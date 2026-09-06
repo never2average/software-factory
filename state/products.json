@@ -1,0 +1,96 @@
+{
+  "$schema": "./products.schema.json",
+  "products": [
+    {
+      "product_id": "claudecode_web",
+      "mold_id": "mold_v1",
+      "name": "Claude Code Web",
+      "tagline": "multi-workspace, multi-agent Claude Code web at feature parity, vanilla, on GLM 5.2",
+      "stage": "defined",
+      "target_model": "GLM 5.2",
+      "gates": {
+        "stamped": [
+          "state/application/<app_id>/ filled against all four schemas",
+          "mold builds on VM (npm run build, typecheck)"
+        ],
+        "lanes_passing": [
+          "all five lanes pass on the stamped app",
+          "accessibility + responsiveness harnesses exist (not in mold today)"
+        ],
+        "deployed": [
+          "production URL on Vercel or VM",
+          "secrets present by name only in state",
+          "GLM 5.2 provider configured and smoke-tested"
+        ],
+        "released": [
+          "onboarding path works end to end (onboard-self, onboard-org, onboard-customer)",
+          "docs + pricing/packaging decided",
+          "budget of inference cost per workspace known"
+        ]
+      },
+      "app_ids": [],
+      "deploy_targets": [
+        "vercel",
+        "vm"
+      ]
+    },
+    {
+      "product_id": "claudecode_web_governed",
+      "mold_id": "mold_v2",
+      "name": "Claude Code Web Governed",
+      "tagline": "mold_v1 + agent governance, pipeline-level data isolation, budget management, performance governor",
+      "stage": "defined",
+      "target_model": "GLM 5.2",
+      "gates": {
+        "stamped": [
+          "mold_v2 codebase exists, forked from mold_v1 at a recorded commit",
+          "all four capabilities have a design note under molds/mold_v2/"
+        ],
+        "lanes_passing": [
+          "mold_v1 lanes still pass",
+          "isolation and budget tests added to context + load lanes"
+        ],
+        "deployed": [
+          "governor and budget limits enforceable per org in production"
+        ],
+        "released": [
+          "governance controls documented for a customer security review"
+        ]
+      },
+      "app_ids": [],
+      "deploy_targets": [
+        "vercel",
+        "vm"
+      ]
+    },
+    {
+      "product_id": "claudecode_web_research",
+      "mold_id": "mold_v3",
+      "name": "Claude Code Web Research",
+      "tagline": "mold_v1 + autoresearch and SAI, multi-context + multi-role isolation per workflow",
+      "stage": "defined",
+      "target_model": "GLM 5.2",
+      "gates": {
+        "stamped": [
+          "mold_v3 codebase exists, forked from mold_v1 at a recorded commit",
+          "autoresearch + SAI scoped in a design note"
+        ],
+        "lanes_passing": [
+          "mold_v1 lanes still pass",
+          "per-workflow context/role isolation covered in context lane"
+        ],
+        "deployed": [
+          "autoresearch runs bounded by the mold_v2 budget model if merged, else by its own cap"
+        ],
+        "released": [
+          "SAI and autoresearch behaviour documented with eval results"
+        ]
+      },
+      "app_ids": [],
+      "deploy_targets": [
+        "vercel",
+        "vm"
+      ]
+    }
+  ]
+}

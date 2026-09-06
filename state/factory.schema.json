@@ -102,6 +102,14 @@
       "items": {
         "type": "string"
       }
+    },
+    "products": {
+      "type": "string",
+      "description": "Path to products.json"
+    },
+    "tasks": {
+      "type": "string",
+      "description": "Path pattern for per-mold task backlogs"
     }
   },
   "$defs": {
