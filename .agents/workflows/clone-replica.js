@@ -52,7 +52,9 @@ while (!deployOk && attempts < 2) {
     `Read ${ROOT}/.claude/scripts/provision.py, ${MOLD}/scripts/deploy.mjs, ${MOLD}/vercel.api.json, ${MOLD}/vercel.eve.json; run read-only checks (cd ${MOLD}; vercel ls <project>, vercel inspect <deployment-url> --logs, vercel project inspect <project>). ` +
     `Return one hypothesis with concrete evidence, a precise fix expressed as an edit to provision.py or a command sequence (never an edit under molds/), the files to change, and confidence 0-1. ${RULES}`,
     { label: `diag:${i}`, schema: DIAG })))).filter(Boolean)
-  const judge = await agent(`Judge these diagnoses of a failed Vercel deploy and choose the one to apply (index into the list, 0-based). Prefer the fix with the strongest concrete evidence and the smallest blast radius. Diagnoses: ${JSON.stringify(diags)}`, { label: 'judge', schema: JUDGE })
+  if (!diags.length) { log('no diagnosis returned (agents unavailable); stopping'); break }
+  const judge = diags.length === 1 ? { chosen: 0, reason: 'only diagnosis' }
+    : await agent(`Judge these diagnoses of a failed Vercel deploy and choose the one to apply (index into the list, 0-based). Prefer the fix with the strongest concrete evidence and the smallest blast radius. Diagnoses: ${JSON.stringify(diags)}`, { label: 'judge', schema: JUDGE })
   const chosen = diags[judge?.chosen ?? 0] ?? diags[0]
   fixes.push({ round: attempts, chosen, judge })
   const applied = await agent(
