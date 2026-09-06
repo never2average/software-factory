@@ -221,6 +221,9 @@
         },
         "blob_store": {
           "type": "string"
+        },
+        "handed_to": {
+          "type": "string"
         }
       }
     },
@@ -232,6 +235,9 @@
       "type": "string",
       "format": "date-time",
       "description": "When the surface configuration was last applied to the running app"
+    },
+    "note": {
+      "type": "string"
     }
   }
 }
