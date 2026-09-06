@@ -130,7 +130,7 @@ async function apply(url, state) {
       on conflict (${sql(pk.orgs)}) do update set name = excluded.name, branding = excluded.branding`.then(() => 1));
     await up("org_members", async () => { let n = 0; for (const m of mp.members) { await sql`insert into org_members (org_id, email, role, invited_by, accepted_at) values (${ws.org_id}, ${m.email}, ${m.role}, ${me}, now()) on conflict (${sql(pk.org_members)}) do update set role = excluded.role`; n++; } return n; });
     await up("platform_admins", async () => { let n = 0; for (const e of mp.platform_admins ?? []) { await sql`insert into platform_admins (email, added_by) values (${e}, ${me}) on conflict do nothing`; n++; } return n; });
-    await up("people_roster", async () => { let n = 0; for (const r of mp.roster ?? []) { await sql`insert into people_roster (org_id, email, name, team, manager_email, escalations) values (${ws.org_id}, ${r.email}, ${r.name ?? null}, ${r.team ?? null}, ${r.manager_email ?? null}, ${sql.json(r.escalations ?? [])}) on conflict (${sql(pk.people_roster)}) do update set name = excluded.name, team = excluded.team, manager_email = excluded.manager_email, escalations = excluded.escalations`; n++; } return n; });
+    await up("people_roster", async () => { let n = 0; for (const r of mp.roster ?? []) { await sql`insert into people_roster (org_id, email, name, team, manager_email, escalations) values (${ws.org_id}, ${r.email}, ${r.name ?? null}, ${r.team ?? null}, ${r.manager_email ?? null}, ${r.escalations && r.escalations.length ? sql.json(r.escalations) : null}) on conflict (${sql(pk.people_roster)}) do update set name = excluded.name, team = excluded.team, manager_email = excluded.manager_email, escalations = excluded.escalations`; n++; } return n; });
     const p = s.primary_context.instructions ?? {}; const ws_ = s.web_search ?? {}, br = s.browser ?? {};
     await up("agent_profiles", () => sql`insert into agent_profiles (id, org_id, email, persona_name, tone, instructions, default_mode, web_search_default, browser_default, model, updated_by) values (${ws.org_id + ":"}, ${ws.org_id}, '', ${p.persona_name ?? null}, ${p.tone ?? null}, ${p.workspace ?? null}, ${p.default_mode ?? null}, ${ws_.default_on_for_agent ?? null}, ${br.default_on_for_agent ?? null}, ${p.model ?? null}, ${me})
       on conflict (${sql(pk.agent_profiles)}) do update set persona_name = excluded.persona_name, tone = excluded.tone, instructions = excluded.instructions, default_mode = excluded.default_mode, web_search_default = excluded.web_search_default, browser_default = excluded.browser_default, model = excluded.model`.then(() => 1));
@@ -148,7 +148,7 @@ async function counts(sql) {
 }
 async function blobTree(token, prefix) {
   const { list } = require("@vercel/blob"); const out = {}; let cursor;
-  do { const r = await list({ token, prefix, cursor, limit: 1000 }); for (const b of r.blobs) { const rel = b.pathname.slice(prefix.length).replace(/^\//, ""); const top = rel.split("/")[0] || "(root)"; out[top] = (out[top] ?? 0) + 1; } cursor = r.hasMore ? r.cursor : undefined; } while (cursor);
+  do { const r = await list({ token, prefix, cursor, limit: 1000 }); for (const b of r.blobs) { const rel = b.pathname.slice(prefix.length).replace(/^\//, ""); const top = rel.split("/")[0] || "(root)"; out[top] = out[top] ?? { files: 0, bytes: 0 }; out[top].files++; out[top].bytes += b.size; } cursor = r.hasMore ? r.cursor : undefined; } while (cursor);
   return out;
 }
 async function diff(url, liveUrl, token, liveToken, prefix) {
@@ -171,7 +171,11 @@ async function diff(url, liveUrl, token, liveToken, prefix) {
 async function blobcopy(prefix, liveToken, token, applyIt) {
   const { list, put } = require("@vercel/blob"); let n = 0, bytes = 0, cursor;
   do { const r = await list({ token: liveToken, prefix, cursor, limit: 1000 });
-    for (const b of r.blobs) { n++; bytes += b.size; if (applyIt) { const res = await fetch(b.url); await put(b.pathname, await res.arrayBuffer(), { token, access: "private", addRandomSuffix: false, allowOverwrite: true, contentType: res.headers.get("content-type") ?? undefined }); } }
+    for (const b of r.blobs) { n++; bytes += b.size; if (applyIt) {
+      const res = await fetch(b.url, { headers: { authorization: "Bearer " + liveToken } });   // private store: unauthenticated GET returns a short error body
+      if (!res.ok) throw new Error(`download ${b.pathname}: HTTP ${res.status}`);
+      const body = await res.arrayBuffer(); if (body.byteLength !== b.size) throw new Error(`download ${b.pathname}: got ${body.byteLength} bytes, expected ${b.size}`);
+      await put(b.pathname, body, { token, access: "private", addRandomSuffix: false, allowOverwrite: true, contentType: res.headers.get("content-type") ?? undefined }); } }
     cursor = r.hasMore ? r.cursor : undefined; } while (cursor);
   return { prefix, files: n, bytes, applied: applyIt };
 }
