@@ -969,7 +969,7 @@
     },
     "functional": {
       "status": "fail",
-      "run_at": "2026-09-06T12:30:00Z",
+      "run_at": "2026-09-06T00:00:00Z",
       "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-06.md"
     },
     "accessibility": {

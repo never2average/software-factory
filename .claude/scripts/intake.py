@@ -27,18 +27,19 @@ def parse_brief(text):
     if re.search(r"\bno browser\b|without (a )?browser|disable (the )?browser|no outbound", t): h["browser"] = False
     if re.search(r"single.?tenant|single workspace|one workspace", t): h["multi_tenant"] = False
     if re.search(r"fresh (database|db)|own (database|db)|new (database|db)", t): h["postgres_scope"] = "fresh"
-    if re.search(r"shared? (database|db)|share.* live (database|db|data)|against (the )?live", t): h["postgres_scope"] = "shared_with_live"
-    m = re.search(r"customer[:\s]+([a-z0-9_-]+)", t)
+    if re.search(r"\b(?:no|not|never|without)\b[^.\n]{0,30}\bshared?\b", t): h["postgres_scope"] = "fresh"
+    elif re.search(r"\bshared? (?:database|db)\b|\bshare[a-z]* the live (?:database|db|data)\b", t): h["postgres_scope"] = "shared_with_live"
+    m = re.search(r"\bcustomer:\s*([a-z0-9_-]+)", t)
     if m: h["customer_id"] = m.group(1)
     m = re.search(r"domain[:\s]+([a-z0-9.-]+\.[a-z]{2,})", t)
     if m: h["custom_domain"] = m.group(1)
     m = re.search(r"\bmold[_ ]?v?([123])\b", t)
     if m: h["mold_id"] = f"mold_v{m.group(1)}"
-    m = re.search(r"(?:workspace|org(?:anization)?)[:\s]+\"?([^\n\"]+?)\"?(?:\.|\n|$)", text, re.I)
+    m = re.search(r"\b(?:workspace|org(?:anisation|anization)?):\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I)
     if m: h["workspace_name"] = m.group(1).strip()
-    m = re.search(r"(?:fde|owner|operator)[:\s]+(" + EMAIL + ")", t)
+    m = re.search(r"\b(?:fde|owner|operator):\s*(" + EMAIL + ")", t)
     if m: h["fde_email"] = m.group(1)
-    m = re.search(r"(?:members?|team)[:\s]+((?:" + EMAIL + r"[,\s]*)+)", t)
+    m = re.search(r"\b(?:members?|team):\s*((?:" + EMAIL + r"[,\s]*)+)", t)
     if m: h["members"] = re.findall(EMAIL, m.group(1))
     m = re.search(r"(?:accounts?|customers?) are called ([a-z]+)|call (?:accounts|customers) ([a-z]+)", t)
     if m: h["account_noun"] = (m.group(1) or m.group(2)).rstrip("s")
@@ -187,6 +188,10 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     ex_app = existing.get("application", {})  # re-running intake never resets progress already made
     if ex_app.get("clone_of", {}).get("extracted_at"):  # the surface came from a live deployment; the brief cannot know better
         app["workspace"], app["surface"] = ex_app["workspace"], ex_app["surface"]
+        app["clone_of"] = ex_app["clone_of"]                      # keep extracted_at, live_counts, live_evidence, the regression result
+        ex_di = existing.get("datainfra", {})
+        for k in ("platforms", "deployments", "pipelines", "agents", "dataroom"):
+            if ex_di.get(k): di[k] = ex_di[k]
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
     if "clone_of" in ex_app and "clone_of" not in app: app["clone_of"] = ex_app["clone_of"]

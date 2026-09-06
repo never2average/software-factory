@@ -126,9 +126,19 @@ def main(a):
         print(f"pg_restore into {proj} (--clean --if-exists) ...")
         r = subprocess.run(["pg_restore", "--clean", "--if-exists", "--no-owner", "--no-privileges", "--dbname", dst, dump], capture_output=True, text=True)
         shutil.rmtree(os.path.dirname(dump))
-        if r.returncode and "errors ignored on restore" not in r.stderr: sys.exit(r.stderr[-2000:])
-        print("  restored" + (" (some statements ignored, normal for --clean on a fresh db)" if r.returncode else ""))
-        ds["postgres"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW, "method": "pg_dump"}
+        # pg_restore prints "errors ignored on restore: N" for ANY non-zero error count, so that phrase
+        # alone cannot mean success. Accept only errors from --clean dropping objects that do not exist yet.
+        errs = [l for l in r.stderr.splitlines() if "error:" in l.lower()]
+        fatal = [l for l in errs if "does not exist" not in l and "already exists" not in l]
+        if r.returncode and fatal: sys.exit("pg_restore reported errors that are not the expected --clean noise:\n" + "\n".join(fatal[:15]))
+        print(f"  restored ({len(errs)} ignorable --clean error(s))" if errs else "  restored")
+        # Rows in connector_secrets / browser_credentials are sealed with the SOURCE app's OPS_SECRETS_KEY
+        # (agent/lib/secret-crypto.ts). The clone mints its own key and Vercel will not reveal live's, so
+        # those rows can never be decrypted here. Clearing them is the honest outcome: the clone shows no
+        # connectors rather than connectors that fail at use.
+        sealed = node("clear-sealed", dict(base, DATABASE_URL=dst), mold)
+        print("  cleared rows sealed with the source key: " + ", ".join(f"{k}={v}" for k, v in sealed.items()))
+        ds["postgres"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW, "method": "pg_dump", "cleared_sealed_rows": sealed}
         if tok:
             b = node("blobcopy", benv, mold, extra=["--apply"]); print(f"  copied {b['files']} blobs under {prefix}")
             ds["blob"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW}
