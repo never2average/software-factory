@@ -1,5 +1,7 @@
 # software-factory
 
+Read `docs/HOW_IT_WORKS.md` first. Questions the intake asks: `docs/INTAKE.md`.
+
 Factory 1: an operator (Fable + sol) services molds through a fixed surface and stamps applications from them. Failed applications revert to the operator.
 
 ```
