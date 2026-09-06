@@ -185,6 +185,8 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     if ans.get("customer_id"): app["customer_id"] = ans["customer_id"]
     if hints.get("clone_of"): app["clone_of"] = dict(hints["clone_of"], snapshot_date=TODAY, regression={"status": "pending"})
     ex_app = existing.get("application", {})  # re-running intake never resets progress already made
+    if ex_app.get("clone_of", {}).get("extracted_at"):  # the surface came from a live deployment; the brief cannot know better
+        app["workspace"], app["surface"] = ex_app["workspace"], ex_app["surface"]
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
     if "clone_of" in ex_app and "clone_of" not in app: app["clone_of"] = ex_app["clone_of"]
