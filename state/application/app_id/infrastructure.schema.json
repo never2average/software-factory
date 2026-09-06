@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "infrastructure.schema.json",
+  "title": "Infrastructure",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": true
+}
