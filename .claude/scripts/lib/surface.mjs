@@ -70,7 +70,8 @@ async function extract(url) {
   const hasEsc = (out.people_roster ?? []).some(r => Array.isArray(r.escalations) && r.escalations.length);
   const present = (i) => i.kind === "workflow_script" ? names.has(i.ref) : i.kind === "recipe" ? slugs.has(i.ref) : i.kind === "workflow_definition" ? defs.some(d => d.entity === i.ref || d.id === i.ref)
     : i.kind === "cycles" ? cyclesN > 0 : i.kind === "todos" ? todosN > 0 : i.kind === "roster_escalations" ? hasEsc : i.kind === "ticket_folder" ? true : true;
-  const blobs = process.env.BLOB_READ_WRITE_TOKEN ? await blobPaths(process.env.BLOB_READ_WRITE_TOKEN, process.env.BLOB_PREFIX ?? "") : null;
+  let blobs = null, blobError = null;
+  if (process.env.BLOB_READ_WRITE_TOKEN) { try { blobs = await blobPaths(process.env.BLOB_READ_WRITE_TOKEN, process.env.BLOB_PREFIX ?? ""); } catch (e) { blobError = e.message; } }
   const filesUnder = (tpl) => blobs ? blobs.filter(p => new RegExp("^" + tpl.replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace(/\\\{[a-z_]+\\\}/g, "[^/]+")).test(p)).length : undefined;
   const workspace = {
     org: pick({ org_id: ORG, name: org.name ?? ORG, display_name: org.branding?.displayName ?? org.name ?? ORG, google_hosted_domain: org.google_hosted_domain, plan: org.plan, data_residency: org.data_residency, blob_prefix: org.blob_prefix, logo_url: org.branding?.logoUrl }),
@@ -87,7 +88,7 @@ async function extract(url) {
       instructions: { ...(prof ? pick({ workspace: prof.instructions, persona_name: prof.persona_name, tone: prof.tone, default_mode: prof.default_mode, model: prof.model }) : {}),
         subagents: (out.agent_configs ?? []).map(r => pick({ agent_key: r.agent_key, paused: !!r.paused, instructions: r.instructions })) },
       memory: { scopes: [...new Set((out.memories ?? []).map(m => m.scope))].filter(Boolean), live_keys: (out.memories ?? []).length },
-      corpus_files: blobs ? { total: blobs.length } : undefined,
+      corpus_files: blobs ? { total: blobs.length } : blobError ? { error: blobError } : undefined,
     },
     multiplayer_context: {
       evidence: { workflows: [...names], recipes: [...slugs], definitions: defs.map(d => ({ id: d.id, entity: d.entity, is_default: !!d.is_default })), cycles: cyclesN, todos: todosN, roster_escalations: hasEsc },

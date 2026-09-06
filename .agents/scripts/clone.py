@@ -79,7 +79,10 @@ def main(a):
         w["org"].update(xw["org"]); w.update({k: v for k, v in xw.items() if k != "org" and v})
         if not any(m["email"] == w["fde_self"]["email"] for m in w["members"]): w["members"].insert(0, {"email": w["fde_self"]["email"], "role": "owner"})
         pc = s["primary_context"]; xp = x["primary_context"]
-        pc["corpus"] = xp.get("corpus", pc["corpus"]); pc["instructions"].update(xp["instructions"]); pc["memory"].update({k: v for k, v in xp["memory"].items() if v not in ([], None)})
+        pc["corpus"] = xp.get("corpus", pc["corpus"])
+        if xp.get("corpus_files", {}).get("error"): print("blob listing failed on live (" + xp["corpus_files"]["error"] + "); corpus file counts skipped")
+        elif xp.get("corpus_files"): pc["corpus_files"] = xp["corpus_files"]
+        pc["instructions"].update(xp["instructions"]); pc["memory"].update({k: v for k, v in xp["memory"].items() if v not in ([], None)})
         mc = s["multiplayer_context"]; xm = x["multiplayer_context"]
         mc["processes"] = xm.get("processes", mc["processes"]); mc["escalation"].update({k: v for k, v in xm["escalation"].items() if v}); clone["live_evidence"] = xm["evidence"]
         gaps = [(p["name"], [i["ref"] for i in p["implemented_by"] if not i.get("present")]) for p in mc["processes"]]; gaps = [g for g in gaps if g[1]]
