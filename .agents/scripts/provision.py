@@ -22,6 +22,47 @@ def vercel_env_names(cwd):
     out = sh("vercel env ls production 2>/dev/null", cwd=cwd, check=False)
     return {l.split()[0] for l in out.splitlines() if l.strip() and l.split()[0].isupper()}
 
+GENERATED = {  # app-internal secrets the factory may mint itself (never external credentials)
+  "CRON_SECRET": "openssl rand -hex 32",
+  "OPS_SECRETS_KEY": "openssl rand -hex 32",
+}
+def _add_env(name, value, cwd):
+    subprocess.run(f"vercel env add {name} production", shell=True, cwd=cwd, input=value, capture_output=True, text=True)
+
+def provision_datastores(app_id, ds, mold_dir, present, infra):
+    """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
+    pg, blob = ds.get("postgres", {}), ds.get("blob", {})
+    if pg.get("scope") == "fresh" and pg.get("provider") == "supabase" and "SUPABASE_URL" not in present:
+        print(f"provisioning fresh Supabase project '{app_id}' via Vercel Marketplace ...")
+        r = subprocess.run(f"vercel integration add supabase --yes -n {app_id} --prefix SUPABASE_ --no-env-pull", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
+        print("  " + " | ".join(tail))
+        if r.returncode: sys.exit("supabase provisioning failed; if it asks for a browser step run: vercel integration open supabase")
+        infra.setdefault("datastores", {})["supabase_resource"] = app_id
+    if blob.get("provider") == "vercel_blob" and "BLOB_READ_WRITE_TOKEN" not in present:
+        print(f"creating Vercel Blob store '{app_id}' ...")
+        r = subprocess.run(f"vercel blob store add {app_id}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        if r.returncode and "already" not in (r.stdout + r.stderr): print("  " + (r.stdout + r.stderr).strip().splitlines()[-1])
+        infra.setdefault("datastores", {})["blob_store"] = app_id
+    present = vercel_env_names(mold_dir)
+    for name, cmd in GENERATED.items():
+        if name not in present:
+            _add_env(name, subprocess.check_output(cmd, shell=True, text=True).strip(), mold_dir); print(f"generated {name}")
+    if "AUTH_JWT_PRIVATE_KEY" not in present:
+        js = ("const{generateKeyPairSync}=require('crypto');const{publicKey:a,privateKey:b}=generateKeyPairSync('ec',{namedCurve:'P-256'});"
+              "console.log(Buffer.from(b.export({type:'pkcs8',format:'pem'})).toString('base64'));console.log(Buffer.from(a.export({type:'spki',format:'pem'})).toString('base64'))")
+        priv, pub = subprocess.check_output(["node", "-e", js], text=True).split()
+        _add_env("AUTH_JWT_PRIVATE_KEY", priv, mold_dir); _add_env("AUTH_JWT_PUBLIC_KEY", pub, mold_dir); print("generated AUTH_JWT key pair")
+    present = vercel_env_names(mold_dir)
+    if "DATABASE_URL" not in present and "SUPABASE_POSTGRES_URL" in present:
+        # DATABASE_URL is the app's canonical name for the pooled Postgres URL the integration injected
+        tmp = os.path.join(mold_dir, ".env.provision")
+        subprocess.run(f"vercel env pull --environment=production {tmp}", shell=True, cwd=mold_dir, capture_output=True)
+        val = next((l.split("=",1)[1].strip().strip('"') for l in open(tmp) if l.startswith("SUPABASE_POSTGRES_URL=")), "")
+        os.remove(tmp)
+        if val: _add_env("DATABASE_URL", val, mold_dir); print("derived DATABASE_URL from SUPABASE_POSTGRES_URL")
+    return vercel_env_names(mold_dir)
+
 def ensure_vm_scaffold(app_id, mold_dir, secrets):
     d = os.path.join(ROOT, "infra/vm/apps", app_id); os.makedirs(d, exist_ok=True)
     df = os.path.join(d, "Dockerfile")
@@ -69,6 +110,8 @@ def main(a):
         proj = infra["vercel"]["project"]
         sh(f"vercel link --yes --project {proj} >/dev/null 2>&1", cwd=mold_dir)
         present = vercel_env_names(mold_dir)
+        present = provision_datastores(app_id, load(os.path.join(adir, "datastores.json")), mold_dir, present, infra)
+        save(os.path.join(adir, "infrastructure.json"), infra)
     else:
         d = ensure_vm_scaffold(app_id, mold_dir, secrets)
         envf = os.path.join(d, ".env"); present = set()
