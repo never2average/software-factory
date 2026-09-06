@@ -34,10 +34,15 @@ def provision_datastores(app_id, ds, mold_dir, present, infra):
     pg, blob = ds.get("postgres", {}), ds.get("blob", {})
     if pg.get("scope") == "fresh" and pg.get("provider") == "supabase" and "SUPABASE_URL" not in present:
         print(f"provisioning fresh Supabase project '{app_id}' via Vercel Marketplace ...")
+        urls = os.path.expanduser("~/.factory-open-urls"); open(urls, "w").close()   # the xdg-open shim (infra/vm/provision.sh) records links a CLI tried to open
         r = subprocess.run(f"vercel integration add supabase -n {app_id} --prefix SUPABASE_ --no-claim --no-env-pull -e production -e preview -e development", shell=True, cwd=mold_dir, capture_output=True, text=True)
-        tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
-        print("  " + " | ".join(tail))
-        if r.returncode: sys.exit("supabase provisioning failed; if it asks for a browser step run: vercel integration open supabase")
+        out = r.stdout + r.stderr; link_ = next((l.strip() for l in open(urls) if l.strip()), None)
+        if "Additional setup required" in out or link_:
+            sys.exit("ONE-TIME STEP: open this link in a browser, accept the Supabase plan for this project, then run the same command again:\n  " + (link_ or f"https://vercel.com/{infra['vercel']['team']}/~/integrations/checkout/supabase?productSlug=supabase&defaultResourceName={app_id}&source=cli&projectSlug={infra['vercel']['project']}"))
+        if r.returncode:
+            msg = [l for l in out.splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+            sys.exit("supabase provisioning failed: " + " | ".join(msg[-3:]))
+        print("  " + (out.strip().splitlines() or ["ok"])[-1])
         infra.setdefault("datastores", {})["supabase_resource"] = app_id
     if blob.get("provider") == "vercel_blob" and "BLOB_READ_WRITE_TOKEN" not in present:
         print(f"creating Vercel Blob store '{app_id}' ...")
