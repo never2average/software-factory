@@ -8,7 +8,7 @@
   make sure the target scaffolding exists, print what is missing. Never deploys.
 --deploy: run the deploy for the target. Refuses if any secret is missing.
 """
-import json, os, re, sys, subprocess, datetime, shutil, urllib.parse
+import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
 def load(p): return json.load(open(p))
@@ -132,6 +132,43 @@ def set_framework(project, framework, mold_dir):
     except Exception: got = None
     if got != framework: sys.exit(f"could not set framework={framework} on {project} (reads {got!r})")
 
+def _project_meta(project, mold_dir):
+    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    try: return json.loads(r.stdout)
+    except Exception: return {}
+
+def git_link(project, mold_dir):
+    """Which git provider, if any, auto-deploys this project. None when nothing does."""
+    return (_project_meta(project, mold_dir).get("link") or {}).get("type")
+
+GIT_LINK_MSG = ("{project} is still connected to git ({link}); every push would deploy the factory repo over this app. "
+                "Disconnect it (Settings -> Git -> Disconnect) and rerun.")
+
+def disconnect_git(project, mold_dir):
+    """A project the CLI creates from inside a git checkout is auto-connected to that repo.
+    The mold lives inside the factory repo, so claudecode-web-api/-workflow were linked to
+    never2average/software-factory and every push started a PRODUCTION build of the factory
+    root: `eve: command not found` (eve preset) / `No Next.js version detected` (nextjs preset).
+    14 ERROR production deployments each, and the workflow build overwrites the build cache the
+    next CLI deploy restores. Only provision.py may create deployments for a stamped app.
+
+    `vercel git disconnect` acts on the project linked in its working directory, so it runs in a
+    throwaway link dir: the mold directory is shared by every agent and must never be relinked."""
+    meta = _project_meta(project, mold_dir)
+    if not (meta.get("link") or {}).get("type"): return
+    d = tempfile.mkdtemp(prefix="vercel-unlink-")
+    try:
+        os.makedirs(os.path.join(d, ".vercel"))
+        json.dump({"projectId": meta.get("id"), "orgId": meta.get("accountId"), "projectName": project},
+                  open(os.path.join(d, ".vercel/project.json"), "w"))
+        subprocess.run(f"vercel git disconnect --cwd {d}", shell=True, cwd=mold_dir,
+                       input="y\n", capture_output=True, text=True)   # the CLI confirms interactively
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    link = git_link(project, mold_dir)
+    if link: sys.exit(GIT_LINK_MSG.format(project=project, link=link))
+    print(f"  {project}: git integration disconnected")
+
 def deploy(cfg, mold_dir):
     """Production deploy from the mold dir; returns the deployment URL. The CLI prints progress on stderr and the URL on stdout, but a build error arrives as JSON, so never trust the last line blindly."""
     r = subprocess.run(f"vercel deploy --prod --yes --local-config {cfg}", shell=True, cwd=mold_dir, capture_output=True, text=True)
@@ -242,6 +279,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         # workflow service: its own Next.js app under services/task-workflow
         print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
         wf_url = run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy")
+        disconnect_git(f"{proj}-workflow", mold_dir)
         infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=proj)
         vals = pull_env(mold_dir, proj)
@@ -252,6 +290,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
         run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build")
         api_url = run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy")
+        disconnect_git(f"{proj}-api", mold_dir)
         infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
         _set_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir, project=proj)
         cfg_main = "vercel.json"
@@ -259,7 +298,10 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
         cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
     print("deploying web app")
+    # the eve prebuilt output and the build-time env `vercel build` wrote are the api's, not the web app's
+    subprocess.run("rm -rf .vercel/output .vercel/static-build .vercel/.env.production.local", shell=True, cwd=mold_dir)
     url = run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy")
+    disconnect_git(proj, mold_dir)
     infra["vercel"]["production_url"] = url; print(f"  {url}")
     # verify-production, as the Makefile does
     checks = [("workflow", f"{infra['vercel'].get('workflow_url','')}/api/health"), ("api", f"{infra['vercel'].get('api_url','')}/eve/v1/health"), ("web", f"{url}/api/ops/health")]
@@ -331,6 +373,11 @@ def main(a):
         present = vercel_env_names(mold_dir, proj)
         present = provision_datastores(app_id, load(os.path.join(adir, "datastores.json")), mold_dir, present, infra, proj)
         save(os.path.join(adir, "infrastructure.json"), infra)
+        # report a reconnected project before anyone deploys: a git-sourced build of the factory repo
+        # overwrites this app's production deployment and its build cache.
+        for p_ in (proj, f"{proj}-api", f"{proj}-workflow"):
+            link = git_link(p_, mold_dir)
+            if link: sys.exit(GIT_LINK_MSG.format(project=p_, link=link))
     else:
         d = ensure_vm_scaffold(app_id, mold_dir, secrets)
         envf = os.path.join(d, ".env"); present = set()

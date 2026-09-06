@@ -55,7 +55,7 @@ Values never enter the repo, the state files, or the chat. State holds names; th
 
 - VM: SSH alias `digitalocean`, root. Provisioned by `infra/vm/provision.sh` (node 24, docker, Vercel CLI, Playwright).
 - GitHub: this repo via a write deploy key; fde-agent via a read-only deploy key (alias `github-fde`).
-- Vercel: CLI logged in on the VM; factory project `claudecode-web` (Node 24.x, Root Directory `.`, Git integration disconnected on 2026-09-06 so only `provision.py --deploy` creates deployments; do not reconnect Git or set a Root Directory, both break CLI deploys from the mold dir). The live `fde-agent*` projects are off limits to the factory.
+- Vercel: CLI logged in on the VM; every project of a stamped app (`<project>`, `<project>-api`, `<project>-workflow`) is Node 24.x with Root Directory `.` — Git integration must stay disconnected; `provision.py` now enforces it (it disconnects each project right after the deploy that may have created it, and `--check` refuses to proceed while one is reconnected) so only `provision.py --deploy` creates deployments. A project the CLI creates from inside the factory checkout is auto-connected to `never2average/software-factory`, and every push then builds the factory root as that app: 39 failed production deployments, plus a poisoned build cache the next CLI deploy restores. Do not reconnect Git or set a Root Directory, both break CLI deploys from the mold dir. The live `fde-agent*` projects are off limits to the factory.
 
 ## Where things stand (2026-09-06)
 
