@@ -34,7 +34,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra):
     pg, blob = ds.get("postgres", {}), ds.get("blob", {})
     if pg.get("scope") == "fresh" and pg.get("provider") == "supabase" and "SUPABASE_URL" not in present:
         print(f"provisioning fresh Supabase project '{app_id}' via Vercel Marketplace ...")
-        r = subprocess.run(f"vercel integration add supabase --yes -n {app_id} --prefix SUPABASE_ --no-env-pull", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        r = subprocess.run(f"vercel integration add supabase -n {app_id} --prefix SUPABASE_ --no-claim --no-env-pull -e production -e preview -e development", shell=True, cwd=mold_dir, capture_output=True, text=True)
         tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
         print("  " + " | ".join(tail))
         if r.returncode: sys.exit("supabase provisioning failed; if it asks for a browser step run: vercel integration open supabase")
