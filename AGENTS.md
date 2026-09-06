@@ -4,6 +4,8 @@ This repository is a software factory, not an application. Read `state/factory.j
 
 Work is tasked: run `python3 .claude/scripts/factory.py next <mold_id>` to get the current task, and use the `task` skill to move it. Products and their stage gates are in `state/products.json`.
 
+To stamp from a description: `intake` subagent (asks the user only unresolved questions, writes state) then `provisioner` subagent (checks secrets by name, deploys). Secret values never enter the repo or the chat.
+
 Rules:
 - Molds under `molds/<mold_id>/codebase` are snapshots. Do not edit them in place; refresh from source per the mold's `MOLD.md`, or fork into a new mold.
 - Stamping an application means: copy `state/application/app_id/` to a real id, fill the four JSON files against their schemas, then run the five testing lanes in `molds/<mold_id>/testing/`. A failed lane sets the application to `reverted` and hands control back to the operator.

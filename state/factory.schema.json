@@ -110,6 +110,68 @@
     "tasks": {
       "type": "string",
       "description": "Path pattern for per-mold task backlogs"
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Answers that apply to every stamped application. Intake asks to confirm them once (confirmed=false), then never again.",
+      "properties": {
+        "confirmed": {
+          "type": "boolean"
+        },
+        "deploy_target": {
+          "type": "string",
+          "enum": [
+            "vercel",
+            "vm"
+          ]
+        },
+        "secret_store": {
+          "type": "string",
+          "enum": [
+            "vercel_env",
+            "vm_env_file"
+          ]
+        },
+        "postgres_provider": {
+          "type": "string",
+          "enum": [
+            "neon",
+            "supabase",
+            "rds",
+            "self_hosted"
+          ]
+        },
+        "blob_provider": {
+          "type": "string",
+          "enum": [
+            "vercel_blob",
+            "s3",
+            "gcs",
+            "azure_blob"
+          ]
+        },
+        "inference_provider": {
+          "type": "string",
+          "enum": [
+            "cloudflare_workers_ai",
+            "vercel_ai_gateway"
+          ]
+        },
+        "inference_model": {
+          "type": "string"
+        },
+        "sandbox_provider": {
+          "type": "string",
+          "enum": [
+            "vercel_sandbox",
+            "modal",
+            "none"
+          ]
+        },
+        "vm": {
+          "type": "object"
+        }
+      }
     }
   },
   "$defs": {
