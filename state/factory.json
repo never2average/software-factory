@@ -85,5 +85,24 @@
   },
   "applications": [],
   "products": "state/products.json",
-  "tasks": "state/tasks/<mold_id>.jsonl"
+  "tasks": "state/tasks/<mold_id>.jsonl",
+  "defaults": {
+    "confirmed": false,
+    "deploy_target": "vercel",
+    "secret_store": "vercel_env",
+    "postgres_provider": "supabase",
+    "blob_provider": "vercel_blob",
+    "inference_provider": "cloudflare_workers_ai",
+    "inference_model": "@cf/zai-org/glm-5.2",
+    "sandbox_provider": "vercel_sandbox",
+    "vm": {
+      "provider": "digitalocean",
+      "host": "69.55.59.169",
+      "ssh_alias": "digitalocean",
+      "cpu": 4,
+      "memory_gb": 8,
+      "disk_gb": 154,
+      "os": "ubuntu-24.04"
+    }
+  }
 }
