@@ -1,0 +1,127 @@
+{
+  "$schema": "../app_id/application.schema.json",
+  "app_id": "claudecode_web_replica",
+  "mold_id": "mold_v1",
+  "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
+  "status": "planned",
+  "brief": "briefs/claudecode_web_replica.md",
+  "product_id": "claudecode_web",
+  "model": {
+    "provider": "cloudflare",
+    "model": "@cf/zai-org/glm-5.2",
+    "context_window": 262144
+  },
+  "capabilities": {
+    "web_search": true,
+    "browser": false,
+    "multi_tenant": true
+  },
+  "service_surface": [
+    "dm.md",
+    "web_search",
+    "primary_context",
+    "multiplayer_context",
+    "custom_workflow_builder"
+  ],
+  "surface": {
+    "dm.md": {
+      "enabled": true,
+      "top_level": [
+        "Customers",
+        "Platform",
+        "Deployments",
+        "Solutions",
+        "Implementation",
+        "Tickets",
+        "People",
+        "Uploads"
+      ],
+      "system_of_record": "postgres"
+    },
+    "browser": {
+      "enabled": false,
+      "local": false,
+      "default_on_for_agent": false
+    },
+    "web_search": {
+      "enabled": true,
+      "default_on_for_agent": true
+    },
+    "primary_context": {
+      "workspace": {
+        "org_id": "onfinance",
+        "name": "OnFinance",
+        "display_name": "OnFinance",
+        "blob_prefix": "orgs/onfinance"
+      },
+      "entity_vocabulary": {
+        "account_noun": "customer"
+      },
+      "agent_profile": {
+        "default_mode": "build",
+        "model": "@cf/zai-org/glm-5.2",
+        "web_search_default": true,
+        "browser_default": false
+      },
+      "agent_configs": [],
+      "memories": []
+    },
+    "multiplayer_context": {
+      "fde_self": {
+        "email": "priyesh@onfinance.in",
+        "name": "Priyesh",
+        "title": "Forward-Deployed Engineer",
+        "skills": [],
+        "capacity_target_accounts": 8
+      },
+      "members": [
+        {
+          "email": "priyesh@onfinance.in",
+          "role": "owner"
+        }
+      ],
+      "platform_admins": [
+        "priyesh@onfinance.in"
+      ],
+      "roster": [
+        {
+          "email": "priyesh@onfinance.in"
+        }
+      ],
+      "customers": []
+    },
+    "custom_workflow_builder": {
+      "library": {
+        "install": "all"
+      },
+      "scripts": [],
+      "definitions": []
+    }
+  },
+  "testing": {
+    "load": {
+      "status": "pending"
+    },
+    "context": {
+      "status": "pending"
+    },
+    "functional": {
+      "status": "pending"
+    },
+    "accessibility": {
+      "status": "pending"
+    },
+    "responsiveness": {
+      "status": "pending"
+    }
+  },
+  "customer_id": "internal",
+  "clone_of": {
+    "kind": "live_deployment",
+    "ref": "fde-agent",
+    "snapshot_date": "2026-09-06",
+    "regression": {
+      "status": "pending"
+    }
+  }
+}

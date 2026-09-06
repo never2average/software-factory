@@ -29,7 +29,8 @@
         ]
       },
       "app_ids": [
-        "claudecode_web_internal"
+        "claudecode_web_internal",
+        "claudecode_web_replica"
       ],
       "deploy_targets": [
         "vercel",

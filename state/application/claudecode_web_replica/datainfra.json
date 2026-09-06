@@ -1,0 +1,35 @@
+{
+  "$schema": "../app_id/datainfra.schema.json",
+  "dataroom": {
+    "spec": "molds/mold_v1/codebase/dm.md",
+    "top_level": [
+      "Customers",
+      "Platform",
+      "Deployments",
+      "Solutions",
+      "Implementation",
+      "Tickets",
+      "People",
+      "Uploads"
+    ],
+    "system_of_record": "postgres",
+    "backend": "vercel-blob",
+    "blob_prefix": "orgs/onfinance",
+    "platform_version_ids": [
+      "v1"
+    ],
+    "seed": {
+      "source": "live_snapshot"
+    }
+  },
+  "platforms": [],
+  "deployments": [],
+  "syncs": [
+    {
+      "source": "manual_entry"
+    }
+  ],
+  "pipelines": [],
+  "agents": [],
+  "connectors": []
+}

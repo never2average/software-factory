@@ -33,6 +33,8 @@ brief (5 lines) ──intake──▶ state/application/<app_id>/ ──provisio
 
 **Provision, deploy mode.** `provision.py x --deploy` refuses if anything is missing. Vercel: deploys the web app, then the eve API and workflow service as `<project>-api` and `<project>-workflow`, mirroring how the live app is split. If the database is shared with live, it deploys web only with crons stripped so live jobs never run twice. VM: `docker compose up -d --build`. The production URL lands in `infrastructure.json`.
 
+**Clone (live replica).** A brief that says "clone of live" stamps an app with `clone_of` set. `clone.py <app> extract` reads the live surface tables into `application.surface`; after provision and deploy, `snapshot --apply` restores a `pg_dump` of live and copies the blob tree, `configure` upserts the surface, and `regress` diffs the clone against live table by table and writes the context-lane report. Live is only ever read. Details: `.claude/skills/clone/SKILL.md`, field mapping: `docs/STATE.md`.
+
 **Lanes.** Five test lanes per mold: functional, context, load, accessibility, responsiveness. Results are written per lane into `application.json`. Any failure sets the app to `reverted` and files a task, returning control to the operator. Accessibility and responsiveness harnesses do not exist yet (tasks mold_v1-007/008).
 
 **Product stage.** Tasks carry `advances_stage`. When every task for a stage is done, `factory.py close` moves the product forward: defined, stamped, lanes_passing, deployed, released.
@@ -53,7 +55,8 @@ Values never enter the repo, the state files, or the chat. State holds names; th
 |---|---|
 | VM runtime | provisioned on node 24, mold typechecks and builds |
 | Vercel | logged in, project linked, nothing deployed |
-| claudecode_web_internal | intake done, fresh database chosen, provisioner not yet run |
+| claudecode_web_internal | intake done, Supabase + Blob provisioned, five user secrets missing, not deployed |
+| claudecode_web_replica | intake done (clone of live); extract/snapshot/configure/regress wait on sol's terminal |
 | Lanes | none run; two harnesses missing |
 | mold_v2, mold_v3 | backlog only |
 
