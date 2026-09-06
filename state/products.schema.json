@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "products.schema.json",
+  "title": "Products",
+  "description": "Software products the factory converts molds into. One product per mold; a product advances through stages as tasks close.",
+  "type": "object",
+  "required": [
+    "products"
+  ],
+  "properties": {
+    "products": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "product_id",
+          "mold_id",
+          "name",
+          "stage",
+          "gates"
+        ],
+        "properties": {
+          "product_id": {
+            "type": "string"
+          },
+          "mold_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tagline": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "defined",
+              "stamped",
+              "lanes_passing",
+              "deployed",
+              "released"
+            ]
+          },
+          "target_model": {
+            "type": "string"
+          },
+          "gates": {
+            "type": "object",
+            "description": "What must be true to advance to each stage",
+            "properties": {
+              "stamped": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lanes_passing": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "deployed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "released": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "app_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deploy_targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "vercel",
+                "vm"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

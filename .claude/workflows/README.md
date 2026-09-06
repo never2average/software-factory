@@ -1,0 +1,1 @@
+Workflows are written as ordered steps that reference skills and agents in this folder's siblings. They are executed by the operator (Fable) with the Workflow tool or by hand; keep them short enough to read before running.

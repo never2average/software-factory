@@ -16,13 +16,25 @@ Fable + sol --service--> [dm.md, browser(o/o), web search(o/o), primary_context,
 - `infra/` — deployment targets: `vercel/` (app + eve functions), `vm/` (DigitalOcean droplet)
 - `.claude/`, `.agents/` — agents, skills, scripts, workflows, sandboxes for Claude Code and other agent runtimes
 
+## Tasking
+
+Every mold has a product (`state/products.json`) and a backlog (`state/tasks/<mold_id>.jsonl`). The operator works the backlog; closing tasks advances the product through defined → stamped → lanes_passing → deployed → released.
+
+```
+python3 .claude/scripts/factory.py status        # products, stages, task counts
+python3 .claude/scripts/factory.py next mold_v1  # what to do now
+python3 .claude/scripts/factory.py validate      # all state files
+```
+
+Skills: `task`, `stamp`, `run-lanes`, `productize`. Agents: `mold-engineer`, `lane-tester`, `product-packager`. Workflows: `stamp-and-test`, `mold-fork`.
+
 ## Molds
 
-| Mold | Status | Definition |
-|---|---|---|
-| mold_v1 | active | multi-workspace multi-agent Claude Code web at feature parity, vanilla, GLM 5.2 |
-| mold_v2 | wip | + agent governance, pipeline-level data isolation, budget management, performance governor |
-| mold_v3 | wip | + autoresearch and SAI, multi-context + multi-role isolation per workflow |
+| Mold | Product | Status | Definition |
+|---|---|---|---|
+| mold_v1 | claudecode_web | active | multi-workspace multi-agent Claude Code web at feature parity, vanilla, GLM 5.2 |
+| mold_v2 | claudecode_web_governed | wip | + agent governance, pipeline-level data isolation, budget management, performance governor |
+| mold_v3 | claudecode_web_research | wip | + autoresearch and SAI, multi-context + multi-role isolation per workflow |
 
 ## Working here
 
