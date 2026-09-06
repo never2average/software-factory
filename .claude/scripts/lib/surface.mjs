@@ -181,6 +181,7 @@ const E = process.env;
   if (cmd === "extract") out = await extract(E.DATABASE_URL);
   else if (cmd === "apply") out = await apply(E.DATABASE_URL, JSON.parse(readFileSync(0, "utf8")));
   else if (cmd === "diff") out = await diff(E.DATABASE_URL, E.LIVE_DATABASE_URL, E.BLOB_READ_WRITE_TOKEN, E.LIVE_BLOB_READ_WRITE_TOKEN, E.BLOB_PREFIX ?? "");
+  else if (cmd === "blobcheck") { const { list } = require("@vercel/blob"); try { const r = await list({ token: E.BLOB_READ_WRITE_TOKEN, prefix: E.BLOB_PREFIX ?? "", limit: 1 }); out = { ok: true, sample: r.blobs[0]?.pathname ?? null }; } catch (e) { out = { ok: false, error: e.message }; } }
   else if (cmd === "blobcopy") out = await blobcopy(E.BLOB_PREFIX ?? "", E.LIVE_BLOB_READ_WRITE_TOKEN, E.BLOB_READ_WRITE_TOKEN, process.argv.includes("--apply"));
   else { console.error("usage: surface.mjs extract|apply|diff|blobcopy"); process.exit(2); }
   process.stdout.write(JSON.stringify(out, null, 2) + "\n");
