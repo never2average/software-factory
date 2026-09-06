@@ -11,18 +11,16 @@
     "snapshot": {
       "source": "live_fde_agent",
       "ref": "fde-agent",
-      "taken_at": "2026-09-06T12:12:30+00:00",
       "method": "pg_dump"
     }
   },
   "blob": {
     "provider": "vercel_blob",
-    "root_prefix": "orgs/org-onfinance-ai",
+    "root_prefix": "orgs/onfinance",
     "token_ref": "BLOB_READ_WRITE_TOKEN",
     "snapshot": {
       "source": "live_fde_agent",
-      "ref": "fde-agent",
-      "taken_at": "2026-09-06T12:12:30+00:00"
+      "ref": "fde-agent"
     }
   },
   "cache": {

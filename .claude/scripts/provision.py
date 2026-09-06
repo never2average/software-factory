@@ -373,6 +373,13 @@ def main(a):
     adir = os.path.join(ST, "application", app_id)
     app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
+    if deploy and app.get("surface", {}).get("branding"):
+        # Build from a branded copy of the mold. branding.py refuses if any rule stopped matching,
+        # so a half-branded app can never ship; the snapshot itself is never edited.
+        r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/branding.py"), app_id, "prepare"], capture_output=True, text=True)
+        print((r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else "")
+        if r.returncode: sys.exit("branding failed; not deploying")
+        mold_dir = os.path.join(ROOT, "build", app_id)
     secrets = infra.get("secrets", []); target = infra["target"]; store = infra.get("secret_store")
     print(f"{app_id}: target={target} store={store} secrets={len(secrets)}")
     if "--set-secret" in a:

@@ -65,20 +65,14 @@
       "api": "vercel.api.json",
       "eve": "vercel.eve.json"
     },
-    "workflow_url": "https://claudecode-web-workflow.vercel.app",
-    "api_url": "https://claudecode-web-api.vercel.app",
     "production_url": "https://claudecode-web-opal.vercel.app",
-    "health": {
-      "workflow": "503",
-      "api": "200",
-      "web": "503"
-    }
+    "workflow_url": "https://claudecode-web-workflow.vercel.app",
+    "api_url": "https://claudecode-web-api.vercel.app"
   },
   "datastores": {
     "supabase_resource": "claudecode_web_internal",
     "blob_store": "claudecode-web-internal (store_yYAYEISeeQYrb12F, private, iad1)"
   },
-  "note": "Uses the Supabase + Blob resources first provisioned for claudecode_web_internal (free-tier quota: two Supabase projects per Vercel team, one is live fde-agent)",
   "deployed_at": "2026-09-06",
   "configured_at": "2026-09-06T12:14:56+00:00"
 }

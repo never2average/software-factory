@@ -111,6 +111,7 @@
     "postgres_scope": "fresh",
     "workspace_name": "OnFinance",
     "fde_email": "priyesh@onfinance.in",
-    "secret_source_project": "fde-agent"
+    "secret_source_project": "fde-agent",
+    "brand_pack": "onfinance"
   }
 }

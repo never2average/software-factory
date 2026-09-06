@@ -28,7 +28,8 @@
       "name": "Onfinance AI",
       "display_name": "Onfinance AI",
       "blob_prefix": "orgs/org-onfinance-ai",
-      "google_hosted_domain": "onfinance.in"
+      "google_hosted_domain": "onfinance.in",
+      "logo_url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjMEI0RjlFIi8+CiAgPHBhdGggZD0iTTEwIDIxLjVWMTMuNUMxMCAxMS41NjcgMTEuNTY3IDEwIDEzLjUgMTBDMTUuNDMzIDEwIDE3IDExLjU2NyAxNyAxMy41VjIxLjUiIHN0cm9rZT0iI0ZGRkZGRiIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8cGF0aCBkPSJNMTcgMTYuNUgyMi41IiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo="
     },
     "fde_self": {
       "email": "priyesh@onfinance.in",
@@ -956,6 +957,9 @@
           ]
         }
       ]
+    },
+    "branding": {
+      "pack": "onfinance"
     }
   },
   "testing": {
