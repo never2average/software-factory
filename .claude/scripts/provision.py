@@ -102,7 +102,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     return vercel_env_names(mold_dir, proj)
 
 DEPLOY_TIME = ["TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT_PUBLIC_EVE_API_URL", "MODEL_PROVIDER"]
-API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CRON_SECRET", "DATABASE_URL",
+API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CRON_SECRET", "DATABASE_URL", "OPS_MULTI_TENANT",
            "MODEL_PROVIDER", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "EXA_API_KEY", "BROWSERBASE_API_KEY",
            "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID"]
 WORKFLOW_ENV = ["DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN"]
@@ -251,6 +251,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
     cfg = {"MODEL_PROVIDER": app["model"]["provider"], "ENABLE_WEB_SEARCH": str(app["capabilities"]["web_search"]).lower(), "ENABLE_BROWSER": str(app["capabilities"]["browser"]).lower(),
            "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=proj)
+    for k, v in cfg.items(): _set_env(k, v, mold_dir, project=f"{proj}-api")   # build-time flags of the eve bundle: the API must agree with the web door
     def run(cmd, env=None, label=""):
         r = subprocess.run(cmd, shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
         urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", r.stdout + r.stderr)
@@ -297,12 +298,20 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
     else:
         v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
         cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
+    # The eve API defaults WEB_ORIGIN to the live app (agent/channels/eve.ts, agent/lib/run-tools.ts).
+    # Point it at this app's own front door; the value is only known once the web app has a URL, so a
+    # first deploy sets it from the project alias and later deploys correct it.
+    web_origin = infra["vercel"].get("production_url") or f"https://{proj}.vercel.app"
+    for p_ in (proj, f"{proj}-api"): _set_env("WEB_ORIGIN", web_origin, mold_dir, project=p_)
     print("deploying web app")
     # the eve prebuilt output and the build-time env `vercel build` wrote are the api's, not the web app's
     subprocess.run("rm -rf .vercel/output .vercel/static-build .vercel/.env.production.local", shell=True, cwd=mold_dir)
     url = run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy")
     disconnect_git(proj, mold_dir)
     infra["vercel"]["production_url"] = url; print(f"  {url}")
+    if url != web_origin:
+        for p_ in (proj, f"{proj}-api"): _set_env("WEB_ORIGIN", url, mold_dir, project=p_)
+        print(f"  WEB_ORIGIN corrected to {url} (takes effect on the next deploy)")
     # verify-production, as the Makefile does
     checks = [("workflow", f"{infra['vercel'].get('workflow_url','')}/api/health"), ("api", f"{infra['vercel'].get('api_url','')}/eve/v1/health"), ("web", f"{url}/api/ops/health")]
     health = {}
@@ -406,7 +415,10 @@ def main(a):
         deploy_vercel(app_id, app, infra, ds, mold_dir)
     else:
         d = os.path.join(ROOT, "infra/vm/apps", app_id)
-        out = sh("docker compose up -d --build 2>&1 | tail -3", cwd=d)
+        # `| tail` under /bin/sh discards the build's exit status, so a failed build read as a success.
+        r = subprocess.run("docker compose up -d --build", shell=True, cwd=d, capture_output=True, text=True)
+        out = "\n".join((r.stdout + r.stderr).strip().splitlines()[-3:])
+        if r.returncode: sys.exit(f"docker compose failed:\n{out}")
         infra["vm"]["production_url"] = f"http://{infra['vm'].get('host','localhost')}:3000"; print(out)
     infra["deployed_at"] = TODAY; save(os.path.join(adir, "infrastructure.json"), infra)
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
