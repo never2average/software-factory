@@ -19,6 +19,14 @@ if ! command -v docker >/dev/null; then
   apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker
 fi
+# headless: CLIs that try to open a browser (Vercel Marketplace checkout) record the URL instead, so scripts can show it to a person
+cat > /usr/local/bin/xdg-open <<'XDG'
+#!/bin/sh
+echo "$1" >> "$HOME/.factory-open-urls"
+echo "OPEN THIS IN A BROWSER: $1" >&2
+exit 0
+XDG
+chmod +x /usr/local/bin/xdg-open
 # global CLIs
 npm install -g --silent vercel@latest playwright@latest
 # playwright browsers + system deps (chromium only; enough for all five lanes)
