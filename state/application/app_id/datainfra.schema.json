@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "datainfra.schema.json",
   "title": "DataInfra",
-  "description": "The data room (dm.md) layout, syncs, pipelines and agents an application is wired with.",
+  "description": "How the data room, syncs, pipelines, agents and per-customer platform records are wired for this application. Instance ids here are the slots of DATAROOM_PATH_TEMPLATES.",
   "type": "object",
   "required": [
     "dataroom"
@@ -26,7 +26,8 @@
               "Solutions",
               "Implementation",
               "Tickets",
-              "People"
+              "People",
+              "Uploads"
             ]
           }
         },
@@ -35,8 +36,52 @@
           "enum": [
             "postgres"
           ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "vercel-blob",
+            "local"
+          ],
+          "default": "vercel-blob"
+        },
+        "blob_prefix": {
+          "type": "string",
+          "description": "orgs/<org_id>"
+        },
+        "platform_version_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Platform/{platform_version_id} slots"
+        },
+        "seed": {
+          "type": "object",
+          "properties": {
+            "customers_json": {
+              "type": "string"
+            },
+            "people_json": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "fixtures",
+                "live_snapshot",
+                "none"
+              ],
+              "default": "none"
+            }
+          },
+          "description": "Inputs for seed-dataroom (two flat JSON files) or a copy of the live blob tree"
         }
-      }
+      },
+      "required": [
+        "top_level",
+        "system_of_record"
+      ]
     },
     "syncs": {
       "type": "array",
@@ -85,11 +130,17 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": [
-          "pipeline_id"
-        ],
         "properties": {
           "pipeline_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "string"
+          },
+          "use_case": {
             "type": "string"
           },
           "config": {
@@ -104,18 +155,29 @@
             ],
             "description": "pipeline/role isolation arrive with mold_v2/mold_v3"
           }
-        }
-      }
+        },
+        "required": [
+          "pipeline_id",
+          "version"
+        ]
+      },
+      "description": "fde configure-solution (kind pipeline)"
     },
     "agents": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": [
-          "agent_id"
-        ],
         "properties": {
           "agent_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "string"
+          },
+          "use_case": {
             "type": "string"
           },
           "recipe": {
@@ -124,8 +186,13 @@
           "evals_dir": {
             "type": "string"
           }
-        }
-      }
+        },
+        "required": [
+          "agent_id",
+          "version"
+        ]
+      },
+      "description": "fde configure-agents (kind agent)"
     },
     "connectors": {
       "type": "array",
@@ -139,10 +206,96 @@
             "type": "string"
           },
           "secret_ref": {
-            "type": "string"
+            "type": "string",
+            "description": "name only"
           }
-        }
+        },
+        "required": [
+          "name"
+        ]
       }
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "deployment_model": {
+            "type": "string",
+            "default": "single_tenant"
+          },
+          "data_residency_constraint": {
+            "type": "string",
+            "default": "none"
+          },
+          "primary_model": {
+            "type": "string"
+          },
+          "primary_use_case": {
+            "type": "string"
+          },
+          "feature_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled_connectors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
+      "description": "fde configure-platform; one platform row per customer"
+    },
+    "deployments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "default": "production"
+          },
+          "region": {
+            "type": "string"
+          },
+          "cloud": {
+            "type": "string",
+            "enum": [
+              "aws",
+              "azure",
+              "gcp",
+              "oci",
+              "bare_metal",
+              "vercel",
+              "digitalocean"
+            ]
+          }
+        },
+        "required": [
+          "customer_id",
+          "version"
+        ]
+      },
+      "description": "fde configure-infra; deployment_id = version"
     }
   }
 }

@@ -13,7 +13,8 @@
   },
   "capabilities": {
     "web_search": true,
-    "browser": false
+    "browser": false,
+    "multi_tenant": true
   },
   "service_surface": [
     "dm.md",
@@ -22,6 +23,81 @@
     "multiplayer_context",
     "custom_workflow_builder"
   ],
+  "surface": {
+    "dm.md": {
+      "enabled": true,
+      "top_level": [
+        "Customers",
+        "Platform",
+        "Deployments",
+        "Solutions",
+        "Implementation",
+        "Tickets",
+        "People",
+        "Uploads"
+      ],
+      "system_of_record": "postgres"
+    },
+    "browser": {
+      "enabled": false,
+      "local": false,
+      "default_on_for_agent": false
+    },
+    "web_search": {
+      "enabled": true,
+      "default_on_for_agent": true
+    },
+    "primary_context": {
+      "workspace": {
+        "org_id": "onfinance",
+        "name": "OnFinance",
+        "display_name": "OnFinance",
+        "blob_prefix": "orgs/onfinance"
+      },
+      "entity_vocabulary": {
+        "account_noun": "customer"
+      },
+      "agent_profile": {
+        "default_mode": "build",
+        "model": "@cf/zai-org/glm-5.2",
+        "web_search_default": true,
+        "browser_default": false
+      },
+      "agent_configs": [],
+      "memories": []
+    },
+    "multiplayer_context": {
+      "fde_self": {
+        "email": "priyesh@onfinance.in",
+        "name": "Priyesh",
+        "title": "Forward-Deployed Engineer",
+        "skills": [],
+        "capacity_target_accounts": 8
+      },
+      "members": [
+        {
+          "email": "priyesh@onfinance.in",
+          "role": "owner"
+        }
+      ],
+      "platform_admins": [
+        "priyesh@onfinance.in"
+      ],
+      "roster": [
+        {
+          "email": "priyesh@onfinance.in"
+        }
+      ],
+      "customers": []
+    },
+    "custom_workflow_builder": {
+      "library": {
+        "install": "all"
+      },
+      "scripts": [],
+      "definitions": []
+    }
+  },
   "testing": {
     "load": {
       "status": "pending"

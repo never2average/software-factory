@@ -12,7 +12,8 @@
     "postgres": {
       "type": "object",
       "required": [
-        "provider"
+        "provider",
+        "scope"
       ],
       "properties": {
         "provider": {
@@ -49,6 +50,42 @@
         },
         "url_ref": {
           "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "fresh",
+            "shared_with_live"
+          ],
+          "description": "fresh = own database; shared_with_live = the live fde-agent database, crons stripped on deploy"
+        },
+        "snapshot": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "live_fde_agent",
+                "application",
+                "none"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            },
+            "taken_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "pg_dump",
+                "supabase_branch"
+              ]
+            }
+          },
+          "description": "Where the initial data came from when cloning"
         }
       }
     },
@@ -72,6 +109,30 @@
         },
         "token_ref": {
           "type": "string"
+        },
+        "store": {
+          "type": "string",
+          "description": "Store name in the provider"
+        },
+        "snapshot": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "live_fde_agent",
+                "application",
+                "none"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            },
+            "taken_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
         }
       }
     },

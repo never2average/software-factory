@@ -11,7 +11,7 @@
   },
   "blob": {
     "provider": "vercel_blob",
-    "root_prefix": "claudecode_web_internal",
+    "root_prefix": "orgs/onfinance",
     "token_ref": "BLOB_READ_WRITE_TOKEN"
   },
   "cache": {

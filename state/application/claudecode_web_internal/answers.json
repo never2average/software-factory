@@ -9,6 +9,11 @@
   "secret_store": "vercel_env",
   "web_search": true,
   "browser": false,
+  "multi_tenant": true,
   "customer_id": "internal",
-  "custom_domain": ""
+  "custom_domain": "",
+  "vercel_project": "claudecode-web",
+  "workspace_name": "OnFinance",
+  "fde_email": "priyesh@onfinance.in",
+  "library": "all"
 }

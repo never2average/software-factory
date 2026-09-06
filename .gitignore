@@ -6,3 +6,5 @@ node_modules/
 !.env.example
 .vercel/
 molds/**/vercel.nocron.json
+__pycache__/
+*.pyc

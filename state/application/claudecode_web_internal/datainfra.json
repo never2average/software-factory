@@ -9,10 +9,21 @@
       "Solutions",
       "Implementation",
       "Tickets",
-      "People"
+      "People",
+      "Uploads"
     ],
-    "system_of_record": "postgres"
+    "system_of_record": "postgres",
+    "backend": "vercel-blob",
+    "blob_prefix": "orgs/onfinance",
+    "platform_version_ids": [
+      "v1"
+    ],
+    "seed": {
+      "source": "none"
+    }
   },
+  "platforms": [],
+  "deployments": [],
   "syncs": [
     {
       "source": "manual_entry"

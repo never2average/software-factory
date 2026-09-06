@@ -29,18 +29,6 @@
     "TASK_WORKFLOW_SERVICE_TOKEN",
     "TASK_WORKFLOW_SERVICE_URL"
   ],
-  "vercel": {
-    "team": "f20170061g-3183s-projects",
-    "project": "claudecode-web",
-    "functions": {
-      "api": "vercel.api.json",
-      "eve": "vercel.eve.json"
-    }
-  },
-  "datastores": {
-    "supabase_resource": "claudecode_web_internal",
-    "blob_store": "claudecode-web-internal (store_yYAYEISeeQYrb12F, private, iad1)"
-  },
   "secrets_user": [
     "CLOUDFLARE_ACCOUNT_ID",
     "CLOUDFLARE_API_TOKEN",
@@ -65,5 +53,23 @@
   "secrets_optional": [
     "GOOGLE_CLIENT_ID",
     "NEXT_PUBLIC_GOOGLE_CLIENT_ID"
-  ]
+  ],
+  "runtime_env": {
+    "OPS_MULTI_TENANT": "1",
+    "ENABLE_WEB_SEARCH": "true",
+    "ENABLE_BROWSER": "false",
+    "MODEL_PROVIDER": "cloudflare"
+  },
+  "vercel": {
+    "team": "f20170061g-3183s-projects",
+    "project": "claudecode-web",
+    "functions": {
+      "api": "vercel.api.json",
+      "eve": "vercel.eve.json"
+    }
+  },
+  "datastores": {
+    "supabase_resource": "claudecode_web_internal",
+    "blob_store": "claudecode-web-internal (store_yYAYEISeeQYrb12F, private, iad1)"
+  }
 }
