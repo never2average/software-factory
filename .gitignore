@@ -8,3 +8,4 @@ node_modules/
 molds/**/vercel.nocron.json
 __pycache__/
 *.pyc
+build/
