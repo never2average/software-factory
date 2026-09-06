@@ -51,6 +51,11 @@ def _set_env(name, value, cwd, project=None):
     subprocess.run(f"vercel env rm {name} production --project {project} --yes", shell=True, cwd=cwd, capture_output=True, text=True)   # API DELETE refuses without a confirmation flag
     r = _env_api(project, f"/v10/projects/{project}/env", "POST", {"key": name, "value": value, "type": "encrypted", "target": ["production"]}, cwd)
     if '"error"' in r.stdout or r.returncode: sys.exit(f"could not set {name} on {project}: {(r.stdout + r.stderr).strip()[-200:]}")
+    got = [e for e in _env_entries(project, cwd) if e.get("key") == name and "production" in (e.get("target") or [])]
+    if not got: sys.exit(f"could not set {name} on {project}: it is absent on readback")
+    if any(e.get("type") == "sensitive" for e in got):
+        sys.exit(f"could not set {name} on {project}: stored as `sensitive`, so it can never be read back. "
+                 "Turn off Team Settings -> Environment Variables -> Sensitive Environment Variables, then rerun.")
 
 def _add_env(name, value, cwd, project):
     """Set only when absent (mints and derived defaults)."""
@@ -105,13 +110,15 @@ WORKFLOW_ENV = ["DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN"]
 def pull_env(mold_dir, project):
     tmp = os.path.join(mold_dir, f".env.provision.{project}")
     subprocess.run(f"vercel env pull --yes --environment=production --project {project} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
-    vals = {}
+    vals, unreadable = {}, []
     for l in open(tmp):
         if "=" in l and not l.startswith("#"):
-            k, v = l.split("=", 1); v = v.strip().strip('"')
-            if v != REDACTED: vals[k.strip()] = v      # write-only variables cannot be copied; leave them out
+            k, v = l.split("=", 1); k, v = k.strip(), v.strip().strip('"')
+            if v == REDACTED: unreadable.append(k); continue    # Sensitive: unreadable, never a value
+            vals[k] = v
     os.remove(tmp)
     if not vals: sys.exit(f"could not pull the production environment of {project}")
+    if unreadable: print(f"  {project}: {len(unreadable)} sensitive var(s) unreadable: {', '.join(sorted(unreadable))}")
     return vals
 
 
@@ -133,12 +140,15 @@ def deploy(cfg, mold_dir):
     return urls[-1]
 
 def sync_env(names, vals, project, mold_dir):
-    have = vercel_env_names(mold_dir, project); n = 0; blocked = []
+    have = vercel_env_names(mold_dir, project); n = 0
+    # with pull_env dropping [SENSITIVE], vals.get(k) is None for anything unreadable at the source
+    blocked = [k for k in names if k not in have and not vals.get(k)]
+    if any(k in ("DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL") for k in blocked):
+        sys.exit(f"{project}: cannot set {', '.join(blocked)} — unreadable (Sensitive) on the source. Recreate as Encrypted and rerun.")
     for k in names:
-        if k in have: continue
-        if vals.get(k): _set_env(k, vals[k], mold_dir, project=project); n += 1
-        elif k in ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GOOGLE_CLIENT_ID"): pass      # optional
-        else: blocked.append(k)
+        if k in have or not vals.get(k): continue
+        _set_env(k, vals[k], mold_dir, project=project); n += 1
+    blocked = [k for k in blocked if k not in ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GOOGLE_CLIENT_ID")]   # optional
     print(f"  {project}: synced {n} env var(s)" + (f"; unreadable at the source, set once by hand: {', '.join(blocked)}" if blocked else ""))
 
 def bootstrap_database(mold_dir, admin_url, projects):
@@ -184,11 +194,15 @@ def bootstrap_database(mold_dir, admin_url, projects):
 
 def run_migrations(mold_dir, vals):
     url = vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL")
-    if not url: sys.exit("no database url to migrate")
-    env = dict(os.environ, DATABASE_URL=url)
+    if not url or not re.match(r"^postgres(?:ql)?://", url):
+        sys.exit("no usable admin database URL: SUPABASE_POSTGRES_URL_NON_POOLING/DATABASE_URL is missing or stored Sensitive "
+                 "(unreadable). Recreate it as Encrypted, then rerun.")
+    # both names: migrate-production.mjs falls back through a chain, and a stale unpooled value in the
+    # ambient environment would otherwise decide which database is migrated.
+    env = dict(os.environ, DATABASE_URL=url, DATABASE_URL_UNPOOLED=url)
     r = subprocess.run("node scripts/migrate-production.mjs", shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
     msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
-    print("  migrations: " + (msg[-1][:160] if msg else "ok"))
+    print("  migrations:\n    " + "\n    ".join(msg[-6:] or ["ok"]))   # a Node crash must never read as its version banner
     if r.returncode: sys.exit("migration failed:\n" + "\n".join(msg[-12:]))
 
 def deploy_vercel(app_id, app, infra, ds, mold_dir):
