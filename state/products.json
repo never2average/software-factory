@@ -28,7 +28,9 @@
           "budget of inference cost per workspace known"
         ]
       },
-      "app_ids": [],
+      "app_ids": [
+        "redacted"
+      ],
       "deploy_targets": [
         "vercel",
         "vm"

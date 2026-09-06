@@ -84,10 +84,18 @@ def main(a):
         print("check only; re-run with --deploy once nothing is missing"); sys.exit(1 if missing else 0)
     if missing: sys.exit("refusing to deploy with missing secrets")
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
+    ds = load(os.path.join(adir, "datastores.json"))
+    shared = ds.get("postgres", {}).get("scope") == "shared_with_live"
     if target == "vercel":
-        url = sh("vercel deploy --prod --yes 2>/dev/null | tail -1", cwd=mold_dir).strip()
+        cfg_main = "vercel.json"
+        if shared:
+            # a second instance on the live database must not run the live cron jobs a second time
+            v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
+            cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v)
+            infra.setdefault("vercel", {})["crons"] = "stripped (shared_with_live)"
+        url = sh(f"vercel deploy --prod --yes --local-config {cfg_main} 2>/dev/null | tail -1", cwd=mold_dir).strip()
         infra.setdefault("vercel", {})["production_url"] = url
-        for cfg, suffix in (("vercel.api.json", "api"), ("vercel.eve.json", "workflow")):
+        for cfg, suffix in (() if shared else (("vercel.api.json", "api"), ("vercel.eve.json", "workflow"))):
             p = f"{proj}-{suffix}"
             sh(f"vercel link --yes --project {p} >/dev/null 2>&1", cwd=mold_dir)
             sh(f"vercel deploy --prod --yes --local-config {cfg} 2>/dev/null | tail -1", cwd=mold_dir)
