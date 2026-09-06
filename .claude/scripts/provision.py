@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Provision: validated application state -> running deployment.
 
-  provision.py <app_id> [--check] [--deploy]
+  provision.py <app_id> [--check] [--deploy] [--set-secret NAME]
 
 --check (default): verify every secret named in infrastructure.json exists in the
   secret store (Vercel env for vercel_env; infra/vm/apps/<app_id>/.env for vm_env_file),
@@ -26,19 +26,36 @@ GENERATED = {  # app-internal secrets the factory may mint itself (never externa
   "CRON_SECRET": "openssl rand -hex 32",
   "OPS_SECRETS_KEY": "openssl rand -hex 32",
 }
-def _add_env(name, value, cwd, project):
-    subprocess.run(f"vercel env add {name} production --project {project}", shell=True, cwd=cwd, input=value, capture_output=True, text=True)
-def _set_env(name, value, cwd, project=None):
-    """Idempotent: replace whatever production value exists. Used for derived, non-secret config such as service URLs.
-    Goes through the REST API so it never relinks the mold dir (other steps may be pulling env there concurrently)."""
-    project = project or load(os.path.join(cwd, ".vercel/project.json"))["projectId"]
+REDACTED = "[SENSITIVE]"   # what `vercel env pull` writes for a write-only variable
+def _env_api(project, path, method, body, cwd):
+    """Vercel API call with the body on stdin, so secret values never reach argv or a file."""
+    return subprocess.run(["vercel", "api", path, "-X", method, "--input", "-", "--raw"], cwd=cwd,
+                          input=json.dumps(body), capture_output=True, text=True)
+
+def _env_entries(project, cwd):
     r = subprocess.run(f"vercel api /v9/projects/{project}/env --raw", shell=True, cwd=cwd, capture_output=True, text=True)
-    try: envs = json.loads(r.stdout).get("envs", [])
-    except Exception: envs = []
-    hit = next((e for e in envs if e["key"] == name and "production" in (e.get("target") or [])), None)
-    body = json.dumps({"key": name, "value": value, "type": "plain", "target": ["production"]})
-    if hit: subprocess.run(["vercel", "api", f"/v9/projects/{project}/env/{hit['id']}", "-X", "PATCH", "--input", "-", "--raw"], cwd=cwd, input=json.dumps({"value": value, "type": "plain"}), capture_output=True, text=True)
-    else: subprocess.run(["vercel", "api", f"/v10/projects/{project}/env", "-X", "POST", "--input", "-", "--raw"], cwd=cwd, input=body, capture_output=True, text=True)
+    try: return json.loads(r.stdout).get("envs", [])
+    except Exception: return []
+
+def _set_env(name, value, cwd, project=None):
+    """Create or replace a production value, as `encrypted`.
+
+    Two platform behaviours force this shape. A variable the CLI's `env add` creates is `sensitive`:
+    write-only, so `env pull` returns the literal [SENSITIVE] and any later copy of it is garbage.
+    And PATCHing a sensitive entry succeeds while changing nothing, which once left DATABASE_URL and
+    TASK_WORKFLOW_SERVICE_URL pointing at the wrong place through an entire deploy. Encrypted entries
+    can be read back, so a later run can verify them."""
+    if value is None or value == "" or value == REDACTED:
+        sys.exit(f"refusing to write {name} on {project}: value is empty or redacted")
+    project = project or load(os.path.join(cwd, ".vercel/project.json"))["projectId"]
+    subprocess.run(f"vercel env rm {name} production --project {project} --yes", shell=True, cwd=cwd, capture_output=True, text=True)   # API DELETE refuses without a confirmation flag
+    r = _env_api(project, f"/v10/projects/{project}/env", "POST", {"key": name, "value": value, "type": "encrypted", "target": ["production"]}, cwd)
+    if '"error"' in r.stdout or r.returncode: sys.exit(f"could not set {name} on {project}: {(r.stdout + r.stderr).strip()[-200:]}")
+
+def _add_env(name, value, cwd, project):
+    """Set only when absent (mints and derived defaults)."""
+    if name in vercel_env_names(cwd, project): return
+    _set_env(name, value, cwd, project=project)
 
 def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
@@ -91,7 +108,8 @@ def pull_env(mold_dir, project):
     vals = {}
     for l in open(tmp):
         if "=" in l and not l.startswith("#"):
-            k, v = l.split("=", 1); vals[k.strip()] = v.strip().strip('"')
+            k, v = l.split("=", 1); v = v.strip().strip('"')
+            if v != REDACTED: vals[k.strip()] = v      # write-only variables cannot be copied; leave them out
     os.remove(tmp)
     if not vals: sys.exit(f"could not pull the production environment of {project}")
     return vals
@@ -115,10 +133,13 @@ def deploy(cfg, mold_dir):
     return urls[-1]
 
 def sync_env(names, vals, project, mold_dir):
-    have = vercel_env_names(mold_dir, project); n = 0
+    have = vercel_env_names(mold_dir, project); n = 0; blocked = []
     for k in names:
-        if k in vals and vals[k] and k not in have: _add_env(k, vals[k], mold_dir, project); n += 1
-    print(f"  {project}: synced {n} env var(s)")
+        if k in have: continue
+        if vals.get(k): _set_env(k, vals[k], mold_dir, project=project); n += 1
+        elif k in ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GOOGLE_CLIENT_ID"): pass      # optional
+        else: blocked.append(k)
+    print(f"  {project}: synced {n} env var(s)" + (f"; unreadable at the source, set once by hand: {', '.join(blocked)}" if blocked else ""))
 
 def bootstrap_database(mold_dir, admin_url, projects):
     """A fresh Postgres needs what Drizzle does not model: row-level security and the app_rw
@@ -271,6 +292,16 @@ CMD ["npm", "run", "start"]
     if not os.path.exists(gi): open(gi, "w").write(".env\n")
     return d
 
+def set_secret(app_id, name, infra, mold_dir):
+    """Prompt for one credential and write it, encrypted, to every project of this app.
+    The value is read from the terminal, never passed on a command line and never stored."""
+    import getpass
+    proj = infra["vercel"]["project"]; projects = [proj, f"{proj}-api", f"{proj}-workflow"]
+    value = getpass.getpass(f"{name} (input hidden): ").strip()
+    if not value: sys.exit("nothing entered")
+    for p in projects: _set_env(name, value, mold_dir, project=p)
+    print(f"{name} set on {len(projects)} project(s). Re-run: python3 .claude/scripts/provision.py {app_id} --deploy")
+
 def main(a):
     if not a: sys.exit(__doc__)
     app_id = a[0]; deploy = "--deploy" in a
@@ -279,6 +310,8 @@ def main(a):
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
     secrets = infra.get("secrets", []); target = infra["target"]; store = infra.get("secret_store")
     print(f"{app_id}: target={target} store={store} secrets={len(secrets)}")
+    if "--set-secret" in a:
+        return set_secret(app_id, a[a.index("--set-secret") + 1], infra, mold_dir)
     if target == "vercel":
         proj = infra["vercel"]["project"]
         present = vercel_env_names(mold_dir, proj)
@@ -292,20 +325,13 @@ def main(a):
         print(f"vm scaffold: {os.path.relpath(d, ROOT)}/ (Dockerfile, docker-compose.yml, .env.example)")
     user_s = infra.get("secrets_user", secrets); derived_s = infra.get("secrets_derived", [])
     missing_user = [x for x in user_s if x not in present]
-    src = load(os.path.join(ST, "factory.json")).get("defaults", {}).get("secret_source_project")
-    if missing_user and target == "vercel" and src and src != infra["vercel"]["project"]:
-        # Same team, same accounts: external credentials already exist on the source project. Copy by name, never print.
-        vals = pull_env(mold_dir, src)
-        copied = []
-        for k in missing_user:
-            if vals.get(k): _add_env(k, vals[k], mold_dir, proj); copied.append(k)
-        if copied: print(f"copied from {src}: {', '.join(copied)}")
-        present = vercel_env_names(mold_dir, proj); missing_user = [x for x in user_s if x not in present]
+    # No copy-from-live path: Vercel marks these `sensitive` (write-only), so a pull of the source
+    # project returns [SENSITIVE] and copying it would write that literal string as the credential.
     missing_derived = [x for x in derived_s if x not in present and x not in DEPLOY_TIME]
     print(f"secrets present: {len([x for x in secrets if x in present])}/{len(secrets)}")
     if missing_user:
-        print("YOU must set these (vercel env add NAME production, in the mold dir):")
-        for m in missing_user: print(f"  {m}")
+        print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
+        for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
     if missing_derived:
         print("provisioner still has to create:"); [print(f"  {m}") for m in missing_derived]
     pending_deploy = [x for x in DEPLOY_TIME if x not in present]
