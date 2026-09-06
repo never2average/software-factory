@@ -273,6 +273,9 @@
               "null"
             ]
           }
+        },
+        "note": {
+          "type": "string"
         }
       },
       "required": [
