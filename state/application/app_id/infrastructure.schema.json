@@ -2,7 +2,122 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "infrastructure.schema.json",
   "title": "Infrastructure",
+  "description": "Where the application runs. Targets map to infra/vercel and infra/vm.",
   "type": "object",
-  "properties": {},
-  "additionalProperties": true
+  "required": [
+    "target"
+  ],
+  "properties": {
+    "target": {
+      "type": "string",
+      "enum": [
+        "vercel",
+        "vm"
+      ]
+    },
+    "vercel": {
+      "type": "object",
+      "properties": {
+        "team": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "production_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "custom_domain": {
+          "type": "string"
+        },
+        "functions": {
+          "type": "object",
+          "properties": {
+            "api": {
+              "type": "string",
+              "description": "vercel.api.json"
+            },
+            "eve": {
+              "type": "string",
+              "description": "vercel.eve.json"
+            }
+          }
+        }
+      }
+    },
+    "vm": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "digitalocean",
+            "aws",
+            "gcp",
+            "azure",
+            "oci",
+            "bare_metal"
+          ]
+        },
+        "host": {
+          "type": "string"
+        },
+        "ssh_alias": {
+          "type": "string"
+        },
+        "cpu": {
+          "type": "integer"
+        },
+        "memory_gb": {
+          "type": "number"
+        },
+        "disk_gb": {
+          "type": "number"
+        },
+        "os": {
+          "type": "string"
+        }
+      }
+    },
+    "inference": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "cloudflare_workers_ai",
+            "vercel_ai_gateway"
+          ]
+        },
+        "account_ref": {
+          "type": "string",
+          "description": "Name of the secret holding the account id, never the value"
+        }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "vercel_sandbox",
+            "modal",
+            "none"
+          ]
+        },
+        "prewarm": {
+          "type": "boolean"
+        }
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "description": "Names of env vars the deployment must carry (values live in the target platform, never here)",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
 }

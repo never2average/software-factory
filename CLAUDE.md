@@ -1,3 +1,5 @@
 # CLAUDE.md
 
-Project instructions for Claude Code. Agent assets live under `.claude/`.
+@AGENTS.md
+
+Claude Code specific assets live under `.claude/` (agents, skills, scripts, workflows, sandboxes).

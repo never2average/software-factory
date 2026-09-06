@@ -2,7 +2,106 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "datastores.schema.json",
   "title": "Datastores",
+  "description": "Backing stores for the application. Postgres is the system of record; blob holds the data room.",
   "type": "object",
-  "properties": {},
-  "additionalProperties": true
+  "required": [
+    "postgres",
+    "blob"
+  ],
+  "properties": {
+    "postgres": {
+      "type": "object",
+      "required": [
+        "provider"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "neon",
+            "supabase",
+            "rds",
+            "self_hosted"
+          ]
+        },
+        "orm": {
+          "type": "string",
+          "const": "drizzle"
+        },
+        "migrations_dir": {
+          "type": "string",
+          "default": "drizzle/"
+        },
+        "rls": {
+          "type": "string",
+          "enum": [
+            "off",
+            "on",
+            "fail_closed"
+          ]
+        },
+        "tenancy": {
+          "type": "string",
+          "enum": [
+            "single_org",
+            "multi_org"
+          ]
+        },
+        "url_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "blob": {
+      "type": "object",
+      "required": [
+        "provider"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "vercel_blob",
+            "s3",
+            "gcs",
+            "azure_blob"
+          ]
+        },
+        "root_prefix": {
+          "type": "string"
+        },
+        "token_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "upstash_redis",
+            "none"
+          ]
+        },
+        "url_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "description": "Agent memory store",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "postgres",
+            "blob"
+          ]
+        }
+      }
+    }
+  }
 }

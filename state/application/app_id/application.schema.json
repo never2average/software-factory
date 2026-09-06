@@ -2,7 +2,216 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "application.schema.json",
   "title": "Application",
+  "description": "One application stamped from a mold.",
   "type": "object",
-  "properties": {},
-  "additionalProperties": true
+  "required": [
+    "app_id",
+    "mold_id",
+    "status"
+  ],
+  "properties": {
+    "app_id": {
+      "type": "string"
+    },
+    "mold_id": {
+      "type": "string"
+    },
+    "mold_commit": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "stamping",
+        "testing",
+        "serviceable",
+        "reverted",
+        "retired"
+      ]
+    },
+    "customer_id": {
+      "type": "string"
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "cloudflare",
+            "gateway"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "default": "@cf/zai-org/glm-5.2"
+        },
+        "context_window": {
+          "type": "integer"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "web_search": {
+          "type": "boolean",
+          "default": true
+        },
+        "browser": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "service_surface": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "dm.md",
+          "browser",
+          "web_search",
+          "primary_context",
+          "multiplayer_context",
+          "custom_workflow_builder"
+        ]
+      }
+    },
+    "testing": {
+      "type": "object",
+      "description": "Last result per lane",
+      "additionalProperties": false,
+      "properties": {
+        "load": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "pass",
+                "fail",
+                "skipped"
+              ]
+            },
+            "run_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "report": {
+              "type": "string"
+            }
+          }
+        },
+        "context": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "pass",
+                "fail",
+                "skipped"
+              ]
+            },
+            "run_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "report": {
+              "type": "string"
+            }
+          }
+        },
+        "functional": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "pass",
+                "fail",
+                "skipped"
+              ]
+            },
+            "run_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "report": {
+              "type": "string"
+            }
+          }
+        },
+        "accessibility": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "pass",
+                "fail",
+                "skipped"
+              ]
+            },
+            "run_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "report": {
+              "type": "string"
+            }
+          }
+        },
+        "responsiveness": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "pass",
+                "fail",
+                "skipped"
+              ]
+            },
+            "run_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "report": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "revert": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "lane": {
+          "type": "string",
+          "enum": [
+            "load",
+            "context",
+            "functional",
+            "accessibility",
+            "responsiveness"
+          ]
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
 }
