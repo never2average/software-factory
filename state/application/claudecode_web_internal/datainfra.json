@@ -1,0 +1,24 @@
+{
+  "$schema": "../app_id/datainfra.schema.json",
+  "dataroom": {
+    "spec": "molds/mold_v1/codebase/dm.md",
+    "top_level": [
+      "Customers",
+      "Platform",
+      "Deployments",
+      "Solutions",
+      "Implementation",
+      "Tickets",
+      "People"
+    ],
+    "system_of_record": "postgres"
+  },
+  "syncs": [
+    {
+      "source": "manual_entry"
+    }
+  ],
+  "pipelines": [],
+  "agents": [],
+  "connectors": []
+}

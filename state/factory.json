@@ -83,11 +83,13 @@
       "responsiveness"
     ]
   },
-  "applications": [],
+  "applications": [
+    "claudecode_web_internal"
+  ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",
   "defaults": {
-    "confirmed": false,
+    "confirmed": true,
     "deploy_target": "vercel",
     "secret_store": "vercel_env",
     "postgres_provider": "supabase",

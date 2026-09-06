@@ -1,0 +1,43 @@
+{
+  "$schema": "../app_id/application.schema.json",
+  "app_id": "claudecode_web_internal",
+  "mold_id": "mold_v1",
+  "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
+  "status": "planned",
+  "brief": "briefs/claudecode_web_internal.md",
+  "product_id": "claudecode_web",
+  "model": {
+    "provider": "cloudflare",
+    "model": "@cf/zai-org/glm-5.2",
+    "context_window": 262144
+  },
+  "capabilities": {
+    "web_search": true,
+    "browser": false
+  },
+  "service_surface": [
+    "dm.md",
+    "web_search",
+    "primary_context",
+    "multiplayer_context",
+    "custom_workflow_builder"
+  ],
+  "testing": {
+    "load": {
+      "status": "pending"
+    },
+    "context": {
+      "status": "pending"
+    },
+    "functional": {
+      "status": "pending"
+    },
+    "accessibility": {
+      "status": "pending"
+    },
+    "responsiveness": {
+      "status": "pending"
+    }
+  },
+  "customer_id": "internal"
+}

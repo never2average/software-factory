@@ -1,0 +1,23 @@
+{
+  "$schema": "../app_id/datastores.schema.json",
+  "postgres": {
+    "provider": "supabase",
+    "orm": "drizzle",
+    "migrations_dir": "drizzle/",
+    "rls": "fail_closed",
+    "tenancy": "multi_org",
+    "url_ref": "DATABASE_URL",
+    "scope": "shared_with_live"
+  },
+  "blob": {
+    "provider": "vercel_blob",
+    "root_prefix": "claudecode_web_internal",
+    "token_ref": "BLOB_READ_WRITE_TOKEN"
+  },
+  "cache": {
+    "provider": "none"
+  },
+  "memory": {
+    "backend": "postgres"
+  }
+}
