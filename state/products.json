@@ -32,7 +32,8 @@
       "deploy_targets": [
         "vercel",
         "vm"
-      ]
+      ],
+      "vercel_project": "claudecode-web"
     },
     {
       "product_id": "claudecode_web_governed",
