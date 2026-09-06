@@ -116,6 +116,41 @@ def sync_env(names, vals, project, mold_dir):
         if k in vals and vals[k] and k not in have: _add_env(k, vals[k], mold_dir, project); n += 1
     print(f"  {project}: synced {n} env var(s)")
 
+def bootstrap_database(mold_dir, admin_url, projects):
+    """A fresh Postgres needs what Drizzle does not model: row-level security and the app_rw
+    login role (NOBYPASSRLS). The mold ships .bootstrap-supabase.mjs for exactly this; it reads
+    .env.supabase, verifies the schema, applies RLS, creates app_rw and writes the app_rw
+    connection string into .env.local. Without it the app runs as a BYPASSRLS superuser and the
+    task-workflow migration fails on the missing role. Idempotent: re-running rotates the password.
+    Returns the app_rw URL, which becomes DATABASE_URL on every project."""
+    envsup = os.path.join(mold_dir, ".env.supabase"); envloc = os.path.join(mold_dir, ".env.local")
+    saved = open(envloc).read() if os.path.exists(envloc) else None
+    try:
+        with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={admin_url}\n")
+        os.chmod(envsup, 0o600)
+        r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        if r.returncode and "Schema INCOMPLETE" in (r.stdout + r.stderr):
+            print("  schema incomplete; drizzle-kit push then bootstrap again")
+            pr = subprocess.run("npx drizzle-kit push --force", shell=True, cwd=mold_dir, env=dict(os.environ, DATABASE_URL=admin_url), capture_output=True, text=True)
+            if pr.returncode: sys.exit("drizzle-kit push failed:\n" + (pr.stdout + pr.stderr).strip()[-1200:])
+            r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        out = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+        for l in out:
+            if l.startswith(("✓", "✗", "app_rw", "policies", "tables app_rw")): print("  " + l[:150])
+        if r.returncode: sys.exit("database bootstrap failed:\n" + "\n".join(out[-12:]))
+        m = re.search(r'^DATABASE_URL="?([^"\n]+)"?', open(envloc).read(), re.M) if os.path.exists(envloc) else None
+        if not m: sys.exit("bootstrap did not write an app_rw DATABASE_URL into .env.local")
+        app_url = m.group(1)
+        for pr_ in projects: _set_env("DATABASE_URL", app_url, mold_dir, project=pr_)
+        print(f"  DATABASE_URL now points at app_rw on {len(projects)} project(s)")
+        return app_url
+    finally:
+        if os.path.exists(envsup): os.remove(envsup)
+        if saved is None:
+            if os.path.exists(envloc): os.remove(envloc)
+        else:
+            open(envloc, "w").write(saved)      # the mold snapshot's own .env.local is restored
+
 def run_migrations(mold_dir, vals):
     url = vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL")
     if not url: sys.exit("no database url to migrate")
@@ -145,13 +180,15 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         vals = pull_env(mold_dir, proj)
         print("running migrations on the fresh database"); run_migrations(mold_dir, vals)
         url = vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL")
+        print("bootstrapping row-level security and the app_rw role")
+        bootstrap_database(mold_dir, url, [proj, f"{proj}-api", f"{proj}-workflow"])
         # .migrate-task-workflow-service.mjs reads its admin URL from .env.supabase, never from the environment.
         # Write it transiently (gitignored inside the mold) and remove it whatever happens.
         envsup = os.path.join(mold_dir, ".env.supabase")
         try:
             with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={url}\n")
             os.chmod(envsup, 0o600)
-            r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, capture_output=True, text=True)
+            r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, capture_output=True, text=True)   # admin url: it grants to app_rw
         finally:
             if os.path.exists(envsup): os.remove(envsup)
         msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
