@@ -1,0 +1,87 @@
+{
+  "$schema": "./factory.schema.json",
+  "factory_id": "factory_1",
+  "operator": {
+    "model": "fable",
+    "human_role": "sol"
+  },
+  "service_surface": [
+    {
+      "name": "dm.md"
+    },
+    {
+      "name": "browser",
+      "optional": true,
+      "flag": "ENABLE_BROWSER"
+    },
+    {
+      "name": "web_search",
+      "optional": true,
+      "flag": "ENABLE_WEB_SEARCH"
+    },
+    {
+      "name": "primary_context"
+    },
+    {
+      "name": "multiplayer_context"
+    },
+    {
+      "name": "custom_workflow_builder"
+    }
+  ],
+  "molds": [
+    {
+      "mold_id": "mold_v1",
+      "status": "active",
+      "definition": "multi-workspace multi-agent claude code web at feature parity application that is purely vanilla and works with GLM 5.2",
+      "target_model": "GLM 5.2",
+      "capabilities": [],
+      "path": "molds/mold_v1",
+      "source": {
+        "repo": "github.com/never2average/fde-agent",
+        "commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
+        "snapshot_date": "2026-09-06"
+      }
+    },
+    {
+      "mold_id": "mold_v2",
+      "status": "wip",
+      "base": "mold_v1",
+      "definition": "mold_v1 with full agent governance, pipeline level data isolation, budget management, and performance governor",
+      "target_model": "GLM 5.2",
+      "capabilities": [
+        "agent_governance",
+        "pipeline_data_isolation",
+        "budget_management",
+        "performance_governor"
+      ],
+      "path": "molds/mold_v2"
+    },
+    {
+      "mold_id": "mold_v3",
+      "status": "wip",
+      "base": "mold_v1",
+      "definition": "mold_v1 with autoresearch and SAI along with multi-context + multi-role isolation per workflow",
+      "target_model": "GLM 5.2",
+      "capabilities": [
+        "autoresearch",
+        "sai",
+        "multi_context_isolation",
+        "multi_role_isolation"
+      ],
+      "path": "molds/mold_v3"
+    }
+  ],
+  "loop": {
+    "service": "operator->surface->mold",
+    "revert": "surface->operator",
+    "revert_on": [
+      "load",
+      "context",
+      "functional",
+      "accessibility",
+      "responsiveness"
+    ]
+  },
+  "applications": []
+}

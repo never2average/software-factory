@@ -2,7 +2,166 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "factory.schema.json",
   "title": "Factory",
+  "description": "One software factory: an operator (model + solutions engineer) that services a set of molds through a fixed service surface, and reverts on failure. Encodes the Factory 1 diagram.",
   "type": "object",
-  "properties": {},
-  "additionalProperties": true
+  "required": [
+    "factory_id",
+    "operator",
+    "service_surface",
+    "molds",
+    "loop"
+  ],
+  "properties": {
+    "factory_id": {
+      "type": "string"
+    },
+    "operator": {
+      "type": "object",
+      "required": [
+        "model",
+        "human_role"
+      ],
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Operator model, e.g. fable"
+        },
+        "human_role": {
+          "type": "string",
+          "description": "Human in the loop, e.g. sol (solutions engineer)"
+        }
+      }
+    },
+    "service_surface": {
+      "type": "array",
+      "description": "What the operator services on every mold. Optional items map to build-time capability flags.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "dm.md",
+              "browser",
+              "web_search",
+              "primary_context",
+              "multiplayer_context",
+              "custom_workflow_builder"
+            ]
+          },
+          "optional": {
+            "type": "boolean",
+            "default": false
+          },
+          "flag": {
+            "type": "string",
+            "description": "Build-time env flag that removes the capability, if optional"
+          }
+        }
+      }
+    },
+    "molds": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/mold"
+      }
+    },
+    "loop": {
+      "type": "object",
+      "description": "service: operator -> surface -> mold. revert: surface -> operator when a stamped application fails a testing lane.",
+      "properties": {
+        "service": {
+          "type": "string",
+          "const": "operator->surface->mold"
+        },
+        "revert": {
+          "type": "string",
+          "const": "surface->operator"
+        },
+        "revert_on": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "load",
+              "context",
+              "functional",
+              "accessibility",
+              "responsiveness"
+            ]
+          }
+        }
+      }
+    },
+    "applications": {
+      "type": "array",
+      "description": "Stamped application ids; each has a folder under state/application/",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "mold": {
+      "type": "object",
+      "required": [
+        "mold_id",
+        "status",
+        "definition",
+        "target_model",
+        "path"
+      ],
+      "properties": {
+        "mold_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "wip",
+            "retired"
+          ]
+        },
+        "base": {
+          "type": "string",
+          "description": "mold_id this mold extends"
+        },
+        "definition": {
+          "type": "string"
+        },
+        "target_model": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "type": "string",
+          "description": "molds/<mold_id>"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string"
+            },
+            "commit": {
+              "type": "string"
+            },
+            "snapshot_date": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        }
+      }
+    }
+  }
 }

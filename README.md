@@ -1,10 +1,29 @@
 # software-factory
 
-Repository for the software factory: agent definitions, state schemas, application molds, and infrastructure.
+Factory 1: an operator (Fable + sol) services molds through a fixed surface and stamps applications from them. Failed applications revert to the operator.
+
+```
+Fable + sol --service--> [dm.md, browser(o/o), web search(o/o), primary_context,
+    ^                     multiplayer_context, custom workflow builder] --> mold 1 (active)
+    |                                                                  --> mold 2 (WIP)
+    +------------------------- revert ------------------------------+  --> mold 3 (WIP)
+```
 
 ## Layout
 
-- `.claude/`, `.agents/` — agents, skills, scripts, workflows, sandboxes for Claude Code and generic agent runtimes
-- `state/` — factory-wide schema plus per-application schemas (`state/application/<app_id>/`)
-- `molds/` — versioned application molds (codebase template + testing suites)
-- `infra/` — deployment targets (`vercel/`, `vm/`)
+- `state/` — `factory.schema.json` + `factory.json` (Factory 1 instance); per-application schemas under `state/application/<app_id>/`
+- `molds/` — `mold_v1` (active, snapshot of fde-agent), `mold_v2`, `mold_v3` (WIP). Each has a `MOLD.md`; `mold_v1/testing/` holds the five test lanes
+- `infra/` — deployment targets: `vercel/` (app + eve functions), `vm/` (DigitalOcean droplet)
+- `.claude/`, `.agents/` — agents, skills, scripts, workflows, sandboxes for Claude Code and other agent runtimes
+
+## Molds
+
+| Mold | Status | Definition |
+|---|---|---|
+| mold_v1 | active | multi-workspace multi-agent Claude Code web at feature parity, vanilla, GLM 5.2 |
+| mold_v2 | wip | + agent governance, pipeline-level data isolation, budget management, performance governor |
+| mold_v3 | wip | + autoresearch and SAI, multi-context + multi-role isolation per workflow |
+
+## Working here
+
+All commands run on the DigitalOcean VM (`ssh digitalocean`), repo at `/root/software-factory`. Refresh the mold snapshot per `molds/mold_v1/MOLD.md`.
