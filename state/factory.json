@@ -110,6 +110,7 @@
     "vercel_team": "your-vercel-team",
     "postgres_scope": "fresh",
     "workspace_name": "OnFinance",
-    "fde_email": "operator@example.com"
+    "fde_email": "operator@example.com",
+    "secret_source_project": "fde-agent"
   }
 }

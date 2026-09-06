@@ -184,6 +184,17 @@ def main(a):
         print(f"vm scaffold: {os.path.relpath(d, ROOT)}/ (Dockerfile, docker-compose.yml, .env.example)")
     user_s = infra.get("secrets_user", secrets); derived_s = infra.get("secrets_derived", [])
     missing_user = [x for x in user_s if x not in present]
+    src = load(os.path.join(ST, "factory.json")).get("defaults", {}).get("secret_source_project")
+    if missing_user and target == "vercel" and src and src != infra["vercel"]["project"]:
+        # Same team, same accounts: external credentials already exist on the source project. Copy by name, never print.
+        subprocess.run(f"vercel link --yes --project {src} >/dev/null 2>&1", shell=True, cwd=mold_dir)
+        vals = pull_env(mold_dir)
+        subprocess.run(f"vercel link --yes --project {infra['vercel']['project']} >/dev/null 2>&1", shell=True, cwd=mold_dir)
+        copied = []
+        for k in missing_user:
+            if vals.get(k): _add_env(k, vals[k], mold_dir); copied.append(k)
+        if copied: print(f"copied from {src}: {', '.join(copied)}")
+        present = vercel_env_names(mold_dir); missing_user = [x for x in user_s if x not in present]
     missing_derived = [x for x in derived_s if x not in present and x not in DEPLOY_TIME]
     print(f"secrets present: {len([x for x in secrets if x in present])}/{len(secrets)}")
     if missing_user:

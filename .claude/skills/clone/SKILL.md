@@ -4,7 +4,7 @@ description: Replicate the live fde-agent deployment into a stamped mold_v1 appl
 ---
 # clone
 
-`python3 .claude/scripts/clone.py <app_id> <step>` where the app was stamped from a brief that says "clone of live" (sets `clone_of`). Steps, in order:
+One command does everything: `python3 .claude/scripts/clone.py <app_id> run`. It stops at the first failure with a plain sentence and is safe to rerun. The app must have been stamped from a brief that says "clone of live" (sets `clone_of`). The steps it runs, also usable one at a time:
 
 1. `plan` — prints what each step touches. No secrets.
 2. `extract` — reads the live surface tables and writes `application.surface` + `datainfra`. Live is only SELECTed.
@@ -13,4 +13,4 @@ description: Replicate the live fde-agent deployment into a stamped mold_v1 appl
 5. `configure` — upserts `application.surface` into the app database (org, members, admins, roster, agent profile, agent configs, workflow definitions, extra scripts). Idempotent.
 6. `regress` — row counts for every table, keyed diff of the surface tables, blob tree per top-level folder. Writes `molds/<mold>/testing/context/reports/<app>-regression-<date>.md`, sets `clone_of.regression` and the context lane; a fail reverts the app.
 
-Every step pulls env values from Vercel at run time into a temp file in the mold dir and deletes it. The agent runtime is not allowed to handle secret values, so steps 2 to 6 run from sol's terminal; the agent prepares state, reads reports and files tasks. Never point any step at the live projects for writes: `LIVE` in clone.py is read-only by construction.
+Nothing is asked of the operator: external secrets are copied from the live project by name, the live blob token is discovered across the three live projects (and blob work is skipped with a note if none works), and fresh datastores are created for the clone. Every step pulls env values from Vercel at run time into a temp file in the mold dir and deletes it. The agent runtime is not allowed to handle secret values, so steps 2 to 6 run from sol's terminal; the agent prepares state, reads reports and files tasks. Never point any step at the live projects for writes: `LIVE` in clone.py is read-only by construction.
