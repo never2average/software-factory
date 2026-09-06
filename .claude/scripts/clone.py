@@ -62,8 +62,18 @@ def main(a):
     base = dict(os.environ, MOLD_DIR=mold, ORG_ID=org, BLOB_PREFIX=prefix)
 
     if step == "extract":
-        live = pull_env(LIVE["web"], mold, proj)
-        out = node("extract", dict(base, DATABASE_URL=pg_url(live)), mold)
+        live = pull_env(LIVE["web"], mold, proj); url = pg_url(live)
+        out = node("extract", dict(base, DATABASE_URL=url), mold)
+        if not any(out["counts"].values()):
+            others = [o for o in out["orgs"] if o["org_id"] != org]
+            print(f"live has no rows for org '{org}'. orgs on live: " + (", ".join(f"{o['org_id']} ({o['name']}, {o['status']}, {o['members']} members)" for o in out["orgs"]) or "none"))
+            if len(others) == 1:
+                org = others[0]["org_id"]; print(f"adopting the only live org: {org}")
+                app["surface"]["primary_context"]["workspace"]["org_id"] = org; app["surface"]["primary_context"]["workspace"]["blob_prefix"] = f"orgs/{org}"
+                di["dataroom"]["blob_prefix"] = f"orgs/{org}"; ds["blob"]["root_prefix"] = f"orgs/{org}"; save(os.path.join(adir, "datastores.json"), ds)
+                out = node("extract", dict(base, ORG_ID=org, DATABASE_URL=url), mold)
+            else:
+                sys.exit("set application.surface.primary_context.workspace.org_id to one of them and re-run")
         s = app["surface"]; x = out["surface"]
         s["primary_context"].update({k: v for k, v in x["primary_context"].items() if v not in ({}, [])})
         s["primary_context"]["workspace"].setdefault("org_id", org)

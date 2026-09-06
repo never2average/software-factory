@@ -48,9 +48,16 @@ const showKey = (key) => key.split(KEY_SEP).join("/");
 const norm = (v) => JSON.stringify(v ?? null);
 const pick = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
+async function listOrgs(sql) {
+  const cols = await tableCols(sql, "orgs"); if (!cols.length) return [];
+  const hasMembers = (await tableCols(sql, "org_members")).length > 0;
+  const os = await sql`select org_id, name, status from orgs order by org_id`;
+  for (const o of os) o.members = hasMembers ? (await sql`select count(*)::int as n from org_members where org_id = ${o.org_id}`)[0].n : null;
+  return os;
+}
 async function extract(url) {
-  const sql = pg(url); const out = {};
-  try { for (const [t, spec] of Object.entries(SURFACE)) out[t] = await rows(sql, t, spec); } finally { await sql.end(); }
+  const sql = pg(url); const out = {}; let orgs = [];
+  try { orgs = await listOrgs(sql); for (const [t, spec] of Object.entries(SURFACE)) out[t] = await rows(sql, t, spec); } finally { await sql.end(); }
   const org = out.orgs?.[0] ?? {}; const prof = (out.agent_profiles ?? []).find(p => p.email === "") ?? null;
   const surface = {
     primary_context: {
@@ -81,7 +88,7 @@ async function extract(url) {
     agents: (out.solutions ?? []).filter(s => s.business_process === "agent").map(s => pick({ agent_id: s.solution_id, version: "v1", customer_id: s.customer_id, use_case: s.use_case })),
   };
   const counts = Object.fromEntries(Object.entries(out).map(([t, r]) => [t, r ? r.length : null]));
-  return { surface, datainfra, counts };
+  return { surface, datainfra, counts, orgs, org: ORG };
 }
 
 async function pkCols(sql, t) {
