@@ -276,6 +276,10 @@
         },
         "note": {
           "type": "string"
+        },
+        "live_evidence": {
+          "type": "object",
+          "description": "What extract found on the source deployment: workflows, recipes, definitions, cycles, todos, roster escalations"
         }
       },
       "required": [
@@ -360,80 +364,95 @@
         "primary_context": {
           "type": "object",
           "properties": {
-            "workspace": {
-              "type": "object",
-              "properties": {
-                "org_id": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9-]*$"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "display_name": {
-                  "type": "string",
-                  "description": "orgs.branding.displayName; the only rename knob the mold has"
-                },
-                "logo_url": {
-                  "type": "string"
-                },
-                "google_hosted_domain": {
-                  "type": "string"
-                },
-                "plan": {
-                  "type": "string"
-                },
-                "data_residency": {
-                  "type": "string"
-                },
-                "limits": {
-                  "type": "object",
-                  "properties": {
-                    "monthly_token_cap": {
-                      "type": "integer"
-                    },
-                    "monthly_cost_usd_cap": {
-                      "type": "number"
-                    },
-                    "workflow_run_cap": {
-                      "type": "integer"
-                    }
+            "corpus": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "customer_agreements",
+                      "customer_context",
+                      "customer_personas",
+                      "customer_interactions",
+                      "product_offerings",
+                      "platform_design",
+                      "solution_catalog",
+                      "rollout_case_studies",
+                      "implementation_history",
+                      "deployment_records",
+                      "tickets",
+                      "people_context",
+                      "custom"
+                    ]
+                  },
+                  "dataroom_path": {
+                    "type": "string",
+                    "description": "Path template from dm.md, e.g. Customers/{customer_id}/agreements/"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "sync": {
+                    "type": "string",
+                    "enum": [
+                      "manual_entry",
+                      "email",
+                      "slack",
+                      "meeting_notes",
+                      "github",
+                      "aws",
+                      "azure",
+                      "gcp",
+                      "oci",
+                      "bare_metal",
+                      "miro",
+                      "claude",
+                      "codex",
+                      "analytics",
+                      "observability",
+                      "call"
+                    ],
+                    "description": "How the content arrives; manual_entry when people upload it"
+                  },
+                  "required": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "The agent must not run without this content"
+                  },
+                  "seeded_from": {
+                    "type": "string",
+                    "enum": [
+                      "live_snapshot",
+                      "fixtures",
+                      "none"
+                    ]
+                  },
+                  "live_files": {
+                    "type": "integer",
+                    "description": "Files found under the path on the source deployment (extract)"
                   }
                 },
-                "blob_prefix": {
-                  "type": "string",
-                  "description": "orgs.blobPrefix; derived orgs/<org_id> when absent"
-                }
+                "required": [
+                  "kind",
+                  "dataroom_path"
+                ]
               },
-              "required": [
-                "org_id",
-                "name"
-              ],
-              "description": "The org row that scopes everything else (fde new-org)"
+              "minItems": 1,
+              "description": "The knowledge the agent reasons over: agreements, offerings, case studies, and so on. Every entry is a data-room location the mold already models"
             },
-            "entity_vocabulary": {
+            "instructions": {
               "type": "object",
               "properties": {
-                "account_noun": {
+                "workspace": {
                   "type": "string",
-                  "default": "customer"
+                  "description": "agent_profiles.instructions for the workspace default profile"
                 },
-                "note": {
-                  "type": "string"
-                }
-              },
-              "description": "What the workspace calls its accounts (customers, patients, clients). mold_v1 hardcodes 'customer' in tables, paths and tools; this is recorded for the parity audit and for mold_v2+, not applied"
-            },
-            "agent_profile": {
-              "type": "object",
-              "properties": {
                 "persona_name": {
                   "type": "string"
                 },
                 "tone": {
-                  "type": "string"
-                },
-                "instructions": {
                   "type": "string"
                 },
                 "default_mode": {
@@ -448,317 +467,255 @@
                 "model": {
                   "type": "string"
                 },
-                "web_search_default": {
-                  "type": "boolean"
-                },
-                "browser_default": {
-                  "type": "boolean"
+                "subagents": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "agent_key": {
+                        "type": "string",
+                        "enum": [
+                          "app-author",
+                          "browser",
+                          "configuration",
+                          "customer-context",
+                          "data-migration",
+                          "deployment",
+                          "evals",
+                          "follow-ups",
+                          "research",
+                          "workflow-author"
+                        ]
+                      },
+                      "paused": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "instructions": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent_key"
+                    ]
+                  }
                 }
               },
-              "description": "agent_profiles row with email='' (workspace default)"
+              "description": "How the agent is told to use the corpus (agent_profiles, agent_configs)"
             },
-            "agent_configs": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "agent_key": {
-                    "type": "string",
-                    "enum": [
-                      "app-author",
-                      "browser",
-                      "configuration",
-                      "customer-context",
-                      "data-migration",
-                      "deployment",
-                      "evals",
-                      "follow-ups",
-                      "research",
-                      "workflow-author"
-                    ]
-                  },
-                  "paused": {
-                    "type": "boolean",
-                    "default": false
-                  },
-                  "instructions": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "agent_key"
-                ]
-              },
-              "description": "agent_configs rows, one per subagent"
-            },
-            "memories": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "scope": {
+            "memory": {
+              "type": "object",
+              "properties": {
+                "scopes": {
+                  "type": "array",
+                  "items": {
                     "type": "string",
                     "enum": [
                       "team",
                       "customer",
                       "person"
                     ]
-                  },
-                  "entity_id": {
-                    "type": "string"
-                  },
-                  "key": {
-                    "type": "string"
-                  },
-                  "value": {
-                    "type": "string",
-                    "description": "Omitted when extracted from a live app; values travel with the database snapshot, not with state"
-                  },
-                  "sensitivity": {
-                    "type": "string",
-                    "enum": [
-                      "internal",
-                      "customer_shareable",
-                      "restricted"
-                    ],
-                    "default": "internal"
                   }
                 },
-                "required": [
-                  "scope",
-                  "key"
-                ]
+                "sensitivity_ceiling": {
+                  "type": "string",
+                  "enum": [
+                    "internal",
+                    "customer_shareable",
+                    "restricted"
+                  ],
+                  "default": "internal"
+                },
+                "live_keys": {
+                  "type": "integer",
+                  "description": "Memory rows on the source deployment (extract)"
+                }
+              },
+              "description": "memories table: what the agent is allowed to remember across turns"
+            },
+            "entity_vocabulary": {
+              "type": "object",
+              "properties": {
+                "account_noun": {
+                  "type": "string",
+                  "default": "customer"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "description": "What the workspace calls its accounts (customers, patients, clients). mold_v1 hardcodes 'customer' in tables, paths and tools; this is recorded for the parity audit and for mold_v2+, not applied"
+            },
+            "corpus_files": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "integer"
+                }
               }
             }
           },
           "required": [
-            "workspace"
-          ]
+            "corpus"
+          ],
+          "description": "What the agent knows: the content corpus, the instructions that frame it, and what it may remember"
         },
         "multiplayer_context": {
           "type": "object",
           "properties": {
-            "fde_self": {
-              "type": "object",
-              "properties": {
-                "email": {
-                  "type": "string",
-                  "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string",
-                  "default": "Forward-Deployed Engineer"
-                },
-                "focus": {
-                  "type": "string"
-                },
-                "timezone": {
-                  "type": "string"
-                },
-                "skills": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "pod": {
-                  "type": "string"
-                },
-                "capacity_target_accounts": {
-                  "type": "integer",
-                  "default": 8
-                }
-              },
-              "required": [
-                "email",
-                "name"
-              ],
-              "description": "fde onboard-self; the identity every configure script runs as"
-            },
-            "members": {
+            "processes": {
               "type": "array",
               "items": {
                 "type": "object",
                 "properties": {
-                  "email": {
+                  "name": {
                     "type": "string",
-                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                    "enum": [
+                      "sprint_planning",
+                      "onboarding",
+                      "escalation_handling",
+                      "incident_postmortem",
+                      "go_live",
+                      "account_review",
+                      "renewal",
+                      "data_migration",
+                      "solution_engineering",
+                      "integration_wiring",
+                      "eval_triage",
+                      "custom"
+                    ]
                   },
-                  "role": {
+                  "label": {
+                    "type": "string",
+                    "description": "Free text when name is custom"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "implemented_by": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "workflow_script",
+                            "workflow_definition",
+                            "recipe",
+                            "cycles",
+                            "todos",
+                            "roster_escalations",
+                            "ticket_folder",
+                            "schedule_rule",
+                            "chat_threads",
+                            "inbox",
+                            "api_route"
+                          ]
+                        },
+                        "ref": {
+                          "type": "string",
+                          "description": "workflow name, recipe slug, definition id, ticket folder, route"
+                        },
+                        "present": {
+                          "type": "boolean",
+                          "description": "Found on the source deployment (extract)"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "ref"
+                      ]
+                    }
+                  },
+                  "owner_role": {
                     "type": "string",
                     "enum": [
                       "owner",
                       "admin",
                       "engineer",
                       "member"
-                    ],
-                    "default": "member"
-                  }
-                },
-                "required": [
-                  "email",
-                  "role"
-                ]
-              },
-              "description": "org_members; exactly one owner minimum"
-            },
-            "platform_admins": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-              },
-              "description": "platform_admins: who may create orgs"
-            },
-            "roster": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "email": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                    ]
                   },
-                  "name": {
-                    "type": "string"
-                  },
-                  "team": {
-                    "type": "string"
-                  },
-                  "manager_email": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-                  },
-                  "escalations": {
+                  "notify": {
                     "type": "array",
                     "items": {
-                      "type": "object",
-                      "properties": {
-                        "email": {
-                          "type": "string",
-                          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-                        },
-                        "reason": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "email",
-                        "reason"
-                      ]
+                      "type": "string",
+                      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
                     }
                   }
                 },
                 "required": [
-                  "email"
+                  "name",
+                  "implemented_by"
                 ]
               },
-              "description": "people_roster: the reporting matrix. manager_email is the single reporting line, escalations the per-condition fan-out"
+              "minItems": 1,
+              "description": "The shared processes the team runs in the workspace: sprint planning, onboarding, escalation handling. Each points at the mold features that implement it; an empty implemented_by is a parity gap"
             },
-            "customers": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "tier": {
-                    "type": "string"
-                  },
-                  "vertical": {
-                    "type": "string"
-                  },
-                  "region": {
-                    "type": "string"
-                  },
-                  "business_owner": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-                  },
-                  "technical_owner": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-                  },
-                  "staff": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "email": {
-                          "type": "string",
-                          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "role": {
-                          "type": "string",
-                          "enum": [
-                            "solution_engineer",
-                            "account_executive"
-                          ]
-                        },
-                        "employer_org": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "email",
-                        "role"
-                      ]
-                    }
-                  },
-                  "stakeholders": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "email": {
-                          "type": "string",
-                          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "role": {
-                          "type": "string",
-                          "enum": [
-                            "key_user",
-                            "decision_maker",
-                            "champion"
-                          ]
-                        },
-                        "employer_org": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "email",
-                        "role"
-                      ]
-                    }
-                  }
+            "escalation": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "enum": [
+                    "roster_escalations",
+                    "pagerduty",
+                    "none"
+                  ],
+                  "description": "people_roster.escalations fan-out, or PagerDuty via route-incident"
                 },
-                "required": [
-                  "id",
-                  "name"
-                ]
+                "incident_workflow": {
+                  "type": "string",
+                  "default": "route-incident"
+                },
+                "ticket_folders": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "feat",
+                      "search",
+                      "bug",
+                      "docs",
+                      "evals",
+                      "config_changes",
+                      "data_migration",
+                      "backfills",
+                      "onboarding"
+                    ]
+                  }
+                }
+              }
+            },
+            "collaboration": {
+              "type": "object",
+              "properties": {
+                "chat_threads": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "presence": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "comments": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "inbox": {
+                  "type": "boolean",
+                  "default": true
+                }
               },
-              "description": "fde new-customer + internal_staff + customer_stakeholders"
+              "description": "Mold constants; listed so a mold without them shows as a gap"
             }
           },
           "required": [
-            "fde_self",
-            "members"
-          ]
+            "processes"
+          ],
+          "description": "How people work together in the workspace, expressed as processes mapped to mold features"
         },
         "custom_workflow_builder": {
           "type": "object",
@@ -987,6 +944,284 @@
         }
       },
       "description": "Configuration for each service-surface item; keys match state/factory.json service_surface names"
+    },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "org": {
+          "type": "object",
+          "properties": {
+            "org_id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            },
+            "name": {
+              "type": "string"
+            },
+            "display_name": {
+              "type": "string",
+              "description": "orgs.branding.displayName; the only rename knob the mold has"
+            },
+            "logo_url": {
+              "type": "string"
+            },
+            "google_hosted_domain": {
+              "type": "string"
+            },
+            "plan": {
+              "type": "string"
+            },
+            "data_residency": {
+              "type": "string"
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "monthly_token_cap": {
+                  "type": "integer"
+                },
+                "monthly_cost_usd_cap": {
+                  "type": "number"
+                },
+                "workflow_run_cap": {
+                  "type": "integer"
+                }
+              }
+            },
+            "blob_prefix": {
+              "type": "string",
+              "description": "orgs.blobPrefix; derived orgs/<org_id> when absent"
+            }
+          },
+          "required": [
+            "org_id",
+            "name"
+          ],
+          "description": "The org row that scopes everything else (fde new-org)"
+        },
+        "fde_self": {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string",
+              "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+            },
+            "name": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string",
+              "default": "Forward-Deployed Engineer"
+            },
+            "focus": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            },
+            "skills": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "pod": {
+              "type": "string"
+            },
+            "capacity_target_accounts": {
+              "type": "integer",
+              "default": 8
+            }
+          },
+          "required": [
+            "email",
+            "name"
+          ],
+          "description": "fde onboard-self; the identity every configure script runs as"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string",
+                "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "owner",
+                  "admin",
+                  "engineer",
+                  "member"
+                ],
+                "default": "member"
+              }
+            },
+            "required": [
+              "email",
+              "role"
+            ]
+          },
+          "description": "org_members; exactly one owner minimum"
+        },
+        "platform_admins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+          },
+          "description": "platform_admins: who may create orgs"
+        },
+        "roster": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string",
+                "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "team": {
+                "type": "string"
+              },
+              "manager_email": {
+                "type": "string",
+                "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+              },
+              "escalations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "email": {
+                      "type": "string",
+                      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "email",
+                    "reason"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "email"
+            ]
+          },
+          "description": "people_roster: the reporting matrix. manager_email is the single reporting line, escalations the per-condition fan-out"
+        },
+        "customers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "tier": {
+                "type": "string"
+              },
+              "vertical": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "business_owner": {
+                "type": "string",
+                "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+              },
+              "technical_owner": {
+                "type": "string",
+                "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+              },
+              "staff": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "email": {
+                      "type": "string",
+                      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "solution_engineer",
+                        "account_executive"
+                      ]
+                    },
+                    "employer_org": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "email",
+                    "role"
+                  ]
+                }
+              },
+              "stakeholders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "email": {
+                      "type": "string",
+                      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "key_user",
+                        "decision_maker",
+                        "champion"
+                      ]
+                    },
+                    "employer_org": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "email",
+                    "role"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          },
+          "description": "fde new-customer + internal_staff + customer_stakeholders"
+        }
+      },
+      "required": [
+        "org",
+        "fde_self",
+        "members"
+      ],
+      "description": "Tenancy and people: who the workspace is and who is in it (orgs, org_members, platform_admins, people_roster, customers). Not a service-surface item; the surface blocks reference it"
     }
   }
 }

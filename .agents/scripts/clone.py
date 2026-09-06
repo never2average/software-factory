@@ -46,7 +46,7 @@ def main(a):
     app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
     ds = load(os.path.join(adir, "datastores.json")); di = load(os.path.join(adir, "datainfra.json"))
     mold = os.path.join(ROOT, "molds", app["mold_id"], "codebase"); proj = infra.get("vercel", {}).get("project")
-    org = app["surface"]["primary_context"]["workspace"]["org_id"]; prefix = di["dataroom"].get("blob_prefix", f"orgs/{org}")
+    org = app["workspace"]["org"]["org_id"]; prefix = di["dataroom"].get("blob_prefix", f"orgs/{org}")
     clone = app.get("clone_of")
     if step != "configure" and not clone: sys.exit(f"{app_id} has no clone_of; only `configure` applies to a non-clone app")
     if step == "plan":
@@ -63,22 +63,27 @@ def main(a):
 
     if step == "extract":
         live = pull_env(LIVE["web"], mold, proj); url = pg_url(live)
-        out = node("extract", dict(base, DATABASE_URL=url), mold)
+        xenv = dict(base, DATABASE_URL=url, BLOB_READ_WRITE_TOKEN=live.get("BLOB_READ_WRITE_TOKEN", ""), STATE_JSON=os.path.join(adir, "application.json"))
+        out = node("extract", xenv, mold)
         if not any(out["counts"].values()):
             others = [o for o in out["orgs"] if o["org_id"] != org]
             print(f"live has no rows for org '{org}'. orgs on live: " + (", ".join(f"{o['org_id']} ({o['name']}, {o['status']}, {o['members']} members)" for o in out["orgs"]) or "none"))
             if len(others) == 1:
                 org = others[0]["org_id"]; print(f"adopting the only live org: {org}")
-                app["surface"]["primary_context"]["workspace"]["org_id"] = org; app["surface"]["primary_context"]["workspace"]["blob_prefix"] = f"orgs/{org}"
-                di["dataroom"]["blob_prefix"] = f"orgs/{org}"; ds["blob"]["root_prefix"] = f"orgs/{org}"; save(os.path.join(adir, "datastores.json"), ds)
-                out = node("extract", dict(base, ORG_ID=org, DATABASE_URL=url), mold)
+                app["workspace"]["org"]["org_id"] = org; app["workspace"]["org"]["blob_prefix"] = f"orgs/{org}"
+                di["dataroom"]["blob_prefix"] = f"orgs/{org}"; ds["blob"]["root_prefix"] = f"orgs/{org}"; save(os.path.join(adir, "datastores.json"), ds); save(os.path.join(adir, "application.json"), app)
+                out = node("extract", dict(xenv, ORG_ID=org, BLOB_PREFIX=f"orgs/{org}"), mold)
             else:
                 sys.exit("set application.surface.primary_context.workspace.org_id to one of them and re-run")
-        s = app["surface"]; x = out["surface"]
-        s["primary_context"].update({k: v for k, v in x["primary_context"].items() if v not in ({}, [])})
-        s["primary_context"]["workspace"].setdefault("org_id", org)
-        mc = s["multiplayer_context"]; mc.update({k: v for k, v in x["multiplayer_context"].items() if v})
-        if not any(m["email"] == mc["fde_self"]["email"] for m in mc["members"]): mc["members"].insert(0, {"email": mc["fde_self"]["email"], "role": "owner"})
+        s = app["surface"]; x = out["surface"]; w = app["workspace"]; xw = out["workspace"]
+        w["org"].update(xw["org"]); w.update({k: v for k, v in xw.items() if k != "org" and v})
+        if not any(m["email"] == w["fde_self"]["email"] for m in w["members"]): w["members"].insert(0, {"email": w["fde_self"]["email"], "role": "owner"})
+        pc = s["primary_context"]; xp = x["primary_context"]
+        pc["corpus"] = xp.get("corpus", pc["corpus"]); pc["instructions"].update(xp["instructions"]); pc["memory"].update({k: v for k, v in xp["memory"].items() if v not in ([], None)})
+        mc = s["multiplayer_context"]; xm = x["multiplayer_context"]
+        mc["processes"] = xm.get("processes", mc["processes"]); mc["escalation"].update({k: v for k, v in xm["escalation"].items() if v}); clone["live_evidence"] = xm["evidence"]
+        gaps = [(p["name"], [i["ref"] for i in p["implemented_by"] if not i.get("present")]) for p in mc["processes"]]; gaps = [g for g in gaps if g[1]]
+        if gaps: print("processes with features missing on live: " + "; ".join(f"{n}: {', '.join(r)}" for n, r in gaps))
         s["custom_workflow_builder"].update(x["custom_workflow_builder"])
         for k in ("platforms", "deployments", "pipelines", "agents"): di[k] = out["datainfra"][k]
         di["dataroom"]["seed"] = {"source": "live_snapshot"}

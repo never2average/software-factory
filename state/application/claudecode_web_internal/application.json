@@ -23,6 +23,36 @@
     "multiplayer_context",
     "custom_workflow_builder"
   ],
+  "workspace": {
+    "org": {
+      "org_id": "onfinance",
+      "name": "OnFinance",
+      "display_name": "OnFinance",
+      "blob_prefix": "orgs/onfinance"
+    },
+    "fde_self": {
+      "email": "priyesh@onfinance.in",
+      "name": "Priyesh",
+      "title": "Forward-Deployed Engineer",
+      "skills": [],
+      "capacity_target_accounts": 8
+    },
+    "members": [
+      {
+        "email": "priyesh@onfinance.in",
+        "role": "owner"
+      }
+    ],
+    "platform_admins": [
+      "priyesh@onfinance.in"
+    ],
+    "roster": [
+      {
+        "email": "priyesh@onfinance.in"
+      }
+    ],
+    "customers": []
+  },
   "surface": {
     "dm.md": {
       "enabled": true,
@@ -48,47 +78,211 @@
       "default_on_for_agent": true
     },
     "primary_context": {
-      "workspace": {
-        "org_id": "onfinance",
-        "name": "OnFinance",
-        "display_name": "OnFinance",
-        "blob_prefix": "orgs/onfinance"
+      "corpus": [
+        {
+          "kind": "customer_agreements",
+          "dataroom_path": "Customers/{customer_id}/agreements/",
+          "sync": "manual_entry",
+          "required": true
+        },
+        {
+          "kind": "customer_context",
+          "dataroom_path": "Customers/{customer_id}/context.md",
+          "sync": "manual_entry",
+          "required": true
+        },
+        {
+          "kind": "customer_personas",
+          "dataroom_path": "Customers/{customer_id}/personas.jsonl",
+          "sync": "manual_entry",
+          "required": true
+        },
+        {
+          "kind": "customer_interactions",
+          "dataroom_path": "Customers/{customer_id}/interactions.jsonl",
+          "sync": "meeting_notes",
+          "required": true
+        },
+        {
+          "kind": "product_offerings",
+          "dataroom_path": "Solutions/{platform_version_id}/",
+          "sync": "manual_entry",
+          "required": true
+        },
+        {
+          "kind": "platform_design",
+          "dataroom_path": "Platform/{platform_version_id}/design_decisions/",
+          "sync": "github",
+          "required": true
+        },
+        {
+          "kind": "rollout_case_studies",
+          "dataroom_path": "Deployments/{customer_id}/{platform_version_id}/",
+          "sync": "manual_entry",
+          "required": true
+        },
+        {
+          "kind": "implementation_history",
+          "dataroom_path": "Implementation/{customer_id}/migrations/{migration_id}/context.md",
+          "sync": "manual_entry",
+          "required": true
+        },
+        {
+          "kind": "tickets",
+          "dataroom_path": "Tickets/{ticket_folder}/{customer_id}/",
+          "sync": "manual_entry",
+          "required": true
+        },
+        {
+          "kind": "people_context",
+          "dataroom_path": "People/{person_id}/context.md",
+          "sync": "manual_entry",
+          "required": true
+        }
+      ],
+      "instructions": {
+        "default_mode": "build",
+        "model": "@cf/zai-org/glm-5.2",
+        "subagents": []
+      },
+      "memory": {
+        "scopes": [
+          "team",
+          "customer",
+          "person"
+        ],
+        "sensitivity_ceiling": "internal"
       },
       "entity_vocabulary": {
         "account_noun": "customer"
-      },
-      "agent_profile": {
-        "default_mode": "build",
-        "model": "@cf/zai-org/glm-5.2",
-        "web_search_default": true,
-        "browser_default": false
-      },
-      "agent_configs": [],
-      "memories": []
+      }
     },
     "multiplayer_context": {
-      "fde_self": {
-        "email": "priyesh@onfinance.in",
-        "name": "Priyesh",
-        "title": "Forward-Deployed Engineer",
-        "skills": [],
-        "capacity_target_accounts": 8
+      "processes": [
+        {
+          "name": "sprint_planning",
+          "enabled": true,
+          "implemented_by": [
+            {
+              "kind": "cycles",
+              "ref": "/api/ops/cycles"
+            },
+            {
+              "kind": "todos",
+              "ref": "/api/ops/todos"
+            },
+            {
+              "kind": "workflow_definition",
+              "ref": "task"
+            }
+          ]
+        },
+        {
+          "name": "onboarding",
+          "enabled": true,
+          "implemented_by": [
+            {
+              "kind": "recipe",
+              "ref": "onboard-self"
+            },
+            {
+              "kind": "recipe",
+              "ref": "import-roster"
+            },
+            {
+              "kind": "recipe",
+              "ref": "connect-sources"
+            },
+            {
+              "kind": "recipe",
+              "ref": "seed-workflows"
+            },
+            {
+              "kind": "recipe",
+              "ref": "onboard-customer"
+            },
+            {
+              "kind": "workflow_script",
+              "ref": "onboard-account"
+            },
+            {
+              "kind": "workflow_script",
+              "ref": "assign-account"
+            }
+          ]
+        },
+        {
+          "name": "escalation_handling",
+          "enabled": true,
+          "implemented_by": [
+            {
+              "kind": "roster_escalations",
+              "ref": "people_roster.escalations"
+            },
+            {
+              "kind": "workflow_script",
+              "ref": "route-incident"
+            },
+            {
+              "kind": "ticket_folder",
+              "ref": "bug"
+            }
+          ]
+        },
+        {
+          "name": "incident_postmortem",
+          "enabled": true,
+          "implemented_by": [
+            {
+              "kind": "workflow_script",
+              "ref": "incident-postmortem"
+            }
+          ]
+        },
+        {
+          "name": "go_live",
+          "enabled": true,
+          "implemented_by": [
+            {
+              "kind": "workflow_script",
+              "ref": "go-live-sprint"
+            },
+            {
+              "kind": "workflow_script",
+              "ref": "infra-sizing"
+            },
+            {
+              "kind": "workflow_script",
+              "ref": "infosec-checklist"
+            }
+          ]
+        },
+        {
+          "name": "account_review",
+          "enabled": true,
+          "implemented_by": [
+            {
+              "kind": "workflow_script",
+              "ref": "qbr-prep"
+            }
+          ]
+        }
+      ],
+      "escalation": {
+        "path": "roster_escalations",
+        "incident_workflow": "route-incident",
+        "ticket_folders": [
+          "bug",
+          "onboarding",
+          "feat"
+        ]
       },
-      "members": [
-        {
-          "email": "priyesh@onfinance.in",
-          "role": "owner"
-        }
-      ],
-      "platform_admins": [
-        "priyesh@onfinance.in"
-      ],
-      "roster": [
-        {
-          "email": "priyesh@onfinance.in"
-        }
-      ],
-      "customers": []
+      "collaboration": {
+        "chat_threads": true,
+        "presence": true,
+        "comments": true,
+        "inbox": true
+      }
     },
     "custom_workflow_builder": {
       "library": {
