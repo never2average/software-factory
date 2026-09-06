@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_internal",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "planned",
+  "status": "retired",
   "brief": "briefs/claudecode_web_internal.md",
   "product_id": "claudecode_web",
   "model": {
@@ -309,5 +309,10 @@
       "status": "pending"
     }
   },
-  "customer_id": "internal"
+  "customer_id": "internal",
+  "revert": {
+    "reason": "placeholder never deployed; its datastores were handed to claudecode_web_replica on 2026-09-06 to stay inside the free Supabase quota",
+    "lane": "functional",
+    "at": "2026-09-06T00:00:00Z"
+  }
 }

@@ -12,13 +12,12 @@
     "context_window": 262144
   },
   "capabilities": {
-    "web_search": true,
+    "web_search": false,
     "browser": false,
     "multi_tenant": true
   },
   "service_surface": [
     "dm.md",
-    "web_search",
     "primary_context",
     "multiplayer_context",
     "custom_workflow_builder"
@@ -623,8 +622,8 @@
       "default_on_for_agent": false
     },
     "web_search": {
-      "enabled": true,
-      "default_on_for_agent": true
+      "enabled": false,
+      "default_on_for_agent": false
     },
     "primary_context": {
       "corpus": [

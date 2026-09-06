@@ -55,8 +55,9 @@ Values never enter the repo, the state files, or the chat. State holds names; th
 |---|---|
 | VM runtime | provisioned on node 24, mold typechecks and builds |
 | Vercel | logged in, project linked, nothing deployed |
-| claudecode_web_internal | intake done, Supabase + Blob provisioned, five user secrets missing, not deployed |
-| claudecode_web_replica | intake done (clone of live); extract/snapshot/configure/regress wait on sol's terminal |
+| claudecode_web_internal | retired placeholder; its Supabase + Blob went to the replica |
+| claudecode_web_replica | clone of live, surface extracted, uses project claudecode-web; `clone.py run` continues from provision |
+| Free tier | Vercel Marketplace allows two free Supabase projects per team (live + one factory app). Further apps need VM Postgres (mold_v1-015) |
 | Lanes | none run; two harnesses missing |
 | mold_v2, mold_v3 | backlog only |
 

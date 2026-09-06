@@ -69,7 +69,6 @@
     }
   },
   "datastores": {
-    "supabase_resource": "claudecode_web_internal",
-    "blob_store": "claudecode-web-internal (store_yYAYEISeeQYrb12F, private, iad1)"
+    "handed_to": "claudecode_web_replica"
   }
 }
