@@ -43,6 +43,17 @@
               "description": "vercel.eve.json"
             }
           }
+        },
+        "workflow_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "api_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "crons": {
+          "type": "string"
         }
       }
     },
@@ -77,6 +88,13 @@
         },
         "os": {
           "type": "string"
+        },
+        "compose": {
+          "type": "string"
+        },
+        "production_url": {
+          "type": "string",
+          "format": "uri"
         }
       }
     },
@@ -118,6 +136,102 @@
       "items": {
         "type": "string"
       }
+    },
+    "secret_store": {
+      "type": "string",
+      "enum": [
+        "vercel_env",
+        "vm_env_file"
+      ]
+    },
+    "secrets_user": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Only the user can supply these (external credentials)"
+    },
+    "secrets_derived": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "provision.py mints or derives these"
+    },
+    "secrets_optional": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "runtime_env": {
+      "type": "object",
+      "properties": {
+        "OPS_MULTI_TENANT": {
+          "type": "string",
+          "enum": [
+            "0",
+            "1"
+          ]
+        },
+        "BROWSER_LOCAL": {
+          "type": "string",
+          "enum": [
+            "0",
+            "1"
+          ]
+        },
+        "CSP_REPORT_ONLY": {
+          "type": "string",
+          "enum": [
+            "0",
+            "1"
+          ]
+        },
+        "ENABLE_WEB_SEARCH": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "ENABLE_BROWSER": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "MODEL_PROVIDER": {
+          "type": "string",
+          "enum": [
+            "cloudflare",
+            "gateway"
+          ]
+        }
+      },
+      "description": "Non-secret env values derived from application.json; written by provision.py, never edited by hand",
+      "additionalProperties": false
+    },
+    "datastores": {
+      "type": "object",
+      "properties": {
+        "supabase_resource": {
+          "type": "string"
+        },
+        "blob_store": {
+          "type": "string"
+        }
+      }
+    },
+    "deployed_at": {
+      "type": "string",
+      "format": "date"
+    },
+    "configured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the surface configuration was last applied to the running app"
     }
   }
 }
