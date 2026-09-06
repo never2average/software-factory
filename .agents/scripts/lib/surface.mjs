@@ -55,32 +55,51 @@ async function listOrgs(sql) {
   for (const o of os) o.members = hasMembers ? (await sql`select count(*)::int as n from org_members where org_id = ${o.org_id}`)[0].n : null;
   return os;
 }
+async function countIf(url, t) { const sql = pg(url); try { if (!(await tableCols(sql, t)).length) return 0; const c = await tableCols(sql, t); return (c.includes("org_id") ? await sql`select count(*)::int as n from ${sql(t)} where org_id = ${ORG}` : await sql`select count(*)::int as n from ${sql(t)}`)[0].n; } finally { await sql.end(); } }
+async function blobPaths(token, prefix) {
+  const { list } = require("@vercel/blob"); const out = []; let cursor;
+  do { const r = await list({ token, prefix, cursor, limit: 1000 }); for (const b of r.blobs) out.push(b.pathname.slice(prefix.length).replace(/^\//, "")); cursor = r.hasMore ? r.cursor : undefined; } while (cursor);
+  return out;
+}
 async function extract(url) {
   const sql = pg(url); const out = {}; let orgs = [];
   try { orgs = await listOrgs(sql); for (const [t, spec] of Object.entries(SURFACE)) out[t] = await rows(sql, t, spec); } finally { await sql.end(); }
   const org = out.orgs?.[0] ?? {}; const prof = (out.agent_profiles ?? []).find(p => p.email === "") ?? null;
+  const names = new Set((out.workflows ?? []).map(w => w.name)), slugs = new Set((out.recipes ?? []).map(r => r.slug)), defs = out.workflow_definitions ?? [];
+  const cyclesN = await countIf(url, "cycles"), todosN = await countIf(url, "todos");
+  const hasEsc = (out.people_roster ?? []).some(r => Array.isArray(r.escalations) && r.escalations.length);
+  const present = (i) => i.kind === "workflow_script" ? names.has(i.ref) : i.kind === "recipe" ? slugs.has(i.ref) : i.kind === "workflow_definition" ? defs.some(d => d.entity === i.ref || d.id === i.ref)
+    : i.kind === "cycles" ? cyclesN > 0 : i.kind === "todos" ? todosN > 0 : i.kind === "roster_escalations" ? hasEsc : i.kind === "ticket_folder" ? true : true;
+  const blobs = process.env.BLOB_READ_WRITE_TOKEN ? await blobPaths(process.env.BLOB_READ_WRITE_TOKEN, process.env.BLOB_PREFIX ?? "") : null;
+  const filesUnder = (tpl) => blobs ? blobs.filter(p => new RegExp("^" + tpl.replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace(/\\\{[a-z_]+\\\}/g, "[^/]+")).test(p)).length : undefined;
+  const workspace = {
+    org: pick({ org_id: ORG, name: org.name ?? ORG, display_name: org.branding?.displayName ?? org.name ?? ORG, google_hosted_domain: org.google_hosted_domain, plan: org.plan, data_residency: org.data_residency, blob_prefix: org.blob_prefix, logo_url: org.branding?.logoUrl }),
+    members: (out.org_members ?? []).map(r => ({ email: r.email, role: r.role ?? "member" })),
+    platform_admins: (out.platform_admins ?? []).map(r => r.email),
+    roster: (out.people_roster ?? []).filter(r => !r.archived_at).map(r => ({ ...pick({ email: r.email, name: r.name, team: r.team, manager_email: r.manager_email }), escalations: r.escalations ?? [] })),
+    customers: (out.customers ?? []).map(c => ({
+      ...pick({ id: c.customer_id, name: c.customer_name, tier: c.tier, vertical: c.vertical, region: c.account_region, business_owner: c.business_owner_email, technical_owner: c.technical_owner_email }),
+      staff: (out.internal_staff ?? []).filter(s => s.customer_id === c.customer_id).map(s => pick({ email: s.email, role: s.staff_role, name: s.name, employer_org: s.employer_org })),
+      stakeholders: (out.customer_stakeholders ?? []).filter(s => s.customer_id === c.customer_id).map(s => pick({ email: s.email, role: s.stakeholder_role, name: s.name, employer_org: s.employer_org })) })),
+  };
   const surface = {
     primary_context: {
-      workspace: pick({ org_id: ORG, name: org.name ?? ORG, display_name: org.branding?.displayName ?? org.name ?? ORG, google_hosted_domain: org.google_hosted_domain, plan: org.plan, data_residency: org.data_residency, blob_prefix: org.blob_prefix, logo_url: org.branding?.logoUrl }),
-      agent_profile: prof ? pick({ persona_name: prof.persona_name, tone: prof.tone, instructions: prof.instructions, default_mode: prof.default_mode, model: prof.model, web_search_default: prof.web_search_default, browser_default: prof.browser_default }) : {},
-      agent_configs: (out.agent_configs ?? []).map(r => pick({ agent_key: r.agent_key, paused: !!r.paused, instructions: r.instructions })),
-      memories: (out.memories ?? []).filter(m => m.sensitivity !== "restricted").map(m => ({ scope: m.scope, entity_id: m.entity_id ?? "", key: m.key, sensitivity: m.sensitivity ?? "internal" })),
+      instructions: { ...(prof ? pick({ workspace: prof.instructions, persona_name: prof.persona_name, tone: prof.tone, default_mode: prof.default_mode, model: prof.model }) : {}),
+        subagents: (out.agent_configs ?? []).map(r => pick({ agent_key: r.agent_key, paused: !!r.paused, instructions: r.instructions })) },
+      memory: { scopes: [...new Set((out.memories ?? []).map(m => m.scope))].filter(Boolean), live_keys: (out.memories ?? []).length },
+      corpus_files: blobs ? { total: blobs.length } : undefined,
     },
     multiplayer_context: {
-      members: (out.org_members ?? []).map(r => ({ email: r.email, role: r.role ?? "member" })),
-      platform_admins: (out.platform_admins ?? []).map(r => r.email),
-      roster: (out.people_roster ?? []).filter(r => !r.archived_at).map(r => ({ ...pick({ email: r.email, name: r.name, team: r.team, manager_email: r.manager_email }), escalations: r.escalations ?? [] })),
-      customers: (out.customers ?? []).map(c => ({
-        ...pick({ id: c.customer_id, name: c.customer_name, tier: c.tier, vertical: c.vertical, region: c.account_region, business_owner: c.business_owner_email, technical_owner: c.technical_owner_email }),
-        staff: (out.internal_staff ?? []).filter(s => s.customer_id === c.customer_id).map(s => pick({ email: s.email, role: s.staff_role, name: s.name, employer_org: s.employer_org })),
-        stakeholders: (out.customer_stakeholders ?? []).filter(s => s.customer_id === c.customer_id).map(s => pick({ email: s.email, role: s.stakeholder_role, name: s.name, employer_org: s.employer_org })) })),
+      evidence: { workflows: [...names], recipes: [...slugs], definitions: defs.map(d => ({ id: d.id, entity: d.entity, is_default: !!d.is_default })), cycles: cyclesN, todos: todosN, roster_escalations: hasEsc },
+      escalation: { path: hasEsc ? "roster_escalations" : "none", incident_workflow: names.has("route-incident") ? "route-incident" : undefined },
     },
     custom_workflow_builder: {
       library: { install: (out.workflows ?? []).some(w => LIBRARY.has(w.name) && w.created_by === "system") ? "all" : "none" },
       scripts: (out.workflows ?? []).filter(w => !(LIBRARY.has(w.name) && w.created_by === "system")).map(w => ({ ...pick({ name: w.name, description: w.description ?? "", trigger: w.trigger ?? "manual", customer_id: w.customer_id, instructions: w.instructions }), steps: w.steps ?? [], enabled: w.enabled !== false, instructions_enabled: !!w.instructions_enabled })),
-      definitions: (out.workflow_definitions ?? []).filter(d => !d.archived_at).map(d => ({ id: d.id, name: d.name, entity: d.entity, is_default: !!d.is_default, stages: d.stages ?? [] })),
+      definitions: defs.filter(d => !d.archived_at).map(d => ({ id: d.id, name: d.name, entity: d.entity, is_default: !!d.is_default, stages: d.stages ?? [] })),
     },
   };
+  const fill = { present, filesUnder };
   const datainfra = {
     platforms: (out.platform ?? []).map(p => ({ ...pick({ customer_id: p.customer_id, version: "v1", deployment_model: p.deployment_model ?? "single_tenant", data_residency_constraint: p.data_residency_constraint ?? "none", primary_model: p.primary_model, primary_use_case: p.primary_use_case }), feature_flags: p.feature_flags ?? [], enabled_connectors: p.enabled_connectors ?? [] })),
     deployments: (out.deployments ?? []).map(d => pick({ customer_id: d.customer_id, version: d.deployment_id, environment: d.environment ?? "production", region: d.region, cloud: d.cloud_provider })),
@@ -88,7 +107,13 @@ async function extract(url) {
     agents: (out.solutions ?? []).filter(s => s.business_process === "agent").map(s => pick({ agent_id: s.solution_id, version: "v1", customer_id: s.customer_id, use_case: s.use_case })),
   };
   const counts = Object.fromEntries(Object.entries(out).map(([t, r]) => [t, r ? r.length : null]));
-  return { surface, datainfra, counts, orgs, org: ORG };
+  // clone.py sends the app's own corpus and process lists; annotate them with what live has
+  const state = process.env.STATE_JSON ? JSON.parse(readFileSync(process.env.STATE_JSON, "utf8")) : null;
+  if (state) {
+    surface.primary_context.corpus = (state.surface.primary_context.corpus ?? []).map(c => ({ ...c, ...(filesUnder(c.dataroom_path) !== undefined && { live_files: filesUnder(c.dataroom_path) }) }));
+    surface.multiplayer_context.processes = (state.surface.multiplayer_context.processes ?? []).map(p => ({ ...p, implemented_by: p.implemented_by.map(i => ({ ...i, present: present(i) })) }));
+  }
+  return { workspace, surface, datainfra, counts, orgs, org: ORG };
 }
 
 async function pkCols(sql, t) {
@@ -96,7 +121,7 @@ async function pkCols(sql, t) {
   return r.map(x => x.attname);
 }
 async function apply(url, state) {
-  const sql = pg(url); const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) pk[t] = await pkCols(sql, t); const s = state.surface; const ws = s.primary_context.workspace; const mp = s.multiplayer_context; const me = mp.fde_self.email; const done = {};
+  const sql = pg(url); const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) pk[t] = await pkCols(sql, t); const s = state.surface; const mp = state.workspace; const ws = mp.org; const me = mp.fde_self.email; const done = {};
   const up = async (label, fn) => { try { done[label] = await fn(); } catch (e) { done[label] = "ERR " + e.message; } };
   try {
     await up("orgs", () => sql`insert into orgs (org_id, name, branding, blob_prefix, status, created_by) values (${ws.org_id}, ${ws.name}, ${sql.json(pick({ displayName: ws.display_name ?? ws.name, logoUrl: ws.logo_url }))}, ${ws.blob_prefix ?? "orgs/" + ws.org_id}, 'active', ${me})
@@ -104,10 +129,10 @@ async function apply(url, state) {
     await up("org_members", async () => { let n = 0; for (const m of mp.members) { await sql`insert into org_members (org_id, email, role, invited_by, accepted_at) values (${ws.org_id}, ${m.email}, ${m.role}, ${me}, now()) on conflict (${sql(pk.org_members)}) do update set role = excluded.role`; n++; } return n; });
     await up("platform_admins", async () => { let n = 0; for (const e of mp.platform_admins ?? []) { await sql`insert into platform_admins (email, added_by) values (${e}, ${me}) on conflict do nothing`; n++; } return n; });
     await up("people_roster", async () => { let n = 0; for (const r of mp.roster ?? []) { await sql`insert into people_roster (org_id, email, name, team, manager_email, escalations) values (${ws.org_id}, ${r.email}, ${r.name ?? null}, ${r.team ?? null}, ${r.manager_email ?? null}, ${sql.json(r.escalations ?? [])}) on conflict (${sql(pk.people_roster)}) do update set name = excluded.name, team = excluded.team, manager_email = excluded.manager_email, escalations = excluded.escalations`; n++; } return n; });
-    const p = s.primary_context.agent_profile ?? {};
-    await up("agent_profiles", () => sql`insert into agent_profiles (id, org_id, email, persona_name, tone, instructions, default_mode, web_search_default, browser_default, model, updated_by) values (${ws.org_id + ":"}, ${ws.org_id}, '', ${p.persona_name ?? null}, ${p.tone ?? null}, ${p.instructions ?? null}, ${p.default_mode ?? null}, ${p.web_search_default ?? null}, ${p.browser_default ?? null}, ${p.model ?? null}, ${me})
+    const p = s.primary_context.instructions ?? {}; const ws_ = s.web_search ?? {}, br = s.browser ?? {};
+    await up("agent_profiles", () => sql`insert into agent_profiles (id, org_id, email, persona_name, tone, instructions, default_mode, web_search_default, browser_default, model, updated_by) values (${ws.org_id + ":"}, ${ws.org_id}, '', ${p.persona_name ?? null}, ${p.tone ?? null}, ${p.workspace ?? null}, ${p.default_mode ?? null}, ${ws_.default_on_for_agent ?? null}, ${br.default_on_for_agent ?? null}, ${p.model ?? null}, ${me})
       on conflict (${sql(pk.agent_profiles)}) do update set persona_name = excluded.persona_name, tone = excluded.tone, instructions = excluded.instructions, default_mode = excluded.default_mode, web_search_default = excluded.web_search_default, browser_default = excluded.browser_default, model = excluded.model`.then(() => 1));
-    await up("agent_configs", async () => { let n = 0; for (const c of s.primary_context.agent_configs ?? []) { await sql`insert into agent_configs (org_id, agent_key, paused, instructions) values (${ws.org_id}, ${c.agent_key}, ${!!c.paused}, ${c.instructions ?? null}) on conflict (${sql(pk.agent_configs)}) do update set paused = excluded.paused, instructions = excluded.instructions`; n++; } return n; });
+    await up("agent_configs", async () => { let n = 0; for (const c of s.primary_context.instructions?.subagents ?? []) { await sql`insert into agent_configs (org_id, agent_key, paused, instructions) values (${ws.org_id}, ${c.agent_key}, ${!!c.paused}, ${c.instructions ?? null}) on conflict (${sql(pk.agent_configs)}) do update set paused = excluded.paused, instructions = excluded.instructions`; n++; } return n; });
     await up("workflow_definitions", async () => { let n = 0; for (const d of s.custom_workflow_builder.definitions ?? []) { await sql`insert into workflow_definitions (id, org_id, name, entity, stages, current_version, is_default, created_by) values (${d.id}, ${ws.org_id}, ${d.name}, ${d.entity}, ${sql.json(d.stages)}, 1, ${!!d.is_default}, ${me}) on conflict (${sql(pk.workflow_definitions)}) do update set name = excluded.name, stages = excluded.stages, is_default = excluded.is_default`; n++; } return n; });
     await up("workflows", async () => { let n = 0; for (const w of s.custom_workflow_builder.scripts ?? []) { if (w.file) continue; /* file-backed scripts go through fde:seed-workflows */
       await sql`insert into workflows (org_id, name, description, trigger, customer_id, steps, instructions, instructions_enabled, enabled, created_by) values (${ws.org_id}, ${w.name}, ${w.description}, ${w.trigger ?? "manual"}, ${w.customer_id ?? null}, ${sql.json(w.steps ?? [])}, ${w.instructions ?? null}, ${!!w.instructions_enabled}, ${w.enabled !== false}, ${me}) on conflict do nothing`; n++; } return n; });

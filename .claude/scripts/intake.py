@@ -44,11 +44,52 @@ def parse_brief(text):
     if m: h["account_noun"] = (m.group(1) or m.group(2)).rstrip("s")
     m = re.search(r"(?:clone|replica|copy) of (?:the )?live(?: fde.agent)?(?:\s+at\s+(https?://\S+|[a-z0-9.-]+\.[a-z]{2,}))?", t)
     if m: h["clone_of"] = {"kind": "live_deployment", "ref": (m.group(1) or "fde-agent").rstrip(".,)")}
+    m = re.search(r"primary context[:\s]+([^\n.]+)", t)
+    if m: h["corpus"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
+    m = re.search(r"multiplayer(?: context)?[:\s]+([^\n.]+)", t)
+    if m: h["processes"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
     m = re.search(r"(?:workflows?)[:\s]+(all|none|library)", t)
     if m: h["library"] = "all" if m.group(1) in ("all", "library") else "none"
     return h
 
 def slug(s): return re.sub(r"[^a-z0-9-]+", "-", s.lower()).strip("-")
+
+# The mold's data room, as corpus kinds. Keys are phrases a brief might use; values are (kind, dm.md path, sync).
+CORPUS = {
+  "customer_agreements":   ("customer agreement|contract|msa|sow",           "Customers/{customer_id}/agreements/",                       "manual_entry"),
+  "customer_context":      ("customer context|account context|account brief", "Customers/{customer_id}/context.md",                        "manual_entry"),
+  "customer_personas":     ("persona|user archetype",                         "Customers/{customer_id}/personas.jsonl",                     "manual_entry"),
+  "customer_interactions": ("interaction|meeting note|call note|email thread","Customers/{customer_id}/interactions.jsonl",                 "meeting_notes"),
+  "product_offerings":     ("product offering|offering|catalog|solution",     "Solutions/{platform_version_id}/",                          "manual_entry"),
+  "platform_design":       ("platform design|design decision|architecture",   "Platform/{platform_version_id}/design_decisions/",           "github"),
+  "rollout_case_studies":  ("rollout|case stud|go.live|deployment stor",      "Deployments/{customer_id}/{platform_version_id}/",           "manual_entry"),
+  "implementation_history":("implementation|migration histor",                "Implementation/{customer_id}/migrations/{migration_id}/context.md", "manual_entry"),
+  "tickets":               ("ticket|issue|incident record",                   "Tickets/{ticket_folder}/{customer_id}/",                     "manual_entry"),
+  "people_context":        ("people|roster context|who is who",               "People/{person_id}/context.md",                             "manual_entry"),
+}
+DEFAULT_CORPUS = ["customer_agreements","customer_context","customer_personas","customer_interactions","product_offerings","platform_design","rollout_case_studies","implementation_history","tickets","people_context"]
+# Shared processes and the mold features that implement them.
+PROCESSES = {
+  "sprint_planning":      ("sprint|cycle|planning",            [("cycles","/api/ops/cycles"),("todos","/api/ops/todos"),("workflow_definition","task")]),
+  "onboarding":           ("onboard",                          [("recipe","onboard-self"),("recipe","import-roster"),("recipe","connect-sources"),("recipe","seed-workflows"),("recipe","onboard-customer"),("workflow_script","onboard-account"),("workflow_script","assign-account")]),
+  "escalation_handling":  ("escalat|on.call|paging",           [("roster_escalations","people_roster.escalations"),("workflow_script","route-incident"),("ticket_folder","bug")]),
+  "incident_postmortem":  ("postmortem|post-mortem|rca",       [("workflow_script","incident-postmortem")]),
+  "go_live":              ("go.live|launch|readiness",         [("workflow_script","go-live-sprint"),("workflow_script","infra-sizing"),("workflow_script","infosec-checklist")]),
+  "account_review":       ("qbr|account review|business review",[("workflow_script","qbr-prep")]),
+  "renewal":              ("renewal|churn",                    [("workflow_script","renewal-risk")]),
+  "data_migration":       ("data migration|migration plan",    [("workflow_script","data-migration-plan")]),
+  "solution_engineering": ("solution engineering|scoping",     [("workflow_script","solution-engineering")]),
+  "integration_wiring":   ("integration|wiring|connector",     [("workflow_script","integration-wiring")]),
+  "eval_triage":          ("eval|regression triage",           [("workflow_script","eval-regression-triage")]),
+}
+DEFAULT_PROCESSES = ["sprint_planning","onboarding","escalation_handling","incident_postmortem","go_live","account_review"]
+def match(phrases, table):
+    """Brief phrases -> known keys, or ('custom', phrase) when nothing in the mold matches."""
+    out = []
+    for ph in phrases:
+        hit = next((k for k, v in table.items() if re.search(v[0], ph.lower())), None)
+        out.append((hit, ph) if hit else ("custom", ph))
+    return out
 
 QUESTIONS = [
  # id, state path, prompt, options or None, resolver(defaults, hints, ctx) -> value or None
@@ -105,19 +146,31 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     optional_secrets = ["GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"]
     top_level = ["Customers","Platform","Deployments","Solutions","Implementation","Tickets","People","Uploads"]
     members = [{"email": fde, "role": "owner"}] + [{"email": e, "role": "member"} for e in hints.get("members", []) if e != fde]
+    corpus = []
+    for kind, phrase in (match(hints["corpus"], CORPUS) if hints.get("corpus") else [(k, None) for k in DEFAULT_CORPUS]):
+        if kind == "custom": corpus.append({"kind": "custom", "dataroom_path": "Uploads/", "description": phrase, "sync": "manual_entry", "required": True})
+        else: corpus.append({"kind": kind, "dataroom_path": CORPUS[kind][1], "sync": CORPUS[kind][2], "required": True, **({"description": phrase} if phrase else {})})
+    processes = []
+    for name, phrase in (match(hints["processes"], PROCESSES) if hints.get("processes") else [(k, None) for k in DEFAULT_PROCESSES]):
+        if name == "custom": processes.append({"name": "custom", "label": phrase, "enabled": True, "implemented_by": []})
+        else: processes.append({"name": name, "enabled": True, "implemented_by": [{"kind": k, "ref": r} for k, r in PROCESSES[name][1]], **({"label": phrase} if phrase else {})})
+    workspace = {
+      "org": {"org_id": org_id, "name": ans["workspace_name"], "display_name": ans["workspace_name"], "blob_prefix": f"orgs/{org_id}"},
+      "fde_self": {"email": fde, "name": fde.split("@")[0].replace(".", " ").title(), "title": "Forward-Deployed Engineer", "skills": [], "capacity_target_accounts": 8},
+      "members": members, "platform_admins": [fde], "roster": [{"email": fde}], "customers": []}
     surface = {
       "dm.md": {"enabled": True, "top_level": top_level, "system_of_record": "postgres"},
       "browser": {"enabled": ans["browser"], "local": False, "default_on_for_agent": ans["browser"]},
       "web_search": {"enabled": ans["web_search"], "default_on_for_agent": ans["web_search"]},
       "primary_context": {
-        "workspace": {"org_id": org_id, "name": ans["workspace_name"], "display_name": ans["workspace_name"], "blob_prefix": f"orgs/{org_id}"},
-        "entity_vocabulary": {"account_noun": hints.get("account_noun", "customer")},
-        "agent_profile": {"default_mode": "build", "model": d.get("inference_model", "@cf/zai-org/glm-5.2"),
-                          "web_search_default": ans["web_search"], "browser_default": ans["browser"]},
-        "agent_configs": [], "memories": []},
+        "corpus": corpus,
+        "instructions": {"default_mode": "build", "model": d.get("inference_model", "@cf/zai-org/glm-5.2"), "subagents": []},
+        "memory": {"scopes": ["team", "customer", "person"], "sensitivity_ceiling": "internal"},
+        "entity_vocabulary": {"account_noun": hints.get("account_noun", "customer")}},
       "multiplayer_context": {
-        "fde_self": {"email": fde, "name": fde.split("@")[0].replace(".", " ").title(), "title": "Forward-Deployed Engineer", "skills": [], "capacity_target_accounts": 8},
-        "members": members, "platform_admins": [fde], "roster": [{"email": fde}], "customers": []},
+        "processes": processes,
+        "escalation": {"path": "roster_escalations", "incident_workflow": "route-incident", "ticket_folders": ["bug","onboarding","feat"]},
+        "collaboration": {"chat_threads": True, "presence": True, "comments": True, "inbox": True}},
       "custom_workflow_builder": {"library": {"install": ans["library"]}, "scripts": [], "definitions": []},
     }
     if hints.get("account_noun") and hints["account_noun"] != "customer":
@@ -127,7 +180,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
       "model":{"provider":"cloudflare" if ans["inference_provider"]=="cloudflare_workers_ai" else "gateway","model":d.get("inference_model","@cf/zai-org/glm-5.2"),"context_window":262144},
       "capabilities":{"web_search":ans["web_search"],"browser":ans["browser"],"multi_tenant":ans["multi_tenant"]},
       "service_surface":[s["name"] for s in factory["service_surface"] if not s.get("optional") or ans.get(s["name"], True)],
-      "surface": surface,
+      "workspace": workspace, "surface": surface,
       "testing":{l:{"status":"pending"} for l in ["load","context","functional","accessibility","responsiveness"]}}
     if ans.get("customer_id"): app["customer_id"] = ans["customer_id"]
     if hints.get("clone_of"): app["clone_of"] = dict(hints["clone_of"], snapshot_date=TODAY, regression={"status": "pending"})
@@ -231,5 +284,5 @@ def main(a):
     r = subprocess.run([sys.executable, os.path.join(ROOT,".claude/scripts/factory.py"), "validate"], capture_output=True, text=True)
     print(r.stdout.strip())
     if r.returncode: sys.exit(r.returncode)
-    print(f"state written: state/application/{app_id}/  (target={infra['target']}, project={infra.get('vercel',{}).get('project','vm')}, org={app['surface']['primary_context']['workspace']['org_id']}, secrets to provide: {len(infra['secrets'])})")
+    print(f"state written: state/application/{app_id}/  (target={infra['target']}, project={infra.get('vercel',{}).get('project','vm')}, org={app['workspace']['org']['org_id']}, corpus={len(app['surface']['primary_context']['corpus'])}, processes={len(app['surface']['multiplayer_context']['processes'])}, secrets to provide: {len(infra['secrets'])})")
 if __name__ == "__main__": main(sys.argv[1:])
