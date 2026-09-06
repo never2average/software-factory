@@ -28,7 +28,8 @@
       "org_id": "org-onfinance-ai",
       "name": "Onfinance AI",
       "display_name": "Onfinance AI",
-      "blob_prefix": "orgs/org-onfinance-ai"
+      "blob_prefix": "orgs/org-onfinance-ai",
+      "google_hosted_domain": "onfinance.in"
     },
     "fde_self": {
       "email": "priyesh@onfinance.in",
@@ -41,6 +42,22 @@
       {
         "email": "priyesh@onfinance.in",
         "role": "owner"
+      },
+      {
+        "email": "rahul@onfinance.in",
+        "role": "member"
+      },
+      {
+        "email": "aviral@onfinance.in",
+        "role": "admin"
+      },
+      {
+        "email": "soham@onfinance.in",
+        "role": "member"
+      },
+      {
+        "email": "chaheti@onfinance.in",
+        "role": "member"
       }
     ],
     "platform_admins": [
@@ -48,10 +65,542 @@
     ],
     "roster": [
       {
-        "email": "priyesh@onfinance.in"
+        "email": "ajinkya.mawal@onfinance.in",
+        "name": "Ajinkya Mawal",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "avantika.sharma@onfinance.in",
+        "name": "Avantika Sharma",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "advait.mandawade@onfinance.in",
+        "name": "Advait Mandawade",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "anuj.srivastava@onfinance.in",
+        "name": "Anuj Srivastava",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "mannish.pimpalkar@onfinance.in",
+        "name": "Mannish Pimpalkar",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "nishant.kushwaha@onfinance.in",
+        "name": "Nishant Kushwaha",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "navya.sree.n@onfinance.in",
+        "name": "Navya Sree N",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "paartha.nimbalkar@onfinance.in",
+        "name": "Paartha Nimbalkar",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "prathmesh.shukla@onfinance.in",
+        "name": "Prathmesh Shukla",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "priyesh@onfinance.in",
+        "name": "Priyesh",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "avila.tarani@onfinance.in",
+        "name": "Avila Tarani",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "rahul.roy@onfinance.in",
+        "name": "Rahul Roy",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "akshat.bhatia@onfinance.in",
+        "name": "Akshat Bhatia",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "samarth.bhasin@onfinance.in",
+        "name": "Samarth Bhasin",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "siddhant.k.singh@onfinance.in",
+        "name": "Siddhant K. Singh",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "shashwat.jha@onfinance.in",
+        "name": "Shashwat Jha",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "soumil.b@onfinance.in",
+        "name": "Soumil B",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "vikram.kakar@onfinance.in",
+        "name": "Vikram Kakar",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "soham.haldar@onfinance.in",
+        "name": "Soham Haldar",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "ayush.ratan@onfinance.in",
+        "name": "Ayush Ratan",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "keshav.malik@onfinance.in",
+        "name": "Keshav Malik",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "himanshu.kumar@onfinance.in",
+        "name": "Himanshu Kumar",
+        "team": "fde",
+        "escalations": []
+      },
+      {
+        "email": "devanshu.agarwal@onfinance.in",
+        "name": "Devanshu Agarwal",
+        "team": "fde",
+        "escalations": []
       }
     ],
-    "customers": []
+    "customers": [
+      {
+        "id": "axis-mf",
+        "name": "Axis MF",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "groww",
+        "name": "Groww",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "upstox",
+        "name": "Upstox",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "cub",
+        "name": "CUB",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "mashreq",
+        "name": "Mashreq (COS)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "muthoot-fincorp",
+        "name": "Muthoot Fincorp",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "hdfc-cap",
+        "name": "HDFC Cap",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "iifl-finance",
+        "name": "IIFL Finance",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "paytm",
+        "name": "Paytm (COS)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "axis-amc",
+        "name": "Axis AMC (COS)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "mahindra-finance",
+        "name": "Mahindra Finance",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "piramal-finance",
+        "name": "Piramal Finance",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "yes-bank",
+        "name": "Yes Bank",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "axis-sec-2",
+        "name": "Axis Sec (COS)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "mlp",
+        "name": "MLP",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "hsbc-india",
+        "name": "HSBC India",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "sebi",
+        "name": "SEBI",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "jmfl",
+        "name": "JMFL",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "icici-bank-2",
+        "name": "ICICI Bank (Naveen)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "canfin-homes",
+        "name": "CanFin Homes",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "i-sec-pd-2",
+        "name": "I-Sec PD (DL)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "mse",
+        "name": "MSE",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "nsdl",
+        "name": "NSDL",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "growxcd",
+        "name": "GrowXCD",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "axis-bank",
+        "name": "Axis Bank",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "sbi-caps",
+        "name": "SBI Caps",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "incred-group",
+        "name": "Incred Group",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "angel-one",
+        "name": "Angel One",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "godrej-group",
+        "name": "Godrej Group",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "aditya-birla-capital",
+        "name": "Aditya Birla Capital",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "nse-indices",
+        "name": "NSE Indices",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "sharjah-islamic-bank",
+        "name": "Sharjah Islamic Bank",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "manappuram",
+        "name": "Manappuram",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "bobcard",
+        "name": "BOBCARD",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "arohan-nbfc",
+        "name": "Arohan NBFC (POC)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "icici-bank-1",
+        "name": "ICICI Bank",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "rbi",
+        "name": "RBI",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "bajaj-amc",
+        "name": "Bajaj AMC",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "icici-sec",
+        "name": "ICICI Sec",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "360one",
+        "name": "360One",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "i-sec-pd-1",
+        "name": "I-Sec PD (V2T)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "nuvama",
+        "name": "Nuvama",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "mirae",
+        "name": "Mirae (V2T)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "axis-sec-1",
+        "name": "Axis Sec (V2T)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "icici-pru",
+        "name": "ICICI Pru (V2T)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "axis-finance",
+        "name": "Axis Finance",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "jupiter",
+        "name": "Jupiter",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "bursa-malaysia",
+        "name": "Bursa Malaysia",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "canara-amc",
+        "name": "Canara AMC",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "hsl",
+        "name": "HSL",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "cag",
+        "name": "CAG",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "sbi",
+        "name": "SBI",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "bse",
+        "name": "BSE",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "jioblackrock",
+        "name": "JioBlackRock",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "julius-baer",
+        "name": "Julius Baer",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "bharatpe",
+        "name": "BharatPe",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "payu-finance",
+        "name": "Payu Finance",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "ncdex",
+        "name": "NCDEX",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "fedfina",
+        "name": "Fedfina",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "saarathi-finance",
+        "name": "Saarathi Finance",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "mcx",
+        "name": "MCX",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "rbl-bank",
+        "name": "RBL Bank",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "finnable",
+        "name": "Finnable",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "icici-hfc",
+        "name": "ICICI HFC",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "cross-river-bank",
+        "name": "Cross River Bank (USA)",
+        "staff": [],
+        "stakeholders": []
+      },
+      {
+        "id": "cwc",
+        "name": "CWC",
+        "staff": [],
+        "stakeholders": []
+      }
+    ]
   },
   "surface": {
     "dm.md": {
@@ -147,11 +696,10 @@
       },
       "memory": {
         "scopes": [
-          "team",
-          "customer",
-          "person"
+          "team"
         ],
-        "sensitivity_ceiling": "internal"
+        "sensitivity_ceiling": "internal",
+        "live_keys": 1
       },
       "entity_vocabulary": {
         "account_noun": "customer"
@@ -165,15 +713,18 @@
           "implemented_by": [
             {
               "kind": "cycles",
-              "ref": "/api/ops/cycles"
+              "ref": "/api/ops/cycles",
+              "present": false
             },
             {
               "kind": "todos",
-              "ref": "/api/ops/todos"
+              "ref": "/api/ops/todos",
+              "present": true
             },
             {
               "kind": "workflow_definition",
-              "ref": "task"
+              "ref": "task",
+              "present": true
             }
           ]
         },
@@ -183,31 +734,38 @@
           "implemented_by": [
             {
               "kind": "recipe",
-              "ref": "onboard-self"
+              "ref": "onboard-self",
+              "present": false
             },
             {
               "kind": "recipe",
-              "ref": "import-roster"
+              "ref": "import-roster",
+              "present": false
             },
             {
               "kind": "recipe",
-              "ref": "connect-sources"
+              "ref": "connect-sources",
+              "present": false
             },
             {
               "kind": "recipe",
-              "ref": "seed-workflows"
+              "ref": "seed-workflows",
+              "present": false
             },
             {
               "kind": "recipe",
-              "ref": "onboard-customer"
+              "ref": "onboard-customer",
+              "present": false
             },
             {
               "kind": "workflow_script",
-              "ref": "onboard-account"
+              "ref": "onboard-account",
+              "present": true
             },
             {
               "kind": "workflow_script",
-              "ref": "assign-account"
+              "ref": "assign-account",
+              "present": true
             }
           ]
         },
@@ -217,15 +775,18 @@
           "implemented_by": [
             {
               "kind": "roster_escalations",
-              "ref": "people_roster.escalations"
+              "ref": "people_roster.escalations",
+              "present": false
             },
             {
               "kind": "workflow_script",
-              "ref": "route-incident"
+              "ref": "route-incident",
+              "present": true
             },
             {
               "kind": "ticket_folder",
-              "ref": "bug"
+              "ref": "bug",
+              "present": true
             }
           ]
         },
@@ -235,7 +796,8 @@
           "implemented_by": [
             {
               "kind": "workflow_script",
-              "ref": "incident-postmortem"
+              "ref": "incident-postmortem",
+              "present": true
             }
           ]
         },
@@ -245,15 +807,18 @@
           "implemented_by": [
             {
               "kind": "workflow_script",
-              "ref": "go-live-sprint"
+              "ref": "go-live-sprint",
+              "present": true
             },
             {
               "kind": "workflow_script",
-              "ref": "infra-sizing"
+              "ref": "infra-sizing",
+              "present": true
             },
             {
               "kind": "workflow_script",
-              "ref": "infosec-checklist"
+              "ref": "infosec-checklist",
+              "present": true
             }
           ]
         },
@@ -263,13 +828,14 @@
           "implemented_by": [
             {
               "kind": "workflow_script",
-              "ref": "qbr-prep"
+              "ref": "qbr-prep",
+              "present": true
             }
           ]
         }
       ],
       "escalation": {
-        "path": "roster_escalations",
+        "path": "none",
         "incident_workflow": "route-incident",
         "ticket_folders": [
           "bug",
@@ -289,7 +855,95 @@
         "install": "all"
       },
       "scripts": [],
-      "definitions": []
+      "definitions": [
+        {
+          "id": "pwf_459024e864e6491f84f6ced4afab3517",
+          "name": "Default task workflow",
+          "entity": "task",
+          "is_default": true,
+          "stages": [
+            {
+              "id": "backlog",
+              "label": "Backlog",
+              "assign": {
+                "type": "none"
+              },
+              "description": "Captured but not yet started.",
+              "transitions": [
+                {
+                  "to": "open",
+                  "migrate": {
+                    "type": "manual"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "open",
+              "label": "Open",
+              "assign": {
+                "type": "least_loaded"
+              },
+              "description": "Ready to be picked up.",
+              "transitions": [
+                {
+                  "to": "in_progress",
+                  "migrate": {
+                    "type": "manual"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "in_progress",
+              "label": "In progress",
+              "assign": {
+                "type": "none"
+              },
+              "description": "Actively being worked.",
+              "transitions": [
+                {
+                  "to": "blocked",
+                  "migrate": {
+                    "type": "manual"
+                  }
+                },
+                {
+                  "to": "done",
+                  "migrate": {
+                    "type": "manual"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "blocked",
+              "label": "Blocked",
+              "assign": {
+                "type": "none"
+              },
+              "description": "Waiting on someone or something.",
+              "transitions": [
+                {
+                  "to": "in_progress",
+                  "migrate": {
+                    "type": "manual"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "done",
+              "label": "Done",
+              "assign": {
+                "type": "none"
+              },
+              "description": "Completed and verified.",
+              "transitions": []
+            }
+          ]
+        }
+      ]
     }
   },
   "testing": {
@@ -316,6 +970,53 @@
     "snapshot_date": "2026-09-06",
     "regression": {
       "status": "pending"
+    },
+    "live_evidence": {
+      "workflows": [
+        "assign-account",
+        "data-migration-plan",
+        "eval-regression-triage",
+        "go-live-sprint",
+        "incident-postmortem",
+        "infosec-checklist",
+        "infra-sizing",
+        "integration-wiring",
+        "onboard-account",
+        "qbr-prep",
+        "renewal-risk",
+        "route-incident",
+        "solution-engineering"
+      ],
+      "recipes": [],
+      "definitions": [
+        {
+          "id": "pwf_459024e864e6491f84f6ced4afab3517",
+          "entity": "task",
+          "is_default": true
+        }
+      ],
+      "cycles": 0,
+      "todos": 1,
+      "roster_escalations": false
+    },
+    "extracted_at": "2026-09-06T11:19:28+00:00",
+    "live_counts": {
+      "orgs": 1,
+      "org_members": 5,
+      "platform_admins": 0,
+      "people_roster": 23,
+      "agent_profiles": 0,
+      "agent_configs": 0,
+      "memories": 1,
+      "workflows": 13,
+      "workflow_definitions": 1,
+      "customers": 66,
+      "internal_staff": 1,
+      "customer_stakeholders": 0,
+      "platform": 0,
+      "solutions": 0,
+      "deployments": 0,
+      "recipes": 0
     }
   }
 }
