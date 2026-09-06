@@ -110,6 +110,7 @@
     "vercel_team": "f20170061g-3183s-projects",
     "postgres_scope": "fresh",
     "workspace_name": "OnFinance",
-    "fde_email": "priyesh@onfinance.in"
+    "fde_email": "priyesh@onfinance.in",
+    "secret_source_project": "fde-agent"
   }
 }

@@ -6,6 +6,7 @@
   clone.py <app_id> snapshot [--apply]   pg_dump live -> restore into the app's fresh database; copy the blob tree
   clone.py <app_id> configure            apply application.surface to the app's database (after deploy + migrations)
   clone.py <app_id> regress              diff app vs live (tables, surface rows, blob tree) -> report + clone_of.regression
+  clone.py <app_id> run                  all of the above in order, plus provision check + deploy, stopping at the first failure
 
 Secrets: every step pulls env values from Vercel at run time into a temp file inside the mold
 dir, uses them for that one command and deletes the file. Nothing is written to state or git.
@@ -33,6 +34,18 @@ def pull_env(project, cwd, back_to):
         if os.path.exists(tmp): os.remove(tmp)
         link(back_to, cwd)
 def pg_url(vals): return vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL") or ""
+
+def live_blob_token(mold, proj, prefix):
+    """The live blob store belongs to one of the three live projects; find a token that can list it. None = skip blob work."""
+    for name in (LIVE["web"], LIVE["api"], LIVE["workflow"]):
+        tok = pull_env(name, mold, proj).get("BLOB_READ_WRITE_TOKEN", "")
+        if not tok: continue
+        r = subprocess.run(["node", os.path.join(ROOT, ".claude/scripts/lib/surface.mjs"), "blobcheck"], cwd=mold, env=dict(os.environ, MOLD_DIR=mold, BLOB_READ_WRITE_TOKEN=tok, BLOB_PREFIX=prefix), capture_output=True, text=True)
+        try:
+            if json.loads(r.stdout).get("ok"): print(f"live blob store reachable through {name}"); return tok
+        except Exception: pass
+    print("no live project has a token the blob store accepts; the clone keeps its own empty data room and blob checks are skipped")
+    return None
 
 def node(cmd, env, cwd, stdin=None, extra=()):
     r = subprocess.run(["node", os.path.join(ROOT, ".claude/scripts/lib/surface.mjs"), cmd, *extra], cwd=cwd, env=env, input=stdin, capture_output=True, text=True)
@@ -62,8 +75,8 @@ def main(a):
     base = dict(os.environ, MOLD_DIR=mold, ORG_ID=org, BLOB_PREFIX=prefix)
 
     if step == "extract":
-        live = pull_env(LIVE["web"], mold, proj); url = pg_url(live)
-        xenv = dict(base, DATABASE_URL=url, BLOB_READ_WRITE_TOKEN=live.get("BLOB_READ_WRITE_TOKEN", ""), STATE_JSON=os.path.join(adir, "application.json"))
+        live = pull_env(LIVE["web"], mold, proj); url = pg_url(live); tok = live_blob_token(mold, proj, prefix) or ""
+        xenv = dict(base, DATABASE_URL=url, BLOB_READ_WRITE_TOKEN=tok, STATE_JSON=os.path.join(adir, "application.json"))
         out = node("extract", xenv, mold)
         if not any(out["counts"].values()):
             others = [o for o in out["orgs"] if o["org_id"] != org]
@@ -104,19 +117,21 @@ def main(a):
         print("pg_dump live (schema public, no owners/privileges) ...")
         subprocess.run(["pg_dump", "--format=custom", "--schema=public", "--no-owner", "--no-privileges", "--file", dump, src], check=True)
         print(f"  {os.path.getsize(dump)//1024} KB")
-        benv = dict(base, LIVE_BLOB_READ_WRITE_TOKEN=live.get("BLOB_READ_WRITE_TOKEN", ""), BLOB_READ_WRITE_TOKEN=mine.get("BLOB_READ_WRITE_TOKEN", ""))
+        tok = live_blob_token(mold, proj, prefix)
+        benv = dict(base, LIVE_BLOB_READ_WRITE_TOKEN=tok or "", BLOB_READ_WRITE_TOKEN=mine.get("BLOB_READ_WRITE_TOKEN", ""))
         if not apply_it:
-            b = node("blobcopy", benv, mold)
-            print(f"blob under {prefix}: {b['files']} files, {b['bytes']//1024} KB"); print("dry run; re-run with --apply to restore into the app database and copy the blobs"); shutil.rmtree(os.path.dirname(dump)); return
+            if tok: b = node("blobcopy", benv, mold); print(f"blob under {prefix}: {b['files']} files, {b['bytes']//1024} KB")
+            print("dry run; re-run with --apply to restore into the app database and copy the blobs"); shutil.rmtree(os.path.dirname(dump)); return
         print(f"pg_restore into {proj} (--clean --if-exists) ...")
         r = subprocess.run(["pg_restore", "--clean", "--if-exists", "--no-owner", "--no-privileges", "--dbname", dst, dump], capture_output=True, text=True)
         shutil.rmtree(os.path.dirname(dump))
         if r.returncode and "errors ignored on restore" not in r.stderr: sys.exit(r.stderr[-2000:])
         print("  restored" + (" (some statements ignored, normal for --clean on a fresh db)" if r.returncode else ""))
-        b = node("blobcopy", benv, mold, extra=["--apply"])
-        print(f"  copied {b['files']} blobs under {prefix}")
         ds["postgres"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW, "method": "pg_dump"}
-        ds["blob"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW}
+        if tok:
+            b = node("blobcopy", benv, mold, extra=["--apply"]); print(f"  copied {b['files']} blobs under {prefix}")
+            ds["blob"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW}
+        else: ds["blob"]["snapshot"] = {"source": "none"}
         save(os.path.join(adir, "datastores.json"), ds); print("datastores.json updated"); return
 
     if step == "configure":
@@ -130,8 +145,8 @@ def main(a):
         return
 
     if step == "regress":
-        live = pull_env(LIVE["web"], mold, proj); mine = pull_env(proj, mold, proj)
-        rep = node("diff", dict(base, DATABASE_URL=pg_url(mine), LIVE_DATABASE_URL=pg_url(live), BLOB_READ_WRITE_TOKEN=mine.get("BLOB_READ_WRITE_TOKEN", ""), LIVE_BLOB_READ_WRITE_TOKEN=live.get("BLOB_READ_WRITE_TOKEN", "")), mold)
+        live = pull_env(LIVE["web"], mold, proj); mine = pull_env(proj, mold, proj); tok = live_blob_token(mold, proj, prefix)
+        rep = node("diff", dict(base, DATABASE_URL=pg_url(mine), LIVE_DATABASE_URL=pg_url(live), BLOB_READ_WRITE_TOKEN=mine.get("BLOB_READ_WRITE_TOKEN", "") if tok else "", LIVE_BLOB_READ_WRITE_TOKEN=tok or ""), mold)
         rdir = os.path.join(ROOT, "molds", app["mold_id"], "testing", "context", "reports"); os.makedirs(rdir, exist_ok=True)
         rpath = os.path.join(rdir, f"{app_id}-regression-{NOW[:10]}.md"); status = "pass" if rep["ok"] else "fail"
         L = [f"# {app_id} vs live ({LIVE['web']}) — {status}", "", f"run_at: {NOW}  org: {org}  prefix: {prefix}", "", "## Tables (row counts)", "", "| table | clone | live | |", "|---|---|---|---|"]
@@ -141,12 +156,20 @@ def main(a):
             if "skipped" in r: L.append(f"- {t}: skipped ({r['skipped']})"); continue
             n = len(r["only_clone"]) + len(r["only_live"]) + len(r["changed"])
             L.append(f"- {t}: clone={r['clone']} live={r['live']} " + ("ok" if not n else f"DIFF only_clone={r['only_clone'][:10]} only_live={r['only_live'][:10]} changed={[c['key']+':'+','.join(c['cols']) for c in r['changed'][:10]]}"))
-        if rep["blob"]: L += ["", "## Blob tree", "", f"prefix {rep['blob']['prefix']}: " + ("same" if rep["blob"]["same"] else f"DIFF clone={rep['blob']['clone']} live={rep['blob']['live']}")]
+        L += ["", "## Blob tree", "", (f"prefix {rep['blob']['prefix']}: " + ("same" if rep["blob"]["same"] else f"DIFF clone={rep['blob']['clone']} live={rep['blob']['live']}")) if rep["blob"] else "skipped: no live token accepted by the blob store"]
         open(rpath, "w").write("\n".join(L) + "\n")
         clone["regression"] = {"status": status, "run_at": NOW, "report": os.path.relpath(rpath, ROOT)}
         app["testing"]["context"] = {"status": status, "run_at": NOW, "report": os.path.relpath(rpath, ROOT)}
         if status == "fail": app["status"] = "reverted"; app["revert"] = {"reason": "regression against live failed", "lane": "context", "at": NOW}
         save(os.path.join(adir, "application.json"), app)
         print(f"{status}: {os.path.relpath(rpath, ROOT)}"); sys.exit(0 if rep["ok"] else 1)
+    if step == "run":
+        me = [sys.executable, os.path.abspath(__file__), app_id]; prov = [sys.executable, os.path.join(ROOT, ".claude/scripts/provision.py"), app_id]
+        steps = [("extract the live surface", me + ["extract"]), ("create datastores and copy secrets", prov), ("deploy", prov + ["--deploy"]),
+                 ("copy the live data", me + ["snapshot", "--apply"]), ("apply the surface", me + ["configure"]), ("compare with live", me + ["regress"])]
+        for i, (label, cmd) in enumerate(steps, 1):
+            print(f"\n[{i}/{len(steps)}] {label}"); r = subprocess.run(cmd)
+            if r.returncode: sys.exit(f"stopped at step {i} ({label}). Fix what it printed above and run `clone.py {app_id} run` again; finished steps are safe to repeat.")
+        print(f"\n{app_id} is a running clone of live; see the report path above."); return
     sys.exit(__doc__)
 if __name__ == "__main__": main(sys.argv[1:])
