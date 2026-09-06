@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Branding: apply an application's theme and logo pack to a per-app copy of the mold.
+"""Branding: apply an application's own theme and logo to a per-app copy of the mold.
 
-  branding.py <app_id> show                 the resolved brand (pack, product name, palette)
+  branding.py <app_id> show                 this app's brand and the palette it derives
   branding.py <app_id> prepare [--force]    build/<app_id>/ = mold copy + brand overlay; prints the path
   branding.py <app_id> check                verify a prepared copy carries the brand and no stale name
 
@@ -10,11 +10,16 @@ source tree (11 MB; node_modules is hard-linked, never written) into build/<app_
 the branded surfaces there. provision.py builds and deploys from that copy, which also gives every
 app its own build directory instead of sharing one.
 
+The brand lives in the application's own state (`surface.branding`), complete, with the icon inline.
+Products carry a `brand` that intake copies in at stamp time; nothing points at a shared file, so an
+app is readable on its own and cannot change under it.
+
 What a brand can change: the product name (browser tab, sign-in wordmark and footer, onboarding
 copy, every outgoing email), the tagline and description, the app icon and sign-in mark, and the
-whole colour palette in light and dark. Rules live in molds/<mold_id>/branding/rules.json so a
-forked mold ships its own; every rule must match or prepare refuses, so a mold refresh that moves
-this text fails loudly instead of shipping half-branded.
+whole colour palette in light and dark. WHERE each of those lives is a property of the mold, not of
+the brand, so molds/<mold_id>/branding/rules.json pins the files and strings — a forked mold ships
+its own. Every rule must match or prepare refuses, so a mold refresh that moves this text fails
+loudly instead of shipping half-branded.
 """
 import base64, json, os, re, shutil, subprocess, sys
 
@@ -90,27 +95,21 @@ def palette(brand_hex, neutral_chroma=0.006):
     return {"light": light, "dark": dark}
 
 # ----------------------------------------------------------------- brand ----
-def resolve(app, mold_dir_parent):
-    """The brand for this app: its own block, else the pack named by it, else nothing."""
-    b = dict(app.get("surface", {}).get("branding") or {})
-    pack_name = b.get("pack")
-    if pack_name:
-        pd = os.path.join(mold_dir_parent, "branding", pack_name)
-        pf = os.path.join(pd, "brand.json")
-        if not os.path.exists(pf): sys.exit(f"no branding pack at {os.path.relpath(pd, ROOT)}")
-        pack = load(pf)
-        pack.update({k: v for k, v in b.items() if k != "pack"})      # the app overrides the pack
-        b = pack; b["_dir"] = pd
-    return b
+def resolve(app):
+    """This app's brand, which lives in its own state and nowhere else.
+
+    There is deliberately no shared pack to point at: an application must be readable on its own, and
+    a brand edited in one place must not silently change every app's next build. Products carry a
+    `brand` that intake COPIES in at stamp time; after that the app owns it."""
+    return dict(app.get("surface", {}).get("branding") or {})
 
 def read_mark(b):
-    """The pack's square mark as (full svg, inner elements). Falls back to a monogram."""
-    d = b.get("_dir"); p = os.path.join(d, "mark.svg") if d else None
-    if p and os.path.exists(p):
-        svg = open(p).read().strip()
-        inner = re.sub(r"^<svg[^>]*>|</svg>\s*$", "", svg, flags=re.S).strip()
+    """The brand's square mark as (full svg, inner elements). Falls back to a monogram."""
+    svg = (b.get("icon_svg") or "").strip()
+    if svg:
         if not re.search(r'viewBox="0 0 32 32"', svg):
-            sys.exit(f"{os.path.relpath(p, ROOT)} must use viewBox=\"0 0 32 32\" so it fits every mark slot")
+            sys.exit('branding.icon_svg must use viewBox="0 0 32 32" so it fits every mark slot')
+        inner = re.sub(r"^<svg[^>]*>|</svg>\s*$", "", svg, flags=re.S).strip()
         return svg, inner
     initials = "".join(w[0] for w in re.findall(r"[A-Za-z]+", b.get("product_name", "App"))[:2]).upper() or "A"
     bg, fg = b.get("icon_bg", "#0A0A0A"), b.get("icon_fg", "#FAFAFA")
@@ -121,7 +120,7 @@ def read_mark(b):
             f'xmlns="http://www.w3.org/2000/svg">{inner}</svg>'), inner
 
 def auth_mark_jsx(inner):
-    """The pack's mark as JSX for the sign-in tile.
+    """The brand mark as JSX for the sign-in tile.
 
     The tile already paints a foreground-coloured square, so the mark's own background rect is
     dropped and its strokes and fills are re-pointed at the background colour. SVG attributes are
@@ -188,7 +187,7 @@ def apply_overlay(build_dir, b, rules):
 
 def prepare(app_id, app, mold_dir, force=False):
     build_dir = os.path.join(ROOT, "build", app_id)
-    b = resolve(app, os.path.dirname(mold_dir))
+    b = resolve(app)
     if not b:
         print("no branding on this app; building from the mold as-is"); return mold_dir
     if os.path.exists(build_dir) and not force: shutil.rmtree(build_dir)
@@ -209,7 +208,7 @@ def prepare(app_id, app, mold_dir, force=False):
 def check(app_id, app, mold_dir):
     build_dir = os.path.join(ROOT, "build", app_id)
     if not os.path.isdir(build_dir): sys.exit(f"no build copy at build/{app_id}; run prepare first")
-    b = resolve(app, os.path.dirname(mold_dir)); rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
+    b = resolve(app); rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
     name = b.get("product_name"); old = rules["product_name_default"]; bad = []
     if name and name != old:
         for key in rules["product_name_files"]:
@@ -217,9 +216,16 @@ def check(app_id, app, mold_dir):
             if old in s: bad.append(f"{rules['files'][key]} still says {old!r}")
             if name not in s: bad.append(f"{rules['files'][key]} does not carry {name!r}")
     if b.get("brand_color"):
-        s = open(os.path.join(build_dir, rules["files"]["globals"])).read()
-        L, C, H = parse_oklch(b["brand_color"] if b["brand_color"].startswith("oklch") else hex_to_oklch(b["brand_color"]))
-        if f" {round(H, 1)})" not in s: bad.append("the palette does not carry the brand hue")
+        # Compare against the values this brand actually derives, not a re-derived hue string: at zero
+        # chroma the hue is dropped, so a hue check would fail on a deliberately greyscale brand.
+        css = open(os.path.join(build_dir, rules["files"]["globals"])).read()
+        pal = palette(b["brand_color"], b.get("neutral_chroma", 0.006))
+        for scheme in ("light", "dark"):
+            for tok, val in (b.get("tokens", {}).get(scheme) or {}).items():
+                if tok in pal[scheme]: pal[scheme][tok] = val
+        missing = [f"--{t}" for t in ("background", "primary", "ring") if f"--{t}: {pal['light'][t]};" not in css]
+        if missing: bad.append("the light palette does not carry " + ", ".join(missing))
+        if f"--primary: {pal['dark']['primary']};" not in css: bad.append("the dark palette does not carry --primary")
     for e in bad: print("  " + e)
     print("branding ok" if not bad else f"{len(bad)} problem(s)")
     sys.exit(1 if bad else 0)
@@ -230,9 +236,9 @@ def main(a):
     app = load(os.path.join(ST, "application", app_id, "application.json"))
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
     if step == "show":
-        b = resolve(app, os.path.dirname(mold_dir))
+        b = resolve(app)
         if not b: return print("no branding on this app")
-        print(json.dumps({k: v for k, v in b.items() if k != "_dir"}, indent=2))
+        print(json.dumps({k: (v[:60] + "…" if k == "icon_svg" and len(v) > 60 else v) for k, v in b.items()}, indent=2))
         if b.get("brand_color"):
             pal = palette(b["brand_color"], b.get("neutral_chroma", 0.006))
             for scheme in ("light", "dark"):

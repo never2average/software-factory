@@ -85,8 +85,7 @@
   },
   "applications": [
     "claudecode_web_internal",
-    "claudecode_web_replica",
-    "dover_pilot"
+    "claudecode_web_replica"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",

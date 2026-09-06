@@ -1,34 +1,18 @@
-# Branding packs for mold_v1
+# Branding for mold_v1
 
-The mold's own identity is "Delivered" with a greyscale palette and a fixed check-mark icon. A stamped
-application can carry its own instead: `application.surface.branding` names a pack here, and
-`branding.py <app> prepare` applies it to a copy of the mold under `build/<app_id>/` which is what
-actually gets built and deployed. The snapshot under `codebase/` is never edited.
+A stamped application carries its own visual identity in its own state — `surface.branding` in
+`state/application/<app_id>/application.json`, complete, with the icon inline. There is no shared
+pack to point at: an application must be readable on its own, and editing a brand in one place must
+never change what an app that already exists builds next time.
 
-## A pack
+Where each brand surface LIVES is a property of this mold, not of any brand, and that is what this
+directory holds.
 
-```
-molds/mold_v1/branding/<pack>/
-  brand.json   product_name, tagline, description, brand_color (#rrggbb), radius, icon_bg, icon_fg
-  mark.svg     32x32, viewBox="0 0 32 32" — becomes the app icon and the sign-in mark
-```
+## rules.json
 
-A **product** owns a pack (`brand_pack` in `state/products.json`), and an app stamped for that product
-inherits it. mold_v1 carries two products, the same codebase under two identities:
+Pins the exact files and strings the overlay rewrites:
 
-| Product | Pack | State |
-|---|---|---|
-| `delivered` | `delivered/` | The mold's own identity, pinned so a build is byte-identical to the unbranded mold |
-| `dover` | `dover/` | Name is right; colour, mark, tagline and description are placeholders |
-
-A brief picks one with `product: dover`, and may still override with `brand: <pack>`,
-`brand color: #hex`, or opt out with `no branding`. A mold with only one product needs no answer.
-
-`onfinance/` predates the split and remains as a worked example of a third identity.
-
-## What a brand reaches
-
-| Surface | Where |
+| Surface | File in the mold |
 |---|---|
 | Browser tab, app name, description | `app/layout.tsx` metadata |
 | App icon, favicon, Apple icon | `app/icon.svg` |
@@ -38,23 +22,38 @@ A brief picks one with `product: dover`, and may still override with `brand: <pa
 | Every outgoing email | `lib/platform-notify.ts` |
 | Inbox copy | `app/_components/ops/inbox-panel.tsx` |
 
-`tokens` in a pack pins individual values outright (`{"light": {"ring": "..."}, "dark": {...}}`), which
-is how `delivered/` reproduces the three tokens the mold hand-tuned away from a plain ramp.
+If a mold refresh moves any of that text, `branding.py <app> prepare` stops with the rule id and
+changes nothing, rather than shipping an app that is half-branded. A forked mold ships its own rules.
+
+## Where a brand comes from
+
+`state/products.json` gives each product a `brand`, and intake COPIES it into the application when it
+is stamped. mold_v1 carries two products on one codebase:
+
+| Product | Identity |
+|---|---|
+| `delivered` | The mold's own, pinned so a build is byte-identical to the unbranded mold |
+| `dover` | Name is right; colour, mark, tagline and description are placeholders |
+
+A brief picks one with `product: dover`, may override the colour with `brand color: #hex`, or opt out
+with `no branding`. After stamping, the app owns its brand: edit it in the app's own state.
+
+## The brand shape
+
+`product_name`, `tagline`, `description`, `brand_color` (`#rrggbb` or `oklch(L C H)`),
+`neutral_chroma`, `radius`, `icon_bg`, `icon_fg`, `icon_svg` (32x32, `viewBox="0 0 32 32"`), and
+`tokens` to pin individual palette values outright.
 
 The palette is derived from one colour: `primary`, `accent` and `ring` carry the brand, neutrals keep
-the mold's lightness ramp and take a trace of the brand hue (`neutral_chroma`, 0 for pure grey). Light
-and dark are generated together, so contrast stays where the mold's design put it.
-
-## When the mold moves
-
-`rules.json` pins the exact text each rule replaces. If a mold refresh moves any of it, `prepare`
-stops with the rule id and changes nothing, rather than shipping an app that is half-branded. Fix the
-rule, then deploy.
+the mold's lightness ramp with a trace of the brand hue (`neutral_chroma` 0 for pure grey). Light and
+dark are generated together, so contrast stays where the mold's design put it. `tokens` overrides the
+derivation where a designer wants an exact value — that is how `delivered` reproduces the three tokens
+the mold hand-tuned.
 
 ## Not covered
 
 Per-organization branding inside one deployment (many orgs, many looks) is a different feature: the
 root layout metadata and `app/icon.svg` are build-time in Next.js, and the sign-in page has no
 organization context before authentication. Each stamped app is its own deployment, which is why the
-build-time overlay is enough here. The org logo tile (`orgs.branding.logoUrl`) remains runtime and
-per-organization as the mold already implements it.
+build-time overlay is enough here. The org logo tile (`orgs.branding.logoUrl`) stays runtime and
+per-organization as the mold already implements it; intake seeds it from the same icon.

@@ -51,9 +51,7 @@ def parse_brief(text):
     if m: h["processes"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
     m = re.search(r"\bproduct:\s*([a-z0-9_-]+)", t)
     if m: h["product_id"] = m.group(1)
-    m = re.search(r"\b(?:brand|branding|theme|logo pack):\s*([a-z0-9_-]+)", t)
-    if m: h["brand_pack"] = m.group(1)
-    if re.search(r"\bno branding\b|\bunbranded\b|\bmold branding\b|\bdefault branding\b", t): h["brand_pack"] = ""
+    if re.search(r"\bno branding\b|\bunbranded\b|\bmold branding\b", t): h["no_branding"] = True
     m = re.search(r"\bbrand colou?r:\s*(#[0-9a-fA-F]{3,6})", text, re.I)
     if m: h["brand_color"] = m.group(1)
     m = re.search(r"(?:workflows?)[:\s]+(all|none|library)", t)
@@ -197,10 +195,12 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         "collaboration": {"chat_threads": True, "presence": True, "comments": True, "inbox": True}},
       "custom_workflow_builder": {"library": {"install": ans["library"]}, "scripts": [], "definitions": []},
     }
-    pack = hints.get("brand_pack", prod.get("brand_pack", d.get("brand_pack", "")))
-    if pack:
-        surface["branding"] = {"pack": pack}
-        if hints.get("brand_color"): surface["branding"]["brand_color"] = hints["brand_color"]
+    # The product's identity is COPIED into the app, not referenced: an application must be readable
+    # on its own, and editing a product's brand later must not change an app that already exists.
+    brand = {} if hints.get("no_branding") else dict(prod.get("brand") or {})
+    if brand:
+        if hints.get("brand_color"): brand["brand_color"] = hints["brand_color"]
+        surface["branding"] = brand
 
     if hints.get("account_noun") and hints["account_noun"] != "customer":
         surface["primary_context"]["entity_vocabulary"]["note"] = "mold_v1 cannot rename accounts; recorded for the parity audit"
@@ -223,10 +223,10 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     # The workspace tile inside the app is a runtime value on the orgs row, not a build-time one, so
     # seed it from the same mark the build uses — but never over one the source deployment already has.
     # CSP allows data: images (proxy.ts img-src).
-    mark = os.path.join(ROOT, "molds", mold_id, "branding", pack, "mark.svg") if pack else ""
-    if mark and os.path.exists(mark) and not app["workspace"]["org"].get("logo_url"):
+    icon = brand.get("icon_svg")
+    if icon and not app["workspace"]["org"].get("logo_url"):
         import base64
-        app["workspace"]["org"]["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(open(mark, "rb").read()).decode()
+        app["workspace"]["org"]["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(icon.encode()).decode()
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
     if "clone_of" in ex_app and "clone_of" not in app: app["clone_of"] = ex_app["clone_of"]
