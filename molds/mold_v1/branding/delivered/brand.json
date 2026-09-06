@@ -1,0 +1,21 @@
+{
+  "$comment": "Delivered \u2014 the mold's own identity, stated explicitly so it is a product like any other rather than a default that happens to be baked in. brand_color is the mold's own --primary, and neutral_chroma 0 keeps the palette pure greyscale, so an app on this pack is visually identical to the unbranded mold.",
+  "product_name": "Delivered",
+  "tagline": "The operations console for forward-deployed teams.",
+  "description": "Delivered \u2014 the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
+  "brand_color": "oklch(0.19 0 0)",
+  "neutral_chroma": 0,
+  "radius": "0.625rem",
+  "icon_bg": "#0A0A0A",
+  "icon_fg": "#FAFAFA",
+  "tokens": {
+    "light": {
+      "ring": "oklch(0.708 0 0)"
+    },
+    "dark": {
+      "primary": "oklch(0.922 0 0)",
+      "accent": "oklch(0.269 0 0)",
+      "ring": "oklch(0.556 0 0)"
+    }
+  }
+}

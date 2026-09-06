@@ -985,6 +985,24 @@
             },
             "icon_fg": {
               "type": "string"
+            },
+            "tokens": {
+              "type": "object",
+              "description": "Pin individual palette tokens, overriding the values derived from brand_color.",
+              "properties": {
+                "light": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "dark": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         }

@@ -2,10 +2,10 @@
   "$schema": "./products.schema.json",
   "products": [
     {
-      "product_id": "claudecode_web",
+      "product_id": "delivered",
       "mold_id": "mold_v1",
-      "name": "Claude Code Web",
-      "tagline": "multi-workspace, multi-agent Claude Code web at feature parity, vanilla, on GLM 5.2",
+      "name": "Delivered",
+      "tagline": "The FDE operations console: onboarding, deployments and the data room for the forward-deployed team.",
       "stage": "defined",
       "target_model": "GLM 5.2",
       "gates": {
@@ -36,7 +36,43 @@
         "vercel",
         "vm"
       ],
-      "vercel_project": "claudecode-web"
+      "vercel_project": "claudecode-web",
+      "brand_pack": "delivered"
+    },
+    {
+      "product_id": "dover",
+      "mold_id": "mold_v1",
+      "name": "Dover",
+      "tagline": "TODO: Dover's one-line positioning.",
+      "stage": "defined",
+      "target_model": "GLM 5.2",
+      "gates": {
+        "stamped": [
+          "state/application/<app_id>/ filled against all four schemas",
+          "mold builds on VM (npm run build, typecheck)"
+        ],
+        "lanes_passing": [
+          "all five lanes pass on the stamped app",
+          "accessibility + responsiveness harnesses exist (not in mold today)"
+        ],
+        "deployed": [
+          "production URL on Vercel or VM",
+          "secrets present by name only in state",
+          "GLM 5.2 provider configured and smoke-tested"
+        ],
+        "released": [
+          "onboarding path works end to end (onboard-self, onboard-org, onboard-customer)",
+          "docs + pricing/packaging decided",
+          "budget of inference cost per workspace known"
+        ]
+      },
+      "app_ids": [],
+      "deploy_targets": [
+        "vercel",
+        "vm"
+      ],
+      "vercel_project": "dover",
+      "brand_pack": "dover"
     },
     {
       "product_id": "claudecode_web_governed",

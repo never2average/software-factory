@@ -13,9 +13,18 @@ molds/mold_v1/branding/<pack>/
   mark.svg     32x32, viewBox="0 0 32 32" — becomes the app icon and the sign-in mark
 ```
 
-`onfinance/` is the factory default (`defaults.brand_pack` in `state/factory.json`), so every app
-stamped from mold_v1 carries it unless a brief says `brand: <pack>`, `no branding`, or overrides a
-field. Its mark and colour are placeholders: drop in the real asset and hex and nothing else changes.
+A **product** owns a pack (`brand_pack` in `state/products.json`), and an app stamped for that product
+inherits it. mold_v1 carries two products, the same codebase under two identities:
+
+| Product | Pack | State |
+|---|---|---|
+| `delivered` | `delivered/` | The mold's own identity, pinned so a build is byte-identical to the unbranded mold |
+| `dover` | `dover/` | Name is right; colour, mark, tagline and description are placeholders |
+
+A brief picks one with `product: dover`, and may still override with `brand: <pack>`,
+`brand color: #hex`, or opt out with `no branding`. A mold with only one product needs no answer.
+
+`onfinance/` predates the split and remains as a worked example of a third identity.
 
 ## What a brand reaches
 
@@ -28,6 +37,9 @@ field. Its mark and colour are placeholders: drop in the real asset and hex and 
 | Onboarding copy | `app/onboard/page.tsx` |
 | Every outgoing email | `lib/platform-notify.ts` |
 | Inbox copy | `app/_components/ops/inbox-panel.tsx` |
+
+`tokens` in a pack pins individual values outright (`{"light": {"ring": "..."}, "dark": {...}}`), which
+is how `delivered/` reproduces the three tokens the mold hand-tuned away from a plain ramp.
 
 The palette is derived from one colour: `primary`, `accent` and `ring` carry the brand, neutrals keep
 the mold's lightness ramp and take a trace of the brand hue (`neutral_chroma`, 0 for pure grey). Light
