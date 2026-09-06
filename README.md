@@ -16,6 +16,16 @@ Fable + sol --service--> [dm.md, browser(o/o), web search(o/o), primary_context,
 - `infra/` — deployment targets: `vercel/` (app + eve functions), `vm/` (DigitalOcean droplet)
 - `.claude/`, `.agents/` — agents, skills, scripts, workflows, sandboxes for Claude Code and other agent runtimes
 
+## Describe → deploy
+
+```
+python3 .claude/scripts/intake.py briefs/<app>.md --app <app> [--ask]   # brief -> state, asks only unresolved questions
+python3 .claude/scripts/provision.py <app>                              # check secrets by name, scaffold target
+python3 .claude/scripts/provision.py <app> --deploy                     # deploy to vercel or the VM
+```
+
+Subagents `intake` and `provisioner` run the same two scripts and ask the user through the harness. Questions and their resolution rules: `docs/INTAKE.md`.
+
 ## Tasking
 
 Every mold has a product (`state/products.json`) and a backlog (`state/tasks/<mold_id>.jsonl`). The operator works the backlog; closing tasks advances the product through defined → stamped → lanes_passing → deployed → released.
