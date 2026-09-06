@@ -37,7 +37,27 @@
         "vm"
       ],
       "vercel_project": "claudecode-web",
-      "brand_pack": "delivered"
+      "brand": {
+        "product_name": "Delivered",
+        "tagline": "The operations console for forward-deployed teams.",
+        "description": "Delivered \u2014 the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
+        "brand_color": "oklch(0.19 0 0)",
+        "neutral_chroma": 0,
+        "radius": "0.625rem",
+        "icon_bg": "#0A0A0A",
+        "icon_fg": "#FAFAFA",
+        "tokens": {
+          "light": {
+            "ring": "oklch(0.708 0 0)"
+          },
+          "dark": {
+            "primary": "oklch(0.922 0 0)",
+            "accent": "oklch(0.269 0 0)",
+            "ring": "oklch(0.556 0 0)"
+          }
+        },
+        "icon_svg": "<svg width=\"32\" height=\"32\" viewBox=\"0 0 32 32\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n  <rect width=\"32\" height=\"32\" rx=\"8\" fill=\"#0A0A0A\"/>\n  <path d=\"M9 16.5L14 21.5L23.5 11\" stroke=\"#FAFAFA\" stroke-width=\"3.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n</svg>"
+      }
     },
     {
       "product_id": "dover",
@@ -72,7 +92,17 @@
         "vm"
       ],
       "vercel_project": "dover",
-      "brand_pack": "dover"
+      "brand": {
+        "product_name": "Dover",
+        "tagline": "TODO: Dover's one-line positioning, shown under the sign-in wordmark.",
+        "description": "TODO: Dover \u2014 one sentence for the browser tab and link previews.",
+        "brand_color": "#1F6F5C",
+        "neutral_chroma": 0.006,
+        "radius": "0.625rem",
+        "icon_bg": "#1F6F5C",
+        "icon_fg": "#FFFFFF",
+        "icon_svg": "<svg width=\"32\" height=\"32\" viewBox=\"0 0 32 32\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n  <rect width=\"32\" height=\"32\" rx=\"8\" fill=\"#1F6F5C\"/>\n  <path d=\"M11 22V10H15.5C19.0899 10 22 12.6863 22 16C22 19.3137 19.0899 22 15.5 22H11Z\" stroke=\"#FFFFFF\" stroke-width=\"3\" stroke-linejoin=\"round\"/>\n</svg>"
+      }
     },
     {
       "product_id": "claudecode_web_governed",

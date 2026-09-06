@@ -29,7 +29,7 @@
       "name": "OnFinance",
       "display_name": "OnFinance",
       "blob_prefix": "orgs/onfinance",
-      "logo_url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjMEEwQTBBIi8+CiAgPHBhdGggZD0iTTkgMTYuNUwxNCAyMS41TDIzLjUgMTEiIHN0cm9rZT0iI0ZBRkFGQSIgc3Ryb2tlLXdpZHRoPSIzLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K"
+      "logo_url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjMEEwQTBBIi8+CiAgPHBhdGggZD0iTTkgMTYuNUwxNCAyMS41TDIzLjUgMTEiIHN0cm9rZT0iI0ZBRkFGQSIgc3Ryb2tlLXdpZHRoPSIzLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4="
     },
     "fde_self": {
       "email": "priyesh@onfinance.in",
@@ -293,7 +293,25 @@
       "definitions": []
     },
     "branding": {
-      "pack": "delivered"
+      "product_name": "Delivered",
+      "tagline": "The operations console for forward-deployed teams.",
+      "description": "Delivered \u2014 the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
+      "brand_color": "oklch(0.19 0 0)",
+      "neutral_chroma": 0,
+      "radius": "0.625rem",
+      "icon_bg": "#0A0A0A",
+      "icon_fg": "#FAFAFA",
+      "tokens": {
+        "light": {
+          "ring": "oklch(0.708 0 0)"
+        },
+        "dark": {
+          "primary": "oklch(0.922 0 0)",
+          "accent": "oklch(0.269 0 0)",
+          "ring": "oklch(0.556 0 0)"
+        }
+      },
+      "icon_svg": "<svg width=\"32\" height=\"32\" viewBox=\"0 0 32 32\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n  <rect width=\"32\" height=\"32\" rx=\"8\" fill=\"#0A0A0A\"/>\n  <path d=\"M9 16.5L14 21.5L23.5 11\" stroke=\"#FAFAFA\" stroke-width=\"3.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n</svg>"
     }
   },
   "testing": {
