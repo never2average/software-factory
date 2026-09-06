@@ -8,7 +8,7 @@
   make sure the target scaffolding exists, print what is missing. Never deploys.
 --deploy: run the deploy for the target. Refuses if any secret is missing.
 """
-import json, os, re, sys, subprocess, datetime, shutil
+import json, os, re, sys, subprocess, datetime, shutil, urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
 def load(p): return json.load(open(p))
@@ -129,15 +129,21 @@ def bootstrap_database(mold_dir, admin_url, projects):
     Returns the app_rw URL, which becomes DATABASE_URL on every project."""
     envsup = os.path.join(mold_dir, ".env.supabase"); envloc = os.path.join(mold_dir, ".env.local")
     saved = open(envloc).read() if os.path.exists(envloc) else None
+    # Reuse the existing app_rw password when one is already deployed. The bootstrap rotates on every
+    # run, and a rotation invalidates every deployment built against the old value until it is rebuilt.
+    env = dict(os.environ)
+    cur = pull_env(mold_dir, projects[0]).get("DATABASE_URL", "")
+    m0 = re.match(r"postgres(?:ql)?://app_rw[^:]*:([^@]+)@", cur)
+    if m0: env["APP_RW_PASSWORD"] = urllib.parse.unquote(m0.group(1)); print("  reusing the deployed app_rw password (no rotation)")
     try:
         with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={admin_url}\n")
         os.chmod(envsup, 0o600)
-        r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
         if r.returncode and "Schema INCOMPLETE" in (r.stdout + r.stderr):
             print("  schema incomplete; drizzle-kit push then bootstrap again")
             pr = subprocess.run("npx drizzle-kit push --force", shell=True, cwd=mold_dir, env=dict(os.environ, DATABASE_URL=admin_url), capture_output=True, text=True)
             if pr.returncode: sys.exit("drizzle-kit push failed:\n" + (pr.stdout + pr.stderr).strip()[-1200:])
-            r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, capture_output=True, text=True)
+            r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
         out = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and not l.lstrip().startswith("at ")]
         for l in out:
             if l.startswith(("✓", "✗", "app_rw", "policies", "tables app_rw")): print("  " + l[:150])
