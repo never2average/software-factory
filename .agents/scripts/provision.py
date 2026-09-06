@@ -41,7 +41,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra):
         infra.setdefault("datastores", {})["supabase_resource"] = app_id
     if blob.get("provider") == "vercel_blob" and "BLOB_READ_WRITE_TOKEN" not in present:
         print(f"creating Vercel Blob store '{app_id}' ...")
-        r = subprocess.run(f"vercel blob create-store {app_id.replace("_","-")}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        r = subprocess.run(f"vercel blob create-store {app_id.replace("_","-")} --access private --yes", shell=True, cwd=mold_dir, capture_output=True, text=True)
         if r.returncode and "already" not in (r.stdout + r.stderr): print("  " + (r.stdout + r.stderr).strip().splitlines()[-1])
         infra.setdefault("datastores", {})["blob_store"] = app_id
     present = vercel_env_names(mold_dir)
@@ -62,6 +62,70 @@ def provision_datastores(app_id, ds, mold_dir, present, infra):
         os.remove(tmp)
         if val: _add_env("DATABASE_URL", val, mold_dir); print("derived DATABASE_URL from SUPABASE_POSTGRES_URL")
     return vercel_env_names(mold_dir)
+
+DEPLOY_TIME = ["TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT_PUBLIC_EVE_API_URL", "MODEL_PROVIDER"]
+API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CRON_SECRET", "DATABASE_URL",
+           "MODEL_PROVIDER", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "EXA_API_KEY", "BROWSERBASE_API_KEY",
+           "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID"]
+WORKFLOW_ENV = ["DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN"]
+
+def pull_env(mold_dir):
+    tmp = os.path.join(mold_dir, ".env.provision")
+    subprocess.run(f"vercel env pull --yes --environment=production {tmp}", shell=True, cwd=mold_dir, capture_output=True)
+    vals = {}
+    for l in open(tmp):
+        if "=" in l and not l.startswith("#"):
+            k, v = l.split("=", 1); vals[k.strip()] = v.strip().strip('"')
+    os.remove(tmp); return vals
+
+def link(project, mold_dir): sh(f"vercel link --yes --project {project} >/dev/null 2>&1", cwd=mold_dir)
+
+def sync_env(names, vals, project, mold_dir):
+    link(project, mold_dir); have = vercel_env_names(mold_dir); n = 0
+    for k in names:
+        if k in vals and vals[k] and k not in have: _add_env(k, vals[k], mold_dir); n += 1
+    print(f"  {project}: synced {n} env var(s)")
+
+def run_migrations(mold_dir, vals):
+    url = vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL")
+    if not url: sys.exit("no database url to migrate")
+    env = dict(os.environ, DATABASE_URL=url)
+    r = subprocess.run("node scripts/migrate-production.mjs", shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
+    print("  migrations: " + ((r.stdout + r.stderr).strip().splitlines() or ["ok"])[-1])
+    if r.returncode: sys.exit("migration failed")
+
+def deploy_vercel(app_id, app, infra, ds, mold_dir):
+    proj = infra["vercel"]["project"]; shared = ds.get("postgres", {}).get("scope") == "shared_with_live"
+    link(proj, mold_dir); have = vercel_env_names(mold_dir)
+    # config values (not secrets) derived from state
+    cfg = {"MODEL_PROVIDER": app["model"]["provider"], "ENABLE_WEB_SEARCH": str(app["capabilities"]["web_search"]).lower(), "ENABLE_BROWSER": str(app["capabilities"]["browser"]).lower()}
+    for k, v in cfg.items():
+        if k not in have: _add_env(k, v, mold_dir)
+    if not shared:
+        if "TASK_WORKFLOW_SERVICE_TOKEN" not in have:
+            _add_env("TASK_WORKFLOW_SERVICE_TOKEN", subprocess.check_output("openssl rand -hex 32", shell=True, text=True).strip(), mold_dir); print("minted TASK_WORKFLOW_SERVICE_TOKEN")
+        vals = pull_env(mold_dir)
+        print("running migrations on the fresh database"); run_migrations(mold_dir, vals)
+        # workflow service
+        print("deploying workflow service"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir)
+        wf_url = sh("vercel deploy --prod --yes --local-config vercel.eve.json 2>/dev/null | tail -1", cwd=mold_dir).strip()
+        infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
+        link(proj, mold_dir)
+        if "TASK_WORKFLOW_SERVICE_URL" not in vercel_env_names(mold_dir): _add_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir)
+        vals = pull_env(mold_dir)
+        # eve api
+        print("deploying eve api"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir)
+        api_url = sh("vercel deploy --prod --yes --local-config vercel.api.json 2>/dev/null | tail -1", cwd=mold_dir).strip()
+        infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
+        link(proj, mold_dir)
+        if "NEXT_PUBLIC_EVE_API_URL" not in vercel_env_names(mold_dir): _add_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir)
+        cfg_main = "vercel.json"
+    else:
+        v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
+        cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
+    print("deploying web app")
+    url = sh(f"vercel deploy --prod --yes --local-config {cfg_main} 2>/dev/null | tail -1", cwd=mold_dir).strip()
+    infra["vercel"]["production_url"] = url; print(f"  {url}")
 
 def ensure_vm_scaffold(app_id, mold_dir, secrets):
     d = os.path.join(ROOT, "infra/vm/apps", app_id); os.makedirs(d, exist_ok=True)
@@ -118,31 +182,24 @@ def main(a):
         if os.path.exists(envf):
             present = {l.split("=")[0].strip() for l in open(envf) if "=" in l and not l.startswith("#") and l.split("=",1)[1].strip()}
         print(f"vm scaffold: {os.path.relpath(d, ROOT)}/ (Dockerfile, docker-compose.yml, .env.example)")
-    missing = [s for s in secrets if s not in present]
-    print(f"secrets present: {len(secrets)-len(missing)}/{len(secrets)}")
-    if missing:
-        print("missing (set these by name in the store, values never go in the repo):")
-        for m in missing: print(f"  {m}")
+    user_s = infra.get("secrets_user", secrets); derived_s = infra.get("secrets_derived", [])
+    missing_user = [x for x in user_s if x not in present]
+    missing_derived = [x for x in derived_s if x not in present and x not in DEPLOY_TIME]
+    print(f"secrets present: {len([x for x in secrets if x in present])}/{len(secrets)}")
+    if missing_user:
+        print("YOU must set these (vercel env add NAME production, in the mold dir):")
+        for m in missing_user: print(f"  {m}")
+    if missing_derived:
+        print("provisioner still has to create:"); [print(f"  {m}") for m in missing_derived]
+    pending_deploy = [x for x in DEPLOY_TIME if x not in present]
+    if pending_deploy: print(f"set during --deploy: {', '.join(pending_deploy)}")
     if not deploy:
-        print("check only; re-run with --deploy once nothing is missing"); sys.exit(1 if missing else 0)
-    if missing: sys.exit("refusing to deploy with missing secrets")
+        print("check only; re-run with --deploy once nothing is missing"); sys.exit(1 if (missing_user or missing_derived) else 0)
+    if missing_user or missing_derived: sys.exit("refusing to deploy with missing secrets")
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
     ds = load(os.path.join(adir, "datastores.json"))
-    shared = ds.get("postgres", {}).get("scope") == "shared_with_live"
     if target == "vercel":
-        cfg_main = "vercel.json"
-        if shared:
-            # a second instance on the live database must not run the live cron jobs a second time
-            v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
-            cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v)
-            infra.setdefault("vercel", {})["crons"] = "stripped (shared_with_live)"
-        url = sh(f"vercel deploy --prod --yes --local-config {cfg_main} 2>/dev/null | tail -1", cwd=mold_dir).strip()
-        infra.setdefault("vercel", {})["production_url"] = url
-        for cfg, suffix in (() if shared else (("vercel.api.json", "api"), ("vercel.eve.json", "workflow"))):
-            p = f"{proj}-{suffix}"
-            sh(f"vercel link --yes --project {p} >/dev/null 2>&1", cwd=mold_dir)
-            sh(f"vercel deploy --prod --yes --local-config {cfg} 2>/dev/null | tail -1", cwd=mold_dir)
-        sh(f"vercel link --yes --project {proj} >/dev/null 2>&1", cwd=mold_dir)
+        deploy_vercel(app_id, app, infra, ds, mold_dir)
     else:
         d = os.path.join(ROOT, "infra/vm/apps", app_id)
         out = sh("docker compose up -d --build 2>&1 | tail -3", cwd=d)

@@ -64,9 +64,13 @@ def coerce(v):
 def build_state(app_id, mold_id, ans, factory, brief_path):
     d = factory.get("defaults", {}); mold = next(m for m in factory["molds"] if m["mold_id"]==mold_id)
     prod = next(p for p in load(os.path.join(ST,"products.json"))["products"] if p["mold_id"]==mold_id)
-    env_names = []
-    f = os.path.join(ROOT, "infra/vercel/env-names.fde-agent.txt")
-    if os.path.exists(f): env_names = [l.strip() for l in open(f) if l.strip()]
+    # Secrets the app needs, by name. "user" = only the user can supply; "derived" = provision.py creates/sets them.
+    user_secrets = ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "RESEND_API_KEY", "PLATFORM_NOTIFY_FROM"]
+    if ans["web_search"]: user_secrets.append("EXA_API_KEY")
+    if ans["browser"]: user_secrets.append("BROWSERBASE_API_KEY")
+    derived_secrets = ["DATABASE_URL", "SUPABASE_URL", "SUPABASE_POSTGRES_URL_NON_POOLING", "BLOB_READ_WRITE_TOKEN", "CRON_SECRET", "OPS_SECRETS_KEY",
+                       "AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY", "MODEL_PROVIDER", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT_PUBLIC_EVE_API_URL"]
+    optional_secrets = ["GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"]
     app = {"$schema":"../app_id/application.schema.json","app_id":app_id,"mold_id":mold_id,"mold_commit":mold.get("source",{}).get("commit",""),
       "status":"planned","brief":os.path.relpath(brief_path, ROOT),"product_id":prod["product_id"],
       "model":{"provider":"cloudflare" if ans["inference_provider"]=="cloudflare_workers_ai" else "gateway","model":d.get("inference_model","@cf/zai-org/glm-5.2"),"context_window":262144},
@@ -77,7 +81,7 @@ def build_state(app_id, mold_id, ans, factory, brief_path):
     infra = {"$schema":"../app_id/infrastructure.schema.json","target":ans["deploy_target"],"secret_store":ans["secret_store"],
       "inference":{"provider":ans["inference_provider"],"account_ref":ans["inference_account"]},
       "sandbox":{"provider":d.get("sandbox_provider","vercel_sandbox"),"prewarm":False},
-      "secrets":sorted(set(env_names + [ans["postgres_ref"], ans["inference_account"], "CLOUDFLARE_API_TOKEN", "BLOB_READ_WRITE_TOKEN"]))}
+      "secrets":sorted(set(user_secrets + derived_secrets)), "secrets_user":user_secrets, "secrets_derived":derived_secrets, "secrets_optional":optional_secrets}
     if ans["deploy_target"]=="vercel":
         infra["vercel"]={"team":"f20170061g-3183s-projects","project":prod.get("vercel_project", app_id),
           "functions":{"api":"vercel.api.json","eve":"vercel.eve.json"}}
