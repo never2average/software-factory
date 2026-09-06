@@ -32,7 +32,8 @@
       "deploy_targets": [
         "vercel",
         "vm"
-      ]
+      ],
+      "vercel_project": "redacted"
     },
     {
       "product_id": "redacted_governed",
