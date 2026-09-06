@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "reverted",
+  "status": "stamping",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "claudecode_web",
   "model": {
@@ -968,7 +968,9 @@
       "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-regression-2026-09-06.md"
     },
     "functional": {
-      "status": "pending"
+      "status": "fail",
+      "run_at": "2026-09-06T12:30:00Z",
+      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-06.md"
     },
     "accessibility": {
       "status": "pending"
