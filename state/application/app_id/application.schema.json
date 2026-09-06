@@ -947,12 +947,8 @@
         },
         "branding": {
           "type": "object",
-          "description": "Theme and logo pack for this application. Applied by branding.py to a per-app copy of the mold at build time (molds/<mold>/branding/rules.json says where); the mold snapshot is never edited. Absent means the mold's own identity.",
+          "description": "This application's visual identity, complete and self-contained: no pointer to shared files, so what this app looks like is readable here and cannot change under it. Copied from the product's `brand` at stamp time. branding.py applies it to a per-app copy of the mold at build time; molds/<mold_id>/branding/rules.json says which files in that mold carry each surface.",
           "properties": {
-            "pack": {
-              "type": "string",
-              "description": "Directory under molds/<mold_id>/branding/ holding brand.json and mark.svg; fields here override the pack"
-            },
             "product_name": {
               "type": "string",
               "description": "Replaces the mold's product name in the browser tab, sign-in wordmark and footer, onboarding copy and every outgoing email"
@@ -1003,8 +999,15 @@
                   }
                 }
               }
+            },
+            "icon_svg": {
+              "type": "string",
+              "description": "32x32 SVG source used for the app icon, favicon and sign-in mark"
             }
-          }
+          },
+          "required": [
+            "product_name"
+          ]
         }
       },
       "description": "Configuration for each service-surface item; keys match state/factory.json service_surface names"

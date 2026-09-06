@@ -85,8 +85,7 @@
   },
   "applications": [
     "redacted",
-    "redacted",
-    "dover_pilot"
+    "redacted"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",

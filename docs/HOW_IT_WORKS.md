@@ -15,8 +15,8 @@ brief (5 lines) ──intake──▶ state/application/<app_id>/ ──provisio
 2. **State** (`state/`). JSON that describes the factory and every application, validated by schemas.
    - `factory.json`: operator, the six-item service surface, the molds, the service/revert loop, and `defaults` (the answers that apply to every app).
    - `products.json`: products with a stage and the gates for each stage. Several products may share a mold — the same
-     codebase under different brands and packaging — so a brief says which with `product: <id>`, and the app inherits that
-     product's `brand_pack`. mold_v1 carries `delivered` and `dover`.
+     codebase under different brands and packaging — so a brief says which with `product: <id>`, and the product's `brand` is
+     copied into the app. mold_v1 carries `delivered` and `dover`.
    - `tasks/<mold_id>.jsonl`: the backlog. Closing tasks advances products.
    - `application/<app_id>/`: four files per stamped app: application, infrastructure, datastores, datainfra. Secrets appear by name only.
 
@@ -47,9 +47,9 @@ If the database is shared with live, it deploys web only with crons stripped so 
 
 **Branding.** An app carrying `surface.branding` is not built from the mold directly: `branding.py <app> prepare` copies the
 mold source into `build/<app_id>/` and rewrites the product name, icon, sign-in mark and palette there, and `provision.py
---deploy` builds that copy. The snapshot is never edited, and each app gets its own build directory. Packs and the rules that
-pin where each string lives are under `molds/<mold_id>/branding/`; a rule that stops matching refuses the deploy rather than
-shipping half-branded.
+--deploy` builds that copy. The snapshot is never edited, and each app gets its own build directory. The brand lives in the app's own state, copied from its product at stamp time, so nothing points at a shared file and an app
+cannot change under it; `molds/<mold_id>/branding/rules.json` pins only WHERE each surface lives in that mold, and a rule that
+stops matching refuses the deploy rather than shipping half-branded.
 
 **Lanes.** Five test lanes per mold: functional, context, load, accessibility, responsiveness. Results are written per lane into `application.json`. Any failure sets the app to `reverted` and files a task, returning control to the operator. Accessibility and responsiveness harnesses do not exist yet (tasks mold_v1-007/008).
 
