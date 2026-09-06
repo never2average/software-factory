@@ -49,6 +49,11 @@ def parse_brief(text):
     if m: h["corpus"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
     m = re.search(r"multiplayer(?: context)?[:\s]+([^\n.]+)", t)
     if m: h["processes"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
+    m = re.search(r"\b(?:brand|branding|theme|logo pack):\s*([a-z0-9_-]+)", t)
+    if m: h["brand_pack"] = m.group(1)
+    if re.search(r"\bno branding\b|\bunbranded\b|\bmold branding\b|\bdefault branding\b", t): h["brand_pack"] = ""
+    m = re.search(r"\bbrand colou?r:\s*(#[0-9a-fA-F]{3,6})", text, re.I)
+    if m: h["brand_color"] = m.group(1)
     m = re.search(r"(?:workflows?)[:\s]+(all|none|library)", t)
     if m: h["library"] = "all" if m.group(1) in ("all", "library") else "none"
     return h
@@ -174,6 +179,11 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         "collaboration": {"chat_threads": True, "presence": True, "comments": True, "inbox": True}},
       "custom_workflow_builder": {"library": {"install": ans["library"]}, "scripts": [], "definitions": []},
     }
+    pack = hints.get("brand_pack", d.get("brand_pack", ""))
+    if pack:
+        surface["branding"] = {"pack": pack}
+        if hints.get("brand_color"): surface["branding"]["brand_color"] = hints["brand_color"]
+
     if hints.get("account_noun") and hints["account_noun"] != "customer":
         surface["primary_context"]["entity_vocabulary"]["note"] = "mold_v1 cannot rename accounts; recorded for the parity audit"
     app = {"$schema":"../app_id/application.schema.json","app_id":app_id,"mold_id":mold_id,"mold_commit":mold.get("source",{}).get("commit",""),
@@ -187,11 +197,18 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     if hints.get("clone_of"): app["clone_of"] = dict(hints["clone_of"], snapshot_date=TODAY, regression={"status": "pending"})
     ex_app = existing.get("application", {})  # re-running intake never resets progress already made
     if ex_app.get("clone_of", {}).get("extracted_at"):  # the surface came from a live deployment; the brief cannot know better
-        app["workspace"], app["surface"] = ex_app["workspace"], ex_app["surface"]
+        brand = surface.get("branding")
+        app["workspace"], app["surface"] = ex_app["workspace"], dict(ex_app["surface"])
+        if brand: app["surface"]["branding"] = brand
+        else: app["surface"].pop("branding", None)
         app["clone_of"] = ex_app["clone_of"]                      # keep extracted_at, live_counts, live_evidence, the regression result
-        ex_di = existing.get("datainfra", {})
-        for k in ("platforms", "deployments", "pipelines", "agents", "dataroom"):
-            if ex_di.get(k): di[k] = ex_di[k]
+    # The workspace tile inside the app is a runtime value on the orgs row, not a build-time one, so
+    # seed it from the same mark the build uses — but never over one the source deployment already has.
+    # CSP allows data: images (proxy.ts img-src).
+    mark = os.path.join(ROOT, "molds", mold_id, "branding", pack, "mark.svg") if pack else ""
+    if mark and os.path.exists(mark) and not app["workspace"]["org"].get("logo_url"):
+        import base64
+        app["workspace"]["org"]["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(open(mark, "rb").read()).decode()
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
     if "clone_of" in ex_app and "clone_of" not in app: app["clone_of"] = ex_app["clone_of"]
@@ -230,6 +247,10 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
                   "backend":"vercel-blob" if ans["blob_provider"]=="vercel_blob" else "local","blob_prefix":f"orgs/{org_id}","platform_version_ids":["v1"],
                   "seed":{"source":"live_snapshot" if hints.get("clone_of") else "none"}},
       "platforms":[],"deployments":[],"syncs":[{"source":"manual_entry"}],"pipelines":[],"agents":[],"connectors":[]}
+    if ex_app.get("clone_of", {}).get("extracted_at"):    # what clone.py extract read from the live deployment
+        ex_di = existing.get("datainfra", {})
+        for k in ("platforms", "deployments", "pipelines", "agents", "dataroom"):
+            if ex_di.get(k): di[k] = ex_di[k]
     return app, infra, ds, di
 
 def main(a):
