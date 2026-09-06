@@ -41,7 +41,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra):
         infra.setdefault("datastores", {})["supabase_resource"] = app_id
     if blob.get("provider") == "vercel_blob" and "BLOB_READ_WRITE_TOKEN" not in present:
         print(f"creating Vercel Blob store '{app_id}' ...")
-        r = subprocess.run(f"vercel blob store add {app_id}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        r = subprocess.run(f"vercel blob create-store {app_id.replace("_","-")}", shell=True, cwd=mold_dir, capture_output=True, text=True)
         if r.returncode and "already" not in (r.stdout + r.stderr): print("  " + (r.stdout + r.stderr).strip().splitlines()[-1])
         infra.setdefault("datastores", {})["blob_store"] = app_id
     present = vercel_env_names(mold_dir)
