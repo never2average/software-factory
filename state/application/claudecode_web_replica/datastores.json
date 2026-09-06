@@ -16,7 +16,7 @@
   },
   "blob": {
     "provider": "vercel_blob",
-    "root_prefix": "orgs/onfinance",
+    "root_prefix": "orgs/org-onfinance-ai",
     "token_ref": "BLOB_READ_WRITE_TOKEN",
     "snapshot": {
       "source": "live_fde_agent",

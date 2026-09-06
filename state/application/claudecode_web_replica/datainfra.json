@@ -14,7 +14,7 @@
     ],
     "system_of_record": "postgres",
     "backend": "vercel-blob",
-    "blob_prefix": "orgs/onfinance",
+    "blob_prefix": "orgs/org-onfinance-ai",
     "platform_version_ids": [
       "v1"
     ],

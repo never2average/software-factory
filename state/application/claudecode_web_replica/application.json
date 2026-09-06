@@ -49,10 +49,10 @@
     },
     "primary_context": {
       "workspace": {
-        "org_id": "onfinance",
-        "name": "OnFinance",
-        "display_name": "OnFinance",
-        "blob_prefix": "orgs/onfinance"
+        "org_id": "org-onfinance-ai",
+        "name": "Onfinance AI",
+        "display_name": "Onfinance AI",
+        "blob_prefix": "orgs/org-onfinance-ai"
       },
       "entity_vocabulary": {
         "account_noun": "customer"
@@ -122,6 +122,7 @@
     "snapshot_date": "2026-09-06",
     "regression": {
       "status": "pending"
-    }
+    },
+    "note": "live also has org-research-os and org-retell-ai; the pg_dump snapshot carries all three, extract/regress cover org-onfinance-ai"
   }
 }
