@@ -260,6 +260,19 @@
               "format": "date-time"
             }
           }
+        },
+        "extracted_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "live_counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
         }
       },
       "required": [
@@ -495,7 +508,8 @@
                     "type": "string"
                   },
                   "value": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Omitted when extracted from a live app; values travel with the database snapshot, not with state"
                   },
                   "sensitivity": {
                     "type": "string",
@@ -509,8 +523,7 @@
                 },
                 "required": [
                   "scope",
-                  "key",
-                  "value"
+                  "key"
                 ]
               }
             }

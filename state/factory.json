@@ -84,6 +84,7 @@
     ]
   },
   "applications": [
+    "redacted",
     "redacted"
   ],
   "products": "state/products.json",
