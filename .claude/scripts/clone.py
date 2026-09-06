@@ -6,6 +6,7 @@
   clone.py <app_id> snapshot [--apply]   pg_dump live -> restore into the app's fresh database; copy the blob tree
   clone.py <app_id> configure            apply application.surface to the app's database (after deploy + migrations)
   clone.py <app_id> regress              diff app vs live (tables, surface rows, blob tree) -> report + clone_of.regression
+  clone.py <app_id> blobls               top-level folder counts of the live data room (whole store), to check the prefix
   clone.py <app_id> run                  all of the above in order, plus provision check + deploy, stopping at the first failure
 
 Secrets: every step pulls env values from Vercel at run time into a temp file inside the mold
@@ -59,7 +60,7 @@ def main(a):
     app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
     ds = load(os.path.join(adir, "datastores.json")); di = load(os.path.join(adir, "datainfra.json"))
     mold = os.path.join(ROOT, "molds", app["mold_id"], "codebase"); proj = infra.get("vercel", {}).get("project")
-    org = app["workspace"]["org"]["org_id"]; prefix = di["dataroom"].get("blob_prefix", f"orgs/{org}")
+    org = app["workspace"]["org"]["org_id"]; prefix = ""   # whole store: the mold keeps the data room under dataroom/ and org subtrees under dataroom/orgs/<org>/
     clone = app.get("clone_of")
     if step != "configure" and not clone: sys.exit(f"{app_id} has no clone_of; only `configure` applies to a non-clone app")
     if step == "plan":
@@ -137,7 +138,7 @@ def main(a):
     if step == "configure":
         mine = pull_env(proj, mold, proj); dst = pg_url(mine)
         if not dst: sys.exit("no database url for the app; run provision.py first")
-        out = node("apply", dict(base, DATABASE_URL=dst), mold, stdin=json.dumps({"surface": app["surface"]}))
+        out = node("apply", dict(base, DATABASE_URL=dst), mold, stdin=json.dumps({"workspace": app["workspace"], "surface": app["surface"]}))
         bad = {k: v for k, v in out.items() if isinstance(v, str) and v.startswith("ERR")}
         print("applied: " + ", ".join(f"{k}={v}" for k, v in out.items()))
         infra["configured_at"] = NOW; save(os.path.join(adir, "infrastructure.json"), infra)
@@ -163,6 +164,11 @@ def main(a):
         if status == "fail": app["status"] = "reverted"; app["revert"] = {"reason": "regression against live failed", "lane": "context", "at": NOW}
         save(os.path.join(adir, "application.json"), app)
         print(f"{status}: {os.path.relpath(rpath, ROOT)}"); sys.exit(0 if rep["ok"] else 1)
+    if step == "blobls":
+        tok = live_blob_token(mold, proj, ""); sub = next((x for x in a[2:] if not x.startswith("--")), "")
+        if not tok: return
+        r = subprocess.run(["node", os.path.join(ROOT, ".claude/scripts/lib/surface.mjs"), "blobtree"], cwd=mold, env=dict(base, BLOB_READ_WRITE_TOKEN=tok, BLOB_PREFIX=sub), capture_output=True, text=True)
+        print(r.stdout.strip() or r.stderr.strip()); return
     if step == "run":
         me = [sys.executable, os.path.abspath(__file__), app_id]; prov = [sys.executable, os.path.join(ROOT, ".claude/scripts/provision.py"), app_id]
         steps = [("extract the live surface", me + ["extract"]), ("create datastores and copy secrets", prov), ("deploy", prov + ["--deploy"]),
