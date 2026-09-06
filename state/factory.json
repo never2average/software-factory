@@ -105,6 +105,10 @@
       "memory_gb": 8,
       "disk_gb": 154,
       "os": "ubuntu-24.04"
-    }
+    },
+    "vercel_team": "your-vercel-team",
+    "postgres_scope": "fresh",
+    "workspace_name": "OnFinance",
+    "fde_email": "operator@example.com"
   }
 }

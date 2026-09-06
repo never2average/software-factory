@@ -85,18 +85,28 @@ def cmd_close(a):
                     p["stage"]=t["advances_stage"]; json.dump(P, open(os.path.join(ST,"products.json"),"w"), indent=2)
                     print(f"{p['product_id']} -> {p['stage']}")
                 else: print(f"stage {t['advances_stage']} waits on {', '.join(x['task_id'] for x in remaining)}")
+TYPES = {"string": str, "boolean": bool, "integer": int, "number": (int, float), "array": list, "object": dict}
 def _check(obj, schema, where):
+    """Recursive subset of JSON Schema: type, required, properties, additionalProperties, items, enum, const, pattern."""
     errs = []
-    for r in schema.get("required", []):
-        if r not in obj: errs.append(f"{where}: missing {r}")
-    for k, v in obj.items():
-        ps = schema.get("properties", {}).get(k)
-        if not ps: continue
-        if "enum" in ps and v not in ps["enum"]: errs.append(f"{where}.{k}: {v!r} not in {ps['enum']}")
-        if "pattern" in ps and isinstance(v,str) and not re.match(ps["pattern"], v): errs.append(f"{where}.{k}: {v!r} fails pattern")
-        if ps.get("type")=="array" and "enum" in ps.get("items",{}):
-            for x in v:
-                if x not in ps["items"]["enum"]: errs.append(f"{where}.{k}: {x!r} not in enum")
+    t = schema.get("type")
+    if t and t in TYPES:
+        ok = isinstance(obj, TYPES[t]) and not (t in ("integer", "number") and isinstance(obj, bool))
+        if not ok: return [f"{where}: expected {t}, got {type(obj).__name__}"]
+    if "enum" in schema and obj not in schema["enum"]: errs.append(f"{where}: {obj!r} not in {schema['enum']}")
+    if "const" in schema and obj != schema["const"]: errs.append(f"{where}: {obj!r} != {schema['const']!r}")
+    if "pattern" in schema and isinstance(obj, str) and not re.match(schema["pattern"], obj): errs.append(f"{where}: {obj!r} fails pattern")
+    if isinstance(obj, dict):
+        for r in schema.get("required", []):
+            if r not in obj: errs.append(f"{where}: missing {r}")
+        props = schema.get("properties", {})
+        for k, v in obj.items():
+            if k == "$schema": continue
+            if k in props: errs += _check(v, props[k], f"{where}.{k}")
+            elif schema.get("additionalProperties") is False: errs.append(f"{where}.{k}: not allowed")
+            elif isinstance(schema.get("additionalProperties"), dict): errs += _check(v, schema["additionalProperties"], f"{where}.{k}")
+    if isinstance(obj, list) and isinstance(schema.get("items"), dict):
+        for i, x in enumerate(obj): errs += _check(x, schema["items"], f"{where}[{i}]")
     return errs
 def cmd_validate(a):
     errs = []

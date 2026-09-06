@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "application.schema.json",
   "title": "Application",
-  "description": "One application stamped from a mold.",
+  "description": "One application stamped from a mold. `surface` holds the operator-serviced configuration for each of the six service-surface items; every field maps to a table, env flag or fde script in the mold (see docs/STATE.md).",
   "type": "object",
   "required": [
     "app_id",
@@ -24,6 +24,7 @@
       "enum": [
         "planned",
         "stamping",
+        "stamped",
         "testing",
         "serviceable",
         "reverted",
@@ -57,13 +58,21 @@
       "properties": {
         "web_search": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "ENABLE_WEB_SEARCH, build-time"
         },
         "browser": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "ENABLE_BROWSER, build-time"
+        },
+        "multi_tenant": {
+          "type": "boolean",
+          "default": true,
+          "description": "OPS_MULTI_TENANT, runtime; false = single workspace"
         }
-      }
+      },
+      "description": "Build-time and runtime toggles the mold recognises"
     },
     "service_surface": {
       "type": "array",
@@ -212,6 +221,756 @@
           "format": "date-time"
         }
       }
+    },
+    "clone_of": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "live_deployment",
+            "application"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "description": "live: the Vercel project or URL of the source; application: an app_id"
+        },
+        "snapshot_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "regression": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "pass",
+                "fail",
+                "skipped"
+              ]
+            },
+            "report": {
+              "type": "string"
+            },
+            "run_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "description": "Set when this app is meant to replicate an existing deployment and be regression-tested against it"
+    },
+    "surface": {
+      "type": "object",
+      "properties": {
+        "dm.md": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "top_level": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Customers",
+                  "Platform",
+                  "Deployments",
+                  "Solutions",
+                  "Implementation",
+                  "Tickets",
+                  "People",
+                  "Uploads"
+                ]
+              },
+              "description": "Domains of the data-room tree (dataroom-schema.ts dataroomDomainSchema)"
+            },
+            "system_of_record": {
+              "type": "string",
+              "enum": [
+                "postgres"
+              ]
+            }
+          },
+          "required": [
+            "enabled"
+          ]
+        },
+        "browser": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "local": {
+              "type": "boolean",
+              "default": false,
+              "description": "BROWSER_LOCAL"
+            },
+            "default_on_for_agent": {
+              "type": "boolean",
+              "description": "agent_profiles.browserDefault"
+            }
+          },
+          "required": [
+            "enabled"
+          ]
+        },
+        "web_search": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "default_on_for_agent": {
+              "type": "boolean",
+              "description": "agent_profiles.webSearchDefault"
+            }
+          },
+          "required": [
+            "enabled"
+          ]
+        },
+        "primary_context": {
+          "type": "object",
+          "properties": {
+            "workspace": {
+              "type": "object",
+              "properties": {
+                "org_id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "display_name": {
+                  "type": "string",
+                  "description": "orgs.branding.displayName; the only rename knob the mold has"
+                },
+                "logo_url": {
+                  "type": "string"
+                },
+                "google_hosted_domain": {
+                  "type": "string"
+                },
+                "plan": {
+                  "type": "string"
+                },
+                "data_residency": {
+                  "type": "string"
+                },
+                "limits": {
+                  "type": "object",
+                  "properties": {
+                    "monthly_token_cap": {
+                      "type": "integer"
+                    },
+                    "monthly_cost_usd_cap": {
+                      "type": "number"
+                    },
+                    "workflow_run_cap": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "blob_prefix": {
+                  "type": "string",
+                  "description": "orgs.blobPrefix; derived orgs/<org_id> when absent"
+                }
+              },
+              "required": [
+                "org_id",
+                "name"
+              ],
+              "description": "The org row that scopes everything else (fde new-org)"
+            },
+            "entity_vocabulary": {
+              "type": "object",
+              "properties": {
+                "account_noun": {
+                  "type": "string",
+                  "default": "customer"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "description": "What the workspace calls its accounts (customers, patients, clients). mold_v1 hardcodes 'customer' in tables, paths and tools; this is recorded for the parity audit and for mold_v2+, not applied"
+            },
+            "agent_profile": {
+              "type": "object",
+              "properties": {
+                "persona_name": {
+                  "type": "string"
+                },
+                "tone": {
+                  "type": "string"
+                },
+                "instructions": {
+                  "type": "string"
+                },
+                "default_mode": {
+                  "type": "string",
+                  "enum": [
+                    "build",
+                    "plan",
+                    "goal",
+                    "loop"
+                  ]
+                },
+                "model": {
+                  "type": "string"
+                },
+                "web_search_default": {
+                  "type": "boolean"
+                },
+                "browser_default": {
+                  "type": "boolean"
+                }
+              },
+              "description": "agent_profiles row with email='' (workspace default)"
+            },
+            "agent_configs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "agent_key": {
+                    "type": "string",
+                    "enum": [
+                      "app-author",
+                      "browser",
+                      "configuration",
+                      "customer-context",
+                      "data-migration",
+                      "deployment",
+                      "evals",
+                      "follow-ups",
+                      "research",
+                      "workflow-author"
+                    ]
+                  },
+                  "paused": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "instructions": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent_key"
+                ]
+              },
+              "description": "agent_configs rows, one per subagent"
+            },
+            "memories": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "team",
+                      "customer",
+                      "person"
+                    ]
+                  },
+                  "entity_id": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "sensitivity": {
+                    "type": "string",
+                    "enum": [
+                      "internal",
+                      "customer_shareable",
+                      "restricted"
+                    ],
+                    "default": "internal"
+                  }
+                },
+                "required": [
+                  "scope",
+                  "key",
+                  "value"
+                ]
+              }
+            }
+          },
+          "required": [
+            "workspace"
+          ]
+        },
+        "multiplayer_context": {
+          "type": "object",
+          "properties": {
+            "fde_self": {
+              "type": "object",
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string",
+                  "default": "Forward-Deployed Engineer"
+                },
+                "focus": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "pod": {
+                  "type": "string"
+                },
+                "capacity_target_accounts": {
+                  "type": "integer",
+                  "default": 8
+                }
+              },
+              "required": [
+                "email",
+                "name"
+              ],
+              "description": "fde onboard-self; the identity every configure script runs as"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "owner",
+                      "admin",
+                      "engineer",
+                      "member"
+                    ],
+                    "default": "member"
+                  }
+                },
+                "required": [
+                  "email",
+                  "role"
+                ]
+              },
+              "description": "org_members; exactly one owner minimum"
+            },
+            "platform_admins": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+              },
+              "description": "platform_admins: who may create orgs"
+            },
+            "roster": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "team": {
+                    "type": "string"
+                  },
+                  "manager_email": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                  },
+                  "escalations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "email": {
+                          "type": "string",
+                          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "email",
+                        "reason"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              },
+              "description": "people_roster: the reporting matrix. manager_email is the single reporting line, escalations the per-condition fan-out"
+            },
+            "customers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "tier": {
+                    "type": "string"
+                  },
+                  "vertical": {
+                    "type": "string"
+                  },
+                  "region": {
+                    "type": "string"
+                  },
+                  "business_owner": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                  },
+                  "technical_owner": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                  },
+                  "staff": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "email": {
+                          "type": "string",
+                          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "solution_engineer",
+                            "account_executive"
+                          ]
+                        },
+                        "employer_org": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "email",
+                        "role"
+                      ]
+                    }
+                  },
+                  "stakeholders": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "email": {
+                          "type": "string",
+                          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "key_user",
+                            "decision_maker",
+                            "champion"
+                          ]
+                        },
+                        "employer_org": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "email",
+                        "role"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ]
+              },
+              "description": "fde new-customer + internal_staff + customer_stakeholders"
+            }
+          },
+          "required": [
+            "fde_self",
+            "members"
+          ]
+        },
+        "custom_workflow_builder": {
+          "type": "object",
+          "properties": {
+            "library": {
+              "type": "object",
+              "properties": {
+                "install": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "none",
+                    "listed"
+                  ],
+                  "default": "all"
+                },
+                "names": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "assign-account",
+                      "data-migration-plan",
+                      "eval-regression-triage",
+                      "go-live-sprint",
+                      "incident-postmortem",
+                      "infosec-checklist",
+                      "infra-sizing",
+                      "integration-wiring",
+                      "onboard-account",
+                      "qbr-prep",
+                      "renewal-risk",
+                      "route-incident",
+                      "solution-engineering"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "install"
+              ],
+              "description": "The 13 default workflow scripts installed by provisionWorkspace; 'listed' keeps only names"
+            },
+            "scripts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "trigger": {
+                    "type": "string",
+                    "enum": [
+                      "on delegation",
+                      "manual",
+                      "on schedule"
+                    ],
+                    "default": "manual"
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "file": {
+                    "type": "string",
+                    "description": "path to a *.workflow.js relative to the app state dir; required for createdBy=system scripts because seed-workflows prunes rows without a file"
+                  },
+                  "customer_id": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "instructions": {
+                    "type": "string"
+                  },
+                  "instructions_enabled": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "notify_emails": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "description"
+                ]
+              },
+              "description": "Workflow scripts beyond the library (workflows table)"
+            },
+            "definitions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "entity": {
+                    "type": "string",
+                    "enum": [
+                      "task",
+                      "implementation"
+                    ]
+                  },
+                  "is_default": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "stages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "assign": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "role",
+                                "person",
+                                "team",
+                                "customer_owner",
+                                "least_loaded",
+                                "prompt"
+                              ]
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "department": {
+                              "type": "string"
+                            },
+                            "guidance": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type"
+                          ]
+                        },
+                        "transitions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "to": {
+                                "type": "string"
+                              },
+                              "migrate": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "manual",
+                                      "rule",
+                                      "prompt"
+                                    ]
+                                  },
+                                  "value": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "to",
+                              "migrate"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "label",
+                        "assign",
+                        "transitions"
+                      ]
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "entity",
+                  "stages"
+                ]
+              },
+              "description": "Project workflow state machines (workflow_definitions); one is_default per entity"
+            }
+          },
+          "required": [
+            "library"
+          ]
+        }
+      },
+      "description": "Configuration for each service-surface item; keys match state/factory.json service_surface names"
     }
   }
 }
