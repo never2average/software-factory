@@ -98,11 +98,15 @@ def pull_env(mold_dir, project):
 
 
 def set_framework(project, framework, mold_dir):
-    """The eve services build to .vercel/output; a project auto-detected as Next.js rejects that. Mirror the live API project's preset."""
+    """The eve API and the task-workflow service need different presets (eve / nextjs); auto-detection
+    picks Next.js for both and then rejects the eve build output. Verified through the API, whose value
+    is the slug (`nextjs`), not the console's display name (`Next.js`)."""
     subprocess.run(f"vercel api /v9/projects/{project} -X PATCH -F framework={framework} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
-    r = subprocess.run(f"vercel project inspect {project}", shell=True, cwd=mold_dir, capture_output=True, text=True)
-    line = next((l for l in (r.stdout + r.stderr).splitlines() if "Framework Preset" in l), "")
-    if framework not in line: sys.exit(f"could not set framework={framework} on {project}: {line.strip() or (r.stdout + r.stderr).strip()[-200:]}")
+    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    try: got = json.loads(r.stdout).get("framework")
+    except Exception: got = None
+    if got != framework: sys.exit(f"could not set framework={framework} on {project} (reads {got!r})")
+
 def deploy(cfg, mold_dir):
     """Production deploy from the mold dir; returns the deployment URL. The CLI prints progress on stderr and the URL on stdout, but a build error arrives as JSON, so never trust the last line blindly."""
     r = subprocess.run(f"vercel deploy --prod --yes --local-config {cfg}", shell=True, cwd=mold_dir, capture_output=True, text=True)
