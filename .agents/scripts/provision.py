@@ -88,6 +88,35 @@ def pull_env(mold_dir):
     os.remove(tmp); return vals
 
 def link(project, mold_dir): sh(f"vercel link --yes --project {project} >/dev/null 2>&1", cwd=mold_dir)
+
+def deploy_prebuilt(project, mold_dir, patch_routes, skip_prewarm=False):
+    """The eve services are built HERE and shipped with --prebuilt, the way the mold's own scripts/deploy.mjs does it.
+    eve provisions sandbox templates into whichever project the VERCEL_OIDC_TOKEN names, so the build runs with a token
+    pulled from the target project and refuses to continue if the token names another project."""
+    import base64
+    link(project, mold_dir); pj = load(os.path.join(mold_dir, ".vercel/project.json"))
+    tokf = os.path.join(mold_dir, ".vercel/.oidc.env")
+    subprocess.run(f"vercel env pull {tokf} --environment=development --yes", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    m = re.search(r'^VERCEL_OIDC_TOKEN="?([^"\n]+)"?', open(tokf).read(), re.M) if os.path.exists(tokf) else None
+    if os.path.exists(tokf): os.remove(tokf)
+    if not m: sys.exit(f"no VERCEL_OIDC_TOKEN for {project}; eve cannot build for it")
+    tok = m.group(1); claims = json.loads(base64.urlsafe_b64decode(tok.split(".")[1] + "==="))
+    if claims.get("project_id") != pj["projectId"]: sys.exit(f"OIDC token names {claims.get('project')} not {project}; refusing to build")
+    env = dict(os.environ, VERCEL="1", VERCEL_OIDC_TOKEN=tok, VERCEL_PROJECT_ID=pj["projectId"], VERCEL_ORG_ID=pj["orgId"])
+    subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel", shell=True, cwd=mold_dir)
+    print(f"  eve build for {project}" + (" (skip sandbox prewarm)" if skip_prewarm else "") + " ...")
+    r = subprocess.run(["npx", "eve", "build"] + (["--skip-sandbox-prewarm"] if skip_prewarm else []), cwd=mold_dir, env=env, capture_output=True, text=True)
+    if r.returncode:
+        tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-25:])
+        sys.exit(f"eve build failed for {project}:\n{tail}\nIf it names sandbox templates that already exist, free them in the project and rerun; or rerun provision with --skip-prewarm (agent sandboxes will then be unavailable).")
+    vc = os.path.join(mold_dir, ".vercel/output/functions/__server.func/.vc-config.json")
+    if os.path.exists(vc):
+        c = load(vc); c["maxDuration"] = "max"; save(vc, c)   # session streams need the full function ceiling
+    if patch_routes: subprocess.run(["node", "scripts/patch-eve-routes.mjs"], cwd=mold_dir, check=True)
+    r = subprocess.run("vercel deploy --prebuilt --prod --yes", shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
+    urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", r.stdout + r.stderr)
+    if r.returncode or not urls: sys.exit(f"prebuilt deploy of {project} failed:\n" + (r.stdout + r.stderr).strip()[-1500:])
+    return urls[-1]
 def set_framework(project, framework, mold_dir):
     """The eve services build to .vercel/output; a project auto-detected as Next.js rejects that. Mirror the live API project's preset."""
     subprocess.run(f"vercel api /v9/projects/{project} -X PATCH -F framework={framework} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
@@ -129,14 +158,14 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         print("running migrations on the fresh database"); run_migrations(mold_dir, vals)
         # workflow service
         print("deploying workflow service"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "eve", mold_dir)
-        wf_url = deploy("vercel.eve.json", mold_dir)
+        wf_url = deploy_prebuilt(f"{proj}-workflow", mold_dir, patch_routes=False, skip_prewarm="--skip-prewarm" in sys.argv)
         infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
         link(proj, mold_dir)
         if "TASK_WORKFLOW_SERVICE_URL" not in vercel_env_names(mold_dir): _add_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir)
         vals = pull_env(mold_dir)
         # eve api
         print("deploying eve api"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir); set_framework(f"{proj}-api", "eve", mold_dir)
-        api_url = deploy("vercel.api.json", mold_dir)
+        api_url = deploy_prebuilt(f"{proj}-api", mold_dir, patch_routes=True, skip_prewarm="--skip-prewarm" in sys.argv)
         infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
         link(proj, mold_dir)
         if "NEXT_PUBLIC_EVE_API_URL" not in vercel_env_names(mold_dir): _add_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir)
