@@ -8,7 +8,7 @@
   make sure the target scaffolding exists, print what is missing. Never deploys.
 --deploy: run the deploy for the target. Refuses if any secret is missing.
 """
-import json, os, sys, subprocess, datetime, shutil
+import json, os, re, sys, subprocess, datetime, shutil
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
 def load(p): return json.load(open(p))
@@ -28,6 +28,10 @@ GENERATED = {  # app-internal secrets the factory may mint itself (never externa
 }
 def _add_env(name, value, cwd):
     subprocess.run(f"vercel env add {name} production", shell=True, cwd=cwd, input=value, capture_output=True, text=True)
+def _set_env(name, value, cwd):
+    """Idempotent: replace whatever production value exists. Used for derived, non-secret config such as service URLs."""
+    subprocess.run(f"vercel env rm {name} production --yes", shell=True, cwd=cwd, capture_output=True, text=True)
+    _add_env(name, value, cwd)
 
 def provision_datastores(app_id, ds, mold_dir, present, infra):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
@@ -84,6 +88,18 @@ def pull_env(mold_dir):
     os.remove(tmp); return vals
 
 def link(project, mold_dir): sh(f"vercel link --yes --project {project} >/dev/null 2>&1", cwd=mold_dir)
+def set_framework(project, framework, mold_dir):
+    """The eve services build to .vercel/output; a project auto-detected as Next.js rejects that. Mirror the live API project's preset."""
+    subprocess.run(f"vercel api /v9/projects/{project} -X PATCH -F framework={framework} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = subprocess.run(f"vercel project inspect {project}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    line = next((l for l in (r.stdout + r.stderr).splitlines() if "Framework Preset" in l), "")
+    if framework not in line: sys.exit(f"could not set framework={framework} on {project}: {line.strip() or (r.stdout + r.stderr).strip()[-200:]}")
+def deploy(cfg, mold_dir):
+    """Production deploy from the mold dir; returns the deployment URL. The CLI prints progress on stderr and the URL on stdout, but a build error arrives as JSON, so never trust the last line blindly."""
+    r = subprocess.run(f"vercel deploy --prod --yes --local-config {cfg}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", r.stdout + r.stderr)
+    if r.returncode or not urls: sys.exit(f"deploy with {cfg} failed:\n" + (r.stdout + r.stderr).strip()[-1500:])
+    return urls[-1]
 
 def sync_env(names, vals, project, mold_dir):
     link(project, mold_dir); have = vercel_env_names(mold_dir); n = 0
@@ -104,23 +120,23 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
     link(proj, mold_dir); have = vercel_env_names(mold_dir)
     # config values (not secrets) derived from state
     cfg = {"MODEL_PROVIDER": app["model"]["provider"], "ENABLE_WEB_SEARCH": str(app["capabilities"]["web_search"]).lower(), "ENABLE_BROWSER": str(app["capabilities"]["browser"]).lower()}
-    for k, v in cfg.items():
-        if k not in have: _add_env(k, v, mold_dir)
+    for k, v in cfg.items(): _set_env(k, v, mold_dir)
+    _set_env("OPS_MULTI_TENANT", infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1"), mold_dir)
     if not shared:
         if "TASK_WORKFLOW_SERVICE_TOKEN" not in have:
             _add_env("TASK_WORKFLOW_SERVICE_TOKEN", subprocess.check_output("openssl rand -hex 32", shell=True, text=True).strip(), mold_dir); print("minted TASK_WORKFLOW_SERVICE_TOKEN")
         vals = pull_env(mold_dir)
         print("running migrations on the fresh database"); run_migrations(mold_dir, vals)
         # workflow service
-        print("deploying workflow service"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir)
-        wf_url = sh("vercel deploy --prod --yes --local-config vercel.eve.json 2>/dev/null | tail -1", cwd=mold_dir).strip()
+        print("deploying workflow service"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "eve", mold_dir)
+        wf_url = deploy("vercel.eve.json", mold_dir)
         infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
         link(proj, mold_dir)
         if "TASK_WORKFLOW_SERVICE_URL" not in vercel_env_names(mold_dir): _add_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir)
         vals = pull_env(mold_dir)
         # eve api
-        print("deploying eve api"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir)
-        api_url = sh("vercel deploy --prod --yes --local-config vercel.api.json 2>/dev/null | tail -1", cwd=mold_dir).strip()
+        print("deploying eve api"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir); set_framework(f"{proj}-api", "eve", mold_dir)
+        api_url = deploy("vercel.api.json", mold_dir)
         infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
         link(proj, mold_dir)
         if "NEXT_PUBLIC_EVE_API_URL" not in vercel_env_names(mold_dir): _add_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir)
@@ -129,7 +145,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
         cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
     print("deploying web app")
-    url = sh(f"vercel deploy --prod --yes --local-config {cfg_main} 2>/dev/null | tail -1", cwd=mold_dir).strip()
+    url = deploy(cfg_main, mold_dir)
     infra["vercel"]["production_url"] = url; print(f"  {url}")
 
 def ensure_vm_scaffold(app_id, mold_dir, secrets):
