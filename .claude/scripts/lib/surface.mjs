@@ -32,7 +32,7 @@ const SURFACE = {
   recipes:               { key: ["org_id","slug"], cols: ["version","title","summary","satisfies_check","sort_order"] },
 };
 // Rows in these tables change with every request; they are counted but never diffed.
-const VOLATILE = new Set(["runtime_env_presence","login_codes","subagent_runs","chat_presence","room_presence","chat_sessions","system_cron_overrides","account_summaries","task_workflow_transition_events","inbox"]);
+const VOLATILE = new Set(["runtime_env_presence","login_codes","subagent_runs","chat_presence","room_presence","chat_sessions","system_cron_overrides","account_summaries","task_workflow_transition_events","inbox_items"]);
 const LIBRARY = new Set(["assign-account","data-migration-plan","eval-regression-triage","go-live-sprint","incident-postmortem","infosec-checklist","infra-sizing","integration-wiring","onboard-account","qbr-prep","renewal-risk","route-incident","solution-engineering"]);
 const KEY_SEP = "|";
 
@@ -126,18 +126,22 @@ async function apply(url, state) {
   const sql = pg(url); const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) pk[t] = await pkCols(sql, t); const s = state.surface; const mp = state.workspace; const ws = mp.org; const me = mp.fde_self.email; const done = {};
   const up = async (label, fn) => { try { done[label] = await fn(); } catch (e) { done[label] = "ERR " + e.message; } };
   try {
-    await up("orgs", () => sql`insert into orgs (org_id, name, branding, blob_prefix, status, created_by) values (${ws.org_id}, ${ws.name}, ${sql.json(pick({ displayName: ws.display_name ?? ws.name, logoUrl: ws.logo_url }))}, ${ws.blob_prefix ?? "orgs/" + ws.org_id}, 'active', ${me})
+    await up("orgs", () => sql`insert into orgs (org_id, name, branding, blob_prefix, status, created_by) values (${ws.org_id}, ${ws.name}, ${ws.display_name || ws.logo_url ? sql.json(pick({ displayName: ws.display_name, logoUrl: ws.logo_url })) : null}, ${ws.blob_prefix ?? "orgs/" + ws.org_id}, 'active', ${me})
       on conflict (${sql(pk.orgs)}) do update set name = excluded.name, branding = excluded.branding`.then(() => 1));
     await up("org_members", async () => { let n = 0; for (const m of mp.members) { await sql`insert into org_members (org_id, email, role, invited_by, accepted_at) values (${ws.org_id}, ${m.email}, ${m.role}, ${me}, now()) on conflict (${sql(pk.org_members)}) do update set role = excluded.role`; n++; } return n; });
     await up("platform_admins", async () => { let n = 0; for (const e of mp.platform_admins ?? []) { await sql`insert into platform_admins (email, added_by) values (${e}, ${me}) on conflict do nothing`; n++; } return n; });
     await up("people_roster", async () => { let n = 0; for (const r of mp.roster ?? []) { await sql`insert into people_roster (org_id, email, name, team, manager_email, escalations) values (${ws.org_id}, ${r.email}, ${r.name ?? null}, ${r.team ?? null}, ${r.manager_email ?? null}, ${r.escalations && r.escalations.length ? sql.json(r.escalations) : null}) on conflict (${sql(pk.people_roster)}) do update set name = excluded.name, team = excluded.team, manager_email = excluded.manager_email, escalations = excluded.escalations`; n++; } return n; });
     const p = s.primary_context.instructions ?? {}; const ws_ = s.web_search ?? {}, br = s.browser ?? {};
-    await up("agent_profiles", () => sql`insert into agent_profiles (id, org_id, email, persona_name, tone, instructions, default_mode, web_search_default, browser_default, model, updated_by) values (${ws.org_id + ":"}, ${ws.org_id}, '', ${p.persona_name ?? null}, ${p.tone ?? null}, ${p.workspace ?? null}, ${p.default_mode ?? null}, ${ws_.default_on_for_agent ?? null}, ${br.default_on_for_agent ?? null}, ${p.model ?? null}, ${me})
+    await up("agent_profiles", () => sql`insert into agent_profiles (id, org_id, email, persona_name, tone, instructions, default_mode, web_search_default, browser_default, model, updated_by) values (${ws.org_id + ":default"}, ${ws.org_id}, '', ${p.persona_name ?? null}, ${p.tone ?? null}, ${p.workspace ?? null}, ${p.default_mode ?? null}, ${ws_.default_on_for_agent ?? null}, ${br.default_on_for_agent ?? null}, ${p.model ?? null}, ${me})
       on conflict (${sql(pk.agent_profiles)}) do update set persona_name = excluded.persona_name, tone = excluded.tone, instructions = excluded.instructions, default_mode = excluded.default_mode, web_search_default = excluded.web_search_default, browser_default = excluded.browser_default, model = excluded.model`.then(() => 1));
     await up("agent_configs", async () => { let n = 0; for (const c of s.primary_context.instructions?.subagents ?? []) { await sql`insert into agent_configs (org_id, agent_key, paused, instructions) values (${ws.org_id}, ${c.agent_key}, ${!!c.paused}, ${c.instructions ?? null}) on conflict (${sql(pk.agent_configs)}) do update set paused = excluded.paused, instructions = excluded.instructions`; n++; } return n; });
     await up("workflow_definitions", async () => { let n = 0; for (const d of s.custom_workflow_builder.definitions ?? []) { await sql`insert into workflow_definitions (id, org_id, name, entity, stages, current_version, is_default, created_by) values (${d.id}, ${ws.org_id}, ${d.name}, ${d.entity}, ${sql.json(d.stages)}, 1, ${!!d.is_default}, ${me}) on conflict (${sql(pk.workflow_definitions)}) do update set name = excluded.name, stages = excluded.stages, is_default = excluded.is_default`; n++; } return n; });
     await up("workflows", async () => { let n = 0; for (const w of s.custom_workflow_builder.scripts ?? []) { if (w.file) continue; /* file-backed scripts go through fde:seed-workflows */
-      await sql`insert into workflows (org_id, name, description, trigger, customer_id, steps, instructions, instructions_enabled, enabled, created_by) values (${ws.org_id}, ${w.name}, ${w.description}, ${w.trigger ?? "manual"}, ${w.customer_id ?? null}, ${sql.json(w.steps ?? [])}, ${w.instructions ?? null}, ${!!w.instructions_enabled}, ${w.enabled !== false}, ${me}) on conflict do nothing`; n++; } return n; });
+      // `workflows` has no unique constraint on (org_id, name) — its PK is a random uuid — so an
+      // ON CONFLICT clause has no index to arbitrate. Check first instead of relying on the database.
+      const [dup] = await sql`select 1 as x from workflows where org_id = ${ws.org_id} and name = ${w.name} limit 1`;
+      if (dup) continue;
+      await sql`insert into workflows (org_id, name, description, trigger, customer_id, steps, instructions, instructions_enabled, enabled, created_by) values (${ws.org_id}, ${w.name}, ${w.description}, ${w.trigger ?? "manual"}, ${w.customer_id ?? null}, ${sql.json(w.steps ?? [])}, ${w.instructions ?? null}, ${!!w.instructions_enabled}, ${w.enabled !== false}, ${me})`; n++; } return n; });
   } finally { await sql.end(); }
   return done;
 }
@@ -187,6 +191,12 @@ const E = process.env;
   else if (cmd === "apply") out = await apply(E.DATABASE_URL, JSON.parse(readFileSync(0, "utf8")));
   else if (cmd === "diff") out = await diff(E.DATABASE_URL, E.LIVE_DATABASE_URL, E.BLOB_READ_WRITE_TOKEN, E.LIVE_BLOB_READ_WRITE_TOKEN, E.BLOB_PREFIX ?? "");
   else if (cmd === "blobcheck") { const { list } = require("@vercel/blob"); try { const r = await list({ token: E.BLOB_READ_WRITE_TOKEN, prefix: E.BLOB_PREFIX ?? "", limit: 1 }); out = { ok: true, sample: r.blobs[0]?.pathname ?? null }; } catch (e) { out = { ok: false, error: e.message }; } }
+  else if (cmd === "clear-sealed") {
+    const sql = pg(E.DATABASE_URL); out = {};
+    try { for (const t of ["connector_secrets", "browser_credentials"]) {
+      if (!(await tableCols(sql, t)).length) { out[t] = null; continue; }
+      out[t] = (await sql`delete from ${sql(t)} returning 1`).length; } } finally { await sql.end(); }
+  }
   else if (cmd === "blobtree") out = await blobTree(E.BLOB_READ_WRITE_TOKEN, E.BLOB_PREFIX ?? "");
   else if (cmd === "blobcopy") out = await blobcopy(E.BLOB_PREFIX ?? "", E.LIVE_BLOB_READ_WRITE_TOKEN, E.BLOB_READ_WRITE_TOKEN, process.argv.includes("--apply"));
   else { console.error("usage: surface.mjs extract|apply|diff|blobcopy"); process.exit(2); }
