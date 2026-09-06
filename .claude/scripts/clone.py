@@ -136,13 +136,15 @@ def main(a):
         save(os.path.join(adir, "datastores.json"), ds); print("datastores.json updated"); return
 
     if step == "configure":
+        if clone and ds["postgres"].get("snapshot", {}).get("source") == "live_fde_agent":
+            print("configure skipped: this app is a clone and its database is a snapshot of live; the surface already matches. Configure is for apps stamped from a brief."); return
         mine = pull_env(proj, mold, proj); dst = pg_url(mine)
         if not dst: sys.exit("no database url for the app; run provision.py first")
         out = node("apply", dict(base, DATABASE_URL=dst), mold, stdin=json.dumps({"workspace": app["workspace"], "surface": app["surface"]}))
         bad = {k: v for k, v in out.items() if isinstance(v, str) and v.startswith("ERR")}
         print("applied: " + ", ".join(f"{k}={v}" for k, v in out.items()))
-        infra["configured_at"] = NOW; save(os.path.join(adir, "infrastructure.json"), infra)
         if bad: sys.exit(1)
+        infra["configured_at"] = NOW; save(os.path.join(adir, "infrastructure.json"), infra)
         return
 
     if step == "regress":
@@ -157,7 +159,7 @@ def main(a):
             if "skipped" in r: L.append(f"- {t}: skipped ({r['skipped']})"); continue
             n = len(r["only_clone"]) + len(r["only_live"]) + len(r["changed"])
             L.append(f"- {t}: clone={r['clone']} live={r['live']} " + ("ok" if not n else f"DIFF only_clone={r['only_clone'][:10]} only_live={r['only_live'][:10]} changed={[c['key']+':'+','.join(c['cols']) for c in r['changed'][:10]]}"))
-        L += ["", "## Blob tree", "", (f"prefix {rep['blob']['prefix']}: " + ("same" if rep["blob"]["same"] else f"DIFF clone={rep['blob']['clone']} live={rep['blob']['live']}")) if rep["blob"] else "skipped: no live token accepted by the blob store"]
+        L += ["", "## Blob tree (files, bytes per top-level folder)", "", (f"prefix '{rep['blob']['prefix']}': " + ("same" if rep["blob"]["same"] else "DIFF") + f" clone={rep['blob']['clone']} live={rep['blob']['live']}") if rep["blob"] else "skipped: no live token accepted by the blob store"]
         open(rpath, "w").write("\n".join(L) + "\n")
         clone["regression"] = {"status": status, "run_at": NOW, "report": os.path.relpath(rpath, ROOT)}
         app["testing"]["context"] = {"status": status, "run_at": NOW, "report": os.path.relpath(rpath, ROOT)}
