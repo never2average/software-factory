@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "stamping",
+  "status": "stamped",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "claudecode_web",
   "model": {

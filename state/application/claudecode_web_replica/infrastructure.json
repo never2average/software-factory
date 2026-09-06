@@ -67,7 +67,12 @@
     },
     "workflow_url": "https://claudecode-web-workflow.vercel.app",
     "api_url": "https://claudecode-web-api.vercel.app",
-    "production_url": "https://claudecode-web-opal.vercel.app"
+    "production_url": "https://claudecode-web-opal.vercel.app",
+    "health": {
+      "workflow": "503",
+      "api": "200",
+      "web": "503"
+    }
   },
   "datastores": {
     "supabase_resource": "claudecode_web_internal",
