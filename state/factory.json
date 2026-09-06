@@ -85,7 +85,8 @@
   },
   "applications": [
     "redacted",
-    "redacted"
+    "redacted",
+    "dover_pilot"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",
@@ -111,7 +112,6 @@
     "postgres_scope": "fresh",
     "workspace_name": "redacted",
     "redacted": "operator@example.com",
-    "secret_source_project": "redacted",
-    "brand_pack": "redacted"
+    "secret_source_project": "redacted"
   }
 }

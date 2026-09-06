@@ -28,12 +28,16 @@ def blocked_by(t, idx):
     return [d for d in t.get("depends_on", []) if idx.get(d, {}).get("status") != "done"]
 def products(): return load(os.path.join(ST,"products.json"))
 def cmd_status(a):
-    ps = {p["mold_id"]: p for p in products()["products"]}
-    print(f"{'mold':9} {'product':26} {'stage':14} {'todo':>4} {'wip':>4} {'done':>4}")
+    """One row per product. A mold can carry several (same codebase, different brand), and they share
+    that mold's backlog, so the task counts repeat across its products."""
+    print(f"{'mold':9} {'product':26} {'stage':14} {'apps':>4} {'todo':>4} {'wip':>4} {'done':>4}")
     for m in molds():
-        ts = read_tasks(m); c = lambda s: sum(1 for t in ts if t["status"]==s)
-        p = ps.get(m, {})
-        print(f"{m:9} {p.get('product_id','-'):26} {p.get('stage','-'):14} {c('todo'):>4} {c('in_progress'):>4} {c('done'):>4}")
+        ts = read_tasks(m); c = lambda s: sum(1 for t in ts if t["status"] == s)
+        ps = [p for p in products()["products"] if p["mold_id"] == m] or [{}]
+        for p in ps:
+            print(f"{m:9} {p.get('product_id','-'):26} {p.get('stage','-'):14} "
+                  f"{len(p.get('app_ids', [])):>4} {c('todo'):>4} {c('in_progress'):>4} {c('done'):>4}")
+
 def cmd_tasks(a):
     ms = [a[0]] if a and not a[0].startswith("--") else molds()
     show_all = "--all" in a; idx = all_tasks()

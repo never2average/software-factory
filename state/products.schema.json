@@ -90,8 +90,17 @@
                 "vm"
               ]
             }
+          },
+          "brand_pack": {
+            "type": "string",
+            "description": "Directory under molds/<mold_id>/branding/. Apps stamped for this product carry it unless the brief overrides."
+          },
+          "vercel_project": {
+            "type": "string",
+            "description": "Project name for the product's first app; later apps get <project>-<suffix>."
           }
-        }
+        },
+        "description": "One product. Several products may share a mold: same codebase, different brand and packaging (a brief picks one with `product: <id>`)."
       }
     }
   }
