@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "planned",
+  "status": "reverted",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "claudecode_web",
   "model": {
@@ -963,7 +963,9 @@
       "status": "pending"
     },
     "context": {
-      "status": "pending"
+      "status": "fail",
+      "run_at": "2026-09-06T12:15:18+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-regression-2026-09-06.md"
     },
     "functional": {
       "status": "pending"
@@ -981,7 +983,9 @@
     "ref": "fde-agent",
     "snapshot_date": "2026-09-06",
     "regression": {
-      "status": "pending"
+      "status": "fail",
+      "run_at": "2026-09-06T12:15:18+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-regression-2026-09-06.md"
     },
     "live_evidence": {
       "workflows": [
@@ -1011,7 +1015,7 @@
       "todos": 1,
       "roster_escalations": false
     },
-    "extracted_at": "2026-09-06T11:39:40+00:00",
+    "extracted_at": "2026-09-06T11:50:40+00:00",
     "live_counts": {
       "orgs": 1,
       "org_members": 5,
@@ -1030,5 +1034,10 @@
       "deployments": 0,
       "recipes": 0
     }
+  },
+  "revert": {
+    "reason": "regression against live failed",
+    "lane": "context",
+    "at": "2026-09-06T12:15:18+00:00"
   }
 }

@@ -1,0 +1,87 @@
+# claudecode_web_replica vs live (fde-agent) — fail
+
+run_at: 2026-09-06T12:15:18+00:00  org: org-onfinance-ai  prefix: 
+
+## Tables (row counts)
+
+| table | clone | live | |
+|---|---|---|---|
+| account_summaries | 0 | 0 | volatile |
+| agent_configs | 0 | 0 | ok |
+| agent_profiles | 1 | 0 | DIFF |
+| agent_prompt_versions | 0 | 0 | ok |
+| app_versions | 7 | 7 | ok |
+| apps | 1 | 1 | ok |
+| automation_audit | 79 | 79 | ok |
+| automation_runs | 5 | 5 | ok |
+| browser_allowlist | 0 | 0 | ok |
+| browser_contexts | 5 | 5 | ok |
+| browser_credentials | 0 | 0 | ok |
+| browser_sessions | 8 | 8 | ok |
+| chat_presence | 0 | 0 | volatile |
+| chat_sessions | 5 | 5 | volatile |
+| chat_thread_members | 2 | 2 | ok |
+| chat_threads | 1 | 1 | ok |
+| chat_turn_authors | 0 | 0 | ok |
+| comments | 0 | 0 | ok |
+| connector_secrets | 0 | 0 | ok |
+| connectors | 0 | 0 | ok |
+| customer_stakeholders | 0 | 0 | ok |
+| customers | 72 | 72 | ok |
+| cycles | 0 | 0 | ok |
+| dataroom_changesets | 0 | 0 | ok |
+| dataroom_file_versions | 1 | 1 | ok |
+| deployments | 3 | 3 | ok |
+| entity_activity | 15 | 15 | ok |
+| implementation | 11 | 11 | ok |
+| inbox_items | 0 | 0 | ok |
+| interactions | 2 | 2 | ok |
+| internal_staff | 1 | 1 | ok |
+| login_codes | 2 | 2 | volatile |
+| memories | 1 | 1 | ok |
+| org_invites | 4 | 4 | ok |
+| org_members | 8 | 8 | ok |
+| orgs | 3 | 3 | ok |
+| people_roster | 24 | 24 | ok |
+| platform | 0 | 0 | ok |
+| platform_admins | 1 | 0 | DIFF |
+| project_workflow_versions | 2 | 2 | ok |
+| recipes | 0 | 0 | ok |
+| room_presence | 1 | 1 | volatile |
+| runtime_env_presence | 23 | 23 | volatile |
+| schedule_rules | 1 | 1 | ok |
+| solutions | 0 | 0 | ok |
+| subagent_runs | 59 | 59 | volatile |
+| system_cron_overrides | 0 | 0 | volatile |
+| task_workflow_instances | 1 | 1 | ok |
+| task_workflow_transition_events | 6 | 6 | volatile |
+| tickets | 0 | 0 | ok |
+| todos | 1 | 1 | ok |
+| workflow_definitions | 2 | 2 | ok |
+| workflow_instruction_versions | 3 | 3 | ok |
+| workflow_run_journal | 43 | 43 | ok |
+| workflow_runs | 10 | 10 | ok |
+| workflows | 26 | 26 | ok |
+
+## Surface rows
+
+- orgs: clone=1 live=1 DIFF only_clone=[] only_live=[] changed=['org-onfinance-ai:branding']
+- org_members: clone=5 live=5 ok
+- platform_admins: clone=1 live=0 DIFF only_clone=['priyesh@onfinance.in'] only_live=[] changed=[]
+- people_roster: clone=23 live=23 DIFF only_clone=[] only_live=[] changed=['org-onfinance-ai/ajinkya.mawal@onfinance.in:escalations', 'org-onfinance-ai/avantika.sharma@onfinance.in:escalations', 'org-onfinance-ai/advait.mandawade@onfinance.in:escalations', 'org-onfinance-ai/anuj.srivastava@onfinance.in:escalations', 'org-onfinance-ai/mannish.pimpalkar@onfinance.in:escalations', 'org-onfinance-ai/nishant.kushwaha@onfinance.in:escalations', 'org-onfinance-ai/navya.sree.n@onfinance.in:escalations', 'org-onfinance-ai/paartha.nimbalkar@onfinance.in:escalations', 'org-onfinance-ai/prathmesh.shukla@onfinance.in:escalations', 'org-onfinance-ai/priyesh@onfinance.in:escalations']
+- agent_profiles: clone=1 live=0 DIFF only_clone=['org-onfinance-ai/'] only_live=[] changed=[]
+- agent_configs: clone=0 live=0 ok
+- memories: clone=1 live=1 ok
+- workflows: clone=13 live=13 ok
+- workflow_definitions: clone=1 live=1 ok
+- customers: clone=66 live=66 ok
+- internal_staff: clone=1 live=1 ok
+- customer_stakeholders: clone=0 live=0 ok
+- platform: clone=0 live=0 ok
+- solutions: clone=0 live=0 ok
+- deployments: clone=0 live=0 ok
+- recipes: clone=0 live=0 ok
+
+## Blob tree
+
+prefix : same
