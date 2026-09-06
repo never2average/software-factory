@@ -49,6 +49,8 @@ def parse_brief(text):
     if m: h["corpus"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
     m = re.search(r"multiplayer(?: context)?[:\s]+([^\n.]+)", t)
     if m: h["processes"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
+    m = re.search(r"\bproduct:\s*([a-z0-9_-]+)", t)
+    if m: h["product_id"] = m.group(1)
     m = re.search(r"\b(?:brand|branding|theme|logo pack):\s*([a-z0-9_-]+)", t)
     if m: h["brand_pack"] = m.group(1)
     if re.search(r"\bno branding\b|\bunbranded\b|\bmold branding\b|\bdefault branding\b", t): h["brand_pack"] = ""
@@ -139,9 +141,25 @@ def coerce(v):
     if isinstance(v, str) and v.lower() in ("true","false"): return v.lower()=="true"
     return v
 
+def pick_product(mold_id, hints, existing=None):
+    """A mold can carry several products — the same codebase under different brands. A brief names one
+    with `product: <id>`; otherwise a re-run keeps the app's own, and a mold with exactly one product
+    needs no answer at all."""
+    prods = [p for p in load(os.path.join(ST, "products.json"))["products"] if p["mold_id"] == mold_id]
+    if not prods: sys.exit(f"no product is defined for {mold_id} in state/products.json")
+    want = hints.get("product_id") or (existing or {}).get("application", {}).get("product_id")
+    if want:
+        hit = next((p for p in prods if p["product_id"] == want), None)
+        if hit: return hit
+        if hints.get("product_id"): sys.exit(f"no product {want!r} on {mold_id}; have: " + ", ".join(p["product_id"] for p in prods))
+    if len(prods) > 1:
+        sys.exit(f"{mold_id} carries {len(prods)} products (" + ", ".join(p["product_id"] for p in prods) +
+                 "); say which one in the brief, e.g. `product: " + prods[0]["product_id"] + "`")
+    return prods[0]
+
 def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     d = factory.get("defaults", {}); mold = next(m for m in factory["molds"] if m["mold_id"]==mold_id)
-    prod = next(p for p in load(os.path.join(ST,"products.json"))["products"] if p["mold_id"]==mold_id)
+    prod = pick_product(mold_id, hints, existing)
     org_id = slug(ans["workspace_name"]); fde = ans["fde_email"]
     # Secrets the app needs, by name. "user" = only the user can supply; "derived" = provision.py creates/sets them.
     user_secrets = ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "RESEND_API_KEY", "PLATFORM_NOTIFY_FROM"]
@@ -179,10 +197,11 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         "collaboration": {"chat_threads": True, "presence": True, "comments": True, "inbox": True}},
       "custom_workflow_builder": {"library": {"install": ans["library"]}, "scripts": [], "definitions": []},
     }
-    pack = hints.get("brand_pack", d.get("brand_pack", ""))
+    pack = hints.get("brand_pack", prod.get("brand_pack", d.get("brand_pack", "")))
     if pack:
         surface["branding"] = {"pack": pack}
         if hints.get("brand_color"): surface["branding"]["brand_color"] = hints["brand_color"]
+
     if hints.get("account_noun") and hints["account_noun"] != "customer":
         surface["primary_context"]["entity_vocabulary"]["note"] = "mold_v1 cannot rename accounts; recorded for the parity audit"
     app = {"$schema":"../app_id/application.schema.json","app_id":app_id,"mold_id":mold_id,"mold_commit":mold.get("source",{}).get("commit",""),
@@ -201,6 +220,13 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         if brand: app["surface"]["branding"] = brand
         else: app["surface"].pop("branding", None)
         app["clone_of"] = ex_app["clone_of"]                      # keep extracted_at, live_counts, live_evidence, the regression result
+    # The workspace tile inside the app is a runtime value on the orgs row, not a build-time one, so
+    # seed it from the same mark the build uses — but never over one the source deployment already has.
+    # CSP allows data: images (proxy.ts img-src).
+    mark = os.path.join(ROOT, "molds", mold_id, "branding", pack, "mark.svg") if pack else ""
+    if mark and os.path.exists(mark) and not app["workspace"]["org"].get("logo_url"):
+        import base64
+        app["workspace"]["org"]["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(open(mark, "rb").read()).decode()
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
     if "clone_of" in ex_app and "clone_of" not in app: app["clone_of"] = ex_app["clone_of"]
@@ -255,7 +281,7 @@ def main(a):
     mold_id = opt("--mold") or hints.get("mold_id") or "mold_v1"
     outdir = os.path.join(ST, "application", app_id); os.makedirs(outdir, exist_ok=True)
     existing = {n: load(os.path.join(outdir, f"{n}.json")) for n in ("application","infrastructure","datastores","datainfra") if os.path.exists(os.path.join(outdir, f"{n}.json"))}
-    prod = next(p for p in load(os.path.join(ST,"products.json"))["products"] if p["mold_id"]==mold_id)
+    prod = pick_product(mold_id, hints, existing)
     ctx = {"app_id": app_id, "product": prod, "first_app": not [x for x in prod.get("app_ids", []) if x != app_id],
            "suffix": app_id[len(prod["product_id"])+1:] if app_id.startswith(prod["product_id"]+"_") else app_id,
            "existing_project": existing.get("infrastructure", {}).get("vercel", {}).get("project")}
@@ -299,7 +325,7 @@ def main(a):
     save(os.path.join(ST,"factory.json"), factory)
     P = load(os.path.join(ST,"products.json"))
     for p in P["products"]:
-        if p["mold_id"]==mold_id and app_id not in p.setdefault("app_ids", []): p["app_ids"].append(app_id)
+        if p["product_id"]==app["product_id"] and app_id not in p.setdefault("app_ids", []): p["app_ids"].append(app_id)
     save(os.path.join(ST,"products.json"), P)
     r = subprocess.run([sys.executable, os.path.join(ROOT,".claude/scripts/factory.py"), "validate"], capture_output=True, text=True)
     print(r.stdout.strip())

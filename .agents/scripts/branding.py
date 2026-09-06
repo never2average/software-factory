@@ -45,7 +45,13 @@ def hex_to_oklch(h):
     C = math.sqrt(A * A + B * B); H = math.degrees(math.atan2(B, A)) % 360
     return f"oklch({round(L, 3)} {round(C, 3)} {round(H, 1)})"
 
-def oklch(L, C, H): return f"oklch({round(L, 3)} {round(C, 3)} {round(H, 1)})"
+def _num(x, places):
+    """Trim to the stylesheet's own style: 0.19 not 0.190, 0 not 0.0."""
+    return f"{round(x, places):g}"
+
+def oklch(L, C, H):
+    c = round(C, 3)
+    return f"oklch({_num(L, 3)} {_num(c, 3)} {_num(0 if c == 0 else H, 1)})"   # hue is meaningless at zero chroma
 
 def parse_oklch(v):
     m = re.fullmatch(r"oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)", v.strip())
@@ -159,6 +165,11 @@ def apply_overlay(build_dir, b, rules):
 
     if b.get("brand_color"):
         pal = palette(b["brand_color"], b.get("neutral_chroma", 0.006))
+        # A pack may pin any token outright — the derivation is a good default, not a straitjacket.
+        for scheme in ("light", "dark"):
+            for tok, val in (b.get("tokens", {}).get(scheme) or {}).items():
+                if tok not in pal[scheme]: sys.exit(f"unknown token --{tok} in tokens.{scheme}")
+                pal[scheme][tok] = val
         p = f("globals"); s = open(p).read()
         for blk in rules["palette_blocks"]:
             i = s.find(blk["anchor"])

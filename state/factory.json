@@ -85,7 +85,8 @@
   },
   "applications": [
     "claudecode_web_internal",
-    "claudecode_web_replica"
+    "claudecode_web_replica",
+    "dover_pilot"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",
@@ -111,7 +112,6 @@
     "postgres_scope": "fresh",
     "workspace_name": "OnFinance",
     "fde_email": "priyesh@onfinance.in",
-    "secret_source_project": "fde-agent",
-    "brand_pack": "onfinance"
+    "secret_source_project": "fde-agent"
   }
 }

@@ -5,7 +5,7 @@
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
   "status": "retired",
   "brief": "briefs/claudecode_web_internal.md",
-  "product_id": "claudecode_web",
+  "product_id": "delivered",
   "model": {
     "provider": "cloudflare",
     "model": "@cf/zai-org/glm-5.2",
@@ -28,7 +28,8 @@
       "org_id": "onfinance",
       "name": "OnFinance",
       "display_name": "OnFinance",
-      "blob_prefix": "orgs/onfinance"
+      "blob_prefix": "orgs/onfinance",
+      "logo_url": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjMEEwQTBBIi8+CiAgPHBhdGggZD0iTTkgMTYuNUwxNCAyMS41TDIzLjUgMTEiIHN0cm9rZT0iI0ZBRkFGQSIgc3Ryb2tlLXdpZHRoPSIzLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K"
     },
     "fde_self": {
       "email": "priyesh@onfinance.in",
@@ -290,6 +291,9 @@
       },
       "scripts": [],
       "definitions": []
+    },
+    "branding": {
+      "pack": "delivered"
     }
   },
   "testing": {

@@ -14,7 +14,9 @@ brief (5 lines) ──intake──▶ state/application/<app_id>/ ──provisio
 
 2. **State** (`state/`). JSON that describes the factory and every application, validated by schemas.
    - `factory.json`: operator, the six-item service surface, the molds, the service/revert loop, and `defaults` (the answers that apply to every app).
-   - `products.json`: one product per mold with a stage and the gates for each stage.
+   - `products.json`: products with a stage and the gates for each stage. Several products may share a mold — the same
+     codebase under different brands and packaging — so a brief says which with `product: <id>`, and the app inherits that
+     product's `brand_pack`. mold_v1 carries `delivered` and `dover`.
    - `tasks/<mold_id>.jsonl`: the backlog. Closing tasks advances products.
    - `application/<app_id>/`: four files per stamped app: application, infrastructure, datastores, datainfra. Secrets appear by name only.
 
@@ -42,6 +44,12 @@ If the database is shared with live, it deploys web only with crons stripped so 
 **Never relink the mold directory.** Agents, workflows and deploys share `molds/<mold>/codebase`, and `vercel link` rewrites its project file for all of them. Every Vercel call passes `--project` instead; a relink mid-run once made the provisioner read another project's environment.
 
 **Clone (live replica).** A brief that says "clone of live" stamps an app with `clone_of` set. `clone.py <app> run` does the rest in one go (extract, provision, deploy, snapshot, configure, regress) and stops with a plain sentence on the first failure. Step by step: `extract` reads the live surface tables into `application.surface`; after provision and deploy, `snapshot --apply` restores a `pg_dump` of live and copies the blob tree, `configure` upserts the surface, and `regress` diffs the clone against live table by table and writes the context-lane report. Live is only ever read. Details: `.claude/skills/clone/SKILL.md`, field mapping: `docs/STATE.md`.
+
+**Branding.** An app carrying `surface.branding` is not built from the mold directly: `branding.py <app> prepare` copies the
+mold source into `build/<app_id>/` and rewrites the product name, icon, sign-in mark and palette there, and `provision.py
+--deploy` builds that copy. The snapshot is never edited, and each app gets its own build directory. Packs and the rules that
+pin where each string lives are under `molds/<mold_id>/branding/`; a rule that stops matching refuses the deploy rather than
+shipping half-branded.
 
 **Lanes.** Five test lanes per mold: functional, context, load, accessibility, responsiveness. Results are written per lane into `application.json`. Any failure sets the app to `reverted` and files a task, returning control to the operator. Accessibility and responsiveness harnesses do not exist yet (tasks mold_v1-007/008).
 

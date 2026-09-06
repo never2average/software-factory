@@ -5,7 +5,7 @@
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
   "status": "stamped",
   "brief": "briefs/claudecode_web_replica.md",
-  "product_id": "claudecode_web",
+  "product_id": "delivered",
   "model": {
     "provider": "cloudflare",
     "model": "@cf/zai-org/glm-5.2",
@@ -959,7 +959,7 @@
       ]
     },
     "branding": {
-      "pack": "onfinance"
+      "pack": "delivered"
     }
   },
   "testing": {
