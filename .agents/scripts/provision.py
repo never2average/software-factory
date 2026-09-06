@@ -171,9 +171,18 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         vals = pull_env(mold_dir)
         print("running migrations on the fresh database"); run_migrations(mold_dir, vals)
         url = vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL")
-        r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, env=dict(os.environ, DATABASE_URL=url), capture_output=True, text=True)
-        print("  task-workflow migrations: " + ((r.stdout + r.stderr).strip().splitlines() or ["ok"])[-1][:160])
-        if r.returncode: sys.exit("task-workflow migration failed")
+        # .migrate-task-workflow-service.mjs reads its admin URL from .env.supabase, never from the environment.
+        # Write it transiently (gitignored inside the mold) and remove it whatever happens.
+        envsup = os.path.join(mold_dir, ".env.supabase")
+        try:
+            with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={url}\n")
+            os.chmod(envsup, 0o600)
+            r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        finally:
+            if os.path.exists(envsup): os.remove(envsup)
+        msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+        print("  task-workflow migrations: " + (msg[-1][:160] if msg else "ok"))
+        if r.returncode: sys.exit("task-workflow migration failed:\n" + "\n".join(msg[-12:]))
         # workflow service: its own Next.js app under services/task-workflow
         print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
         wf_url = run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy")
