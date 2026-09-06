@@ -4,7 +4,7 @@ description: Replicate the live fde-agent deployment into a stamped mold_v1 appl
 ---
 # clone
 
-One command does everything: `python3 .claude/scripts/clone.py <app_id> run`. It stops at the first failure with a plain sentence and is safe to rerun. The app must have been stamped from a brief that says "clone of live" (sets `clone_of`). The steps it runs, also usable one at a time:
+Preferred: the `clone-replica` workflow (`.claude/workflows/clone-replica.js`, args `{app_id, date}`), which runs the same steps with parallel preflight agents, a three-hypothesis diagnosis panel and judge when a deploy fails, one analyst per verification dimension with two adversarial refuters per pass, and a report agent that commits. Fallback without agents: `python3 .claude/scripts/clone.py <app_id> run`. It stops at the first failure with a plain sentence and is safe to rerun. The app must have been stamped from a brief that says "clone of live" (sets `clone_of`). The steps it runs, also usable one at a time:
 
 1. `plan` — prints what each step touches. No secrets.
 2. `extract` — reads the live surface tables and writes `application.surface` + `datainfra`. Live is only SELECTed.
