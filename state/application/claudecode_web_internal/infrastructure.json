@@ -51,5 +51,9 @@
       "api": "vercel.api.json",
       "eve": "vercel.eve.json"
     }
+  },
+  "datastores": {
+    "supabase_resource": "claudecode_web_internal",
+    "blob_store": "claudecode_web_internal"
   }
 }
