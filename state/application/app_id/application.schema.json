@@ -551,6 +551,9 @@
               "properties": {
                 "total": {
                   "type": "integer"
+                },
+                "error": {
+                  "type": "string"
                 }
               }
             }
