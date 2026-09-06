@@ -28,7 +28,9 @@
           "budget of inference cost per workspace known"
         ]
       },
-      "app_ids": [],
+      "app_ids": [
+        "claudecode_web_internal"
+      ],
       "deploy_targets": [
         "vercel",
         "vm"
