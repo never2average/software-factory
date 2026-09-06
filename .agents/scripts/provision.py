@@ -131,14 +131,14 @@ def ensure_vm_scaffold(app_id, mold_dir, secrets):
     d = os.path.join(ROOT, "infra/vm/apps", app_id); os.makedirs(d, exist_ok=True)
     df = os.path.join(d, "Dockerfile")
     if not os.path.exists(df):
-        open(df, "w").write("""FROM node:22-bookworm-slim AS build
+        open(df, "w").write("""FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app ./
