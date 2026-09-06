@@ -152,37 +152,62 @@ def run_migrations(mold_dir, vals):
     if r.returncode: sys.exit("migration failed")
 
 def deploy_vercel(app_id, app, infra, ds, mold_dir):
-    proj = infra["vercel"]["project"]; shared = ds.get("postgres", {}).get("scope") == "shared_with_live"
+    """Mirror of the mold's Makefile `deploy` target: migrate, workflow service (services/task-workflow, Next.js),
+    Eve API (vercel build with experimental frameworks + --prebuilt), web dashboard, then health verification."""
+    proj = infra["vercel"]["project"]; team = infra["vercel"].get("team", ""); scope = f"--scope {team}" if team else ""
+    shared = ds.get("postgres", {}).get("scope") == "shared_with_live"
     link(proj, mold_dir); have = vercel_env_names(mold_dir)
-    # config values (not secrets) derived from state
-    cfg = {"MODEL_PROVIDER": app["model"]["provider"], "ENABLE_WEB_SEARCH": str(app["capabilities"]["web_search"]).lower(), "ENABLE_BROWSER": str(app["capabilities"]["browser"]).lower()}
+    cfg = {"MODEL_PROVIDER": app["model"]["provider"], "ENABLE_WEB_SEARCH": str(app["capabilities"]["web_search"]).lower(), "ENABLE_BROWSER": str(app["capabilities"]["browser"]).lower(),
+           "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
     for k, v in cfg.items(): _set_env(k, v, mold_dir)
-    _set_env("OPS_MULTI_TENANT", infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1"), mold_dir)
+    def run(cmd, env=None, label=""):
+        r = subprocess.run(cmd, shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
+        urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", r.stdout + r.stderr)
+        if r.returncode: sys.exit(f"{label or cmd} failed:\n" + (r.stdout + r.stderr).strip()[-1500:])
+        return urls[-1] if urls else ""
     if not shared:
         if "TASK_WORKFLOW_SERVICE_TOKEN" not in have:
             _add_env("TASK_WORKFLOW_SERVICE_TOKEN", subprocess.check_output("openssl rand -hex 32", shell=True, text=True).strip(), mold_dir); print("minted TASK_WORKFLOW_SERVICE_TOKEN")
         vals = pull_env(mold_dir)
         print("running migrations on the fresh database"); run_migrations(mold_dir, vals)
-        # workflow service
-        print("deploying workflow service"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "eve", mold_dir)
-        wf_url = deploy_prebuilt(f"{proj}-workflow", mold_dir, patch_routes=False, skip_prewarm="--skip-prewarm" in sys.argv)
+        url = vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL")
+        r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, env=dict(os.environ, DATABASE_URL=url), capture_output=True, text=True)
+        print("  task-workflow migrations: " + ((r.stdout + r.stderr).strip().splitlines() or ["ok"])[-1][:160])
+        if r.returncode: sys.exit("task-workflow migration failed")
+        # workflow service: its own Next.js app under services/task-workflow
+        print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
+        wf_url = run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy")
         infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
-        link(proj, mold_dir)
-        if "TASK_WORKFLOW_SERVICE_URL" not in vercel_env_names(mold_dir): _add_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir)
+        _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=proj)
         vals = pull_env(mold_dir)
-        # eve api
-        print("deploying eve api"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir); set_framework(f"{proj}-api", "eve", mold_dir)
-        api_url = deploy_prebuilt(f"{proj}-api", mold_dir, patch_routes=True, skip_prewarm="--skip-prewarm" in sys.argv)
+        # eve api: build here with the experimental framework, ship prebuilt
+        print("deploying eve api (vercel build --prebuilt)"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir); set_framework(f"{proj}-api", "eve", mold_dir)
+        _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=f"{proj}-api")
+        subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
+        env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
+        try:
+            run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build")
+            api_url = run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy")
+        finally:
+            link(proj, mold_dir)
         infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
-        link(proj, mold_dir)
-        if "NEXT_PUBLIC_EVE_API_URL" not in vercel_env_names(mold_dir): _add_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir)
+        _set_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir, project=proj)
         cfg_main = "vercel.json"
     else:
         v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
         cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
-    print("deploying web app")
-    url = deploy(cfg_main, mold_dir)
+    print("deploying web app"); link(proj, mold_dir)
+    url = run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy")
     infra["vercel"]["production_url"] = url; print(f"  {url}")
+    # verify-production, as the Makefile does
+    checks = [("workflow", f"{infra['vercel'].get('workflow_url','')}/api/health"), ("api", f"{infra['vercel'].get('api_url','')}/eve/v1/health"), ("web", f"{url}/api/ops/health")]
+    health = {}
+    for name, u in checks:
+        if not u.startswith("http"): continue
+        r = subprocess.run(f"curl --silent --show-error --max-time 20 -o /dev/null -w '%{{http_code}}' {u}", shell=True, capture_output=True, text=True)
+        health[name] = r.stdout.strip(); print(f"  health {name}: {health[name]} {u}")
+    infra["vercel"]["health"] = health
+    if any(v != "200" for v in health.values()): print("WARNING: a health check is not 200; see infrastructure.json vercel.health")
 
 def ensure_vm_scaffold(app_id, mold_dir, secrets):
     d = os.path.join(ROOT, "infra/vm/apps", app_id); os.makedirs(d, exist_ok=True)

@@ -80,9 +80,9 @@ const DIMS = [
   ['surface-rows', 'the keyed surface tables (orgs, members, roster, customers, workflows, definitions, memories, ...) show no only_clone/only_live/changed entries'],
   ['blob', 'the blob tree section shows the same per-folder counts, or explains a skip'],
   ['web', `GET the production_url from ${ROOT}/state/application/${APP}/infrastructure.json and /onboard with curl -sS -o /dev/null -w "%{http_code}" (10s timeout); 200 or a redirect to a sign-in page passes`],
-  ['api', `GET the api_url from infrastructure.json: / and /api/ops/health if present; a 2xx or a JSON body passes; a 404 HTML page or 5xx fails`],
-  ['workflow-service', `GET the workflow_url from infrastructure.json /; a 2xx or an eve/nitro response passes; 5xx fails`],
-  ['inference', `GET production_url + /api/ops/health and read the inference part of the JSON (GLM 5.2 on Cloudflare Workers AI); pass only if it reports ok`],
+  ['api', `GET api_url + /eve/v1/health from infrastructure.json (the mold's Makefile verify-production check); pass only on HTTP 200`],
+  ['workflow-service', `GET workflow_url + /api/health from infrastructure.json; pass only on HTTP 200 with a JSON body whose service is task-workflow (the mold's Makefile check); an eve landing page or 404 is a fail`],
+  ['inference', `GET production_url + /api/ops/health; pass only if the JSON has ok true and inference.ok true (GLM 5.2 on Cloudflare Workers AI) and taskWorkflow.ok true; quote the detail strings`],
 ]
 const verified = await pipeline(DIMS,
   ([dim, how]) => agent(`Verify dimension "${dim}" for the clone ${APP}: ${how}. Regression report:\n${(regress?.tail ?? '').slice(0, 6000)}\nReturn status pass/fail/skipped with concrete evidence (status codes, counts, quoted lines). ${RULES}`, { label: `verify:${dim}`, schema: VERIFY }),
