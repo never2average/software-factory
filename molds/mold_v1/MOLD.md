@@ -7,7 +7,7 @@
 
 ## Contents
 
-- `codebase/` — verbatim snapshot of the fde-agent repo (eve framework + Next.js 16 + Drizzle/Neon + Vercel Blob data room). `.git`, `node_modules`, `test-results` excluded.
+- `codebase/` — verbatim snapshot of the fde-agent repo (eve framework + Next.js 16 + Drizzle/Postgres (Supabase in the live deployment) + Vercel Blob data room). `.git`, `node_modules`, `test-results` excluded.
 - `testing/` — the five test lanes the factory runs against a stamped application. Each lane README maps to what the codebase already provides and what is still to be written.
 
 ## Service surface (what the factory operator gets from a stamped app)
