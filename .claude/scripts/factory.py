@@ -89,10 +89,10 @@ TYPES = {"string": str, "boolean": bool, "integer": int, "number": (int, float),
 def _check(obj, schema, where):
     """Recursive subset of JSON Schema: type, required, properties, additionalProperties, items, enum, const, pattern."""
     errs = []
-    t = schema.get("type")
-    if t and t in TYPES:
-        ok = isinstance(obj, TYPES[t]) and not (t in ("integer", "number") and isinstance(obj, bool))
-        if not ok: return [f"{where}: expected {t}, got {type(obj).__name__}"]
+    t = schema.get("type"); ts = [x for x in (t if isinstance(t, list) else [t]) if x in TYPES] if t else []
+    if ts:
+        ok = any(isinstance(obj, TYPES[x]) and not (x in ("integer", "number") and isinstance(obj, bool)) for x in ts) or ("null" in (t if isinstance(t, list) else [t]) and obj is None)
+        if not ok: return [f"{where}: expected {'/'.join(map(str, t if isinstance(t, list) else [t]))}, got {type(obj).__name__}"]
     if "enum" in schema and obj not in schema["enum"]: errs.append(f"{where}: {obj!r} not in {schema['enum']}")
     if "const" in schema and obj != schema["const"]: errs.append(f"{where}: {obj!r} != {schema['const']!r}")
     if "pattern" in schema and isinstance(obj, str) and not re.match(schema["pattern"], obj): errs.append(f"{where}: {obj!r} fails pattern")

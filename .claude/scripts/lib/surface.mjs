@@ -95,8 +95,8 @@ async function extract(url) {
       escalation: { path: hasEsc ? "roster_escalations" : "none", incident_workflow: names.has("route-incident") ? "route-incident" : undefined },
     },
     custom_workflow_builder: {
-      library: { install: (out.workflows ?? []).some(w => LIBRARY.has(w.name) && w.created_by === "system") ? "all" : "none" },
-      scripts: (out.workflows ?? []).filter(w => !(LIBRARY.has(w.name) && w.created_by === "system")).map(w => ({ ...pick({ name: w.name, description: w.description ?? "", trigger: w.trigger ?? "manual", customer_id: w.customer_id, instructions: w.instructions }), steps: w.steps ?? [], enabled: w.enabled !== false, instructions_enabled: !!w.instructions_enabled })),
+      library: (() => { const have = (out.workflows ?? []).filter(w => LIBRARY.has(w.name)).map(w => w.name); return have.length === LIBRARY.size ? { install: "all" } : have.length ? { install: "listed", names: have } : { install: "none" }; })(),
+      scripts: (out.workflows ?? []).filter(w => !LIBRARY.has(w.name)).map(w => ({ ...pick({ name: w.name, description: w.description ?? "", trigger: w.trigger ?? "manual", customer_id: w.customer_id, instructions: w.instructions }), steps: w.steps ?? [], enabled: w.enabled !== false, instructions_enabled: !!w.instructions_enabled })),
       definitions: defs.filter(d => !d.archived_at).map(d => ({ id: d.id, name: d.name, entity: d.entity, is_default: !!d.is_default, stages: d.stages ?? [] })),
     },
   };
