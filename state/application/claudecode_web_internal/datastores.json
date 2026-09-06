@@ -7,7 +7,7 @@
     "rls": "fail_closed",
     "tenancy": "multi_org",
     "url_ref": "DATABASE_URL",
-    "scope": "shared_with_live"
+    "scope": "fresh"
   },
   "blob": {
     "provider": "vercel_blob",

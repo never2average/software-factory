@@ -2,7 +2,7 @@
   "deploy_target": "vercel",
   "postgres_provider": "supabase",
   "postgres_ref": "DATABASE_URL",
-  "postgres_scope": "shared_with_live",
+  "postgres_scope": "fresh",
   "blob_provider": "vercel_blob",
   "inference_provider": "cloudflare_workers_ai",
   "inference_account": "CLOUDFLARE_ACCOUNT_ID",
