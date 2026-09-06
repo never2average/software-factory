@@ -1,8 +1,148 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "datainfra.schema.json",
-  "title": "Datainfra",
+  "title": "DataInfra",
+  "description": "The data room (dm.md) layout, syncs, pipelines and agents an application is wired with.",
   "type": "object",
-  "properties": {},
-  "additionalProperties": true
+  "required": [
+    "dataroom"
+  ],
+  "properties": {
+    "dataroom": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "string",
+          "default": "molds/mold_v1/codebase/dm.md"
+        },
+        "top_level": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "Customers",
+              "Platform",
+              "Deployments",
+              "Solutions",
+              "Implementation",
+              "Tickets",
+              "People"
+            ]
+          }
+        },
+        "system_of_record": {
+          "type": "string",
+          "enum": [
+            "postgres"
+          ]
+        }
+      }
+    },
+    "syncs": {
+      "type": "array",
+      "description": "Inbound sync sources enabled for this app",
+      "items": {
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "manual_entry",
+              "email",
+              "slack",
+              "meeting_notes",
+              "github",
+              "aws",
+              "azure",
+              "gcp",
+              "oci",
+              "bare_metal",
+              "miro",
+              "claude",
+              "codex",
+              "analytics",
+              "observability",
+              "call"
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "schedule": {
+            "type": "string",
+            "description": "cron"
+          }
+        }
+      }
+    },
+    "pipelines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "pipeline_id"
+        ],
+        "properties": {
+          "pipeline_id": {
+            "type": "string"
+          },
+          "config": {
+            "type": "string"
+          },
+          "isolation": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "pipeline",
+              "role"
+            ],
+            "description": "pipeline/role isolation arrive with mold_v2/mold_v3"
+          }
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "agent_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "recipe": {
+            "type": "string"
+          },
+          "evals_dir": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "connectors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "secret_ref": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
 }
