@@ -21,19 +21,19 @@ LIVE = {"web": "fde-agent", "api": "fde-agent-api", "workflow": "fde-task-workfl
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
 
-def link(project, cwd): subprocess.run(f"vercel link --yes --project {project} >/dev/null 2>&1", shell=True, cwd=cwd, check=True)
-def pull_env(project, cwd, back_to):
-    """Production env of `project` as a dict. Relinks the mold dir to `back_to` afterwards."""
-    link(project, cwd); tmp = os.path.join(cwd, f".env.clone.{project}")
+def pull_env(project, cwd, _back_to=None):
+    """Production env of `project` as a dict. Names the project explicitly and never relinks the mold dir:
+    other agents share that directory, and a relink mid-run can point another step at the wrong project."""
+    tmp = os.path.join(cwd, f".env.clone.{project}")
     try:
-        subprocess.run(f"vercel env pull --yes --environment=production {tmp}", shell=True, cwd=cwd, capture_output=True, check=True)
+        subprocess.run(f"vercel env pull --yes --environment=production --project {project} {tmp}", shell=True, cwd=cwd, capture_output=True, check=True)
         vals = {}
         for l in open(tmp):
             if "=" in l and not l.startswith("#"): k, v = l.split("=", 1); vals[k.strip()] = v.strip().strip('"')
+        if not vals: sys.exit(f"could not pull the production environment of {project}")
         return vals
     finally:
         if os.path.exists(tmp): os.remove(tmp)
-        link(back_to, cwd)
 def pg_url(vals): return vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL") or ""
 
 def live_blob_token(mold, proj, prefix):
