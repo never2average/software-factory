@@ -43,7 +43,7 @@ Values never enter the repo, the state files, or the chat. State holds names; th
 
 ## Access
 
-- VM: SSH alias `digitalocean`, root. Provisioned by `infra/vm/provision.sh` (node 22, docker, Vercel CLI, Playwright).
+- VM: SSH alias `digitalocean`, root. Provisioned by `infra/vm/provision.sh` (node 24, docker, Vercel CLI, Playwright).
 - GitHub: this repo via a write deploy key; fde-agent via a read-only deploy key (alias `github-fde`).
 - Vercel: CLI logged in on the VM; factory project `claudecode-web`. The live `fde-agent*` projects are off limits to the factory.
 
@@ -51,7 +51,7 @@ Values never enter the repo, the state files, or the chat. State holds names; th
 
 | Item | Status |
 |---|---|
-| VM runtime | provisioned, mold typechecks |
+| VM runtime | provisioned on node 24, mold typechecks and builds |
 | Vercel | logged in, project linked, nothing deployed |
 | claudecode_web_internal | intake done, fresh database chosen, provisioner not yet run |
 | Lanes | none run; two harnesses missing |

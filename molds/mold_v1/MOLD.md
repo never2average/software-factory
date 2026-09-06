@@ -1,7 +1,8 @@
 # mold_v1
 
 **Status:** active
-**Source:** github.com/never2average/fde-agent @ dc98cb6c0c25ef81304fb6cf1db172396e62b805 (main, snapshot 2026-09-06)
+**Source:** github.com/never2average/fde-agent @ dc98cb6c0c25ef81304fb6cf1db172396e62b805 (main, snapshot 2026-09-06; re-verified identical to upstream main 2026-09-06)
+**Node:** 24.x (package.json engines; VM and Vercel project both on 24)
 **Target model:** GLM 5.2 via OpenAI-compatible provider
 **Definition (Factory 1 diagram):** multi-workspace, multi-agent Claude Code web at feature parity application that is purely vanilla and works with GLM 5.2.
 

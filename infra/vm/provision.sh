@@ -4,9 +4,9 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q ca-certificates curl gnupg git tmux jq build-essential rsync unzip
-# node 22 (NodeSource)
-if ! command -v node >/dev/null || [ "$(node -v | cut -c2-3)" != "22" ]; then
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+# node 24 (NodeSource; matches molds/mold_v1 engines and the Vercel project)
+if ! command -v node >/dev/null || [ "$(node -v | cut -c2-3)" != "24" ]; then
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   apt-get install -y -q nodejs
 fi
 # docker engine + compose plugin
