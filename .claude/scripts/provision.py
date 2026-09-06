@@ -28,10 +28,17 @@ GENERATED = {  # app-internal secrets the factory may mint itself (never externa
 }
 def _add_env(name, value, cwd):
     subprocess.run(f"vercel env add {name} production", shell=True, cwd=cwd, input=value, capture_output=True, text=True)
-def _set_env(name, value, cwd):
-    """Idempotent: replace whatever production value exists. Used for derived, non-secret config such as service URLs."""
-    subprocess.run(f"vercel env rm {name} production --yes", shell=True, cwd=cwd, capture_output=True, text=True)
-    _add_env(name, value, cwd)
+def _set_env(name, value, cwd, project=None):
+    """Idempotent: replace whatever production value exists. Used for derived, non-secret config such as service URLs.
+    Goes through the REST API so it never relinks the mold dir (other steps may be pulling env there concurrently)."""
+    project = project or load(os.path.join(cwd, ".vercel/project.json"))["projectId"]
+    r = subprocess.run(f"vercel api /v9/projects/{project}/env --raw", shell=True, cwd=cwd, capture_output=True, text=True)
+    try: envs = json.loads(r.stdout).get("envs", [])
+    except Exception: envs = []
+    hit = next((e for e in envs if e["key"] == name and "production" in (e.get("target") or [])), None)
+    body = json.dumps({"key": name, "value": value, "type": "plain", "target": ["production"]})
+    if hit: subprocess.run(["vercel", "api", f"/v9/projects/{project}/env/{hit['id']}", "-X", "PATCH", "--input", "-", "--raw"], cwd=cwd, input=json.dumps({"value": value, "type": "plain"}), capture_output=True, text=True)
+    else: subprocess.run(["vercel", "api", f"/v10/projects/{project}/env", "-X", "POST", "--input", "-", "--raw"], cwd=cwd, input=body, capture_output=True, text=True)
 
 def provision_datastores(app_id, ds, mold_dir, present, infra):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
