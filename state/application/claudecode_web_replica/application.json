@@ -632,61 +632,71 @@
           "kind": "customer_agreements",
           "dataroom_path": "Customers/{customer_id}/agreements/",
           "sync": "manual_entry",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "customer_context",
           "dataroom_path": "Customers/{customer_id}/context.md",
           "sync": "manual_entry",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "customer_personas",
           "dataroom_path": "Customers/{customer_id}/personas.jsonl",
           "sync": "manual_entry",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "customer_interactions",
           "dataroom_path": "Customers/{customer_id}/interactions.jsonl",
           "sync": "meeting_notes",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "product_offerings",
           "dataroom_path": "Solutions/{platform_version_id}/",
           "sync": "manual_entry",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "platform_design",
           "dataroom_path": "Platform/{platform_version_id}/design_decisions/",
           "sync": "github",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "rollout_case_studies",
           "dataroom_path": "Deployments/{customer_id}/{platform_version_id}/",
           "sync": "manual_entry",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "implementation_history",
           "dataroom_path": "Implementation/{customer_id}/migrations/{migration_id}/context.md",
           "sync": "manual_entry",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "tickets",
           "dataroom_path": "Tickets/{ticket_folder}/{customer_id}/",
           "sync": "manual_entry",
-          "required": true
+          "required": true,
+          "live_files": 0
         },
         {
           "kind": "people_context",
           "dataroom_path": "People/{person_id}/context.md",
           "sync": "manual_entry",
-          "required": true
+          "required": true,
+          "live_files": 0
         }
       ],
       "instructions": {
@@ -703,6 +713,9 @@
       },
       "entity_vocabulary": {
         "account_noun": "customer"
+      },
+      "corpus_files": {
+        "total": 0
       }
     },
     "multiplayer_context": {
@@ -999,7 +1012,7 @@
       "todos": 1,
       "roster_escalations": false
     },
-    "extracted_at": "2026-09-06T11:19:28+00:00",
+    "extracted_at": "2026-09-06T11:39:40+00:00",
     "live_counts": {
       "orgs": 1,
       "org_members": 5,
