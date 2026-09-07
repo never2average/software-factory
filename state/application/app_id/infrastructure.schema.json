@@ -224,6 +224,28 @@
         },
         "handed_to": {
           "type": "string"
+        },
+        "neon_resource": {
+          "type": "string",
+          "description": "Vercel Marketplace Neon resource backing this app; adopted (free, unattached) or created"
+        },
+        "local_pg": {
+          "type": "object",
+          "description": "self_hosted only: the app's own Postgres cluster on a private docker network, never a host port",
+          "properties": {
+            "container": {
+              "type": "string"
+            },
+            "network": {
+              "type": "string"
+            },
+            "volume": {
+              "type": "string"
+            },
+            "database": {
+              "type": "string"
+            }
+          }
         }
       }
     },

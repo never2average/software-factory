@@ -34,7 +34,10 @@ def pull_env(project, cwd, _back_to=None):
         return vals
     finally:
         if os.path.exists(tmp): os.remove(tmp)
-def pg_url(vals): return vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL") or ""
+# The ADMIN url, in provider order. DATABASE_URL is last on purpose: after the app_rw bootstrap it is
+# a NOBYPASSRLS role that owns nothing, and `pg_restore --clean --if-exists` against it fails with
+# `must be owner of table orgs`. Same chain as provision.py's admin_url().
+def pg_url(vals): return next((vals[k] for k in ("SUPABASE_POSTGRES_URL_NON_POOLING", "DATABASE_URL_UNPOOLED", "POSTGRES_ADMIN_URL", "DATABASE_URL") if vals.get(k)), "")
 
 def live_blob_token(mold, proj, prefix):
     """The live blob store belongs to one of the three live projects; find a token that can list it. None = skip blob work."""

@@ -86,6 +86,49 @@
             }
           },
           "description": "Where the initial data came from when cloning"
+        },
+        "sslmode": {
+          "type": "string",
+          "enum": [
+            "require",
+            "verify-full",
+            "disable"
+          ],
+          "default": "require",
+          "description": "The runtime clients pass NO ssl option (agent/lib/db/index.ts, lib/ops-db.ts), so this query parameter on DATABASE_URL is the only thing that turns TLS on. Without it the app speaks plaintext Postgres."
+        },
+        "admin_url_ref": {
+          "type": "string",
+          "description": "Secret NAME of the URL with DDL rights (migrations, pg_restore). Never DATABASE_URL after the app_rw bootstrap: that role owns nothing."
+        },
+        "pooling": {
+          "type": "string",
+          "enum": [
+            "none",
+            "transaction",
+            "session"
+          ],
+          "description": "transaction = DATABASE_URL is a transaction pooler (Neon pooled endpoint, Supabase Supavisor:6543). Safe for RLS: app.org_id is set with set_config(...,true), which is transaction-local."
+        },
+        "exposure": {
+          "type": "string",
+          "enum": [
+            "managed_provider",
+            "private_docker_network"
+          ],
+          "description": "How the database is reachable. There is no public-port option, by design."
+        },
+        "network": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
         }
       }
     },
