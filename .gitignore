@@ -9,3 +9,9 @@ molds/**/vercel.nocron.json
 __pycache__/
 *.pyc
 build/
+
+# generated per-app database artifacts: the compose file and README are generated output and may be
+# committed, but the Postgres superuser password and the server TLS private key never are. These two
+# rules exist so the protection cannot depend on which provision.py path created the directory.
+infra/vm/apps/*/.pg-admin
+infra/vm/apps/*/pg/

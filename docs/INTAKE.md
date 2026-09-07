@@ -5,7 +5,7 @@ What the factory needs to know before it can stamp an application, and where eac
 | Id | Written to | Asked when | Options |
 |---|---|---|---|
 | deploy_target | infrastructure.target | brief silent and defaults unconfirmed | vercel, vm |
-| postgres_provider | datastores.postgres.provider | defaults unconfirmed | supabase, neon, rds, self_hosted |
+| postgres_provider | datastores.postgres.provider | defaults unconfirmed; brief hint (`neon` / `supabase` / `self-host the postgres`) | **neon** (default, free), supabase, rds, self_hosted |
 | postgres_ref | datastores.postgres.url_ref | never (DATABASE_URL) | name only |
 | postgres_scope | datastores.postgres.scope | never (brief hint, default fresh) | fresh, shared_with_live |
 | blob_provider | datastores.blob.provider | defaults unconfirmed | vercel_blob, s3, gcs, azure_blob |
@@ -22,6 +22,21 @@ What the factory needs to know before it can stamp an application, and where eac
 | fde_email | application.workspace.fde_self.email | brief silent and no factory default | email |
 | library | application.surface.custom_workflow_builder.library.install | never (brief hint, default all) | all, none |
 
-Brief hints recognised: "vercel" / "vm, droplet, self-host"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "fde: <email>"; "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none"; "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
+Brief hints recognised: "vercel" / "vm, droplet, self-host"; "neon" / "supabase" / "self-host the postgres, database on the vm, local postgres"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "fde: <email>"; "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none"; "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
 
 Steady state after the first confirmed intake: zero questions for a five-line brief; everything comes from the brief or defaults. Secrets are always by name; `provision.py` checks presence in the store and lists what the user still has to set.
+
+## Postgres providers
+
+| provider | what it means | deployable to Vercel |
+| --- | --- | --- |
+| `neon` **(default)** | free Neon database on the Vercel Marketplace. `provision.py` first adopts an unattached free resource and proves it is EMPTY, then falls back to `vercel integration add neon` (verified: exits 0, no checkout page). `DATABASE_URL` is the pooled endpoint, `DATABASE_URL_UNPOOLED` the direct one for migrations. | yes |
+| `supabase` | as before. The team's free tier is exhausted, so a new app dead-ends at a Marketplace checkout link. | yes, if you pay |
+| `rds` | schema only; no provisioner. `provision.py` says so instead of failing obscurely. | no |
+| `self_hosted` | a Postgres container on the app's own private docker network, **no host port ever**. Local verification only — `provision.py` exits if you pair it with `target: vercel`, because reaching it from a Vercel function would mean `hostssl ... 0.0.0.0/0`. See `infra/vm/README.md`. | no, by design |
+
+The secret NAMES an app declares now follow its provider (`infrastructure.secrets_derived`):
+`neon` adds `DATABASE_URL_UNPOOLED`, `supabase` adds `SUPABASE_URL` + `SUPABASE_POSTGRES_URL_NON_POOLING`,
+`self_hosted` adds `POSTGRES_ADMIN_URL`. Before this, every app declared `SUPABASE_URL` — a name that
+exists nowhere in the mold codebase, which `provision.py` then required before it would deploy, so a
+non-Supabase app could never pass the gate.

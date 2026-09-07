@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """Provision: validated application state -> running deployment.
 
-  provision.py <app_id> [--check] [--deploy] [--set-secret NAME]
+  provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db]
 
 --check (default): verify every secret named in infrastructure.json exists in the
   secret store (Vercel env for vercel_env; infra/vm/apps/<app_id>/.env for vm_env_file),
-  make sure the target scaffolding exists, print what is missing. Never deploys.
+  regenerate the app's local artifact, print what is missing. Never deploys.
 --deploy: run the deploy for the target. Refuses if any secret is missing.
+--verify-db: stand up this app's LOCAL database (private docker network, no host port) and run
+  the whole mold chain against it — push, migrate, RLS + app_rw bootstrap, task-workflow — then
+  prove the resulting URL is app_rw/NOBYPASSRLS/policied/encrypted. Touches nothing remote.
+
+ONE COMMITTED DEPLOY TARGET: vercel. `target: vm` is a LOCAL VERIFICATION target — it generates
+the app's datastore artifact and runs the lanes against it; it does not serve the application.
+See infra/vm/README.md for why (three deployables, four crons and a Vercel-injected OIDC identity
+the mold cannot get off Vercel without a fork, which HARD RULE 1 forbids).
+
+DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier is exhausted;
+Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.
+`self_hosted` means a Postgres on a PRIVATE docker network with no host port — never a public one.
 """
 import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -62,10 +74,191 @@ def _add_env(name, value, cwd, project):
     if name in vercel_env_names(cwd, project): return
     _set_env(name, value, cwd, project=project)
 
+# The env var whose presence means "this app already has a database".
+# This used to be the literal "SUPABASE_URL" for every app — a name that appears NOWHERE in the mold
+# codebase (grep over ts/tsx/mjs/js finds nothing), yet intake wrote it into secrets_derived and
+# main() blocked the deploy on it. A non-Supabase app could therefore never satisfy the gate and
+# could never deploy. The sentinel is now whatever that provider actually injects.
+DB_SENTINEL = {"supabase": "SUPABASE_URL", "neon": "DATABASE_URL_UNPOOLED",
+               "rds": "DATABASE_URL", "self_hosted": "POSTGRES_ADMIN_URL"}
+ADMIN_KEYS = ("SUPABASE_POSTGRES_URL_NON_POOLING", "DATABASE_URL_UNPOOLED", "POSTGRES_ADMIN_URL", "DATABASE_URL")
+
+def admin_url(vals):
+    """The URL that owns the schema, whichever provider named it.
+
+    DATABASE_URL is deliberately last: after bootstrap_database it is app_rw, which owns no table and
+    cannot run DDL. Two copies of this chain used to be hardcoded (run_migrations, deploy_vercel) and
+    both knew only Supabase's name for it."""
+    return next((vals[k] for k in ADMIN_KEYS if vals.get(k)), "")
+
+def _link_dir(project, mold_dir):
+    """A throwaway directory linked to `project`, for CLI commands that act on 'the current project'.
+    The mold directory is shared by every agent and is linked to a DIFFERENT app; relinking it would
+    point another step at the wrong project, and `vercel integration add` has no --project flag."""
+    meta = _project_meta(project, mold_dir)
+    if not meta.get("id"): return None
+    d = tempfile.mkdtemp(prefix="vercel-link-"); os.makedirs(os.path.join(d, ".vercel"))
+    json.dump({"projectId": meta["id"], "orgId": meta.get("accountId"), "projectName": project},
+              open(os.path.join(d, ".vercel/project.json"), "w"))
+    return d
+
+def ensure_projects(proj, mold_dir):
+    """Create this app's three Vercel projects before anything writes to them.
+
+    deploy_vercel's first act is _set_env(..., project=f'{proj}-api'), and the API answers 404 for a
+    project that does not exist — so a first deploy of a NEW app could never start. The two projects
+    that exist today were created by other means, which is why nobody had hit this."""
+    for p in (proj, f"{proj}-api", f"{proj}-workflow"):
+        if _project_meta(p, mold_dir).get("id"): continue
+        r = subprocess.run(f"vercel project add {p}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        if not _project_meta(p, mold_dir).get("id"):
+            sys.exit(f"could not create the Vercel project {p}: " + (r.stdout + r.stderr).strip()[-200:])
+        print(f"  created Vercel project {p}")
+
+def _neon_spares(mold_dir):
+    """Every Neon resource on this team that is available and attached to no project."""
+    r = subprocess.run("vercel integration list --all --json", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    try: res = json.loads(r.stdout[r.stdout.index("{"):]).get("resources", [])
+    except Exception: res = []
+    return [x["name"] for x in res if x.get("product") == "Neon" and x.get("status") == "available" and not x.get("projects")]
+
+def _db_stat(mold_dir, proj, key="DATABASE_URL_UNPOOLED"):
+    """{tables, policies, size} of the database a project's env points at, or None."""
+    vals = pull_env(mold_dir, proj)
+    url = vals.get(key) or vals.get("DATABASE_URL")
+    if not url: return None
+    r = _node_lib(os.path.join(ROOT, ".claude/scripts/lib/db-tables.mjs"), {"DB_URL": url}, mold_dir)
+    try: return json.loads((r.stdout.strip().splitlines() or ["{}"])[-1])
+    except Exception: return None
+
+def adopt_or_create_neon(app_id, mold_dir, infra, proj):
+    """A free Postgres for this app, with no checkout page.
+
+    Vercel keeps a Marketplace resource on its plan whether or not a project uses it, so the cheapest
+    database is one the team already owns and nothing is attached to. Adopt that first; only ask the
+    Marketplace for a new one when there is none. This is the whole reason a second app is free:
+    Supabase's free tier is exhausted, Neon's is not.
+
+    UNATTACHED IS NOT EMPTY. The first spare on this team held 15 MB and 54 tables of an older copy of
+    this very schema; pushing onto it made drizzle-kit ask an interactive rename question and abort.
+    `scope: fresh` means fresh, so an adopted database is connected, INSPECTED, and disconnected again
+    unless it is empty. The factory never writes over data it did not create."""
+    for name in _neon_spares(mold_dir):
+        print(f"trying the free Neon database '{name}' (attached to no project) ...")
+        c = subprocess.run(f"vercel integration-resource connect {name} {proj} -e production -e preview -e development --yes",
+                           shell=True, cwd=mold_dir, capture_output=True, text=True)
+        if c.returncode:
+            print("  could not connect it: " + (c.stdout + c.stderr).strip().splitlines()[-1][:160]); continue
+        st = _db_stat(mold_dir, proj)
+        if st and st.get("tables") == 0:
+            print(f"  adopted {name}: empty database, free plan, no checkout")
+            infra.setdefault("datastores", {})["neon_resource"] = name
+            return
+        print(f"  {name} already holds {(st or {}).get('tables','?')} table(s) ({(st or {}).get('size','?')}) — "
+              f"not overwriting it; disconnecting and asking for a new one")
+        subprocess.run(f"vercel integration-resource disconnect {name} {proj} --yes", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    print(f"provisioning a fresh Neon database '{app_id}' via Vercel Marketplace (Free plan) ...")
+    urls = os.path.expanduser("~/.factory-open-urls"); open(urls, "w").close()   # the xdg-open shim (infra/vm/provision.sh) records links a CLI tried to open
+    res_name = app_id.replace("_", "-")                                          # resource names are dns-ish
+    d = _link_dir(proj, mold_dir)
+    try:
+        r = subprocess.run(f"vercel integration add neon -n {res_name} --no-claim --no-env-pull -e production -e preview -e development"
+                           + (f" --cwd {d}" if d else ""), shell=True, cwd=mold_dir, capture_output=True, text=True)
+    finally:
+        if d: shutil.rmtree(d, ignore_errors=True)
+    out = r.stdout + r.stderr; link_ = next((l.strip() for l in open(urls) if l.strip()), None)
+    if "Additional setup required" in out or link_:
+        sys.exit("ONE-TIME STEP: open this link in a browser, accept the Neon FREE plan for this project, then run the same command again:\n  "
+                 + (link_ or f"https://vercel.com/{infra['vercel']['team']}/~/integrations/checkout/neon?productSlug=neon&defaultResourceName={res_name}&source=cli&projectSlug={proj}"))
+    if r.returncode:
+        msg = [l for l in out.splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+        sys.exit("neon provisioning failed: " + " | ".join(msg[-3:]))
+    print("  " + next((l for l in out.splitlines() if "provisioned" in l), "provisioned").strip()[:160])
+    # `integration add` connects to the project linked in its cwd; make the attachment explicit either way
+    subprocess.run(f"vercel integration-resource connect {res_name} {proj} -e production -e preview -e development --yes",
+                   shell=True, cwd=mold_dir, capture_output=True, text=True)
+    st = _db_stat(mold_dir, proj)
+    if not st: sys.exit(f"Neon resource {res_name} was created but {proj} has no DATABASE_URL_UNPOOLED; connect it in the dashboard and rerun.")
+    if st.get("tables"): sys.exit(f"the new Neon database is not empty ({st['tables']} tables) — refusing to write over it")
+    infra.setdefault("datastores", {})["neon_resource"] = res_name
+
+def _blob_store(name, mold_dir):
+    """The team's Blob store of this name, with the projects it is connected to, or None."""
+    r = subprocess.run("vercel api /v1/storage/stores --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    try: st = json.loads(r.stdout).get("stores", [])
+    except Exception: st = []
+    return next((x for x in st if x.get("type") == "blob" and x.get("name") == name), None)
+
+def _connect_store(store_id, project_id, mold_dir):
+    """Attach an existing store to a project, which is what injects its token into that project's env.
+    Same endpoint the CLI's own create path uses (connectResourceToProject in the Vercel CLI)."""
+    return subprocess.run(["vercel", "api", f"/v1/storage/stores/{store_id}/connections", "-X", "POST", "--input", "-", "--raw"],
+                          cwd=mold_dir, capture_output=True, text=True,
+                          input=json.dumps({"envVarEnvironments": ["production", "preview", "development"],
+                                            "projectId": project_id, "type": "integration"}))
+
+def _cli_err(out):
+    """The line a human needs out of a CLI transcript: its `Error:` line, else the last thing it said."""
+    return next((l.strip() for l in out.splitlines() if l.strip().startswith("Error")),
+                (out.strip().splitlines() or ["the CLI reported nothing"])[-1].strip())
+
+def ensure_blob_store(app_id, mold_dir, infra, proj):
+    """A private Blob store CONNECTED TO THIS APP'S PROJECT — the connection is what injects
+    BLOB_READ_WRITE_TOKEN, and nothing else in the factory can supply that name.
+
+    `vercel blob create-store` attaches the new store to the project linked in its WORKING DIRECTORY.
+    This ran in the mold directory, which is linked to a different app, so the store was created
+    attached to nothing, the app's project never received BLOB_READ_WRITE_TOKEN, and --deploy refused
+    for ever on a derived secret that no command could produce — the same dead end as the phantom
+    SUPABASE_URL gate, one function away from the fix Neon already uses. So: run it in a throwaway link
+    dir of THIS app's project, and never leave the run unverified.
+
+    Re-running is idempotent: a second create answers `A blob store named "x" already exists. (409)`
+    and still EXITS 0, so the returncode says nothing — the store is looked up by name and connected."""
+    name = app_id.replace("_", "-")
+    print(f"creating Vercel Blob store '{name}' and connecting it to {proj} ...")
+    meta = _project_meta(proj, mold_dir)
+    if not meta.get("id"): sys.exit(f"the Vercel project {proj} does not exist yet; rerun --check")
+    d = _link_dir(proj, mold_dir)
+    try:
+        r = subprocess.run(f"vercel blob create-store {name} --access private -e production -e preview -e development --yes --cwd {d}",
+                           shell=True, cwd=mold_dir, capture_output=True, text=True)
+        out = r.stdout + r.stderr
+    finally:
+        shutil.rmtree(d, ignore_errors=True)   # `create-store` pulls env into its cwd; it must not be the mold
+    if "already exists" in out:
+        st = _blob_store(name, mold_dir)
+        if not st: sys.exit(f"a Blob store named {name} exists on this team but could not be read back; delete it in the dashboard and rerun")
+        # `projectId` is the project; `id` on a connection entry is the connection's own id, not the project's
+        if any(c.get("projectId") == meta["id"] for c in (st.get("projectsMetadata") or [])):
+            print(f"  {name} was already connected to {proj}")
+        else:
+            c = _connect_store(st["id"], meta["id"], mold_dir)
+            bad = '"error"' in c.stdout or c.returncode
+            print("  " + (_cli_err(c.stdout + c.stderr)[:160] if bad else f"connected the existing store {name} to {proj}"))
+    elif "Success" in out: print("  " + next((l.strip() for l in out.splitlines() if "created" in l.lower()), "created")[:160])
+    else: print("  " + _cli_err(out)[:160])                    # neither created nor pre-existing
+    infra.setdefault("datastores", {})["blob_store"] = name
+    if "BLOB_READ_WRITE_TOKEN" not in vercel_env_names(mold_dir, proj):
+        st = _blob_store(name, mold_dir)
+        if not st:
+            sys.exit(f"could not create the Blob store {name}: {_cli_err(out)[:200]}\n"
+                     f"Fix that and rerun: python3 .claude/scripts/provision.py {app_id} --check")
+        sys.exit(f"the Blob store {name} exists but {proj} still has no BLOB_READ_WRITE_TOKEN. Run this one command, then rerun:\n"
+                 f"  vercel api /v1/storage/stores/{(st or {}).get('id','<store id>')}/connections -X POST --raw "
+                 f"""--input - <<< '{{"envVarEnvironments":["production","preview","development"],"projectId":"{meta['id']}","type":"integration"}}'""")
+    print(f"  BLOB_READ_WRITE_TOKEN injected into {proj}")
+
 def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
     pg, blob = ds.get("postgres", {}), ds.get("blob", {})
-    if pg.get("scope") == "fresh" and pg.get("provider") == "supabase" and "SUPABASE_URL" not in present:
+    prov = pg.get("provider", "supabase")
+    if pg.get("scope") == "fresh" and prov == "neon" and DB_SENTINEL["neon"] not in present:
+        adopt_or_create_neon(app_id, mold_dir, infra, proj)
+    elif pg.get("scope") == "fresh" and prov not in ("supabase", "neon"):
+        sys.exit(f"datastores.postgres.provider={prov!r} has no provisioner for target=vercel. "
+                 f'Set it to "neon" (free) in state/application/{app_id}/datastores.json and rerun.')
+    if pg.get("scope") == "fresh" and prov == "supabase" and DB_SENTINEL["supabase"] not in present:
         print(f"provisioning fresh Supabase project '{app_id}' via Vercel Marketplace ...")
         urls = os.path.expanduser("~/.factory-open-urls"); open(urls, "w").close()   # the xdg-open shim (infra/vm/provision.sh) records links a CLI tried to open
         r = subprocess.run(f"vercel integration add supabase -n {app_id} --prefix SUPABASE_ --no-claim --no-env-pull -e production -e preview -e development", shell=True, cwd=mold_dir, capture_output=True, text=True)
@@ -78,10 +271,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
         print("  " + (out.strip().splitlines() or ["ok"])[-1])
         infra.setdefault("datastores", {})["supabase_resource"] = app_id
     if blob.get("provider") == "vercel_blob" and "BLOB_READ_WRITE_TOKEN" not in present:
-        print(f"creating Vercel Blob store '{app_id}' ...")
-        r = subprocess.run(f"vercel blob create-store {app_id.replace("_","-")} --access private --yes", shell=True, cwd=mold_dir, capture_output=True, text=True)
-        if r.returncode and "already" not in (r.stdout + r.stderr): print("  " + (r.stdout + r.stderr).strip().splitlines()[-1])
-        infra.setdefault("datastores", {})["blob_store"] = app_id
+        ensure_blob_store(app_id, mold_dir, infra, proj)
     present = vercel_env_names(mold_dir, proj)
     for name, cmd in GENERATED.items():
         if name not in present:
@@ -188,12 +378,56 @@ def sync_env(names, vals, project, mold_dir):
     blocked = [k for k in blocked if k not in ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GOOGLE_CLIENT_ID")]   # optional
     print(f"  {project}: synced {n} env var(s)" + (f"; unreadable at the source, set once by hand: {', '.join(blocked)}" if blocked else ""))
 
-def bootstrap_database(mold_dir, admin_url, projects):
+def _node_lib(script, env, mold_dir):
+    """Run one of .claude/scripts/lib/*.mjs against the mold's node_modules WITHOUT putting a file
+    inside the mold (HARD RULE 1): ESM resolves a bare import from the script's own directory
+    upward, so a temp directory holding a node_modules symlink is enough."""
+    d = tempfile.mkdtemp(prefix="factory-lib-")
+    try:
+        os.symlink(os.path.join(mold_dir, "node_modules"), os.path.join(d, "node_modules"))
+        p = os.path.join(d, os.path.basename(script)); shutil.copy(script, p)
+        return subprocess.run(["node", p], cwd=d, env=dict(os.environ, **env), capture_output=True, text=True)
+    finally: shutil.rmtree(d, ignore_errors=True)
+
+def _verify_app_rw(mold_dir, url):
+    """Prove the URL that is ABOUT to become DATABASE_URL really is the restricted role.
+
+    Until now provision.py trusted the mold's own self-test and then deployed a URL it had never
+    opened. That is how the live app came to report `role postgres — WARNING: BYPASSRLS, row-level
+    security is NOT enforced`. The URL travels in the environment, never in argv: /proc/<pid>/cmdline
+    is world-readable."""
+    r = _node_lib(os.path.join(ROOT, ".claude/scripts/lib/verify-apprw.mjs"), {"APP_RW_URL": url}, mold_dir)
+    line = (r.stdout.strip().splitlines() or [""])[-1]
+    if line: print("  app_rw check: " + line)
+    if r.returncode: sys.exit("refusing to deploy this DATABASE_URL: " + ((r.stderr.strip().splitlines() or ["verification failed"])[-1])[:300])
+
+def _retarget(app_url, runtime_url):
+    """Put the app_rw URL back on the host:port that actually answers, and force TLS.
+
+    .bootstrap-supabase.mjs:206 does `appUrl.port = "6543"` unconditionally — Supavisor's port and
+    nobody else's. It is right for Supabase and wrong for Neon, RDS and any self-hosted server, so
+    the script writes an unreachable DATABASE_URL and then dies on its own connection test, AFTER
+    doing 100% of the security work. Forking the mold is forbidden and bending every provider onto
+    port 6543 means publishing a Postgres port, so instead take host:port back from the URL that
+    already works. Provider-independent: one seam unblocks neon, rds and self_hosted at once."""
+    a, b = urllib.parse.urlsplit(app_url), urllib.parse.urlsplit(runtime_url)
+    q = dict(urllib.parse.parse_qsl(a.query)); q["sslmode"] = "require"
+    userinfo = a.netloc.rsplit("@", 1)[0] if "@" in a.netloc else ""
+    host = b.netloc.rsplit("@", 1)[-1]
+    return urllib.parse.urlunsplit((a.scheme, f"{userinfo}@{host}" if userinfo else host, a.path, urllib.parse.urlencode(q), a.fragment))
+
+def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_url=""):
     """A fresh Postgres needs what Drizzle does not model: row-level security and the app_rw
     login role (NOBYPASSRLS). The mold ships .bootstrap-supabase.mjs for exactly this; it reads
     .env.supabase, verifies the schema, applies RLS, creates app_rw and writes the app_rw
     connection string into .env.local. Without it the app runs as a BYPASSRLS superuser and the
     task-workflow migration fails on the missing role. Idempotent: re-running rotates the password.
+
+    EVERY provider runs this same script. The tempting alternative for Neon, .setup-app-role.mjs,
+    creates the role and grants DML and applies ZERO policies — `grep -n 'ROW LEVEL SECURITY|CREATE
+    POLICY' .setup-app-role.mjs` returns nothing — so app #2 would ship with a correctly-restricted
+    role guarding an empty policy set: every log line green, no tenant isolation at all.
+
     Returns the app_rw URL, which becomes DATABASE_URL on every project."""
     envsup = os.path.join(mold_dir, ".env.supabase"); envloc = os.path.join(mold_dir, ".env.local")
     saved = open(envloc).read() if os.path.exists(envloc) else None
@@ -204,21 +438,28 @@ def bootstrap_database(mold_dir, admin_url, projects):
     m0 = re.match(r"postgres(?:ql)?://app_rw[^:]*:([^@]+)@", cur)
     if m0: env["APP_RW_PASSWORD"] = urllib.parse.unquote(m0.group(1)); print("  reusing the deployed app_rw password (no rotation)")
     try:
-        with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={admin_url}\n")
+        with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={admin}\n")
         os.chmod(envsup, 0o600)
         r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
-        if r.returncode and "Schema INCOMPLETE" in (r.stdout + r.stderr):
-            print("  schema incomplete; drizzle-kit push then bootstrap again")
-            pr = subprocess.run("npx drizzle-kit push --force", shell=True, cwd=mold_dir, env=dict(os.environ, DATABASE_URL=admin_url), capture_output=True, text=True)
-            if pr.returncode: sys.exit("drizzle-kit push failed:\n" + (pr.stdout + pr.stderr).strip()[-1200:])
-            r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
-        out = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+        raw = r.stdout + r.stderr
+        out = [l for l in raw.splitlines() if l.strip() and not l.lstrip().startswith("at ")]
         for l in out:
             if l.startswith(("✓", "✗", "app_rw", "policies", "tables app_rw")): print("  " + l[:150])
-        if r.returncode: sys.exit("database bootstrap failed:\n" + "\n".join(out[-12:]))
         m = re.search(r'^DATABASE_URL="?([^"\n]+)"?', open(envloc).read(), re.M) if os.path.exists(envloc) else None
+        # THE SEAM. The script PERSISTS the app_rw URL before it self-tests — its own comment says
+        # "PERSIST BEFORE VERIFYING", because the generated password exists nowhere else. Its self-test
+        # then connects to the port it just forced to 6543, so on any provider but Supabase it can only
+        # fail there, after every piece of real work has already succeeded. Treat that one shape as a
+        # success and re-verify independently below; anything else still exits exactly as before.
+        did_work = bool(m) and "DATABASE_URL now points at" in raw
+        if r.returncode and not did_work: sys.exit("database bootstrap failed:\n" + "\n".join(out[-12:]))
         if not m: sys.exit("bootstrap did not write an app_rw DATABASE_URL into .env.local")
         app_url = m.group(1)
+        if provider != "supabase":
+            # Supabase is the one provider that genuinely fronts a different port for runtime pooling.
+            app_url = _retarget(app_url, runtime_url or admin)
+            if r.returncode: print(f"  bootstrap's own test hit the hardcoded port 6543; retargeted to the {provider} endpoint")
+        _verify_app_rw(mold_dir, app_url)
         for pr_ in projects: _set_env("DATABASE_URL", app_url, mold_dir, project=pr_)
         print(f"  DATABASE_URL now points at app_rw on {len(projects)} project(s)")
         return app_url
@@ -229,11 +470,32 @@ def bootstrap_database(mold_dir, admin_url, projects):
         else:
             open(envloc, "w").write(saved)      # the mold snapshot's own .env.local is restored
 
+def push_schema(mold_dir, url):
+    """`drizzle-kit push` FIRST, then the journal. The mold's own bootstrap says so ("ORDER MATTERS")
+    and provision.py had it backwards: it ran migrate-production.mjs first and kept `push` only as a
+    failure fallback inside bootstrap_database. On a truly empty database that fallback is a dead end —
+    the journal is two tables behind schema.ts, so the bootstrap reports `Schema INCOMPLETE — 2 of 56
+    tables missing: login_codes, inbox_items`, and the fallback push then dies with `Interactive
+    prompts require a TTY terminal`. Provider-independent: it strands a fresh Neon branch exactly as
+    it strands a fresh Supabase project."""
+    r = subprocess.run("npx drizzle-kit push --force", shell=True, cwd=mold_dir,
+                       env=dict(os.environ, DATABASE_URL=url), capture_output=True, text=True)
+    raw = r.stdout + r.stderr
+    msg = [l for l in raw.strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+    print("  schema push: " + (msg[-1][:160] if msg else "ok"))
+    # drizzle-kit exits 0 after this one, so returncode alone reads a dead push as a success and the
+    # bootstrap then reports `Schema INCOMPLETE`. It only happens on a database that already holds a
+    # different version of the schema, which `scope: fresh` is supposed to have ruled out.
+    if "Interactive prompts require a TTY" in raw:
+        sys.exit("drizzle-kit push needs an interactive rename decision, which means this database is NOT empty. "
+                 "A `scope: fresh` app must get an empty database; point datastores.postgres at a new one and rerun.")
+    if r.returncode: sys.exit("drizzle-kit push failed:\n" + "\n".join(msg[-12:]))
+
 def run_migrations(mold_dir, vals):
-    url = vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL")
+    url = admin_url(vals)
     if not url or not re.match(r"^postgres(?:ql)?://", url):
-        sys.exit("no usable admin database URL: SUPABASE_POSTGRES_URL_NON_POOLING/DATABASE_URL is missing or stored Sensitive "
-                 "(unreadable). Recreate it as Encrypted, then rerun.")
+        sys.exit("no usable admin database URL: none of " + "/".join(ADMIN_KEYS) + " is set, or it is stored "
+                 "Sensitive (unreadable). Recreate it as Encrypted, then rerun.")
     # both names: migrate-production.mjs falls back through a chain, and a stale unpooled value in the
     # ambient environment would otherwise decide which database is migrated.
     env = dict(os.environ, DATABASE_URL=url, DATABASE_URL_UNPOOLED=url)
@@ -241,6 +503,40 @@ def run_migrations(mold_dir, vals):
     msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
     print("  migrations:\n    " + "\n    ".join(msg[-6:] or ["ok"]))   # a Node crash must never read as its version banner
     if r.returncode: sys.exit("migration failed:\n" + "\n".join(msg[-12:]))
+
+def bring_up_schema(mold_dir, ds, proj, projects):
+    """Empty database -> a schema, a migration journal, RLS, app_rw, and a DATABASE_URL proven to be
+    all four. Separated from deploy_vercel so it can be run — and audited — on its own with
+    `--verify-db`, without building or deploying anything.
+
+    Order is push, migrate, bootstrap, task-workflow. That is what the mold itself says ("ORDER
+    MATTERS: push the schema first, then this") and the reverse of what provision.py used to do."""
+    vals = pull_env(mold_dir, proj)
+    url = admin_url(vals)
+    # Neon injects the POOLED endpoint as DATABASE_URL and the direct one as DATABASE_URL_UNPOOLED.
+    # Migrations belong on the direct endpoint; the runtime belongs on the pooled one, because the mold
+    # opens 10 agent + 5 ops backends per serverless instance and the pool size cannot be capped from
+    # the URL (`?max=3` still opened 10). RLS survives transaction pooling: withOrgRls sets app.org_id
+    # through set_config(..., true), which is transaction-LOCAL, and both clients run prepare:false —
+    # verify-apprw.mjs asserts that round trip on the exact URL about to be deployed.
+    runtime = vals.get("DATABASE_URL") or url
+    print("pushing the schema, then the migration journal"); push_schema(mold_dir, url); run_migrations(mold_dir, vals)
+    print("bootstrapping row-level security and the app_rw role")
+    bootstrap_database(mold_dir, url, projects,
+                       provider=ds.get("postgres", {}).get("provider", "supabase"), runtime_url=runtime)
+    # .migrate-task-workflow-service.mjs reads its admin URL from .env.supabase, never from the environment.
+    # Write it transiently (gitignored inside the mold) and remove it whatever happens.
+    envsup = os.path.join(mold_dir, ".env.supabase")
+    try:
+        with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={url}\n")
+        os.chmod(envsup, 0o600)
+        r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, capture_output=True, text=True)   # admin url: it grants to app_rw
+    finally:
+        if os.path.exists(envsup): os.remove(envsup)
+    msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+    print("  task-workflow migrations: " + (msg[-1][:160] if msg else "ok"))
+    if r.returncode: sys.exit("task-workflow migration failed:\n" + "\n".join(msg[-12:]))
+    return vals
 
 def deploy_vercel(app_id, app, infra, ds, mold_dir):
     """Mirror of the mold's Makefile `deploy` target: migrate, workflow service (services/task-workflow, Next.js),
@@ -260,23 +556,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
     if not shared:
         if "TASK_WORKFLOW_SERVICE_TOKEN" not in have:
             _add_env("TASK_WORKFLOW_SERVICE_TOKEN", subprocess.check_output("openssl rand -hex 32", shell=True, text=True).strip(), mold_dir, proj); print("minted TASK_WORKFLOW_SERVICE_TOKEN")
-        vals = pull_env(mold_dir, proj)
-        print("running migrations on the fresh database"); run_migrations(mold_dir, vals)
-        url = vals.get("SUPABASE_POSTGRES_URL_NON_POOLING") or vals.get("DATABASE_URL")
-        print("bootstrapping row-level security and the app_rw role")
-        bootstrap_database(mold_dir, url, [proj, f"{proj}-api", f"{proj}-workflow"])
-        # .migrate-task-workflow-service.mjs reads its admin URL from .env.supabase, never from the environment.
-        # Write it transiently (gitignored inside the mold) and remove it whatever happens.
-        envsup = os.path.join(mold_dir, ".env.supabase")
-        try:
-            with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={url}\n")
-            os.chmod(envsup, 0o600)
-            r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, capture_output=True, text=True)   # admin url: it grants to app_rw
-        finally:
-            if os.path.exists(envsup): os.remove(envsup)
-        msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
-        print("  task-workflow migrations: " + (msg[-1][:160] if msg else "ok"))
-        if r.returncode: sys.exit("task-workflow migration failed:\n" + "\n".join(msg[-12:]))
+        vals = bring_up_schema(mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
         # workflow service: its own Next.js app under services/task-workflow
         print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
         wf_url = run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy")
@@ -322,50 +602,163 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
     infra["vercel"]["health"] = health
     if any(v != "200" for v in health.values()): print("WARNING: a health check is not 200; see infrastructure.json vercel.health")
 
-def ensure_vm_scaffold(app_id, mold_dir, secrets):
-    d = os.path.join(ROOT, "infra/vm/apps", app_id); os.makedirs(d, exist_ok=True)
-    df = os.path.join(d, "Dockerfile")
-    if not os.path.exists(df):
-        open(df, "w").write("""FROM node:24-bookworm-slim AS build
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
-COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
-FROM node:24-bookworm-slim
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /app ./
-EXPOSE 3000
-CMD ["npm", "run", "start"]
-""")
-    cf = os.path.join(d, "docker-compose.yml")
-    if not os.path.exists(cf):
-        open(cf, "w").write(f"""services:
-  web:
-    build:
-      context: {os.path.relpath(mold_dir, d)}
-      dockerfile: {os.path.relpath(df, mold_dir)}
-    env_file: .env
-    ports: ["3000:3000"]
+ARTIFACT_HEADER = """# GENERATED by .claude/scripts/provision.py from state/application/{app_id}/*.json.
+# REGENERATED ON EVERY RUN (--check and --verify-db alike) — edit this file and your edit is gone.
+# The one sanctioned hand-edit seam is docker-compose.override.yml, which is never generated. Compose
+# merges it AUTOMATICALLY ONLY when you run compose from this directory, so that is how the factory
+# runs it too (`localpg.up` shells out to `docker compose up -d` with cwd here): an override written
+# beside this file governs the database `--verify-db` brings up, not just manual runs. An explicit
+# `docker compose -f <this file>` silently drops the override — do not use that form.
+#
+# WHAT THIS IS: {app_id}'s LOCAL database, for the five testing lanes and for schema rehearsals on
+# this box. WHAT IT IS NOT: a deployment of the application. mold_v1 is three deployables plus four
+# cron schedules plus a Vercel-injected OIDC identity that durable-workflow auto-resume needs, and
+# giving the VM a non-Vercel identity means editing the mold, which HARD RULE 1 forbids. The one
+# committed deploy target is vercel — see infra/vm/README.md.
+#
+# NO HOST PORT, EVER. Postgres listens on {port} INSIDE the container, on the private network
+# {net}, which is also what makes .bootstrap-supabase.mjs's hardcoded port 6543 a no-op.
+# This droplet has no firewall (ufw inactive, iptables -P INPUT ACCEPT); a published port here is on
+# the public internet within minutes.
+"""
+
+def generate_local_artifact(app_id, mold_dir, secrets, ds, infra):
+    """infra/vm/apps/<app_id>/ is pure generated output, rewritten from state on EVERY run.
+
+    It used to be written only `if not os.path.exists(...)`, so from the first write onward the factory
+    stopped describing the app: a hand-edited compose survived a re-run byte-identical, and — worse —
+    the frozen build context meant a BRANDED app silently rebuilt the unbranded mold. Nothing is
+    conditional here now; drift is impossible by construction."""
+    sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import localpg
+    d = localpg.appdir(app_id)          # creates the directory AND its .gitignore, in that order
+    pg = ds.get("postgres", {})
+    hdr = ARTIFACT_HEADER.format(app_id=app_id, port=localpg.PORT, net=localpg.net(app_id))
+    open(os.path.join(d, "docker-compose.yml"), "w").write(hdr + f"""
+name: {localpg.net(app_id)}
+services:
+  db:
+    image: {localpg.IMAGE}
+    container_name: {localpg.cont(app_id)}
+    command: ["-c","port={localpg.PORT}","-c","ssl=on","-c","ssl_cert_file=/certs/server.crt","-c","ssl_key_file=/certs/server.key","-c","password_encryption=scram-sha-256","-c","max_connections=200"]
+    environment:
+      POSTGRES_DB: {localpg.dbname(app_id)}
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg-admin
+    secrets: [pg-admin]
+    volumes:
+      - {localpg.vol(app_id)}:/var/lib/postgresql/data
+      - ./pg:/certs:ro
+    networks:
+      default: {{aliases: [db]}}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD","pg_isready","-p","{localpg.PORT}","-U","postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+secrets:
+  pg-admin:
+    file: ./.pg-admin
+volumes:
+  {localpg.vol(app_id)}:
+    name: {localpg.vol(app_id)}      # pin it: compose would otherwise prefix the project name and
+                                     # `localpg.py up` and `docker compose up` would use two different data dirs
+networks:
+  default:
+    name: {localpg.net(app_id)}
 """)
-    ex = os.path.join(d, ".env.example")
-    open(ex, "w").write("".join(f"{s}=\n" for s in secrets))
-    gi = os.path.join(d, ".gitignore")
-    if not os.path.exists(gi): open(gi, "w").write(".env\n")
+    open(os.path.join(d, ".env.example"), "w").write(
+        f"# secret NAMES only — values are generated or read from your terminal, never typed into this file\n"
+        f"# provider: {pg.get('provider','?')}   scope: {pg.get('scope','?')}   deploy target: {infra.get('target','?')}\n"
+        + "".join(f"{s}=\n" for s in secrets))
+    localpg.ensure_local_secrets(app_id)   # .pg-admin + pg/server.{crt,key}: the compose file's own inputs,
+                                           # without which `docker compose up` fails on a bind-mount that
+                                           # does not exist. The artifact is runnable the moment it exists.
+    open(os.path.join(d, "README.md"), "w").write(f"""<!-- GENERATED; see infra/vm/README.md -->
+# {app_id} — local database artifact
+
+    python3 .claude/scripts/provision.py {app_id} --verify-db   # up, full mold chain, app_rw proof
+    (cd infra/vm/apps/{app_id} && docker compose up -d)         # the database alone, nothing else
+    python3 .claude/scripts/lib/localpg.py down {app_id}
+
+Provider `{pg.get('provider','?')}`. No host port: `docker port {localpg.cont(app_id)}` is empty by
+design. Hand edits go in `docker-compose.override.yml` here, and both commands above honour it —
+`docker compose -f <file>` from elsewhere would silently ignore it, so run compose from this directory.
+`.pg-admin` (Postgres superuser password) and `pg/server.key` (TLS private key) are ignored by this
+directory's .gitignore and by the root one; never commit them.
+""")
     return d
 
+def _vm_env(app_id, pairs):
+    """Write values into the app's own gitignored env file, 0600. This is the vm_env_file secret store:
+    the same contract as Vercel env, on a box the factory owns. Values never enter state or the repo."""
+    f = os.path.join(ROOT, "infra/vm/apps", app_id, ".env"); os.makedirs(os.path.dirname(f), exist_ok=True)
+    keep = [l for l in (open(f).read().splitlines() if os.path.exists(f) else []) if l.split("=")[0] not in pairs]
+    old = os.umask(0o077)
+    try: open(f, "w").write("\n".join(keep + [f"{k}={v}" for k, v in pairs.items()]) + "\n")
+    finally: os.umask(old)
+    os.chmod(f, 0o600)
+
+def verify_db(app_id, mold_dir, ds):
+    """Stand up the app's LOCAL Postgres and run the whole mold chain against it, then prove the URL.
+
+    This is what `target: vm` buys: a real database the lanes can run against, on a private network,
+    with no credential of the user's involved anywhere."""
+    sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import localpg
+    localpg.up(app_id); adm = localpg.url(app_id)
+    envloc = os.path.join(mold_dir, ".env.local"); saved = open(envloc).read() if os.path.exists(envloc) else None
+    envsup = os.path.join(mold_dir, ".env.supabase")
+    try:
+        with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={adm}\n")
+        os.chmod(envsup, 0o600)
+        for label, cmd, env in [("schema push", "npx drizzle-kit push --force", {"DATABASE_URL": adm}),
+                                ("migration journal", "node scripts/migrate-production.mjs", {"DATABASE_URL": adm, "DATABASE_URL_UNPOOLED": adm}),
+                                ("rls + app_rw", "node .bootstrap-supabase.mjs", {}),
+                                ("task-workflow", "npm run db:migrate:task-workflows", {})]:
+            r = localpg.run(app_id, cmd, mold_dir, env)
+            msg = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and not l.lstrip().startswith("at ") and not l.startswith("npm notice")]
+            print(f"  {label}: " + (msg[-1][:150] if msg else "ok"))
+            if r.returncode: sys.exit(f"{label} failed:\n" + "\n".join(msg[-12:]))
+        m = re.search(r'^DATABASE_URL="?([^"\n]+)"?', open(envloc).read(), re.M)
+        if not m: sys.exit("bootstrap did not write an app_rw DATABASE_URL into .env.local")
+        r = localpg.run(app_id, "node /factory-lib/verify-apprw.mjs", mold_dir, {"APP_RW_URL": m.group(1)},
+                        # node resolves a bare import from the script's directory UPWARD, so /node_modules
+                        # serves /factory-lib without a nested mount into a read-only one
+                        extra=["-v", f"{os.path.join(ROOT, '.claude/scripts/lib')}:/factory-lib:ro",
+                               "-v", f"{os.path.join(mold_dir, 'node_modules')}:/node_modules:ro"])
+        print("  app_rw check: " + (r.stdout.strip().splitlines() or [r.stderr.strip()[-200:]])[-1])
+        if r.returncode: sys.exit("app_rw verification failed")
+        _vm_env(app_id, {"POSTGRES_ADMIN_URL": adm, "DATABASE_URL": m.group(1)})
+        print(f"verified: {app_id}'s local database is ready (no host port; `docker port {localpg.cont(app_id)}` is empty)")
+        print(f"  DATABASE_URL and POSTGRES_ADMIN_URL written to infra/vm/apps/{app_id}/.env — 0600, and ignored by\n"
+              f"  both infra/vm/apps/{app_id}/.gitignore and the root .gitignore, as are .pg-admin and pg/server.key")
+    finally:
+        if os.path.exists(envsup): os.remove(envsup)
+        if saved is None:
+            if os.path.exists(envloc): os.remove(envloc)
+        else: open(envloc, "w").write(saved)
+
 def set_secret(app_id, name, infra, mold_dir):
-    """Prompt for one credential and write it, encrypted, to every project of this app.
-    The value is read from the terminal, never passed on a command line and never stored."""
+    """Prompt for one credential and write it where this app's secrets live.
+    The value is read from the terminal, never passed on a command line and never stored here.
+
+    `infra["vercel"]` used to be read unconditionally, so this — the ONE command a non-technical
+    operator is ever told to run — died with KeyError: 'vercel' on any app that is not on Vercel."""
     import getpass
-    proj = infra["vercel"]["project"]; projects = [proj, f"{proj}-api", f"{proj}-workflow"]
     value = getpass.getpass(f"{name} (input hidden): ").strip()
     if not value: sys.exit("nothing entered")
-    for p in projects: _set_env(name, value, mold_dir, project=p)
-    print(f"{name} set on {len(projects)} project(s). Re-run: python3 .claude/scripts/provision.py {app_id} --deploy")
+    if infra.get("target") == "vercel":
+        proj = infra["vercel"]["project"]; projects = [proj, f"{proj}-api", f"{proj}-workflow"]
+        for p in projects: _set_env(name, value, mold_dir, project=p)
+        where = f"{len(projects)} project(s)"
+    else:
+        f = os.path.join(ROOT, "infra/vm/apps", app_id, ".env")
+        os.makedirs(os.path.dirname(f), exist_ok=True)
+        lines = [l for l in (open(f).read().splitlines() if os.path.exists(f) else []) if not l.startswith(f"{name}=")]
+        old = os.umask(0o077)
+        try: open(f, "w").write("\n".join(lines + [f"{name}={value}"]) + "\n")
+        finally: os.umask(old)
+        os.chmod(f, 0o600); where = os.path.relpath(f, ROOT)
+    print(f"{name} set on {where}.")
 
 def main(a):
     if not a: sys.exit(__doc__)
@@ -381,25 +774,50 @@ def main(a):
         if r.returncode: sys.exit("branding failed; not deploying")
         mold_dir = os.path.join(ROOT, "build", app_id)
     secrets = infra.get("secrets", []); target = infra["target"]; store = infra.get("secret_store")
-    print(f"{app_id}: target={target} store={store} secrets={len(secrets)}")
+    ds = load(os.path.join(adir, "datastores.json")); prov = ds.get("postgres", {}).get("provider", "supabase")
+    print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
     if "--set-secret" in a:
         return set_secret(app_id, a[a.index("--set-secret") + 1], infra, mold_dir)
+    # NO POSTGRES PORT IS EVER OPENED TO THE INTERNET. That refusal is code, not a comment.
+    # A self_hosted database here lives on a private docker network with no host port, which a Vercel
+    # function cannot reach. Making it reachable would mean `hostssl ... 0.0.0.0/0` — the team is on
+    # Vercel Pro, which has no static egress IP, so there is no narrower rule — with sslmode=require
+    # and no server authentication (verify-full needs `ssl:{ca}` in agent/lib/db/index.ts, a mold edit
+    # HARD RULE 1 forbids), on a droplet with ufw inactive and ~1100 SSH credential attempts a day.
+    if prov == "self_hosted" and target == "vercel":
+        sys.exit(f'{app_id}: postgres.provider "self_hosted" is a LOCAL database on this box (private docker '
+                 f'network, no host port) and a Vercel deployment cannot reach it — and this factory never opens '
+                 f'a Postgres port to the internet. Set "provider": "neon" in state/application/{app_id}/'
+                 f'datastores.json (Neon\'s free tier is available) and rerun. To use it locally: '
+                 f'python3 .claude/scripts/provision.py {app_id} --verify-db')
     if target == "vercel":
         proj = infra["vercel"]["project"]
+        ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
         present = vercel_env_names(mold_dir, proj)
-        present = provision_datastores(app_id, load(os.path.join(adir, "datastores.json")), mold_dir, present, infra, proj)
+        present = provision_datastores(app_id, ds, mold_dir, present, infra, proj)
         save(os.path.join(adir, "infrastructure.json"), infra)
         # report a reconnected project before anyone deploys: a git-sourced build of the factory repo
         # overwrites this app's production deployment and its build cache.
         for p_ in (proj, f"{proj}-api", f"{proj}-workflow"):
             link = git_link(p_, mold_dir)
             if link: sys.exit(GIT_LINK_MSG.format(project=p_, link=link))
+        if "--verify-db" in a:
+            # the database half of --deploy, on its own: no build, no deployment, no service touched
+            bring_up_schema(mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
+            return print(f"{app_id}: database ready and verified on {prov}")
     else:
-        d = ensure_vm_scaffold(app_id, mold_dir, secrets)
+        # EVERY vm run regenerates the artifact, --verify-db included. --verify-db used to return before
+        # this line, so the compose file and README could be missing while state still named them, and —
+        # worse — the run that creates .pg-admin and pg/server.key was the one run that never wrote the
+        # .gitignore protecting them. (localpg.appdir now writes it first, and the root .gitignore
+        # carries the same rules; this ordering means the artifact simply cannot lag the database.)
+        d = generate_local_artifact(app_id, mold_dir, secrets, ds, infra)
+        if "--verify-db" in a: return verify_db(app_id, mold_dir, ds)
         envf = os.path.join(d, ".env"); present = set()
         if os.path.exists(envf):
             present = {l.split("=")[0].strip() for l in open(envf) if "=" in l and not l.startswith("#") and l.split("=",1)[1].strip()}
-        print(f"vm scaffold: {os.path.relpath(d, ROOT)}/ (Dockerfile, docker-compose.yml, .env.example)")
+        print(f"local artifact regenerated: {os.path.relpath(d, ROOT)}/ (docker-compose.yml, .env.example, README.md)")
+        print(f"target=vm VERIFIES, it does not deploy — run: python3 .claude/scripts/provision.py {app_id} --verify-db")
     user_s = infra.get("secrets_user", secrets); derived_s = infra.get("secrets_derived", [])
     missing_user = [x for x in user_s if x not in present]
     # No copy-from-live path: Vercel marks these `sensitive` (write-only), so a pull of the source
@@ -416,17 +834,15 @@ def main(a):
     if not deploy:
         print("check only; re-run with --deploy once nothing is missing"); sys.exit(1 if (missing_user or missing_derived) else 0)
     if missing_user or missing_derived: sys.exit("refusing to deploy with missing secrets")
+    if target != "vercel":
+        # No half-working second target. The vm branch used to `docker compose up -d --build` a
+        # single `web` container and then call it deployed: no database, no eve API, no task-workflow
+        # service, no crons, no health check — one fifth of the application, recorded as `stamped`.
+        sys.exit(f"{app_id}: target 'vm' is a LOCAL VERIFICATION target, not a deploy target (see infra/vm/README.md). "
+                 f"Run `python3 .claude/scripts/provision.py {app_id} --verify-db` to bring its database up and prove "
+                 f"the schema, or set infrastructure.target to \"vercel\" to deploy the application.")
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
-    ds = load(os.path.join(adir, "datastores.json"))
-    if target == "vercel":
-        deploy_vercel(app_id, app, infra, ds, mold_dir)
-    else:
-        d = os.path.join(ROOT, "infra/vm/apps", app_id)
-        # `| tail` under /bin/sh discards the build's exit status, so a failed build read as a success.
-        r = subprocess.run("docker compose up -d --build", shell=True, cwd=d, capture_output=True, text=True)
-        out = "\n".join((r.stdout + r.stderr).strip().splitlines()[-3:])
-        if r.returncode: sys.exit(f"docker compose failed:\n{out}")
-        infra["vm"]["production_url"] = f"http://{infra['vm'].get('host','localhost')}:3000"; print(out)
+    deploy_vercel(app_id, app, infra, ds, mold_dir)
     infra["deployed_at"] = TODAY; save(os.path.join(adir, "infrastructure.json"), infra)
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")

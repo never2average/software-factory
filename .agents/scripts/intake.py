@@ -26,6 +26,9 @@ def parse_brief(text):
     if re.search(r"\bno (web )?search\b|without (web )?search|disable (web )?search", t): h["web_search"] = False
     if re.search(r"\bno browser\b|without (a )?browser|disable (the )?browser|no outbound", t): h["browser"] = False
     if re.search(r"single.?tenant|single workspace|one workspace", t): h["multi_tenant"] = False
+    if re.search(r"\bneon\b", t): h["postgres_provider"] = "neon"
+    elif re.search(r"\bsupabase\b|\bmanaged postgres\b", t): h["postgres_provider"] = "supabase"
+    elif re.search(r"self.?host[a-z]*\s+(?:the\s+)?(?:postgres|database|db)|(?:postgres|database|db)\s+on\s+(?:the\s+)?(?:vm|droplet|box)|local (?:postgres|database)", t): h["postgres_provider"] = "self_hosted"
     if re.search(r"fresh (database|db)|own (database|db)|new (database|db)", t): h["postgres_scope"] = "fresh"
     if re.search(r"\b(?:no|not|never|without)\b[^.\n]{0,30}\bshared?\b", t): h["postgres_scope"] = "fresh"
     elif re.search(r"\bshared? (?:database|db)\b|\bshare[a-z]* the live (?:database|db|data)\b", t): h["postgres_scope"] = "shared_with_live"
@@ -101,8 +104,11 @@ QUESTIONS = [
  # id, state path, prompt, options or None, resolver(defaults, hints, ctx) -> value or None
  ("deploy_target", "infrastructure.target", "Where should this application run?", ["vercel","vm"],
    lambda d,h,c: h.get("deploy_target") or d.get("deploy_target")),
- ("postgres_provider", "datastores.postgres.provider", "Which Postgres provider?", ["supabase","neon","rds","self_hosted"],
-   lambda d,h,c: d.get("postgres_provider")),
+ # the hint was ignored here — alone among the sixteen questions — so a brief could never land on a
+ # provider and intake silently stamped the factory default. self_hosted is LOCAL-ONLY (no host port),
+ # so it forces target=vm; provision.py refuses to pair it with a Vercel deployment.
+ ("postgres_provider", "datastores.postgres.provider", "Which Postgres provider?", ["neon","supabase","rds","self_hosted"],
+   lambda d,h,c: h.get("postgres_provider") or d.get("postgres_provider")),
  ("postgres_ref", "datastores.postgres.url_ref", "Name of the secret holding the Postgres URL (e.g. DATABASE_URL). Name only, never the value.", None,
    lambda d,h,c: "DATABASE_URL"),
  ("postgres_scope", "datastores.postgres.scope", "Fresh database for this app, or shared with the live fde-agent data?", ["fresh","shared_with_live"],
@@ -163,7 +169,14 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     user_secrets = ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "RESEND_API_KEY", "PLATFORM_NOTIFY_FROM"]
     if ans["web_search"]: user_secrets.append("EXA_API_KEY")
     if ans["browser"]: user_secrets.append("BROWSERBASE_API_KEY")
-    derived_secrets = ["DATABASE_URL", "SUPABASE_URL", "SUPABASE_POSTGRES_URL_NON_POOLING", "BLOB_READ_WRITE_TOKEN", "CRON_SECRET", "OPS_SECRETS_KEY",
+    # Provider-dependent, because provision.py blocks the deploy on every name in this list. It used to
+    # be a literal Supabase list for every app, including SUPABASE_URL — a name that appears NOWHERE in
+    # the mold codebase, so a non-Supabase app named a secret nothing could ever supply and could never
+    # deploy. PROVIDER_SECRETS holds what each provider actually injects.
+    PROVIDER_SECRETS = {"supabase": ["SUPABASE_URL", "SUPABASE_POSTGRES_URL_NON_POOLING"],
+                        "neon": ["DATABASE_URL_UNPOOLED"],           # scripts/migrate-production.mjs:28 already reads it
+                        "rds": [], "self_hosted": ["POSTGRES_ADMIN_URL"]}
+    derived_secrets = ["DATABASE_URL", *PROVIDER_SECRETS.get(ans["postgres_provider"], []), "BLOB_READ_WRITE_TOKEN", "CRON_SECRET", "OPS_SECRETS_KEY",
                        "AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY", "MODEL_PROVIDER", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT_PUBLIC_EVE_API_URL"]
     optional_secrets = ["GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"]
     top_level = ["Customers","Platform","Deployments","Solutions","Implementation","Tickets","People","Uploads"]
@@ -245,13 +258,24 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     ex_inf = existing.get("infrastructure", {})
     for k in ("datastores", "deployed_at", "configured_at"):
         if k in ex_inf: infra[k] = ex_inf[k]
-    for k in ("production_url", "workflow_url", "api_url", "crons"):
+    for k in ("production_url", "workflow_url", "api_url", "crons", "health"):   # `health` is the deploy's own verdict; dropping it left state unable to say whether the app came up
         if k in ex_inf.get("vercel", {}) and "vercel" in infra: infra["vercel"][k] = ex_inf["vercel"][k]
     ds = {"$schema":"../app_id/datastores.schema.json",
       "postgres":{"provider":ans["postgres_provider"],"orm":"drizzle","migrations_dir":"drizzle/","rls":"fail_closed",
-                  "tenancy":"multi_org" if ans["multi_tenant"] else "single_org","url_ref":ans["postgres_ref"],"scope":ans["postgres_scope"]},
+                  "tenancy":"multi_org" if ans["multi_tenant"] else "single_org","url_ref":ans["postgres_ref"],"scope":ans["postgres_scope"],
+                  "sslmode":"require"},
       "blob":{"provider":ans["blob_provider"],"root_prefix":f"orgs/{org_id}","token_ref":"BLOB_READ_WRITE_TOKEN"},
       "cache":{"provider":"none"},"memory":{"backend":"postgres"}}
+    if ans["postgres_provider"] == "self_hosted":
+        # A per-app CLUSTER, never a database on a shared one: `app_rw` is a cluster-global role whose
+        # name is hardcoded across the mold, so a second app on the same cluster silently rotates the
+        # first app's password. Reachable only from the app's own docker network — no host port.
+        ds["postgres"].update({"network": f"sf-{app_id.replace('_','-')}", "host": "db", "port": 6543,
+                               "database": re.sub(r"[^a-z0-9]", "", app_id.lower()), "admin_url_ref": "POSTGRES_ADMIN_URL",
+                               "exposure": "private_docker_network"})
+    if ans["postgres_provider"] == "neon":
+        ds["postgres"]["admin_url_ref"] = "DATABASE_URL_UNPOOLED"     # migrations on the direct endpoint, runtime on the pooled one
+        ds["postgres"]["pooling"] = "transaction"
     if hints.get("clone_of"):
         ds["postgres"]["snapshot"] = {"source": "live_fde_agent", "ref": hints["clone_of"]["ref"], "method": "pg_dump"}
         ds["blob"]["snapshot"] = {"source": "live_fde_agent", "ref": hints["clone_of"]["ref"]}

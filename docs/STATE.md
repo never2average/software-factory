@@ -51,6 +51,23 @@ Default processes for mold_v1: sprint_planning (cycles, todos, task definition),
 | `scripts[]` | extra `workflows` rows; give `file` for system-owned ones because `fde:seed-workflows` prunes rows without a backing file |
 | `definitions[]` | `workflow_definitions` state machines (`entity`, `stages[].assign`, `transitions[].migrate`); one `is_default` per entity |
 
+## datastores.postgres
+| Field | Meaning |
+|---|---|
+| `provider` | `neon` (default, free), `supabase`, `rds`, `self_hosted`. Drives which provisioner `provision.py` runs and which secret NAMES the app declares |
+| `url_ref` | always `DATABASE_URL` — `agent/lib/db/index.ts:34` says "DATABASE_URL is the ONLY source. There is deliberately no POSTGRES_URL" |
+| `admin_url_ref` | the secret NAME of the URL with DDL rights: `DATABASE_URL_UNPOOLED` (neon), `SUPABASE_POSTGRES_URL_NON_POOLING` (supabase), `POSTGRES_ADMIN_URL` (self_hosted). Never `DATABASE_URL` after the bootstrap — that is `app_rw`, which owns nothing, and `pg_restore --clean` against it fails `must be owner of table orgs` |
+| `sslmode` | `require`. The runtime clients pass no `ssl` option, so this query parameter on `DATABASE_URL` is the only thing that turns TLS on |
+| `pooling` | `transaction` when `DATABASE_URL` is a transaction pooler (Neon's pooled endpoint, Supavisor:6543). Safe for RLS because `app.org_id` is set with `set_config(..., true)`, which is transaction-local; `verify-apprw.mjs` asserts that round trip on every deploy |
+| `exposure` | `managed_provider` or `private_docker_network`. There is no public-port option, by design |
+| `network` / `host` / `port` / `database` | `self_hosted` only: the app's own docker network and the in-container port. `provision.py` refuses to pair `self_hosted` with `target: vercel` |
+
+**One Postgres cluster per app, never one database per app.** `app_rw` is a cluster-global role whose
+name is hardcoded across the mold, so stamping app #2 into a second database on app #1's cluster
+rotates app #1's password. Measured, not assumed: `app_two credential -> app_one DATABASE: OK`
+(read confidential rows, wrote one), and a silent `ALTER ROLE app_rw` broke app #1's live deployment
+with `FAIL 28P01`. See `infra/vm/README.md`.
+
 ## capabilities and runtime env
 `application.capabilities` is the source; `infrastructure.runtime_env` is what provision.py writes to the target (`OPS_MULTI_TENANT`, `ENABLE_*`, `MODEL_PROVIDER`). Never edit `runtime_env` by hand.
 
@@ -58,4 +75,4 @@ Default processes for mold_v1: sprint_planning (cycles, todos, task definition),
 Set when the app replicates an existing deployment. `datastores.postgres.snapshot` and `datastores.blob.snapshot` say where the data came from; `clone_of.regression` records the diff run against the source. Read-back tools in the mold (`fde:doctor`, `validate-solution`, `context-graph`) print prose, so the regression harness queries Postgres and blob directly.
 
 ## Brief hints that fill these blocks
-`workspace: <name>`, `fde: <email>`, `members: a@x, b@x`, `primary context: customer agreements, product offerings, rollout case studies`, `multiplayer: sprint planning, onboarding, escalation handling`, `accounts are called patients`, `clone of live`, `fresh database` / `shared database`, `single workspace`, `workflows: all|none`, plus the older `vercel|vm`, `no web search`, `no browser`, `customer: <id>`, `domain: <host>`, `mold_v2`. Everything the brief does not say takes the mold default or a confirmed factory default; nothing is guessed.
+`workspace: <name>`, `fde: <email>`, `members: a@x, b@x`, `primary context: customer agreements, product offerings, rollout case studies`, `multiplayer: sprint planning, onboarding, escalation handling`, `accounts are called patients`, `clone of live`, `fresh database` / `shared database`, `single workspace`, `workflows: all|none`, plus `neon` / `supabase` / `self-host the postgres`, and the older `vercel|vm`, `no web search`, `no browser`, `customer: <id>`, `domain: <host>`, `mold_v2`. Everything the brief does not say takes the mold default or a confirmed factory default; nothing is guessed.
