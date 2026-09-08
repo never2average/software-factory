@@ -8,11 +8,14 @@
 // through the globally installed Playwright chromium. Every route is graded on its own row:
 //   - a route that does not answer 2xx is `skipped` with the status, never `pass` — the lane must not
 //     report green for a page it never rendered;
+//   - a route that answers 2xx and then renders NO interactive control is `fail`, not `pass`: axe finds
+//     no violation in an empty body and Tab reaches nothing, so every criterion below is satisfied
+//     vacuously. Nothing measured must never read as green (see "did the application actually render");
 //   - `fail` is reserved for axe violations of impact serious or critical (WCAG 2.1 A/AA, the level
 //     this factory claims) and for keyboard defects that make a control unreachable or invisible;
 //   - moderate/minor violations and axe `incomplete` results are printed in the detail column and do
 //     not fail the lane, because they need human judgement.
-// The workflow builder is behind a signed-in identity, so its traversal row is `skipped` with that
+// The workflow builder is behind a signed-in identity, so its traversal row is `not-covered` with that
 // reason named rather than quietly dropped: see README.md, "Not covered".
 import { createRequire } from "node:module";
 import { writeFileSync, readFileSync } from "node:fs";
@@ -66,12 +69,34 @@ const open = async (browser, route) => {
   return { page, status, err };
 };
 
+// DID THE APPLICATION ACTUALLY RENDER? A 200 is not a rendered page. An empty shell — a colliding
+// deployment, or a Next.js client-side crash — answers 200 and then satisfies every criterion below
+// VACUOUSLY: axe finds 0 violations in an empty body, and "0 tabbable of 0 interactive" printed as a
+// pass. That is how this lane came to read green against a deployment that rendered none of the
+// application. A declared page route of this mold has controls on it; one that renders none is a
+// broken deploy, not a clean bill of health, so it FAILS the row. (The "app was never deployed" and
+// "this 200 came from something that is not this mold" cases are caught earlier and more kindly, by
+// the lane's target-up.py precondition, which makes the whole lane `skipped`.)
+const CONTROLS = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="link"], [role="tab"], [tabindex]:not([tabindex="-1"])';
+const census = (page) => page.evaluate((SEL) => {
+  const vis = [...document.querySelectorAll(SEL)].filter(el => {
+    const cs = getComputedStyle(el);
+    return cs.display !== "none" && cs.visibility !== "hidden" && el.getClientRects().length;
+  });
+  return { interactive: vis.length, chars: (document.body ? document.body.innerText : "").trim().length };
+}, CONTROLS);
+const notRendered = (c) => c.interactive ? null
+  : `the route answered 2xx but rendered no interactive control (${c.chars} chars of body text): nothing was `
+  + `graded here, so this row cannot pass — the deployment is serving a shell, not the application`;
+
 const browser = await chromium.launch({ args: ["--no-sandbox"] });
 
 if (only === "all" || only === "axe") {
   for (const route of routes) {
     const { page, status, err } = await open(browser, route);
     if (status < 200 || status >= 300) { row(`axe ${route}`, "skipped", err || `route answered HTTP ${status}: not rendered, so not graded`); await page.close(); continue; }
+    const c = await census(page), dead = notRendered(c);
+    if (dead) { row(`axe ${route}`, "fail", dead); await page.close(); continue; }
     await page.addScriptTag({ path: AXE });
     // Every rule runs, but only WCAG 2.1 A/AA serious+critical grades the row; best-practice findings
     // are printed so the operator sees them without the lane failing on a rule nobody signed up to.
@@ -86,7 +111,7 @@ if (only === "all" || only === "axe") {
     const rest = res.violations.filter(v => !(v.wcag && FAIL_IMPACTS.has(v.impact)));
     const fmt = (l) => l.map(v => `${v.id}[${v.impact}x${v.n}${v.wcag ? "" : ",best-practice"}]`).join(" ") || "none";
     row(`axe ${route}`, bad.length ? "fail" : "pass",
-        `WCAG A/AA serious+critical: ${fmt(bad)} · reported only: ${fmt(rest)} · ${res.passes} rules passed · ${res.incomplete.length} need review`);
+        `${c.interactive} control(s) rendered · WCAG A/AA serious+critical: ${fmt(bad)} · reported only: ${fmt(rest)} · ${res.passes} rules passed · ${res.incomplete.length} need review`);
     detail.push({ route, ...res });
     await page.close();
   }
@@ -96,6 +121,8 @@ if (only === "all" || only === "keyboard") {
   for (const route of routes) {
     const { page, status, err } = await open(browser, route);
     if (status < 200 || status >= 300) { row(`keyboard ${route}`, "skipped", err || `route answered HTTP ${status}: not rendered, so not graded`); await page.close(); continue; }
+    const dead = notRendered(await census(page));
+    if (dead) { row(`keyboard ${route}`, "fail", dead); await page.close(); continue; }
     const seen = [];
     for (let i = 0; i < 40; i++) {
       await page.keyboard.press("Tab");
@@ -115,7 +142,9 @@ if (only === "all" || only === "keyboard") {
       document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])').length);
     const noRing = seen.filter(s => !s.ring), invisible = seen.filter(s => !s.visible);
     const problems = [];
-    if (!seen.length && interactive > 0) problems.push(`0 of ${interactive} interactive elements are reachable by Tab`);
+    // No `&& interactive > 0` guard: a page with nothing to reach was already failed by the census
+    // above, so reaching here with an empty walk means real controls exist that Tab cannot get to.
+    if (!seen.length) problems.push(`0 of ${interactive} interactive elements are reachable by Tab`);
     if (noRing.length) problems.push(`${noRing.length} focused control(s) show no focus indicator (WCAG 2.4.7): ${noRing.slice(0, 3).map(s => s.tag + ":" + (s.label || "-")).join(", ")}`);
     if (invisible.length) problems.push(`${invisible.length} focused control(s) are offscreen or zero-size`);
     row(`keyboard ${route}`, problems.length ? "fail" : "pass",
@@ -127,7 +156,11 @@ if (only === "all" || only === "keyboard") {
   const { page, status } = await open(browser, "/workspace");
   const builder = status >= 200 && status < 300
     ? await page.evaluate(() => !!document.querySelector('[data-testid*="workflow-builder"], [class*="workflow-builder"]')) : false;
-  row("keyboard workflow-builder", builder ? "pass" : "skipped",
+  // `not-covered`, not `skipped`: the runner's rule is that a lane cannot be `pass` while something it
+  // declared went unmeasured, and a row printed `skipped` reads as exactly that. This row can never run
+  // unauthenticated — it is the lane's documented coverage gap (README, "Not covered"), not a
+  // measurement that failed to happen — so it is labelled for what it is and counted separately.
+  row("keyboard workflow-builder", builder ? "pass" : "not-covered",
       builder ? "builder rendered and traversed" : "the builder renders only for a signed-in identity; unauthenticated this lane sees the workspace shell only");
   await page.close();
 }
@@ -139,14 +172,16 @@ const w = Math.max(...rows.map(r => r.name.length), 5);
 console.log("| check | result | detail |");
 console.log("|---|---|---|");
 for (const r of rows) console.log(`| ${r.name.padEnd(w)} | ${r.result} | ${r.why} |`);
-const failed = rows.filter(r => r.result === "fail"), ran = rows.filter(r => r.result !== "skipped");
+const n = (s) => rows.filter(r => r.result === s).length;
+const failed = rows.filter(r => r.result === "fail");
 // On stdout, after a blank line, so the runner can inline table + summary verbatim as valid markdown.
-console.log(`\n_target ${base} · axe-core ${AXE_V} · ${rows.length} rows: ${ran.length - failed.length} pass, ${failed.length} fail, ${rows.length - ran.length} skipped_`);
+console.log(`\n_target ${base} · axe-core ${AXE_V} · ${rows.length} rows: ${n("pass")} pass, ${n("fail")} fail, ` +
+            `${n("skipped")} skipped, ${n("not-covered")} declared not covered_`);
 if (blocked) console.error(`blocked ${blocked} browser request(s) to the live factory projects or the /eve/v1 proxy: this lane never talks to production`);
 // A declared ROUTE that was not rendered cannot be reported green: exit 0 here would let the runner
 // record `pass` for a page nothing looked at. (The workflow-builder row is a declared limitation of
 // the lane, not a route, so it may stay `skipped` without failing the check — README, "Not covered".)
-const unrendered = rows.filter(r => r.result === "skipped" && r.name !== "keyboard workflow-builder");
+const unrendered = rows.filter(r => r.result === "skipped");
 if (unrendered.length) {
   console.error(`${unrendered.length} declared route(s) did not render, so this check cannot pass: ` +
     unrendered.map(r => r.name).join(", ") + ". The lane's target-up.py precondition is what turns an " +

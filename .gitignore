@@ -15,3 +15,6 @@ build/
 # rules exist so the protection cannot depend on which provision.py path created the directory.
 infra/vm/apps/*/.pg-admin
 infra/vm/apps/*/pg/
+
+# dry-run lane reports: scratch by construction — the header of each says nothing was recorded
+molds/**/testing/*/reports/dry/

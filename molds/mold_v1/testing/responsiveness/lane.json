@@ -1,0 +1,109 @@
+{
+  "$schema": "../lane.schema.json",
+  "lane": "responsiveness",
+  "order": 50,
+  "summary": "A Playwright chromium viewport matrix (320/390/820/1440) over the mold's three page routes, grading horizontal overflow, cumulative layout shift, content a user cannot reach, tap target size and interaction latency against published budgets. A route that answers 2xx and then renders no interactive control, or a tap-target row that finds no target, fails: nothing measured is never a pass. The two timing budgets (CLS, INP) must be exceeded on every one of 3 runs before a row fails.",
+  "requires": [
+    {
+      "cmd": "node {testing}/responsiveness/deps-check.mjs",
+      "else": "Install the browser this lane drives: npm i -g playwright && npx playwright install chromium."
+    }
+  ],
+  "checks": [
+    {
+      "name": "layout.matrix",
+      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only layout",
+      "cwd": "root",
+      "timeout_s": 600,
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "rows: "
+        ],
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "emits": "markdown_table",
+      "requires": [
+        {
+          "state": "infrastructure.vercel.production_url",
+          "must": "nonempty",
+          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+        },
+        {
+          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+        }
+      ],
+      "why": "A page that scrolls sideways at 320px, or that shifts under the reader's finger, or that hides a control where no scroll can reach it, is a customer who cannot finish the task on the device they actually own."
+    },
+    {
+      "name": "tap.targets",
+      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only targets",
+      "cwd": "root",
+      "timeout_s": 400,
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "rows: "
+        ],
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "emits": "markdown_table",
+      "requires": [
+        {
+          "state": "infrastructure.vercel.production_url",
+          "must": "nonempty",
+          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+        },
+        {
+          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+        }
+      ],
+      "why": "A control smaller than a fingertip, with another control beside it, is a mis-tap: on a touch screen that is the difference between sending a message and deleting one."
+    },
+    {
+      "name": "interaction.latency",
+      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only interaction",
+      "cwd": "root",
+      "timeout_s": 400,
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "rows: "
+        ],
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "emits": "markdown_table",
+      "requires": [
+        {
+          "state": "infrastructure.vercel.production_url",
+          "must": "nonempty",
+          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+        },
+        {
+          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "else": "The deployed app did not serve this application on /, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+        }
+      ],
+      "why": "Interaction to Next Paint over 200ms is the lag where a person taps a second time because the first tap looked ignored — the layout can be perfect and the app still feel broken."
+    }
+  ],
+  "not_covered": [
+    "Anything behind a signed-in identity. Unauthenticated this lane measures 3 routes and 2-7 controls; the ops-centre panels and the workflow builder are never rendered, so their layout at mobile width is UNMEASURED, not passing.",
+    "Real devices, real networks and real fingers. Chromium's mobile emulation sets viewport, touch and device pixel ratio; it does not reproduce a slow CPU, a slow radio, a notch, a software keyboard covering the field being typed into, or a browser's own chrome eating vertical space.",
+    "Orientation change, browser zoom to 200-400% (WCAG 1.4.4 Resize Text), reduced motion, forced-colors and print layout.",
+    "Routes that do not exist in this mold snapshot. The mold has exactly three page routes (/, /onboard, /workspace); there is no /chat route, chat is rendered at /.",
+    "Timing jitter below the repeat threshold. CLS and INP are re-measured up to 3 times and a row fails only when the budget is exceeded on every run, so a single marginal overshoot on this shared VM is reported (every sample is printed) rather than used to revert an application. A budget missed by a hair on one run in three is therefore NOT flagged.",
+    "Interaction latency under load or with a cold cache. INP here is measured on an already-warm page against a deployed build, so it is a floor, not the number a first-time visitor on a phone will see.",
+    "WCAG 2.5.8 exceptions this harness cannot judge: the 'equivalent' exception (the same action available through a larger control elsewhere) and the 'user agent control' and 'essential' exceptions. Targets exempted by inline-in-text or by the 24px spacing rule are named in the detail column so the exemption is auditable rather than silent.",
+    "Whether a layout shift was worth it. CLS counts movement, not intent; a deliberate expanding panel and a janky late-loading banner score the same.",
+    "Whether the page served is THIS application's data. The precondition checks that the HTML carries this mold's own markers, which catches an undeployed URL and a URL now served by something else; it cannot tell two mold_v1 applications apart, because they render the same markup."
+  ]
+}
