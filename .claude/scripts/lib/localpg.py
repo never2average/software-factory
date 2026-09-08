@@ -60,9 +60,31 @@ def appdir(app_id):
 
 def compose_file(app_id): return os.path.join(appdir(app_id), "docker-compose.yml")
 
+def has_data(app_id):
+    """Does this app's data volume still exist? Postgres bakes the superuser password INTO that volume
+    at initdb time, so the volume and `.pg-admin` are one credential in two places."""
+    return _d("volume", "inspect", vol(app_id)).returncode == 0
+
 def _pw(app_id):
-    """The admin password lives in the app's ignored `.pg-admin` (0600), generated, never typed, never printed."""
+    """The admin password lives in the app's ignored `.pg-admin` (0600), generated, never typed, never printed.
+
+    NEVER MINT A SECOND ONE OVER A LIVE VOLUME. provision.py regenerates this directory on every run and
+    documents it as generated output, but this file is not derivable from anything: the password it holds
+    was written into the data directory when the cluster was initialised. Minting a fresh one here writes
+    a password the existing volume has never heard of — and it used to do exactly that, silently: the
+    regeneration printed `local artifact regenerated`, exit 0, and every connection afterwards failed with
+    `password authentication failed for user "postgres"` and no hint that a credential had been lost.
+    Regenerating the artifact must not be able to destroy the only copy of a credential, so it refuses."""
     p = os.path.join(appdir(app_id), ".pg-admin")
+    if not os.path.exists(p) and has_data(app_id):
+        sys.exit(f"the admin password for {app_id}'s local database is missing "
+                 f"(infra/vm/apps/{app_id}/.pg-admin) but its data volume {vol(app_id)} still exists, and nothing "
+                 f"can open that volume without it. Nothing has been changed.\n"
+                 f"  If you have a copy of that file, put it back at infra/vm/apps/{app_id}/.pg-admin and rerun.\n"
+                 f"  Otherwise rebuild the database — it is a LOCAL VERIFICATION database, rebuilt from state,\n"
+                 f"  and this DELETES the data in it:\n"
+                 f"    python3 .claude/scripts/lib/localpg.py down {app_id}\n"
+                 f"    python3 .claude/scripts/provision.py {app_id} --verify-db")
     if not os.path.exists(p):
         old = os.umask(0o077)
         # no trailing newline: the compose artifact feeds this same file to POSTGRES_PASSWORD_FILE,
@@ -75,7 +97,14 @@ def _pw(app_id):
 def _cert(app_id):
     d = certdir(app_id); os.makedirs(d, exist_ok=True)          # appdir() wrote .gitignore first: pg/ is ignored
     crt, key = os.path.join(d, "server.crt"), os.path.join(d, "server.key")
-    if not os.path.exists(crt):
+    if not (os.path.exists(crt) and os.path.exists(key)):
+        # BOTH OR NEITHER. `if not exists(crt)` alone left a present-crt / missing-key directory untouched
+        # and then died three lines down in os.chmod(key) with a FileNotFoundError traceback — a stack
+        # trace where the operator needed a sentence — and postgres would not have started either.
+        # Unlike .pg-admin this pair IS derivable: it is self-signed, no CA trusts it and postgres.js's
+        # `ssl: require` encrypts without verifying it, so regenerating both costs nothing.
+        for f in (crt, key):
+            if os.path.exists(f): os.remove(f)
         subprocess.run(["openssl", "req", "-new", "-x509", "-days", "3650", "-nodes", "-subj", f"/CN={cont(app_id)}",
                         "-addext", f"subjectAltName=DNS:db,DNS:{cont(app_id)}", "-out", crt, "-keyout", key],
                        check=True, capture_output=True)

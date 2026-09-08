@@ -2,16 +2,24 @@
 
 Does the application work at the width the customer actually holds?
 
+Two halves. **Signed out**: the mold's three page routes — which is a sign-in page and an empty
+workspace shell. **Signed in** (`--auth`): the product — the chat thread, the ops centre and the
+workflow builder — measured with a session the deployment itself minted. Until the second half existed,
+a green responsiveness lane meant a sign-in page reflowed at 320px and said nothing at all about the
+workspace people actually work in (mold_v1-040).
+
 The runner drives this lane; nothing here is run by hand:
 
 ```
 python3 .claude/scripts/lanes.py <app_id> --lane responsiveness
 python3 .claude/scripts/lanes.py <app_id> --lane responsiveness --dry-run   # measure and report, write no state
+MOLD_V1_SESSION_TOKEN='<a session for that app>' \
+  python3 .claude/scripts/lanes.py <app_id> --lane responsiveness           # includes the signed-in half
 ```
 
 | file | what it is |
 |---|---|
-| `lane.json` | the declaration the runner reads (three checks, their preconditions and their budgets) |
+| `lane.json` | the declaration the runner reads (six checks — three signed out, three signed in — their preconditions and their budgets) |
 | `responsive.mjs` | the harness: a Playwright chromium viewport matrix that prints a markdown table and exits 0/1 |
 | `deps-check.mjs` | lane precondition — is chromium actually here? |
 | `target-up.py` | check precondition — does the URL answer 2xx *and* serve this application's own markup? |
@@ -104,15 +112,83 @@ manufacture a failure there would be as dishonest as hiding it.
   was compared against. `lane.json` additionally forbids the string `| fail |` in stdout and requires
   the summary line, so a harness that crashed after printing a header cannot read as green.
 - **Losing the target mid-run exits 3**, not 0 — nothing measured must never be reported as nothing wrong.
-- **HARD RULE 2 is enforced in the browser.** Every request to a live `fde-agent` / `fde-agent-api` /
-  `fde-task-workflow` host is aborted and counted, and the count is printed in the footer of every run
-  (`0 request(s) to live fde-* hosts blocked`) as evidence rather than as a promise. Interaction rows
-  only click in-page controls whose accessible name is not an auth or destructive verb, and each click
-  asserts the URL did not change.
+- **HARD RULE 2 is enforced in the browser, by host *and by path*.** Every request to a live
+  `fde-agent` / `fde-agent-api` / `fde-task-workflow` host is aborted and counted — and so is every
+  request to `/eve/v1/` or `/.well-known/workflow/`, whatever host it is addressed to. The second half
+  is not belt-and-braces: `next.config.ts` rewrites those **same-origin** paths to `EVE_API`, which
+  `lib/agent-url.ts` defaults to the live `fde-agent-api` whenever the variable is missing, and it
+  forwards the `Authorization` header. The browser only ever sees `https://<app-under-test>/eve/v1/…`,
+  so a hostname test alone never fires and Vercel proxies the test session straight into a production
+  project. Signed out that path is unreachable (the chat shell never renders); signed in, `/` **is**
+  the chat thread and it fetches `/eve/v1/session/*` on load. Measured against a fixture that serves
+  those paths and counts what arrives: with the hostname-only guard the footer said `0 … blocked` while
+  the fixture received **16** `/eve/v1` requests; with the path guard the footer says **16 blocked** and
+  the fixture received **0**. The count is in the footer of every run as evidence rather than as a
+  promise. Interaction rows only click in-page controls whose accessible name is not an auth or
+  destructive verb, and each click asserts the URL did not change.
+
+## Authenticated coverage
+
+The three `*.authenticated` checks measure the product. They need one thing the factory does not
+otherwise hold: **a session for the application under test**, passed in by name in
+`MOLD_V1_SESSION_TOKEN`. Where it comes from, and why that is honest rather than a bypass, is written
+out once in the accessibility lane's README ("Authenticated coverage") — the mechanism, the refusals
+and the storage key are identical, because it is the same product and the same client.
+
+The short version:
+
+- **no token, no run.** `lane.json` gates each authenticated check on the variable's presence, so the
+  checks are `skipped` and, by the runner's rollup, the **lane** is `skipped` — never `pass`. A lane
+  that has not seen the product may not certify it.
+- **an unusable session is `skipped`, not `fail`.** Each authenticated check has a second precondition,
+  `session-live.py <url> --min-remaining <timeout_s + 300>`: it exits 0 only when the variable holds a
+  session this deployment still accepts, with enough life left to outlast the run. Missing, malformed,
+  expired, too-close-to-expiry, or refused with 401/403 all make the check — and the lane — `skipped`,
+  with one instruction. That verdict is taken before a browser opens, deliberately: a `fail` lane
+  *reverts the application*, and a browser session lasts about an hour, so the likeliest thing that
+  goes wrong here is a paste that went stale, not a broken app. The accessibility README's "A stale
+  session is `skipped`, not `fail`" states the reasoning and the one window this does not close.
+- **a token the server refuses measures nothing, so it grades nothing.** Each surface first asks the
+  deployment itself (read-only `GET /api/ops/orgs` with that bearer). 401/403 marks the row
+  `not-covered`, names the status, and exits 2 — never `pass`, and never a quiet fall back to the
+  shell.
+- **a surface that renders the signed-out shell fails.** Each names a control that appears only with
+  its own content, and the census is compared against the same URL loaded with no session. If signing
+  in changed nothing, the row says so rather than measuring the shell twice.
+- **read-only, enforced.** Signed in, the app writes on its own and this lane clicks. Every non-GET the
+  page attempts is aborted and counted, and the count is in the footer of every run. The click denylist
+  (`save`, `publish`, `delete`, `invite`, `export`, …) is the second fence behind it.
+
+The four surfaces: `/` (chat thread), `/workspace?tab=people` and `?tab=audit` (ops centre),
+`?tab=workflows` (workflow builder) — the app's own deep links, not a click path this harness invented.
+
+### What it found the first time it ran
+
+Against a locally built mold_v1 (throwaway Postgres, its own generated keypair, a session minted by
+that app's own `POST /api/auth/email/verify`):
+
+    layout / chat @ reflow-320              fail  4 controls unreachable even after scrolling:
+                                                  "Customer context" still past the edge (right=406 > 320),
+                                                  "Search"/"Browser" clipped by an overflow-x:hidden ancestor
+    layout / chat @ mobile-390              fail  2 controls unreachable: "Browser", "Build"
+    layout /workspace people @ reflow-320   fail  "Actions" clipped by an overflow-x:hidden ancestor
+    layout /workspace people @ mobile-390   fail  same
+    layout … @ tablet-820 / desktop-1440    pass  16 rows, CLS 0.0000–0.0174, no horizontal scroll
+    targets (390, 820) × 4 surfaces         pass  12–20 targets each, none under 24px
+
+Twelve of the sixteen layout rows pass, and the four that fail are real: on a 320px screen the chat
+composer's own action row cannot be reached at all. Signed out, those same four viewports produced
+nothing but green.
 
 ## What this lane does *not* cover
 
 Listed in `lane.json` under `not_covered` and reprinted verbatim at the foot of every report, so a green
-lane cannot imply more than it measured. The largest gap by far: **everything behind a signed-in
-identity**. Unauthenticated the lane reaches 3 routes and 2–7 controls, so the ops-centre panels and the
-workflow builder are unmeasured, not passing.
+lane cannot imply more than it measured. What is left after the signed-in half:
+
+- **the surfaces the session does not open** — the data room, connectors and agents tabs, the ops-centre
+  modal inside the chat shell, and anything needing a write (creating a workflow, sending a message).
+  This lane is read-only on the application it grades;
+- **the signed-in half itself, whenever `MOLD_V1_SESSION_TOKEN` is absent** — those checks are `skipped`
+  and so is the lane. Never `pass`;
+- **which identity, and how much data.** A workspace with a hundred members lays out differently from
+  the one the supplied session resolves to. The report names the identity it measured.

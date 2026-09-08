@@ -19,12 +19,14 @@
 // what would make this lane cry wolf on every horizontal tab strip in every future mold.
 //
 // HARD RULE 2 (read-only on the live projects) is enforced in the browser, not by good intentions:
-// every request to a live fde-* host is aborted and counted, and the count is printed in the footer as
+// every request to a live fde-* host — and every same-origin path the mold rewrites INTO one, which is
+// how /eve/v1/* reaches the live fde-agent-api — is aborted and counted, and the count is in the footer as
 // evidence. Interaction rows only ever click in-page controls whose accessible name is not an auth or
 // destructive verb, and each click asserts the URL did not change.
 //
 // Exit 0 every row within budget · 1 a row is over budget (the table carries `| fail |`, which the
-// runner also forbids) · 2 bad usage · 3 the target stopped answering mid-run, so nothing was measured.
+// runner also forbids) · 2 nothing was measured — bad usage, or no usable session (missing, malformed,
+// expired, or refused by the deployment) · 3 the target stopped answering mid-run.
 // A skipped row NEVER lifts the exit code: unmeasured must never read as pass.
 import { createRequire } from "node:module";
 const { chromium } = createRequire("/usr/lib/node_modules/")("playwright");
@@ -42,19 +44,86 @@ const VIEWPORTS = [
   { name: "tablet-820",   w: 820,  h: 1180, touch: true  },
   { name: "desktop-1440", w: 1440, h: 900,  touch: false },
 ];
-const ROUTES = ["/", "/onboard", "/workspace"];
+const ROUTES = ["/", "/onboard", "/workspace"];   // the SIGNED-OUT app: sign-in page, sign-in page, shell
 const TOUCH_VIEWPORTS = ["mobile-390", "tablet-820"];
-const LIVE = /(^|\.)fde-(agent|agent-api|task-workflow)\./i;   // HARD RULE 2: never touched, only counted.
+// HARD RULE 2: the live factory projects are never touched, only counted. TWO tests, because a
+// hostname test alone does not cover this mold. next.config.ts:33 rewrites the SAME-ORIGIN paths
+// /eve/v1/* and /.well-known/workflow/* to EVE_API, which lib/agent-url.ts defaults to the LIVE
+// fde-agent-api whenever the env var is missing, and forwards the Authorization header. The browser
+// only ever sees https://<app-under-test>/eve/v1/..., so the hostname never matches and Vercel proxies
+// the test session straight into a production project. Signed out that path is unreachable (the chat
+// shell never renders); signed in, `/` is the chat thread and chat-shell.tsx / agent-chat.tsx /
+// cockpit.tsx all fetch /eve/v1/session/*. So the PATH is blocked too, at the same place.
+const LIVE = /(^|\.)fde-(agent|agent-api|task-workflow)[^.]*\./i;
+const PROXY_PATHS = /\/(eve\/v1|\.well-known\/workflow)\//;
+
+// ---- the product, behind a signed-in identity (--auth) -------------------------------------------
+// Signed out, this lane measures a sign-in page (2 controls) and a workspace shell whose panels say
+// "loading…" for ever because /api/ops/* answers 401 — and it printed `pass` for all of it. The layout
+// of the thing customers actually use at 320px, the tap targets in the ops centre, the latency of the
+// workflow builder: all UNMEASURED behind a green lane (mold_v1-040).
+//
+// `--auth` measures those. The session is one this deployment ITSELF minted through its own sign-in
+// (POST /api/auth/email/verify — lib/auth-session.ts), handed over BY NAME in an environment variable
+// and stored under the same localStorage key the app's own sign-in writes. Nothing here mints, forges
+// or weakens anything:
+//   - no variable, no run: the check is gated on the variable's presence in lane.json, so the lane goes
+//     `skipped`, never `pass` (a lane cannot certify a surface it never saw);
+//   - a token the SERVER refuses grades nothing: the deployment's own read-only GET /api/ops/orgs is
+//     the verdict, not the client's opinion of its own localStorage. The row is `not-covered` and the
+//     run exits 2 — never `pass`, and not `fail` either, because a refused credential says the
+//     operator's paste went stale (a browser session lasts about an hour), not that the application
+//     is broken, and a `fail` lane reverts the application. The ordinary version of that is caught
+//     BEFORE a browser opens by session-live.py, the checks' precondition in lane.json, which makes
+//     an unusable session a `skipped` check and a `skipped` lane;
+//   - a surface that renders the signed-out shell anyway fails: each one names a control that appears
+//     only with its own content, and the census is compared against the same url with no session.
+// `?tab=` is the app's own deep link into a workspace tab (app/_components/ops/workspace-panel.tsx).
+const AUTH_SURFACES = [
+  { name: "/ chat",              path: "/",                        marker: /new chat/i,     what: 'the chat thread\'s "New chat" control' },
+  { name: "/workspace people",   path: "/workspace?tab=people",    marker: /\binvite\b/i,   what: 'the People tab\'s "Invite" control' },
+  { name: "/workspace audit",    path: "/workspace?tab=audit",     marker: /\bactor\b/i,    what: "the Audit trail's actor filter" },
+  { name: "/workspace builder",  path: "/workspace?tab=workflows", marker: /new workflow/i, what: 'the workflow builder\'s "New workflow" control' },
+];
 
 const args = process.argv.slice(2);
 const arg = (k, d) => { const i = args.indexOf(k); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 const BASE = (arg("--url", "") || "").replace(/\/+$/, "");
 const ONLY = arg("--only", "all");
-if (!BASE) { console.error("usage: responsive.mjs --url <base> [--only layout|targets|interaction]"); process.exit(2); }
+const AUTH = args.includes("--auth");
+const SESSION_ENV = arg("--session-env", "MOLD_V1_SESSION_TOKEN");
+if (!BASE) { console.error("usage: responsive.mjs --url <base> [--only layout|targets|interaction] [--auth] [--session-env NAME]"); process.exit(2); }
+const ORIGIN = new URL(BASE).origin;
+
+// The credential is read BY NAME and never printed: only the identity it names and its expiry, so a
+// report can say who the product was measured as without becoming the place the token leaks. Claims
+// are decoded, not verified — the deployment's own answer is the verdict (see authGate).
+function readSession() {
+  const raw = (process.env[SESSION_ENV] || "").trim();
+  if (!raw) return { missing: true };
+  const parts = raw.split(".");
+  if (parts.length !== 3) return { bad: `${SESSION_ENV} is set but is not a JWT (expected three dot-separated parts)` };
+  let c = {};
+  try { c = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")); } catch { /* claims stay empty */ }
+  return { token: raw, who: c.email || c.sub || "(the token names no email)", exp: c.exp,
+           expired: typeof c.exp === "number" && c.exp * 1000 < Date.now() };
+}
+const SESSION = AUTH ? readSession() : { missing: true };
+// An expired token is not a weaker session, it is no session: the deployment refuses it and the
+// signed-out shell is what would be measured. So it is handled with "missing" and "malformed" below,
+// never graded — an unmeasured run must not be able to say anything about the application.
+const STALE = AUTH && SESSION.expired
+  ? `the session in ${SESSION_ENV} expired at ${new Date(SESSION.exp * 1000).toISOString()}` : "";
+let refused = false;   // the deployment turned the session away mid-run: measured nothing, grades nothing
+
+/** What each mode iterates: the three page routes, or the four authenticated surfaces. */
+const surfaces = () => AUTH ? AUTH_SURFACES : ROUTES.map((p) => ({ name: p, path: p, marker: null }));
 
 const rows = [];
-const row = (name, result, detail) => rows.push({ name, result, detail: String(detail).replace(/\|/g, "/") });
-let blocked = 0, navFailures = 0, navAttempts = 0;
+// One markdown cell per row: a pipe ends the cell early and a newline ends the TABLE, so a label
+// lifted out of the page (a two-line button) is flattened rather than corrupting the report.
+const row = (name, result, detail) => rows.push({ name, result, detail: String(detail).replace(/\s+/g, " ").replace(/\|/g, "/").trim() });
+let blocked = 0, navFailures = 0, navAttempts = 0, writes = 0;
 
 // Installed before any script on the page: layout-shift and event timing must be observed from the
 // first frame, so `buffered: true` alone is not enough — the observer has to exist before paint.
@@ -79,9 +148,24 @@ async function newCtx(browser, vp) {
     deviceScaleFactor: vp.touch ? 3 : 1, reducedMotion: "no-preference",
   });
   await ctx.addInitScript(INIT);
+  if (AUTH && SESSION.token) {
+    // The same key the app's own sign-in writes (app/_components/auth-gate.tsx), and ONLY on the
+    // application's own origin: an init script runs in EVERY frame, third-party sign-in iframes
+    // included, and a credential must never be written into somebody else's storage.
+    await ctx.addInitScript(({ t, o }) => {
+      try { if (location.origin === o) localStorage.setItem("fde-google-token", t); } catch { /* private mode */ }
+    }, { t: SESSION.token, o: ORIGIN });
+  }
   await ctx.route("**/*", (r) => {
-    let host = ""; try { host = new URL(r.request().url()).hostname; } catch {}
-    if (LIVE.test(host)) { blocked++; return r.abort(); }
+    const req = r.request();
+    let host = "", path = ""; try { const u = new URL(req.url()); host = u.hostname; path = u.pathname; } catch {}
+    if (LIVE.test(host) || PROXY_PATHS.test(path)) { blocked++; return r.abort(); }
+    // READ-ONLY, enforced rather than intended. Signed in, this app writes on its own (presence,
+    // telemetry, a chat-session backfill) and this lane CLICKS. A harness that can POST to the
+    // deployment it is grading is one selector away from changing a tenant's data, so every non-GET
+    // is aborted and counted (HARD RULE 8: the safe value, not the convenient one). Nothing measured
+    // here needs a write: layout, tap size and INP are all properties of the rendered page.
+    if (req.method() !== "GET" && req.method() !== "HEAD") { writes++; return r.abort(); }
     return r.continue();
   });
   return ctx;
@@ -117,11 +201,68 @@ const census = (page) => page.evaluate((SEL) => {
     const cs = getComputedStyle(el);
     return cs.display !== "none" && cs.visibility !== "hidden" && el.getClientRects().length;
   });
-  return { controls: vis.length, chars: (document.body ? document.body.innerText : "").trim().length };
+  return { controls: vis.length, chars: (document.body ? document.body.innerText : "").trim().length,
+           names: vis.map((el) => ((el.getAttribute("aria-label") || el.textContent || el.tagName) + "").trim().slice(0, 40)) };
 }, CONTROLS);
 const notRendered = (c) => c.controls ? null
   : `the route answered 2xx but rendered no interactive control (${c.chars} chars of body text): nothing was `
     + `measured here, so this row cannot pass — the deployment is serving a shell, not the application`;
+
+// ---- did we actually get IN? ---------------------------------------------------------------------
+// Two facts, both measured, before any authenticated row is graded:
+//   1. the DEPLOYMENT accepted the credential — a read-only GET /api/ops/orgs carrying the same bearer
+//      the app's own ops client sends (app/_components/ops/lib.ts). 401 means the token is not this
+//      deployment's or has expired, and what is on screen is the signed-out shell;
+//   2. the SURFACE rendered — the control that only exists once its own content is there, and a census
+//      strictly larger than the same url loaded with no session. The shell renders either way, so
+//      without this a green row would certify the shell. Nothing measured is never a pass.
+const serverAcceptsSession = (page) => page.evaluate(async () => {
+  try {
+    const t = localStorage.getItem("fde-google-token");
+    if (!t) return { status: -1, why: "no session was installed in this browser" };
+    const r = await fetch("/api/ops/orgs", { headers: { authorization: "Bearer " + t } });
+    return { status: r.status };
+  } catch (e) { return { status: -1, why: String(e).slice(0, 120) }; }
+});
+const shellSeen = new Map();   // "<viewport> <path>" -> control count with NO session, measured once
+async function shellControls(browser, vp, path) {
+  const key = `${vp.name} ${path}`;
+  if (shellSeen.has(key)) return shellSeen.get(key);
+  const saved = SESSION.token;
+  SESSION.token = null;                       // this one context gets no session: it IS the control sample
+  const ctx = await newCtx(browser, vp);
+  SESSION.token = saved;
+  const { page, err } = await open(ctx, path);
+  // -1 when the signed-out sample itself did not load. The comparison is then not evidence either way,
+  // so the row falls back to the marker alone — which is the strict half of the gate, not the loose one.
+  let n = -1;
+  if (!err) { n = (await census(page)).controls; await page.close(); }
+  await ctx.close();
+  shellSeen.set(key, n);
+  return n;
+}
+/** null when the surface is genuinely signed in and rendered, else the sentence that fails the row. */
+async function authGate(page, su, shell) {
+  if (!AUTH) return null;
+  const a = await serverAcceptsSession(page);
+  if (a.status !== 200) {
+    // NOTHING WAS MEASURED, so nothing is graded: `refused` makes the row `not-covered` and the run
+    // exit 2. See the header — a stale credential is the operator's to refresh, not a defect to
+    // revert an application over.
+    refused = true;
+    return `the deployment refused this session: GET /api/ops/orgs answered ${a.status}${a.why ? ` (${a.why})` : ""}. ` +
+      `This row measured nothing about the product — refresh ${SESSION_ENV} and run it again.`;
+  }
+  await page.waitForTimeout(1500);            // the panels render after their ops fetches resolve
+  const c = await census(page);
+  const marked = su.marker.test(c.names.join(" | "));
+  if (!marked || c.controls <= shell) {
+    return `signed in and accepted (200), but this surface did not render: ${marked ? "" : `${su.what} is absent; `}` +
+      `${c.controls} control(s) signed in vs ${shell} signed out — the shell renders either way, so grading this would ` +
+      "have measured the shell, not the surface.";
+  }
+  return null;
+}
 
 // ---- repeat-and-confirm, for the two budgets that move on their own -------------------------------
 // Overflow, clipping and tap size are geometry: measure them twice and you get the same answer. CLS
@@ -139,7 +280,7 @@ async function confirm(sample, budget) {
   let last;
   for (let i = 0; i < CONFIRM; i++) {
     last = await sample();
-    if (last.err || last.dead || last.skip) return { last, runs };
+    if (last.err || last.dead || last.skip || last.gate) return { last, runs };
     runs.push(last.value);
     if (last.value <= budget) break;
   }
@@ -154,14 +295,17 @@ const seen = (runs, unit, dp = 0) => {
 async function layout(browser) {
   for (const vp of VIEWPORTS) {
     const ctx = await newCtx(browser, vp);
-    for (const route of ROUTES) {
-      const label = `layout ${route} @ ${vp.name}`;
+    for (const su of surfaces()) {
+      const label = `layout ${su.name} @ ${vp.name}`;
+      const shell = AUTH ? await shellControls(browser, vp, su.path) : -1;
       const probe = async () => {
-        const { page, err } = await open(ctx, route);
+        const { page, err } = await open(ctx, su.path);
         if (err) return { err };
         const c = await census(page);
         const dead = notRendered(c);
         if (dead) { await page.close(); return { dead, c }; }
+        const gate = await authGate(page, su, shell);
+        if (gate) { await page.close(); return { gate }; }
         // CLS is snapshotted BEFORE the reachability probe, because scrolling to test reachability can
         // itself provoke shifts and would otherwise pollute the number this row grades.
         const m = await page.evaluate(() => {
@@ -223,6 +367,7 @@ async function layout(browser) {
       const { last, runs, best } = await confirm(probe, BUDGET.cls);
       if (last.err) { row(label, "skipped", `did not load: ${last.err}`); continue; }
       if (last.dead) { row(label, "fail", last.dead); continue; }
+      if (last.gate) { row(label, refused ? "not-covered" : "fail", last.gate); continue; }
       const { m, reach, c } = last;
       const bad = [];
       if (m.overflow > BUDGET.overflowPx) bad.push(`horizontal scroll ${m.overflow}px at ${m.vw}px wide (budget 0px, WCAG 1.4.10)`);
@@ -242,13 +387,16 @@ async function layout(browser) {
 async function targets(browser) {
   for (const vp of VIEWPORTS.filter((v) => TOUCH_VIEWPORTS.includes(v.name))) {
     const ctx = await newCtx(browser, vp);
-    for (const route of ROUTES) {
-      const label = `targets ${route} @ ${vp.name}`;
-      const { page, err } = await open(ctx, route);
+    for (const su of surfaces()) {
+      const label = `targets ${su.name} @ ${vp.name}`;
+      const shell = AUTH ? await shellControls(browser, vp, su.path) : -1;
+      const { page, err } = await open(ctx, su.path);
       if (err) { row(label, "skipped", `did not load: ${err}`); continue; }
       const c = await census(page);
       const dead = notRendered(c);
       if (dead) { row(label, "fail", dead); await page.close(); continue; }
+      const gate = await authGate(page, su, shell);
+      if (gate) { row(label, refused ? "not-covered" : "fail", gate); await page.close(); continue; }
       const t = await page.evaluate(({ min, advisory }) => {
         const SEL = 'a[href],button,input:not([type="hidden"]),select,textarea,summary,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="switch"]';
         const all = [];
@@ -294,18 +442,28 @@ async function targets(browser) {
 async function interaction(browser) {
   for (const vp of VIEWPORTS.filter((v) => ["mobile-390", "desktop-1440"].includes(v.name))) {
     const ctx = await newCtx(browser, vp);
-    // Click rows: /workspace is the only route with in-page controls. On / and /onboard the only
-    // controls are "Continue with Google" and the email-code button; clicking either leaves the app,
-    // so they are declared out of scope rather than clicked and mis-measured.
-    const label = `interaction /workspace click @ ${vp.name}`;
+    // Click rows. Signed out, /workspace is the only route with in-page controls: on / and /onboard the
+    // only controls are "Continue with Google" and the email-code button, and clicking either leaves the
+    // app, so they are declared out of scope rather than clicked and mis-measured. Signed in, every
+    // authenticated surface has real in-page controls, and those are the clicks a customer actually
+    // makes — which is the point of --auth.
+    for (const su of (AUTH ? AUTH_SURFACES : [{ name: "/workspace", path: "/workspace", marker: null }])) {
+    const label = `interaction ${su.name} click @ ${vp.name}`;
+    const shell = AUTH ? await shellControls(browser, vp, su.path) : -1;
     const clickProbe = async () => {
-      const { page, err } = await open(ctx, "/workspace");
+      const { page, err } = await open(ctx, su.path);
       if (err) return { err };
       const c = await census(page);
       const dead = notRendered(c);
       if (dead) { await page.close(); return { dead }; }
+      const gate = await authGate(page, su, shell);
+      if (gate) { await page.close(); return { gate }; }
       const n = await page.evaluate(() => {
-        const UNSAFE = /sign ?in|sign ?up|google|continue with|log ?in|log ?out|delete|remove|submit|send|invite|upload/i;
+        // A denylist of VERBS, as a second fence behind the read-only request guard (every non-GET is
+        // aborted, so a click cannot reach the server even if one slips through). Widened for the
+        // signed-in surfaces, where the buttons on screen are no longer only "Continue with Google":
+        // save, publish, archive, revoke and friends are exactly the ones a measurement must not press.
+        const UNSAFE = /sign ?in|sign ?up|google|continue with|log ?in|log ?out|sign ?out|delete|remove|submit|send|invite|upload|save|publish|archive|revoke|disconnect|reset|clear|export|import|run\b|deploy|approve|reject/i;
         let i = 0;
         for (const el of document.querySelectorAll("button")) {
           // NOT el.type: HTMLButtonElement.type reports "submit" for any <button> with no type
@@ -335,22 +493,27 @@ async function interaction(browser) {
     const clicked = await confirm(clickProbe, BUDGET.inpMs);
     if (clicked.last.err) row(label, "skipped", `did not load: ${clicked.last.err}`);
     else if (clicked.last.dead) row(label, "fail", clicked.last.dead);
+    else if (clicked.last.gate) row(label, refused ? "not-covered" : "fail", clicked.last.gate);
     else if (clicked.last.skip) row(label, "skipped", clicked.last.skip);
     else row(label, clicked.best > BUDGET.inpMs ? "fail" : "pass",
       clicked.best > BUDGET.inpMs
         ? `INP over budget ${BUDGET.inpMs}ms on all ${clicked.runs.length} runs: ${seen(clicked.runs, "ms")}`
         : (clicked.last.navigated ? `stopped after ${clicked.last.clicked} click(s): the page navigated, so later clicks were not measured · ` : `${clicked.last.clicked} in-page click(s) · `)
           + `INP=${seen(clicked.runs, "ms")} (budget ${BUDGET.inpMs}ms)`);
+    }
     // Keyboard focus rows: pressing Tab is safe on every route and is the one interaction a
     // keyboard-only user makes constantly.
-    for (const route of ROUTES) {
-      const klabel = `interaction ${route} keyboard @ ${vp.name}`;
+    for (const su of surfaces()) {
+      const klabel = `interaction ${su.name} keyboard @ ${vp.name}`;
+      const kshell = AUTH ? await shellControls(browser, vp, su.path) : -1;
       const kbProbe = async () => {
-        const { page, err } = await open(ctx, route);
+        const { page, err } = await open(ctx, su.path);
         if (err) return { err };
         const c = await census(page);
         const dead = notRendered(c);
         if (dead) { await page.close(); return { dead }; }
+        const gate = await authGate(page, su, kshell);
+        if (gate) { await page.close(); return { gate }; }
         let presses = 0;
         for (let i = 0; i < 6; i++) {
           await page.keyboard.press("Tab");
@@ -364,6 +527,7 @@ async function interaction(browser) {
       const k = await confirm(kbProbe, BUDGET.inpMs);
       if (k.last.err) { row(klabel, "skipped", `did not load: ${k.last.err}`); continue; }
       if (k.last.dead) { row(klabel, "fail", k.last.dead); continue; }
+      if (k.last.gate) { row(klabel, refused ? "not-covered" : "fail", k.last.gate); continue; }
       row(klabel, k.best > BUDGET.inpMs ? "fail" : "pass",
         k.best > BUDGET.inpMs
           ? `INP over budget ${BUDGET.inpMs}ms on all ${k.runs.length} runs: ${seen(k.runs, "ms")}`
@@ -371,6 +535,32 @@ async function interaction(browser) {
     }
     await ctx.close();
   }
+}
+
+// --auth with no credential measures NOTHING, so it grades nothing: every surface prints
+// `not-covered` with the reason and the run exits 2. In the lane the check is gated on the variable's
+// PRESENCE (lane.json `requires: env`), so the runner skips the check and the lane becomes `skipped` —
+// a lane can never read `pass` while the product surface went unmeasured.
+if (AUTH && (SESSION.missing || SESSION.bad || STALE)) {
+  for (const su of AUTH_SURFACES) {
+    row(`${ONLY === "all" ? "auth" : ONLY} ${su.name}`, "not-covered",
+        SESSION.bad || (STALE && `${STALE}, so this run would measure the signed-out shell, not the product`) ||
+        `no session token in ${SESSION_ENV}: this surface renders only for a signed-in identity`);
+  }
+  const w0 = Math.max(...rows.map((r) => r.name.length));
+  console.log("| check | result | detail |");
+  console.log("|---|---|---|");
+  for (const r of rows) console.log(`| ${r.name.padEnd(w0)} | ${r.result} | ${r.detail} |`);
+  console.log(`\n_target ${BASE} · viewports none · 0 request(s) to the live projects or the /eve/v1 proxy blocked · ` +
+              `${rows.length} rows: 0 pass, 0 fail, 0 skipped, ${rows.length} declared not covered_`);
+  console.error((SESSION.bad || STALE || `${SESSION_ENV} is not set`) + ". The signed-in product surface (chat thread, " +
+    "ops centre, workflow builder) was NOT measured at any viewport. Sign in to this application as the factory's test identity " +
+    'and export that browser session: see molds/mold_v1/testing/responsiveness/README.md, "Authenticated coverage".');
+  process.exit(2);
+}
+if (AUTH) {
+  console.error(`signed in as ${SESSION.who}${SESSION.exp ? ` (token expires ${new Date(SESSION.exp * 1000).toISOString()})` : ""}` +
+                `${SESSION.expired ? " — ALREADY EXPIRED" : ""}; the token itself is never printed`);
 }
 
 const browser = await chromium.launch();
@@ -388,13 +578,24 @@ console.log("| check | result | detail |");
 console.log("|---|---|---|");
 for (const r of rows) console.log(`| ${r.name.padEnd(w)} | ${r.result} | ${r.detail} |`);
 const n = (s) => rows.filter((r) => r.result === s).length;
-console.log(`\n_target ${BASE} · viewports ${[...usedVp].sort((x, y) => x - y).join("/") || "none"} · ${blocked} request(s) to live fde-* hosts blocked · ` +
-            `${rows.length} rows: ${n("pass")} pass, ${n("fail")} fail, ${n("skipped")} skipped_`);
+console.log(`\n_target ${BASE} · ${AUTH ? "SIGNED IN" : "signed out"} · viewports ${[...usedVp].sort((x, y) => x - y).join("/") || "none"} · ` +
+            `${blocked} request(s) to the live projects or the /eve/v1 proxy blocked · ${writes} non-GET request(s) blocked (this lane is read-only) · ` +
+            `${rows.length} rows: ${n("pass")} pass, ${n("fail")} fail, ${n("skipped")} skipped, ` +
+            `${n("not-covered")} declared not covered_`);
 // Nothing measured at all is not a pass. The runner's precondition probe should have caught a target
 // that was already down, so losing every route mid-run is an anomaly worth surfacing loudly.
 if (navAttempts && navFailures === navAttempts) {
   console.error(`the target stopped answering mid-run: ${navFailures}/${navAttempts} navigations failed, so nothing was measured`);
   process.exit(3);
+}
+if (refused) {
+  // Exit 2 = nothing was measured. Not 1: `fail` reverts the application (lanes.py), and a credential
+  // this deployment turned away is the operator's to refresh, not a defect of the app. The check's
+  // precondition, session-live.py, is what catches the ordinary stale paste before a browser opens.
+  console.error(`the deployment refused ${SESSION_ENV} part-way through, so the signed-in surfaces were NOT measured at any ` +
+    "viewport and nothing here grades the application. Sign in again and re-run with a fresh session: " +
+    'molds/mold_v1/testing/responsiveness/README.md, "Authenticated coverage".');
+  process.exit(2);
 }
 if (n("skipped")) {
   // Line 28 said a skipped row never lifts the exit code; exit 0 did exactly that. A skipped row here

@@ -7,7 +7,8 @@
   factory.py add <mold> "<title>" --type build [--pri 2] [--owner fable] [--lane x] [--dep id ...]
   factory.py set <task_id> <field> <value>   e.g. set mold_v1-001 status done
   factory.py close <task_id> "<evidence>"    marks done and appends evidence; bumps product stage if advances_stage
-  factory.py validate                    every state/*.json[l] file checks its required fields + enums
+  factory.py validate                    every state/*.json[l] file and every molds/*/testing/*/lane.json
+                                         checks its required fields + enums
 """
 import json, sys, os, datetime, re
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -90,9 +91,19 @@ def cmd_close(a):
                     print(f"{p['product_id']} -> {p['stage']}")
                 else: print(f"stage {t['advances_stage']} waits on {', '.join(x['task_id'] for x in remaining)}")
 TYPES = {"string": str, "boolean": bool, "integer": int, "number": (int, float), "array": list, "object": dict}
-def _check(obj, schema, where):
-    """Recursive subset of JSON Schema: type, required, properties, additionalProperties, items, enum, const, pattern."""
+def _check(obj, schema, where, root=None):
+    """Recursive subset of JSON Schema: type, required, properties, additionalProperties, items, enum, const,
+    pattern, and $ref when the whole document is passed as `root` (lane.schema.json names one $def twice, and
+    factory.schema.json refs its mold $def — an unresolved $ref used to mean that subtree went UNCHECKED,
+    which is the same permissive default as grading an unmeasured row `pass`)."""
     errs = []
+    if root is not None and isinstance(schema, dict) and "$ref" in schema:
+        n = root
+        try:
+            for k in schema["$ref"].split("/")[1:]: n = n[k]
+        except (KeyError, TypeError, IndexError):
+            return [f"{where}: schema $ref {schema['$ref']!r} does not resolve"]
+        return _check(obj, n, where, root)
     t = schema.get("type"); ts = [x for x in (t if isinstance(t, list) else [t]) if x in TYPES] if t else []
     if ts:
         ok = any(isinstance(obj, TYPES[x]) and not (x in ("integer", "number") and isinstance(obj, bool)) for x in ts) or ("null" in (t if isinstance(t, list) else [t]) and obj is None)
@@ -106,12 +117,24 @@ def _check(obj, schema, where):
         props = schema.get("properties", {})
         for k, v in obj.items():
             if k == "$schema": continue
-            if k in props: errs += _check(v, props[k], f"{where}.{k}")
+            if k in props: errs += _check(v, props[k], f"{where}.{k}", root)
             elif schema.get("additionalProperties") is False: errs.append(f"{where}.{k}: not allowed")
-            elif isinstance(schema.get("additionalProperties"), dict): errs += _check(v, schema["additionalProperties"], f"{where}.{k}")
+            elif isinstance(schema.get("additionalProperties"), dict): errs += _check(v, schema["additionalProperties"], f"{where}.{k}", root)
     if isinstance(obj, list) and isinstance(schema.get("items"), dict):
-        for i, x in enumerate(obj): errs += _check(x, schema["items"], f"{where}[{i}]")
+        for i, x in enumerate(obj): errs += _check(x, schema["items"], f"{where}[{i}]", root)
     return errs
+def _ts(s):
+    """ISO-8601 (date or date-time) -> an aware UTC datetime, or None if it cannot be ordered.
+
+    These used to be compared as raw strings, which is only correct while every writer uses the same
+    offset: "2026-09-09T01:00:00+09:00" sorts AFTER "2026-09-08T18:00:00+00:00" as text and is the
+    EARLIER instant. Unparseable returns None and is reported by the caller, never silently skipped —
+    a comparison that cannot run is not a comparison that passed."""
+    try: d = datetime.datetime.fromisoformat(str(s).strip().replace("Z", "+00:00"))
+    except ValueError: return None
+    # A missing offset means the writer omitted it; every timestamp this factory writes is UTC (NOW),
+    # so assume UTC rather than drop the comparison.
+    return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
 # An app that says it is deployed is making its claims in the present tense.
 DEPLOYED = ("stamped", "testing", "serviceable")
 def _rls_claim(app_id, docs):
@@ -130,6 +153,13 @@ def _rls_claim(app_id, docs):
     if want in (None, "off") or st not in DEPLOYED: return []
     w = f"{app_id}/datastores.json: postgres.rls is {want!r}"
     fix = f"Run: python3 .claude/scripts/provision.py {app_id} --verify-rls"
+    # --deploy is the Vercel lane's remedy and the ONLY thing that replaces the build in front of traffic.
+    # A vm-target app is run from a regenerated local artifact instead (provision.py refuses --deploy for
+    # it outright), so pointing a vm operator at --deploy would be an instruction that cannot succeed.
+    vm = (docs.get("infrastructure") or {}).get("target") == "vm"
+    redeploy = (f"Run: python3 .claude/scripts/provision.py {app_id} --deploy" if not vm else
+                f"Regenerate this app's local artifact and restart it from the new compose file: "
+                f"python3 .claude/scripts/provision.py {app_id} --verify-db")
     if not ev or str(ev.get("source", "")).startswith("not verified"):
         return [f"{w} on a {st} app but nothing has measured it" + (f" ({ev.get('source')})" if ev else "") + f". {fix}"]
     out = []
@@ -159,11 +189,131 @@ def _rls_claim(app_id, docs):
                                                         f"(got {ev.get('cross_org_write')!r}, expected 42501). {fix}")
     if want == "fail_closed" and ev.get("unset_org_rows"): out.append(f"{w} but with no workspace in scope "
         f"{ev.get('probe_table')} still returned {ev['unset_org_rows']} row(s) — that is failing OPEN. {fix}")
+    # The stored DATABASE_URL passing the gate and the PROCESS IN FRONT OF TRAFFIC using it are two
+    # different facts: a Vercel env change only reaches the app on its next build. provision.py already
+    # reads /api/ops/health into running_app and refuses to finish on anything but "enforced" — but
+    # validate read every other field of the evidence and not this one, so an app whose own record said
+    # the live build is not enforcing RLS validated green forever after.
+    #
+    # ALLOWLIST ON THE WRITER'S OWN PREFIX. provision.py:_rls_from_doc emits exactly three shapes —
+    # "enforced — <detail>", "NOT enforced — <detail>", "UNMEASURED: <why>" — and provision.py itself
+    # gates on startswith("enforced") in both places that decide whether an app may finish (verify_rls,
+    # and the --deploy gate that must pass before status becomes `stamped`). Reading that same prefix is
+    # what keeps these two files from drifting; the earlier pass matched a REMEMBERED sentence instead
+    # and so rejected the only affirmative its writer can produce. Everything else fails, because
+    # unmeasured is not measured-good.
+    ra = str(ev.get("running_app") or "")
+    if not ra:
+        out.append(f"{w} and the stored credential was measured, but nothing read the app in front of traffic "
+                   f"(rls_verified.running_app is absent) — the running build may still hold an older "
+                   f"DATABASE_URL. {fix}")
+    elif ra.startswith("no BYPASSRLS warning"):
+        # UNMEASURED, however affirmative it reads. An older provision.py returned this whenever the body
+        # it fetched did not contain the word BYPASSRLS, so a 404 DEPLOYMENT_NOT_FOUND page, a 401 Vercel
+        # login wall and a 500 crash all earned it — i.e. it was emitted exactly when nothing could be
+        # read. Re-measure with the reader that can tell those apart rather than inherit the affirmative.
+        out.append(f"{w} and the only reading of the app serving traffic is {ra[:120]!r} — a string an older "
+                   f"provision.py returned for ANY page that did not mention BYPASSRLS, a 404 or a login wall "
+                   f"included, so it records that nothing was read, not that RLS is on. {fix}")
+    elif not ra.startswith("enforced"):
+        # "NOT enforced" is a definitive reading of the wrong DATABASE_URL, and only a new build replaces
+        # it (provision.py says the same). Anything else is unreadable, and re-reading the endpoint is the
+        # cheaper first step: --verify-rls re-measures and, if it still cannot read it, prints provision.py's
+        # own next instruction with the reason (no production URL / deployment protection).
+        out.append(f"{w} but the app SERVING TRAFFIC reports {ra[:160]!r} on /api/ops/health — the process "
+                   f"answering requests is not known to be enforcing it. "
+                   f"{redeploy if ra.startswith('NOT enforced') else fix}")
+    # Evidence is a photograph of one database at one instant, and two ordinary events invalidate it
+    # without changing a single field of it: a deploy (the build, and the DATABASE_URL it holds, changed
+    # after the measurement) and a snapshot restore (pg_restore --clean drops every policy — clone.py
+    # makes the same comparison before it will call a replica isolated).
+    at = str(ev.get("at") or ""); atd = _ts(at)
+    dep = str((docs.get("infrastructure") or {}).get("deployed_at") or "")
+    snap = str((pg.get("snapshot") or {}).get("taken_at") or "")
+    if not at:
+        out.append(f"{w} but the evidence carries no `at`, so nothing can tell whether it predates the deploy "
+                   f"that replaced the database it measured. {fix}")
+    elif not atd:
+        out.append(f"{w} but rls_verified.at is {at[:60]!r}, which is not an ISO-8601 timestamp, so nothing can "
+                   f"order this proof against the deploy or the restore that would invalidate it. {fix}")
+    # Only the vercel lane records a deploy date (provision.py:1379 stamps it, and nothing in the vm lane
+    # ever does), so this comparison is asked of that lane only — demanding a deployed_at from a vm app
+    # would be a red line no command could clear. A vm app is still covered by the running_app reading
+    # above and the snapshot comparison below; both work off its own vm.production_url and its snapshot.
+    if not vm and atd and not dep:
+        # An app in this state was deployed by something, and an undated deploy cannot be compared: the
+        # convenient reading is "then it is not stale", which is how evidence from 2020 passed. --deploy
+        # stamps deployed_at, so this instruction resolves it.
+        out.append(f"{w} but infrastructure.json records no deployed_at, so nothing can tell whether this proof "
+                   f"predates the build serving traffic. {redeploy}")
+    elif not vm and atd and not _ts(dep):
+        out.append(f"{w} but infrastructure.deployed_at is {dep[:60]!r}, which is not a date, so nothing can order "
+                   f"this proof against the deploy. {redeploy}")
+    # deployed_at carries a DAY (schema: format date) and `at` an instant, so days are all this can compare.
+    # Same-day therefore passes — and it is the coarsest safe comparison, not a safe one: a redeploy hours
+    # after a measurement still reads fresh here. What catches that case is the running_app branch above,
+    # because a deploy rewrites rls_verified wholesale and leaves running_app absent.
+    elif not vm and atd and atd.astimezone(datetime.timezone.utc).date() < _ts(dep).date():
+        out.append(f"{w} but the evidence was measured {at} and this app was deployed {dep} — that proof is about "
+                   f"the build before the one serving traffic. {fix}")
+    if atd and snap:
+        sd = _ts(snap)
+        if not sd:
+            out.append(f"{w} but postgres.snapshot.taken_at is {snap[:60]!r}, which is not an ISO-8601 timestamp, so "
+                       f"nothing can tell whether the restore came after the proof. {fix}")
+        elif atd < sd:
+            out.append(f"{w} but the evidence was measured {at} and the database was restored from a snapshot taken "
+                       f"{snap} — a restore drops every policy the proof measured. {fix}")
     return out
+
+LANE_FIX = "Fix that file, then re-run: python3 .claude/scripts/factory.py validate"
+def _lane_specs():
+    """Every molds/<mold>/testing/<lane>/lane.json against that mold's lane.schema.json.
+
+    lanes.py validates the declaration too, but only for the five lanes it knows and only at the moment
+    someone runs them, exiting 2 — so a lane.json in the wrong folder, a sixth lane folder, or a typo'd
+    key sat in the repo looking healthy until a run stopped dead on it. Same _check as every other
+    schema in the factory: the schema uses $ref, which is why _check learned to resolve one."""
+    errs = []; md = os.path.join(ROOT, "molds")
+    for mold in sorted(os.listdir(md) if os.path.isdir(md) else []):
+        tdir = os.path.join(md, mold, "testing")
+        if not os.path.isdir(tdir): continue
+        # A mold may carry its own lane.schema.json; mold_v1's is the fallback, exactly as lanes.py picks it.
+        sp = next((x for x in (os.path.join(tdir, "lane.schema.json"),
+                               os.path.join(md, "mold_v1", "testing", "lane.schema.json")) if os.path.exists(x)), None)
+        for lane in sorted(os.listdir(tdir)):
+            f = os.path.join(tdir, lane, "lane.json")
+            if not os.path.isfile(f): continue            # no lane.json is legal: that lane is `skipped`, never `pass`
+            rel = os.path.relpath(f, ROOT)
+            try: spec = load(f)
+            except Exception as x: errs.append(f"{rel}: not valid JSON ({x}). {LANE_FIX}"); continue
+            if not sp:
+                errs.append(f"{rel}: there is no molds/{mold}/testing/lane.schema.json (nor the mold_v1 fallback) "
+                            f"to check it against, so nothing knows what this lane declares. Restore that schema, "
+                            f"then re-run: python3 .claude/scripts/factory.py validate"); continue
+            sch = load(sp); se = _check(spec, sch, rel, sch)
+            # One instruction after the machine detail, never a bare type error on its own (HARD RULE 4).
+            if se: errs += se + [f"{rel} does not match {os.path.relpath(sp, ROOT)}; the {len(se)} line(s) above "
+                                 f"name the key. {LANE_FIX}"]
+            if spec.get("lane") != lane:
+                errs.append(f"{rel}: declares lane {spec.get('lane')!r} but sits in the {lane}/ folder — lanes.py "
+                            f"reads the folder, so this declaration would never run. {LANE_FIX}")
+            names = [c.get("name") for c in spec.get("checks", []) if isinstance(c, dict)]
+            dup = sorted({str(n) for n in names if names.count(n) > 1})
+            if dup: errs.append(f"{rel}: two checks are both named {', '.join(dup)} — one report row would hide "
+                                f"the other's result. {LANE_FIX}")
+    return errs
 
 def cmd_validate(a):
     errs = []
-    errs += _check(load(os.path.join(ST,"factory.json")), load(os.path.join(ST,"factory.schema.json")), "factory.json")
+    fs = load(os.path.join(ST,"factory.schema.json")); fj = load(os.path.join(ST,"factory.json"))
+    errs += _check(fj, fs, "factory.json", fs)
+    if any(not isinstance(m, dict) or "mold_id" not in m for m in fj.get("molds", [])):
+        # Every audit below walks the mold list. A mold entry with no mold_id used to reach it and raise
+        # a KeyError mid-run: a traceback instead of a finding (HARD RULE 4). Report and stop here.
+        for e in errs: print(e)
+        sys.exit(f"{len(errs)} problem(s). Fix state/factory.json first: every entry under \"molds\" needs a "
+                 f"\"mold_id\" before the rest of the factory can be checked.")
     ps = load(os.path.join(ST,"products.schema.json"))["properties"]["products"]["items"]
     for p in products()["products"]: errs += _check(p, ps, f"products.json[{p.get('product_id')}]")
     tsch = load(os.path.join(ST,"tasks.schema.json")); idx = all_tasks()
@@ -182,6 +332,7 @@ def cmd_validate(a):
                 docs[name] = load(f); errs += _check(docs[name], load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
             else: errs.append(f"{app}: missing {name}.json")
         errs += _rls_claim(app, docs)
+    errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
 if __name__ == "__main__":
