@@ -21,7 +21,8 @@
           "rows: "
         ],
         "stdout_not": [
-          "\\| fail \\|"
+          "\\| fail \\|",
+          "\\| skipped \\|"
         ]
       },
       "emits": "markdown_table",
@@ -49,7 +50,8 @@
           "rows: "
         ],
         "stdout_not": [
-          "\\| fail \\|"
+          "\\| fail \\|",
+          "\\| skipped \\|"
         ]
       },
       "emits": "markdown_table",
@@ -77,7 +79,8 @@
           "rows: "
         ],
         "stdout_not": [
-          "\\| fail \\|"
+          "\\| fail \\|",
+          "\\| skipped \\|"
         ]
       },
       "emits": "markdown_table",
