@@ -39,7 +39,84 @@
             "off",
             "on",
             "fail_closed"
-          ]
+          ],
+          "description": "What the application ASKS for. fail_closed = a query with no workspace in scope returns zero rows; on = policies are enforced but permissive when no workspace is set; off = no tenant isolation. fail_closed and on are GATES: provision.py refuses to finish a deploy that cannot prove them, and factory.py validate refuses either value on a stamped app without a matching rls_verified block."
+        },
+        "rls_verified": {
+          "type": "object",
+          "description": "EVIDENCE, written by provision.py/clone.py from a live measurement of the database the app runs against — never by hand. This is what turns `rls` from a claim into a record: it names the role that was measured, how many org-scoped tables were enabled+forced+policied, and whether another workspace's rows were actually readable.",
+          "required": [
+            "at",
+            "backend",
+            "mode",
+            "source"
+          ],
+          "properties": {
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "backend": {
+              "type": "string",
+              "description": "Which Postgres backend was measured (the datastores.postgres.provider value), so a proof against the local self_hosted database is never mistaken for a proof against the managed one"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "off",
+                "on",
+                "fail_closed"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "description": "Which command produced this, or why nothing could be proven"
+            },
+            "role": {
+              "type": "string",
+              "description": "current_user on the deployed DATABASE_URL — app_rw, not postgres"
+            },
+            "superuser": {
+              "type": "boolean"
+            },
+            "bypassrls": {
+              "type": "boolean",
+              "description": "Must be false: BYPASSRLS silently ignores every policy, and FORCE ROW LEVEL SECURITY does not override it"
+            },
+            "org_scoped_tables": {
+              "type": "integer",
+              "description": "Tables in public carrying an org_id column, counted from the catalog"
+            },
+            "protected": {
+              "type": "integer",
+              "description": "Of those, how many have RLS enabled AND forced AND at least one policy"
+            },
+            "unprotected": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "probe_table": {
+              "type": "string",
+              "description": "The table the cross-workspace read/write probe ran against, inside a rolled-back transaction"
+            },
+            "foreign_rows_readable": {
+              "type": "integer",
+              "description": "Rows of another workspace visible to the app role while scoped. Must be 0"
+            },
+            "cross_org_write": {
+              "type": "string",
+              "description": "SQLSTATE of the cross-workspace INSERT. Must be 42501; 'ACCEPTED' means the write went through"
+            },
+            "unset_org_rows": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "fail_closed only: rows visible with app.org_id set to the empty string, which is what a transaction pooler leaves behind. Must be 0"
+            }
+          }
         },
         "tenancy": {
           "type": "string",

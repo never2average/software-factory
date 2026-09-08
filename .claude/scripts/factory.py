@@ -112,6 +112,41 @@ def _check(obj, schema, where):
     if isinstance(obj, list) and isinstance(schema.get("items"), dict):
         for i, x in enumerate(obj): errs += _check(x, schema["items"], f"{where}[{i}]")
     return errs
+# An app that says it is deployed is making its claims in the present tense.
+DEPLOYED = ("stamped", "testing", "serviceable")
+def _rls_claim(app_id, docs):
+    """`"rls": "fail_closed"` used to be a string literal that nothing in the factory ever read: intake
+    stamped it into every app regardless of provider, scope or tenancy, validate checked it against a
+    JSON-schema enum, and the deployed app meanwhile reported `role postgres — WARNING: BYPASSRLS`.
+    A value that cannot be false is not a claim, it is decoration.
+
+    So an app that says it is deployed must carry the evidence beside the claim. The evidence is
+    written only by a live measurement (provision.py --verify-db / --verify-rls / --deploy, clone.py),
+    never by hand, and this compares the two: same mode, a non-superuser non-BYPASSRLS role, zero
+    unprotected org-scoped tables, zero foreign rows readable, and a cross-workspace write that
+    Postgres refused with 42501. `rls: off` asks for nothing and is asked nothing."""
+    ds = docs.get("datastores") or {}; st = (docs.get("application") or {}).get("status")
+    pg = ds.get("postgres", {}); want = pg.get("rls"); ev = pg.get("rls_verified") or {}
+    if want in (None, "off") or st not in DEPLOYED: return []
+    w = f"{app_id}/datastores.json: postgres.rls is {want!r}"
+    fix = f"Run: python3 .claude/scripts/provision.py {app_id} --verify-rls"
+    if not ev or str(ev.get("source", "")).startswith("not verified"):
+        return [f"{w} on a {st} app but nothing has measured it" + (f" ({ev.get('source')})" if ev else "") + f". {fix}"]
+    out = []
+    if ev.get("mode") != want: out.append(f"{w} but the evidence records mode {ev.get('mode')!r}. {fix}")
+    if ev.get("bypassrls") is not False or ev.get("superuser") is not False:
+        out.append(f"{w} but it was measured as role {ev.get('role')!r} with superuser={ev.get('superuser')} "
+                   f"bypassrls={ev.get('bypassrls')} — either one ignores every policy. {fix}")
+    if ev.get("unprotected"): out.append(f"{w} but {len(ev['unprotected'])} of {ev.get('org_scoped_tables')} org-scoped "
+                                         f"tables had no enforced policy: {', '.join(ev['unprotected'][:6])}. {fix}")
+    if ev.get("foreign_rows_readable"): out.append(f"{w} but {ev['foreign_rows_readable']} row(s) of another workspace "
+                                                   f"were readable from {ev.get('probe_table')}. {fix}")
+    if ev.get("cross_org_write") != "42501": out.append(f"{w} but a cross-workspace INSERT was not refused by RLS "
+                                                        f"(got {ev.get('cross_org_write')!r}, expected 42501). {fix}")
+    if want == "fail_closed" and ev.get("unset_org_rows"): out.append(f"{w} but with no workspace in scope "
+        f"{ev.get('probe_table')} still returned {ev['unset_org_rows']} row(s) — that is failing OPEN. {fix}")
+    return out
+
 def cmd_validate(a):
     errs = []
     errs += _check(load(os.path.join(ST,"factory.json")), load(os.path.join(ST,"factory.schema.json")), "factory.json")
@@ -126,10 +161,13 @@ def cmd_validate(a):
     appdir = os.path.join(ST,"application")
     for app in os.listdir(appdir):
         if app=="app_id": continue
+        docs = {}
         for name in ["application","infrastructure","datastores","datainfra"]:
             f = os.path.join(appdir, app, f"{name}.json")
-            if os.path.exists(f): errs += _check(load(f), load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
+            if os.path.exists(f):
+                docs[name] = load(f); errs += _check(docs[name], load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
             else: errs.append(f"{app}: missing {name}.json")
+        errs += _rls_claim(app, docs)
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
 if __name__ == "__main__":

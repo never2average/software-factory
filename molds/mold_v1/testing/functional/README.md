@@ -3,27 +3,69 @@
 Existing: Playwright `codebase/tests/cards.spec.ts`, `stickloop.spec.ts` (`npm run test:cards`), plus the `test:*` node scripts (dataroom, syncs, alerts, schedules, render, sor, browser-security).
 Covers: feature-parity checks for the Claude Code web surface, FDE skills, workflow builder.
 
-## Tenant isolation through a transaction pooler (added for mold_v1-015)
+## Tenant isolation (mold_v1-015, rewritten for mold_v1-016)
 
-    APP_RW_URL="$(the app's deployed DATABASE_URL)" node .claude/scripts/lib/verify-apprw.mjs
+    python3 molds/mold_v1/testing/functional/tenant-isolation.py <app_id>
 
-Asserts, on the exact URL the app runs with: `current_user = app_rw`, `rolbypassrls = false`,
-`count(pg_policies) > 0`, the wire is encrypted (either Postgres terminated TLS, or the server refuses
-a `sslmode=disable` connection — Neon terminates TLS at its proxy, so `pg_stat_ssl.ssl` reads false on
-a fully encrypted connection), and that a **transaction-local** `set_config('app.org_id', …, true)`
-survives a round trip.
+Two rows, both required, neither satisfiable by a status code. The lane MEASURES; it never repairs.
 
-That last one is the assertion that matters for `DATABASE_URL` being a pooled endpoint. Neon's pooled
-endpoint is pgbouncer in transaction mode, and it is what the app must use — the mold opens 10 agent +
-5 ops backends per serverless instance and the pool size cannot be capped from the URL (`?max=3` still
-opened 10). Transaction pooling would break RLS if `app.org_id` were set with `set_config(..., false)`;
-`withOrgRls` uses `true`, so it holds. Measured through a transaction pooler:
+    | rls.isolation | pass | {"role":"app_rw","superuser":false,"bypassrls":false,"tables_org_scoped":52,
+                              "protected":52,"unprotected":[],"probe_table":"account_summaries",
+                              "own_org_rows":1,"foreign_rows":0,"cross_org_write":"42501","unset_org_rows":0}
+    | rls.health    | pass | the deployed app's own /api/ops/health db detail, with no BYPASSRLS in it
 
-    no GUC   -> customers: 2
-    GUC=orgA -> customers: 1
-    GUC=orgB -> customers: 1
-    app_rw, no GUC -> connector_secrets: 0        (org_isolation_strict denies when the GUC is unset)
-    cross-org INSERT refused: 42501 new row violates row-level security policy for table "customers"
+`rls.isolation` runs `provision.py <app_id> --verify-rls --no-repair`, which connects as the app role
+on the app's own deployed DATABASE_URL and proves, rather than asserts:
 
-Lane result is a fail if the script exits non-zero. `provision.py` runs the same gate before it writes
-`DATABASE_URL` anywhere, so a deploy that would fail this lane cannot happen.
+* `current_user = app_rw`, `rolsuper = false` **and** `rolbypassrls = false`. Both flags: a
+  `SUPERUSER NOBYPASSRLS` role ignores every policy too, and the app's own health endpoint
+  (`app/api/ops/health/route.ts:83`) selects only `rolbypassrls` — measured, it read one foreign row
+  while the endpoint would have printed `(RLS enforced)`.
+* every `public` base table carrying an `org_id` column has `relrowsecurity` AND `relforcerowsecurity`
+  AND at least one policy, counted from the catalog rather than from a name list. `FORCE` is
+  load-bearing: a table's owner bypasses a merely-ENABLED policy.
+* a cross-workspace read returns **0 rows** while the same row is visible in its own workspace (so the
+  check can never pass vacuously), a cross-workspace INSERT is refused with SQLSTATE **42501**, and —
+  when the app declares `fail_closed` — a query with `app.org_id` set to the EMPTY STRING (what a
+  transaction pooler leaves behind, not NULL) returns nothing. All inside one rolled-back transaction.
+* the wire is encrypted and a transaction-local `set_config('app.org_id', …, true)` survives a round
+  trip — which is what makes RLS hold through Supavisor:6543 and Neon's pooled endpoint.
+
+READ THIS BEFORE TRUSTING A GREEN LINE HERE. The previous version of this gate asked only
+`count(pg_policies) > 0`. Run verbatim against an as-shipped database, the mold's own bootstrap prints
+`app_rw BYPASSRLS : false`, `policies : 17`, `tables app_rw cannot SELECT: 0` and concludes **READY** —
+on a database where 35 of 52 org-scoped tables have no policy at all and the other 17 fail OPEN. The
+check passed and the database still leaked. That is why the row above quotes counts and a SQLSTATE
+instead of a word.
+
+`rls.health` exists because the stored `DATABASE_URL` passing the gate is a different fact from the
+RUNNING build using it: a Vercel env change only takes effect on the next build. The mold's `checkDb`
+returns the BYPASSRLS warning as a `detail` string on a resolved (`ok: true`) check, so neither the
+aggregate `ok` nor the HTTP status moves — which is how this lane once printed
+
+    | health.db | pass | ok=true, 94-123 ms: "SELECT 1 ok · role postgres — WARNING: BYPASSRLS,
+                                              row-level security is NOT enforced..."
+
+The row reads the body, so that reading is now a `fail`.
+
+An app whose `datastores.postgres.rls` is `"off"` gets `skipped`, not `pass`. `provision.py` runs the
+same proof before it writes `DATABASE_URL` anywhere and records the result in
+`datastores.postgres.rls_verified`; `factory.py validate` refuses `"rls": "fail_closed"` on a stamped
+app without matching evidence, so a deploy that would fail this lane cannot be recorded as shipped.
+
+### What the coverage pass fixes, and why it is not in the mold
+
+`.bootstrap-supabase.mjs` policies a hardcoded 13-name list plus `connector_secrets`; the schema
+carries `org_id` on 52 tables. `molds/*/codebase` is immutable (HARD RULE 1), so
+`.claude/scripts/lib/rls-cover.mjs` applies `ENABLE` + `FORCE` + the mold's own `org_isolation`
+predicate to whatever the catalog says is org-scoped, and provision.py/clone.py run it after the
+bootstrap and after every migration. It is needed more often than it looks: measured on a real
+database, `npx drizzle-kit push --force` takes `policies 52 -> 0` and `relrowsecurity 52 -> 0` while
+leaving app_rw's DML grants in place, and `pg_restore --clean --if-exists` takes
+`has_table_privilege('app_rw','orgs','SELECT') t -> f` and `pg_default_acl 2 -> 0` rows.
+
+`orgs`, `org_members` and `org_invites` keep the permissive predicate even in fail_closed mode: they
+are read before any workspace is known (sign-in, "which workspaces am I in", claiming an invite,
+`acrossOrgsRls`'s sweep). They are still enabled, forced and policied, so they are scoped once a
+workspace IS in scope. That exemption is printed on every run, in `control_plane`.
+

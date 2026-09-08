@@ -4,6 +4,7 @@
   clone.py <app_id> plan                 what the steps below would do, no secrets touched
   clone.py <app_id> extract              live surface -> application.json + datainfra.json (read-only on live)
   clone.py <app_id> snapshot [--apply]   pg_dump live -> restore into the app's fresh database; copy the blob tree
+  clone.py <app_id> rls                  re-cover and re-PROVE tenant isolation after the restore (never optional)
   clone.py <app_id> configure            apply application.surface to the app's database (after deploy + migrations)
   clone.py <app_id> regress              diff app vs live (tables, surface rows, blob tree) -> report + clone_of.regression
   clone.py <app_id> blobls               top-level folder counts of the live data room (whole store), to check the prefix
@@ -35,8 +36,9 @@ def pull_env(project, cwd, _back_to=None):
     finally:
         if os.path.exists(tmp): os.remove(tmp)
 # The ADMIN url, in provider order. DATABASE_URL is last on purpose: after the app_rw bootstrap it is
-# a NOBYPASSRLS role that owns nothing, and `pg_restore --clean --if-exists` against it fails with
-# `must be owner of table orgs`. Same chain as provision.py's admin_url().
+# a NOBYPASSRLS role that owns nothing, so pg_restore and pg_dump need one of the others. This is the
+# migration/restore credential ONLY — `configure` deliberately uses DATABASE_URL, because surface
+# writes are application writes and must go through RLS. Same chain as provision.py's admin_url().
 def pg_url(vals): return next((vals[k] for k in ("SUPABASE_POSTGRES_URL_NON_POOLING", "DATABASE_URL_UNPOOLED", "POSTGRES_ADMIN_URL", "DATABASE_URL") if vals.get(k)), "")
 
 def live_blob_token(mold, proj, prefix):
@@ -126,15 +128,26 @@ def main(a):
         if not apply_it:
             if tok: b = node("blobcopy", benv, mold); print(f"blob under {prefix}: {b['files']} files, {b['bytes']//1024} KB")
             print("dry run; re-run with --apply to restore into the app database and copy the blobs"); shutil.rmtree(os.path.dirname(dump)); return
-        print(f"pg_restore into {proj} (--clean --if-exists) ...")
-        r = subprocess.run(["pg_restore", "--clean", "--if-exists", "--no-owner", "--no-privileges", "--dbname", dst, dump], capture_output=True, text=True)
+        # DATA ONLY, into the schema the deploy already built. `--clean --if-exists` emitted
+        # `DROP SCHEMA IF EXISTS public; CREATE SCHEMA public;` ahead of everything else, which took the
+        # RLS policies, the relrowsecurity/relforcerowsecurity flags, every grant to app_rw and the whole
+        # pg_default_acl with it — measured: policies 2 -> 0, relforcerowsecurity t -> f,
+        # has_table_privilege('app_rw', 'customers', 'SELECT') t -> f, exit code 0, and `regress` then
+        # reported pass because it compares row counts and never looks at pg_policies. The clone was a
+        # replica of live with tenant isolation silently removed.
+        print(f"pg_restore into {proj} (--data-only, into the schema the deploy already created) ...")
+        r = subprocess.run(["pg_restore", "--data-only", "--disable-triggers", "--no-owner", "--no-privileges",
+                            "--dbname", dst, dump], capture_output=True, text=True)
         shutil.rmtree(os.path.dirname(dump))
         # pg_restore prints "errors ignored on restore: N" for ANY non-zero error count, so that phrase
-        # alone cannot mean success. Accept only errors from --clean dropping objects that do not exist yet.
+        # alone cannot mean success. A data-only load has no --clean noise to forgive; a row that is
+        # already there is the one benign case.
         errs = [l for l in r.stderr.splitlines() if "error:" in l.lower()]
-        fatal = [l for l in errs if "does not exist" not in l and "already exists" not in l]
-        if r.returncode and fatal: sys.exit("pg_restore reported errors that are not the expected --clean noise:\n" + "\n".join(fatal[:15]))
-        print(f"  restored ({len(errs)} ignorable --clean error(s))" if errs else "  restored")
+        fatal = [l for l in errs if "already exists" not in l and "duplicate key" not in l]
+        if fatal: sys.exit("pg_restore reported errors:\n" + "\n".join(fatal[:15]) +
+                           "\n\nA data-only restore needs the schema to be in place first. Run "
+                           f"`python3 .claude/scripts/provision.py {app_id} --deploy` before `snapshot --apply`.")
+        print(f"  restored ({len(errs)} ignorable error(s))" if errs else "  restored")
         # Rows in connector_secrets / browser_credentials are sealed with the SOURCE app's OPS_SECRETS_KEY
         # (agent/lib/secret-crypto.ts). The clone mints its own key and Vercel will not reveal live's, so
         # those rows can never be decrypted here. Clearing them is the honest outcome: the clone shows no
@@ -146,13 +159,29 @@ def main(a):
             b = node("blobcopy", benv, mold, extra=["--apply"]); print(f"  copied {b['files']} blobs under {prefix}")
             ds["blob"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW}
         else: ds["blob"]["snapshot"] = {"source": "none"}
-        save(os.path.join(adir, "datastores.json"), ds); print("datastores.json updated"); return
+        save(os.path.join(adir, "datastores.json"), ds); print("datastores.json updated")
+        # A restore is a schema event: it can add rows to tables whose policies were built for a
+        # different database, and any future change of restore strategy could touch DDL again. Re-cover
+        # and re-prove immediately, before `configure` writes anything through the app role.
+        return main([app_id, "rls"])
+
+    if step == "rls":
+        # One implementation, in provision.py, so the clone and the deploy can never disagree about what
+        # "isolated" means. It re-applies coverage (a restore or a migration can leave a table with the
+        # app_rw DML grant and no policy) and then proves a cross-workspace read and write are refused.
+        r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/provision.py"), app_id, "--verify-rls"])
+        if r.returncode: sys.exit(f"{app_id}: tenant isolation could not be proven after the restore; not continuing.")
+        return
 
     if step == "configure":
         if clone and ds["postgres"].get("snapshot", {}).get("source") == "live_fde_agent":
             print("configure skipped: this app is a clone and its database is a snapshot of live; the surface already matches. Configure is for apps stamped from a brief."); return
-        mine = pull_env(proj, mold, proj); dst = pg_url(mine)
-        if not dst: sys.exit("no database url for the app; run provision.py first")
+        mine = pull_env(proj, mold, proj)
+        # The APP role, not the admin one. Surface writes are ordinary application writes and must go
+        # through RLS like every other write; running them as the BYPASSRLS admin proves nothing about
+        # whether the app can actually do them, and hides a missing policy until a user hits it.
+        dst = mine.get("DATABASE_URL") or pg_url(mine)
+        if not dst: sys.exit(f"no database url for the app; run `python3 .claude/scripts/provision.py {app_id} --deploy` first")
         out = node("apply", dict(base, DATABASE_URL=dst), mold, stdin=json.dumps({"workspace": app["workspace"], "surface": app["surface"]}))
         bad = {k: v for k, v in out.items() if isinstance(v, str) and v.startswith("ERR")}
         print("applied: " + ", ".join(f"{k}={v}" for k, v in out.items()))
@@ -164,7 +193,23 @@ def main(a):
         live = pull_env(LIVE["web"], mold, proj); mine = pull_env(proj, mold, proj); tok = live_blob_token(mold, proj, prefix)
         rep = node("diff", dict(base, DATABASE_URL=pg_url(mine), LIVE_DATABASE_URL=pg_url(live), BLOB_READ_WRITE_TOKEN=mine.get("BLOB_READ_WRITE_TOKEN", "") if tok else "", LIVE_BLOB_READ_WRITE_TOKEN=tok or ""), mold)
         rdir = os.path.join(ROOT, "molds", app["mold_id"], "testing", "context", "reports"); os.makedirs(rdir, exist_ok=True)
-        rpath = os.path.join(rdir, f"{app_id}-regression-{NOW[:10]}.md"); status = "pass" if rep["ok"] else "fail"
+        rpath = os.path.join(rdir, f"{app_id}-regression-{NOW[:10]}.md")
+        # A row-count diff cannot see a wiped policy set, so it used to report `pass` on a clone with no
+        # tenant isolation at all. The isolation evidence is part of the verdict now.
+        ds = load(os.path.join(adir, "datastores.json")); pg = ds.get("postgres", {})
+        want = pg.get("rls", "off"); ev = pg.get("rls_verified") or {}
+        iso = []
+        if want != "off":
+            if not ev or str(ev.get("source", "")).startswith("not verified"):
+                iso.append(f"declares rls {want} but nothing has measured it")
+            else:
+                if ev.get("at", "") < (pg.get("snapshot", {}).get("taken_at") or ""): iso.append(f"the proof ({ev['at']}) predates the restore ({pg['snapshot']['taken_at']}) — run `clone.py {app_id} rls`")
+                if ev.get("mode") != want: iso.append(f"declares {want}, measured {ev.get('mode')}")
+                if ev.get("unprotected"): iso.append(f"{len(ev['unprotected'])} of {ev.get('org_scoped_tables')} org-scoped tables unprotected")
+                if ev.get("foreign_rows_readable"): iso.append(f"{ev['foreign_rows_readable']} foreign row(s) readable")
+                if ev.get("cross_org_write") != "42501": iso.append(f"cross-workspace INSERT not refused ({ev.get('cross_org_write')})")
+                if want == "fail_closed" and ev.get("unset_org_rows"): iso.append(f"{ev['unset_org_rows']} row(s) visible with no workspace in scope")
+        status = "pass" if (rep["ok"] and not iso) else "fail"
         L = [f"# {app_id} vs live ({LIVE['web']}) — {status}", "", f"run_at: {NOW}  org: {org}  prefix: {prefix}", "", "## Tables (row counts)", "", "| table | clone | live | |", "|---|---|---|---|"]
         for t, r in sorted(rep["tables"].items()): L.append(f"| {t} | {r['clone']} | {r['live']} | {'volatile' if r['volatile'] else ('ok' if r['same'] else 'DIFF')} |")
         L += ["", "## Surface rows", ""]
@@ -172,13 +217,23 @@ def main(a):
             if "skipped" in r: L.append(f"- {t}: skipped ({r['skipped']})"); continue
             n = len(r["only_clone"]) + len(r["only_live"]) + len(r["changed"])
             L.append(f"- {t}: clone={r['clone']} live={r['live']} " + ("ok" if not n else f"DIFF only_clone={r['only_clone'][:10]} only_live={r['only_live'][:10]} changed={[c['key']+':'+','.join(c['cols']) for c in r['changed'][:10]]}"))
+        L += ["", "## Tenant isolation", "",
+              f"- declared: `{want}`" + (f" · measured `{ev.get('mode')}` on {ev.get('backend')} at {ev.get('at')} ({ev.get('source')})" if ev else " · NO evidence"),
+              f"- role `{ev.get('role')}` superuser={ev.get('superuser')} bypassrls={ev.get('bypassrls')}" if ev.get("role") else "- role: not measured",
+              f"- org-scoped tables enabled+forced+policied: {ev.get('protected')}/{ev.get('org_scoped_tables')}" + (f" · unprotected: {', '.join(ev['unprotected'][:10])}" if ev.get("unprotected") else ""),
+              f"- cross-workspace read of `{ev.get('probe_table')}`: {ev.get('foreign_rows_readable')} row(s) · write refused with `{ev.get('cross_org_write')}`" if ev.get("probe_table") else "- cross-workspace probe: not run",
+              ("- **FAIL**: " + "; ".join(iso)) if iso else "- ok"]
         L += ["", "## Blob tree (files, bytes per top-level folder)", "", (f"prefix '{rep['blob']['prefix']}': " + ("same" if rep["blob"]["same"] else "DIFF") + f" clone={rep['blob']['clone']} live={rep['blob']['live']}") if rep["blob"] else "skipped: no live token accepted by the blob store"]
         open(rpath, "w").write("\n".join(L) + "\n")
+        if iso: print("tenant isolation: " + "; ".join(iso))
         clone["regression"] = {"status": status, "run_at": NOW, "report": os.path.relpath(rpath, ROOT)}
         app["testing"]["context"] = {"status": status, "run_at": NOW, "report": os.path.relpath(rpath, ROOT)}
-        if status == "fail": app["status"] = "reverted"; app["revert"] = {"reason": "regression against live failed", "lane": "context", "at": NOW}
+        if status == "fail":
+            app["status"] = "reverted"
+            app["revert"] = {"reason": ("tenant isolation: " + "; ".join(iso)) if iso else "regression against live failed",
+                             "lane": "functional" if iso else "context", "at": NOW}
         save(os.path.join(adir, "application.json"), app)
-        print(f"{status}: {os.path.relpath(rpath, ROOT)}"); sys.exit(0 if rep["ok"] else 1)
+        print(f"{status}: {os.path.relpath(rpath, ROOT)}"); sys.exit(0 if status == "pass" else 1)
     if step == "blobls":
         tok = live_blob_token(mold, proj, ""); sub = next((x for x in a[2:] if not x.startswith("--")), "")
         if not tok: return
@@ -187,7 +242,8 @@ def main(a):
     if step == "run":
         me = [sys.executable, os.path.abspath(__file__), app_id]; prov = [sys.executable, os.path.join(ROOT, ".claude/scripts/provision.py"), app_id]
         steps = [("extract the live surface", me + ["extract"]), ("create datastores and copy secrets", prov), ("deploy", prov + ["--deploy"]),
-                 ("copy the live data", me + ["snapshot", "--apply"]), ("apply the surface", me + ["configure"]), ("compare with live", me + ["regress"])]
+                 ("copy the live data", me + ["snapshot", "--apply"]), ("prove tenant isolation after the restore", me + ["rls"]),
+                 ("apply the surface", me + ["configure"]), ("compare with live", me + ["regress"])]
         for i, (label, cmd) in enumerate(steps, 1):
             print(f"\n[{i}/{len(steps)}] {label}"); r = subprocess.run(cmd)
             if r.returncode: sys.exit(f"stopped at step {i} ({label}). Fix what it printed above and run `clone.py {app_id} run` again; finished steps are safe to repeat.")
