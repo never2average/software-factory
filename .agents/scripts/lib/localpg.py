@@ -37,6 +37,11 @@ def certdir(app_id): return os.path.join(appdir(app_id), "pg")
 
 def _running(name): return _d("inspect", "-f", "{{.State.Running}}", name).stdout.strip() == "true"
 
+HBA = ("# hostssl only: `host` would let any client on the app network downgrade to plaintext, and the\n"
+       "# server offering TLS is not the same as the server requiring it.\n"
+       "local all all scram-sha-256\n"
+       "hostssl all all all scram-sha-256\n")
+
 GITIGNORE = ".env\n.pg-admin\npg/\n"
 
 def appdir(app_id):
@@ -74,7 +79,10 @@ def _cert(app_id):
         subprocess.run(["openssl", "req", "-new", "-x509", "-days", "3650", "-nodes", "-subj", f"/CN={cont(app_id)}",
                         "-addext", f"subjectAltName=DNS:db,DNS:{cont(app_id)}", "-out", crt, "-keyout", key],
                        check=True, capture_output=True)
+    hba = os.path.join(d, "pg_hba.conf")
+    if not os.path.exists(hba): open(hba, "w").write(HBA)
     os.chmod(key, 0o600); os.chown(key, 999, 999); os.chown(crt, 999, 999)   # uid 999 = postgres in the official image
+    os.chown(hba, 999, 999)
     return d
 
 def _no_port_msg(app_id, pub):
@@ -109,7 +117,8 @@ def up(app_id):
                "--restart", "unless-stopped",
                "-e", f"POSTGRES_PASSWORD={pw}", "-e", f"POSTGRES_DB={dbname(app_id)}",
                "-v", f"{vol(app_id)}:/var/lib/postgresql/data", "-v", f"{certs}:/certs:ro",
-               IMAGE, "-c", f"port={PORT}", "-c", "ssl=on", "-c", "ssl_cert_file=/certs/server.crt",
+               IMAGE, "-c", f"port={PORT}", "-c", "ssl=on", "-c", "hba_file=/certs/pg_hba.conf",
+               "-c", "ssl_cert_file=/certs/server.crt",
                "-c", "ssl_key_file=/certs/server.key", "-c", "password_encryption=scram-sha-256",
                "-c", "max_connections=200")
     if r.returncode: sys.exit("could not start the app database:\n" + (r.stdout + r.stderr).strip()[-400:])
@@ -125,9 +134,9 @@ def up(app_id):
           + ("" if os.path.exists(cf) else "  [no compose artifact yet: run provision.py " + app_id + " --check]"))
 
 def ensure_local_secrets(app_id):
-    """Materialise the compose artifact's two inputs — .pg-admin and pg/server.{crt,key} — so a freshly
-    generated artifact can be brought up by `docker compose up -d` with nothing else run first.
-    provision.py calls this as it generates the artifact; both files are ignored before they exist."""
+    """Materialise the compose artifact's inputs — .pg-admin and pg/{server.crt,server.key,pg_hba.conf}
+    — so a freshly generated artifact can be brought up by `docker compose up -d` with nothing else run
+    first. provision.py calls this as it generates the artifact; all of them are ignored before they exist."""
     _pw(app_id); return _cert(app_id)
 
 def url(app_id):

@@ -803,7 +803,7 @@ services:
   db:
     image: {localpg.IMAGE}
     container_name: {localpg.cont(app_id)}
-    command: ["-c","port={localpg.PORT}","-c","ssl=on","-c","ssl_cert_file=/certs/server.crt","-c","ssl_key_file=/certs/server.key","-c","password_encryption=scram-sha-256","-c","max_connections=200"]
+    command: ["-c","port={localpg.PORT}","-c","ssl=on","-c","hba_file=/certs/pg_hba.conf","-c","ssl_cert_file=/certs/server.crt","-c","ssl_key_file=/certs/server.key","-c","password_encryption=scram-sha-256","-c","max_connections=200"]
     environment:
       POSTGRES_DB: {localpg.dbname(app_id)}
       POSTGRES_PASSWORD_FILE: /run/secrets/pg-admin

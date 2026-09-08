@@ -103,7 +103,11 @@ try {
 
   /* C2 ------------------------------------------------------------------- */
   out.sslmode = new URL(url).searchParams.get("sslmode");
-  if (r.ssl !== true) {                    // TLS may be terminated in front of Postgres; prove plaintext is refused
+  {
+    // ALWAYS probe, including when Postgres itself terminated TLS. Guarding this on r.ssl !== true made
+    // the assertion dead code on exactly the providers that need it: a self-hosted or RDS server
+    // terminates its own TLS, so r.ssl reads true on OUR encrypted connection while the same server
+    // still accepts an unencrypted one from anybody else. Offering TLS is not requiring it.
     const u = new URL(url); u.searchParams.set("sslmode", "disable");
     const bare = postgres(u.toString(), { max: 1, prepare: false, connect_timeout: 15 });
     // ONLY an SSL-required refusal counts. Scoring any error as "refused" let a transient failure —
@@ -275,9 +279,11 @@ try {
   if (out.bypassrls !== false) bad.push(`${out.role} has BYPASSRLS: every policy is silently ignored`);
   if (out.superuser !== false) bad.push(`${out.role} is SUPERUSER: every policy is silently ignored (the app's own health check would not see this)`);
   if (out.sslmode !== "require" && out.sslmode !== "verify-full") bad.push(`DATABASE_URL carries sslmode=${out.sslmode} — the runtime clients pass no ssl option, so this would be plaintext`);
-  if (out.pg_stat_ssl !== true && !String(out.plaintext).startsWith("refused"))
-    bad.push(out.plaintext === "ACCEPTED" ? "the server accepts unencrypted connections and Postgres did not terminate TLS"
-      : `Postgres did not terminate TLS and the plaintext probe was ${out.plaintext} — nothing proved this connection is encrypted`);
+  if (out.plaintext === "ACCEPTED")
+    bad.push("the server accepts unencrypted connections — any client on its network can downgrade to plaintext, "
+      + "whatever sslmode this URL carries");
+  else if (out.pg_stat_ssl !== true && !String(out.plaintext).startsWith("refused"))
+    bad.push(`Postgres did not terminate TLS and the plaintext probe was ${out.plaintext} — nothing proved this connection is encrypted`);
   if (!out.guc_roundtrip) bad.push("transaction-local app.org_id did not survive the round trip");
   if (mode !== "off") {
     if (out.open_policies.length) bad.push(`${out.open_policies.length} permissive policy/policies do not scope by org_id, and Postgres OR's them, so each reopens its whole table: ` +

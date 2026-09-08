@@ -55,18 +55,37 @@ Default processes for mold_v1: sprint_planning (cycles, todos, task definition),
 | Field | Meaning |
 |---|---|
 | `provider` | `neon` (default, free), `supabase`, `rds`, `self_hosted`. Drives which provisioner `provision.py` runs and which secret NAMES the app declares |
+| `rls` | what the application ASKS for: `fail_closed` (multi-workspace: no workspace in scope means zero rows), `on` (policies enforced but permissive with no workspace set), `off` (no isolation). Written by intake from `tenancy`, never a constant. `fail_closed` and `on` are GATES — `provision.py` will not finish a deploy it cannot prove, and `factory.py validate` refuses either value on a deployed app with no matching evidence |
+| `rls_verified` | the EVIDENCE for that ask, written only by a live measurement (`provision.py --deploy` / `--verify-db` / `--verify-rls`, `clone.py`) — never by hand. It names the role measured (`app_rw`, `superuser` and `bypassrls` both false), the `backend` it was measured on (a proof against the local database is not a proof about the Neon one), how many org-scoped tables were enabled+forced+policied, which permissive policies do not scope by `org_id` or leaked when executed, how many tables the cross-workspace probe actually ran on and which it skipped and why, `foreign_rows_readable` (must be 0), `cross_org_write` (must be SQLSTATE `42501`), `unset_org_rows` for `fail_closed`, and `running_app` — what the build in front of traffic says on `/api/ops/health`, which is a different fact from the stored credential passing the gate |
 | `url_ref` | always `DATABASE_URL` — `agent/lib/db/index.ts:34` says "DATABASE_URL is the ONLY source. There is deliberately no POSTGRES_URL" |
 | `admin_url_ref` | the secret NAME of the URL with DDL rights: `DATABASE_URL_UNPOOLED` (neon), `SUPABASE_POSTGRES_URL_NON_POOLING` (supabase), `POSTGRES_ADMIN_URL` (self_hosted). Never `DATABASE_URL` after the bootstrap — that is `app_rw`, which owns nothing, and `pg_restore --clean` against it fails `must be owner of table orgs` |
 | `sslmode` | `require`. The runtime clients pass no `ssl` option, so this query parameter on `DATABASE_URL` is the only thing that turns TLS on |
 | `pooling` | `transaction` when `DATABASE_URL` is a transaction pooler (Neon's pooled endpoint, Supavisor:6543). Safe for RLS because `app.org_id` is set with `set_config(..., true)`, which is transaction-local; `verify-apprw.mjs` asserts that round trip on every deploy |
 | `exposure` | `managed_provider` or `private_docker_network`. There is no public-port option, by design |
-| `network` / `host` / `port` / `database` | `self_hosted` only: the app's own docker network and the in-container port. `provision.py` refuses to pair `self_hosted` with `target: vercel` |
+| `network` / `host` / `port` / `database` | `self_hosted` only: the app's own docker network (`sf-<app_id>`), the host alias `db`, and port 6543 INSIDE the container — no host port is ever published, so `.bootstrap-supabase.mjs`'s hardcoded `port = "6543"` is a no-op instead of a workaround. `provision.py` refuses to pair `self_hosted` with `target: vercel`: a Vercel function cannot reach a private docker network, and the only way to let it would be to open Postgres to the internet. Brought up by `.claude/scripts/lib/localpg.py` (TLS on, self-signed cert) through `infra/vm/apps/<app_id>/docker-compose.yml`; both refuse to start a config that publishes a port |
 
 **One Postgres cluster per app, never one database per app.** `app_rw` is a cluster-global role whose
 name is hardcoded across the mold, so stamping app #2 into a second database on app #1's cluster
 rotates app #1's password. Measured, not assumed: `app_two credential -> app_one DATABASE: OK`
 (read confidential rows, wrote one), and a silent `ALTER ROLE app_rw` broke app #1's live deployment
 with `FAIL 28P01`. See `infra/vm/README.md`.
+
+## application.testing and application.status
+`testing` holds the last result per lane — `{status, run_at, report}` for each of `functional`, `context`,
+`load`, `accessibility`, `responsiveness`, and `additionalProperties: false`, so a sixth lane has nowhere
+legal to live until the schema says otherwise. `status` is one of `pending`, `pass`, `fail`, `skipped`;
+`skipped` (not `pass`) is what a lane gets when a check could not run, and `report` points at the markdown
+under `molds/<mold_id>/testing/<lane>/reports/`.
+
+`.claude/scripts/lanes.py` is the ONLY writer of this block, and the only `application.status` it may write
+is `reverted` — which it does, plus a task against the mold, on any lane failure. Promotion to `stamped`,
+`testing` or `serviceable` stays with the operator. A `--dry-run` writes neither, and its reports go to
+`<lane>/reports/dry/` headed DRY RUN so an unrecorded verdict cannot sit in the archive.
+
+What a lane needs from state, declared per check in the lane's `lane.json` rather than in the runner:
+`infrastructure.vercel.production_url` (accessibility, responsiveness, and the functional `rls` row all
+grade the deployed app), `datastores.postgres.rls` (the `rls` row is skipped when it is `off`), and
+`application.clone_of.ref` (the context lane's `clone.regression` row only applies to a replica).
 
 ## capabilities and runtime env
 `application.capabilities` is the source; `infrastructure.runtime_env` is what provision.py writes to the target (`OPS_MULTI_TENANT`, `ENABLE_*`, `MODEL_PROVIDER`). Never edit `runtime_env` by hand.

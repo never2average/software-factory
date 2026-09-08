@@ -396,4 +396,11 @@ if (navAttempts && navFailures === navAttempts) {
   console.error(`the target stopped answering mid-run: ${navFailures}/${navAttempts} navigations failed, so nothing was measured`);
   process.exit(3);
 }
+if (n("skipped")) {
+  // Line 28 said a skipped row never lifts the exit code; exit 0 did exactly that. A skipped row here
+  // means a route did not load, so nothing was measured on it — and an unmeasured row graded `pass` is
+  // the one failure mode this lane exists to prevent. It is reported, not silently tolerated.
+  console.error(`${n("skipped")} row(s) measured nothing (route did not load); a lane cannot pass on unmeasured rows`);
+  process.exit(1);
+}
 process.exit(n("fail") ? 1 : 0);

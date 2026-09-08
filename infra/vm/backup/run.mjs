@@ -31,8 +31,17 @@ try {
   const r = spawnSync("pg_dump", ["-Fc", "--no-owner", "--no-acl", "-f", dump, url], { stdio: ["ignore", "ignore", "pipe"] });
   if (r.status !== 0) throw new Error("pg_dump failed: " + String(r.stderr).slice(-300));
   const key = `backups/${app}/${new Date().toISOString().slice(0, 10)}.dump`;
-  const { size } = await put(key, readFileSync(dump), { access: "public", addRandomSuffix: false, allowOverwrite: true, token });
-  console.log(`${key} ${size} bytes`);
+  // access:"private" is the whole security posture of this file. A dump is the entire multi-tenant
+  // database — every org's rows and connector_secrets — so "public" would serve it from
+  // https://$storeId.public.blob.vercel-storage.com/$pathname with no auth, and addRandomSuffix:false
+  // makes that URL guessable from the app id and the date. The store is created --access private;
+  // this matches it, and the assertion below refuses to leave a public object behind if it ever drifts.
+  const blob = await put(key, readFileSync(dump), { access: "private", addRandomSuffix: false, allowOverwrite: true, token });
+  if (/\.public\.blob\.vercel-storage\.com/.test(blob.url || "")) {
+    await del([blob.url], { token });
+    throw new Error("refusing to keep a publicly addressable database dump; the upload was deleted");
+  }
+  console.log(`${key} ${blob.size} bytes (private)`);
   const cutoff = Date.now() - retain * 86400000;
   const { blobs } = await list({ prefix: `backups/${app}/`, token });
   const old = blobs.filter((b) => new Date(b.uploadedAt).getTime() < cutoff).map((b) => b.url);
