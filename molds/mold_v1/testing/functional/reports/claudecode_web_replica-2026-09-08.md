@@ -1,10 +1,12 @@
 # Functional lane — claudecode_web_replica (2026-09-08)
 
 Mold: mold_v1 (commit dc98cb6c0c25ef81304fb6cf1db172396e62b805).
-Run at 2026-09-08T09:04:54+00:00. Lane status: **fail** (15 of 20 checks passed, 4 failed, 1 skipped).
+Run at 2026-09-08T10:13:19+00:00. Lane status: **fail** (15 of 20 checks passed, 4 failed, 1 skipped).
 Command: `python3 .claude/scripts/lanes.py claudecode_web_replica --lane functional`
 
 Feature-parity of the mold's own surface: data room, syncs, alerts, schedules, rendering, system of record, chat persistence, gates, and the tenant-isolation rows that cannot be satisfied by a status code.
+
+Not run in this run (the lane order stopped here): context, load, accessibility, responsiveness. Their recorded results are whatever a previous run left.
 
 ## Checks
 
@@ -29,7 +31,7 @@ Feature-parity of the mold's own surface: data room, syncs, alerts, schedules, r
 | `check:gates` | pass | exit 0 | ater sync ok the local chat cache is keyed by workspace gate lockstep: 19/19 source checks passed (run with --live to also probe production) |
 | `check:tenancy` | pass | exit 0 | in scope: 21 · pending: 0 service files : 6 · in scope: 6 · pending: 0 ✓ all three projects read tenant data only inside a workspace's scope |
 | `test:cards` | skipped | Blocked by the snapshot, not by this app: tests/cards.spec.ts drives /preview/cards and /preview/stickloop, and app/preview does not exist in this mold. Refresh the mold from source per molds/mold_v1/MOLD.md, then re-run |  |
-| `rls` | fail | exit 1, expected 0; output matched the forbidden /BYPASSRLS/; output matched the forbidden /NOT enforced/ | "SELECT 1 ok \u00b7 role postgres \u2014 WARNING: BYPASSRLS, row-level security is NOT enforced (point DATABASE_URL at app_rw)", "ms": 20} / |
+| `rls` | fail | exit 1, expected 0; output matched the forbidden /BYPASSRLS/; output matched the forbidden /NOT enforced/ |  "SELECT 1 ok \u00b7 role postgres \u2014 WARNING: BYPASSRLS, row-level security is NOT enforced (point DATABASE_URL at app_rw)", "ms": 8} / |
 
 ## Failures
 
@@ -127,7 +129,7 @@ Two rows a status code cannot satisfy: the app role must not be able to read ano
 | check | result | detail |
 |---|---|---|
 | rls.isolation | fail |   Run: python3 .claude/scripts/provision.py claudecode_web_replica --verify-db |
-| rls.health    | fail | {"ok": true, "detail": "SELECT 1 ok \u00b7 role postgres \u2014 WARNING: BYPASSRLS, row-level security is NOT enforced (point DATABASE_URL at app_rw)", "ms": 20} |
+| rls.health    | fail | {"ok": true, "detail": "SELECT 1 ok \u00b7 role postgres \u2014 WARNING: BYPASSRLS, row-level security is NOT enforced (point DATABASE_URL at app_rw)", "ms": 8} |
 ```
 
 Rows marked with a task id are defects of the mold snapshot itself, not of this application. Fixing them needs a mold refresh from source per `MOLD.md`; they are reported here rather than muted, and they still fail the lane.
@@ -140,7 +142,7 @@ Rows marked with a task id are defects of the mold snapshot itself, not of this 
 | check | result | detail |
 |---|---|---|
 | rls.isolation | fail |   Run: python3 .claude/scripts/provision.py claudecode_web_replica --verify-db |
-| rls.health    | fail | {"ok": true, "detail": "SELECT 1 ok \u00b7 role postgres \u2014 WARNING: BYPASSRLS, row-level security is NOT enforced (point DATABASE_URL at app_rw)", "ms": 20} |
+| rls.health    | fail | {"ok": true, "detail": "SELECT 1 ok \u00b7 role postgres \u2014 WARNING: BYPASSRLS, row-level security is NOT enforced (point DATABASE_URL at app_rw)", "ms": 8} |
 
 
 ## Skipped, and what would make them run

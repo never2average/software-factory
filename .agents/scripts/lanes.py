@@ -3,7 +3,9 @@
 
   lanes.py <app_id>                        every lane, in order, stopping at the first fail
   lanes.py <app_id> --lane functional      only the named lane(s); repeatable
-  lanes.py <app_id> --dry-run              run everything and write the reports; write NO state, file NO task
+  lanes.py <app_id> --dry-run              run everything; write NO state, file NO task. Its reports go to
+                                           <lane>/reports/dry/ and say DRY RUN, so the evidence archive can
+                                           never hold a verdict that state never recorded.
   lanes.py <app_id> --list                 per lane: harness or not, how many checks, which preconditions are unmet
 
 Exit 0 every lane passed or was skipped · 1 a lane failed, and (outside --dry-run) the application is now
@@ -11,7 +13,9 @@ Exit 0 every lane passed or was skipped · 1 a lane failed, and (outside --dry-r
 or misnamed lane.json).
 
 A lane declares itself in `molds/<mold_id>/testing/<lane>/lane.json` against `lane.schema.json`, so a new
-lane in a future mold never edits this file. The rollup is deliberately unfakeable, in this order:
+CHECK, harness or precondition in a future mold never edits this file. A sixth LANE does: `testing` in
+application.schema.json has one key per lane, so a result for a lane it does not know has nowhere legal to
+live. A lane folder outside the five is therefore announced on stdout, never silently ignored. The rollup is deliberately unfakeable, in this order:
 
   no lane.json | "checks": [] | a lane-level precondition unmet  -> skipped
   any check failed                                               -> fail
@@ -140,15 +144,20 @@ def context(app_id, lane, mold_id, docs, report):
     return {"app_id": app_id, "root": ROOT, "mold": mold, "codebase": os.path.join(mold, "codebase"),
             "testing": os.path.join(mold, "testing"), "lane": lane, "date": TODAY, "url": url, "report": report}
 
-def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet_lane, not_run):
+def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet_lane, not_run, dry=False):
     n = lambda s: sum(1 for r in results if r["status"] == s)
     head = f"{n('pass')} of {len(results)} checks passed" if results else "no harness"
     if n("fail"): head += f", {n('fail')} failed"
     if n("skipped"): head += f", {n('skipped')} skipped"
-    L = [f"# {lane.capitalize()} lane — {app_id} ({TODAY})", "",
+    L = [f"# {lane.capitalize()} lane — {app_id} ({TODAY})" + (" — DRY RUN" if dry else ""), "",
          f"Mold: {mold_id} (commit {commit}).",
          f"Run at {NOW}. Lane status: **{status}** ({head}).",
-         f"Command: `python3 .claude/scripts/lanes.py {app_id} --lane {lane}`"]
+         f"Command: `python3 .claude/scripts/lanes.py {app_id} --lane {lane}" + (" --dry-run`" if dry else "`")]
+    if dry:
+        L += ["", "**DRY RUN — nothing here was recorded.** No `testing." + lane + "` was written to "
+              f"`state/application/{app_id}/application.json`, no task was filed, and the application was not "
+              "reverted whatever this report says. It lives under `reports/dry/` so it can never be mistaken "
+              "for, or overwrite, the report a recorded run points at."]
     if spec and spec.get("summary"): L += ["", spec["summary"]]
     if not_run: L += ["", f"Not run in this run (the lane order stopped here): {', '.join(not_run)}. "
                           "Their recorded results are whatever a previous run left."]
@@ -231,6 +240,13 @@ def main(a):
     commit = docs["application"].get("mold_commit") or next((m.get("source", {}).get("commit", "?") for m in
              load(os.path.join(ST, "factory.json"))["molds"] if m["mold_id"] == mold_id), "?")
     specs = {l: read_spec(l, mold_id) for l in LANES}
+    tdir = os.path.join(ROOT, "molds", mold_id, "testing")
+    extra = sorted(d for d in (os.listdir(tdir) if os.path.isdir(tdir) else [])
+                   if d not in LANES and os.path.exists(os.path.join(tdir, d, "lane.json")))
+    if extra:   # silently never running a declared lane would be the same lie as calling it `pass`
+        print(f"note: molds/{mold_id}/testing/ also declares {', '.join(extra)}, which this runner did not run: "
+              f"application.json has one `testing` key per lane and knows only {', '.join(LANES)}. Add the lane to "
+              f"state/application/app_id/application.schema.json and to LANES in this file before it can be recorded.")
     order = sorted(LANES, key=lambda l: ((specs[l] or {}).get("order", DEFAULT_ORDER[l]), l))
     todo = [l for l in order if not want or l in want]
 
@@ -239,7 +255,8 @@ def main(a):
         for l in todo:
             s = specs[l]
             if not s: print(f"{l:16} {'no':8} {0:>6}  no lane.json — this lane is skipped, never passed"); continue
-            ctx = context(app_id, l, mold_id, docs, os.path.join(ROOT, "molds", mold_id, "testing", l, "reports", f"{app_id}-{TODAY}.md"))
+            ctx = context(app_id, l, mold_id, docs, os.path.join(ROOT, "molds", mold_id, "testing", l, "reports",
+                          *(["dry"] if dry else []), f"{app_id}-{TODAY}.md"))
             u = [e for e in (unmet(p, docs, ctx) for p in s.get("requires", [])) if e]
             u += [e for c in s.get("checks", []) for e in (unmet(p, docs, ctx) for p in c.get("requires", [])) if e]
             print(f"{l:16} {'yes':8} {len(s.get('checks', [])):>6}  " + ("; ".join(dict.fromkeys(u))[:160] if u else "all met"))
@@ -248,7 +265,7 @@ def main(a):
     verdicts, first_fail = {}, None
     for i, lane in enumerate(todo):
         spec = specs[lane]
-        rdir = os.path.join(ROOT, "molds", mold_id, "testing", lane, "reports")
+        rdir = os.path.join(ROOT, "molds", mold_id, "testing", lane, "reports", *(["dry"] if dry else []))
         os.makedirs(rdir, exist_ok=True)
         rpath = os.path.join(rdir, f"{app_id}-{TODAY}.md")
         ctx = context(app_id, lane, mold_id, docs, rpath)
@@ -262,7 +279,7 @@ def main(a):
         verdicts[lane] = (status, results, rpath)
         not_run = todo[i + 1:] if status == "fail" and not dry else []
         # The report is on disk BEFORE the state write, so `testing.<lane>.report` always resolves.
-        open(rpath, "w").write(report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet_lane, not_run))
+        open(rpath, "w").write(report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet_lane, not_run, dry))
         rel = os.path.relpath(rpath, ROOT)
         print(f"{lane:16} {status:8} {sum(1 for r in results if r['status']=='pass')}/{len(results)} passed  {rel}")
         if not dry:

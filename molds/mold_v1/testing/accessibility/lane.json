@@ -2,7 +2,7 @@
   "$schema": "../lane.schema.json",
   "lane": "accessibility",
   "order": 40,
-  "summary": "axe-core 4.13.0 (WCAG 2.1 A/AA) and keyboard-only traversal over the mold's three page routes, driven by Playwright chromium against the application's own deployed URL.",
+  "summary": "axe-core 4.13.0 (WCAG 2.1 A/AA) and keyboard-only traversal over the mold's three page routes, driven by Playwright chromium against the application's own deployed URL. A route that answers 2xx and then renders no interactive control fails the row: nothing measured is never a pass.",
   "requires": [
     {
       "cmd": "node {testing}/accessibility/deps-check.mjs",
@@ -33,8 +33,8 @@
           "else": "This lane grades rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace",
-          "else": "The deployed app did not answer on /, /onboard and /workspace, so there was nothing to grade. Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
       "why": "A serious or critical WCAG 2.1 A/AA violation is a customer who cannot use the page at all: an unnamed button is invisible to a screen reader, and failing contrast is unreadable in daylight or with low vision."
@@ -58,19 +58,20 @@
           "else": "This lane grades rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace",
-          "else": "The deployed app did not answer on /, /onboard and /workspace, so there was nothing to grade. Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
       "why": "Tab is the only way in for anyone who cannot use a mouse: a control no Tab reaches, or one that takes focus with no visible ring, locks that person out of the workspace."
     }
   ],
   "not_covered": [
-    "Anything behind a signed-in identity: the workflow builder, the ops center tabs and the chat thread view. Unauthenticated the lane reaches 3 pages and 2-9 tabbable controls; the builder row is reported `skipped`, not `pass`.",
+    "Anything behind a signed-in identity: the workflow builder, the ops center tabs and the chat thread view. Unauthenticated the lane reaches 3 pages and 2-9 tabbable controls; the builder row is reported `not-covered` — a declared gap of this lane, never a measurement that passed.",
     "Screen-reader output. axe-core checks the accessibility tree, not what NVDA/VoiceOver actually announces.",
     "Best-practice and moderate/minor axe rules. They are printed in the detail column (for example landmark-one-main and region on /workspace) but do not fail the lane.",
     "axe `incomplete` results, which need a human to judge them; the count is printed per route.",
     "Colour rendering under a different theme or brand pack, zoom to 200%, reduced motion and forced-colors modes.",
-    "Routes that do not exist in this mold snapshot. The mold has exactly three page routes (/, /onboard, /workspace); there is no /chat route, chat is rendered at /."
+    "Routes that do not exist in this mold snapshot. The mold has exactly three page routes (/, /onboard, /workspace); there is no /chat route, chat is rendered at /.",
+    "Whether the page served is THIS application's data. The precondition checks that the HTML carries this mold's own markers, which catches an undeployed URL and a URL now served by something else; it cannot tell two mold_v1 applications apart, because they render the same markup. A wrong-but-same-mold `production_url` is a provisioning defect, not one this lane can see."
   ]
 }

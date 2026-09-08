@@ -1,7 +1,7 @@
 # Context lane — claudecode_web_replica (2026-09-08)
 
 Mold: mold_v1 (commit dc98cb6c0c25ef81304fb6cf1db172396e62b805).
-Run at 2026-09-08T09:06:06+00:00. Lane status: **fail** (3 of 5 checks passed, 1 failed, 1 skipped).
+Run at 2026-09-08T10:14:21+00:00. Lane status: **fail** (3 of 5 checks passed, 1 failed, 1 skipped).
 Command: `python3 .claude/scripts/lanes.py claudecode_web_replica --lane context`
 
 Primary context assembly, memory persistence, the quality/hardening bundle, cross-org isolation of multiplayer context, and — for a clone — the regression verdict against the deployment it replicates.
