@@ -15,10 +15,10 @@
         ],
         "lanes_passing": [
           "all five lanes pass on the stamped app",
-          "accessibility + responsiveness harnesses exist (not in mold today)"
+          "every lane has a harness: accessibility and responsiveness exist (built 2026-09-08); testing/load/stress.py does not yet"
         ],
         "deployed": [
-          "production URL on Vercel or VM",
+          "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
           "GLM 5.2 provider configured and smoke-tested"
         ],
@@ -33,8 +33,7 @@
         "claudecode_web_replica"
       ],
       "deploy_targets": [
-        "vercel",
-        "vm"
+        "vercel"
       ],
       "vercel_project": "claudecode-web",
       "brand": {
@@ -73,10 +72,10 @@
         ],
         "lanes_passing": [
           "all five lanes pass on the stamped app",
-          "accessibility + responsiveness harnesses exist (not in mold today)"
+          "every lane has a harness: accessibility and responsiveness exist (built 2026-09-08); testing/load/stress.py does not yet"
         ],
         "deployed": [
-          "production URL on Vercel or VM",
+          "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
           "GLM 5.2 provider configured and smoke-tested"
         ],
@@ -88,8 +87,7 @@
       },
       "app_ids": [],
       "deploy_targets": [
-        "vercel",
-        "vm"
+        "vercel"
       ],
       "vercel_project": "dover",
       "brand": {
