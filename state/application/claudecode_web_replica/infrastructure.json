@@ -18,13 +18,12 @@
     "CLOUDFLARE_API_TOKEN",
     "CRON_SECRET",
     "DATABASE_URL",
+    "DATABASE_URL_UNPOOLED",
     "MODEL_PROVIDER",
     "NEXT_PUBLIC_EVE_API_URL",
     "OPS_SECRETS_KEY",
     "PLATFORM_NOTIFY_FROM",
     "RESEND_API_KEY",
-    "SUPABASE_POSTGRES_URL_NON_POOLING",
-    "SUPABASE_URL",
     "TASK_WORKFLOW_SERVICE_TOKEN",
     "TASK_WORKFLOW_SERVICE_URL"
   ],
@@ -36,8 +35,7 @@
   ],
   "secrets_derived": [
     "DATABASE_URL",
-    "SUPABASE_URL",
-    "SUPABASE_POSTGRES_URL_NON_POOLING",
+    "DATABASE_URL_UNPOOLED",
     "BLOB_READ_WRITE_TOKEN",
     "CRON_SECRET",
     "OPS_SECRETS_KEY",
@@ -70,9 +68,9 @@
     "api_url": "https://claudecode-web-api.vercel.app"
   },
   "datastores": {
-    "supabase_resource": "claudecode_web_internal",
     "blob_store": "claudecode-web-internal (store_yYAYEISeeQYrb12F, private, iad1)"
   },
   "deployed_at": "2026-09-06",
-  "configured_at": "2026-09-06T12:14:56+00:00"
+  "configured_at": "2026-09-06T12:14:56+00:00",
+  "note": "migrated to the Neon shape on 2026-09-08 (task mold_v1-037): SUPABASE_URL and SUPABASE_POSTGRES_URL_NON_POOLING removed \u2014 the first appears nowhere in the mold codebase and the second is Supabase's name for the admin URL \u2014 and DATABASE_URL_UNPOOLED added, which is what the Neon connection injects and what admin_url_ref now names. The Supabase resource this app was first configured onto is not its database any more; it must be re-provisioned (task mold_v1-026)."
 }

@@ -18,14 +18,13 @@
     "CLOUDFLARE_API_TOKEN",
     "CRON_SECRET",
     "DATABASE_URL",
+    "DATABASE_URL_UNPOOLED",
     "EXA_API_KEY",
     "MODEL_PROVIDER",
     "NEXT_PUBLIC_EVE_API_URL",
     "OPS_SECRETS_KEY",
     "PLATFORM_NOTIFY_FROM",
     "RESEND_API_KEY",
-    "SUPABASE_POSTGRES_URL_NON_POOLING",
-    "SUPABASE_URL",
     "TASK_WORKFLOW_SERVICE_TOKEN",
     "TASK_WORKFLOW_SERVICE_URL"
   ],
@@ -38,8 +37,7 @@
   ],
   "secrets_derived": [
     "DATABASE_URL",
-    "SUPABASE_URL",
-    "SUPABASE_POSTGRES_URL_NON_POOLING",
+    "DATABASE_URL_UNPOOLED",
     "BLOB_READ_WRITE_TOKEN",
     "CRON_SECRET",
     "OPS_SECRETS_KEY",
@@ -70,5 +68,6 @@
   },
   "datastores": {
     "handed_to": "claudecode_web_replica"
-  }
+  },
+  "note": "retired placeholder, migrated to the Neon shape on 2026-09-08 (task mold_v1-037) so it declares no secret the provisioner will never create."
 }

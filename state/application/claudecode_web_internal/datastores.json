@@ -1,13 +1,16 @@
 {
   "$schema": "../app_id/datastores.schema.json",
   "postgres": {
-    "provider": "supabase",
+    "provider": "neon",
     "orm": "drizzle",
     "migrations_dir": "drizzle/",
     "rls": "fail_closed",
     "tenancy": "multi_org",
     "url_ref": "DATABASE_URL",
-    "scope": "fresh"
+    "scope": "fresh",
+    "admin_url_ref": "DATABASE_URL_UNPOOLED",
+    "pooling": "transaction",
+    "sslmode": "require"
   },
   "blob": {
     "provider": "vercel_blob",
