@@ -401,12 +401,21 @@ def sync_env(names, vals, project, mold_dir):
 def _node_lib(script, env, mold_dir):
     """Run one of .claude/scripts/lib/*.mjs against the mold's node_modules WITHOUT putting a file
     inside the mold (HARD RULE 1): ESM resolves a bare import from the script's own directory
-    upward, so a temp directory holding a node_modules symlink is enough."""
+    upward, so a temp directory holding a node_modules symlink is enough.
+
+    EVERY .mjs in lib/ is copied, not just the one being run: verify-apprw.mjs and rls-cover.mjs share
+    lib/rls-policy.mjs (the pass that executes each policy instead of reading it), and a relative import
+    resolves beside the script. The vm runner mounts the whole directory for the same reason."""
     d = tempfile.mkdtemp(prefix="factory-lib-")
     try:
-        os.symlink(os.path.join(mold_dir, "node_modules"), os.path.join(d, "node_modules"))
-        p = os.path.join(d, os.path.basename(script)); shutil.copy(script, p)
-        return subprocess.run(["node", p], cwd=d, env=dict(os.environ, **env), capture_output=True, text=True)
+        # abspath: a relative mold_dir would make this symlink dangle, and a dangling node_modules is
+        # ERR_MODULE_NOT_FOUND — a Node stack trace where a diagnosis belongs.
+        os.symlink(os.path.join(os.path.abspath(mold_dir), "node_modules"), os.path.join(d, "node_modules"))
+        src = os.path.dirname(os.path.abspath(script))
+        for f in os.listdir(src):
+            if f.endswith(".mjs"): shutil.copy(os.path.join(src, f), os.path.join(d, f))
+        return subprocess.run(["node", os.path.join(d, os.path.basename(script))], cwd=d,
+                              env=dict(os.environ, **env), capture_output=True, text=True)
     finally: shutil.rmtree(d, ignore_errors=True)
 
 def rls_mode(ds):
@@ -443,7 +452,9 @@ def _node_err(r, fallback="no output"):
 def _unprovable(r, hint, what):
     """The proof did not RUN. That is not the same fact as "isolation is broken", and the operator gets
     the difference plus the one command that fixes it — never a stack trace (HARD RULE 4)."""
-    return (f"{what} could not be measured, so nothing was proven: {_node_err(r)}.\n"
+    # The scripts say "<x> could not be measured — <reason>" themselves; keep the reason, drop the echo.
+    det = re.sub(r"^[a-z\- ]+could not be measured (—|--) ", "", _node_err(r))
+    return (f"{what} could not be measured, so nothing was proven: {det}.\n"
             f"  Nothing was changed. Run: {hint}")
 
 def _rls_cover(run, admin, mode, hint):
@@ -489,11 +500,15 @@ def _verify_app_rw(run, url, mode, backend, source, hint):
     except Exception: sys.exit("the isolation proof printed nothing readable; refusing to deploy")
     # Everything the gate can now see goes into the record. `protected/unprotected` alone would let
     # state read "52/52, unprotected []" over a database with a `USING (true)` policy beside every
-    # org_isolation, which is the exact shape of the defect this file exists to stop.
+    # org_isolation, which is the exact shape of the defect this file exists to stop — and
+    # `open_policies` alone would still read clean over a policy that says org_id and means `OR true`,
+    # so what each policy DID when it was executed is recorded too.
     return {"at": NOW, "backend": backend, "mode": mode, "source": source, "role": out.get("role"),
             "superuser": out.get("superuser"), "bypassrls": out.get("bypassrls"),
             "org_scoped_tables": out.get("tables_org_scoped"), "protected": out.get("protected"),
             "unprotected": out.get("unprotected") or [], "open_policies": out.get("open_policies") or [],
+            "leaking_policies": out.get("leaking_policies") or [], "policies_executed": out.get("policies_executed"),
+            "policies_unverified": out.get("policies_unverified") or [], "unmeasured": out.get("unmeasured") or [],
             "probe_table": out.get("probe_table"), "probe_tables": out.get("probe_tables"),
             "probe_skipped": out.get("probe_skipped") or [],
             "foreign_rows_readable": out.get("foreign_rows"), "leaking_tables": out.get("leaking_tables") or [],
@@ -517,6 +532,7 @@ def record_rls(adir, ds, ev):
         print(f"  recorded datastores.postgres.rls_verified ({ev.get('mode')} on {ev.get('backend')}, "
               f"{ev.get('protected')}/{ev.get('org_scoped_tables')} org-scoped tables protected, "
               f"{len(ev.get('open_policies') or [])} open policy/policies, "
+              f"{ev.get('policies_executed')} policy/policies executed, "
               f"{ev.get('probe_tables')} table(s) probed across the workspace boundary)")
 
 def _retarget(app_url, runtime_url):
@@ -983,8 +999,9 @@ def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
     record_rls(adir, ds, ev)
     print(f"{app_id}: tenant isolation PROVEN on the stored DATABASE_URL — {ev['protected']}/{ev['org_scoped_tables']} "
           f"org-scoped tables enabled+forced+scoped, {len(ev['open_policies'])} policy/policies that do not scope by "
-          f"org_id, {ev['foreign_rows_readable']} foreign row(s) readable as {ev['role']} across {ev['probe_tables']} "
-          f"probed table(s), cross-workspace write refused with {ev['cross_org_write']}")
+          f"org_id, {ev['policies_executed']} policy/policies executed with {len(ev['leaking_policies'])} handing over "
+          f"another workspace's rows, {ev['foreign_rows_readable']} foreign row(s) readable as {ev['role']} across "
+          f"{ev['probe_tables']} probed table(s), cross-workspace write refused with {ev['cross_org_write']}")
     if ev["running_app"].startswith("NOT enforced"):
         sys.exit(f"{app_id}: but the app SERVING TRAFFIC still says row-level security is not enforced "
                  f'("{ev["running_app"][:160]}"). A Vercel env change only reaches the app on its next build.\n'
@@ -1125,12 +1142,22 @@ def main(a):
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
     try:
         alarm = deploy_vercel(app_id, app, infra, ds, mold_dir, adir)
-    except SystemExit as e:
+    except BaseException as e:
         # "deployed" and "isolated" are the same state or the app is not deployed. Every exit inside
         # deploy_vercel — the coverage pass, the isolation proof, a failed build — lands here, so the
         # app can never be left recorded as shipped after a gate said no.
+        #
+        # BaseException, not SystemExit: an unexpected fault (a KeyError in a record helper, a Ctrl-C,
+        # an OOM) is not a SystemExit, so it used to fly straight past this handler and leave the app
+        # parked in `stamping` — a status factory.py validate's DEPLOYED tuple does not audit, i.e. a
+        # half-deployed app that no gate ever looks at again. An unknown failure is the LEAST safe
+        # moment to skip the revert. The exception is re-raised untouched, so the traceback (and the
+        # exit code) still reach the operator.
         save(os.path.join(adir, "infrastructure.json"), infra)
-        _revert(adir, app, str(e) if e.code else "deploy stopped")
+        if isinstance(e, SystemExit): _revert(adir, app, str(e) if e.code else "deploy stopped")
+        elif isinstance(e, KeyboardInterrupt): _revert(adir, app, "the deploy was interrupted before it finished")
+        else: _revert(adir, app, f"the deploy stopped on an unexpected {type(e).__name__}: {str(e)[:200]}. "
+                                 f"Nothing about this app is proven; re-run: python3 .claude/scripts/provision.py {app_id} --deploy")
         raise
     infra["deployed_at"] = TODAY; save(os.path.join(adir, "infrastructure.json"), infra)
     if alarm and rls_mode(ds) != "off":

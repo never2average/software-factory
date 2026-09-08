@@ -1,0 +1,38 @@
+{
+  "$schema": "../lane.schema.json",
+  "lane": "load",
+  "order": 30,
+  "summary": "Task-workflow throughput and latency under concurrency, and thread-open latency for a signed-in operator.",
+  "not_covered": [
+    "GLM 5.2 inference throughput and the sandbox prewarm saturation budget \u2014 neither has a harness yet (mold_v1 backlog).",
+    "Sustained soak: the stress spec is a burst, not an hour."
+  ],
+  "checks": [
+    {
+      "name": "test:task-workflow:stress",
+      "run": "python3 {testing}/load/stress.py {app_id}",
+      "cwd": "root",
+      "emits": "markdown_table",
+      "timeout_s": 1800,
+      "why": "The task-workflow service is the multiplayer engine; p95 latency and 5xx count under concurrency are what an operator feels.",
+      "requires": [
+        {
+          "path": "{testing}/load/stress.py",
+          "else": "No harness yet. The lane needs molds/mold_v1/testing/load/stress.py to bring up a private Postgres (localpg.py up {app_id}), migrate it, build services/task-workflow in a copy of the mold, run workflow.stress.spec.ts against it and print the p50/p95/5xx table. Measured once by hand: 186 ops, p95 262 ms, zero 5xx."
+        }
+      ]
+    },
+    {
+      "name": "fde:thread-open-perf",
+      "run": "node scripts/fde/thread-open-perf.mjs",
+      "timeout_s": 900,
+      "why": "Thread-open latency is the first thing an operator waits on every morning.",
+      "requires": [
+        {
+          "env": "FDE_OPS_TOKEN",
+          "else": "Skipped on purpose: without a signed-in identity this script measures NOTHING and still exits 0, and unconfigured it defaults to the LIVE fde-agent projects. Give it FDE_OPS_URL and FDE_OPS_TOKEN for this app's own deployment (names only \u2014 the runner never reads the value)."
+        }
+      ]
+    }
+  ]
+}

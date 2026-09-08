@@ -206,6 +206,11 @@ def main(a):
                 if ev.get("at", "") < (pg.get("snapshot", {}).get("taken_at") or ""): iso.append(f"the proof ({ev['at']}) predates the restore ({pg['snapshot']['taken_at']}) — run `clone.py {app_id} rls`")
                 if ev.get("mode") != want: iso.append(f"declares {want}, measured {ev.get('mode')}")
                 if ev.get("unprotected"): iso.append(f"{len(ev['unprotected'])} of {ev.get('org_scoped_tables')} org-scoped tables unprotected")
+                # A restore can leave a policy in place and still leave it OPEN: judged by what the
+                # policies did when they were executed, not by how many exist.
+                if ev.get("open_policies"): iso.append(f"{len(ev['open_policies'])} permissive policy/policies do not scope by org_id ({', '.join(ev['open_policies'][:4])})")
+                if ev.get("leaking_policies"): iso.append(f"{len(ev['leaking_policies'])} policy/policies handed over another workspace's rows when executed ({', '.join(ev['leaking_policies'][:3])})")
+                if ev.get("unmeasured"): iso.append(f"{len(ev['unmeasured'])} org-scoped table(s) were never measured ({', '.join(ev['unmeasured'][:4])})")
                 if ev.get("foreign_rows_readable"): iso.append(f"{ev['foreign_rows_readable']} foreign row(s) readable")
                 if ev.get("cross_org_write") != "42501": iso.append(f"cross-workspace INSERT not refused ({ev.get('cross_org_write')})")
                 if want == "fail_closed" and ev.get("unset_org_rows"): iso.append(f"{ev['unset_org_rows']} row(s) visible with no workspace in scope")
@@ -221,7 +226,8 @@ def main(a):
               f"- declared: `{want}`" + (f" · measured `{ev.get('mode')}` on {ev.get('backend')} at {ev.get('at')} ({ev.get('source')})" if ev else " · NO evidence"),
               f"- role `{ev.get('role')}` superuser={ev.get('superuser')} bypassrls={ev.get('bypassrls')}" if ev.get("role") else "- role: not measured",
               f"- org-scoped tables enabled+forced+policied: {ev.get('protected')}/{ev.get('org_scoped_tables')}" + (f" · unprotected: {', '.join(ev['unprotected'][:10])}" if ev.get("unprotected") else ""),
-              f"- cross-workspace read of `{ev.get('probe_table')}`: {ev.get('foreign_rows_readable')} row(s) · write refused with `{ev.get('cross_org_write')}`" if ev.get("probe_table") else "- cross-workspace probe: not run",
+              f"- cross-workspace read across {ev.get('probe_tables')} probed table(s): {ev.get('foreign_rows_readable')} row(s) · write refused with `{ev.get('cross_org_write')}`" if ev.get("probe_table") else "- cross-workspace probe: not run",
+              f"- policies executed one at a time: {ev.get('policies_executed')}" + (f" · **leaking**: {', '.join(ev['leaking_policies'][:6])}" if ev.get("leaking_policies") else " · none handed over another workspace's rows"),
               ("- **FAIL**: " + "; ".join(iso)) if iso else "- ok"]
         L += ["", "## Blob tree (files, bytes per top-level folder)", "", (f"prefix '{rep['blob']['prefix']}': " + ("same" if rep["blob"]["same"] else "DIFF") + f" clone={rep['blob']['clone']} live={rep['blob']['live']}") if rep["blob"] else "skipped: no live token accepted by the blob store"]
         open(rpath, "w").write("\n".join(L) + "\n")

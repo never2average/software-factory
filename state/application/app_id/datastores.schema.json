@@ -44,7 +44,7 @@
         },
         "rls_verified": {
           "type": "object",
-          "description": "EVIDENCE, written by provision.py/clone.py from a live measurement of the database the app runs against — never by hand. This is what turns `rls` from a claim into a record: it names the role that was measured, how many org-scoped tables were enabled+forced+policied, and whether another workspace's rows were actually readable.",
+          "description": "EVIDENCE, written by provision.py/clone.py from a live measurement of the database the app runs against \u2014 never by hand. This is what turns `rls` from a claim into a record: it names the role that was measured, how many org-scoped tables were enabled+forced+policied, and whether another workspace's rows were actually readable.",
           "required": [
             "at",
             "backend",
@@ -74,7 +74,7 @@
             },
             "role": {
               "type": "string",
-              "description": "current_user on the deployed DATABASE_URL — app_rw, not postgres"
+              "description": "current_user on the deployed DATABASE_URL \u2014 app_rw, not postgres"
             },
             "superuser": {
               "type": "boolean"
@@ -97,17 +97,74 @@
                 "type": "string"
               }
             },
+            "open_policies": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Permissive policies that apply to the app role and do NOT scope by org_id. Postgres OR's permissive policies, so each one reopens its whole table. Must be empty"
+            },
+            "leaking_policies": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Permissive policies that were EXECUTED as the app role against rows the check owns and handed over another workspace's rows anyway \u2014 a predicate can name org_id and still say `OR true`. Must be empty"
+            },
+            "policies_executed": {
+              "type": "integer",
+              "description": "How many permissive policies were run, one at a time, on a temp copy of their table's columns. This is the measurement that reaches the tables the live probe skips for their foreign keys or triggers"
+            },
+            "policies_unverified": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Policies that could not be executed (the app role lacks TEMP, the admin cannot SET ROLE to it, the table's shape could not be replicated). An unverified policy is never counted as a passing one"
+            },
+            "unmeasured": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Org-scoped tables that neither the cross-workspace probe nor the policy execution pass could measure \u2014 nothing proves those tables. Must be empty"
+            },
             "probe_table": {
               "type": "string",
               "description": "The table the cross-workspace read/write probe ran against, inside a rolled-back transaction"
+            },
+            "probe_tables": {
+              "type": "integer",
+              "description": "How many tables the cross-workspace read/write probe actually ran on (it runs on every eligible table, not one)"
+            },
+            "probe_skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Tables the live probe could not use, each with the reason (foreign keys, user triggers, control plane, unsynthesisable column) \u2014 so a probe count is never read as 'all of them'"
             },
             "foreign_rows_readable": {
               "type": "integer",
               "description": "Rows of another workspace visible to the app role while scoped. Must be 0"
             },
+            "leaking_tables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Tables that returned another workspace's rows, with counts. Must be empty"
+            },
             "cross_org_write": {
               "type": "string",
               "description": "SQLSTATE of the cross-workspace INSERT. Must be 42501; 'ACCEPTED' means the write went through"
+            },
+            "cross_org_writable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Tables that accepted a row owned by another workspace, with the SQLSTATE returned. Must be empty"
             },
             "unset_org_rows": {
               "type": [
@@ -115,6 +172,17 @@
                 "null"
               ],
               "description": "fail_closed only: rows visible with app.org_id set to the empty string, which is what a transaction pooler leaves behind. Must be 0"
+            },
+            "open_with_no_org": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "fail_closed only: tables that still returned rows with app.org_id set to the empty string. Must be empty"
+            },
+            "running_app": {
+              "type": "string",
+              "description": "What the app IN FRONT OF TRAFFIC says on /api/ops/health. The stored credential passing the gate is a different fact from the running build using it: a Vercel env change only takes effect on the next build"
             }
           }
         },

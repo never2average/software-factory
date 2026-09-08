@@ -63,7 +63,15 @@
  * an unset GUC), or an `org_isolation` that ANDs `app.principal_email` for account-level connector
  * credentials. Both are stricter than what this pass would write and permissive policies OR, so
  * replacing either would WEAKEN the database. They are reported in `kept_strict` — and, unlike the
- * bucket that name replaces, only after their predicate has actually been read.
+ * bucket that name replaces, only after their predicate has actually been READ AND RUN.
+ *
+ * READING A PREDICATE IS STILL NOT PROOF. `USING ((org_id = current_setting('app.org_id', true)) OR
+ * true)` names org_id, names the GUC, passes every text rule above, and hands over the whole table:
+ * measured on `tickets`, where this pass called it `kept_strict` and exited 0 while app_rw scoped to
+ * one workspace read another's row. So after the DDL, every permissive policy is EXECUTED — singly,
+ * against rows built for the purpose, on a temp copy of its table's columns, under SET LOCAL ROLE of
+ * the app role, inside a transaction that is rolled back (lib/rls-policy.mjs). A policy that admits a
+ * foreign row is reported in `leaking_policies` and the pass exits 1, whatever its name.
  *
  * ADMIN_URL travels in the environment, never in argv: /proc/<pid>/cmdline is world-readable.
  * Prints one JSON line; no secret in it.
@@ -73,6 +81,7 @@
  *   exit 3  it could not run at all (unreachable, refused, bad credentials) — nothing was measured
  */
 import postgres from "postgres";
+import { measurePolicies, isScoped, exprs, why, cap, q } from "./rls-policy.mjs";
 
 const url = process.env.ADMIN_URL;
 if (!url) { console.error("ADMIN_URL is not set"); process.exit(2); }
@@ -84,24 +93,7 @@ const APP_ROLE = process.env.APP_ROLE || "app_rw";
 const CONTROL_PLANE = new Set(["orgs", "org_members", "org_invites"]);
 const STRICT = `(org_id = current_setting('app.org_id', true))`;
 const OPEN = `(coalesce(current_setting('app.org_id', true), '') = '' OR org_id = current_setting('app.org_id', true))`;
-const q = (id) => '"' + String(id).replace(/"/g, '""') + '"';
 const norm = (x) => String(x).toLowerCase().replace(/::[a-z ]+/g, "").replace(/[\s()]/g, "");
-// A predicate can only confine a row to a workspace if it reads the workspace and compares org_id.
-const scoped = (e) => /\borg_id\b/i.test(e) && /current_setting\(\s*'app\.org_id'/i.test(e);
-const exprs = (p) => [p.qual, p.with_check].filter((e) => e !== null && e !== undefined && e !== "");
-const isScoped = (p) => { const e = exprs(p); return e.length > 0 && e.every(scoped); };
-
-/** One line, no stack, no Node version banner — provision.py stores this verbatim as the revert reason. */
-function why(e) {
-  const c = e && (e.code || e.errno), m = String((e && e.message) || e);
-  if (c === "ECONNREFUSED") return "cannot reach the database: connection refused";
-  if (c === "ENOTFOUND" || c === "EAI_AGAIN") return "cannot reach the database: host not found";
-  if (c === "ETIMEDOUT" || c === "CONNECT_TIMEOUT") return "cannot reach the database: connection timed out";
-  if (c === "28P01" || c === "28000") return "the database refused these credentials (password authentication failed)";
-  if (c === "3D000") return "that database does not exist on this server";
-  if (c === "ECONNRESET" || c === "EPIPE") return "the database closed the connection (TLS or pooler mismatch)";
-  return (c ? `${c}: ` : "") + m.split("\n")[0].slice(0, 200);
-}
 
 const sql = postgres(url, { ssl: "require", prepare: false, max: 1, connect_timeout: 20, onnotice: () => {} });
 try {
@@ -127,7 +119,7 @@ try {
   // `applies`: a policy listed TO another role cannot open anything for the app role. Resolved through
   // pg_has_role so a policy granted to a group the app role is a member of still counts.
   const POLICIES = () => sql`
-    SELECT tablename AS t, policyname AS p, permissive, coalesce(qual, '') AS qual,
+    SELECT tablename AS t, policyname AS p, permissive, cmd, coalesce(qual, '') AS qual,
       coalesce(with_check, '') AS with_check,
       EXISTS (SELECT 1 FROM unnest(roles) r
               WHERE CASE WHEN r = 'public' THEN true
@@ -188,12 +180,46 @@ try {
     for (const p of bad) open_policies.push(`${r.t}:${p.p}`);
     if (!(r.enabled && r.forced && live.some(isScoped)) || bad.length) unprotected.push(r.t);
   }
+  // Now RUN them. `kept_strict` used to be a name this pass gave a predicate it had only read; a
+  // policy that ORs `true` onto a scoped comparison reads as strict and is not. Measured as the app
+  // role (SET LOCAL ROLE — the admin this pass connects as is typically a superuser, and a superuser
+  // bypasses every policy, which would report a leak on a perfect database).
+  const applying = new Map();
+  for (const r of after) applying.set(r.t, (by.get(r.t) || []).filter((p) => p.permissive === "PERMISSIVE" && p.applies));
+  // Measuring through a role that bypasses RLS would report a leak on every table and blame the
+  // policies for what the ROLE does. Say the real thing instead — and it is not something this pass
+  // can repair: the role attribute belongs to the bootstrap, and the gate refuses the URL anyway.
+  const [ar] = await sql`SELECT rolsuper AS s, rolbypassrls AS b FROM pg_roles WHERE rolname = ${APP_ROLE}`;
+  if (!ar) { console.error(`there is no ${APP_ROLE} role on this database — the bootstrap has not run here yet.`); process.exit(2); }
+  if (ar.s || ar.b) {
+    console.error(`${APP_ROLE} is ${ar.s ? "SUPERUSER" : ""}${ar.s && ar.b ? " and " : ""}${ar.b ? "BYPASSRLS" : ""}: ` +
+      `every policy is silently ignored for it, so no amount of coverage means anything. Run ` +
+      `ALTER ROLE ${APP_ROLE} NOSUPERUSER NOBYPASSRLS as the admin, then rerun.`);
+    process.exit(1);
+  }
+  const beh = await measurePolicies(sql, { tables: after, policies: applying, mode, control: CONTROL_PLANE,
+                                           assume: who.u === APP_ROLE ? null : APP_ROLE });
+  for (const l of beh.leaking) { const t = l.split(":")[0]; if (!unprotected.includes(t)) unprotected.push(t); }
   // Cap the lists: the counts are the evidence, the names are there to point at. A 52-table run
   // otherwise prints four screens of JSON into a log the operator has to read.
-  const cap = (a) => (a.length > 20 ? [...a.slice(0, 20), `+${a.length - 20} more`] : a);
   console.log(JSON.stringify({ mode, tables_org_scoped: after.length, protected: after.length - unprotected.length,
-    unprotected: cap(unprotected), open_policies: cap(open_policies), changed: cap(changed),
-    control_plane: cp, kept_strict: cap(kept), other_role_policies: cap(other) }));
+    unprotected: cap(unprotected), open_policies: cap(open_policies), leaking_policies: cap(beh.leaking),
+    policies_executed: beh.checked, policies_unverified: cap(beh.unverified), changed: cap(changed),
+    control_plane: [...cp], kept_strict: cap(kept), other_role_policies: cap(other) }));
+  if (beh.leaking.length) {
+    const [t0, rest] = [beh.leaking[0].split(":")[0], beh.leaking[0].split(":").slice(1).join(":")];
+    console.error(`${beh.leaking.length} permissive policy/policies were EXECUTED as ${APP_ROLE} and handed over another ` +
+      `workspace's rows, whatever their name says: ${beh.leaking.slice(0, 6).join(", ")}${beh.leaking.length > 6 ? " …" : ""}. ` +
+      `This pass will not drop a policy the application may depend on. Rewrite each to confine rows to ` +
+      `current_setting('app.org_id'), or drop it (DROP POLICY "${rest.replace(/\(.*$/, "")}" ON "${t0}"), then rerun.`);
+    process.exit(1);
+  }
+  if (beh.unverified.length) {
+    console.error(`${beh.unverified.length} policy/policies could not be executed, so nothing measured what they actually ` +
+      `do: ${beh.unverified.slice(0, 4).join(", ")}. ${APP_ROLE} needs TEMP on this database and the admin role needs to be ` +
+      `a member of it (GRANT ${APP_ROLE} TO current_user), then rerun.`);
+    process.exit(1);
+  }
   if (open_policies.length) {
     console.error(`${open_policies.length} policy/policies on org-scoped table(s) do not scope by org_id, and Postgres OR's ` +
       `permissive policies, so each one reopens its whole table: ${open_policies.slice(0, 8).join(", ")}` +
