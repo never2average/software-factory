@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "stamped",
+  "status": "reverted",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "delivered",
   "model": {
@@ -995,10 +995,14 @@
       "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-06.md"
     },
     "accessibility": {
-      "status": "pending"
+      "status": "fail",
+      "run_at": "2026-09-08T10:33:51+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-08.md"
     },
     "responsiveness": {
-      "status": "pending"
+      "status": "pass",
+      "run_at": "2026-09-08T10:32:33+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-08.md"
     }
   },
   "customer_id": "internal",
@@ -1060,8 +1064,8 @@
     }
   },
   "revert": {
-    "reason": "regression against live failed",
-    "lane": "context",
-    "at": "2026-09-06T12:15:18+00:00"
+    "lane": "accessibility",
+    "at": "2026-09-08T10:33:51+00:00",
+    "reason": "accessibility lane failed on 1 check(s): axe.wcag21aa; report molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-08.md; task mold_v1-023"
   }
 }

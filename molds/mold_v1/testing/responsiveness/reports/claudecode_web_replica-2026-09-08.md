@@ -1,7 +1,7 @@
 # Responsiveness lane — claudecode_web_replica (2026-09-08)
 
 Mold: mold_v1 (commit dc98cb6c0c25ef81304fb6cf1db172396e62b805).
-Run at 2026-09-08T10:14:51+00:00. Lane status: **pass** (3 of 3 checks passed).
+Run at 2026-09-08T10:32:33+00:00. Lane status: **pass** (3 of 3 checks passed).
 Command: `python3 .claude/scripts/lanes.py claudecode_web_replica --lane responsiveness`
 
 A Playwright chromium viewport matrix (320/390/820/1440) over the mold's three page routes, grading horizontal overflow, cumulative layout shift, content a user cannot reach, tap target size and interaction latency against published budgets. A route that answers 2xx and then renders no interactive control, or a tap-target row that finds no target, fails: nothing measured is never a pass. The two timing budgets (CLS, INP) must be exceeded on every one of 3 runs before a row fails.
@@ -52,14 +52,14 @@ _target https://claudecode-web-opal.vercel.app · viewports 390/820 · 0 request
 
 | check | result | detail |
 |---|---|---|
-| interaction /workspace click @ mobile-390      | pass | 4 in-page click(s) · INP=96ms (budget 200ms) |
-| interaction / keyboard @ mobile-390            | pass | 6 Tab press(es) over 2 rendered control(s) · INP=96ms (budget 200ms) |
+| interaction /workspace click @ mobile-390      | pass | 4 in-page click(s) · INP=248/56ms over 2 runs, best 56ms (budget 200ms) |
+| interaction / keyboard @ mobile-390            | pass | 6 Tab press(es) over 2 rendered control(s) · INP=200ms (budget 200ms) |
 | interaction /onboard keyboard @ mobile-390     | pass | 6 Tab press(es) over 2 rendered control(s) · INP=32ms (budget 200ms) |
-| interaction /workspace keyboard @ mobile-390   | pass | 6 Tab press(es) over 8 rendered control(s) · INP=80ms (budget 200ms) |
-| interaction /workspace click @ desktop-1440    | pass | 4 in-page click(s) · INP=32ms (budget 200ms) |
-| interaction / keyboard @ desktop-1440          | pass | 6 Tab press(es) over 2 rendered control(s) · INP=32ms (budget 200ms) |
-| interaction /onboard keyboard @ desktop-1440   | pass | 6 Tab press(es) over 2 rendered control(s) · INP=40ms (budget 200ms) |
-| interaction /workspace keyboard @ desktop-1440 | pass | 6 Tab press(es) over 8 rendered control(s) · INP=32ms (budget 200ms) |
+| interaction /workspace keyboard @ mobile-390   | pass | 6 Tab press(es) over 8 rendered control(s) · INP=96ms (budget 200ms) |
+| interaction /workspace click @ desktop-1440    | pass | 4 in-page click(s) · INP=40ms (budget 200ms) |
+| interaction / keyboard @ desktop-1440          | pass | 6 Tab press(es) over 2 rendered control(s) · INP=232/176ms over 2 runs, best 176ms (budget 200ms) |
+| interaction /onboard keyboard @ desktop-1440   | pass | 6 Tab press(es) over 2 rendered control(s) · INP=72ms (budget 200ms) |
+| interaction /workspace keyboard @ desktop-1440 | pass | 6 Tab press(es) over 8 rendered control(s) · INP=40ms (budget 200ms) |
 
 _target https://claudecode-web-opal.vercel.app · viewports 390/1440 · 0 request(s) to live fde-* hosts blocked · 8 rows: 8 pass, 0 fail, 0 skipped_
 

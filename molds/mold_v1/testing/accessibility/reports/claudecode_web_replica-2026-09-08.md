@@ -1,7 +1,7 @@
 # Accessibility lane — claudecode_web_replica (2026-09-08)
 
 Mold: mold_v1 (commit dc98cb6c0c25ef81304fb6cf1db172396e62b805).
-Run at 2026-09-08T10:14:36+00:00. Lane status: **fail** (1 of 2 checks passed, 1 failed).
+Run at 2026-09-08T10:33:51+00:00. Lane status: **fail** (1 of 2 checks passed, 1 failed).
 Command: `python3 .claude/scripts/lanes.py claudecode_web_replica --lane accessibility`
 
 axe-core 4.13.0 (WCAG 2.1 A/AA) and keyboard-only traversal over the mold's three page routes, driven by Playwright chromium against the application's own deployed URL. A route that answers 2xx and then renders no interactive control fails the row: nothing measured is never a pass.
