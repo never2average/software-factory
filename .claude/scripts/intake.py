@@ -261,7 +261,15 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     for k in ("production_url", "workflow_url", "api_url", "crons", "health"):   # `health` is the deploy's own verdict; dropping it left state unable to say whether the app came up
         if k in ex_inf.get("vercel", {}) and "vercel" in infra: infra["vercel"][k] = ex_inf["vercel"][k]
     ds = {"$schema":"../app_id/datastores.schema.json",
-      "postgres":{"provider":ans["postgres_provider"],"orm":"drizzle","migrations_dir":"drizzle/","rls":"fail_closed",
+      # rls follows TENANCY, it is not a constant. This line used to write "fail_closed" into every app
+      # regardless of provider, scope or tenancy — a claim nothing measured, beside an app that ran as a
+      # BYPASSRLS superuser. It is now the application's ASK, and provision.py refuses to finish a deploy
+      # that cannot prove it: multi-workspace apps must fail closed, a single-workspace app still gets
+      # enforced policies but they stay permissive when no workspace is in scope, so the control-plane
+      # and cron paths that never set app.org_id keep working. The proof itself lands in
+      # datastores.postgres.rls_verified, written only by a live measurement.
+      "postgres":{"provider":ans["postgres_provider"],"orm":"drizzle","migrations_dir":"drizzle/",
+                  "rls":"fail_closed" if ans["multi_tenant"] else "on",
                   "tenancy":"multi_org" if ans["multi_tenant"] else "single_org","url_ref":ans["postgres_ref"],"scope":ans["postgres_scope"],
                   "sslmode":"require"},
       "blob":{"provider":ans["blob_provider"],"root_prefix":f"orgs/{org_id}","token_ref":"BLOB_READ_WRITE_TOKEN"},
