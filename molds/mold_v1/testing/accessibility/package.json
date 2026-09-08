@@ -1,0 +1,13 @@
+{
+  "name": "mold-v1-accessibility-lane",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Accessibility lane harness for mold_v1. Lives beside the lane so nothing is installed into the immutable mold codebase.",
+  "scripts": {
+    "check": "node deps-check.mjs",
+    "vendor": "npm pack axe-core@4.13.0 --pack-destination /tmp && tar -xzOf /tmp/axe-core-4.13.0.tgz package/axe.min.js > vendor/axe.min.js && rm -f /tmp/axe-core-4.13.0.tgz && node deps-check.mjs"
+  },
+  "comment": "axe-core is vendored as vendor/axe.min.js (one standalone file, MPL-2.0) and injected with addScriptTag, so the lane needs no node_modules and no network at run time. Playwright is the VM-wide install; this lane never adds a dependency to molds/mold_v1/codebase.",
+  "devDependencies": { "axe-core": "4.13.0" }
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "../lane.schema.json",
+  "lane": "accessibility",
+  "order": 40,
+  "summary": "axe-core 4.13.0 (WCAG 2.1 A/AA) and keyboard-only traversal over the mold's three page routes, driven by Playwright chromium against the application's own deployed URL.",
+  "requires": [
+    {
+      "cmd": "node {testing}/accessibility/deps-check.mjs",
+      "else": "Install the browser this lane drives: npm i -g playwright && npx playwright install chromium."
+    },
+    {
+      "path": "molds/mold_v1/testing/accessibility/vendor/axe.min.js",
+      "else": "Restore the vendored rule set: npm --prefix molds/mold_v1/testing/accessibility run vendor"
+    }
+  ],
+  "checks": [
+    {
+      "name": "axe.wcag21aa",
+      "run": "node {testing}/accessibility/a11y.mjs --url {url} --only axe",
+      "cwd": "root",
+      "timeout_s": 300,
+      "expect": {
+        "exit": 0,
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "emits": "markdown_table",
+      "requires": [
+        {
+          "state": "infrastructure.vercel.production_url",
+          "must": "nonempty",
+          "else": "This lane grades rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+        },
+        {
+          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace",
+          "else": "The deployed app did not answer on /, /onboard and /workspace, so there was nothing to grade. Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+        }
+      ],
+      "why": "A serious or critical WCAG 2.1 A/AA violation is a customer who cannot use the page at all: an unnamed button is invisible to a screen reader, and failing contrast is unreadable in daylight or with low vision."
+    },
+    {
+      "name": "keyboard.traversal",
+      "run": "node {testing}/accessibility/a11y.mjs --url {url} --only keyboard",
+      "cwd": "root",
+      "timeout_s": 300,
+      "expect": {
+        "exit": 0,
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "emits": "markdown_table",
+      "requires": [
+        {
+          "state": "infrastructure.vercel.production_url",
+          "must": "nonempty",
+          "else": "This lane grades rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+        },
+        {
+          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace",
+          "else": "The deployed app did not answer on /, /onboard and /workspace, so there was nothing to grade. Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+        }
+      ],
+      "why": "Tab is the only way in for anyone who cannot use a mouse: a control no Tab reaches, or one that takes focus with no visible ring, locks that person out of the workspace."
+    }
+  ],
+  "not_covered": [
+    "Anything behind a signed-in identity: the workflow builder, the ops center tabs and the chat thread view. Unauthenticated the lane reaches 3 pages and 2-9 tabbable controls; the builder row is reported `skipped`, not `pass`.",
+    "Screen-reader output. axe-core checks the accessibility tree, not what NVDA/VoiceOver actually announces.",
+    "Best-practice and moderate/minor axe rules. They are printed in the detail column (for example landmark-one-main and region on /workspace) but do not fail the lane.",
+    "axe `incomplete` results, which need a human to judge them; the count is printed per route.",
+    "Colour rendering under a different theme or brand pack, zoom to 200%, reduced motion and forced-colors modes.",
+    "Routes that do not exist in this mold snapshot. The mold has exactly three page routes (/, /onboard, /workspace); there is no /chat route, chat is rendered at /."
+  ]
+}
