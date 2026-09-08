@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Provision: validated application state -> running deployment.
 
-  provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db]
+  provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]
 
 --check (default): verify every secret named in infrastructure.json exists in the
   secret store (Vercel env for vercel_env; infra/vm/apps/<app_id>/.env for vm_env_file),
@@ -9,7 +9,16 @@
 --deploy: run the deploy for the target. Refuses if any secret is missing.
 --verify-db: stand up this app's LOCAL database (private docker network, no host port) and run
   the whole mold chain against it — push, migrate, RLS + app_rw bootstrap, task-workflow — then
-  prove the resulting URL is app_rw/NOBYPASSRLS/policied/encrypted. Touches nothing remote.
+  cover every org-scoped table and PROVE the resulting URL cannot read another workspace's rows.
+  Touches nothing remote. Rotates the app_rw password, so it is not a read-only check.
+--verify-rls: prove tenant isolation on whatever this app is running RIGHT NOW, and record the
+  result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only
+  measure). No build, no deploy, no password rotation. Run it after any restore or migration.
+
+TENANT ISOLATION IS A GATE, NOT A LABEL. datastores.postgres.rls says what the application asked
+for: "fail_closed" and "on" are enforced — the deploy stops and the app is recorded `reverted`
+rather than `stamped` if a workspace can read another workspace's rows — while "off" is measured
+and recorded but never enforced. DATABASE_URL is written in exactly one place, after the proof.
 
 ONE COMMITTED DEPLOY TARGET: vercel. `target: vm` is a LOCAL VERIFICATION target — it generates
 the app's datastore artifact and runs the lanes against it; it does not serve the application.
@@ -23,6 +32,7 @@ Neon's is not, and an unattached Neon resource already sits on this team, so app
 import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
+NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
 def sh(cmd, cwd=None, check=True):
@@ -282,16 +292,26 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
         priv, pub = subprocess.check_output(["node", "-e", js], text=True).split()
         _add_env("AUTH_JWT_PRIVATE_KEY", priv, mold_dir, proj); _add_env("AUTH_JWT_PUBLIC_KEY", pub, mold_dir, proj); print("generated AUTH_JWT key pair")
     present = vercel_env_names(mold_dir, proj)
-    if "DATABASE_URL" not in present and "SUPABASE_POSTGRES_URL" in present:
-        # DATABASE_URL is the app's canonical name for the pooled Postgres URL the integration injected
+    if "POSTGRES_ADMIN_URL" not in present and "SUPABASE_POSTGRES_URL" in present:
+        # NOT DATABASE_URL. This line used to copy SUPABASE_POSTGRES_URL — the pooled URL whose user is
+        # `postgres.<ref>`, a BYPASSRLS superuser — into DATABASE_URL, and nothing ever replaced it: three
+        # exits sit between here and bootstrap_database (a git-linked project, `--check`, missing secrets),
+        # so a run could legitimately leave a SUPERUSER connection string as the app's runtime credential
+        # on all three projects and stop. That is precisely how the live app came to report
+        # `role postgres — WARNING: BYPASSRLS, row-level security is NOT enforced`.
+        # DATABASE_URL is now written in exactly ONE place — bring_up_schema, after the isolation gate
+        # passes — so a project that has never been bootstrapped has no DATABASE_URL at all. That fails
+        # closed (the app cannot reach the database) instead of failing open (it reaches it as root).
         tmp = os.path.join(mold_dir, ".env.provision")
         subprocess.run(f"vercel env pull --yes --environment=production --project {proj} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
         val = next((l.split("=",1)[1].strip().strip('"') for l in open(tmp) if l.startswith("SUPABASE_POSTGRES_URL=")), "")
         os.remove(tmp)
-        if val: _add_env("DATABASE_URL", val, mold_dir, proj); print("derived DATABASE_URL from SUPABASE_POSTGRES_URL")
+        if val: _add_env("POSTGRES_ADMIN_URL", val, mold_dir, proj); print("derived POSTGRES_ADMIN_URL (admin only; DATABASE_URL is written by the RLS gate)")
     return vercel_env_names(mold_dir, proj)
 
-DEPLOY_TIME = ["TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT_PUBLIC_EVE_API_URL", "MODEL_PROVIDER"]
+# Set during --deploy, so `--check` must not report them missing. DATABASE_URL belongs here now that
+# nothing else may write it: bring_up_schema mints it from the app_rw bootstrap once the gate passes.
+DEPLOY_TIME = ["TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT_PUBLIC_EVE_API_URL", "MODEL_PROVIDER", "DATABASE_URL"]
 API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CRON_SECRET", "DATABASE_URL", "OPS_MULTI_TENANT",
            "MODEL_PROVIDER", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "EXA_API_KEY", "BROWSERBASE_API_KEY",
            "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID"]
@@ -389,17 +409,115 @@ def _node_lib(script, env, mold_dir):
         return subprocess.run(["node", p], cwd=d, env=dict(os.environ, **env), capture_output=True, text=True)
     finally: shutil.rmtree(d, ignore_errors=True)
 
-def _verify_app_rw(mold_dir, url):
-    """Prove the URL that is ABOUT to become DATABASE_URL really is the restricted role.
+def rls_mode(ds):
+    """What the application ASKED for, in datastores.postgres.rls.
 
-    Until now provision.py trusted the mold's own self-test and then deployed a URL it had never
-    opened. That is how the live app came to report `role postgres — WARNING: BYPASSRLS, row-level
-    security is NOT enforced`. The URL travels in the environment, never in argv: /proc/<pid>/cmdline
-    is world-readable."""
-    r = _node_lib(os.path.join(ROOT, ".claude/scripts/lib/verify-apprw.mjs"), {"APP_RW_URL": url}, mold_dir)
+    `fail_closed` and `on` are GATES: the coverage pass runs, the isolation probe runs, and a failure
+    stops the deploy. `off` is an application saying it does not want tenant isolation — the role and
+    the wire are still measured and recorded, but nothing is enforced and nothing is applied. The
+    factory still points DATABASE_URL at the NOBYPASSRLS app role in every mode: which role the app
+    runs as is not the application's choice to make."""
+    return ds.get("postgres", {}).get("rls", "fail_closed")
+
+def _lib_runner(mold_dir):
+    """How to run .claude/scripts/lib/*.mjs against the MANAGED backend: on this box, against the
+    mold's node_modules, with the secret in the environment."""
+    return lambda script, env: _node_lib(os.path.join(ROOT, ".claude/scripts/lib", script), env, mold_dir)
+
+NODE_NOISE = re.compile(r"^(at\s|node:internal|Node\.js v|\^+$|\}\)?;?$|\)+;?$|throw |Emitted \'error\'|"
+                        r"Run \'docker .*--help\'|See \'docker .*--help\'|\[Symbol|\s*$)")
+
+def _node_err(r, fallback="no output"):
+    """One human sentence out of a Node (or docker) process — never its version banner.
+
+    verify-apprw.mjs and rls-cover.mjs each print ONE line and exit 3 when they could not run at all,
+    but anything that kills the process outside their own try/catch — a docker network that is gone, an
+    ESM resolution failure, an OOM — still arrives as a stack trace, and its LAST line is always
+    `Node.js v24.20.0`. Taking the last line is how "refusing to deploy this DATABASE_URL: Node.js
+    v24.20.0" became a permanent revert reason in application.json. run_migrations and the vm chain
+    already filter this; the RLS gate was the one place that did not."""
+    keep = [l.strip() for l in (r.stderr or "").splitlines() if l.strip() and not NODE_NOISE.match(l.strip())]
+    if not keep: keep = [l.strip() for l in (r.stdout or "").splitlines() if l.strip() and not l.strip().startswith("{")]
+    return (" / ".join(keep[-3:]))[:300] or fallback
+
+def _unprovable(r, hint, what):
+    """The proof did not RUN. That is not the same fact as "isolation is broken", and the operator gets
+    the difference plus the one command that fixes it — never a stack trace (HARD RULE 4)."""
+    return (f"{what} could not be measured, so nothing was proven: {_node_err(r)}.\n"
+            f"  Nothing was changed. Run: {hint}")
+
+def _rls_cover(run, admin, mode, hint):
+    """Close the coverage gap the mold's hardcoded 13-name SCOPED list leaves behind — factory-side,
+    because molds/*/codebase is immutable (HARD RULE 1).
+
+    Runs AFTER the mold's own bootstrap and AFTER the task-workflow migration, on BOTH backends, so a
+    table either of them creates is covered too. `rls-cover.mjs` reads the org-scoped table set from the
+    catalog rather than from a list — a list is how 37 of 52 tables came to have no policy at all."""
+    if mode == "off": return None
+    r = run("rls-cover.mjs", {"ADMIN_URL": admin, "RLS_MODE": mode})
     line = (r.stdout.strip().splitlines() or [""])[-1]
-    if line: print("  app_rw check: " + line)
-    if r.returncode: sys.exit("refusing to deploy this DATABASE_URL: " + ((r.stderr.strip().splitlines() or ["verification failed"])[-1])[:300])
+    if line.startswith("{"): print("  rls coverage: " + line[:260])
+    # exit 3 = could not connect, exit 2 = pointed at the wrong role, and any non-zero exit with no
+    # JSON line means the pass never reached its own verdict. None of those is evidence of anything.
+    if r.returncode and (r.returncode != 1 or not line.startswith("{")):
+        sys.exit(_unprovable(r, hint, "row-level security coverage"))
+    if r.returncode:
+        sys.exit("row-level security coverage failed, so tenant isolation cannot be claimed: " + _node_err(r))
+    try: return json.loads(line)
+    except Exception: return None
+
+def _verify_app_rw(run, url, mode, backend, source, hint):
+    """PROVE, on the exact string that is about to become DATABASE_URL, that another workspace's rows
+    are unreachable — then return the evidence so state can record it.
+
+    provision.py used to trust the mold's own self-test and deploy a URL it had never opened: that is
+    how the live app came to report `role postgres — WARNING: BYPASSRLS, row-level security is NOT
+    enforced`. The first gate that replaced it asked only `count(pg_policies) > 0`, which passes on a
+    database where 37 of 52 org-scoped tables have no policy — a gate that certifies the broken state.
+    verify-apprw.mjs now ends by reading, and writing, across a workspace boundary and failing.
+
+    The URL travels in the environment, never in argv: /proc/<pid>/cmdline is world-readable. Nothing
+    printed here contains a credential — only role names, flags and counts."""
+    r = run("verify-apprw.mjs", {"APP_RW_URL": url, "RLS_MODE": mode})
+    line = (r.stdout.strip().splitlines() or [""])[-1]
+    if line.startswith("{"): print("  isolation proof: " + line[:400])
+    if r.returncode and (r.returncode != 1 or not line.startswith("{")):
+        sys.exit(_unprovable(r, hint, "tenant isolation"))
+    if r.returncode:
+        sys.exit("refusing to deploy this DATABASE_URL: " + _node_err(r, "verification failed"))
+    try: out = json.loads(line)
+    except Exception: sys.exit("the isolation proof printed nothing readable; refusing to deploy")
+    # Everything the gate can now see goes into the record. `protected/unprotected` alone would let
+    # state read "52/52, unprotected []" over a database with a `USING (true)` policy beside every
+    # org_isolation, which is the exact shape of the defect this file exists to stop.
+    return {"at": NOW, "backend": backend, "mode": mode, "source": source, "role": out.get("role"),
+            "superuser": out.get("superuser"), "bypassrls": out.get("bypassrls"),
+            "org_scoped_tables": out.get("tables_org_scoped"), "protected": out.get("protected"),
+            "unprotected": out.get("unprotected") or [], "open_policies": out.get("open_policies") or [],
+            "probe_table": out.get("probe_table"), "probe_tables": out.get("probe_tables"),
+            "probe_skipped": out.get("probe_skipped") or [],
+            "foreign_rows_readable": out.get("foreign_rows"), "leaking_tables": out.get("leaking_tables") or [],
+            "cross_org_write": out.get("cross_org_write"), "cross_org_writable": out.get("cross_org_writable") or [],
+            "unset_org_rows": out.get("unset_org_rows"), "open_with_no_org": out.get("open_with_no_org") or []}
+
+def record_rls(adir, ds, ev):
+    """datastores.postgres.rls stops being a claim the moment this is written beside it.
+
+    `factory.py validate` refuses `rls: fail_closed` (or `on`) on an app that says it is deployed
+    without a matching evidence block, so the field can no longer be a string nothing tested."""
+    if not ev: return
+    ds.setdefault("postgres", {})["rls_verified"] = ev
+    save(os.path.join(adir, "datastores.json"), ds)
+    # .get, not [] — a `not verified:` record (scope=shared_with_live) carries no counts, and a
+    # KeyError here is not a SystemExit, so main()'s revert handler would not have fired: the deploy
+    # died mid-flight and left the app recorded as `stamping`, which factory.py validate does not audit.
+    if str(ev.get("source", "")).startswith("not verified"):
+        print(f"  recorded datastores.postgres.rls_verified: NOT verified — {ev.get('source')[:160]}")
+    else:
+        print(f"  recorded datastores.postgres.rls_verified ({ev.get('mode')} on {ev.get('backend')}, "
+              f"{ev.get('protected')}/{ev.get('org_scoped_tables')} org-scoped tables protected, "
+              f"{len(ev.get('open_policies') or [])} open policy/policies, "
+              f"{ev.get('probe_tables')} table(s) probed across the workspace boundary)")
 
 def _retarget(app_url, runtime_url):
     """Put the app_rw URL back on the host:port that actually answers, and force TLS.
@@ -428,7 +546,10 @@ def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_u
     POLICY' .setup-app-role.mjs` returns nothing — so app #2 would ship with a correctly-restricted
     role guarding an empty policy set: every log line green, no tenant isolation at all.
 
-    Returns the app_rw URL, which becomes DATABASE_URL on every project."""
+    Returns the app_rw URL. It is NOT written anywhere here: the coverage pass and the isolation
+    proof run first, in bring_up_schema, and only then does DATABASE_URL get set. Writing it here meant
+    the credential was live on three projects before anything had checked what it could reach, and the
+    task-workflow migration — which creates three more org-scoped tables — had not even run yet."""
     envsup = os.path.join(mold_dir, ".env.supabase"); envloc = os.path.join(mold_dir, ".env.local")
     saved = open(envloc).read() if os.path.exists(envloc) else None
     # Reuse the existing app_rw password when one is already deployed. The bootstrap rotates on every
@@ -459,9 +580,6 @@ def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_u
             # Supabase is the one provider that genuinely fronts a different port for runtime pooling.
             app_url = _retarget(app_url, runtime_url or admin)
             if r.returncode: print(f"  bootstrap's own test hit the hardcoded port 6543; retargeted to the {provider} endpoint")
-        _verify_app_rw(mold_dir, app_url)
-        for pr_ in projects: _set_env("DATABASE_URL", app_url, mold_dir, project=pr_)
-        print(f"  DATABASE_URL now points at app_rw on {len(projects)} project(s)")
         return app_url
     finally:
         if os.path.exists(envsup): os.remove(envsup)
@@ -504,13 +622,15 @@ def run_migrations(mold_dir, vals):
     print("  migrations:\n    " + "\n    ".join(msg[-6:] or ["ok"]))   # a Node crash must never read as its version banner
     if r.returncode: sys.exit("migration failed:\n" + "\n".join(msg[-12:]))
 
-def bring_up_schema(mold_dir, ds, proj, projects):
+def bring_up_schema(app_id, mold_dir, ds, proj, projects):
     """Empty database -> a schema, a migration journal, RLS, app_rw, and a DATABASE_URL proven to be
     all four. Separated from deploy_vercel so it can be run — and audited — on its own with
     `--verify-db`, without building or deploying anything.
 
-    Order is push, migrate, bootstrap, task-workflow. That is what the mold itself says ("ORDER
-    MATTERS: push the schema first, then this") and the reverse of what provision.py used to do."""
+    Order is push, migrate, bootstrap, task-workflow, COVER, PROVE, publish. The first four are what
+    the mold itself says ("ORDER MATTERS: push the schema first, then this") and the reverse of what
+    provision.py used to do; the last three are the factory's, and they are why `rls: fail_closed` is
+    now a measurement. Returns (env values, evidence)."""
     vals = pull_env(mold_dir, proj)
     url = admin_url(vals)
     # Neon injects the POOLED endpoint as DATABASE_URL and the direct one as DATABASE_URL_UNPOOLED.
@@ -522,8 +642,8 @@ def bring_up_schema(mold_dir, ds, proj, projects):
     runtime = vals.get("DATABASE_URL") or url
     print("pushing the schema, then the migration journal"); push_schema(mold_dir, url); run_migrations(mold_dir, vals)
     print("bootstrapping row-level security and the app_rw role")
-    bootstrap_database(mold_dir, url, projects,
-                       provider=ds.get("postgres", {}).get("provider", "supabase"), runtime_url=runtime)
+    app_url = bootstrap_database(mold_dir, url, projects,
+                                 provider=ds.get("postgres", {}).get("provider", "supabase"), runtime_url=runtime)
     # .migrate-task-workflow-service.mjs reads its admin URL from .env.supabase, never from the environment.
     # Write it transiently (gitignored inside the mold) and remove it whatever happens.
     envsup = os.path.join(mold_dir, ".env.supabase")
@@ -536,9 +656,20 @@ def bring_up_schema(mold_dir, ds, proj, projects):
     msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
     print("  task-workflow migrations: " + (msg[-1][:160] if msg else "ok"))
     if r.returncode: sys.exit("task-workflow migration failed:\n" + "\n".join(msg[-12:]))
-    return vals
+    # AFTER the migration, not before: db:migrate:task-workflows creates three more org-scoped tables,
+    # and the mold policies them from its own fixed list. Cover, then prove, then — and only then —
+    # publish the credential.
+    mode = rls_mode(ds); run = _lib_runner(mold_dir)
+    hint = f"python3 .claude/scripts/provision.py {app_id} --check"
+    _rls_cover(run, url, mode, hint)
+    ev = _verify_app_rw(run, app_url, mode, ds.get("postgres", {}).get("provider", "supabase"),
+                        "provision.py bring_up_schema", hint)
+    for pr_ in projects: _set_env("DATABASE_URL", app_url, mold_dir, project=pr_)
+    print(f"  DATABASE_URL now points at app_rw on {len(projects)} project(s)")
+    vals["DATABASE_URL"] = app_url        # sync_env must never push the PRE-bootstrap admin URL onward
+    return vals, ev
 
-def deploy_vercel(app_id, app, infra, ds, mold_dir):
+def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     """Mirror of the mold's Makefile `deploy` target: migrate, workflow service (services/task-workflow, Next.js),
     Eve API (vercel build with experimental frameworks + --prebuilt), web dashboard, then health verification."""
     proj = infra["vercel"]["project"]; team = infra["vercel"].get("team", ""); scope = f"--scope {team}" if team else ""
@@ -556,7 +687,8 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
     if not shared:
         if "TASK_WORKFLOW_SERVICE_TOKEN" not in have:
             _add_env("TASK_WORKFLOW_SERVICE_TOKEN", subprocess.check_output("openssl rand -hex 32", shell=True, text=True).strip(), mold_dir, proj); print("minted TASK_WORKFLOW_SERVICE_TOKEN")
-        vals = bring_up_schema(mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
+        vals, ev = bring_up_schema(app_id, mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
+        record_rls(adir, ds, ev)
         # workflow service: its own Next.js app under services/task-workflow
         print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
         wf_url = run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy")
@@ -576,6 +708,12 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         _set_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir, project=proj)
         cfg_main = "vercel.json"
     else:
+        # bring_up_schema — and with it the app_rw bootstrap, the coverage pass and the isolation proof —
+        # is inside `if not shared`. main() refuses shared_with_live for a multi_org app for exactly that
+        # reason; a single_org app on a shared database gets an honest record instead of a silent claim.
+        record_rls(adir, ds, {"at": NOW, "backend": ds.get("postgres", {}).get("provider", "supabase"),
+                              "mode": rls_mode(ds), "source": "not verified: scope=shared_with_live, the database "
+                              "belongs to another application and this deploy neither bootstraps nor gates it"})
         v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
         cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
     # The eve API defaults WEB_ORIGIN to the live app (agent/channels/eve.ts, agent/lib/run-tools.ts).
@@ -594,13 +732,23 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir):
         print(f"  WEB_ORIGIN corrected to {url} (takes effect on the next deploy)")
     # verify-production, as the Makefile does
     checks = [("workflow", f"{infra['vercel'].get('workflow_url','')}/api/health"), ("api", f"{infra['vercel'].get('api_url','')}/eve/v1/health"), ("web", f"{url}/api/ops/health")]
-    health = {}
+    health = {}; alarm = ""
     for name, u in checks:
         if not u.startswith("http"): continue
-        r = subprocess.run(f"curl --silent --show-error --max-time 20 -o /dev/null -w '%{{http_code}}' {u}", shell=True, capture_output=True, text=True)
-        health[name] = r.stdout.strip(); print(f"  health {name}: {health[name]} {u}")
+        r = subprocess.run(f"curl --silent --show-error --max-time 20 -w '\n%{{http_code}}' {u}", shell=True, capture_output=True, text=True)
+        body, _, code = r.stdout.rpartition("\n")
+        health[name] = code.strip(); print(f"  health {name}: {health[name]} {u}")
+        # READ THE BODY, NOT THE STATUS CODE. The mold's checkDb returns the BYPASSRLS warning as a
+        # `detail` string with ok:true, so the aggregate ok — and the HTTP status — are unaffected: the
+        # endpoint answers 200 while announcing that row-level security is not enforced. The status code
+        # is structurally incapable of carrying this, which is why a lane report once printed
+        # `health.db | pass` next to the warning. Deployed and isolated have to be the same state.
+        if name == "web" and re.search(r"BYPASSRLS|row-level security is NOT enforced", body, re.I):
+            try: alarm = json.loads(body).get("db", {}).get("detail", "")[:220]
+            except Exception: alarm = "the health endpoint reports BYPASSRLS"
     infra["vercel"]["health"] = health
     if any(v != "200" for v in health.values()): print("WARNING: a health check is not 200; see infrastructure.json vercel.health")
+    return alarm
 
 ARTIFACT_HEADER = """# GENERATED by .claude/scripts/provision.py from state/application/{app_id}/*.json.
 # REGENERATED ON EVERY RUN (--check and --verify-db alike) — edit this file and your edit is gone.
@@ -698,7 +846,17 @@ def _vm_env(app_id, pairs):
     finally: os.umask(old)
     os.chmod(f, 0o600)
 
-def verify_db(app_id, mold_dir, ds):
+def _vm_runner(app_id, mold_dir):
+    """How to run .claude/scripts/lib/*.mjs against the SELF_HOSTED backend: inside node:24 on the app's
+    private docker network, with the mold's node_modules mounted read-only beside the script. Node
+    resolves a bare import from the script's own directory upward, so /node_modules serves /factory-lib
+    without writing anything into the mold (HARD RULE 1). Same scripts, same checks, both backends."""
+    sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import localpg
+    return lambda script, env: localpg.run(app_id, f"node /factory-lib/{script}", mold_dir, env,
+        extra=["-v", f"{os.path.join(ROOT, '.claude/scripts/lib')}:/factory-lib:ro",
+               "-v", f"{os.path.join(mold_dir, 'node_modules')}:/node_modules:ro"])
+
+def verify_db(app_id, mold_dir, ds, adir):
     """Stand up the app's LOCAL Postgres and run the whole mold chain against it, then prove the URL.
 
     This is what `target: vm` buys: a real database the lanes can run against, on a private network,
@@ -720,13 +878,12 @@ def verify_db(app_id, mold_dir, ds):
             if r.returncode: sys.exit(f"{label} failed:\n" + "\n".join(msg[-12:]))
         m = re.search(r'^DATABASE_URL="?([^"\n]+)"?', open(envloc).read(), re.M)
         if not m: sys.exit("bootstrap did not write an app_rw DATABASE_URL into .env.local")
-        r = localpg.run(app_id, "node /factory-lib/verify-apprw.mjs", mold_dir, {"APP_RW_URL": m.group(1)},
-                        # node resolves a bare import from the script's directory UPWARD, so /node_modules
-                        # serves /factory-lib without a nested mount into a read-only one
-                        extra=["-v", f"{os.path.join(ROOT, '.claude/scripts/lib')}:/factory-lib:ro",
-                               "-v", f"{os.path.join(mold_dir, 'node_modules')}:/node_modules:ro"])
-        print("  app_rw check: " + (r.stdout.strip().splitlines() or [r.stderr.strip()[-200:]])[-1])
-        if r.returncode: sys.exit("app_rw verification failed")
+        # Same two scripts as the managed lane, in the same order, after the same four steps.
+        mode = rls_mode(ds); run = _vm_runner(app_id, mold_dir)
+        hint = f"python3 .claude/scripts/provision.py {app_id} --verify-db"
+        _rls_cover(run, adm, mode, hint)
+        ev = _verify_app_rw(run, m.group(1), mode, "self_hosted", "provision.py --verify-db", hint)
+        record_rls(adir, ds, ev)
         _vm_env(app_id, {"POSTGRES_ADMIN_URL": adm, "DATABASE_URL": m.group(1)})
         print(f"verified: {app_id}'s local database is ready (no host port; `docker port {localpg.cont(app_id)}` is empty)")
         print(f"  DATABASE_URL and POSTGRES_ADMIN_URL written to infra/vm/apps/{app_id}/.env — 0600, and ignored by\n"
@@ -760,6 +917,88 @@ def set_secret(app_id, name, infra, mold_dir):
         os.chmod(f, 0o600); where = os.path.relpath(f, ROOT)
     print(f"{name} set on {where}.")
 
+def _health_rls(infra):
+    """What the app IN FRONT OF TRAFFIC says about row-level security, read from its own health endpoint.
+
+    READ THE BODY, NOT THE STATUS CODE: the mold's checkDb returns the BYPASSRLS warning as a `detail`
+    string with ok:true, so the endpoint answers 200 while announcing that RLS is off. Read-only, and
+    the only reading that covers the process actually serving requests."""
+    u = (infra.get("vercel") or {}).get("production_url") or (infra.get("vm") or {}).get("production_url") or ""
+    if not u.startswith("http"): return "not checked: this app has no production URL yet"
+    r = subprocess.run(f"curl --silent --show-error --max-time 20 {u}/api/ops/health", shell=True, capture_output=True, text=True)
+    body = r.stdout or ""
+    if r.returncode or not body: return "not checked: the health endpoint did not answer"
+    m = re.search(r"(BYPASSRLS[^\"]*|row-level security is NOT enforced[^\"]*)", body)
+    return f"NOT enforced — {m.group(1)[:180]}" if m else "no BYPASSRLS warning on /api/ops/health"
+
+def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
+    """Prove tenant isolation on an app that is ALREADY deployed, and record the result.
+
+    Self-discovering, because the operator is not technical (HARD RULE 4): the admin URL and the app
+    URL come from wherever this app's secrets live — Vercel production env for a vercel app, the app's
+    own 0600 `.env` for a vm one — and nothing is ever asked for on the command line. Neither URL is
+    printed. On failure it prints ONE instruction.
+
+    `repair` runs the coverage pass first, which is what makes this safe to run after a clone restore
+    or after any migration: pg_restore --clean drops every policy, and a migration adds tables that
+    inherit app_rw's DML grant with no policy at all."""
+    mode = rls_mode(ds); prov = ds.get("postgres", {}).get("provider", "supabase")
+    if ds.get("postgres", {}).get("scope") == "shared_with_live" and repair:
+        # scope shared_with_live means this app borrows the LIVE database. Measuring it is fine; applying
+        # DDL to it from here is not, whatever the app declares.
+        repair = False; print("  scope is shared_with_live: measuring only, no coverage pass (that database belongs to another application)")
+    if mode == "off":
+        return print(f'{app_id}: datastores.postgres.rls is "off" — this application did not ask for tenant '
+                     f"isolation, so there is nothing to prove. Set it to \"fail_closed\" to turn the gate on.")
+    if infra.get("target") == "vercel":
+        proj = infra["vercel"]["project"]; vals = pull_env(mold_dir, proj)
+        adm, appurl, run = admin_url(vals), vals.get("DATABASE_URL", ""), _lib_runner(mold_dir)
+        hint = f"python3 .claude/scripts/provision.py {app_id} --check"
+        if not appurl:
+            sys.exit(f"{app_id}: {proj} has no readable DATABASE_URL, so there is nothing to prove yet.\n"
+                     f"  Run: python3 .claude/scripts/provision.py {app_id} --verify-db")
+        if repair and not adm:
+            sys.exit(f"{app_id}: no admin database URL on {proj} (none of {'/'.join(ADMIN_KEYS)}), so the coverage "
+                     f"pass cannot run.\n  Run: {hint}")
+    else:
+        envf = os.path.join(ROOT, "infra/vm/apps", app_id, ".env")
+        vals = {l.split("=", 1)[0].strip(): l.split("=", 1)[1].strip() for l in (open(envf).read().splitlines() if os.path.exists(envf) else []) if "=" in l and not l.startswith("#")}
+        adm, appurl, run = vals.get("POSTGRES_ADMIN_URL", ""), vals.get("DATABASE_URL", ""), _vm_runner(app_id, mold_dir)
+        hint = f"python3 .claude/scripts/provision.py {app_id} --verify-db"
+        if not appurl:
+            sys.exit(f"{app_id}: this app's local database has not been brought up yet.\n  Run: {hint}")
+        # Same guard as the vercel branch: an .env holding DATABASE_URL but no POSTGRES_ADMIN_URL (an
+        # older artifact, a hand-edited file) otherwise reached rls-cover.mjs with ADMIN_URL= and died
+        # on "ADMIN_URL is not set" — true, and useless to the person reading it.
+        if repair and not adm:
+            sys.exit(f"{app_id}: infra/vm/apps/{app_id}/.env has no POSTGRES_ADMIN_URL, so the coverage pass "
+                     f"cannot run.\n  Run: {hint}")
+    if repair: _rls_cover(run, adm, mode, hint)
+    ev = _verify_app_rw(run, appurl, mode, prov, "provision.py --verify-rls", hint)
+    # What the RUNNING app uses is a different fact from what the stored credential proves: a Vercel env
+    # change only takes effect on the NEXT build. Read the app's own health endpoint and say which of the
+    # two this evidence covers — `--verify-db` printed that caveat and this command printed none, so
+    # `--verify-rls` -> `factory.py validate` could end green while the live process still ran as postgres.
+    ev["running_app"] = _health_rls(infra)
+    record_rls(adir, ds, ev)
+    print(f"{app_id}: tenant isolation PROVEN on the stored DATABASE_URL — {ev['protected']}/{ev['org_scoped_tables']} "
+          f"org-scoped tables enabled+forced+scoped, {len(ev['open_policies'])} policy/policies that do not scope by "
+          f"org_id, {ev['foreign_rows_readable']} foreign row(s) readable as {ev['role']} across {ev['probe_tables']} "
+          f"probed table(s), cross-workspace write refused with {ev['cross_org_write']}")
+    if ev["running_app"].startswith("NOT enforced"):
+        sys.exit(f"{app_id}: but the app SERVING TRAFFIC still says row-level security is not enforced "
+                 f'("{ev["running_app"][:160]}"). A Vercel env change only reaches the app on its next build.\n'
+                 f"  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
+    print(f"  the running app reports: {ev['running_app']}")
+
+def _revert(adir, app, reason):
+    """A deploy that could not prove isolation is not a deploy. Record it as reverted, with the reason,
+    instead of leaving the app in `stamping` or — as before — writing `stamped` regardless."""
+    app["status"] = "reverted"
+    app["revert"] = {"reason": reason[:400], "lane": "functional", "at": NOW}
+    save(os.path.join(adir, "application.json"), app)
+    print(f"  status set to reverted: {reason[:200]}")
+
 def main(a):
     if not a: sys.exit(__doc__)
     app_id = a[0]; deploy = "--deploy" in a
@@ -778,6 +1017,10 @@ def main(a):
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
     if "--set-secret" in a:
         return set_secret(app_id, a[a.index("--set-secret") + 1], infra, mold_dir)
+    if "--verify-rls" in a:
+        # The gate on its own, against whatever is deployed right now. Nothing is built, nothing is
+        # deployed, no password is rotated — `--verify-db` rotates app_rw, this does not.
+        return verify_rls(app_id, app, infra, ds, adir, mold_dir, repair="--no-repair" not in a)
     # NO POSTGRES PORT IS EVER OPENED TO THE INTERNET. That refusal is code, not a comment.
     # A self_hosted database here lives on a private docker network with no host port, which a Vercel
     # function cannot reach. Making it reachable would mean `hostssl ... 0.0.0.0/0` — the team is on
@@ -790,8 +1033,36 @@ def main(a):
                  f'a Postgres port to the internet. Set "provider": "neon" in state/application/{app_id}/'
                  f'datastores.json (Neon\'s free tier is available) and rerun. To use it locally: '
                  f'python3 .claude/scripts/provision.py {app_id} --verify-db')
+    pg = ds.get("postgres", {})
+    if pg.get("scope") == "shared_with_live" and pg.get("tenancy") == "multi_org":
+        # The `shared` branch of deploy_vercel skips bring_up_schema entirely — no app_rw, no coverage
+        # pass, no isolation proof — and then records the app as stamped. A multi-tenant application on
+        # a database this deploy neither bootstraps nor gates cannot honestly claim isolation.
+        sys.exit(f'{app_id}: datastores.postgres pairs scope "shared_with_live" with tenancy "multi_org". '
+                 f"That deploy borrows another application's database, so it never creates app_rw and never "
+                 f"proves tenant isolation, yet multi_org means the app serves more than one workspace. Set "
+                 f'"scope": "fresh" in state/application/{app_id}/datastores.json (the app gets its own '
+                 f'database) or "tenancy": "single_org" if it really serves one workspace.')
     if target == "vercel":
         proj = infra["vercel"]["project"]
+        others = []
+        for other in sorted(os.listdir(os.path.join(ST, "application"))):
+            if other in (app_id, "app_id"): continue
+            f = os.path.join(ST, "application", other, "infrastructure.json")
+            g = os.path.join(ST, "application", other, "application.json")
+            if not (os.path.exists(f) and os.path.exists(g)): continue
+            if load(g).get("status") in ("retired", "reverted", "planned"): continue
+            if load(f).get("vercel", {}).get("project") == proj: others.append(other)
+        if others:
+            # One Vercel project is ONE env namespace and app_rw is a CLUSTER-GLOBAL role, so provisioning
+            # the second app rewrites the first app's DATABASE_URL and rotates the password out from under
+            # its running build. intake.py already refuses this shape for self_hosted; there is no reason
+            # it is safe here. (claudecode_web_internal and claudecode_web_replica were both configured
+            # onto claudecode-web; internal is retired, which is why only one of them is live.)
+            sys.exit(f"{app_id}: {', '.join(others)} already deploy to the Vercel project {proj}. One project is one "
+                     f"environment namespace and one app_rw password, so provisioning this app would rewrite that "
+                     f"app's DATABASE_URL and rotate its database password. Give this app its own project in "
+                     f"state/application/{app_id}/infrastructure.json (vercel.project) and rerun.")
         ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
         present = vercel_env_names(mold_dir, proj)
         present = provision_datastores(app_id, ds, mold_dir, present, infra, proj)
@@ -803,8 +1074,11 @@ def main(a):
             if link: sys.exit(GIT_LINK_MSG.format(project=p_, link=link))
         if "--verify-db" in a:
             # the database half of --deploy, on its own: no build, no deployment, no service touched
-            bring_up_schema(mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
-            return print(f"{app_id}: database ready and verified on {prov}")
+            _, ev = bring_up_schema(app_id, mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
+            record_rls(adir, ds, ev)
+            print(f"{app_id}: database ready and verified on {prov}")
+            return print("  the RUNNING app still uses the DATABASE_URL of its last build; Vercel env changes take "
+                         "effect on the NEXT one. Re-run with --deploy to put this credential in front of traffic.")
     else:
         # EVERY vm run regenerates the artifact, --verify-db included. --verify-db used to return before
         # this line, so the compose file and README could be missing while state still named them, and —
@@ -812,7 +1086,7 @@ def main(a):
         # .gitignore protecting them. (localpg.appdir now writes it first, and the root .gitignore
         # carries the same rules; this ordering means the artifact simply cannot lag the database.)
         d = generate_local_artifact(app_id, mold_dir, secrets, ds, infra)
-        if "--verify-db" in a: return verify_db(app_id, mold_dir, ds)
+        if "--verify-db" in a: return verify_db(app_id, mold_dir, ds, adir)
         envf = os.path.join(d, ".env"); present = set()
         if os.path.exists(envf):
             present = {l.split("=")[0].strip() for l in open(envf) if "=" in l and not l.startswith("#") and l.split("=",1)[1].strip()}
@@ -831,6 +1105,13 @@ def main(a):
         print("provisioner still has to create:"); [print(f"  {m}") for m in missing_derived]
     pending_deploy = [x for x in DEPLOY_TIME if x not in present]
     if pending_deploy: print(f"set during --deploy: {', '.join(pending_deploy)}")
+    ev = ds.get("postgres", {}).get("rls_verified")
+    if rls_mode(ds) != "off" and (not ev or str(ev.get("source", "")).startswith("not verified")):
+        # `--check` regenerates the artifact and counts secrets and never once looked at the database.
+        # An app can therefore sit here for weeks claiming fail_closed with nothing having measured it.
+        print(f'datastores.postgres.rls says "{rls_mode(ds)}" but nothing has measured it yet.')
+        print(f"  python3 .claude/scripts/provision.py {app_id} --verify-rls")
+    elif ev: print(f"tenant isolation last proven {ev['at']} on {ev['backend']} ({ev.get('protected')}/{ev.get('org_scoped_tables')} org-scoped tables protected)")
     if not deploy:
         print("check only; re-run with --deploy once nothing is missing"); sys.exit(1 if (missing_user or missing_derived) else 0)
     if missing_user or missing_derived: sys.exit("refusing to deploy with missing secrets")
@@ -842,8 +1123,24 @@ def main(a):
                  f"Run `python3 .claude/scripts/provision.py {app_id} --verify-db` to bring its database up and prove "
                  f"the schema, or set infrastructure.target to \"vercel\" to deploy the application.")
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
-    deploy_vercel(app_id, app, infra, ds, mold_dir)
+    try:
+        alarm = deploy_vercel(app_id, app, infra, ds, mold_dir, adir)
+    except SystemExit as e:
+        # "deployed" and "isolated" are the same state or the app is not deployed. Every exit inside
+        # deploy_vercel — the coverage pass, the isolation proof, a failed build — lands here, so the
+        # app can never be left recorded as shipped after a gate said no.
+        save(os.path.join(adir, "infrastructure.json"), infra)
+        _revert(adir, app, str(e) if e.code else "deploy stopped")
+        raise
     infra["deployed_at"] = TODAY; save(os.path.join(adir, "infrastructure.json"), infra)
+    if alarm and rls_mode(ds) != "off":
+        # The stored DATABASE_URL passing the gate is not the same fact as the RUNNING app using it:
+        # a Vercel env change only takes effect on the next build, and this is the only reading that
+        # covers the process actually serving traffic.
+        _revert(adir, app, f"the deployed app reports row-level security is not enforced: {alarm}")
+        sys.exit(f"{app_id}: the app deployed, but its own health endpoint says row-level security is NOT enforced "
+                 f'("{alarm}") while datastores.postgres.rls claims "{rls_mode(ds)}". The build in front of traffic '
+                 f"is still using an older DATABASE_URL.\n  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
 if __name__ == "__main__": main(sys.argv[1:])
