@@ -71,7 +71,9 @@ const INIT = () => {
   } catch { /* a browser without these entry types leaves the metrics at 0; the row says so. */ }
 };
 
+const usedVp = new Set();   // the footer reports the viewports this RUN actually visited, not the matrix
 async function newCtx(browser, vp) {
+  usedVp.add(vp.w);
   const ctx = await browser.newContext({
     viewport: { width: vp.w, height: vp.h }, hasTouch: vp.touch, isMobile: vp.touch,
     deviceScaleFactor: vp.touch ? 3 : 1, reducedMotion: "no-preference",
@@ -100,63 +102,137 @@ async function open(ctx, route) {
   return { page };
 }
 
+// ---- did the application actually render? --------------------------------------------------------
+// A 200 is not a rendered application. An empty shell, or a Next.js client-side crash, answers 200 and
+// then satisfies every budget below VACUOUSLY: 0px of overflow, CLS 0, 0 tap targets, no control to
+// click. That is exactly how this lane came to print 24 green rows against a deployment that rendered
+// nothing at all. So every row starts by counting what the browser can actually see, and a declared
+// page route that rendered no interactive control FAILS the row rather than passing it for free.
+// (`target-up.py`, the lane's precondition, catches the app that was never deployed and the 200 that
+// came from something other than this mold — that is a `skipped` lane. Reaching here means the mold's
+// own HTML arrived and then produced nothing, which is a defect of the deployment, not of the plan.)
+const CONTROLS = 'a[href],button,input:not([type="hidden"]),select,textarea,summary,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="switch"],[tabindex]:not([tabindex="-1"])';
+const census = (page) => page.evaluate((SEL) => {
+  const vis = [...document.querySelectorAll(SEL)].filter((el) => {
+    const cs = getComputedStyle(el);
+    return cs.display !== "none" && cs.visibility !== "hidden" && el.getClientRects().length;
+  });
+  return { controls: vis.length, chars: (document.body ? document.body.innerText : "").trim().length };
+}, CONTROLS);
+const notRendered = (c) => c.controls ? null
+  : `the route answered 2xx but rendered no interactive control (${c.chars} chars of body text): nothing was `
+    + `measured here, so this row cannot pass — the deployment is serving a shell, not the application`;
+
+// ---- repeat-and-confirm, for the two budgets that move on their own -------------------------------
+// Overflow, clipping and tap size are geometry: measure them twice and you get the same answer. CLS
+// and INP are not. Measured once, `interaction / keyboard @ desktop-1440` swung 32 -> 176 -> 208 ->
+// 208ms across four consecutive runs against an UNCHANGED deployment: two runs in four would have
+// reverted a healthy application, filed a task, and told a non-technical operator their app had been
+// pulled out of service — on 4% of overshoot on a shared 4-vCPU box running headless chromium. A
+// budget that fires on measurement noise is not a defect, so a timing row is re-measured up to
+// CONFIRM times and fails only when the budget is exceeded on EVERY run. It is not a weakening: a
+// genuinely slow interaction cannot come in under budget on a repeat, and every sample is printed, so
+// a borderline number stays visible instead of being smoothed away.
+const CONFIRM = 3;
+async function confirm(sample, budget) {
+  const runs = [];
+  let last;
+  for (let i = 0; i < CONFIRM; i++) {
+    last = await sample();
+    if (last.err || last.dead || last.skip) return { last, runs };
+    runs.push(last.value);
+    if (last.value <= budget) break;
+  }
+  return { last, runs, best: Math.min(...runs) };
+}
+const seen = (runs, unit, dp = 0) => {
+  const f = (v) => (dp ? v.toFixed(dp) : String(Math.round(v)));
+  return runs.length > 1 ? `${runs.map(f).join("/")}${unit} over ${runs.length} runs, best ${f(Math.min(...runs))}${unit}` : `${f(runs[0])}${unit}`;
+};
+
 // ---- layout: horizontal overflow, cumulative layout shift, and content that cannot be reached ------
 async function layout(browser) {
   for (const vp of VIEWPORTS) {
     const ctx = await newCtx(browser, vp);
     for (const route of ROUTES) {
       const label = `layout ${route} @ ${vp.name}`;
-      const { page, err } = await open(ctx, route);
-      if (err) { row(label, "skipped", `did not load: ${err}`); continue; }
-      // CLS is snapshotted BEFORE the reachability probe, because scrolling to test reachability can
-      // itself provoke shifts and would otherwise pollute the number this row grades.
-      const m = await page.evaluate(() => {
-        const de = document.documentElement;
-        return { overflow: Math.max(0, de.scrollWidth - de.clientWidth), cls: window.__cls, vw: de.clientWidth };
-      });
-      const reach = await page.evaluate(() => {
-        const de = document.documentElement, vw = de.clientWidth, vh = de.clientHeight;
-        const SEL = 'a[href],button,input,select,textarea,summary,[role="button"],[role="link"],[role="tab"],[tabindex]:not([tabindex="-1"])';
-        const named = (el) => ((el.getAttribute("aria-label") || el.textContent || el.getAttribute("name") || el.tagName) + "").trim().slice(0, 24);
-        // Reachable means a person can actually get a pointer onto it: its centre is inside the
-        // viewport AND hit-testing that centre lands on the control. The hit test is what catches a
-        // control clipped by an `overflow: hidden` ancestor or buried under an overlay while its
-        // rectangle still reads as "on screen" — geometry alone calls those visible.
-        const hits = (el, r) => {
-          const x = r.left + r.width / 2, y = r.top + r.height / 2;
-          if (x < 0 || y < 0 || x > vw || y > vh) return false;
-          const hit = document.elementFromPoint(x, y);
-          return !!hit && (hit === el || el.contains(hit) || hit.contains(el));
-        };
-        const off = [], stuck = [];
-        for (const el of document.querySelectorAll(SEL)) {
-          const cs = getComputedStyle(el);
-          if (cs.display === "none" || cs.visibility === "hidden" || !el.getClientRects().length) continue;
-          const r = el.getBoundingClientRect();
-          if (r.width < 1 || r.height < 1) continue;
-          if (hits(el, r)) continue;
-          off.push(named(el));
-          // Try to reach it the way a person would, then look again.
-          el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
-          const after = el.getBoundingClientRect();
-          if (!hits(el, after)) {
-            const why = (after.right > vw + 1 || after.left < -1) ? `still past the edge, right=${Math.round(after.right)} > ${vw}`
-                      : "clipped or covered: hit-testing its centre does not reach it";
-            stuck.push(`${named(el)} [${why}]`);
+      const probe = async () => {
+        const { page, err } = await open(ctx, route);
+        if (err) return { err };
+        const c = await census(page);
+        const dead = notRendered(c);
+        if (dead) { await page.close(); return { dead, c }; }
+        // CLS is snapshotted BEFORE the reachability probe, because scrolling to test reachability can
+        // itself provoke shifts and would otherwise pollute the number this row grades.
+        const m = await page.evaluate(() => {
+          const de = document.documentElement;
+          return { overflow: Math.max(0, de.scrollWidth - de.clientWidth), cls: window.__cls, vw: de.clientWidth };
+        });
+        const reach = await page.evaluate(() => {
+          const de = document.documentElement, vw = de.clientWidth, vh = de.clientHeight;
+          const SEL = 'a[href],button,input,select,textarea,summary,[role="button"],[role="link"],[role="tab"],[tabindex]:not([tabindex="-1"])';
+          const named = (el) => ((el.getAttribute("aria-label") || el.textContent || el.getAttribute("name") || el.tagName) + "").trim().slice(0, 24);
+          // Reachable means a person can actually get a pointer onto it: its centre is inside the
+          // viewport AND hit-testing that centre lands on the control. The hit test is what catches a
+          // control clipped by an `overflow: hidden` ancestor or buried under an overlay while its
+          // rectangle still reads as "on screen" — geometry alone calls those visible.
+          const hits = (el, r) => {
+            const x = r.left + r.width / 2, y = r.top + r.height / 2;
+            if (x < 0 || y < 0 || x > vw || y > vh) return false;
+            const hit = document.elementFromPoint(x, y);
+            return !!hit && (hit === el || el.contains(hit) || hit.contains(el));
+          };
+          // `overflow: hidden` still scrolls under SCRIPT control, so scrollIntoView happily "rescues" a
+          // control that no person can ever reach with a mouse, a finger or a keyboard. That is the whole
+          // clipped-content defect, so it is tested BEFORE any scrolling and is never scrolled away.
+          const clippedByHidden = (el) => {
+            for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+              const cs = getComputedStyle(a);
+              const hx = /hidden|clip/.test(cs.overflowX), hy = /hidden|clip/.test(cs.overflowY);
+              if (!hx && !hy) continue;
+              const ar = a.getBoundingClientRect(), r = el.getBoundingClientRect();
+              if (hx && (r.right <= ar.left + 1 || r.left >= ar.right - 1)) return `clipped by an overflow-x:${cs.overflowX} ancestor a user cannot scroll`;
+              if (hy && (r.bottom <= ar.top + 1 || r.top >= ar.bottom - 1)) return `clipped by an overflow-y:${cs.overflowY} ancestor a user cannot scroll`;
+            }
+            return null;
+          };
+          const off = [], stuck = [];
+          for (const el of document.querySelectorAll(SEL)) {
+            const cs = getComputedStyle(el);
+            if (cs.display === "none" || cs.visibility === "hidden" || !el.getClientRects().length) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) continue;
+            const hidden = clippedByHidden(el);
+            if (hidden) { stuck.push(`${named(el)} [${hidden}]`); continue; }
+            if (hits(el, r)) continue;
+            off.push(named(el));
+            // Try to reach it the way a person would, then look again.
+            el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+            const after = el.getBoundingClientRect();
+            if (!hits(el, after)) {
+              const why = (after.right > vw + 1 || after.left < -1) ? `still past the edge, right=${Math.round(after.right)} > ${vw}`
+                        : "clipped or covered: hit-testing its centre does not reach it";
+              stuck.push(`${named(el)} [${why}]`);
+            }
           }
-        }
-        return { off: off.length, offNames: off.slice(0, 4), stuck };
-      });
+          return { off: off.length, offNames: off.slice(0, 4), stuck };
+        });
+        await page.close();
+        return { value: m.cls, m, reach, c };
+      };
+      const { last, runs, best } = await confirm(probe, BUDGET.cls);
+      if (last.err) { row(label, "skipped", `did not load: ${last.err}`); continue; }
+      if (last.dead) { row(label, "fail", last.dead); continue; }
+      const { m, reach, c } = last;
       const bad = [];
       if (m.overflow > BUDGET.overflowPx) bad.push(`horizontal scroll ${m.overflow}px at ${m.vw}px wide (budget 0px, WCAG 1.4.10)`);
-      if (m.cls > BUDGET.cls) bad.push(`CLS ${m.cls.toFixed(4)} over budget ${BUDGET.cls}`);
+      if (best > BUDGET.cls) bad.push(`CLS over budget ${BUDGET.cls} on all ${runs.length} runs: ${seen(runs, "", 4)}`);
       if (reach.stuck.length) bad.push(`${reach.stuck.length} control(s) unreachable even after scrolling: ${reach.stuck.slice(0, 3).join(", ")}`);
       const note = reach.off
         ? `${reach.off} control(s) past the edge (${reach.offNames.join(", ")}), all reachable by scrolling`
         : "no control past the edge";
       row(label, bad.length ? "fail" : "pass",
-        bad.length ? bad.join(" · ") : `hOverflow=${m.overflow}px · CLS=${m.cls.toFixed(4)} (budget ${BUDGET.cls}) · ${note}`);
-      await page.close();
+        bad.length ? bad.join(" · ") : `${c.controls} control(s) rendered · hOverflow=${m.overflow}px · CLS=${seen(runs, "", 4)} (budget ${BUDGET.cls}) · ${note}`);
     }
     await ctx.close();
   }
@@ -170,6 +246,9 @@ async function targets(browser) {
       const label = `targets ${route} @ ${vp.name}`;
       const { page, err } = await open(ctx, route);
       if (err) { row(label, "skipped", `did not load: ${err}`); continue; }
+      const c = await census(page);
+      const dead = notRendered(c);
+      if (dead) { row(label, "fail", dead); await page.close(); continue; }
       const t = await page.evaluate(({ min, advisory }) => {
         const SEL = 'a[href],button,input:not([type="hidden"]),select,textarea,summary,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="switch"]';
         const all = [];
@@ -196,13 +275,16 @@ async function targets(browser) {
         }
         return { n: all.length, under, exempt, advisories };
       }, { min: BUDGET.tapMinPx, advisory: BUDGET.tapAdvisoryPx });
+      await page.close();
+      // Zero targets is not "none under 24px". It is a row that measured nothing, and a row that
+      // measured nothing is never a pass — the whole reason this lane could read green on a dead page.
+      if (!t.n) { row(label, "fail", `${c.controls} control(s) rendered but 0 of them is a tap target: this row measured nothing, so it cannot pass`); continue; }
       const detail = [`${t.n} target(s)`,
         t.under.length ? `UNDER ${BUDGET.tapMinPx}px: ${t.under.join(", ")}` : `none under ${BUDGET.tapMinPx}px`,
         t.exempt.length ? `exempt: ${t.exempt.slice(0, 3).join("; ")}` : null,
         t.advisories.length ? `reported only (<${BUDGET.tapAdvisoryPx}px, SC 2.5.5 AAA): ${t.advisories.slice(0, 3).join(", ")}` : null,
       ].filter(Boolean).join(" · ");
       row(label, t.under.length ? "fail" : "pass", detail);
-      await page.close();
     }
     await ctx.close();
   }
@@ -216,9 +298,12 @@ async function interaction(browser) {
     // controls are "Continue with Google" and the email-code button; clicking either leaves the app,
     // so they are declared out of scope rather than clicked and mis-measured.
     const label = `interaction /workspace click @ ${vp.name}`;
-    const { page, err } = await open(ctx, "/workspace");
-    if (err) { row(label, "skipped", `did not load: ${err}`); }
-    else {
+    const clickProbe = async () => {
+      const { page, err } = await open(ctx, "/workspace");
+      if (err) return { err };
+      const c = await census(page);
+      const dead = notRendered(c);
+      if (dead) { await page.close(); return { dead }; }
       const n = await page.evaluate(() => {
         const UNSAFE = /sign ?in|sign ?up|google|continue with|log ?in|log ?out|delete|remove|submit|send|invite|upload/i;
         let i = 0;
@@ -234,40 +319,55 @@ async function interaction(browser) {
         }
         return i;
       });
-      if (!n) row(label, "skipped", "no in-page control on this route was safe to click (all are auth or destructive verbs)");
-      else {
-        const before = page.url();
-        let clicked = 0, navigated = false;
-        for (let i = 0; i < n; i++) {
-          await page.click(`[data-resp-safe="${i}"]`, { timeout: 8000 }).catch(() => {});
-          await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-          clicked++;
-          if (page.url() !== before) { navigated = true; break; }
-        }
-        const inp = await page.evaluate(() => window.__inp);
-        const over = inp > BUDGET.inpMs;
-        row(label, over ? "fail" : "pass",
-          navigated ? `stopped after ${clicked} click(s): the page navigated, so later clicks were not measured · INP=${Math.round(inp)}ms`
-                    : `${clicked} in-page click(s) · INP=${Math.round(inp)}ms (budget ${BUDGET.inpMs}ms)`);
+      if (!n) { await page.close(); return { skip: "no in-page control on this route was safe to click (all are auth or destructive verbs)" }; }
+      const before = page.url();
+      let clicked = 0, navigated = false;
+      for (let i = 0; i < n; i++) {
+        await page.click(`[data-resp-safe="${i}"]`, { timeout: 8000 }).catch(() => {});
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        clicked++;
+        if (page.url() !== before) { navigated = true; break; }
       }
+      const inp = await page.evaluate(() => window.__inp);
       await page.close();
-    }
+      return { value: inp, clicked, navigated };
+    };
+    const clicked = await confirm(clickProbe, BUDGET.inpMs);
+    if (clicked.last.err) row(label, "skipped", `did not load: ${clicked.last.err}`);
+    else if (clicked.last.dead) row(label, "fail", clicked.last.dead);
+    else if (clicked.last.skip) row(label, "skipped", clicked.last.skip);
+    else row(label, clicked.best > BUDGET.inpMs ? "fail" : "pass",
+      clicked.best > BUDGET.inpMs
+        ? `INP over budget ${BUDGET.inpMs}ms on all ${clicked.runs.length} runs: ${seen(clicked.runs, "ms")}`
+        : (clicked.last.navigated ? `stopped after ${clicked.last.clicked} click(s): the page navigated, so later clicks were not measured · ` : `${clicked.last.clicked} in-page click(s) · `)
+          + `INP=${seen(clicked.runs, "ms")} (budget ${BUDGET.inpMs}ms)`);
     // Keyboard focus rows: pressing Tab is safe on every route and is the one interaction a
     // keyboard-only user makes constantly.
     for (const route of ROUTES) {
       const klabel = `interaction ${route} keyboard @ ${vp.name}`;
-      const { page: kp, err: kerr } = await open(ctx, route);
-      if (kerr) { row(klabel, "skipped", `did not load: ${kerr}`); continue; }
-      let presses = 0;
-      for (let i = 0; i < 6; i++) {
-        await kp.keyboard.press("Tab");
-        await kp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-        presses++;
-      }
-      const inp = await kp.evaluate(() => window.__inp);
-      row(klabel, inp > BUDGET.inpMs ? "fail" : "pass",
-        `${presses} Tab press(es) · INP=${Math.round(inp)}ms (budget ${BUDGET.inpMs}ms)`);
-      await kp.close();
+      const kbProbe = async () => {
+        const { page, err } = await open(ctx, route);
+        if (err) return { err };
+        const c = await census(page);
+        const dead = notRendered(c);
+        if (dead) { await page.close(); return { dead }; }
+        let presses = 0;
+        for (let i = 0; i < 6; i++) {
+          await page.keyboard.press("Tab");
+          await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+          presses++;
+        }
+        const inp = await page.evaluate(() => window.__inp);
+        await page.close();
+        return { value: inp, presses, c };
+      };
+      const k = await confirm(kbProbe, BUDGET.inpMs);
+      if (k.last.err) { row(klabel, "skipped", `did not load: ${k.last.err}`); continue; }
+      if (k.last.dead) { row(klabel, "fail", k.last.dead); continue; }
+      row(klabel, k.best > BUDGET.inpMs ? "fail" : "pass",
+        k.best > BUDGET.inpMs
+          ? `INP over budget ${BUDGET.inpMs}ms on all ${k.runs.length} runs: ${seen(k.runs, "ms")}`
+          : `${k.last.presses} Tab press(es) over ${k.last.c.controls} rendered control(s) · INP=${seen(k.runs, "ms")} (budget ${BUDGET.inpMs}ms)`);
     }
     await ctx.close();
   }
@@ -288,7 +388,7 @@ console.log("| check | result | detail |");
 console.log("|---|---|---|");
 for (const r of rows) console.log(`| ${r.name.padEnd(w)} | ${r.result} | ${r.detail} |`);
 const n = (s) => rows.filter((r) => r.result === s).length;
-console.log(`\n_target ${BASE} · viewports ${VIEWPORTS.map((v) => v.w).join("/")} · ${blocked} request(s) to live fde-* hosts blocked · ` +
+console.log(`\n_target ${BASE} · viewports ${[...usedVp].sort((x, y) => x - y).join("/") || "none"} · ${blocked} request(s) to live fde-* hosts blocked · ` +
             `${rows.length} rows: ${n("pass")} pass, ${n("fail")} fail, ${n("skipped")} skipped_`);
 // Nothing measured at all is not a pass. The runner's precondition probe should have caught a target
 // that was already down, so losing every route mid-run is an anomaly worth surfacing loudly.
