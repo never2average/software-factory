@@ -5,7 +5,14 @@
 
 --check (default): verify every secret named in infrastructure.json exists in the
   secret store (Vercel env for vercel_env; infra/vm/apps/<app_id>/.env for vm_env_file),
-  regenerate the app's local artifact, print what is missing. Never deploys.
+  regenerate the app's local artifact, print what is missing. It builds and deploys nothing.
+  IT IS NOT READ-ONLY, and on target=vercel it is not local either. Before it can count a
+  secret it calls ensure_projects (creates <proj>, <proj>-api, <proj>-workflow if absent) and
+  provision_datastores (adopts a spare Neon resource or provisions a new one on the Marketplace,
+  and creates a temporary sf-neon-inspect-* project per candidate to read the table count from —
+  a project it deletes, or NAMES ON STDOUT when the delete fails). A --check of an app whose
+  datastores are not provisioned yet therefore creates real, billable, team-visible resources.
+  Read it as "check and provision, do not build"; only --deploy puts code in front of traffic.
 --deploy: run the deploy for the target. Refuses if any secret is missing.
 --verify-db: stand up this app's LOCAL database (private docker network, no host port) and run
   the whole mold chain against it — push, migrate, RLS + app_rw bootstrap, task-workflow — then
