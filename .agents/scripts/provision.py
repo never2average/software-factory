@@ -23,7 +23,9 @@ and recorded but never enforced. DATABASE_URL is written in exactly one place, a
 ONE COMMITTED DEPLOY TARGET: vercel. `target: vm` is a LOCAL VERIFICATION target — it generates
 the app's datastore artifact and runs the lanes against it; it does not serve the application.
 See infra/vm/README.md for why (three deployables, four crons and a Vercel-injected OIDC identity
-the mold cannot get off Vercel without a fork, which HARD RULE 1 forbids).
+the mold cannot get off Vercel without a fork, which HARD RULE 1 forbids). A vm app therefore ENDS at
+--verify-db, and --deploy says so immediately; it requires postgres.provider self_hosted, because the
+only artifact this lane builds is that local database and the artifact must match the state.
 
 DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier is exhausted;
 Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.
@@ -132,14 +134,55 @@ def _neon_spares(mold_dir):
     except Exception: res = []
     return [x["name"] for x in res if x.get("product") == "Neon" and x.get("status") == "available" and not x.get("projects")]
 
-def _db_stat(mold_dir, proj, key="DATABASE_URL_UNPOOLED"):
+def _db_stat(mold_dir, proj, key="DATABASE_URL_UNPOOLED", environment="production"):
     """{tables, policies, size} of the database a project's env points at, or None."""
-    vals = pull_env(mold_dir, proj)
+    vals = pull_env(mold_dir, proj, environment=environment, required=False)
     url = vals.get(key) or vals.get("DATABASE_URL")
     if not url: return None
     r = _node_lib(os.path.join(ROOT, ".claude/scripts/lib/db-tables.mjs"), {"DB_URL": url}, mold_dir)
     try: return json.loads((r.stdout.strip().splitlines() or ["{}"])[-1])
     except Exception: return None
+
+def _scratch_project(mold_dir):
+    """A throwaway Vercel project with no deployment, no domain and no traffic, whose only job is to
+    hold a candidate database's connection string long enough to LOOK at it. Returns its name or None."""
+    name = f"sf-neon-inspect-{os.urandom(4).hex()}"
+    r = subprocess.run(f"vercel project add {name}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    if _project_meta(name, mold_dir).get("id"): return name
+    print("  could not create a temporary inspection project: " + _cli_err(r.stdout + r.stderr)[:160]); return None
+
+def _rm_scratch_project(name, mold_dir):
+    """Remove it — and SAY SO if it survives. A leftover inspection project is a leftover database URL."""
+    subprocess.run(f"vercel project rm {name} --yes", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    if _project_meta(name, mold_dir).get("id"):
+        subprocess.run(f"vercel api /v9/projects/{name} -X DELETE --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    if _project_meta(name, mold_dir).get("id"):
+        print(f"  NOTE: the temporary inspection project {name} could not be deleted. Delete it in the Vercel "
+              f"dashboard (Projects -> {name} -> Settings -> Delete); it holds a database URL and nothing else.")
+
+def _neon_probe(name, mold_dir):
+    """Is this Neon resource EMPTY? Answered with the app's own project connected to NOTHING.
+
+    Vercel publishes no connection string for a resource attached to no project — `vercel
+    integration-resource inspect <name>` returns status, plan and a dashboard link and no credential —
+    so the only way to see inside a candidate is to connect it somewhere. It must not be somewhere that
+    matters. This connects it to a project created for the purpose, on `development` ONLY (never any
+    production environment, and never the app's), reads the table count, disconnects, and deletes the
+    project whatever happens. Returns (stat or None, reason)."""
+    scratch = _scratch_project(mold_dir)
+    if not scratch: return None, "no temporary project to inspect it in"
+    try:
+        c = subprocess.run(f"vercel integration-resource connect {name} {scratch} -e development --yes",
+                           shell=True, cwd=mold_dir, capture_output=True, text=True)
+        if c.returncode: return None, _cli_err(c.stdout + c.stderr)[:160]
+        try:
+            st = _db_stat(mold_dir, scratch, environment="development")
+            return st, ("" if st else "connecting it injected no database URL")
+        finally:
+            subprocess.run(f"vercel integration-resource disconnect {name} {scratch} --yes",
+                           shell=True, cwd=mold_dir, capture_output=True, text=True)
+    finally:
+        _rm_scratch_project(scratch, mold_dir)
 
 def adopt_or_create_neon(app_id, mold_dir, infra, proj):
     """A free Postgres for this app, with no checkout page.
@@ -151,46 +194,88 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
 
     UNATTACHED IS NOT EMPTY. The first spare on this team held 15 MB and 54 tables of an older copy of
     this very schema; pushing onto it made drizzle-kit ask an interactive rename question and abort.
-    `scope: fresh` means fresh, so an adopted database is connected, INSPECTED, and disconnected again
-    unless it is empty. The factory never writes over data it did not create."""
-    for name in _neon_spares(mold_dir):
-        print(f"trying the free Neon database '{name}' (attached to no project) ...")
+    `scope: fresh` means fresh, so a candidate is INSPECTED before it is adopted.
+
+    INSPECT FIRST, CONNECT SECOND. That inspection used to run on the app's OWN project: connect with
+    -e production -e preview -e development, pull the env, count the tables, disconnect if it turned
+    out to hold data. Between those two steps a DATABASE_URL for a stranger's database sat in the
+    production environment of a project that may already be serving traffic, and any build started in
+    that window — a redeploy, a cron, another agent — would have picked it up. Worse, every failure
+    after the connect (the CLI dies, the table read fails, the run is interrupted, the "not empty"
+    exit on the create path) left the resource attached. The app's project is now connected to exactly
+    one thing: a database already proven empty. Everything before that happens in a project created
+    for the inspection and deleted after it."""
+    def attach(name):
+        """Connect a database already PROVEN empty to the app's project, and confirm what landed.
+        Anything unexpected disconnects again: the failure path leaves nothing attached."""
         c = subprocess.run(f"vercel integration-resource connect {name} {proj} -e production -e preview -e development --yes",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         if c.returncode:
-            print("  could not connect it: " + (c.stdout + c.stderr).strip().splitlines()[-1][:160]); continue
+            print("  could not connect it: " + _cli_err(c.stdout + c.stderr)[:160]); return False
         st = _db_stat(mold_dir, proj)
         if st and st.get("tables") == 0:
-            print(f"  adopted {name}: empty database, free plan, no checkout")
-            infra.setdefault("datastores", {})["neon_resource"] = name
-            return
-        print(f"  {name} already holds {(st or {}).get('tables','?')} table(s) ({(st or {}).get('size','?')}) — "
-              f"not overwriting it; disconnecting and asking for a new one")
-        subprocess.run(f"vercel integration-resource disconnect {name} {proj} --yes", shell=True, cwd=mold_dir, capture_output=True, text=True)
+            infra.setdefault("datastores", {})["neon_resource"] = name; return True
+        print(f"  {name} is not usable on {proj} after connecting "
+              f"({(st or {}).get('tables', 'no database URL was injected')}); disconnecting it again")
+        subprocess.run(f"vercel integration-resource disconnect {name} {proj} --yes",
+                       shell=True, cwd=mold_dir, capture_output=True, text=True)
+        return False
+
+    for name in _neon_spares(mold_dir):
+        print(f"inspecting the free Neon database '{name}' (attached to no project) ...")
+        st, why = _neon_probe(name, mold_dir)
+        if st is None:
+            print(f"  could not read it: {why} — leaving it alone ({proj} was not connected to it)"); continue
+        if st.get("tables"):
+            print(f"  {name} already holds {st['tables']} table(s) ({st.get('size','?')}) — not overwriting it; "
+                  f"{proj} was never connected to it"); continue
+        print(f"  {name} is empty; connecting it to {proj}")
+        if attach(name):
+            print(f"  adopted {name}: empty database, free plan, no checkout"); return
     print(f"provisioning a fresh Neon database '{app_id}' via Vercel Marketplace (Free plan) ...")
     urls = os.path.expanduser("~/.factory-open-urls"); open(urls, "w").close()   # the xdg-open shim (infra/vm/provision.sh) records links a CLI tried to open
     res_name = app_id.replace("_", "-")                                          # resource names are dns-ish
-    d = _link_dir(proj, mold_dir)
+    # Created INTO the inspection project, not into the app's. `integration add` connects the new
+    # resource to the project linked in its cwd, and a resource the Marketplace hands back is not
+    # automatically empty either (a re-used name, a restored branch) — it gets the same read as a spare.
+    scratch = _scratch_project(mold_dir)
+    if not scratch:
+        sys.exit(f"could not create a temporary Vercel project to provision {res_name} into, so nothing was "
+                 f"provisioned and {proj} was not touched.\n  Run: python3 .claude/scripts/provision.py {app_id} --check")
+    d = _link_dir(scratch, mold_dir)
     try:
-        r = subprocess.run(f"vercel integration add neon -n {res_name} --no-claim --no-env-pull -e production -e preview -e development"
-                           + (f" --cwd {d}" if d else ""), shell=True, cwd=mold_dir, capture_output=True, text=True)
+        if not d: sys.exit(f"the temporary project {scratch} could not be linked; nothing was provisioned.")
+        r = subprocess.run(f"vercel integration add neon -n {res_name} --no-claim --no-env-pull -e development --cwd {d}",
+                           shell=True, cwd=mold_dir, capture_output=True, text=True)
+        out = r.stdout + r.stderr; link_ = next((l.strip() for l in open(urls) if l.strip()), None)
+        if "Additional setup required" in out or link_:
+            sys.exit("ONE-TIME STEP: open this link in a browser, accept the Neon FREE plan for this project, then run the same command again:\n  "
+                     + (link_ or f"https://vercel.com/{infra['vercel']['team']}/~/integrations/checkout/neon?productSlug=neon&defaultResourceName={res_name}&source=cli&projectSlug={proj}"))
+        if r.returncode:
+            msg = [l for l in out.splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+            sys.exit("neon provisioning failed: " + " | ".join(msg[-3:]))
+        print("  " + next((l for l in out.splitlines() if "provisioned" in l), "provisioned").strip()[:160])
+        subprocess.run(f"vercel integration-resource connect {res_name} {scratch} -e development --yes",
+                       shell=True, cwd=mold_dir, capture_output=True, text=True)   # explicit: `add` connects via its cwd
+        st = _db_stat(mold_dir, scratch, environment="development")
+        subprocess.run(f"vercel integration-resource disconnect {res_name} {scratch} --yes",
+                       shell=True, cwd=mold_dir, capture_output=True, text=True)
     finally:
         if d: shutil.rmtree(d, ignore_errors=True)
-    out = r.stdout + r.stderr; link_ = next((l.strip() for l in open(urls) if l.strip()), None)
-    if "Additional setup required" in out or link_:
-        sys.exit("ONE-TIME STEP: open this link in a browser, accept the Neon FREE plan for this project, then run the same command again:\n  "
-                 + (link_ or f"https://vercel.com/{infra['vercel']['team']}/~/integrations/checkout/neon?productSlug=neon&defaultResourceName={res_name}&source=cli&projectSlug={proj}"))
-    if r.returncode:
-        msg = [l for l in out.splitlines() if l.strip() and not l.lstrip().startswith("at ")]
-        sys.exit("neon provisioning failed: " + " | ".join(msg[-3:]))
-    print("  " + next((l for l in out.splitlines() if "provisioned" in l), "provisioned").strip()[:160])
-    # `integration add` connects to the project linked in its cwd; make the attachment explicit either way
-    subprocess.run(f"vercel integration-resource connect {res_name} {proj} -e production -e preview -e development --yes",
-                   shell=True, cwd=mold_dir, capture_output=True, text=True)
-    st = _db_stat(mold_dir, proj)
-    if not st: sys.exit(f"Neon resource {res_name} was created but {proj} has no DATABASE_URL_UNPOOLED; connect it in the dashboard and rerun.")
-    if st.get("tables"): sys.exit(f"the new Neon database is not empty ({st['tables']} tables) — refusing to write over it")
-    infra.setdefault("datastores", {})["neon_resource"] = res_name
+        _rm_scratch_project(scratch, mold_dir)
+    if not st:
+        sys.exit(f"the new Neon resource {res_name} produced no database URL, so nothing could check whether it is "
+                 f"empty and it was NOT connected to {proj}. Connect it in the Vercel dashboard "
+                 f"(Storage -> {res_name} -> Connect Project -> {proj}) and rerun: "
+                 f"python3 .claude/scripts/provision.py {app_id} --check")
+    if st.get("tables"):
+        sys.exit(f"the new Neon database {res_name} is not empty ({st['tables']} tables) — refusing to write over "
+                 f"it. Nothing was connected to {proj}. Delete that resource in the Vercel dashboard "
+                 f"(Storage -> {res_name} -> Delete) and rerun: python3 .claude/scripts/provision.py {app_id} --check")
+    if not attach(res_name):
+        sys.exit(f"{res_name} is empty but could not be connected to {proj}. Connect it in the Vercel dashboard "
+                 f"(Storage -> {res_name} -> Connect Project -> {proj}) and rerun.")
+    print(f"  provisioned {res_name}: empty database, free plan, connected to {proj}")
 
 def _blob_store(name, mold_dir):
     """The team's Blob store of this name, with the projects it is connected to, or None."""
@@ -317,17 +402,21 @@ API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_I
            "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID"]
 WORKFLOW_ENV = ["DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN"]
 
-def pull_env(mold_dir, project):
+def pull_env(mold_dir, project, environment="production", required=True):
+    """This app's env values. `required=False` returns {} instead of exiting: the candidate-database
+    inspection reads a throwaway project that may legitimately hold nothing, and an exit there would
+    skip the cleanup that removes it."""
     tmp = os.path.join(mold_dir, f".env.provision.{project}")
-    subprocess.run(f"vercel env pull --yes --environment=production --project {project} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
+    subprocess.run(f"vercel env pull --yes --environment={environment} --project {project} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
     vals, unreadable = {}, []
-    for l in open(tmp):
+    for l in (open(tmp) if os.path.exists(tmp) else []):
         if "=" in l and not l.startswith("#"):
             k, v = l.split("=", 1); k, v = k.strip(), v.strip().strip('"')
             if v == REDACTED: unreadable.append(k); continue    # Sensitive: unreadable, never a value
             vals[k] = v
-    os.remove(tmp)
-    if not vals: sys.exit(f"could not pull the production environment of {project}")
+    if os.path.exists(tmp): os.remove(tmp)
+    if not vals and not required: return {}
+    if not vals: sys.exit(f"could not pull the {environment} environment of {project}")
     if unreadable: print(f"  {project}: {len(unreadable)} sensitive var(s) unreadable: {', '.join(sorted(unreadable))}")
     return vals
 
@@ -534,6 +623,24 @@ def record_rls(adir, ds, ev):
               f"{len(ev.get('open_policies') or [])} open policy/policies, "
               f"{ev.get('policies_executed')} policy/policies executed, "
               f"{ev.get('probe_tables')} table(s) probed across the workspace boundary)")
+
+def record_running_app(adir, ds, running):
+    """Put the reading of the PROCESS IN FRONT OF TRAFFIC into the evidence, not just on the screen.
+
+    --deploy measures this at the end of deploy_vercel and used to only RETURN it: record_rls had
+    already written rls_verified several minutes earlier (before the build existed to read), so a
+    successful deploy left `running_app` absent from state. factory.py validate reads that field, so
+    every deployed app answered "nothing read the app in front of traffic — run --verify-rls", and
+    --verify-rls then re-measured the very reading the deploy had already taken and thrown away: an
+    instruction loop for the operator who cannot read their way out of it (HARD RULE 4). The deploy
+    measured it; the deploy records it.
+
+    Recorded for every outcome, "NOT enforced" and "UNMEASURED" included — main() reverts the app on
+    those, and the reason it reverted is exactly what the next person needs to see in state."""
+    ev = ds.get("postgres", {}).get("rls_verified")
+    if not ev: return                       # rls_verified is written before this on every path that reaches it
+    ev["running_app"] = running
+    save(os.path.join(adir, "datastores.json"), ds)
 
 def _retarget(app_url, runtime_url):
     """Put the app_rw URL back on the host:port that actually answers, and force TLS.
@@ -748,23 +855,24 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         print(f"  WEB_ORIGIN corrected to {url} (takes effect on the next deploy)")
     # verify-production, as the Makefile does
     checks = [("workflow", f"{infra['vercel'].get('workflow_url','')}/api/health"), ("api", f"{infra['vercel'].get('api_url','')}/eve/v1/health"), ("web", f"{url}/api/ops/health")]
-    health = {}; alarm = ""
+    health = {}; running = "UNMEASURED: the web app was not health-checked"
     for name, u in checks:
         if not u.startswith("http"): continue
-        r = subprocess.run(f"curl --silent --show-error --max-time 20 -w '\n%{{http_code}}' {u}", shell=True, capture_output=True, text=True)
-        body, _, code = r.stdout.rpartition("\n")
-        health[name] = code.strip(); print(f"  health {name}: {health[name]} {u}")
-        # READ THE BODY, NOT THE STATUS CODE. The mold's checkDb returns the BYPASSRLS warning as a
-        # `detail` string with ok:true, so the aggregate ok — and the HTTP status — are unaffected: the
-        # endpoint answers 200 while announcing that row-level security is not enforced. The status code
-        # is structurally incapable of carrying this, which is why a lane report once printed
-        # `health.db | pass` next to the warning. Deployed and isolated have to be the same state.
-        if name == "web" and re.search(r"BYPASSRLS|row-level security is NOT enforced", body, re.I):
-            try: alarm = json.loads(body).get("db", {}).get("detail", "")[:220]
-            except Exception: alarm = "the health endpoint reports BYPASSRLS"
+        code, doc, why = _read_health(u)
+        health[name] = code or "no answer"; print(f"  health {name}: {health[name]} {u}")
+        # READ THE BODY, NOT THE STATUS CODE — and only a body that IS this app's health document.
+        # The mold's checkDb returns the BYPASSRLS warning as a `detail` string with ok:true, so the
+        # aggregate ok, and the HTTP status, are unaffected: the endpoint answers 200 while announcing
+        # that row-level security is not enforced. The status code is structurally incapable of carrying
+        # this, which is why a lane report once printed `health.db | pass` next to the warning. The
+        # converse matters just as much: a 404/401/500 carries no warning either, and reading that as
+        # "no warning" is how an app whose deploy failed could be recorded as isolated.
+        if name == "web": running = _rls_from_doc(code, doc, why)
     infra["vercel"]["health"] = health
     if any(v != "200" for v in health.values()): print("WARNING: a health check is not 200; see infrastructure.json vercel.health")
-    return alarm
+    record_running_app(adir, ds, running)
+    print(f"  row-level security, as reported by the app now serving traffic: {running[:170]}")
+    return running
 
 ARTIFACT_HEADER = """# GENERATED by .claude/scripts/provision.py from state/application/{app_id}/*.json.
 # REGENERATED ON EVERY RUN (--check and --verify-db alike) — edit this file and your edit is gone.
@@ -786,16 +894,33 @@ ARTIFACT_HEADER = """# GENERATED by .claude/scripts/provision.py from state/appl
 # the public internet within minutes.
 """
 
+GENERATED_FILES = ("docker-compose.yml", ".env.example", "README.md")
 def generate_local_artifact(app_id, mold_dir, secrets, ds, infra):
-    """infra/vm/apps/<app_id>/ is pure generated output, rewritten from state on EVERY run.
+    """Rewrite THESE THREE FILES from state on every run: docker-compose.yml, .env.example, README.md.
 
-    It used to be written only `if not os.path.exists(...)`, so from the first write onward the factory
+    They used to be written only `if not os.path.exists(...)`, so from the first write onward the factory
     stopped describing the app: a hand-edited compose survived a re-run byte-identical, and — worse —
-    the frozen build context meant a BRANDED app silently rebuilt the unbranded mold. Nothing is
-    conditional here now; drift is impossible by construction."""
+    the frozen build context meant a BRANDED app silently rebuilt the unbranded mold. Nothing about
+    those three is conditional now; drift is impossible by construction.
+
+    WHAT IS NOT GENERATED, AND MUST NEVER BE. `.pg-admin` (the cluster superuser password) and
+    `pg/server.{crt,key}` also live in this directory, and they are NOT derivable from state: Postgres
+    stores the password inside the data directory at initdb time, so that file is the only copy of the
+    credential that opens the volume. Calling the whole directory "pure generated output" is what made
+    it look safe to clear or recreate — and losing .pg-admin used to be SILENT: ensure_local_secrets
+    minted a fresh password, this function reported success, and the running database then refused every
+    connection. localpg._pw now refuses to mint a second password over an existing volume, and the
+    self-signed TLS pair is regenerated as a pair (it is derivable, so losing it costs nothing)."""
     sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import localpg
-    d = localpg.appdir(app_id)          # creates the directory AND its .gitignore, in that order
     pg = ds.get("postgres", {})
+    if pg.get("provider") != "self_hosted":
+        # This artifact IS a self_hosted database. Writing one for an app whose state names a managed
+        # provider would describe a database the application does not have. main() gates this too; the
+        # refusal lives here as well because the artifact and the state are one fact.
+        sys.exit(f'{app_id}: refusing to generate a local Postgres artifact for an app whose '
+                 f'datastores.postgres.provider is "{pg.get("provider")}". Set it to "self_hosted" to verify '
+                 f'locally, or set infrastructure.target to "vercel" to run it on {pg.get("provider")}.')
+    d = localpg.appdir(app_id)          # creates the directory AND its .gitignore, in that order
     hdr = ARTIFACT_HEADER.format(app_id=app_id, port=localpg.PORT, net=localpg.net(app_id))
     open(os.path.join(d, "docker-compose.yml"), "w").write(hdr + f"""
 name: {localpg.net(app_id)}
@@ -847,8 +972,13 @@ networks:
 Provider `{pg.get('provider','?')}`. No host port: `docker port {localpg.cont(app_id)}` is empty by
 design. Hand edits go in `docker-compose.override.yml` here, and both commands above honour it —
 `docker compose -f <file>` from elsewhere would silently ignore it, so run compose from this directory.
-`.pg-admin` (Postgres superuser password) and `pg/server.key` (TLS private key) are ignored by this
-directory's .gitignore and by the root one; never commit them.
+GENERATED, REWRITTEN ON EVERY RUN: docker-compose.yml, .env.example, README.md. Edit those and the
+edit is gone. NOT generated and NOT derivable from state: `.pg-admin` (this cluster's superuser
+password) and `pg/server.key` (TLS private key) — both ignored by this directory's .gitignore and by
+the root one, never committed, and never rewritten by a regeneration. `.pg-admin` is the ONLY copy of
+the password baked into volume {localpg.vol(app_id)}: lose it and nothing can open that volume again, so provisioning
+refuses rather than quietly mint a second one. Rebuild from scratch with
+`python3 .claude/scripts/lib/localpg.py down {app_id}` (deletes the data) then `--verify-db`.
 """)
     return d
 
@@ -878,6 +1008,14 @@ def verify_db(app_id, mold_dir, ds, adir):
     This is what `target: vm` buys: a real database the lanes can run against, on a private network,
     with no credential of the user's involved anywhere."""
     sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import localpg
+    prov = ds.get("postgres", {}).get("provider")
+    if prov != "self_hosted":
+        # --verify-db brings up a local container and writes ITS url as this app's DATABASE_URL. Doing
+        # that for an app whose state names a managed provider hands the app a database its own state
+        # does not describe, and records an isolation proof measured on the wrong backend.
+        sys.exit(f'{app_id}: --verify-db verifies a LOCAL database, but datastores.postgres.provider is '
+                 f'"{prov}". Nothing was started. Set it to "self_hosted" to verify locally, or run this app '
+                 f'on {prov} with infrastructure.target "vercel".')
     localpg.up(app_id); adm = localpg.url(app_id)
     envloc = os.path.join(mold_dir, ".env.local"); saved = open(envloc).read() if os.path.exists(envloc) else None
     envsup = os.path.join(mold_dir, ".env.supabase")
@@ -910,6 +1048,55 @@ def verify_db(app_id, mold_dir, ds, adir):
             if os.path.exists(envloc): os.remove(envloc)
         else: open(envloc, "w").write(saved)
 
+VM_NOT_A_DEPLOY_TARGET = (
+  '{app_id}: target "vm" is a LOCAL VERIFICATION target, not a deploy target (infra/vm/README.md: mold_v1 is\n'
+  'three deployables, four cron schedules and a Vercel-injected OIDC identity that durable-workflow resume\n'
+  'needs — giving the VM a non-Vercel identity means editing the mold, which is forbidden). Nothing on this\n'
+  'box can deploy it, and nothing in this factory creates the Vercel-only secrets a deploy would need, so\n'
+  'there is no list of missing things to work through here.\n'
+  '  To verify this app on this box:  python3 .claude/scripts/provision.py {app_id} --verify-db\n'
+  '  To put it in front of users:     set "target": "vercel" in state/application/{app_id}/infrastructure.json,\n'
+  '                                   then: python3 .claude/scripts/provision.py {app_id} --check')
+
+VM_PRODUCED = ("POSTGRES_ADMIN_URL", "DATABASE_URL")   # the only two secrets the vm lane creates (--verify-db)
+
+def vm_report(app_id, d, infra, ds):
+    """How a `target: vm` run ends: with ONE next command that exists.
+
+    The vercel tail below this is the wrong report for a vm app. It counts every derived secret as
+    something "the provisioner still has to create" — but the provisioner that creates them
+    (provision_datastores) only runs for target=vercel, so on a vm app that line names work nobody can
+    do, and then points at --deploy, which vm has no answer for. This says what the vm lane actually
+    produces, what it cannot, and stops."""
+    envf = os.path.join(d, ".env")
+    present = {l.split("=")[0].strip() for l in (open(envf) if os.path.exists(envf) else [])
+               if "=" in l and not l.startswith("#") and l.split("=", 1)[1].strip()}
+    names = infra.get("secrets", [])
+    print(f"secrets present in {os.path.relpath(envf, ROOT)}: {len([x for x in names if x in present])}/{len(names)}")
+    missing_user = [x for x in infra.get("secrets_user", names) if x not in present]
+    if missing_user:
+        print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
+        for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
+    pending = [x for x in VM_PRODUCED if x not in present]
+    if pending: print(f"--verify-db writes: {', '.join(pending)}")
+    orphan = [x for x in infra.get("secrets_derived", []) if x not in present and x not in VM_PRODUCED]
+    if orphan:
+        print(f"not produced on this target: {', '.join(orphan)}")
+        print("  those are minted by the vercel deploy path, which target=vm never runs. The local database "
+              "does not need them, and nothing here is waiting on them.")
+    ev = ds.get("postgres", {}).get("rls_verified")
+    unproven = rls_mode(ds) != "off" and (not ev or str(ev.get("source", "")).startswith("not verified"))
+    if pending or unproven:
+        print(f"Next: python3 .claude/scripts/provision.py {app_id} --verify-db"
+              "   (brings the local database up and proves tenant isolation on it)")
+    else:
+        print(f"tenant isolation last proven {ev['at']} on {ev['backend']} "
+              f"({ev.get('protected')}/{ev.get('org_scoped_tables')} org-scoped tables protected)")
+        print(f"This app is fully verified on this box, and target=vm ends here — it does not serve traffic. "
+              f"To put it in front of users, set \"target\": \"vercel\" in "
+              f"state/application/{app_id}/infrastructure.json and rerun --check.")
+    sys.exit(1 if (missing_user or pending) else 0)
+
 def set_secret(app_id, name, infra, mold_dir):
     """Prompt for one credential and write it where this app's secrets live.
     The value is read from the terminal, never passed on a command line and never stored here.
@@ -933,19 +1120,67 @@ def set_secret(app_id, name, infra, mold_dir):
         os.chmod(f, 0o600); where = os.path.relpath(f, ROOT)
     print(f"{name} set on {where}.")
 
-def _health_rls(infra):
-    """What the app IN FRONT OF TRAFFIC says about row-level security, read from its own health endpoint.
+HEALTH_PATH = "/api/ops/health"
+# The mold's ONE affirmative health sentence, and the only thing that may score `enforced` below.
+RLS_ENFORCED_DETAIL = re.compile(r"role\s+(\S+)\s+\(RLS enforced\)")
+def _read_health(url):
+    """(http status, parsed JSON body or None, one-line reason it is not readable). Read-only."""
+    r = subprocess.run(f"curl --silent --show-error --max-time 20 -w '\\n%{{http_code}}' {url}",
+                       shell=True, capture_output=True, text=True)
+    body, _, code = r.stdout.rpartition("\n"); code = code.strip()
+    if r.returncode or not code:
+        return "", None, "nothing answered: " + (((r.stderr or "").strip().splitlines() or ["no response"])[-1])[:120]
+    try: doc = json.loads(body)
+    except Exception: doc = None
+    if not isinstance(doc, dict):
+        return code, None, f"HTTP {code}, and the body is not a health document ({body.strip()[:60]!r})"
+    return code, doc, ""
 
-    READ THE BODY, NOT THE STATUS CODE: the mold's checkDb returns the BYPASSRLS warning as a `detail`
-    string with ok:true, so the endpoint answers 200 while announcing that RLS is off. Read-only, and
-    the only reading that covers the process actually serving requests."""
+def _rls_from_doc(code, doc, why):
+    """What the app IN FRONT OF TRAFFIC says about row-level security — or UNMEASURED, never an
+    affirmative it did not earn.
+
+    THIS VALUE IS RECORDED as datastores.postgres.rls_verified.running_app and printed to the operator,
+    and it is the only reading that covers the process actually serving requests. It used to be a regex
+    for a warning string over whatever came back, so a 404 DEPLOYMENT_NOT_FOUND page, a 401 Vercel
+    protection wall and a 500 crash — none of which contain the word BYPASSRLS — all scored as the
+    affirmative "no BYPASSRLS warning on /api/ops/health". An endpoint is unreadable exactly when a
+    deploy has gone wrong, which is exactly when that reading was consulted.
+
+    READ THE BODY, NOT THE STATUS CODE, and only THIS body: the mold's checkDb reports the warning as
+    `db.detail` with ok:true, so the endpoint answers 200 while announcing that RLS is off. A response
+    that carries no db check is not this app's health endpoint and proves nothing about it.
+
+    THREE SHAPES, AND THEY ARE A CONTRACT: "enforced — ...", "NOT enforced — ...", "UNMEASURED: ...".
+    provision.py gates on startswith("enforced") in the two places that let an app finish (verify_rls
+    and the --deploy gate before status becomes `stamped`), and factory.py:_rls_claim allowlists the
+    same prefix. Renaming any of the three means changing all four call sites together."""
+    if doc is None: return f"UNMEASURED: {why}"
+    db = doc.get("db") if isinstance(doc.get("db"), dict) else {}
+    det = db.get("detail")
+    if not isinstance(det, str) or not det:
+        return f"UNMEASURED: HTTP {code} answered, but the body carries no db check — this is not {HEALTH_PATH}"
+    if re.search(r"BYPASSRLS|row-level security is NOT enforced", det, re.I): return f"NOT enforced — {det[:180]}"
+    if not db.get("ok"): return f"UNMEASURED: the app could not reach its database — {det[:160]}"
+    # POSITIVE MATCH, NOT ABSENCE — the same mistake one level in. Scoring "enforced" because the
+    # warning is missing means every db.detail this factory does not recognise is read as good news:
+    # an older build, a forked health route, a `detail` that only says "SELECT 1 ok" all earned the
+    # affirmative while nothing had reported a role at all. The mold emits exactly one affirmative
+    # sentence (app/api/ops/health/route.ts:94, `SELECT 1 ok · role ${role} (RLS enforced)`) and it is
+    # printed ONLY when pg_roles.rolbypassrls came back false for the role the serving process is
+    # connected as. Match that, or record that nothing was measured.
+    if not RLS_ENFORCED_DETAIL.search(det):
+        return (f"UNMEASURED: HTTP {code} answered and the db check reads {det[:110]!r}, which is not this "
+                f"mold's `role <name> (RLS enforced)` sentence, so it names no role and settles nothing")
+    return f"enforced — {det[:180]}"
+
+def _rls_from_health(origin):
+    return _rls_from_doc(*_read_health(origin.rstrip("/") + HEALTH_PATH))
+
+def _health_rls(infra):
     u = (infra.get("vercel") or {}).get("production_url") or (infra.get("vm") or {}).get("production_url") or ""
-    if not u.startswith("http"): return "not checked: this app has no production URL yet"
-    r = subprocess.run(f"curl --silent --show-error --max-time 20 {u}/api/ops/health", shell=True, capture_output=True, text=True)
-    body = r.stdout or ""
-    if r.returncode or not body: return "not checked: the health endpoint did not answer"
-    m = re.search(r"(BYPASSRLS[^\"]*|row-level security is NOT enforced[^\"]*)", body)
-    return f"NOT enforced — {m.group(1)[:180]}" if m else "no BYPASSRLS warning on /api/ops/health"
+    if not u.startswith("http"): return "UNMEASURED: this app has no production URL yet"
+    return _rls_from_health(u)
 
 def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
     """Prove tenant isolation on an app that is ALREADY deployed, and record the result.
@@ -1006,6 +1241,13 @@ def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
         sys.exit(f"{app_id}: but the app SERVING TRAFFIC still says row-level security is not enforced "
                  f'("{ev["running_app"][:160]}"). A Vercel env change only reaches the app on its next build.\n'
                  f"  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
+    if not ev["running_app"].startswith("enforced"):
+        # UNMEASURED is not a pass. The stored credential is proven; the process in front of traffic is
+        # not, and it is recorded that way rather than as the affirmative this used to print.
+        sys.exit(f"{app_id}: the stored DATABASE_URL is proven, but NOTHING could be read from the app serving "
+                 f"traffic, so what that process runs as is unknown and has been recorded UNMEASURED "
+                 f'("{ev["running_app"][:160]}").\n'
+                 f"  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
     print(f"  the running app reports: {ev['running_app']}")
 
 def _revert(adir, app, reason):
@@ -1050,6 +1292,19 @@ def main(a):
                  f'a Postgres port to the internet. Set "provider": "neon" in state/application/{app_id}/'
                  f'datastores.json (Neon\'s free tier is available) and rerun. To use it locally: '
                  f'python3 .claude/scripts/provision.py {app_id} --verify-db')
+    if target != "vercel" and prov != "self_hosted":
+        # THE ARTIFACT MUST MATCH THE STATE. target=vm builds exactly one thing — a local postgres:17 on
+        # a private docker network — and --verify-db then brings that container up and writes ITS url as
+        # this app's DATABASE_URL. Neither function ever read postgres.provider, so an app whose state
+        # says `neon` got a self_hosted database anyway: an .env.example headed `provider: neon` above a
+        # postgres:17 compose file, a DATABASE_URL pointing at a container instead of at Neon, and an
+        # rls_verified block stamped `backend: neon` from a measurement taken on the wrong database
+        # (factory.py validate compares those two, which is how it would surface much later).
+        sys.exit(f'{app_id}: target "vm" builds one artifact — a local Postgres on a private docker network — '
+                 f'but datastores.postgres.provider is "{prov}", so there is nothing here to generate for it '
+                 f'and nothing was written.\n'
+                 f'  To verify this app locally: set "provider": "self_hosted" in state/application/{app_id}/datastores.json\n'
+                 f'  To run it on {prov}:        set "target": "vercel" in state/application/{app_id}/infrastructure.json')
     pg = ds.get("postgres", {})
     if pg.get("scope") == "shared_with_live" and pg.get("tenancy") == "multi_org":
         # The `shared` branch of deploy_vercel skips bring_up_schema entirely — no app_rw, no coverage
@@ -1097,6 +1352,14 @@ def main(a):
             return print("  the RUNNING app still uses the DATABASE_URL of its last build; Vercel env changes take "
                          "effect on the NEXT one. Re-run with --deploy to put this credential in front of traffic.")
     else:
+        # THE VM LANE TERMINATES HERE. This exit used to sit at the very END of main(), two lines behind
+        # `refusing to deploy with missing secrets` — so it was unreachable dead code: the names a vm app
+        # is missing (BLOB_READ_WRITE_TOKEN, CRON_SECRET, OPS_SECRETS_KEY, AUTH_JWT_PRIVATE_KEY,
+        # AUTH_JWT_PUBLIC_KEY and the provider's own) are minted by provision_datastores, which runs
+        # ONLY on the vercel branch. --check ended by saying "run --deploy", --deploy answered "refusing
+        # to deploy with missing secrets", and no command in this factory could ever produce them: a
+        # closed loop with no terminating step, for the one operator who cannot read their way out of it.
+        if deploy: sys.exit(VM_NOT_A_DEPLOY_TARGET.format(app_id=app_id))
         # EVERY vm run regenerates the artifact, --verify-db included. --verify-db used to return before
         # this line, so the compose file and README could be missing while state still named them, and —
         # worse — the run that creates .pg-admin and pg/server.key was the one run that never wrote the
@@ -1104,11 +1367,8 @@ def main(a):
         # carries the same rules; this ordering means the artifact simply cannot lag the database.)
         d = generate_local_artifact(app_id, mold_dir, secrets, ds, infra)
         if "--verify-db" in a: return verify_db(app_id, mold_dir, ds, adir)
-        envf = os.path.join(d, ".env"); present = set()
-        if os.path.exists(envf):
-            present = {l.split("=")[0].strip() for l in open(envf) if "=" in l and not l.startswith("#") and l.split("=",1)[1].strip()}
-        print(f"local artifact regenerated: {os.path.relpath(d, ROOT)}/ (docker-compose.yml, .env.example, README.md)")
-        print(f"target=vm VERIFIES, it does not deploy — run: python3 .claude/scripts/provision.py {app_id} --verify-db")
+        print(f"local artifact regenerated: {os.path.relpath(d, ROOT)}/ ({', '.join(GENERATED_FILES)})")
+        return vm_report(app_id, d, infra, ds)
     user_s = infra.get("secrets_user", secrets); derived_s = infra.get("secrets_derived", [])
     missing_user = [x for x in user_s if x not in present]
     # No copy-from-live path: Vercel marks these `sensitive` (write-only), so a pull of the source
@@ -1132,16 +1392,9 @@ def main(a):
     if not deploy:
         print("check only; re-run with --deploy once nothing is missing"); sys.exit(1 if (missing_user or missing_derived) else 0)
     if missing_user or missing_derived: sys.exit("refusing to deploy with missing secrets")
-    if target != "vercel":
-        # No half-working second target. The vm branch used to `docker compose up -d --build` a
-        # single `web` container and then call it deployed: no database, no eve API, no task-workflow
-        # service, no crons, no health check — one fifth of the application, recorded as `stamped`.
-        sys.exit(f"{app_id}: target 'vm' is a LOCAL VERIFICATION target, not a deploy target (see infra/vm/README.md). "
-                 f"Run `python3 .claude/scripts/provision.py {app_id} --verify-db` to bring its database up and prove "
-                 f"the schema, or set infrastructure.target to \"vercel\" to deploy the application.")
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
     try:
-        alarm = deploy_vercel(app_id, app, infra, ds, mold_dir, adir)
+        running = deploy_vercel(app_id, app, infra, ds, mold_dir, adir)
     except BaseException as e:
         # "deployed" and "isolated" are the same state or the app is not deployed. Every exit inside
         # deploy_vercel — the coverage pass, the isolation proof, a failed build — lands here, so the
@@ -1160,14 +1413,24 @@ def main(a):
                                  f"Nothing about this app is proven; re-run: python3 .claude/scripts/provision.py {app_id} --deploy")
         raise
     infra["deployed_at"] = TODAY; save(os.path.join(adir, "infrastructure.json"), infra)
-    if alarm and rls_mode(ds) != "off":
+    if rls_mode(ds) != "off" and not running.startswith("enforced"):
         # The stored DATABASE_URL passing the gate is not the same fact as the RUNNING app using it:
         # a Vercel env change only takes effect on the next build, and this is the only reading that
-        # covers the process actually serving traffic.
-        _revert(adir, app, f"the deployed app reports row-level security is not enforced: {alarm}")
-        sys.exit(f"{app_id}: the app deployed, but its own health endpoint says row-level security is NOT enforced "
-                 f'("{alarm}") while datastores.postgres.rls claims "{rls_mode(ds)}". The build in front of traffic '
-                 f"is still using an older DATABASE_URL.\n  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
+        # covers the process actually serving traffic. UNMEASURED lands here too — an app whose health
+        # endpoint cannot be read has not been shown to be anything, and "not shown" is not "fine".
+        if running.startswith("NOT enforced"):
+            _revert(adir, app, f"the deployed app reports row-level security is not enforced: {running}")
+            sys.exit(f"{app_id}: the app deployed, but its own health endpoint says row-level security is NOT enforced "
+                     f'("{running}") while datastores.postgres.rls claims "{rls_mode(ds)}". The build in front of traffic '
+                     f"is still using an older DATABASE_URL.\n  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
+        _revert(adir, app, f"nothing could be read from the deployed app, so the process serving traffic is "
+                           f"unproven: {running}")
+        sys.exit(f"{app_id}: the deploy finished, but its own health endpoint could not be read "
+                 f'("{running}"), so nothing shows which database role the running app uses while '
+                 f'datastores.postgres.rls claims "{rls_mode(ds)}".\n'
+                 f"  Open {infra.get('vercel', {}).get('production_url', 'the app URL')}{HEALTH_PATH} in a browser. If it asks "
+                 f"for a login, turn off Vercel Deployment Protection for this project, then run: "
+                 f"python3 .claude/scripts/provision.py {app_id} --deploy")
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
 if __name__ == "__main__": main(sys.argv[1:])
