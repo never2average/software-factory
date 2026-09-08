@@ -39,6 +39,14 @@
  *   C7 unset     fail_closed only: with app.org_id set to the EMPTY STRING (what a transaction pooler
  *                leaves behind, not NULL), the table returns zero rows.
  *
+ *   C8 behaviour every permissive policy is EXECUTED, one at a time, against rows this script owns on a
+ *                temp copy of its table's columns (lib/rls-policy.mjs). Reading the predicate is not the
+ *                same as running it: `USING ((org_id = current_setting('app.org_id', true)) OR true)`
+ *                satisfies every text rule in C4 and still hands over another workspace's rows —
+ *                measured on `tickets`, which C5-C7 skip because it carries foreign keys. C8 is what
+ *                covers the tables the live probe cannot touch, and it can never be vacuous: the
+ *                foreign row is one this check inserted.
+ *
  * C5/C6/C7 RUN ON EVERY PROBE-ELIGIBLE TABLE, not on one. They are the only checks that read across the
  * boundary rather than reasoning about the catalog, and a single-table probe is exactly as blind as a
  * name list: with the probe on account_summaries, a planted `USING (true)` on browser_credentials was
@@ -65,6 +73,7 @@
  *   exit 3  it could not run at all (unreachable, refused, bad credentials) — nothing was measured
  */
 import postgres from "postgres";
+import { measurePolicies, isScoped, exprs, why, cap, q } from "./rls-policy.mjs";
 
 const url = process.env.APP_RW_URL;
 if (!url) { console.error("APP_RW_URL is not set"); process.exit(2); }
@@ -73,30 +82,15 @@ const ROLE = process.env.APP_ROLE || "app_rw";
 const CONTROL_PLANE = ["orgs", "org_members", "org_invites"];   // same set as rls-cover.mjs; see its header
 const A = "__rls_probe_a__", B = "__rls_probe_b__", C = "__rls_probe_c__";
 const ROLLBACK = "__rls_probe_rollback__";
-const q = (id) => '"' + String(id).replace(/"/g, '""') + '"';
-const scoped = (e) => /\borg_id\b/i.test(e) && /current_setting\(\s*'app\.org_id'/i.test(e);
-const exprs = (p) => [p.qual, p.with_check].filter((e) => e !== null && e !== undefined && e !== "");
-const isScoped = (p) => { const e = exprs(p); return e.length > 0 && e.every(scoped); };
-
-/** One line, no stack, no Node version banner — provision.py stores this verbatim as the revert reason. */
-function why(e) {
-  const c = e && (e.code || e.errno), m = String((e && e.message) || e);
-  if (c === "ECONNREFUSED") return "cannot reach the database: connection refused";
-  if (c === "ENOTFOUND" || c === "EAI_AGAIN") return "cannot reach the database: host not found";
-  if (c === "ETIMEDOUT" || c === "CONNECT_TIMEOUT") return "cannot reach the database: connection timed out";
-  if (c === "28P01" || c === "28000") return "the database refused these credentials (password authentication failed)";
-  if (c === "3D000") return "that database does not exist on this server";
-  if (c === "ECONNRESET" || c === "EPIPE") return "the database closed the connection (TLS or pooler mismatch)";
-  return (c ? `${c}: ` : "") + m.split("\n")[0].slice(0, 200);
-}
 
 const sql = postgres(url, { max: 1, prepare: false, connect_timeout: 20, onnotice: () => {} });
 const out = { mode, role: null, superuser: null, bypassrls: null, sslmode: null, pg_stat_ssl: null, plaintext: "not tried",
               guc_roundtrip: null, tables_org_scoped: null, protected: null, unprotected: [], open_policies: [],
+              leaking_policies: [], policies_executed: 0, policies_unverified: [],
               other_role_policies: [], probe_tables: 0, probe_table: null, probe_skipped: [], own_org_rows: 0,
               foreign_rows: 0, leaking_tables: [], cross_org_write: null, cross_org_writable: [],
-              unset_org_rows: null, open_with_no_org: [] };
-const bad = [];
+              unset_org_rows: null, open_with_no_org: [], unmeasured: [] };
+const bad = [], probedOk = new Set();
 try {
   /* C1 + C3 -------------------------------------------------------------- */
   const [r] = await sql`SELECT current_user AS u,
@@ -112,7 +106,15 @@ try {
   if (r.ssl !== true) {                    // TLS may be terminated in front of Postgres; prove plaintext is refused
     const u = new URL(url); u.searchParams.set("sslmode", "disable");
     const bare = postgres(u.toString(), { max: 1, prepare: false, connect_timeout: 15 });
-    try { await bare`SELECT 1`; out.plaintext = "ACCEPTED"; } catch { out.plaintext = "refused"; }
+    // ONLY an SSL-required refusal counts. Scoring any error as "refused" let a transient failure —
+    // a timeout, a full connection pool, a pooler hiccup — read as proof that the server encrypts.
+    try { await bare`SELECT 1`; out.plaintext = "ACCEPTED"; }
+    catch (e) {
+      const m = String((e && e.message) || e).toLowerCase();
+      out.plaintext = (e && (e.code === "28000" || e.code === "08P01")) ||
+        /ssl|encryption|secure connection/.test(m) ? "refused (server requires TLS)"
+        : `inconclusive: ${why(e)}`;
+    }
     await bare.end({ timeout: 5 }).catch(() => {});
   }
 
@@ -129,7 +131,7 @@ try {
   // `applies`: a policy listed TO another role cannot open anything for THIS connection. Resolved
   // through pg_has_role, so a policy granted to a group this role belongs to still counts.
   const pols = await sql`
-    SELECT tablename AS t, policyname AS p, permissive, coalesce(qual, '') AS qual, coalesce(with_check, '') AS with_check,
+    SELECT tablename AS t, policyname AS p, permissive, cmd, coalesce(qual, '') AS qual, coalesce(with_check, '') AS with_check,
       EXISTS (SELECT 1 FROM unnest(roles) rr
               WHERE CASE WHEN rr = 'public' THEN true
                          WHEN EXISTS (SELECT 1 FROM pg_roles gg WHERE gg.rolname = rr)
@@ -147,6 +149,20 @@ try {
     for (const p of mine) if (!isScoped(p)) out.open_policies.push(`${x.t}:${p.p}`);
     if (!(x.enabled && x.forced && mine.some(isScoped)) || mine.some((p) => !isScoped(p))) out.unprotected.push(x.t);
   }
+  out.protected = cov.length - out.unprotected.length;
+
+  /* C8 — RUN each policy instead of reading it ---------------------------- */
+  // A predicate that mentions org_id and the GUC can still hand over the whole table
+  // (`... OR true`). lib/rls-policy.mjs executes every permissive policy singly against rows it owns
+  // on a temp copy of the table's columns, which is also the only measurement that reaches the tables
+  // C5-C7 must skip for their foreign keys and triggers.
+  // Not through a role that bypasses RLS: every policy would "leak" and the report would blame the
+  // policies for what the ROLE did. C1 already refuses such a URL; this keeps the reason honest.
+  const canMeasure = out.superuser === false && out.bypassrls === false;
+  const beh = canMeasure ? await measurePolicies(sql, { tables: cov, policies: live, mode, control: new Set(CONTROL_PLANE) })
+    : { leaking: [], checked: 0, unverified: [`all:${out.role} bypasses row level security, so no policy can be measured through it`] };
+  out.leaking_policies = beh.leaking; out.policies_executed = beh.checked; out.policies_unverified = beh.unverified;
+  for (const l of beh.leaking) { const t = l.split(":")[0]; if (!out.unprotected.includes(t)) out.unprotected.push(t); }
   out.protected = cov.length - out.unprotected.length;
 
   /* C5/C6/C7 — every eligible table, one transaction, rolled back --------- */
@@ -227,7 +243,7 @@ try {
               const [u] = await s`SELECT count(*)::int AS n FROM (SELECT 1 FROM ${s(pr.t)} LIMIT 5) z`;
               un = u.n;
             }
-            out.probe_tables += 1;
+            out.probe_tables += 1; probedOk.add(pr.t);
             out.own_org_rows += own.n;
             out.foreign_rows += fr.n;
             if (own.n !== 1) out.probe_skipped.push(`${pr.t}:own row not visible in its own workspace`);
@@ -246,19 +262,33 @@ try {
     }).catch((e) => { if (e.message !== ROLLBACK) throw e; });
     out.cross_org_write = writes.size === 1 ? [...writes][0] : `mixed: ${out.cross_org_writable.slice(0, 4).join(", ")}`;
     if (mode === "fail_closed" && out.unset_org_rows === null) out.unset_org_rows = 0;
+
   }
+
+  // A table neither the live probe nor the behavioural pass could measure has been ASSERTED about,
+  // not proven — the exact thing this file exists to stop.
+  out.unmeasured = !canMeasure ? []
+    : cov.map((x) => x.t).filter((t) => !probedOk.has(t) && beh.unverified.some((u) => u.startsWith(t + ":")));
 
   /* verdict --------------------------------------------------------------- */
   if (out.role !== ROLE) bad.push(`current_user is ${out.role}, not ${ROLE}`);
   if (out.bypassrls !== false) bad.push(`${out.role} has BYPASSRLS: every policy is silently ignored`);
   if (out.superuser !== false) bad.push(`${out.role} is SUPERUSER: every policy is silently ignored (the app's own health check would not see this)`);
   if (out.sslmode !== "require" && out.sslmode !== "verify-full") bad.push(`DATABASE_URL carries sslmode=${out.sslmode} — the runtime clients pass no ssl option, so this would be plaintext`);
-  if (out.pg_stat_ssl !== true && out.plaintext !== "refused") bad.push("the server accepts unencrypted connections and Postgres did not terminate TLS");
+  if (out.pg_stat_ssl !== true && !String(out.plaintext).startsWith("refused"))
+    bad.push(out.plaintext === "ACCEPTED" ? "the server accepts unencrypted connections and Postgres did not terminate TLS"
+      : `Postgres did not terminate TLS and the plaintext probe was ${out.plaintext} — nothing proved this connection is encrypted`);
   if (!out.guc_roundtrip) bad.push("transaction-local app.org_id did not survive the round trip");
   if (mode !== "off") {
     if (out.open_policies.length) bad.push(`${out.open_policies.length} permissive policy/policies do not scope by org_id, and Postgres OR's them, so each reopens its whole table: ` +
       `${out.open_policies.slice(0, 8).join(", ")}${out.open_policies.length > 8 ? " …" : ""}`);
-    const silent = out.unprotected.filter((t) => !out.open_policies.some((o) => o.startsWith(t + ":")));
+    if (out.leaking_policies.length) bad.push(`${out.leaking_policies.length} permissive policy/policies were EXECUTED and handed over another workspace's rows: ` +
+      `${out.leaking_policies.slice(0, 6).join(", ")}${out.leaking_policies.length > 6 ? " …" : ""}`);
+    if (out.unmeasured.length) bad.push(`${out.unmeasured.length} org-scoped table(s) could not be measured at all — neither the ` +
+      `cross-workspace probe nor the policy execution pass could reach them, so nothing proves them: ${out.unmeasured.slice(0, 6).join(", ")} ` +
+      `(${(out.policies_unverified[0] || "").split(":").slice(-1)[0]})`);
+    const silent = out.unprotected.filter((t) => !out.open_policies.some((o) => o.startsWith(t + ":")) &&
+                                                 !out.leaking_policies.some((o) => o.startsWith(t + ":")));
     if (silent.length) bad.push(`${silent.length} of ${out.tables_org_scoped} org-scoped table(s) lack ENABLE+FORCE+a policy that scopes by org_id: ${silent.slice(0, 8).join(", ")}${silent.length > 8 ? " …" : ""}`);
     if (out.probe_tables) {
       if (out.own_org_rows !== out.probe_tables) bad.push(`the probe row was not visible in its own workspace on ${out.probe_tables - out.own_org_rows} table(s) — those checks would have been vacuous`);
@@ -269,9 +299,9 @@ try {
   }
   // The counts are the evidence; the lists are there to name names. Cap them so one JSON line stays a
   // line — a 52-table failure otherwise prints four screens of it and state records four screens of it.
-  const cap = (a) => (a.length > 20 ? [...a.slice(0, 20), `+${a.length - 20} more`] : a);
-  for (const k of ["unprotected", "open_policies", "other_role_policies", "probe_skipped", "leaking_tables",
-                   "cross_org_writable", "open_with_no_org"]) out[k] = cap(out[k]);
+  for (const k of ["unprotected", "open_policies", "leaking_policies", "policies_unverified", "other_role_policies",
+                   "probe_skipped", "leaking_tables", "cross_org_writable", "open_with_no_org", "unmeasured"])
+    if (Array.isArray(out[k])) out[k] = cap(out[k]);
   console.log(JSON.stringify(out));
   if (bad.length) { console.error("tenant isolation NOT proven: " + bad.join("; ")); process.exit(1); }
 } catch (e) {

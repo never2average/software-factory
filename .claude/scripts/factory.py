@@ -134,9 +134,23 @@ def _rls_claim(app_id, docs):
         return [f"{w} on a {st} app but nothing has measured it" + (f" ({ev.get('source')})" if ev else "") + f". {fix}"]
     out = []
     if ev.get("mode") != want: out.append(f"{w} but the evidence records mode {ev.get('mode')!r}. {fix}")
+    # A proof against the local self_hosted database is not a proof about a Neon one. provision.py
+    # itself tells operators to switch provider when a Vercel deploy cannot reach a private network,
+    # and the proof written before that switch would otherwise stand as evidence for the new backend.
+    if ev.get("backend") and pg.get("provider") and ev["backend"] != pg["provider"]:
+        out.append(f"{w} but the evidence was measured on backend {ev['backend']!r} while postgres.provider is now "
+                   f"{pg['provider']!r} — that proof is about a different database. {fix}")
     if ev.get("bypassrls") is not False or ev.get("superuser") is not False:
         out.append(f"{w} but it was measured as role {ev.get('role')!r} with superuser={ev.get('superuser')} "
                    f"bypassrls={ev.get('bypassrls')} — either one ignores every policy. {fix}")
+    if ev.get("open_policies"): out.append(f"{w} but {len(ev['open_policies'])} permissive policy/policies do not scope "
+        f"by org_id, and Postgres OR's them, so each reopens its whole table: {', '.join(ev['open_policies'][:6])}. {fix}")
+    if ev.get("leaking_policies"): out.append(f"{w} but {len(ev['leaking_policies'])} permissive policy/policies were "
+        f"EXECUTED and handed over another workspace's rows: {', '.join(ev['leaking_policies'][:4])}. {fix}")
+    if ev.get("unmeasured"): out.append(f"{w} but {len(ev['unmeasured'])} org-scoped table(s) were never measured at all: "
+        f"{', '.join(ev['unmeasured'][:6])} — an unmeasured table is not an isolated one. {fix}")
+    if ev.get("policies_unverified"): out.append(f"{w} but {len(ev['policies_unverified'])} policy/policies could not be "
+        f"executed, so nothing measured what they do: {', '.join(ev['policies_unverified'][:4])}. {fix}")
     if ev.get("unprotected"): out.append(f"{w} but {len(ev['unprotected'])} of {ev.get('org_scoped_tables')} org-scoped "
                                          f"tables had no enforced policy: {', '.join(ev['unprotected'][:6])}. {fix}")
     if ev.get("foreign_rows_readable"): out.append(f"{w} but {ev['foreign_rows_readable']} row(s) of another workspace "
