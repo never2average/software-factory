@@ -448,6 +448,9 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
           onClick={() => canEditOrg && logoRef.current?.click()}
           disabled={!canEditOrg}
           title={canEditOrg ? "Change workspace logo" : undefined}
+          // The mark inside is aria-hidden (initials are decoration, not a name), so
+          // without this the button has no accessible name at all.
+          aria-label={canEditOrg ? "Change workspace logo" : "Workspace logo"}
           className={cn("group relative flex shrink-0", canEditOrg && "cursor-pointer")}
         >
           <OrgMark name={current?.name ?? orgId ?? "Workspace"} logoUrl={logoUrl} size="md" />

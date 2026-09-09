@@ -26,8 +26,12 @@ test("workspace cards render and select", async ({ page }) => {
   await expect(page.getByText("2.3.1")).toBeVisible();
 
   // Sprint cards render (title + burndown), matching the implementation layout.
+  // recharts' ResponsiveContainer draws its <svg> only after its ResizeObserver
+  // has measured the card, so wait for the first chart before counting them.
   await expect(page.getByTestId("sprint-cards")).toBeVisible();
-  expect(await page.getByTestId("sprint-cards").locator("svg.recharts-surface").count()).toBeGreaterThanOrEqual(1);
+  const sprintCharts = page.getByTestId("sprint-cards").locator("svg.recharts-surface");
+  await expect(sprintCharts.first()).toBeVisible();
+  expect(await sprintCharts.count()).toBeGreaterThanOrEqual(1);
 
   // Implementation cards: the four customers render.
   for (const c of ["SBI", "ICICI HFC", "CUB", "MLP USA"]) {
@@ -41,6 +45,7 @@ test("workspace cards render and select", async ({ page }) => {
 
   // Each implementation card renders a burndown chart (recharts <svg>).
   const charts = page.getByTestId("impl-board").locator("svg.recharts-surface");
+  await expect(charts.first()).toBeVisible();
   expect(await charts.count()).toBeGreaterThanOrEqual(4);
 
   // Screenshots for the record.

@@ -27,3 +27,6 @@ scripts/.ui-log
 .org-wipe-backup-*.json
 .org-wipe-backup-customers-*.json
 .vercel/.agent-oidc.env
+
+# Playwright output (screenshots, traces).
+test-results
