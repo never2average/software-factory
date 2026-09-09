@@ -146,6 +146,14 @@ function rowToRecord(row: ScheduleRow): ScheduleRuleRecord {
 /** Internal fallback shape holds real Dates so lease math matches Postgres. */
 interface FallbackRule {
   id: string;
+  /**
+   * The workspace this rule belongs to. The table has had this column all along and
+   * every database branch below scopes by it; the in-process fallback did not carry
+   * it, so `scheduleRuleSchema.parse` threw on `orgId` the moment a rule was created
+   * without a database — and every fallback read below was reachable from any
+   * workspace that knew an id.
+   */
+  orgId: string;
   customerId: string | null;
   name: string;
   cron: string | null;
@@ -171,6 +179,7 @@ const fallbackRules = new Map<string, FallbackRule>();
 function fallbackToRecord(r: FallbackRule): ScheduleRuleRecord {
   return scheduleRuleSchema.parse({
     id: r.id,
+    orgId: r.orgId,
     customerId: r.customerId,
     name: r.name,
     cron: r.cron,
@@ -261,6 +270,7 @@ export async function createScheduleRule(
   const now = new Date();
   const rule: FallbackRule = {
     id: randomUUID(),
+    orgId: input.orgId,
     customerId: input.customerId ?? null,
     name: input.name,
     cron: input.cron ?? null,
@@ -316,6 +326,7 @@ export async function listScheduleRules(
   return [...fallbackRules.values()]
     .filter(
       (r) =>
+        r.orgId === orgId &&
         (filter?.customerId === undefined || r.customerId === filter.customerId) &&
         (filter?.enabled === undefined || r.enabled === filter.enabled),
     )
@@ -372,7 +383,9 @@ export async function updateScheduleRule(
     return rowToRecord(updated[0]);
   }
   const rule = fallbackRules.get(id);
-  if (!rule) throw new Error(`schedule rule not found: ${id}`);
+  // Same predicate as the UPDATE above: another workspace's rule is NOT FOUND, not forbidden,
+  // so an id cannot be probed for existence across the boundary.
+  if (!rule || rule.orgId !== orgId) throw new Error(`schedule rule not found: ${id}`);
   if (patch.name !== undefined) rule.name = patch.name;
   if (patch.prompt !== undefined) rule.prompt = patch.prompt;
   if (patch.channelId !== undefined) rule.channelId = patch.channelId;
@@ -405,6 +418,8 @@ export async function deleteScheduleRule(
     );
     return deleted.length > 0;
   }
+  const doomed = fallbackRules.get(id);
+  if (!doomed || doomed.orgId !== orgId) return false;
   return fallbackRules.delete(id);
 }
 
@@ -545,7 +560,7 @@ export async function completeRule(
     return;
   }
   const rule = fallbackRules.get(claim.id);
-  if (!rule || rule.leaseToken !== claim.leaseToken) return;
+  if (!rule || rule.orgId !== claim.orgId || rule.leaseToken !== claim.leaseToken) return;
   rule.lockedAt = null;
   rule.leaseToken = null;
   rule.lastRunAt = opts.ranAt;
@@ -593,7 +608,7 @@ export async function releaseRule(
     return;
   }
   const rule = fallbackRules.get(claim.id);
-  if (!rule || rule.leaseToken !== claim.leaseToken) return;
+  if (!rule || rule.orgId !== claim.orgId || rule.leaseToken !== claim.leaseToken) return;
   rule.lockedAt = null;
   rule.leaseToken = null;
   rule.lastError = message;

@@ -20,11 +20,17 @@ const { getDb } = await import("../agent/lib/db/index.ts");
 const store = await import("../agent/lib/schedule-store.ts");
 const { createScheduleTool, listSchedulesTool, updateScheduleTool, deleteScheduleTool } =
   await import("../agent/lib/schedule-tools.ts");
+const { orgForSession } = await import("../agent/lib/org-context.ts");
 
 assert.equal(getDb(), null, "no DB URL is set, getDb() must return null (fallback path)");
 
 store.__resetFallbackScheduleRules();
 
+/**
+ * Every store entry point is workspace-scoped: the tools resolve the workspace from the
+ * caller's session and pass it down. These direct store calls must do the same, or they are
+ * testing a signature the product no longer has.
+ */
 /** Fake eve session/tool context for a given authenticated teammate. */
 const ctxFor = (email) => ({
   session: {
@@ -40,8 +46,12 @@ const ctxFor = (email) => ({
 
 const FDE_A = "priyesh@onfinance.in";
 const FDE_B = "lena@onfinance.in";
+const OTHER_ORG = "org-someone-else";
 
 // --- create via tool: createdBy = ctx email, enabled, nextRunAt echoes ------
+
+const ORG = await orgForSession(ctxFor(FDE_A));
+assert.equal(typeof ORG, "string", "the tools resolve a workspace even with no database");
 
 const firstRunAt = "2026-07-11T09:00:00Z";
 const created = await createScheduleTool.execute(
@@ -116,6 +126,7 @@ await assert.rejects(
 store.__resetFallbackScheduleRules();
 const now = new Date("2026-07-10T12:00:00Z");
 const recurring = await store.createScheduleRule({
+  orgId: ORG,
   name: "Every 30m sweep",
   prompt: "sweep",
   firstRunAt: now, // due exactly at `now`
@@ -135,7 +146,7 @@ assert.deepEqual(secondClaim, [], "the same rule is NOT claimed again within the
 
 const ranAt = new Date("2026-07-10T12:00:05Z");
 await store.completeRule(firstClaim[0], { ranAt });
-const afterComplete = (await store.listScheduleRules())[0];
+const afterComplete = (await store.listScheduleRules(ORG))[0];
 assert.equal(
   new Date(afterComplete.nextRunAt).toISOString(),
   new Date(ranAt.getTime() + 30 * 60_000).toISOString(),
@@ -159,7 +170,7 @@ const dueAgain = new Date(afterComplete.nextRunAt);
 const claimAgain = await store.claimDueRules({ now: dueAgain });
 assert.equal(claimAgain.length, 1, "the rule is due again at its advanced nextRunAt");
 await store.completeRule(claimAgain[0], { ranAt: dueAgain, error: "slack delivery failed: channel unwired" });
-const afterError = (await store.listScheduleRules())[0];
+const afterError = (await store.listScheduleRules(ORG))[0];
 assert.equal(afterError.lastError, "slack delivery failed: channel unwired", "delivery error is recorded");
 assert.equal(
   new Date(afterError.nextRunAt).toISOString(),
@@ -174,6 +185,7 @@ store.__resetFallbackScheduleRules();
 const leaseForMs = 5 * 60_000;
 const t0 = new Date("2026-07-10T12:00:00Z");
 const leaseRule = await store.createScheduleRule({
+  orgId: ORG,
   name: "lease-test",
   prompt: "x",
   firstRunAt: t0,
@@ -198,13 +210,14 @@ assert.equal(claimB[0].id, leaseRule.id);
 assert.notEqual(claimB[0].leaseToken, claimA[0].leaseToken, "re-claim stamps a fresh lease token");
 // a stale worker (claimA) completing after re-claim is a no-op
 await store.completeRule(claimA[0], { ranAt: new Date(t0.getTime() + 30_000) });
-const stillLocked = (await store.listScheduleRules())[0];
+const stillLocked = (await store.listScheduleRules(ORG))[0];
 assert.equal(stillLocked.leaseToken, claimB[0].leaseToken, "stale-lease complete did NOT clobber the new holder");
 
 // --- one-time rule is disabled after complete -------------------------------
 
 store.__resetFallbackScheduleRules();
 const oneShot = await store.createScheduleRule({
+  orgId: ORG,
   name: "one-shot",
   prompt: "run once",
   firstRunAt: t0,
@@ -214,7 +227,7 @@ const oneShot = await store.createScheduleRule({
 const oneClaim = await store.claimDueRules({ now: t0 });
 assert.equal(oneClaim.length, 1);
 await store.completeRule(oneClaim[0], { ranAt: t0 });
-const afterOneShot = (await store.listScheduleRules({ enabled: false }))[0];
+const afterOneShot = (await store.listScheduleRules(ORG, { enabled: false }))[0];
 assert.equal(afterOneShot.id, oneShot.id, "one-time rule is now disabled");
 assert.equal(afterOneShot.enabled, false, "one-time rule flips to enabled=false after it runs");
 assert.deepEqual(
@@ -227,6 +240,7 @@ assert.deepEqual(
 
 store.__resetFallbackScheduleRules();
 const relRule = await store.createScheduleRule({
+  orgId: ORG,
   name: "release-test",
   prompt: "x",
   firstRunAt: t0,
@@ -236,7 +250,7 @@ const relRule = await store.createScheduleRule({
 const relClaim = await store.claimDueRules({ now: t0 });
 const retryAt = new Date(t0.getTime() + 15 * 60_000);
 await store.releaseRule(relClaim[0], { error: new Error("boom"), retryAt });
-const afterRelease = (await store.listScheduleRules())[0];
+const afterRelease = (await store.listScheduleRules(ORG))[0];
 assert.equal(afterRelease.id, relRule.id);
 assert.equal(afterRelease.lockedAt, null, "release clears the lock");
 assert.equal(afterRelease.lastError, "boom", "release records String(error.message)");
@@ -248,16 +262,47 @@ assert.equal(
 
 // --- delete returns true then false -----------------------------------------
 
-assert.equal(await store.deleteScheduleRule(relRule.id), true, "delete removes the rule");
-assert.equal(await store.deleteScheduleRule(relRule.id), false, "deleting a missing rule returns false");
+assert.equal(await store.deleteScheduleRule(ORG, relRule.id), true, "delete removes the rule");
+assert.equal(await store.deleteScheduleRule(ORG, relRule.id), false, "deleting a missing rule returns false");
 
 // delete via tool (uuid-validated input)
 store.__resetFallbackScheduleRules();
 const toDelete = await store.createScheduleRule({
+  orgId: ORG,
   name: "del", prompt: "x", firstRunAt: t0, everyMinutes: null, createdBy: FDE_A,
 });
 const del = await deleteScheduleTool.execute({ id: toDelete.id }, ctxFor(FDE_A));
 assert.equal(del.deleted, true, "delete tool removes the rule");
+
+// --- the fallback map is workspace-scoped, exactly like the table ------------
+// Before orgId reached FallbackRule this was unreachable code: creating a rule without a
+// database threw on the schema. It is also the property the database branch has always
+// enforced with `eq(scheduleRules.orgId, orgId)`, and the fallback silently did not.
+store.__resetFallbackScheduleRules();
+const mine = await store.createScheduleRule({
+  orgId: ORG, name: "mine", prompt: "x", firstRunAt: t0, everyMinutes: null, createdBy: FDE_A,
+});
+assert.equal(mine.orgId, ORG, "a rule created without a database still records its workspace");
+assert.deepEqual(
+  await store.listScheduleRules(OTHER_ORG),
+  [],
+  "another workspace cannot list this rule",
+);
+assert.equal(
+  await store.deleteScheduleRule(OTHER_ORG, mine.id),
+  false,
+  "another workspace cannot delete this rule by id",
+);
+await assert.rejects(
+  store.updateScheduleRule(OTHER_ORG, mine.id, { name: "stolen" }),
+  /not found/,
+  "another workspace cannot update this rule, and is told NOT FOUND rather than forbidden",
+);
+assert.equal(
+  (await store.listScheduleRules(ORG)).length,
+  1,
+  "the owning workspace still sees its rule after all of that",
+);
 
 assert.equal(getDb(), null, "still no DB connection after the whole flow");
 

@@ -1,4 +1,43 @@
 {
-  "internalStaffAssignments": [],
-  "customerStakeholders": []
+  "_comment": "SYNTHETIC people seed for the no-database fallback path, paired with data/customers.json. scripts/validate-data.mjs enforces that every fdeOwner and ticketOwnerEmail is same-customer internal staff, so an account here must have its owner listed here too. No real people.",
+  "internalStaffAssignments": [
+    {
+      "customer_id": "acme-bank",
+      "staffRole": "solution_engineer",
+      "name": "Priyesh Srivastava",
+      "title": "Forward-Deployed Engineer",
+      "employerOrg": "OnFinance",
+      "email": "priyesh@onfinance.in",
+      "lastContact": "2026-07-09"
+    },
+    {
+      "customer_id": "northwind-cap",
+      "staffRole": "solution_engineer",
+      "name": "Priyesh Srivastava",
+      "title": "Forward-Deployed Engineer",
+      "employerOrg": "OnFinance",
+      "email": "priyesh@onfinance.in",
+      "lastContact": "2026-07-09"
+    }
+  ],
+  "customerStakeholders": [
+    {
+      "customer_id": "acme-bank",
+      "stakeholderRole": "decision_maker",
+      "name": "Sam Cole",
+      "title": "Head of Information Security",
+      "employerOrg": "Acme Bank",
+      "email": "sam.cole@acme-bank.example",
+      "lastContact": "2026-07-08"
+    },
+    {
+      "customer_id": "northwind-cap",
+      "stakeholderRole": "champion",
+      "name": "Rea Vogel",
+      "title": "Director of Research Technology",
+      "employerOrg": "Northwind Capital",
+      "email": "rea.vogel@northwind-cap.example",
+      "lastContact": "2026-07-10"
+    }
+  ]
 }
