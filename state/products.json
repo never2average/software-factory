@@ -30,8 +30,7 @@
       },
       "app_ids": [
         "claudecode_web_internal",
-        "claudecode_web_replica",
-        "sf_e2e_vm"
+        "claudecode_web_replica"
       ],
       "deploy_targets": [
         "vercel"

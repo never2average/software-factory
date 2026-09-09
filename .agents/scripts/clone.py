@@ -21,7 +21,7 @@ ST = os.path.join(ROOT, "state"); NOW = datetime.datetime.now(datetime.timezone.
 STAMP = datetime.datetime.fromisoformat(NOW).strftime("%Y-%m-%dT%H%M%SZ")   # the same second as run_at, cut for a filename
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lanes import reserve_report   # ONE implementation of "a report path nobody can reopen", shared with the lanes
-from factory import _ts   # ONE reading of an ISO-8601 instant, shared with validate (lanes.py imports factory the same way)
+from factory import _ts, TS_FORM   # ONE reading of an ISO-8601 instant, shared with validate (lanes.py imports factory the same way)
 LIVE = {"web": "fde-agent", "api": "fde-agent-api", "workflow": "fde-task-workflow"}   # the reference deployment; never deployed to
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
@@ -89,7 +89,7 @@ def isolation_findings(app_id, pg):
     # is a finding, not a skipped comparison (a comparison that cannot run is not one that passed).
     at = str(ev.get("at") or ""); atd = _ts(at); snap = str((pg.get("snapshot") or {}).get("taken_at") or ""); sd = _ts(snap) if snap else None
     if not atd: iso.append(f"the proof carries no orderable `at` ({at[:60]!r}), so nothing can tell whether it predates the restore — run `clone.py {app_id} rls`")
-    elif snap and not sd: iso.append(f"postgres.snapshot.taken_at is {snap[:60]!r}, not an ISO-8601 timestamp, so nothing can tell whether the restore came after the proof")
+    elif snap and not sd: iso.append(f"postgres.snapshot.taken_at is {snap[:60]!r}, not {TS_FORM}, so nothing can tell whether the restore came after the proof")
     elif sd and atd < sd: iso.append(f"the proof ({at}) predates the restore ({snap}) — run `clone.py {app_id} rls`")
     if ev.get("mode") != want: iso.append(f"declares {want}, measured {ev.get('mode')}")
     if ev.get("unprotected"): iso.append(f"{len(ev['unprotected'])} of {ev.get('org_scoped_tables')} org-scoped tables unprotected")

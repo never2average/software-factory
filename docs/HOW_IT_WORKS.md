@@ -78,7 +78,7 @@ private-network Postgres, `.env.example`, README) and checks `.env`. The VM targ
 2. The task-workflow microservice from `services/task-workflow` (a Next.js app, preset `nextjs`), then the Eve API (`vercel build` with the experimental framework, shipped `--prebuilt`, preset `eve`), then the web dashboard. Presets are set through the API and verified by slug, since auto-detection picks Next.js for the Eve output and then rejects it.
 3. The three health endpoints the Makefile checks: `<workflow>/api/health`, `<api>/eve/v1/health`, `<web>/api/ops/health`. Results land in `infrastructure.json` under `vercel.health`.
 
-If the database is shared with live, it deploys web only with crons stripped so live jobs never run twice. VM apps are not deployed: `--deploy` refuses and points at `--verify-db`. Every URL is captured from the CLI output by pattern, never from the last line.
+If the database is shared with live, it deploys web only with crons stripped so live jobs never run twice. VM apps are not deployed: `--deploy` refuses and points at `--verify-db`, and a vm app's status stays `planned` — `factory.py validate` and every `provision.py` writer refuse a vm app in any deployed status (`stamping`, `stamped`, `testing`, `serviceable`), since nothing on that lane ever serves traffic (mold_v1-047). Every URL is captured from the CLI output by pattern, never from the last line.
 
 **Tenant isolation is a gate, not a label.** `datastores.postgres.rls` used to be the string `fail_closed`
 in every app, written by intake regardless of provider, scope or tenancy, checked only against a JSON-schema
