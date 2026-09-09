@@ -1,7 +1,9 @@
 # mold_v1
 
 **Status:** active
-**Source:** github.com/never2average/fde-agent @ dc98cb6c0c25ef81304fb6cf1db172396e62b805 (main, snapshot 2026-09-06; re-verified identical to upstream main 2026-09-06)
+**Source:** github.com/never2average/fde-agent @ fe174186eaaff4686b7747135116093be7ed1be8 (branch `fix/three-offline-test-defects`, snapshot 2026-09-09)
+
+> **This snapshot is AHEAD of `main`.** It carries one commit that is not merged yet: [PR #10](https://github.com/never2average/fde-agent/pull/10), which fixes the three offline test failures the functional lane reverts every stamped application on (factory tasks mold_v1-017, 018, 019). `main` is still at `dc98cb6`. When the PR merges, re-snapshot from `main` and drop this note; if it is rejected or reworked, re-snapshot from `main` and the lane goes red again until the fix lands another way.
 **Node:** 24.x (package.json engines; VM and Vercel project both on 24)
 **Target model:** GLM 5.2 via OpenAI-compatible provider
 **Definition (Factory 1 diagram):** multi-workspace, multi-agent Claude Code web at feature parity application that is purely vanilla and works with GLM 5.2.
