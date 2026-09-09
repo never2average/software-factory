@@ -85,9 +85,7 @@
           "budget of inference cost per workspace known"
         ]
       },
-      "app_ids": [
-        "sf_e2e_vm"
-      ],
+      "app_ids": [],
       "deploy_targets": [
         "vercel"
       ],
