@@ -36,7 +36,41 @@ brief (5 lines) ──intake──▶ state/application/<app_id>/ ──provisio
 
 **Intake.** `intake.py briefs/x.md --app x` reads the brief for hints (target, customer, domain, "no browser", "no web search"), fills what factory defaults cover, and writes `questions.json` for the rest, exiting 2. The `intake` subagent asks those questions in batches of four and re-runs with `--answers`. The first intake ever also confirms the defaults; after that a new app asks one question: fresh database or shared with live. Output: validated state, app registered in `factory.json` and under its product.
 
-**Provision, check mode.** `provision.py x` links the mold to the app's Vercel project, then for a fresh database gets it a **free Neon database** through the Vercel Marketplace — adopting an unattached free resource when one exists and is empty, otherwise creating one (`vercel integration add neon`, no checkout page) — plus a private **Blob store created inside the app's own Vercel project** — the connection is what injects `BLOB_READ_WRITE_TOKEN`, and the store used to be created from the mold directory, which is linked to a *different* app, so the token never arrived and `--deploy` refused for ever on a secret no command could supply; provisioning now fails loudly with one command to paste if the token is still absent, mints the app-internal secrets (cron secret, ops key, sign-in key pair), derives `DATABASE_URL`, and finally lists every secret name still missing. External credentials (Cloudflare, Resend, Exa) are copied by name from the live project (`defaults.secret_source_project`) when missing; only a credential that exists nowhere in the team is left for the user. For the VM target it instead REGENERATES `infra/vm/apps/x/` from the four state files (compose for the app's own private-network Postgres, `.env.example`, README) and checks `.env`. The VM target verifies; it does not deploy — see `infra/vm/README.md`.
+**Provision, check mode — NOT read-only on a Vercel app.** `provision.py x` (or `--check`) counts the secret
+names the app declares against the store and prints what is still missing. It builds and deploys nothing. But on
+`target: vercel` it is not a look: before it can count a secret it (1) creates the three Vercel projects `<proj>`,
+`<proj>-api`, `<proj>-workflow` if they do not exist, (2) provisions the datastores the state names — for a fresh
+`neon` database it adopts an unattached free Neon resource on the team if one exists **and is empty**, otherwise
+runs `vercel integration add neon` (no checkout page); plus a private **Blob store created inside the app's own
+Vercel project**, whose connection is what injects `BLOB_READ_WRITE_TOKEN` — and (3) mints the app-internal secrets
+(`CRON_SECRET`, `OPS_SECRETS_KEY`, the `AUTH_JWT_*` sign-in key pair) into the project. So a `--check` of an app
+whose datastores are not provisioned yet creates real, team-visible, potentially billable resources. That is task
+**mold_v1-041, still open**: read `provision.py <app>` as "check *and provision*, do not build"; only `--deploy` puts
+code in front of traffic. There is no copy-from-live path for external credentials: Vercel stores them write-only
+(`sensitive`), so the user sets each one with `provision.py <app> --set-secret NAME` (value typed at a hidden
+prompt, written as `encrypted` to all three projects, never to a file). `DATABASE_URL` is not written here at all —
+only the RLS gate inside `--deploy` / `--verify-db` writes it.
+
+**What check mode DELETES.** To learn whether a candidate Neon database is empty the factory must connect it
+somewhere, and it must not be somewhere that matters. So it creates a throwaway Vercel project named
+`sf-neon-inspect-<8 hex chars>` (pattern `^sf-neon-inspect-[0-9a-f]{8}$`, `SCRATCH_RE` in `provision.py`), connects
+the candidate to it on the `development` environment only, reads the table count, disconnects, and deletes that
+project by REST `DELETE /v9/projects/<id> --dangerously-skip-permissions` — the one deletion that works
+unattended on Vercel CLI 59.11.7 (`project rm` has no `--yes`; the flag name is Vercel's, it means "the
+confirmation was deliberate", it grants nothing extra). This happens on every `--check`, `--deploy` or
+`--verify-db` of a **vercel** app with `postgres.scope: fresh`, `provider: neon` and no `DATABASE_URL_UNPOOLED` on
+its project yet — once per candidate resource, and once more for a freshly created resource (which is created into
+an inspection project too, then read the same way). Before creating one it also **sweeps** the team: every project
+whose name matches `SCRATCH_RE` and whose `createdAt` is older than **30 minutes** (`SCRATCH_STALE_S`) is deleted
+the same way, because a probe that died mid-run left a project holding a database URL. Younger matches are left
+alone (a parallel run may be using one) and so is any match whose age cannot be read. Nothing else is ever
+deleted: not the app's projects, not a Neon resource, not a Blob store, never anything named outside that pattern.
+A deletion is reported only after Vercel answers 404 for the name; a lookup that merely failed prints a NOTE with the
+dashboard path instead of claiming success.
+
+For the VM target it instead REGENERATES `infra/vm/apps/x/` from the four state files (compose for the app's own
+private-network Postgres, `.env.example`, README) and checks `.env`. The VM target verifies; it does not deploy — see
+`infra/vm/README.md`.
 
 **Provision, deploy mode.** `provision.py x --deploy` refuses if anything is missing, then mirrors the mold's own `Makefile deploy` target:
 
@@ -145,14 +179,37 @@ over `/`, `/onboard`, `/workspace`) and `responsiveness/responsive.mjs` (a 320/3
 grading horizontal overflow, CLS, unreachable content, tap-target size and INP). Both refuse the vacuous
 pass: a route that answers 200 and renders no interactive control fails rather than scoring zero
 violations, and a `target-up` precondition first checks the URL is serving *this mold's* markup. The
-`load` lane's stress harness does not exist yet (`testing/load/stress.py`, task mold_v1-024); the lane
-reports `skipped` and prints what would build it.
+`load` lane's harness is `testing/load/stress.py` (mold_v1-024, done): it builds the task-workflow service from
+the snapshot, runs the mold's own stress spec against a throwaway private Postgres, and refuses to grade any of
+its eight rows it did not measure.
 
 **Product stage.** Tasks carry `advances_stage`. When every task for a stage is done, `factory.py close` moves the product forward: defined, stamped, lanes_passing, deployed, released.
 
 ## Secrets
 
-Values never enter the repo, the state files, or the chat. State holds names; the store holds values (Vercel env for Vercel targets, an env file on the VM for VM targets). Claude Code's auto-mode classifier blocks the agent from writing secret values to Vercel env, even generated ones, so `provision.py` is run by a human for that step. The check-and-report half runs fine from an agent.
+Values never enter the repo, the state files, or the chat. State holds names; the store holds values (Vercel env for
+Vercel targets, an env file on the VM for VM targets). Claude Code's auto-mode classifier blocks the agent from
+writing secret values to Vercel env, even generated ones, so `provision.py` is run by a human for that step. The
+check-and-report half runs fine from an agent. Two kinds of name appear in `infrastructure.json`: `secrets_user`
+(only the user can supply: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `RESEND_API_KEY`, `PLATFORM_NOTIFY_FROM`,
+plus `EXA_API_KEY` with web search on and `BROWSERBASE_API_KEY` with the browser on) and `secrets_derived` (the
+factory mints or derives them during provisioning). The runbook for a new operator is `docs/RUNBOOK.md`.
+
+**`OPS_SECRETS_KEY` is minted per app, and sealed rows do not travel.** The mold seals every connector credential
+and browser credential with AES-256-GCM under `OPS_SECRETS_KEY` (`lib/secret-crypto.ts`; tables `connector_secrets`
+and `browser_credentials`). `provision.py` mints a fresh 32-byte key for every app it provisions and never reads
+another project's, and Vercel would not reveal it anyway. Consequences (task mold_v1-021):
+
+- A fresh app imports nothing sealed. It starts with zero connectors and zero stored browser credentials; nothing
+  in intake, provision or the lanes copies a sealed row in.
+- A clone is the only path that restores rows from another app, and `clone.py snapshot --apply` clears
+  `connector_secrets` and `browser_credentials` right after the restore and records the counts in
+  `datastores.postgres.snapshot.cleared_sealed_rows`, because a row sealed under live's key would only fail at use.
+- A restored dump from any other source (a hand `pg_restore`, a Neon branch) will carry rows the app cannot open.
+  There is no factory command to re-key them, by design: re-keying needs the source key in a terminal.
+- What an operator does when the app needs a connector: sign in to the app and enter it there (Ops -> connectors, or
+  the browser-credentials screen), which seals it under this app's own key. Rotating the key later is the mold's
+  `.rotate-connector-secrets.mjs` (`OPS_SECRETS_KEY_V<n>`), a human-terminal step, not a factory one.
 
 ## Access
 
@@ -170,8 +227,8 @@ Values never enter the repo, the state files, or the chat. State holds names; th
 | claudecode_web_replica | clone of live, deployed at `claudecode-web-opal.vercel.app`; **`reverted`** — the accessibility lane failed it on 2026-09-08 (task mold_v1-023) |
 | Free tier | Supabase's free tier is exhausted (live + one factory app). Neon's is not, so `defaults.postgres_provider` is `neon` and app #2 onward costs nothing (mold_v1-015) |
 | RLS gate | built and proven on new databases (mold_v1-016). The replica's *deployed* build still connects as `postgres` with BYPASSRLS — it predates the gate and its `datastores.postgres` still says `supabase` with no `rls_verified` (mold_v1-026) |
-| Lanes | all five declared and runnable; run on the replica 2026-09-08: responsiveness **pass**, accessibility **fail** (1 of 2 checks), functional **fail** (15/20 pass, 4 fail — three are known mold defects 017/018/019, the fourth is the BYPASSRLS row), context **fail** (clone regression), load **skipped** (no stress harness yet, mold_v1-024) |
-| Harnesses | accessibility (`a11y.mjs`, axe-core 4.13.0) and responsiveness (`responsive.mjs`) exist and run — mold_v1-007/008 closed. `testing/load/stress.py` does not exist |
+| Lanes | all five declared and runnable; run on the replica 2026-09-08: responsiveness **pass**, accessibility **fail** (1 of 2 checks), functional **fail** (15/20 pass, 4 fail — three are known mold defects 017/018/019, the fourth is the BYPASSRLS row), context **fail** (clone regression), load **skipped** at the time (stress harness landed afterwards, mold_v1-024) |
+| Harnesses | accessibility (`a11y.mjs`, axe-core 4.13.0) and responsiveness (`responsive.mjs`) exist and run — mold_v1-007/008 closed. `testing/load/stress.py` exists (mold_v1-024); `lanes.py <app> --list` shows `load  yes  1  all met` |
 | mold_v2, mold_v3 | backlog only — `MOLD.md` and a roadmap, no codebase, nothing stamped |
 
 Run `python3 .claude/scripts/factory.py status` and `python3 .claude/scripts/lanes.py <app_id> --list` for the live view.

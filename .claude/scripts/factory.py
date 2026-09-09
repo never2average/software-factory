@@ -123,20 +123,53 @@ def _check(obj, schema, where, root=None):
     if isinstance(obj, list) and isinstance(schema.get("items"), dict):
         for i, x in enumerate(obj): errs += _check(x, schema["items"], f"{where}[{i}]", root)
     return errs
+TS_FORM = "a date-time with an explicit UTC offset (e.g. 2026-09-09T14:03:27+00:00)"
 def _ts(s):
-    """ISO-8601 (date or date-time) -> an aware UTC datetime, or None if it cannot be ordered.
+    """RFC 3339 date-time WITH offset -> an aware datetime, or None if it cannot be ordered.
 
     These used to be compared as raw strings, which is only correct while every writer uses the same
     offset: "2026-09-09T01:00:00+09:00" sorts AFTER "2026-09-08T18:00:00+00:00" as text and is the
     EARLIER instant. Unparseable returns None and is reported by the caller, never silently skipped —
-    a comparison that cannot run is not a comparison that passed."""
+    a comparison that cannot run is not a comparison that passed.
+
+    NO OFFSET IS NOT UTC. This used to read "2026-09-06T00:00:00" as midnight UTC "because every
+    timestamp this factory writes is UTC" — but a value this factory wrote carries its offset (NOW is
+    timezone-aware), so an offset-less one was written by something else, and guessing its zone is
+    a guess of up to 14 hours in either direction on a comparison that decides whether a proof
+    predates a deploy. The schema pattern already refused it for deployed_at; the reader now refuses
+    it for every timestamp it orders, so the two agree (mold_v1-048). A bare date parses as a naive
+    midnight and is refused by the same rule."""
     try: d = datetime.datetime.fromisoformat(str(s).strip().replace("Z", "+00:00"))
     except ValueError: return None
-    # A missing offset means the writer omitted it; every timestamp this factory writes is UTC (NOW),
-    # so assume UTC rather than drop the comparison.
-    return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+    return d if d.tzinfo else None
 # An app that says it is deployed is making its claims in the present tense.
 DEPLOYED = ("stamped", "testing", "serviceable")
+# The only statuses a vm app can honestly hold. `stamping` and every DEPLOYED status are written by
+# provision.py --deploy alone, which refuses a vm app before it writes anything (VM_NOT_A_DEPLOY_TARGET).
+VM_STATUSES = ("planned", "reverted", "retired")
+def _vm_status(app_id, docs):
+    """A `target: vm` app never serves traffic, so it can never be in a status that says it does.
+
+    The vm lane is LOCAL VERIFICATION (provision.py's header, infra/vm/README.md): --verify-db brings up
+    a private Postgres, runs the mold's schema chain and proves app_rw cannot read another workspace,
+    and the lane ENDS there — no web build, no API, no workflow service is ever started, so no process
+    holds DATABASE_URL in front of anyone. Nothing in this factory advances a vm app past `planned`
+    (intake writes planned, lanes.py writes only reverted, --deploy refuses vm before it touches status).
+
+    So a vm app in a DEPLOYED status got there by hand, and the honest reading is not "audit its
+    evidence" — every evidence field it could carry is about a database, and the one field the gate
+    needs, running_app, is about a serving process that does not exist. --verify-db records it
+    `unmeasured` by construction, _rls_claim fails `unmeasured` on every DEPLOYED status, and the
+    instruction it prints (--verify-rls) re-records `unmeasured`: a red line no command could clear
+    (mold_v1-047). The two alternatives were both refused: exempting vm apps from the running_app
+    gate is a permissive default, and calling the app_rw isolation proof "the health reading" would
+    grade a credential as a process. The status itself is the error, and this says so in one sentence."""
+    st = (docs.get("application") or {}).get("status")
+    if (docs.get("infrastructure") or {}).get("target") != "vm" or st in VM_STATUSES or st is None: return []
+    return [f"{app_id}/application.json: status is {st!r} but infrastructure.target is 'vm', which never serves "
+            f"traffic (provision.py --deploy refuses it, so nothing in this factory writes that status for a vm "
+            f"app) — set status back to 'planned' in state/application/{app_id}/application.json, or set target "
+            f"to 'vercel' and run: python3 .claude/scripts/provision.py {app_id} --deploy"]
 def _rls_claim(app_id, docs):
     """`"rls": "fail_closed"` used to be a string literal that nothing in the factory ever read: intake
     stamped it into every app regardless of provider, scope or tenancy, validate checked it against a
@@ -151,15 +184,14 @@ def _rls_claim(app_id, docs):
     ds = docs.get("datastores") or {}; st = (docs.get("application") or {}).get("status")
     pg = ds.get("postgres", {}); want = pg.get("rls"); ev = pg.get("rls_verified") or {}
     if want in (None, "off") or st not in DEPLOYED: return []
+    # A vm app in a DEPLOYED status is reported by _vm_status as exactly that — the status is the error.
+    # Every line below would add an instruction (--verify-rls, --deploy) that the vm lane cannot act on,
+    # so it says nothing here; this is not an exemption, the app already failed validate one line up.
+    if (docs.get("infrastructure") or {}).get("target") == "vm": return []
     w = f"{app_id}/datastores.json: postgres.rls is {want!r}"
     fix = f"Run: python3 .claude/scripts/provision.py {app_id} --verify-rls"
-    # --deploy is the Vercel lane's remedy and the ONLY thing that replaces the build in front of traffic.
-    # A vm-target app is run from a regenerated local artifact instead (provision.py refuses --deploy for
-    # it outright), so pointing a vm operator at --deploy would be an instruction that cannot succeed.
-    vm = (docs.get("infrastructure") or {}).get("target") == "vm"
-    redeploy = (f"Run: python3 .claude/scripts/provision.py {app_id} --deploy" if not vm else
-                f"Regenerate this app's local artifact and restart it from the new compose file: "
-                f"python3 .claude/scripts/provision.py {app_id} --verify-db")
+    # --deploy is the ONLY thing that replaces the build in front of traffic.
+    redeploy = f"Run: python3 .claude/scripts/provision.py {app_id} --deploy"
     if not ev or str(ev.get("source", "")).startswith("not verified"):
         return [f"{w} on a {st} app but nothing has measured it" + (f" ({ev.get('source')})" if ev else "") + f". {fix}"]
     out = []
@@ -231,35 +263,35 @@ def _rls_claim(app_id, docs):
         out.append(f"{w} but the evidence carries no `at`, so nothing can tell whether it predates the deploy "
                    f"that replaced the database it measured. {fix}")
     elif not atd:
-        out.append(f"{w} but rls_verified.at is {at[:60]!r}, which is not an ISO-8601 timestamp, so nothing can "
-                   f"order this proof against the deploy or the restore that would invalidate it. {fix}")
-    # Only the vercel lane records a deploy date (provision.py:1379 stamps it, and nothing in the vm lane
-    # ever does), so this comparison is asked of that lane only — demanding a deployed_at from a vm app
-    # would be a red line no command could clear. A vm app is still covered by the running_app reading
-    # above and the snapshot comparison below; both work off its own vm.production_url and its snapshot.
-    if not vm and atd and not dep:
+        # _ts refuses a naive time (no offset) as well as garbage: rls_verified.at carries no schema
+        # pattern, so this line is the only thing that stops "2026-09-09T10:00:00" from being read as UTC.
+        out.append(f"{w} but datastores.postgres.rls_verified.at is {at[:60]!r}, which is not {TS_FORM}, so "
+                   f"nothing can order this proof against the deploy or the restore that would invalidate it. {fix}")
+    # Only --deploy records a deploy date, and only the vercel lane reaches --deploy; a vm app never gets
+    # this far (it returned above, and _vm_status already refused its status).
+    if atd and not dep:
         # An app in this state was deployed by something, and an undated deploy cannot be compared: the
         # convenient reading is "then it is not stale", which is how evidence from 2020 passed. --deploy
         # stamps deployed_at, so this instruction resolves it.
         out.append(f"{w} but infrastructure.json records no deployed_at, so nothing can tell whether this proof "
                    f"predates the build serving traffic. {redeploy}")
-    elif not vm and atd and (not _ts(dep) or "T" not in dep):
-        # A bare date is refused here as well as by the schema pattern: _ts would read it as midnight and
-        # silently downgrade this to the whole-day comparison the schema change removed.
-        out.append(f"{w} but infrastructure.deployed_at is {dep[:60]!r}, which is not a date-time with an offset "
-                   f"(e.g. 2026-09-09T14:03:27+00:00), so nothing can order this proof against the deploy to the "
-                   f"hour it happened. {redeploy}")
+    elif atd and not _ts(dep):
+        # A bare date or an offset-less time is refused here as well as by the schema pattern (mold_v1-048):
+        # _ts used to read "2026-09-06T00:00:00" as midnight UTC and pass it, so the reader's guarantee was
+        # narrower than the schema's — a state file that skipped the schema check validated on a guess.
+        out.append(f"{w} but infrastructure.deployed_at is {dep[:60]!r}, which is not {TS_FORM}, so nothing can "
+                   f"order this proof against the deploy to the hour it happened. {redeploy}")
     # Both are instants now (infrastructure.schema.json: deployed_at is a date-time, written from the same
     # UTC clock as rls_verified.at), so this is the exact comparison. It used to be by calendar day, and
     # a redeploy hours after a measurement read fresh; a measurement even one second before the deploy
     # is about the build that was replaced.
-    elif not vm and atd and atd < _ts(dep):
+    elif atd and atd < _ts(dep):
         out.append(f"{w} but the evidence was measured {at} and this app was deployed {dep} — that proof is about "
                    f"the build before the one serving traffic. {fix}")
     if atd and snap:
         sd = _ts(snap)
         if not sd:
-            out.append(f"{w} but postgres.snapshot.taken_at is {snap[:60]!r}, which is not an ISO-8601 timestamp, so "
+            out.append(f"{w} but datastores.postgres.snapshot.taken_at is {snap[:60]!r}, which is not {TS_FORM}, so "
                        f"nothing can tell whether the restore came after the proof. {fix}")
         elif atd < sd:
             out.append(f"{w} but the evidence was measured {at} and the database was restored from a snapshot taken "
@@ -331,7 +363,7 @@ def cmd_validate(a):
             if os.path.exists(f):
                 docs[name] = load(f); errs += _check(docs[name], load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
             else: errs.append(f"{app}: missing {name}.json")
-        errs += _rls_claim(app, docs)
+        errs += _vm_status(app, docs) + _rls_claim(app, docs)
     errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)

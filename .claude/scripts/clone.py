@@ -21,6 +21,7 @@ ST = os.path.join(ROOT, "state"); NOW = datetime.datetime.now(datetime.timezone.
 STAMP = datetime.datetime.fromisoformat(NOW).strftime("%Y-%m-%dT%H%M%SZ")   # the same second as run_at, cut for a filename
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lanes import reserve_report   # ONE implementation of "a report path nobody can reopen", shared with the lanes
+from factory import _ts   # ONE reading of an ISO-8601 instant, shared with validate (lanes.py imports factory the same way)
 LIVE = {"web": "fde-agent", "api": "fde-agent-api", "workflow": "fde-task-workflow"}   # the reference deployment; never deployed to
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
@@ -69,6 +70,50 @@ def write_report(rdir, app_id, text):
     with os.fdopen(fd, "w") as fh: fh.write(text)
     os.chmod(rpath, 0o444)   # a fence for a non-root operator; O_EXCL above is the guarantee (see lanes.py)
     return rpath
+
+def isolation_findings(app_id, pg):
+    """Why the tenant-isolation evidence in `pg` (datastores.postgres) does NOT support a passing context lane; [] means it does.
+
+    A row-count diff cannot see a wiped policy set, so `regress` used to report `pass` on a clone with no
+    tenant isolation at all; the isolation evidence is part of the verdict. This function is the whole
+    verdict on that evidence, kept apart from main() so it can be exercised with constructed blocks and
+    without a database. It mirrors factory.py's _rls_claim for the fields both read, and stays STRICTER
+    where a clone is concerned: a clone's whole point is to stand in front of traffic as a replica of live."""
+    want = pg.get("rls", "off"); ev = pg.get("rls_verified") or {}
+    if want == "off": return []
+    if not ev or str(ev.get("source", "")).startswith("not verified"): return [f"declares rls {want} but nothing has measured it"]
+    iso = []
+    # Instants, not strings. "2026-09-09T01:00:00+09:00" sorts AFTER "2026-09-08T18:00:00+00:00" as text and is the
+    # EARLIER instant, so the raw comparison let a proof taken before a restore stand as a proof about the restored
+    # database whenever the two writers used different offsets. _ts is factory.py's reading; an unparseable stamp
+    # is a finding, not a skipped comparison (a comparison that cannot run is not one that passed).
+    at = str(ev.get("at") or ""); atd = _ts(at); snap = str((pg.get("snapshot") or {}).get("taken_at") or ""); sd = _ts(snap) if snap else None
+    if not atd: iso.append(f"the proof carries no orderable `at` ({at[:60]!r}), so nothing can tell whether it predates the restore — run `clone.py {app_id} rls`")
+    elif snap and not sd: iso.append(f"postgres.snapshot.taken_at is {snap[:60]!r}, not an ISO-8601 timestamp, so nothing can tell whether the restore came after the proof")
+    elif sd and atd < sd: iso.append(f"the proof ({at}) predates the restore ({snap}) — run `clone.py {app_id} rls`")
+    if ev.get("mode") != want: iso.append(f"declares {want}, measured {ev.get('mode')}")
+    if ev.get("unprotected"): iso.append(f"{len(ev['unprotected'])} of {ev.get('org_scoped_tables')} org-scoped tables unprotected")
+    # A restore can leave a policy in place and still leave it OPEN: judged by what the
+    # policies did when they were executed, not by how many exist.
+    if ev.get("open_policies"): iso.append(f"{len(ev['open_policies'])} permissive policy/policies do not scope by org_id ({', '.join(ev['open_policies'][:4])})")
+    if ev.get("leaking_policies"): iso.append(f"{len(ev['leaking_policies'])} policy/policies handed over another workspace's rows when executed ({', '.join(ev['leaking_policies'][:3])})")
+    if ev.get("unmeasured"): iso.append(f"{len(ev['unmeasured'])} org-scoped table(s) were never measured ({', '.join(ev['unmeasured'][:4])})")
+    if ev.get("foreign_rows_readable"): iso.append(f"{ev['foreign_rows_readable']} foreign row(s) readable")
+    if ev.get("cross_org_write") != "42501": iso.append(f"cross-workspace INSERT not refused ({ev.get('cross_org_write')})")
+    if want == "fail_closed" and ev.get("unset_org_rows"): iso.append(f"{ev['unset_org_rows']} row(s) visible with no workspace in scope")
+    # THE PROCESS IN FRONT OF TRAFFIC. Every field above is about the stored credential; a Vercel env change
+    # only reaches the app on its next build, so the serving process can still hold a BYPASSRLS url while the
+    # stored one passes every probe. provision.py reads /api/ops/health and records the verdict as one of three
+    # tokens (datastores.schema.json: rls_verified.running_app); this verdict used to read every field but that
+    # one, so a replica whose own record said its serving build ignores every policy still passed the context
+    # lane. Equality against the single affirmative token is the whole test. `not_enforced` is a definitive
+    # reading and only a new build clears it. `unmeasured`, absent, or any spelling outside the enum reads as a
+    # FAIL, not a pass: nothing measured the serving process, and unmeasured is not measured-good — the
+    # convenient reading ("absent, so nothing to fail") is exactly how the old verdict passed this replica.
+    ra = ev.get("running_app"); rd = str(ev.get("running_app_detail") or "").strip()[:160]; rd = f" ({rd})" if rd else ""
+    if ra == "not_enforced": iso.append(f"the app SERVING TRAFFIC reports row-level security is not enforced on /api/ops/health{rd} — only a new build replaces the credential it holds: run `python3 .claude/scripts/provision.py {app_id} --deploy`")
+    elif ra != "enforced": iso.append(f"nothing usable was read from the app SERVING TRAFFIC (rls_verified.running_app is {ra!r}){rd} — the process answering requests is not known to be enforcing it: run `python3 .claude/scripts/provision.py {app_id} --verify-rls`")
+    return iso
 
 def node(cmd, env, cwd, stdin=None, extra=()):
     r = subprocess.run(["node", os.path.join(ROOT, ".claude/scripts/lib/surface.mjs"), cmd, *extra], cwd=cwd, env=env, input=stdin, capture_output=True, text=True)
@@ -210,26 +255,10 @@ def main(a):
         live = pull_env(LIVE["web"], mold, proj); mine = pull_env(proj, mold, proj); tok = live_blob_token(mold, proj, prefix)
         rep = node("diff", dict(base, DATABASE_URL=pg_url(mine), LIVE_DATABASE_URL=pg_url(live), BLOB_READ_WRITE_TOKEN=mine.get("BLOB_READ_WRITE_TOKEN", "") if tok else "", LIVE_BLOB_READ_WRITE_TOKEN=tok or ""), mold)
         rdir = os.path.join(ROOT, "molds", app["mold_id"], "testing", "context", "reports")
-        # A row-count diff cannot see a wiped policy set, so it used to report `pass` on a clone with no
-        # tenant isolation at all. The isolation evidence is part of the verdict now.
+        # The isolation evidence is part of the verdict (isolation_findings above says why and what it reads).
         ds = load(os.path.join(adir, "datastores.json")); pg = ds.get("postgres", {})
         want = pg.get("rls", "off"); ev = pg.get("rls_verified") or {}
-        iso = []
-        if want != "off":
-            if not ev or str(ev.get("source", "")).startswith("not verified"):
-                iso.append(f"declares rls {want} but nothing has measured it")
-            else:
-                if ev.get("at", "") < (pg.get("snapshot", {}).get("taken_at") or ""): iso.append(f"the proof ({ev['at']}) predates the restore ({pg['snapshot']['taken_at']}) — run `clone.py {app_id} rls`")
-                if ev.get("mode") != want: iso.append(f"declares {want}, measured {ev.get('mode')}")
-                if ev.get("unprotected"): iso.append(f"{len(ev['unprotected'])} of {ev.get('org_scoped_tables')} org-scoped tables unprotected")
-                # A restore can leave a policy in place and still leave it OPEN: judged by what the
-                # policies did when they were executed, not by how many exist.
-                if ev.get("open_policies"): iso.append(f"{len(ev['open_policies'])} permissive policy/policies do not scope by org_id ({', '.join(ev['open_policies'][:4])})")
-                if ev.get("leaking_policies"): iso.append(f"{len(ev['leaking_policies'])} policy/policies handed over another workspace's rows when executed ({', '.join(ev['leaking_policies'][:3])})")
-                if ev.get("unmeasured"): iso.append(f"{len(ev['unmeasured'])} org-scoped table(s) were never measured ({', '.join(ev['unmeasured'][:4])})")
-                if ev.get("foreign_rows_readable"): iso.append(f"{ev['foreign_rows_readable']} foreign row(s) readable")
-                if ev.get("cross_org_write") != "42501": iso.append(f"cross-workspace INSERT not refused ({ev.get('cross_org_write')})")
-                if want == "fail_closed" and ev.get("unset_org_rows"): iso.append(f"{ev['unset_org_rows']} row(s) visible with no workspace in scope")
+        iso = isolation_findings(app_id, pg)
         status = "pass" if (rep["ok"] and not iso) else "fail"
         L = [f"# {app_id} vs live ({LIVE['web']}) — {status}", "", f"run_at: {NOW}  org: {org}  prefix: {prefix}", "", "## Tables (row counts)", "", "| table | clone | live | |", "|---|---|---|---|"]
         for t, r in sorted(rep["tables"].items()): L.append(f"| {t} | {r['clone']} | {r['live']} | {'volatile' if r['volatile'] else ('ok' if r['same'] else 'DIFF')} |")
@@ -244,6 +273,7 @@ def main(a):
               f"- org-scoped tables enabled+forced+policied: {ev.get('protected')}/{ev.get('org_scoped_tables')}" + (f" · unprotected: {', '.join(ev['unprotected'][:10])}" if ev.get("unprotected") else ""),
               f"- cross-workspace read across {ev.get('probe_tables')} probed table(s): {ev.get('foreign_rows_readable')} row(s) · write refused with `{ev.get('cross_org_write')}`" if ev.get("probe_table") else "- cross-workspace probe: not run",
               f"- policies executed one at a time: {ev.get('policies_executed')}" + (f" · **leaking**: {', '.join(ev['leaking_policies'][:6])}" if ev.get("leaking_policies") else " · none handed over another workspace's rows"),
+              f"- app in front of traffic (/api/ops/health): `{ev.get('running_app') or 'not read'}`" + (f" · {str(ev.get('running_app_detail'))[:160]}" if ev.get("running_app_detail") else ""),
               ("- **FAIL**: " + "; ".join(iso)) if iso else "- ok"]
         L += ["", "## Blob tree (files, bytes per top-level folder)", "", (f"prefix '{rep['blob']['prefix']}': " + ("same" if rep["blob"]["same"] else "DIFF") + f" clone={rep['blob']['clone']} live={rep['blob']['live']}") if rep["blob"] else "skipped: no live token accepted by the blob store"]
         rpath = write_report(rdir, app_id, "\n".join(L) + "\n")

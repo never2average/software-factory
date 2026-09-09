@@ -1130,6 +1130,7 @@ VM_NOT_A_DEPLOY_TARGET = (
   '                                   then: python3 .claude/scripts/provision.py {app_id} --check')
 
 VM_PRODUCED = ("POSTGRES_ADMIN_URL", "DATABASE_URL")   # the only two secrets the vm lane creates (--verify-db)
+VM_STATUSES = ("planned", "reverted", "retired")        # the only statuses a vm app can hold (factory.py:VM_STATUSES)
 
 def vm_report(app_id, d, infra, ds):
     """How a `target: vm` run ends: with ONE next command that exists.
@@ -1163,7 +1164,8 @@ def vm_report(app_id, d, infra, ds):
     else:
         print(f"tenant isolation last proven {ev['at']} on {ev['backend']} "
               f"({ev.get('protected')}/{ev.get('org_scoped_tables')} org-scoped tables protected)")
-        print(f"This app is fully verified on this box, and target=vm ends here — it does not serve traffic. "
+        print(f"This app is fully verified on this box, and target=vm ends here — it does not serve traffic, so its "
+              f"status stays planned (factory.py validate refuses a deployed status on a vm app). "
               f"To put it in front of users, set \"target\": \"vercel\" in "
               f"state/application/{app_id}/infrastructure.json and rerun --check.")
     sys.exit(1 if (missing_user or pending) else 0)
@@ -1251,8 +1253,16 @@ def _rls_from_doc(code, doc, why):
 def _rls_from_health(origin):
     return _rls_from_doc(*_read_health(origin.rstrip("/") + HEALTH_PATH))
 
+VM_NO_PROCESS = ("target vm serves nothing: no web, API or workflow process is ever started on this lane, so no "
+                 "process holds DATABASE_URL in front of traffic; the lane ends at --verify-db and the app stays planned")
 def _health_rls(infra):
-    u = (infra.get("vercel") or {}).get("production_url") or (infra.get("vm") or {}).get("production_url") or ""
+    if infra.get("target") == "vm":
+        # Never read vm.production_url. Nothing on this lane starts the application (infra/vm/README.md),
+        # so a URL sitting in that field was typed in, and whatever answers it is not a process this
+        # factory deployed — reading `enforced` off it would grade a stranger's endpoint as this app's.
+        # The safe value is the constant one: unmeasured, with the reason (mold_v1-047).
+        return "unmeasured", VM_NO_PROCESS
+    u = (infra.get("vercel") or {}).get("production_url") or ""
     if not u.startswith("http"): return "unmeasured", "this app has no production URL yet"
     return _rls_from_health(u)
 
@@ -1311,6 +1321,12 @@ def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
           f"org_id, {ev['policies_executed']} policy/policies executed with {len(ev['leaking_policies'])} handing over "
           f"another workspace's rows, {ev['foreign_rows_readable']} foreign row(s) readable as {ev['role']} across "
           f"{ev['probe_tables']} probed table(s), cross-workspace write refused with {ev['cross_org_write']}")
+    if infra.get("target") == "vm":
+        # THE VM LANE ENDS HERE, and says so instead of pointing at --deploy (which refuses a vm app). The
+        # stored credential is proven; a serving process is not, because none exists on this lane — that
+        # is recorded as `unmeasured` above, and factory.py validate refuses any deployed status on a vm
+        # app, so this app's status stays `planned` and nothing here is left for a later command.
+        return print(f"  no serving process was measured — {VM_NO_PROCESS}. This app's status stays planned.")
     if ev["running_app"] == "not_enforced":
         sys.exit(f"{app_id}: but the app SERVING TRAFFIC still says row-level security is not enforced "
                  f'("{ev["running_app_detail"][:160]}"). A Vercel env change only reaches the app on its next build.\n'
@@ -1435,6 +1451,14 @@ def main(a):
         # to deploy with missing secrets", and no command in this factory could ever produce them: a
         # closed loop with no terminating step, for the one operator who cannot read their way out of it.
         if deploy: sys.exit(VM_NOT_A_DEPLOY_TARGET.format(app_id=app_id))
+        if app.get("status") not in VM_STATUSES:
+            # The same refusal factory.py validate makes (_vm_status), at the writer: a vm app never serves
+            # traffic, and this lane never writes a status that says it does, so one that says so was set
+            # by hand. Running --check or --verify-db on it would then record evidence beside a status the
+            # evidence cannot support.
+            sys.exit(f"{app_id}: status is {app.get('status')!r} but target is \"vm\", which never serves traffic and "
+                     f"never reaches that status. Set \"status\": \"planned\" in state/application/{app_id}/"
+                     f"application.json and rerun, or set \"target\": \"vercel\" to deploy it for real.")
         # EVERY vm run regenerates the artifact, --verify-db included. --verify-db used to return before
         # this line, so the compose file and README could be missing while state still named them, and —
         # worse — the run that creates .pg-admin and pg/server.key was the one run that never wrote the
