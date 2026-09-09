@@ -45,7 +45,7 @@ resource or Blob store, never the live `fde-agent*` projects.
   resource is created into such a project and read the same way.
 - **The sweep:** before creating one, every team project matching `SCRATCH_RE` whose `createdAt` is older than
   **30 minutes** (`SCRATCH_STALE_S`) is deleted the same way — a leftover from an interrupted run holds a database
-  URL. Younger matches, and matches whose age cannot be read, are left alone and named on stdout.
+  URL. Younger matches are left alone and named on stdout; a match whose age cannot be read is left alone silently (unknown is not stale).
 - **Honesty:** a project counts as deleted only after Vercel answers `Project not found. (404)` for it; any other
   lookup failure prints a NOTE with the dashboard path (`Projects -> <name> -> Settings -> Delete`).
 
