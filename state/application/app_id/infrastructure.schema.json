@@ -251,7 +251,9 @@
     },
     "deployed_at": {
       "type": "string",
-      "format": "date"
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+      "description": "The INSTANT the build now serving traffic was deployed, as an RFC 3339 date-time WITH offset \u2014 what provision.py's NOW yields: datetime.datetime.now(datetime.timezone.utc).isoformat(timespec=\"seconds\"), e.g. 2026-09-09T14:03:27+00:00. Written by provision.py --deploy at the moment the deploy finishes, never by hand. This used to be a bare date, so factory.py could only order rls_verified.at against it in whole days and a redeploy hours after the measurement still read fresh; validate now compares the two instants exactly and rejects any rls_verified.at earlier than this. The pattern is enforced (format alone is documentation to this factory's validator): a bare date, a naive time without offset, or any other spelling is a schema error. To migrate an old bare date by hand, use midnight UTC of that day (YYYY-MM-DDT00:00:00+00:00) and say so in `note`: it is the earliest instant the deploy could have happened, so it is the honest conversion, but it also means a proof measured later that same day cannot be told apart from one taken before the deploy \u2014 the next --deploy writes the exact instant and ends that ambiguity."
     },
     "configured_at": {
       "type": "string",

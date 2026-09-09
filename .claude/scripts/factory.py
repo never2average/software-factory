@@ -190,39 +190,36 @@ def _rls_claim(app_id, docs):
     if want == "fail_closed" and ev.get("unset_org_rows"): out.append(f"{w} but with no workspace in scope "
         f"{ev.get('probe_table')} still returned {ev['unset_org_rows']} row(s) — that is failing OPEN. {fix}")
     # The stored DATABASE_URL passing the gate and the PROCESS IN FRONT OF TRAFFIC using it are two
-    # different facts: a Vercel env change only reaches the app on its next build. provision.py already
-    # reads /api/ops/health into running_app and refuses to finish on anything but "enforced" — but
-    # validate read every other field of the evidence and not this one, so an app whose own record said
-    # the live build is not enforcing RLS validated green forever after.
+    # different facts: a Vercel env change only reaches the app on its next build. provision.py reads
+    # /api/ops/health and records the verdict here; validate used to read every other field of the
+    # evidence and not this one, so an app whose own record said the live build is not enforcing RLS
+    # validated green forever after.
     #
-    # ALLOWLIST ON THE WRITER'S OWN PREFIX. provision.py:_rls_from_doc emits exactly three shapes —
-    # "enforced — <detail>", "NOT enforced — <detail>", "UNMEASURED: <why>" — and provision.py itself
-    # gates on startswith("enforced") in both places that decide whether an app may finish (verify_rls,
-    # and the --deploy gate that must pass before status becomes `stamped`). Reading that same prefix is
-    # what keeps these two files from drifting; the earlier pass matched a REMEMBERED sentence instead
-    # and so rejected the only affirmative its writer can produce. Everything else fails, because
-    # unmeasured is not measured-good.
-    ra = str(ev.get("running_app") or "")
-    if not ra:
+    # AN ENUM, NOT A SENTENCE. running_app was free text and this function prefix-matched the sentence
+    # provision.py happened to write ("enforced — ...", "NOT enforced — ...", "UNMEASURED: ..."), so the
+    # two files could drift silently: a rewording on the writer's side turned into a validate failure
+    # here, and a rewording here into a green light for whatever the writer emitted. The schema
+    # (datastores.schema.json: rls_verified.running_app) now fixes the three tokens and their meaning;
+    # the sentence lives in running_app_detail and is printed, never parsed. Equality against the one
+    # affirmative token is the whole test: `unmeasured` fails because unmeasured is not measured-good,
+    # and anything outside the enum is a schema error _check already reported, so it fails too.
+    ra = ev.get("running_app"); rd = str(ev.get("running_app_detail") or "").strip()
+    rd = f" ({rd[:160]})" if rd else ""
+    if ra is None or ra == "":
         out.append(f"{w} and the stored credential was measured, but nothing read the app in front of traffic "
                    f"(rls_verified.running_app is absent) — the running build may still hold an older "
                    f"DATABASE_URL. {fix}")
-    elif ra.startswith("no BYPASSRLS warning"):
-        # UNMEASURED, however affirmative it reads. An older provision.py returned this whenever the body
-        # it fetched did not contain the word BYPASSRLS, so a 404 DEPLOYMENT_NOT_FOUND page, a 401 Vercel
-        # login wall and a 500 crash all earned it — i.e. it was emitted exactly when nothing could be
-        # read. Re-measure with the reader that can tell those apart rather than inherit the affirmative.
-        out.append(f"{w} and the only reading of the app serving traffic is {ra[:120]!r} — a string an older "
-                   f"provision.py returned for ANY page that did not mention BYPASSRLS, a 404 or a login wall "
-                   f"included, so it records that nothing was read, not that RLS is on. {fix}")
-    elif not ra.startswith("enforced"):
-        # "NOT enforced" is a definitive reading of the wrong DATABASE_URL, and only a new build replaces
-        # it (provision.py says the same). Anything else is unreadable, and re-reading the endpoint is the
-        # cheaper first step: --verify-rls re-measures and, if it still cannot read it, prints provision.py's
-        # own next instruction with the reason (no production URL / deployment protection).
-        out.append(f"{w} but the app SERVING TRAFFIC reports {ra[:160]!r} on /api/ops/health — the process "
-                   f"answering requests is not known to be enforcing it. "
-                   f"{redeploy if ra.startswith('NOT enforced') else fix}")
+    elif ra == "not_enforced":
+        # A definitive reading of the wrong DATABASE_URL; only a new build replaces it (provision.py says the same).
+        out.append(f"{w} but the app SERVING TRAFFIC reports that row-level security is not enforced on "
+                   f"/api/ops/health{rd} — the process answering requests holds a credential that ignores every "
+                   f"policy. {redeploy}")
+    elif ra != "enforced":
+        # `unmeasured`, or a spelling the schema rejects. Re-reading the endpoint is the cheaper first step:
+        # --verify-rls re-measures and, if it still cannot read it, prints provision.py's own next
+        # instruction with the reason (no production URL / deployment protection).
+        out.append(f"{w} but nothing usable was read from the app SERVING TRAFFIC (rls_verified.running_app is "
+                   f"{ra!r}){rd} — the process answering requests is not known to be enforcing it. {fix}")
     # Evidence is a photograph of one database at one instant, and two ordinary events invalidate it
     # without changing a single field of it: a deploy (the build, and the DATABASE_URL it holds, changed
     # after the measurement) and a snapshot restore (pg_restore --clean drops every policy — clone.py
@@ -246,14 +243,17 @@ def _rls_claim(app_id, docs):
         # stamps deployed_at, so this instruction resolves it.
         out.append(f"{w} but infrastructure.json records no deployed_at, so nothing can tell whether this proof "
                    f"predates the build serving traffic. {redeploy}")
-    elif not vm and atd and not _ts(dep):
-        out.append(f"{w} but infrastructure.deployed_at is {dep[:60]!r}, which is not a date, so nothing can order "
-                   f"this proof against the deploy. {redeploy}")
-    # deployed_at carries a DAY (schema: format date) and `at` an instant, so days are all this can compare.
-    # Same-day therefore passes — and it is the coarsest safe comparison, not a safe one: a redeploy hours
-    # after a measurement still reads fresh here. What catches that case is the running_app branch above,
-    # because a deploy rewrites rls_verified wholesale and leaves running_app absent.
-    elif not vm and atd and atd.astimezone(datetime.timezone.utc).date() < _ts(dep).date():
+    elif not vm and atd and (not _ts(dep) or "T" not in dep):
+        # A bare date is refused here as well as by the schema pattern: _ts would read it as midnight and
+        # silently downgrade this to the whole-day comparison the schema change removed.
+        out.append(f"{w} but infrastructure.deployed_at is {dep[:60]!r}, which is not a date-time with an offset "
+                   f"(e.g. 2026-09-09T14:03:27+00:00), so nothing can order this proof against the deploy to the "
+                   f"hour it happened. {redeploy}")
+    # Both are instants now (infrastructure.schema.json: deployed_at is a date-time, written from the same
+    # UTC clock as rls_verified.at), so this is the exact comparison. It used to be by calendar day, and
+    # a redeploy hours after a measurement read fresh; a measurement even one second before the deploy
+    # is about the build that was replaced.
+    elif not vm and atd and atd < _ts(dep):
         out.append(f"{w} but the evidence was measured {at} and this app was deployed {dep} — that proof is about "
                    f"the build before the one serving traffic. {fix}")
     if atd and snap:
