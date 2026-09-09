@@ -18,7 +18,7 @@
           "every lane has a harness: accessibility and responsiveness exist (built 2026-09-08); testing/load/stress.py does not yet"
         ],
         "deployed": [
-          "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
+          "production URL on Vercel — the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
           "GLM 5.2 provider configured and smoke-tested"
         ],
@@ -39,7 +39,7 @@
       "brand": {
         "product_name": "Delivered",
         "tagline": "The operations console for forward-deployed teams.",
-        "description": "Delivered \u2014 the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
+        "description": "Delivered — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
         "brand_color": "oklch(0.19 0 0)",
         "neutral_chroma": 0,
         "radius": "0.625rem",
@@ -75,7 +75,7 @@
           "every lane has a harness: accessibility and responsiveness exist (built 2026-09-08); testing/load/stress.py does not yet"
         ],
         "deployed": [
-          "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
+          "production URL on Vercel — the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
           "GLM 5.2 provider configured and smoke-tested"
         ],
@@ -93,7 +93,7 @@
       "brand": {
         "product_name": "Dover",
         "tagline": "TODO: Dover's one-line positioning, shown under the sign-in wordmark.",
-        "description": "TODO: Dover \u2014 one sentence for the browser tab and link previews.",
+        "description": "TODO: Dover — one sentence for the browser tab and link previews.",
         "brand_color": "#1F6F5C",
         "neutral_chroma": 0.006,
         "radius": "0.625rem",
