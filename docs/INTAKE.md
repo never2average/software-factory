@@ -40,6 +40,15 @@ The secret NAMES an app declares now follow its provider (`infrastructure.secret
 `self_hosted` adds `POSTGRES_ADMIN_URL`. Before this, every app declared `SUPABASE_URL` — a name that
 exists nowhere in the mold codebase, which `provision.py` then required before it would deploy, so a
 non-Supabase app could never pass the gate.
+`infrastructure.secrets_user` follows the inference provider the same way: `cloudflare_workers_ai` adds
+`CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`, `vercel_ai_gateway` adds `AI_GATEWAY_API_KEY` and no
+Cloudflare name at all — the gateway branch of `agent/lib/model.ts` never reads one, and until this an
+app on the gateway was blocked on two secrets it would never use. A name is only worth requiring if the
+deploy delivers it: on `target: vercel` the process running `model.ts` is the `<project>-api` deployment
+and the only list `provision.py` syncs onto it is `API_ENV`, so intake reads that list and refuses a
+provider whose secret is not in it (today: `vercel_ai_gateway` on Vercel — `AI_GATEWAY_API_KEY` is not
+forwarded), instead of writing state that passes `--check` and runs without its key. The refusal lifts
+by itself once `API_ENV` carries the name. `target: vm` starts no process, so nothing is forwarded there.
 
 ## What intake decides without asking
 
