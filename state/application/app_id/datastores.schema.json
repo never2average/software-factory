@@ -182,7 +182,16 @@
             },
             "running_app": {
               "type": "string",
-              "description": "What the app IN FRONT OF TRAFFIC says on /api/ops/health. The stored credential passing the gate is a different fact from the running build using it: a Vercel env change only takes effect on the next build"
+              "enum": [
+                "enforced",
+                "not_enforced",
+                "unmeasured"
+              ],
+              "description": "VERDICT on what the app IN FRONT OF TRAFFIC says on /api/ops/health, as one of exactly three tokens. The stored credential passing the gate is a different fact from the running build using it (a Vercel env change only takes effect on the next build), so this is the only reading that covers the serving process. CONTRACT (provision.py writes, factory.py reads, nothing else parses this): `enforced` = the health body carried this mold's own affirmative sentence `role <name> (RLS enforced)` for the role the serving process connects as, i.e. pg_roles.rolbypassrls was measured false; the only value that lets a stamped app validate. `not_enforced` = the health body reported BYPASSRLS or `row-level security is NOT enforced`: a definitive reading that the running build holds the wrong DATABASE_URL, and only a new build (--deploy) clears it. `unmeasured` = nothing usable was read: no production URL, an unreachable or non-2xx endpoint, a login wall, a body without a db check, a db check that is not the affirmative sentence, or the app could not reach its database. Unmeasured is never good news; it fails validate like not_enforced does. The human-readable sentence (HTTP status, the db.detail text, the reason nothing could be read) goes in running_app_detail, NEVER here: factory.py compares this field for equality against the three tokens and reads nothing else, so any other spelling (\"Enforced\", \"enforced \u2014 ...\", \"NOT enforced\") is a schema error, not a verdict."
+            },
+            "running_app_detail": {
+              "type": "string",
+              "description": "Free text beside running_app for the operator: the db.detail sentence the health endpoint returned, or why it could not be read (`HTTP 404 DEPLOYMENT_NOT_FOUND`, `no production URL yet`). Printed, never parsed \u2014 no reader may derive a verdict from it. Write it together with running_app on every outcome."
             }
           }
         },

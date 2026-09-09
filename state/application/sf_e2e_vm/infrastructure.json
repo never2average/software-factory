@@ -1,0 +1,73 @@
+{
+  "$schema": "../app_id/infrastructure.schema.json",
+  "target": "vm",
+  "secret_store": "vm_env_file",
+  "inference": {
+    "provider": "cloudflare_workers_ai",
+    "account_ref": "CLOUDFLARE_ACCOUNT_ID"
+  },
+  "sandbox": {
+    "provider": "vercel_sandbox",
+    "prewarm": false
+  },
+  "secrets": [
+    "AUTH_JWT_PRIVATE_KEY",
+    "AUTH_JWT_PUBLIC_KEY",
+    "BLOB_READ_WRITE_TOKEN",
+    "BROWSERBASE_API_KEY",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "CRON_SECRET",
+    "DATABASE_URL",
+    "EXA_API_KEY",
+    "MODEL_PROVIDER",
+    "NEXT_PUBLIC_EVE_API_URL",
+    "OPS_SECRETS_KEY",
+    "PLATFORM_NOTIFY_FROM",
+    "POSTGRES_ADMIN_URL",
+    "RESEND_API_KEY",
+    "TASK_WORKFLOW_SERVICE_TOKEN",
+    "TASK_WORKFLOW_SERVICE_URL"
+  ],
+  "secrets_user": [
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "RESEND_API_KEY",
+    "PLATFORM_NOTIFY_FROM",
+    "EXA_API_KEY",
+    "BROWSERBASE_API_KEY"
+  ],
+  "secrets_derived": [
+    "DATABASE_URL",
+    "POSTGRES_ADMIN_URL",
+    "BLOB_READ_WRITE_TOKEN",
+    "CRON_SECRET",
+    "OPS_SECRETS_KEY",
+    "AUTH_JWT_PRIVATE_KEY",
+    "AUTH_JWT_PUBLIC_KEY",
+    "MODEL_PROVIDER",
+    "TASK_WORKFLOW_SERVICE_TOKEN",
+    "TASK_WORKFLOW_SERVICE_URL",
+    "NEXT_PUBLIC_EVE_API_URL"
+  ],
+  "secrets_optional": [
+    "GOOGLE_CLIENT_ID",
+    "NEXT_PUBLIC_GOOGLE_CLIENT_ID"
+  ],
+  "runtime_env": {
+    "OPS_MULTI_TENANT": "0",
+    "ENABLE_WEB_SEARCH": "true",
+    "ENABLE_BROWSER": "true",
+    "MODEL_PROVIDER": "cloudflare"
+  },
+  "vm": {
+    "provider": "digitalocean",
+    "host": "69.55.59.169",
+    "ssh_alias": "digitalocean",
+    "cpu": 4,
+    "memory_gb": 8,
+    "disk_gb": 154,
+    "os": "ubuntu-24.04",
+    "compose": "infra/vm/apps/sf_e2e_vm/docker-compose.yml"
+  }
+}

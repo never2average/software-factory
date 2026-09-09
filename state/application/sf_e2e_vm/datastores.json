@@ -1,0 +1,71 @@
+{
+  "$schema": "../app_id/datastores.schema.json",
+  "postgres": {
+    "provider": "self_hosted",
+    "orm": "drizzle",
+    "migrations_dir": "drizzle/",
+    "rls": "on",
+    "tenancy": "single_org",
+    "url_ref": "DATABASE_URL",
+    "scope": "fresh",
+    "sslmode": "require",
+    "network": "sf-sf-e2e-vm",
+    "host": "db",
+    "port": 6543,
+    "database": "sfe2evm",
+    "admin_url_ref": "POSTGRES_ADMIN_URL",
+    "exposure": "private_docker_network",
+    "rls_verified": {
+      "at": "2026-09-09T07:35:15+00:00",
+      "backend": "self_hosted",
+      "mode": "on",
+      "source": "provision.py --verify-db",
+      "role": "app_rw",
+      "superuser": false,
+      "bypassrls": false,
+      "org_scoped_tables": 52,
+      "protected": 52,
+      "unprotected": [],
+      "open_policies": [],
+      "leaking_policies": [],
+      "policies_executed": 52,
+      "policies_unverified": [],
+      "unmeasured": [],
+      "probe_table": "account_summaries",
+      "probe_tables": 40,
+      "probe_skipped": [
+        "customer_stakeholders:foreign keys",
+        "deployments:foreign keys",
+        "implementation:foreign keys",
+        "interactions:foreign keys",
+        "internal_staff:foreign keys",
+        "org_invites:control plane (readable with no workspace in scope, by design)",
+        "org_members:control plane (readable with no workspace in scope, by design)",
+        "orgs:control plane (readable with no workspace in scope, by design)",
+        "platform:foreign keys",
+        "solutions:foreign keys",
+        "task_workflow_instances:foreign keys",
+        "tickets:foreign keys"
+      ],
+      "foreign_rows_readable": 0,
+      "leaking_tables": [],
+      "cross_org_write": "42501",
+      "cross_org_writable": [],
+      "unset_org_rows": null,
+      "open_with_no_org": [],
+      "running_app": "unmeasured",
+      "running_app_detail": "this app has no production URL yet"
+    }
+  },
+  "blob": {
+    "provider": "vercel_blob",
+    "root_prefix": "orgs/e2e-check",
+    "token_ref": "BLOB_READ_WRITE_TOKEN"
+  },
+  "cache": {
+    "provider": "none"
+  },
+  "memory": {
+    "backend": "postgres"
+  }
+}

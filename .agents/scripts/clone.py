@@ -18,6 +18,9 @@ terminal: the agent runtime is not allowed to handle secret values.
 import json, os, sys, subprocess, datetime, shutil, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+STAMP = datetime.datetime.fromisoformat(NOW).strftime("%Y-%m-%dT%H%M%SZ")   # the same second as run_at, cut for a filename
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lanes import reserve_report   # ONE implementation of "a report path nobody can reopen", shared with the lanes
 LIVE = {"web": "fde-agent", "api": "fde-agent-api", "workflow": "fde-task-workflow"}   # the reference deployment; never deployed to
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
@@ -53,6 +56,20 @@ def live_blob_token(mold, proj, prefix):
     print("no live project has a token the blob store accepts; the clone keeps its own empty data room and blob checks are skipped")
     return None
 
+def write_report(rdir, app_id, text):
+    """Land the regression report where nothing can rewrite it, and return its path.
+
+    The report is evidence: `testing.context.report`, `clone_of.regression.report` and a standing
+    `revert.reason` all point at it. The convenient write (a date-only name reopened with "w") let a
+    same-day re-clone silently replace the file a `reverted` record still cites. So it lands exactly the
+    way lanes.py lands a lane report — reserve_report: the UTC second in the name, O_EXCL so even an
+    identical name takes the next suffix, 0444 afterwards. Name: <app_id>-regression-<stamp>[-n].md."""
+    os.makedirs(rdir, exist_ok=True)
+    fd, rpath = reserve_report(rdir, f"{app_id}-regression", STAMP)
+    with os.fdopen(fd, "w") as fh: fh.write(text)
+    os.chmod(rpath, 0o444)   # a fence for a non-root operator; O_EXCL above is the guarantee (see lanes.py)
+    return rpath
+
 def node(cmd, env, cwd, stdin=None, extra=()):
     r = subprocess.run(["node", os.path.join(ROOT, ".claude/scripts/lib/surface.mjs"), cmd, *extra], cwd=cwd, env=env, input=stdin, capture_output=True, text=True)
     if r.returncode: sys.exit(r.stderr.strip() or f"surface.mjs {cmd} failed")
@@ -73,7 +90,7 @@ def main(a):
         print("  extract   SELECT surface tables on live -> application.surface, datainfra.{platforms,deployments,pipelines,agents}")
         print(f"  snapshot  pg_dump --schema=public live -> pg_restore into {proj}; blob list+copy under {prefix} (needs --apply)")
         print(f"  configure surface.mjs apply against {proj} (upserts org, members, admins, roster, profile, configs, definitions, scripts)")
-        print(f"  regress   counts + keyed diff of surface tables + blob tree, {proj} vs live -> molds/{app['mold_id']}/testing/context/reports/")
+        print(f"  regress   counts + keyed diff of surface tables + blob tree, {proj} vs live -> molds/{app['mold_id']}/testing/context/reports/{app_id}-regression-<utc second>.md")
         if ds["postgres"].get("scope") != "fresh": print("  WARNING: snapshot/configure refuse unless datastores.postgres.scope is fresh")
         return
     if step in ("snapshot", "configure") and ds["postgres"].get("scope") != "fresh": sys.exit("refusing: datastores.postgres.scope must be fresh (never write to the live database)")
@@ -192,8 +209,7 @@ def main(a):
     if step == "regress":
         live = pull_env(LIVE["web"], mold, proj); mine = pull_env(proj, mold, proj); tok = live_blob_token(mold, proj, prefix)
         rep = node("diff", dict(base, DATABASE_URL=pg_url(mine), LIVE_DATABASE_URL=pg_url(live), BLOB_READ_WRITE_TOKEN=mine.get("BLOB_READ_WRITE_TOKEN", "") if tok else "", LIVE_BLOB_READ_WRITE_TOKEN=tok or ""), mold)
-        rdir = os.path.join(ROOT, "molds", app["mold_id"], "testing", "context", "reports"); os.makedirs(rdir, exist_ok=True)
-        rpath = os.path.join(rdir, f"{app_id}-regression-{NOW[:10]}.md")
+        rdir = os.path.join(ROOT, "molds", app["mold_id"], "testing", "context", "reports")
         # A row-count diff cannot see a wiped policy set, so it used to report `pass` on a clone with no
         # tenant isolation at all. The isolation evidence is part of the verdict now.
         ds = load(os.path.join(adir, "datastores.json")); pg = ds.get("postgres", {})
@@ -230,7 +246,7 @@ def main(a):
               f"- policies executed one at a time: {ev.get('policies_executed')}" + (f" · **leaking**: {', '.join(ev['leaking_policies'][:6])}" if ev.get("leaking_policies") else " · none handed over another workspace's rows"),
               ("- **FAIL**: " + "; ".join(iso)) if iso else "- ok"]
         L += ["", "## Blob tree (files, bytes per top-level folder)", "", (f"prefix '{rep['blob']['prefix']}': " + ("same" if rep["blob"]["same"] else "DIFF") + f" clone={rep['blob']['clone']} live={rep['blob']['live']}") if rep["blob"] else "skipped: no live token accepted by the blob store"]
-        open(rpath, "w").write("\n".join(L) + "\n")
+        rpath = write_report(rdir, app_id, "\n".join(L) + "\n")
         if iso: print("tenant isolation: " + "; ".join(iso))
         clone["regression"] = {"status": status, "run_at": NOW, "report": os.path.relpath(rpath, ROOT)}
         app["testing"]["context"] = {"status": status, "run_at": NOW, "report": os.path.relpath(rpath, ROOT)}
