@@ -170,8 +170,10 @@ def _project_gone(project, mold_dir):
         try:
             if json.loads(r.stdout).get("id"): return False
         except Exception: pass
-    err = (r.stdout + r.stderr).lower()
-    return "(404)" in err or "not found" in err
+    # The 404 form only. A bare "not found" also matches `/bin/sh: vercel: not found` (no CLI on PATH)
+    # and `command not found`, and the measured result of those was True — "deleted" read off a shell
+    # error. Vercel's own answer is `Error: Project not found. (404)`; unknown stays "still there".
+    return "not found. (404)" in (r.stdout + r.stderr).lower()
 
 def _rm_scratch_project(name, mold_dir):
     """Remove it — and SAY SO if it survives. A leftover inspection project is a leftover database URL.
