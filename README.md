@@ -1,6 +1,6 @@
 # software-factory
 
-Read `docs/HOW_IT_WORKS.md` first. Questions the intake asks: `docs/INTAKE.md`.
+Read `docs/HOW_IT_WORKS.md` first. Questions the intake asks: `docs/INTAKE.md`. Operator runbook, brief to live app: `docs/RUNBOOK.md`. What a product is and ships as: `docs/PRODUCTS.md`. Inference cost per workspace: `docs/COST_MODEL.md`.
 
 Factory 1: an operator (Fable + sol) services molds through a fixed surface and stamps applications from them. Failed applications revert to the operator.
 
@@ -23,7 +23,8 @@ Fable + sol --service--> [dm.md, browser(o/o), web search(o/o), primary_context,
 
 ```
 python3 .claude/scripts/intake.py briefs/<app>.md --app <app> [--ask]   # brief -> state, asks only unresolved questions
-python3 .claude/scripts/provision.py <app>                              # check secrets by name, regenerate the local artifact
+python3 .claude/scripts/provision.py <app>                              # check secrets by name — on a vercel app this also CREATES projects and datastores (mold_v1-041)
+python3 .claude/scripts/provision.py <app> --set-secret NAME            # type one credential at a hidden prompt (human terminal)
 python3 .claude/scripts/provision.py <app> --deploy                     # deploy to vercel (proves app_rw + RLS first)
 python3 .claude/scripts/lanes.py <app>                                  # the five testing lanes; a fail reverts the app
 ```

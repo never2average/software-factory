@@ -1,0 +1,30 @@
+{
+  "$schema": "../app_id/datastores.schema.json",
+  "postgres": {
+    "provider": "self_hosted",
+    "orm": "drizzle",
+    "migrations_dir": "drizzle/",
+    "rls": "fail_closed",
+    "tenancy": "multi_org",
+    "url_ref": "DATABASE_URL",
+    "scope": "fresh",
+    "sslmode": "require",
+    "network": "sf-sf-e2e-vm",
+    "host": "db",
+    "port": 6543,
+    "database": "sfe2evm",
+    "admin_url_ref": "POSTGRES_ADMIN_URL",
+    "exposure": "private_docker_network"
+  },
+  "blob": {
+    "provider": "vercel_blob",
+    "root_prefix": "orgs/e2e-check",
+    "token_ref": "BLOB_READ_WRITE_TOKEN"
+  },
+  "cache": {
+    "provider": "none"
+  },
+  "memory": {
+    "backend": "postgres"
+  }
+}

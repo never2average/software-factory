@@ -21,8 +21,22 @@ EMAIL = r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"
 def parse_brief(text):
     """Deterministic hints from the brief. Interpretation beyond this is the intake subagent's job."""
     t = text.lower(); h = {}
-    if re.search(r"\b(vm|droplet|self.?host|on.prem|single machine)\b", t): h["deploy_target"] = "vm"
-    if "vercel" in t: h["deploy_target"] = "vercel"
+    vm = bool(re.search(r"\b(vm|droplet|self.?host|on.prem|single machine)\b", t))
+    # "vercel" anywhere used to pick the deploy target, so "inference through the Vercel AI Gateway" moved
+    # an app that asked for the vm onto Vercel (and paired it with a self_hosted database provision.py
+    # then refused). Only a vercel that is not the gateway's own name counts — and the name comes in
+    # several spellings ("Vercel AI Gateway", "Vercel's AI Gateway", "vercel-ai-gateway", "Vercel gateway").
+    # The possessive lives INSIDE the lookahead: as an optional group before it, "vercel's ai gateway"
+    # backtracked out of the 's and matched a bare "vercel" that the lookahead could no longer see.
+    vercel = bool(re.search(r"\bvercel\b(?!(?:['\u2019]s)?[\s-]+(?:ai[\s-]+)?gateway\b)", t))
+    if vm and vercel:
+        # A brief that names BOTH is a question, not an answer. The last rule to run used to win, so
+        # intake wrote target=vercel for a brief that asked for the vm. deploy_target stays pending.
+        h["deploy_target_conflict"] = True
+    elif vm: h["deploy_target"] = "vm"
+    elif vercel: h["deploy_target"] = "vercel"
+    if re.search(r"\bai[\s-]+gateway\b|\bvercel(?:['\u2019]s)?[\s-]+gateway\b", t): h["inference_provider"] = "vercel_ai_gateway"
+    elif re.search(r"\bworkers\s+ai\b|\bcloudflare\b", t): h["inference_provider"] = "cloudflare_workers_ai"
     if re.search(r"\bno (web )?search\b|without (web )?search|disable (web )?search", t): h["web_search"] = False
     if re.search(r"\bno browser\b|without (a )?browser|disable (the )?browser|no outbound", t): h["browser"] = False
     if re.search(r"single.?tenant|single workspace|one workspace", t): h["multi_tenant"] = False
@@ -62,6 +76,35 @@ def parse_brief(text):
     return h
 
 def slug(s): return re.sub(r"[^a-z0-9-]+", "-", s.lower()).strip("-")
+
+# What the mold reads for each inference provider (agent/lib/model.ts). The cloudflare branch reads
+# CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN (model.ts:35-36) and nothing else; the gateway branch
+# reads NO Cloudflare name — it hands a bare model id to the AI SDK, whose gateway provider
+# (@ai-sdk/gateway 4.0.12) authenticates with AI_GATEWAY_API_KEY and otherwise falls back to the OIDC
+# token Vercel injects into its own functions. Nothing in this factory measures whether OIDC is on
+# for a project, so the key is required on every target instead of trusted to appear at request time.
+# Every name here goes into secrets_user, and provision.py blocks the deploy on each of them, so an
+# app must never name a secret its provider does not read.
+INFERENCE_SECRETS = {"cloudflare_workers_ai": ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"],
+                     "vercel_ai_gateway": ["AI_GATEWAY_API_KEY"]}
+def unforwarded(target, provider):
+    """Names in INFERENCE_SECRETS[provider] that the target's deploy never hands to the process running
+    agent/lib/model.ts. On Vercel that process is the `<project>-api` deployment, and the ONLY list
+    provision.py syncs onto it is API_ENV (deploy_vercel -> sync_env(API_ENV, ...)); `--check` counts a
+    secret present on the main project alone. A name missing from API_ENV therefore passes the gate and
+    still never reaches the runtime, which then either fails or falls back to whatever the SDK finds —
+    an unmeasured default. The list is READ from provision.py, not copied here, so this refusal lifts by
+    itself the day provision.py forwards the name. target=vm starts no process at all (provision.py:
+    "target vm serves nothing"), so there is nothing to forward and nothing to refuse."""
+    if target != "vm":
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import provision                     # stdlib-only module, no side effects at import
+        return [n for n in INFERENCE_SECRETS.get(provider, []) if n not in provision.API_ENV]
+    return []
+
+def answered(c, h, d, key):
+    """An answer given for an earlier question (answers.json, --ask) beats the brief, which beats the default."""
+    return c.get("resolved", {}).get(key) or h.get(key) or d.get(key)
 
 # The mold's data room, as corpus kinds. Keys are phrases a brief might use; values are (kind, dm.md path, sync).
 CORPUS = {
@@ -103,7 +146,7 @@ def match(phrases, table):
 QUESTIONS = [
  # id, state path, prompt, options or None, resolver(defaults, hints, ctx) -> value or None
  ("deploy_target", "infrastructure.target", "Where should this application run?", ["vercel","vm"],
-   lambda d,h,c: h.get("deploy_target") or d.get("deploy_target")),
+   lambda d,h,c: None if h.get("deploy_target_conflict") else h.get("deploy_target") or d.get("deploy_target")),
  # the hint was ignored here — alone among the sixteen questions — so a brief could never land on a
  # provider and intake silently stamped the factory default. self_hosted is LOCAL-ONLY (no host port),
  # so it forces target=vm; provision.py refuses to pair it with a Vercel deployment.
@@ -115,12 +158,13 @@ QUESTIONS = [
    lambda d,h,c: h.get("postgres_scope") or d.get("postgres_scope", "fresh")),
  ("blob_provider", "datastores.blob.provider", "Which blob store for the data room?", ["vercel_blob","s3","gcs","azure_blob"],
    lambda d,h,c: d.get("blob_provider")),
- ("inference_provider", "infrastructure.inference.provider", "Which inference provider serves GLM 5.2?", ["cloudflare_workers_ai","vercel_ai_gateway"],
-   lambda d,h,c: d.get("inference_provider")),
+ ("inference_provider", "infrastructure.inference.provider", "Which inference provider serves the agent?", ["cloudflare_workers_ai","vercel_ai_gateway"],
+   lambda d,h,c: h.get("inference_provider") or d.get("inference_provider")),
+ # the first name the provider reads: CLOUDFLARE_ACCOUNT_ID on Workers AI, AI_GATEWAY_API_KEY on the gateway
  ("inference_account", "infrastructure.inference.account_ref", "Name of the secret holding the inference account id (e.g. CLOUDFLARE_ACCOUNT_ID).", None,
-   lambda d,h,c: "CLOUDFLARE_ACCOUNT_ID" if (h.get("inference_provider") or d.get("inference_provider"))=="cloudflare_workers_ai" else None),
+   lambda d,h,c: (INFERENCE_SECRETS.get(answered(c, h, d, "inference_provider")) or [None])[0]),
  ("secret_store", "infrastructure.secret_store", "Where do secret values live?", ["vercel_env","vm_env_file"],
-   lambda d,h,c: "vm_env_file" if (h.get("deploy_target") or d.get("deploy_target"))=="vm" else d.get("secret_store")),
+   lambda d,h,c: "vm_env_file" if answered(c, h, d, "deploy_target")=="vm" else d.get("secret_store")),
  ("web_search", "application.capabilities.web_search", "Enable web search (Exa) in the agent?", ["true","false"],
    lambda d,h,c: h.get("web_search", True)),
  ("browser", "application.capabilities.browser", "Enable the browser subagent?", ["true","false"],
@@ -166,7 +210,11 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     prod = pick_product(mold_id, hints, existing)
     org_id = slug(ans["workspace_name"]); fde = ans["fde_email"]
     # Secrets the app needs, by name. "user" = only the user can supply; "derived" = provision.py creates/sets them.
-    user_secrets = ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "RESEND_API_KEY", "PLATFORM_NOTIFY_FROM"]
+    # The inference half follows the provider (INFERENCE_SECRETS): this used to be a literal Cloudflare
+    # list for every app, so a gateway app named two secrets it never reads and could not deploy.
+    if ans["inference_provider"] not in INFERENCE_SECRETS:
+        sys.exit(f"inference_provider must be one of {', '.join(INFERENCE_SECRETS)}, not {ans['inference_provider']!r}")
+    user_secrets = [*INFERENCE_SECRETS[ans["inference_provider"]], "RESEND_API_KEY", "PLATFORM_NOTIFY_FROM"]
     if ans["web_search"]: user_secrets.append("EXA_API_KEY")
     if ans["browser"]: user_secrets.append("BROWSERBASE_API_KEY")
     # Provider-dependent, because provision.py blocks the deploy on every name in this list. It used to
@@ -317,19 +365,21 @@ def main(a):
     ctx = {"app_id": app_id, "product": prod, "first_app": not [x for x in prod.get("app_ids", []) if x != app_id],
            "suffix": app_id[len(prod["product_id"])+1:] if app_id.startswith(prod["product_id"]+"_") else app_id,
            "existing_project": existing.get("infrastructure", {}).get("vercel", {}).get("project")}
+    resolved, pending = {}, []; ctx["resolved"] = resolved   # later questions may depend on earlier answers
     if not hints.get("workspace_name") and not d.get("workspace_name"): hints["workspace_name"] = None
     answers = load(opt("--answers")) if opt("--answers") else {}
     qfile = os.path.join(outdir, "questions.json")
     if os.path.exists(qfile) and not answers:
         prev = load(qfile).get("answers", {}); answers.update(prev)
-    resolved, pending = {}, []
     for qid, path, prompt, options, resolve in QUESTIONS:
         if qid in answers: resolved[qid] = coerce(answers[qid]); continue
         v = resolve(d, hints, ctx)
         # factory defaults are only trusted once confirmed; until then they become suggested answers
         if v is not None and (d.get("confirmed") or qid not in ("deploy_target","postgres_provider","blob_provider","inference_provider","secret_store")):
             resolved[qid] = coerce(v); continue
-        pending.append({"id":qid,"path":path,"question":prompt,"options":options,"suggested":v})
+        q = {"id":qid,"path":path,"question":prompt,"options":options,"suggested":v}
+        if qid == "deploy_target" and hints.get("deploy_target_conflict"): q["why"] = "the brief names both the vm and Vercel"
+        pending.append(q)
     if "--ask" in opts and pending:
         for q in pending:
             hint = f" [{'/'.join(q['options'])}]" if q["options"] else ""
@@ -342,9 +392,17 @@ def main(a):
                      "answers":{k:v for k,v in resolved.items()},"pending":pending,"generated":TODAY})
         print(f"{len(pending)} question(s) pending -> {os.path.relpath(qfile, ROOT)}")
         for q in pending:
-            print(f"  - {q['id']}: {q['question']}" + (f"  options={q['options']}" if q["options"] else "") + (f"  suggested={q['suggested']}" if q["suggested"] not in (None,"") else ""))
+            print(f"  - {q['id']}: {q['question']}" + (f"  options={q['options']}" if q["options"] else "") + (f"  suggested={q['suggested']}" if q["suggested"] not in (None,"") else "") + (f"  ({q['why']})" if q.get("why") else ""))
         sys.exit(2)
     # everything resolved: write state, confirm defaults, register app
+    gap = unforwarded(resolved["deploy_target"], resolved["inference_provider"])
+    if gap:
+        if not existing and not os.listdir(outdir): os.rmdir(outdir)   # nothing was written; leave no empty app behind
+        sys.exit(f"{app_id}: inference provider {resolved['inference_provider']} needs {', '.join(gap)} at run time, but "
+                 f"provision.py does not forward that name to the api project on target={resolved['deploy_target']} "
+                 f"(API_ENV in .claude/scripts/provision.py), so a deploy would pass --check and still run without it. "
+                 f"Nothing was written. Either add {', '.join(gap)} to API_ENV in .claude/scripts/provision.py and rerun, "
+                 f"or say `inference via cloudflare workers ai` in the brief.")
     app, infra, ds, di = build_state(app_id, mold_id, resolved, hints, factory, brief_path, existing)
     for name, obj in [("application",app),("infrastructure",infra),("datastores",ds),("datainfra",di)]:
         save(os.path.join(outdir, f"{name}.json"), obj)
