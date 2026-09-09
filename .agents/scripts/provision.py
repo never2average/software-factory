@@ -1349,9 +1349,13 @@ def _revert(adir, app, reason):
     print(f"  status set to reverted: {reason[:200]}")
 
 def main(a):
-    if not a: sys.exit(__doc__)
+    if not a or a[0].startswith("-"): sys.exit(__doc__)   # `--help`, or a flag where the app id goes
     app_id = a[0]; deploy = "--deploy" in a
     adir = os.path.join(ST, "application", app_id)
+    if not os.path.isfile(os.path.join(adir, "application.json")):
+        sys.exit(f"{app_id}: no such application (state/application/{app_id}/application.json does not exist). "
+                 f"Registered: {', '.join(sorted(os.listdir(os.path.join(ST, 'application'))) or ['none'])}. "
+                 f"Stamp one first: python3 .claude/scripts/intake.py briefs/{app_id}.md --app {app_id}")
     app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
     if deploy and app.get("surface", {}).get("branding"):
@@ -1364,6 +1368,15 @@ def main(a):
     secrets = infra.get("secrets", []); target = infra["target"]; store = infra.get("secret_store")
     ds = load(os.path.join(adir, "datastores.json")); prov = ds.get("postgres", {}).get("provider", "supabase")
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
+    if target == "vm" and not deploy and app.get("status") not in VM_STATUSES:
+        # The same refusal factory.py validate makes (_vm_status), at the writer: a vm app never serves
+        # traffic, and this lane never writes a status that says it does, so one that says so was set
+        # by hand. It sits BEFORE every writer — --set-secret, --verify-rls, --check, --verify-db — because
+        # each of them would record something beside a status the record cannot support (--verify-rls used
+        # to run and write rls_verified under a `stamped` vm app). --deploy keeps its own refusal below.
+        sys.exit(f"{app_id}: status is {app.get('status')!r} but target is \"vm\", which never serves traffic and "
+                 f"never reaches that status. Set \"status\": \"planned\" in state/application/{app_id}/"
+                 f"application.json and rerun, or set \"target\": \"vercel\" to deploy it for real.")
     if "--set-secret" in a:
         return set_secret(app_id, a[a.index("--set-secret") + 1], infra, mold_dir)
     if "--verify-rls" in a:
@@ -1451,14 +1464,6 @@ def main(a):
         # to deploy with missing secrets", and no command in this factory could ever produce them: a
         # closed loop with no terminating step, for the one operator who cannot read their way out of it.
         if deploy: sys.exit(VM_NOT_A_DEPLOY_TARGET.format(app_id=app_id))
-        if app.get("status") not in VM_STATUSES:
-            # The same refusal factory.py validate makes (_vm_status), at the writer: a vm app never serves
-            # traffic, and this lane never writes a status that says it does, so one that says so was set
-            # by hand. Running --check or --verify-db on it would then record evidence beside a status the
-            # evidence cannot support.
-            sys.exit(f"{app_id}: status is {app.get('status')!r} but target is \"vm\", which never serves traffic and "
-                     f"never reaches that status. Set \"status\": \"planned\" in state/application/{app_id}/"
-                     f"application.json and rerun, or set \"target\": \"vercel\" to deploy it for real.")
         # EVERY vm run regenerates the artifact, --verify-db included. --verify-db used to return before
         # this line, so the compose file and README could be missing while state still named them, and —
         # worse — the run that creates .pg-admin and pg/server.key was the one run that never wrote the

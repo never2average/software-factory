@@ -30,8 +30,7 @@
       },
       "app_ids": [
         "redacted",
-        "redacted",
-        "sf_e2e_vm"
+        "redacted"
       ],
       "deploy_targets": [
         "vercel"

@@ -85,8 +85,7 @@
   },
   "applications": [
     "redacted",
-    "redacted",
-    "sf_e2e_vm"
+    "redacted"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",

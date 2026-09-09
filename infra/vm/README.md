@@ -10,7 +10,9 @@ engine + compose, Vercel CLI, Playwright + chromium with system deps.
 
 `target: vm` is a **local verification** target. It generates the app's database artifact and runs
 the mold's own schema chain against it. It does not serve the application, and `--deploy` on a vm
-app refuses in one sentence rather than pretending.
+app refuses in one sentence rather than pretending. A vm app's status therefore stays `planned` (or
+`reverted` / `retired`): `factory.py validate` and every `provision.py` writer refuse a vm app in `stamping`,
+`stamped`, `testing` or `serviceable`, because no process this factory started ever served it (mold_v1-047).
 
 That is a decision with a cause, not a deferral (task **mold_v1-020**):
 
