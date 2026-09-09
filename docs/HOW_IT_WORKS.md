@@ -191,8 +191,9 @@ Values never enter the repo, the state files, or the chat. State holds names; th
 Vercel targets, an env file on the VM for VM targets). Claude Code's auto-mode classifier blocks the agent from
 writing secret values to Vercel env, even generated ones, so `provision.py` is run by a human for that step. The
 check-and-report half runs fine from an agent. Two kinds of name appear in `infrastructure.json`: `secrets_user`
-(only the user can supply: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `RESEND_API_KEY`, `PLATFORM_NOTIFY_FROM`,
-plus `EXA_API_KEY` with web search on and `BROWSERBASE_API_KEY` with the browser on) and `secrets_derived` (the
+(only the user can supply: `RESEND_API_KEY` and `PLATFORM_NOTIFY_FROM` always, plus the inference credential the
+provider needs — `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` for Cloudflare Workers AI, `AI_GATEWAY_API_KEY` for
+`vercel_ai_gateway` (see docs/INTAKE.md) — plus `EXA_API_KEY` with web search on and `BROWSERBASE_API_KEY` with the browser on) and `secrets_derived` (the
 factory mints or derives them during provisioning). The runbook for a new operator is `docs/RUNBOOK.md`.
 
 **`OPS_SECRETS_KEY` is minted per app, and sealed rows do not travel.** The mold seals every connector credential
