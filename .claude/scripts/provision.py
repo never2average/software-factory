@@ -10,7 +10,8 @@
   secret it calls ensure_projects (creates <proj>, <proj>-api, <proj>-workflow if absent) and
   provision_datastores (adopts a spare Neon resource or provisions a new one on the Marketplace,
   and creates a temporary sf-neon-inspect-* project per candidate to read the table count from —
-  a project it deletes, or NAMES ON STDOUT when the delete fails). A --check of an app whose
+  a project it deletes through the REST API (the only delete that works unattended on CLI 59.11.7),
+  after first sweeping any sf-neon-inspect-* project an earlier interrupted run left behind). A --check of an app whose
   datastores are not provisioned yet therefore creates real, billable, team-visible resources.
   Read it as "check and provision, do not build"; only --deploy puts code in front of traffic.
 --deploy: run the deploy for the target. Refuses if any secret is missing.
@@ -40,7 +41,7 @@ Neon's is not, and an unattached Neon resource already sits on this team, so app
 """
 import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
+ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
@@ -158,14 +159,62 @@ def _scratch_project(mold_dir):
     if _project_meta(name, mold_dir).get("id"): return name
     print("  could not create a temporary inspection project: " + _cli_err(r.stdout + r.stderr)[:160]); return None
 
+SCRATCH_RE = re.compile(r"^sf-neon-inspect-[0-9a-f]{8}$")   # exactly what _scratch_project mints, nothing else
+SCRATCH_STALE_S = 30 * 60   # a probe takes seconds; anything this old is a leak, not a run in flight
+def _project_gone(project, mold_dir):
+    """True ONLY when Vercel says the project does not exist. A lookup that fails for any other reason
+    (no network, an expired token -> `Not authorized (403)`, a rate limit) returns False, so the caller
+    treats "unknown" as "still there" and says so, rather than reading a blind spot as a deletion."""
+    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    if r.returncode == 0:
+        try:
+            if json.loads(r.stdout).get("id"): return False
+        except Exception: pass
+    err = (r.stdout + r.stderr).lower()
+    return "(404)" in err or "not found" in err
+
 def _rm_scratch_project(name, mold_dir):
-    """Remove it — and SAY SO if it survives. A leftover inspection project is a leftover database URL."""
-    subprocess.run(f"vercel project rm {name} --yes", shell=True, cwd=mold_dir, capture_output=True, text=True)
-    if _project_meta(name, mold_dir).get("id"):
-        subprocess.run(f"vercel api /v9/projects/{name} -X DELETE --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
-    if _project_meta(name, mold_dir).get("id"):
-        print(f"  NOTE: the temporary inspection project {name} could not be deleted. Delete it in the Vercel "
-              f"dashboard (Projects -> {name} -> Settings -> Delete); it holds a database URL and nothing else.")
+    """Remove it — and SAY SO if it survives. A leftover inspection project is a leftover database URL.
+
+    Vercel CLI 59.11.7 offers no unattended `project rm`: `--yes` is "unknown or unexpected option",
+    `--non-interactive` still prints the `Are you sure? (y/N)` prompt and waits, and piping `yes` into
+    it re-asks the question forever on a non-tty. The REST call is refused too unless it is told the
+    confirmation was deliberate — `--dangerously-skip-permissions` is Vercel's name for that flag on
+    `vercel api`, and it is the ONE deletion that works from a subprocess (measured: a project created
+    and deleted this way is gone from `vercel project ls` in the same run). Deleted by name, then by id
+    if the name lookup and the delete disagree. Returns True only on a confirmed 404 afterwards: a
+    lookup that merely FAILED is not a deletion, and the operator gets the dashboard note instead."""
+    for ref in (name, _project_meta(name, mold_dir).get("id") or name):
+        subprocess.run(f"vercel api /v9/projects/{ref} -X DELETE --raw --dangerously-skip-permissions",
+                       shell=True, cwd=mold_dir, capture_output=True, text=True)
+        if _project_gone(name, mold_dir): return True
+    print(f"  NOTE: the temporary inspection project {name} could not be confirmed deleted. Check the Vercel "
+          f"dashboard (Projects -> {name} -> Settings -> Delete); it holds a database URL and nothing else.")
+    return False
+
+def _sweep_scratch_projects(mold_dir):
+    """Delete STALE sf-neon-inspect-* projects on the team BEFORE creating another.
+
+    A probe that dies between `project add` and `_rm_scratch_project` (Ctrl-C, OOM, a CLI that could
+    not delete — mold_v1-042) leaves a project holding a database URL. Each run pays that debt first,
+    so a leak lasts one run, not forever. Only names this file mints (SCRATCH_RE) are touched, and
+    only ones older than SCRATCH_STALE_S: this factory fans provisioning out to parallel agents, and a
+    sweep that took every match would delete a concurrent run's project mid-probe — with a Neon
+    resource still connected to it, and that run then buying a fresh database it did not need. A
+    project whose age cannot be read is left alone for the same reason: unknown is not stale."""
+    r = subprocess.run('vercel api "/v9/projects?search=sf-neon-inspect-&limit=100" --raw',
+                       shell=True, cwd=mold_dir, capture_output=True, text=True)
+    try: projects = json.loads(r.stdout).get("projects", [])
+    except Exception: projects = []
+    now_ms = datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000
+    for p in projects:
+        n, created = p.get("name", ""), p.get("createdAt")
+        if not SCRATCH_RE.match(n) or not isinstance(created, (int, float)): continue
+        age = (now_ms - created) / 1000
+        if age < SCRATCH_STALE_S:
+            print(f"  leaving the inspection project {n} alone: {int(age)}s old, another run may still be using it"); continue
+        print(f"  removing the leftover inspection project {n} from an earlier run ({int(age // 60)} min old)")
+        _rm_scratch_project(n, mold_dir)
 
 def _neon_probe(name, mold_dir):
     """Is this Neon resource EMPTY? Answered with the app's own project connected to NOTHING.
@@ -228,6 +277,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
         return False
 
+    _sweep_scratch_projects(mold_dir)
     for name in _neon_spares(mold_dir):
         print(f"inspecting the free Neon database '{name}' (attached to no project) ...")
         st, why = _neon_probe(name, mold_dir)
@@ -617,6 +667,13 @@ def record_rls(adir, ds, ev):
     `factory.py validate` refuses `rls: fail_closed` (or `on`) on an app that says it is deployed
     without a matching evidence block, so the field can no longer be a string nothing tested."""
     if not ev: return
+    # REPLACE, never merge: rls_verified is one measurement of one database at one instant, and a
+    # running_app verdict carried over from an older block would be a verdict about an older build. So
+    # every block carries its own — a caller that measured nothing in front of traffic writes the safe
+    # token, not nothing: `unmeasured` fails validate, absence also fails validate, and neither can be
+    # mistaken for the affirmative (datastores.schema.json: rls_verified.running_app).
+    if ev.get("running_app") not in RLS_TOKENS:
+        ev["running_app"], ev["running_app_detail"] = "unmeasured", "nothing read the app in front of traffic in this step"
     ds.setdefault("postgres", {})["rls_verified"] = ev
     save(os.path.join(adir, "datastores.json"), ds)
     # .get, not [] — a `not verified:` record (scope=shared_with_live) carries no counts, and a
@@ -642,11 +699,13 @@ def record_running_app(adir, ds, running):
     instruction loop for the operator who cannot read their way out of it (HARD RULE 4). The deploy
     measured it; the deploy records it.
 
-    Recorded for every outcome, "NOT enforced" and "UNMEASURED" included — main() reverts the app on
-    those, and the reason it reverted is exactly what the next person needs to see in state."""
+    Recorded for every outcome, `not_enforced` and `unmeasured` included — main() reverts the app on
+    those, and the reason it reverted is exactly what the next person needs to see in state.
+    `running` is the (token, detail) pair from _rls_from_doc: the token is the verdict factory.py
+    compares, the detail is the sentence the operator reads."""
     ev = ds.get("postgres", {}).get("rls_verified")
     if not ev: return                       # rls_verified is written before this on every path that reaches it
-    ev["running_app"] = running
+    ev["running_app"], ev["running_app_detail"] = running
     save(os.path.join(adir, "datastores.json"), ds)
 
 def _retarget(app_url, runtime_url):
@@ -862,7 +921,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         print(f"  WEB_ORIGIN corrected to {url} (takes effect on the next deploy)")
     # verify-production, as the Makefile does
     checks = [("workflow", f"{infra['vercel'].get('workflow_url','')}/api/health"), ("api", f"{infra['vercel'].get('api_url','')}/eve/v1/health"), ("web", f"{url}/api/ops/health")]
-    health = {}; running = "UNMEASURED: the web app was not health-checked"
+    health = {}; running = ("unmeasured", "the web app was not health-checked")
     for name, u in checks:
         if not u.startswith("http"): continue
         code, doc, why = _read_health(u)
@@ -878,7 +937,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     infra["vercel"]["health"] = health
     if any(v != "200" for v in health.values()): print("WARNING: a health check is not 200; see infrastructure.json vercel.health")
     record_running_app(adir, ds, running)
-    print(f"  row-level security, as reported by the app now serving traffic: {running[:170]}")
+    print(f"  row-level security, as reported by the app now serving traffic: {running[0]} ({running[1][:160]})")
     return running
 
 ARTIFACT_HEADER = """# GENERATED by .claude/scripts/provision.py from state/application/{app_id}/*.json.
@@ -1009,7 +1068,7 @@ def _vm_runner(app_id, mold_dir):
         extra=["-v", f"{os.path.join(ROOT, '.claude/scripts/lib')}:/factory-lib:ro",
                "-v", f"{os.path.join(mold_dir, 'node_modules')}:/node_modules:ro"])
 
-def verify_db(app_id, mold_dir, ds, adir):
+def verify_db(app_id, mold_dir, ds, adir, infra):
     """Stand up the app's LOCAL Postgres and run the whole mold chain against it, then prove the URL.
 
     This is what `target: vm` buys: a real database the lanes can run against, on a private network,
@@ -1044,6 +1103,9 @@ def verify_db(app_id, mold_dir, ds, adir):
         hint = f"python3 .claude/scripts/provision.py {app_id} --verify-db"
         _rls_cover(run, adm, mode, hint)
         ev = _verify_app_rw(run, m.group(1), mode, "self_hosted", "provision.py --verify-db", hint)
+        # The same reading the vercel lane takes: a vm app serves nothing, so this records `unmeasured`
+        # with the reason — the honest verdict, and the one the schema and validate expect to find here.
+        ev["running_app"], ev["running_app_detail"] = _health_rls(infra)
         record_rls(adir, ds, ev)
         _vm_env(app_id, {"POSTGRES_ADMIN_URL": adm, "DATABASE_URL": m.group(1)})
         print(f"verified: {app_id}'s local database is ready (no host port; `docker port {localpg.cont(app_id)}` is empty)")
@@ -1130,6 +1192,7 @@ def set_secret(app_id, name, infra, mold_dir):
 HEALTH_PATH = "/api/ops/health"
 # The mold's ONE affirmative health sentence, and the only thing that may score `enforced` below.
 RLS_ENFORCED_DETAIL = re.compile(r"role\s+(\S+)\s+\(RLS enforced\)")
+RLS_TOKENS = ("enforced", "not_enforced", "unmeasured")   # datastores.schema.json: rls_verified.running_app
 def _read_health(url):
     """(http status, parsed JSON body or None, one-line reason it is not readable). Read-only."""
     r = subprocess.run(f"curl --silent --show-error --max-time 20 -w '\\n%{{http_code}}' {url}",
@@ -1144,7 +1207,7 @@ def _read_health(url):
     return code, doc, ""
 
 def _rls_from_doc(code, doc, why):
-    """What the app IN FRONT OF TRAFFIC says about row-level security — or UNMEASURED, never an
+    """What the app IN FRONT OF TRAFFIC says about row-level security — or `unmeasured`, never an
     affirmative it did not earn.
 
     THIS VALUE IS RECORDED as datastores.postgres.rls_verified.running_app and printed to the operator,
@@ -1158,17 +1221,19 @@ def _rls_from_doc(code, doc, why):
     `db.detail` with ok:true, so the endpoint answers 200 while announcing that RLS is off. A response
     that carries no db check is not this app's health endpoint and proves nothing about it.
 
-    THREE SHAPES, AND THEY ARE A CONTRACT: "enforced — ...", "NOT enforced — ...", "UNMEASURED: ...".
-    provision.py gates on startswith("enforced") in the two places that let an app finish (verify_rls
-    and the --deploy gate before status becomes `stamped`), and factory.py:_rls_claim allowlists the
-    same prefix. Renaming any of the three means changing all four call sites together."""
-    if doc is None: return f"UNMEASURED: {why}"
+    RETURNS (token, detail). The token is one of RLS_TOKENS — the enum datastores.schema.json fixes for
+    rls_verified.running_app — and it is the ONLY thing anyone compares: provision.py's two gates
+    (verify_rls, and the --deploy gate before status becomes `stamped`) and factory.py:_rls_claim all
+    test `== "enforced"`. The detail is the db.detail sentence or the reason nothing could be read,
+    recorded beside it as running_app_detail and printed, never parsed. The old shape was one string
+    ("enforced — ...") that both files prefix-matched, so a rewording on either side changed verdicts."""
+    if doc is None: return "unmeasured", why
     db = doc.get("db") if isinstance(doc.get("db"), dict) else {}
     det = db.get("detail")
     if not isinstance(det, str) or not det:
-        return f"UNMEASURED: HTTP {code} answered, but the body carries no db check — this is not {HEALTH_PATH}"
-    if re.search(r"BYPASSRLS|row-level security is NOT enforced", det, re.I): return f"NOT enforced — {det[:180]}"
-    if not db.get("ok"): return f"UNMEASURED: the app could not reach its database — {det[:160]}"
+        return "unmeasured", f"HTTP {code} answered, but the body carries no db check — this is not {HEALTH_PATH}"
+    if re.search(r"BYPASSRLS|row-level security is NOT enforced", det, re.I): return "not_enforced", det[:180]
+    if not db.get("ok"): return "unmeasured", f"the app could not reach its database — {det[:160]}"
     # POSITIVE MATCH, NOT ABSENCE — the same mistake one level in. Scoring "enforced" because the
     # warning is missing means every db.detail this factory does not recognise is read as good news:
     # an older build, a forked health route, a `detail` that only says "SELECT 1 ok" all earned the
@@ -1177,16 +1242,16 @@ def _rls_from_doc(code, doc, why):
     # printed ONLY when pg_roles.rolbypassrls came back false for the role the serving process is
     # connected as. Match that, or record that nothing was measured.
     if not RLS_ENFORCED_DETAIL.search(det):
-        return (f"UNMEASURED: HTTP {code} answered and the db check reads {det[:110]!r}, which is not this "
-                f"mold's `role <name> (RLS enforced)` sentence, so it names no role and settles nothing")
-    return f"enforced — {det[:180]}"
+        return "unmeasured", (f"HTTP {code} answered and the db check reads {det[:110]!r}, which is not this "
+                              f"mold's `role <name> (RLS enforced)` sentence, so it names no role and settles nothing")
+    return "enforced", det[:180]
 
 def _rls_from_health(origin):
     return _rls_from_doc(*_read_health(origin.rstrip("/") + HEALTH_PATH))
 
 def _health_rls(infra):
     u = (infra.get("vercel") or {}).get("production_url") or (infra.get("vm") or {}).get("production_url") or ""
-    if not u.startswith("http"): return "UNMEASURED: this app has no production URL yet"
+    if not u.startswith("http"): return "unmeasured", "this app has no production URL yet"
     return _rls_from_health(u)
 
 def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
@@ -1237,25 +1302,25 @@ def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
     # change only takes effect on the NEXT build. Read the app's own health endpoint and say which of the
     # two this evidence covers — `--verify-db` printed that caveat and this command printed none, so
     # `--verify-rls` -> `factory.py validate` could end green while the live process still ran as postgres.
-    ev["running_app"] = _health_rls(infra)
+    ev["running_app"], ev["running_app_detail"] = _health_rls(infra)
     record_rls(adir, ds, ev)
     print(f"{app_id}: tenant isolation PROVEN on the stored DATABASE_URL — {ev['protected']}/{ev['org_scoped_tables']} "
           f"org-scoped tables enabled+forced+scoped, {len(ev['open_policies'])} policy/policies that do not scope by "
           f"org_id, {ev['policies_executed']} policy/policies executed with {len(ev['leaking_policies'])} handing over "
           f"another workspace's rows, {ev['foreign_rows_readable']} foreign row(s) readable as {ev['role']} across "
           f"{ev['probe_tables']} probed table(s), cross-workspace write refused with {ev['cross_org_write']}")
-    if ev["running_app"].startswith("NOT enforced"):
+    if ev["running_app"] == "not_enforced":
         sys.exit(f"{app_id}: but the app SERVING TRAFFIC still says row-level security is not enforced "
-                 f'("{ev["running_app"][:160]}"). A Vercel env change only reaches the app on its next build.\n'
+                 f'("{ev["running_app_detail"][:160]}"). A Vercel env change only reaches the app on its next build.\n'
                  f"  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
-    if not ev["running_app"].startswith("enforced"):
-        # UNMEASURED is not a pass. The stored credential is proven; the process in front of traffic is
+    if ev["running_app"] != "enforced":
+        # `unmeasured` is not a pass. The stored credential is proven; the process in front of traffic is
         # not, and it is recorded that way rather than as the affirmative this used to print.
         sys.exit(f"{app_id}: the stored DATABASE_URL is proven, but NOTHING could be read from the app serving "
-                 f"traffic, so what that process runs as is unknown and has been recorded UNMEASURED "
-                 f'("{ev["running_app"][:160]}").\n'
+                 f"traffic, so what that process runs as is unknown and has been recorded unmeasured "
+                 f'("{ev["running_app_detail"][:160]}").\n'
                  f"  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
-    print(f"  the running app reports: {ev['running_app']}")
+    print(f"  the running app reports: enforced ({ev['running_app_detail']})")
 
 def _revert(adir, app, reason):
     """A deploy that could not prove isolation is not a deploy. Record it as reverted, with the reason,
@@ -1354,6 +1419,7 @@ def main(a):
         if "--verify-db" in a:
             # the database half of --deploy, on its own: no build, no deployment, no service touched
             _, ev = bring_up_schema(app_id, mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
+            ev["running_app"], ev["running_app_detail"] = _health_rls(infra)   # what the CURRENT build says, read now
             record_rls(adir, ds, ev)
             print(f"{app_id}: database ready and verified on {prov}")
             return print("  the RUNNING app still uses the DATABASE_URL of its last build; Vercel env changes take "
@@ -1373,7 +1439,7 @@ def main(a):
         # .gitignore protecting them. (localpg.appdir now writes it first, and the root .gitignore
         # carries the same rules; this ordering means the artifact simply cannot lag the database.)
         d = generate_local_artifact(app_id, mold_dir, secrets, ds, infra)
-        if "--verify-db" in a: return verify_db(app_id, mold_dir, ds, adir)
+        if "--verify-db" in a: return verify_db(app_id, mold_dir, ds, adir, infra)
         print(f"local artifact regenerated: {os.path.relpath(d, ROOT)}/ ({', '.join(GENERATED_FILES)})")
         return vm_report(app_id, d, infra, ds)
     user_s = infra.get("secrets_user", secrets); derived_s = infra.get("secrets_derived", [])
@@ -1419,21 +1485,28 @@ def main(a):
         else: _revert(adir, app, f"the deploy stopped on an unexpected {type(e).__name__}: {str(e)[:200]}. "
                                  f"Nothing about this app is proven; re-run: python3 .claude/scripts/provision.py {app_id} --deploy")
         raise
-    infra["deployed_at"] = TODAY; save(os.path.join(adir, "infrastructure.json"), infra)
-    if rls_mode(ds) != "off" and not running.startswith("enforced"):
+    # An INSTANT, not a day (infrastructure.schema.json: deployed_at), and the SAME instant as the
+    # rls_verified.at this run wrote: NOW is taken once per process, so the proof, the running_app reading
+    # and the deploy are one record of one run. factory.py orders rls_verified.at against this exactly —
+    # a clock read here, minutes after the proof, would make every successful deploy read as stale, and a
+    # bare date is a schema error there.
+    infra["deployed_at"] = NOW
+    save(os.path.join(adir, "infrastructure.json"), infra)
+    verdict, detail = running
+    if rls_mode(ds) != "off" and verdict != "enforced":
         # The stored DATABASE_URL passing the gate is not the same fact as the RUNNING app using it:
         # a Vercel env change only takes effect on the next build, and this is the only reading that
-        # covers the process actually serving traffic. UNMEASURED lands here too — an app whose health
+        # covers the process actually serving traffic. `unmeasured` lands here too — an app whose health
         # endpoint cannot be read has not been shown to be anything, and "not shown" is not "fine".
-        if running.startswith("NOT enforced"):
-            _revert(adir, app, f"the deployed app reports row-level security is not enforced: {running}")
+        if verdict == "not_enforced":
+            _revert(adir, app, f"the deployed app reports row-level security is not enforced: {detail}")
             sys.exit(f"{app_id}: the app deployed, but its own health endpoint says row-level security is NOT enforced "
-                     f'("{running}") while datastores.postgres.rls claims "{rls_mode(ds)}". The build in front of traffic '
+                     f'("{detail}") while datastores.postgres.rls claims "{rls_mode(ds)}". The build in front of traffic '
                      f"is still using an older DATABASE_URL.\n  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
         _revert(adir, app, f"nothing could be read from the deployed app, so the process serving traffic is "
-                           f"unproven: {running}")
+                           f"unproven: {detail}")
         sys.exit(f"{app_id}: the deploy finished, but its own health endpoint could not be read "
-                 f'("{running}"), so nothing shows which database role the running app uses while '
+                 f'("{detail}"), so nothing shows which database role the running app uses while '
                  f'datastores.postgres.rls claims "{rls_mode(ds)}".\n'
                  f"  Open {infra.get('vercel', {}).get('production_url', 'the app URL')}{HEALTH_PATH} in a browser. If it asks "
                  f"for a login, turn off Vercel Deployment Protection for this project, then run: "
