@@ -86,7 +86,11 @@ const AUTH_SURFACES = [
   { name: "/ chat",              path: "/",                        marker: /new chat/i,     what: 'the chat thread\'s "New chat" control' },
   { name: "/workspace people",   path: "/workspace?tab=people",    marker: /\binvite\b/i,   what: 'the People tab\'s "Invite" control' },
   { name: "/workspace audit",    path: "/workspace?tab=audit",     marker: /\bactor\b/i,    what: "the Audit trail's actor filter" },
-  { name: "/workspace builder",  path: "/workspace?tab=workflows", marker: /new workflow/i, what: 'the workflow builder\'s "New workflow" control' },
+  // `needs`: a service beyond the web app that this surface is a client of. lane-url.py passes
+  // `--without <service>` for a target=vm fixture, which runs the web app alone (infra/vm/README.md), and
+  // the surface is then declared `not-covered` with that reason rather than failed on a control the
+  // service would have rendered. A deployment gets no such flag: there, an absent builder IS a defect.
+  { name: "/workspace builder",  path: "/workspace?tab=workflows", marker: /new workflow/i, what: 'the workflow builder\'s "New workflow" control', needs: "task-workflow" },
 ];
 
 const args = process.argv.slice(2);
@@ -95,7 +99,14 @@ const BASE = (arg("--url", "") || "").replace(/\/+$/, "");
 const ONLY = arg("--only", "all");
 const AUTH = args.includes("--auth");
 const SESSION_ENV = arg("--session-env", "MOLD_V1_SESSION_TOKEN");
-if (!BASE) { console.error("usage: responsive.mjs --url <base> [--only layout|targets|interaction] [--auth] [--session-env NAME]"); process.exit(2); }
+// Services the target does not run (`--without task-workflow`, repeatable). Only lane-url.py emits it, and
+// only for a vm fixture; a surface that `needs` one is printed `not-covered` — "declared off on this
+// fixture", the one phrase lane.json's stdout_not lets through — instead of failed, and never `pass`.
+const WITHOUT = new Set(args.flatMap((x, i) => (x === "--without" && args[i + 1] ? [args[i + 1]] : [])));
+const declaredOff = (su) => AUTH && su.needs && WITHOUT.has(su.needs)
+  ? `declared off on this fixture: it does not run the ${su.needs} service, which ${su.what} needs (--without ${su.needs} from lane-url.py), so this surface was not opened and nothing here measures it`
+  : null;
+if (!BASE) { console.error("usage: responsive.mjs --url <base> [--only layout|targets|interaction] [--auth] [--session-env NAME] [--without <service>]"); process.exit(2); }
 const ORIGIN = new URL(BASE).origin;
 
 // The credential is read BY NAME and never printed: only the identity it names and its expiry, so a
@@ -300,6 +311,7 @@ async function layout(browser) {
     const ctx = await newCtx(browser, vp);
     for (const su of surfaces()) {
       const label = `layout ${su.name} @ ${vp.name}`;
+      if (declaredOff(su)) { row(label, "not-covered", declaredOff(su)); continue; }
       const shell = AUTH ? await shellControls(browser, vp, su.path) : -1;
       const probe = async () => {
         const { page, err } = await open(ctx, su.path);
@@ -392,6 +404,7 @@ async function targets(browser) {
     const ctx = await newCtx(browser, vp);
     for (const su of surfaces()) {
       const label = `targets ${su.name} @ ${vp.name}`;
+      if (declaredOff(su)) { row(label, "not-covered", declaredOff(su)); continue; }
       const shell = AUTH ? await shellControls(browser, vp, su.path) : -1;
       const { page, err } = await open(ctx, su.path);
       if (err) { row(label, "skipped", `did not load: ${err}`); continue; }
@@ -452,6 +465,7 @@ async function interaction(browser) {
     // makes — which is the point of --auth.
     for (const su of (AUTH ? AUTH_SURFACES : [{ name: "/workspace", path: "/workspace", marker: null }])) {
     const label = `interaction ${su.name} click @ ${vp.name}`;
+    if (declaredOff(su)) { row(label, "not-covered", declaredOff(su)); continue; }
     const shell = AUTH ? await shellControls(browser, vp, su.path) : -1;
     const clickProbe = async () => {
       const { page, err } = await open(ctx, su.path);
@@ -508,6 +522,7 @@ async function interaction(browser) {
     // keyboard-only user makes constantly.
     for (const su of surfaces()) {
       const klabel = `interaction ${su.name} keyboard @ ${vp.name}`;
+      if (declaredOff(su)) { row(klabel, "not-covered", declaredOff(su)); continue; }
       const kshell = AUTH ? await shellControls(browser, vp, su.path) : -1;
       const kbProbe = async () => {
         const { page, err } = await open(ctx, su.path);

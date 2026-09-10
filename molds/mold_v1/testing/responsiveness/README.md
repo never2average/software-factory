@@ -215,10 +215,45 @@ by hand at the time; `--verify-db` now mints it, as the vercel lane does), each 
 The precondition, the same way: `session.py sess_probe -- session-live.py http://127.0.0.1:3123
 --min-remaining 1200` -> `200 · session accepted for operator@example.com · member of 1 workspace(s)`.
 A fresh key pair the deployment does not hold -> 401 -> `skipped`; an FDE identity with no membership
--> "lists no workspace for that identity" -> `skipped`. `lanes.py`'s own `unmet()` resolves the rewired
-precondition MET for this app and URL; the runner itself could not drive the lane end to end because a
-`target: vm` app may hold no `production_url` (mold_v1-053). The first Vercel application whose pair
-`provision.py` generated is the run still to be made.
+-> "lists no workspace for that identity" -> `skipped`. At the time the runner itself could not drive
+the lane end to end because a `target: vm` app holds no `production_url` (mold_v1-053); the next section
+is that run.
+
+### Measuring a vm fixture (2026-09-10): the runner, end to end
+
+The URL gate is now `lane-url.py`: `production_url` when there is one; for a `target: vm` fixture, the
+loopback address the operator names in **`MOLD_V1_LANE_URL`**, honoured only for a vm app with
+`secret_store: vm_env_file`, no `production_url`, a status that serves nobody, and a URL that is plain
+`http://127.0.0.1:<port>` / `http://localhost:<port>` — anything else, and any vercel app, is refused
+with one sentence. For a fixture it also hands the harness `--without task-workflow`, so the builder
+rows are declared `not-covered` (the vm lane does not run that service) rather than failed; on a
+deployment the builder is measured. The accessibility README, "Measuring a vm fixture", lists what
+starting the fixture took (the four env names `--verify-db` writes, the database host rewritten from the
+network alias to the container's address, `fde:new-org` for the workspace). Then:
+
+    MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py lane_probe --lane responsiveness --dry-run
+
+    responsiveness   fail     4/6 passed  molds/mold_v1/testing/responsiveness/reports/dry/lane_probe-2026-09-10T033722Z.md
+
+    layout.matrix, tap.targets, interaction.latency   pass   signed out: 12 + 6 + 8 rows, every one measured
+    layout.matrix.authenticated        fail   16 rows: 8 pass, 4 fail, 4 declared not covered (builder x4)
+      layout / chat @ reflow-320              fail  4 controls unreachable ("Customer context" right=406 > 320; "Search",
+                                                    "Browser", "Build" clipped by an overflow-x:hidden ancestor)
+      layout / chat @ mobile-390              fail  "Browser", "Build" clipped
+      layout /workspace people @ 320 and 390  fail  "Actions" clipped by an overflow-x:hidden ancestor
+      layout audit x4, chat/people @ 820/1440 pass  hOverflow 0px, CLS 0.0000-0.0174
+    tap.targets.authenticated          pass   8 rows: 6 pass (13-20 targets each, none under 24px), builder x2 not-covered
+    interaction.latency.authenticated  fail   16 rows: 11 pass, 1 fail, builder x4 not-covered
+      interaction / chat click @ desktop-1440 fail  INP over budget 200ms on all 3 runs: 208/208/224ms
+      the other 11                            pass  INP 32-144ms
+    footer, every signed-in run               0 requests to the live projects or /eve/v1 blocked · 0 non-GET blocked
+
+The layout rows are the same defects the hand-driven run found on 2026-09-09; the one INP miss is a
+marginal overshoot on this shared box (208ms against 200ms, three times), which is exactly the case the
+repeat-and-confirm rule prints every sample for. Either way the verdict is a `fail` reached by `lanes.py`
+itself, over the product surface, with no human in the loop — which is what mold_v1-040 asked for. The
+report was a `--dry-run` on a throwaway that was then removed with its container, volume, network and
+state.
 
 ## What this lane does *not* cover
 
@@ -228,9 +263,13 @@ lane cannot imply more than it measured. What is left after the signed-in half:
 - **the surfaces the session does not open** — the data room, connectors and agents tabs, the ops-centre
   modal inside the chat shell, and anything needing a write (creating a workflow, sending a message).
   This lane is read-only on the application it grades;
+- **the workflow builder on a `target: vm` fixture** — the vm lane does not run the task-workflow
+  service the builder is a client of, so on a fixture named in `MOLD_V1_LANE_URL` those rows are
+  declared `not-covered` with the reason; the builder is measured on a deployment;
 - **the signed-in half itself, whenever no usable session exists** — no key in the app's secret store
-  (a `target: vm` app), a key the deployment does not run with, an FDE identity with no workspace there,
-  and no operator-lent session: those checks are `skipped` and so is the lane. Never `pass`;
+  (a `target: vm` app that has not run `--verify-db`), a key the deployment does not run with, an FDE
+  identity with no workspace there, and no operator-lent session: those checks are `skipped` and so is
+  the lane. Never `pass`;
 - **any identity but the application's own FDE** — the minted session is the workspace owner's; a
   `member`'s layout is measured only when an operator lends such a session;
 - **which identity, and how much data.** A workspace with a hundred members lays out differently from

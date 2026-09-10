@@ -55,8 +55,26 @@
         },
         "crons": {
           "type": "string"
+        },
+        "health": {
+          "type": "object",
+          "description": "The deploy's own verdict on the three health endpoints the Makefile checks (workflow /api/health, api /eve/v1/health, web /api/ops/health), written by provision.py --deploy and carried across a re-intake by intake.py; never by hand. Each value is the HTTP status the endpoint answered as a string (\"200\"), or \"no answer\". A code is not proof of isolation: the RLS verdict is read from the body and lands in datastores.postgres.rls_verified.running_app, never here.",
+          "properties": {
+            "workflow": {
+              "type": "string"
+            },
+            "api": {
+              "type": "string"
+            },
+            "web": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         }
-      }
+      },
+      "description": "Only what provision.py and intake.py write, and nothing else (additionalProperties is false, like `vm`): every key here is either read as THIS app's URL by lanes.py / the lanes' target-up gates (production_url, workflow_url, api_url) or consumed by provision.py (team, project, functions, custom_domain, crons, health). An open object let a misspelt or stranger's key validate silently (mold_v1-057); a new key must be added here WITH a description, not by reopening the object. A target=vm app must not carry this object at all \u2014 validate refuses it, see `target`.",
+      "additionalProperties": false
     },
     "vm": {
       "type": "object",

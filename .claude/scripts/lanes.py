@@ -183,7 +183,10 @@ def read_spec(lane, mold_id):
 
 def context(app_id, lane, mold_id, docs, report):
     infra = docs.get("infrastructure") or {}
-    url = ((infra.get("vercel") or {}).get("production_url") or (infra.get("vm") or {}).get("production_url") or "").rstrip("/")
+    # vercel.production_url ONLY. The vm lane never starts a web process and the schema refuses vm.production_url
+    # (mold_v1-053), so a vm app gets "" here and every URL check reports "not deployed" instead of grading a
+    # server this factory did not deploy; the old fallback read a field that could no longer validate (mold_v1-057).
+    url = ((infra.get("vercel") or {}).get("production_url") or "").rstrip("/")
     mold = os.path.join(ROOT, "molds", mold_id)
     return {"app_id": app_id, "root": ROOT, "mold": mold, "codebase": os.path.join(mold, "codebase"),
             "testing": os.path.join(mold, "testing"), "lane": lane, "date": TODAY, "url": url, "report": report}
