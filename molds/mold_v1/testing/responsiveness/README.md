@@ -248,9 +248,9 @@ network alias to the container's address, `fde:new-org` for the workspace). Then
     footer, every signed-in run               0 requests to the live projects or /eve/v1 blocked · 0 non-GET blocked
 
 This is the run of 2026-09-10 (throwaway `v040fix`; the accessibility README's "Measuring a vm fixture"
-lists the five steps it took, verbatim). An earlier attempt the same morning against `v040probe` left a
-0-byte report for this lane — the run was interrupted, so until this one no `lanes.py` run had measured
-the signed-in half of responsiveness. The layout rows are the same defects the hand-driven run found on
+lists the five steps it took, verbatim). An earlier attempt against the throwaway `verif_probe`
+(2026-09-09T22:59Z) was interrupted and left a 0-byte report for this lane, since removed; until this run
+no `lanes.py` run had measured the signed-in half of responsiveness. The layout rows are the same defects the hand-driven run found on
 2026-09-09. The verdict is a `fail` reached by `lanes.py` itself, over the product surface, with no human
 in the loop — which is what mold_v1-040 asked for. The report was a `--dry-run` on a throwaway that was
 then removed with its container, volume, network and state.

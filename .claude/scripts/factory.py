@@ -187,15 +187,16 @@ def _vm_url(app_id, docs):
     return [f"{app_id}/infrastructure.json: vm.production_url is set, but nothing on the vm lane starts a web process "
             f"(provision.py --deploy refuses target vm), so that URL names a server this factory did not deploy — "
             f"delete the vm.production_url line from state/application/{app_id}/infrastructure.json"]
-# The object each target owns; the other must be absent (lanes.py reads vercel.production_url FIRST, whatever the target).
+# The object each target owns; the other must be absent (lane-url.py reads vercel.production_url whatever the target;
+# nothing reads vm.production_url any more, so a URL typed under `vercel` on a vm app is the only door left, and this closes it).
 TARGET_OBJECT = {"vercel": "vercel", "vm": "vm"}
 def _target_objects(app_id, docs):
     """A target=vm app must carry no `vercel` object, a target=vercel app no `vm` object (mold_v1-053).
 
     _vm_url refuses vm.production_url by name, but nothing tied the `vercel` object to target=vercel: a vm
-    app with `"vercel": {"production_url": "http://127.0.0.1:3123"}` validated ok, and lanes.py's context()
-    reads vercel.production_url BEFORE vm.production_url, so that app was graded against whatever server
-    was typed there — the exact bypass the name-only refusal claimed to close. The schema cannot say
+    app with `"vercel": {"production_url": "http://127.0.0.1:3123"}` validated ok, and the lanes' lane-url.py
+    prints vercel.production_url whenever it is set (nothing reads vm.production_url, which the schema
+    forbids), so that app was graded against whatever server was typed there — the exact bypass the name-only refusal claimed to close. The schema cannot say
     "vercel only when target is vercel" (this validator has no if/then), so the rule is here, and it is
     the whole object, not just the URL keys: workflow_url, api_url and project all feed provision.py's
     vercel path, and a vm app has no vercel path. The lanes group's dry run wanted a local URL for a vm

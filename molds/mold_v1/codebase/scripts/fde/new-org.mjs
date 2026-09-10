@@ -4,24 +4,18 @@
 //     [--domain onfinance.in] [--owner priyesh@onfinance.in]
 //
 // Writes ONE `orgs` row (idempotent by id), the owner into `org_members`, adds
-// the owner to `platform_admins`, and seeds the built-in recipe catalog. This is
-// the FDE-assisted door of §6 — a thin client of the same tables the self-serve
-// wizard and the provisioning API write. See the Org Onboarding plan.
+// the owner to `platform_admins`, seeds the built-in recipe catalog into the
+// workspace and installs its workflow library. This is the FDE-assisted door of
+// §6 — a thin client of the same tables the self-serve wizard and the
+// provisioning API write. See the Org Onboarding plan.
 //
 // Requires the org-tenancy migration to have been run (orgs table present).
 import { getDb, closeDb, slugify, nowIso } from "./lib/customer.mjs";
-import { orgs, orgMembers, platformAdmins, recipes } from "../../agent/lib/db/schema.ts";
-import { provisionWorkspace } from "../../agent/lib/provision-workspace.ts";
-import { eq, isNull, and } from "drizzle-orm";
+import { withOrgDb } from "../../agent/lib/db/index.ts";
+import { orgs, orgMembers, platformAdmins } from "../../agent/lib/db/schema.ts";
+import { BUILTIN_RECIPES, provisionWorkspace } from "../../agent/lib/provision-workspace.ts";
+import { eq } from "drizzle-orm";
 import { glyph, flag, hasFlag, resolveIdentity } from "./lib/fde.mjs";
-
-const BUILTIN_RECIPES = [
-  ["onboard-self", "Sign in & record yourself", "Get signed in, wired to the data room over MCP, and recorded as an operator.", "members"],
-  ["import-roster", "Import the roster", "Pull people from Google Directory or a CSV into the roster.", "roster"],
-  ["connect-sources", "Connect a source", "Wire one connector (GitHub, Slack, …) and store its secret.", "connector"],
-  ["seed-workflows", "Seed the workflow library", "Install the starter workflow library, default apps, and crons.", "workflows"],
-  ["onboard-customer", "Onboard the first customer", "Create the first customer account and its data-room skeleton.", "customer"],
-];
 
 async function main() {
   const name = flag("name").trim();
@@ -79,21 +73,18 @@ async function main() {
   await db.insert(platformAdmins).values({ email: owner, addedBy: "fde:new-org" }).onConflictDoNothing();
   console.log(`${glyph.ok} ${owner} is owner + platform admin.`);
 
-  // 3. Seed the built-in recipe catalog (global rows; idempotent by slug).
-  let seeded = 0;
-  for (let i = 0; i < BUILTIN_RECIPES.length; i++) {
-    const [slug, title, summary, check] = BUILTIN_RECIPES[i];
-    const [have] = await db.select().from(recipes).where(and(isNull(recipes.orgId), eq(recipes.slug, slug)));
-    if (!have) {
-      await db.insert(recipes).values({ orgId: null, slug, version: "1", title, summary, satisfiesCheck: check, sortOrder: i });
-      seeded++;
-    }
-  }
-  console.log(`${glyph.ok} Recipe catalog: ${seeded} new, ${BUILTIN_RECIPES.length - seeded} already present.`);
-
-  // 4. Install the workflow library into THIS workspace, so the org is usable
-  //    on arrival rather than after someone remembers a second command.
-  const { workflowsCreated, workflowsSkipped } = await provisionWorkspace(db, id, owner);
+  // Steps 3 and 4 write org-scoped tables, and those are different from the
+  // three above: `recipes.org_id` is NOT NULL (543913c) and both `recipes` and
+  // `workflows` carry the org_isolation policy, which fails closed. The runtime
+  // role is app_rw, so an insert on a connection with no workspace in scope is
+  // refused by the database. So: one transaction, scoped to the org this
+  // script already knows. What gets seeded — the recipe catalog and the
+  // workflow library — lives in provisionWorkspace, shared with the self-serve
+  // wizard (POST /api/ops/orgs), so the two doors cannot drift apart.
+  const { recipesCreated, workflowsCreated, workflowsSkipped } = await withOrgDb(id, (tx) =>
+    provisionWorkspace(tx, id, owner),
+  );
+  console.log(`${glyph.ok} Recipe catalog: ${recipesCreated} new, ${BUILTIN_RECIPES.length - recipesCreated} already present.`);
   console.log(`${glyph.ok} Workflow library: ${workflowsCreated} installed, ${workflowsSkipped} already present.`);
 
   console.log(`\n${glyph.ok} Workspace "${id}" provisioned at ${nowIso()}.`);

@@ -1940,17 +1940,19 @@ export const platformAdmins = pgTable("platform_admins", {
 });
 
 /**
- * Recipe registry — the versioned, per-org (null = global default) catalog the
- * onboarding handoff hands to a customer's coding agents (`--recipes a,b,c`).
- * "Extensibility = a row, not a code change": mirrors the seed-pack seam. The
- * built-in recipes (onboard-self, import-roster, connect-sources, seed-workflows,
- * onboard-customer) are seeded as global rows; an org can add/override its own.
+ * Recipe registry — the versioned, per-org catalog the onboarding handoff hands
+ * to a customer's coding agents (`--recipes a,b,c`). "Extensibility = a row,
+ * not a code change": mirrors the seed-pack seam. The built-in recipes
+ * (onboard-self, import-roster, connect-sources, seed-workflows,
+ * onboard-customer) are seeded INTO EACH WORKSPACE by provisionWorkspace when
+ * it is created; there are no global rows (org_id is NOT NULL and the
+ * fail-closed policy scopes reads to one org). An org can add/override its own.
  */
 export const recipes = pgTable(
   "recipes",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orgId: text("org_id").notNull(), // null = built-in global recipe
+    orgId: text("org_id").notNull(),
     slug: text("slug").notNull(), // onboard-self | import-roster | ...
     version: text("version").notNull().default("1"),
     title: text("title").notNull(),

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 import { orgMembers, orgs, platformAdmins } from "@/agent/lib/db/schema";
-import { getOpsDb } from "@/lib/ops-db";
+import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { seedWorkspace } from "@/lib/org-seed";
 import { provisionWorkspace } from "@/agent/lib/provision-workspace";
 import { verifyOpsAuth } from "@/lib/ops-auth";
@@ -206,18 +206,26 @@ export async function POST(request: NextRequest) {
     // instead of three empty panels. Best-effort — see lib/org-seed.ts.
     const seeded = await seedWorkspace(orgId, row.name);
     /**
-     * Install the workflow library. A workspace with no workflows is not a
-     * workspace anyone can use, and until now the only way to get them was an
-     * FDE remembering to run `fde:seed-workflows --org <id>` by hand.
+     * Install the recipe catalog and the workflow library. A workspace with no
+     * workflows is not a workspace anyone can use, and until now the only way
+     * to get them was an FDE remembering to run `fde:seed-workflows --org <id>`
+     * by hand.
+     *
+     * Inside the new workspace's RLS scope, not on the unscoped handle above:
+     * `orgs` and `org_members` are the control plane and carry no policy, but
+     * `recipes` and `workflows` fail closed, so as app_rw the unscoped insert
+     * was refused — caught below as a "best-effort" failure — and every
+     * self-serve workspace came out with an empty library. Same shape as
+     * `fde:new-org`, which is the other door onto these tables.
      *
      * Best-effort on purpose: the workspace itself is already created and
      * usable, so a seeding failure must not turn a successful signup into a
      * 500. It is reported in the response instead of thrown.
      */
-    let provisioned: { workflowsCreated: number; workflowsSkipped: number } | null = null;
+    let provisioned: Awaited<ReturnType<typeof provisionWorkspace>> | null = null;
     let provisionError: string | null = null;
     try {
-      provisioned = await provisionWorkspace(db, orgId, identity.email);
+      provisioned = await withOrgRls(orgId, (tx) => provisionWorkspace(tx, orgId, identity.email));
     } catch (e) {
       provisionError = e instanceof Error ? e.message : String(e);
       console.error("provisionWorkspace failed", { orgId, error: provisionError });

@@ -344,7 +344,14 @@ outputs quoted are the ones it printed:
    SCRATCH copy holding `DATABASE_URL=<the admin URL>` (the seed writes rows the app_rw role's policies do
    not let it insert; the file was deleted right after). It created the `orgs` row and the owner +
    platform-admin membership, then its own `recipes` insert failed on a NULL `org_id` — a defect of the
-   mold's seed script, not of the lane; membership is what the session needs and it was there.
+   mold's seed script at that snapshot (`65fbc2d`), not of the lane; membership is what the session needs
+   and it was there. **That failure is gone from the tree:** the snapshot was refreshed to `a735e5e`
+   (MOLD.md; mold_v1-059), where `new-org.mjs` seeds the catalog inside the org's own scope, and the same
+   command re-run on 2026-09-10 against a throwaway vm fixture (`swp_vm`, `provision.py --verify-db`, then
+   `new-org.mjs` on the app's private network as the **app_rw** role, no `.env.local` written anywhere)
+   printed `Recipe catalog: 5 new` and `Workflow library: 13 installed`, and the database held
+   `recipes org_id=sweep-059 n=5`, `workflows org_id=sweep-059 n=13` and no NULL `org_id` row. Repeating
+   these five steps today seeds the whole workspace, not just its membership.
 4. `python3 .claude/scripts/lib/session.py v040fix -- python3 molds/mold_v1/testing/accessibility/session-live.py http://127.0.0.1:3123 --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` printed
    `session accepted for <fde_self.email> · member of 1 workspace(s) · 1798s left (needs 1200s)`.
 5. Then the runner itself:

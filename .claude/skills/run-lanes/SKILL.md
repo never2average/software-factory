@@ -28,6 +28,17 @@ harness beside it — never `lanes.py`. A check is one shell command plus what t
      "known_defect": "mold_v1-017", "emits": "markdown_table",
      "why": "one sentence: what a failure here actually means"}
 
+A `requires` entry is either `{"state": "<path>", "must": "nonempty"}` (the functional `rls` row gates on
+`infrastructure.vercel.production_url` this way) or a `cmd` that exits 0. The two browser lanes use the `cmd`
+form for their URL instead: `<lane>/lane-url.py <app_id>` prints
+`infrastructure.vercel.production_url` when it is set, else, for a `target: vm` fixture only, the loopback
+address the operator names in `MOLD_V1_LANE_URL` for one run —
+`MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py <app_id> --lane accessibility`
+(`docs/RUNBOOK.md` §7). Anything but `http://127.0.0.1:<port>` / `http://localhost:<port>`, any vercel app, a vm
+app with a `production_url`, or a status that serves somebody is refused in one sentence, and the check is
+`skipped`. `lane-url.py --harness` also emits `--without task-workflow` for such a fixture; the harness honours
+it only when `--url` is loopback, so the builder's `not-covered` row exists on a fixture and nowhere else.
+
 Anything richer than an exit code belongs in a harness script in the lane folder that prints a
 markdown table and exits 0/1 — like `functional/tenant-isolation.py` — with `"emits":
 "markdown_table"`. Budgets, viewport matrices and axe rule sets live there, not in `lane.json`.
