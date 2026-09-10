@@ -62,8 +62,10 @@ def compose_file(app_id): return os.path.join(appdir(app_id), "docker-compose.ym
 
 def has_data(app_id):
     """Does this app's data volume still exist? Postgres bakes the superuser password INTO that volume
-    at initdb time, so the volume and `.pg-admin` are one credential in two places."""
-    return _d("volume", "inspect", vol(app_id)).returncode == 0
+    at initdb time, so the volume and `.pg-admin` are one credential in two places. Through _exists, so
+    an unreachable daemon stops here instead of reading as "no volume" and letting _pw mint a new password
+    over a live one."""
+    return _exists(("volume",), vol(app_id))
 
 def _pw(app_id):
     """The admin password lives in the app's ignored `.pg-admin` (0600), generated, never typed, never printed.
@@ -185,9 +187,27 @@ def run(app_id, cmd, mold_dir, env=None, extra=()):
     args += [NODE_IMAGE, "sh", "-lc", cmd]
     return _d(*args)
 
+NOT_FOUND = re.compile(r"(?i)no such (object|volume)|network \S+ not found")   # docker's three not-found texts
+
 def _exists(kind, name):
-    """`docker [kind] inspect` exit 0 — the only evidence that a resource is (still) there."""
-    return _d(*kind, "inspect", name).returncode == 0
+    """Is this resource there? True on `docker [kind] inspect` exit 0; False ONLY when docker itself says
+    it is not there. Any other failure (daemon unreachable, permission denied) STOPS the command: the first
+    version read every non-zero exit as "absent", so with the daemon down `down` printed "nothing to remove"
+    exit 0 while the container, volume and network all still existed — an absence verdict read off a
+    connection error. Absence is a fact docker states, not the lack of an answer."""
+    r = _d(*kind, "inspect", name)
+    if r.returncode == 0: return True
+    err = r.stderr.strip()
+    if NOT_FOUND.search(err): return False
+    sys.exit(f"could not ask docker whether {' '.join(kind) or 'container'} {name} exists, so nothing more is touched:\n  "
+             + (err.splitlines() or ["docker inspect failed with no message"])[0]
+             + "\n  Check that docker is running (`docker info`), then rerun.")
+
+def _reason(r):
+    """The daemon's reason from a failed `docker ... rm`: the first `Error response` line. The LAST line was
+    used before, and `docker network rm` ends its stderr with a bare `exit status 1` under the real reason."""
+    lines = [l for l in r.stderr.strip().splitlines() if l.strip()]
+    return next((l for l in lines if "Error response" in l), lines[0] if lines else "still present")
 
 def down(app_id, keep_data=False):
     """Remove the container, its data volume (unless --keep-data) and the network — and REPORT ONLY WHAT
@@ -202,7 +222,7 @@ def down(app_id, keep_data=False):
     for label, kind, name in kinds:
         if not _exists(kind, name): continue
         r = _d(*kind, "rm", *(("-f",) if label == "container" else ()), name)
-        if _exists(kind, name): stuck.append(f"{label} {name}: " + (r.stderr.strip().splitlines() or ["still present"])[-1])
+        if _exists(kind, name): stuck.append(f"{label} {name}: " + _reason(r))
         else: removed.append(f"{label} {name}")
     if keep_data and _exists(("volume",), vol(app_id)): kept.append(f"volume {vol(app_id)} kept (--keep-data)")
     if stuck:
