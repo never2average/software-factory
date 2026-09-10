@@ -110,7 +110,9 @@ def _check(obj, schema, where, root=None):
         if not ok: return [f"{where}: expected {'/'.join(map(str, t if isinstance(t, list) else [t]))}, got {type(obj).__name__}"]
     if "enum" in schema and obj not in schema["enum"]: errs.append(f"{where}: {obj!r} not in {schema['enum']}")
     if "const" in schema and obj != schema["const"]: errs.append(f"{where}: {obj!r} != {schema['const']!r}")
-    if "pattern" in schema and isinstance(obj, str) and not re.match(schema["pattern"], obj): errs.append(f"{where}: {obj!r} fails pattern")
+    if "pattern" in schema and isinstance(obj, str) and not re.match(schema["pattern"], obj):
+        # A timestamp's pattern is the offset rule _ts enforces; say that, not "fails pattern" (HARD RULE 4).
+        errs.append(f"{where}: {obj!r} is not {TS_FORM}" if schema.get("format") == "date-time" else f"{where}: {obj!r} fails pattern")
     if isinstance(obj, dict):
         for r in schema.get("required", []):
             if r not in obj: errs.append(f"{where}: missing {r}")
@@ -170,6 +172,19 @@ def _vm_status(app_id, docs):
             f"traffic (provision.py --deploy refuses it, so nothing in this factory writes that status for a vm "
             f"app) — set status back to 'planned' in state/application/{app_id}/application.json, or set target "
             f"to 'vercel' and run: python3 .claude/scripts/provision.py {app_id} --deploy"]
+def _vm_url(app_id, docs):
+    """infrastructure.vm.production_url is REFUSED, not merely dropped from the schema (mold_v1-053).
+
+    Nothing writes it: --deploy refuses a vm app before it starts anything (VM_NO_PROCESS), so a URL in
+    that field was typed in and names a server this factory did not deploy. Nothing this factory trusts
+    reads it either — _health_rls returns `unmeasured` by construction — but lanes.py still takes it as
+    the lane URL when vercel has none, so a stranger's endpoint could be graded as this app. Removing the
+    key from the schema alone would let it validate silently (the vm object is open); this names it."""
+    vm = (docs.get("infrastructure") or {}).get("vm") or {}
+    if "production_url" not in vm: return []
+    return [f"{app_id}/infrastructure.json: vm.production_url is set, but nothing on the vm lane starts a web process "
+            f"(provision.py --deploy refuses target vm), so that URL names a server this factory did not deploy — "
+            f"delete the vm.production_url line from state/application/{app_id}/infrastructure.json"]
 def _rls_claim(app_id, docs):
     """`"rls": "fail_closed"` used to be a string literal that nothing in the factory ever read: intake
     stamped it into every app regardless of provider, scope or tenancy, validate checked it against a
@@ -263,8 +278,8 @@ def _rls_claim(app_id, docs):
         out.append(f"{w} but the evidence carries no `at`, so nothing can tell whether it predates the deploy "
                    f"that replaced the database it measured. {fix}")
     elif not atd:
-        # _ts refuses a naive time (no offset) as well as garbage: rls_verified.at carries no schema
-        # pattern, so this line is the only thing that stops "2026-09-09T10:00:00" from being read as UTC.
+        # _ts refuses a naive time (no offset) as well as garbage. The schema pattern on rls_verified.at
+        # now refuses the same spellings (mold_v1-053); this stays so the reader never trusts the schema alone.
         out.append(f"{w} but datastores.postgres.rls_verified.at is {at[:60]!r}, which is not {TS_FORM}, so "
                    f"nothing can order this proof against the deploy or the restore that would invalidate it. {fix}")
     # Only --deploy records a deploy date, and only the vercel lane reaches --deploy; a vm app never gets
@@ -363,7 +378,7 @@ def cmd_validate(a):
             if os.path.exists(f):
                 docs[name] = load(f); errs += _check(docs[name], load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
             else: errs.append(f"{app}: missing {name}.json")
-        errs += _vm_status(app, docs) + _rls_claim(app, docs)
+        errs += _vm_status(app, docs) + _vm_url(app, docs) + _rls_claim(app, docs)
     errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)

@@ -4,7 +4,8 @@ Does the application work at the width the customer actually holds?
 
 Two halves. **Signed out**: the mold's three page routes — which is a sign-in page and an empty
 workspace shell. **Signed in** (`--auth`): the product — the chat thread, the ops centre and the
-workflow builder — measured with a session the deployment itself minted. Until the second half existed,
+workflow builder — measured with a session the factory signs for the application's own FDE with the
+app's own key (see "Authenticated coverage"). Until the second half existed,
 a green responsiveness lane meant a sign-in page reflowed at 320px and said nothing at all about the
 workspace people actually work in (mold_v1-040).
 
@@ -13,9 +14,13 @@ The runner drives this lane; nothing here is run by hand:
 ```
 python3 .claude/scripts/lanes.py <app_id> --lane responsiveness
 python3 .claude/scripts/lanes.py <app_id> --lane responsiveness --dry-run   # measure and report, write no state
-MOLD_V1_SESSION_TOKEN='<a session for that app>' \
-  python3 .claude/scripts/lanes.py <app_id> --lane responsiveness           # includes the signed-in half
+MOLD_V1_SESSION_TOKEN='<a session you signed in for>' \
+  python3 .claude/scripts/lanes.py <app_id> --lane responsiveness           # measure as yourself instead
 ```
+
+The signed-in half needs no paste: `lane.json` runs each `*.authenticated` check through
+`.claude/scripts/lib/session.py <app_id> -- …`, which signs a session for the application's own FDE with
+the application's own `AUTH_JWT_PRIVATE_KEY` and hands it over by name.
 
 | file | what it is |
 |---|---|
@@ -23,6 +28,7 @@ MOLD_V1_SESSION_TOKEN='<a session for that app>' \
 | `responsive.mjs` | the harness: a Playwright chromium viewport matrix that prints a markdown table and exits 0/1 |
 | `deps-check.mjs` | lane precondition — is chromium actually here? |
 | `target-up.py` | check precondition — does the URL answer 2xx *and* serve this application's own markup? |
+| `session-live.py` | precondition of the signed-in checks — is there a session this deployment accepts, for an identity with a workspace, with enough life left? (a copy of the accessibility lane's) |
 | `package.json` | declares that this lane installs **nothing**, and never into `molds/mold_v1/codebase` |
 | `reports/` | one report per run, written by the runner |
 
@@ -129,32 +135,38 @@ manufacture a failure there would be as dishonest as hiding it.
 
 ## Authenticated coverage
 
-The three `*.authenticated` checks measure the product. They need one thing the factory does not
-otherwise hold: **a session for the application under test**, passed in by name in
-`MOLD_V1_SESSION_TOKEN`. Where it comes from, and why that is honest rather than a bypass, is written
-out once in the accessibility lane's README ("Authenticated coverage") — the mechanism, the refusals
-and the storage key are identical, because it is the same product and the same client.
+The three `*.authenticated` checks measure the product. They need **a session for the application under
+test**, and the factory now makes one: `lane.json` runs each check, and its precondition, through
+`.claude/scripts/lib/session.py <app_id> -- …`, which signs the app's own kind of session — the ES256
+"email-session" token `lib/auth-session.ts` defines and `lib/ops-auth.ts` admits on its signature alone —
+with the app's own `AUTH_JWT_PRIVATE_KEY`, for the app's own FDE (`application.workspace.fde_self.email`),
+and hands it to the harness by name in `MOLD_V1_SESSION_TOKEN`. Why that is a real session and not a
+bypass, where the key is read from, what the token does and does not prove, and how to measure as
+yourself instead, are written out once in the accessibility lane's README ("Authenticated coverage") —
+the mechanism, the refusals and the storage key are identical, because it is the same product and the
+same client.
 
 The short version:
 
-- **no token, no run.** `lane.json` gates each authenticated check on the variable's presence, so the
-  checks are `skipped` and, by the runner's rollup, the **lane** is `skipped` — never `pass`. A lane
+- **no usable session, no run.** `session-live.py`, each authenticated check's precondition, exits 1
+  when nothing could be signed (a `target: vm` app — the vm lane does not generate the pair), when the
+  deployment answers 401/403 (the factory's key is not the one it runs with), when the identity belongs
+  to no workspace there, or when the session cannot outlive the run (`--min-remaining <timeout_s + 300>`).
+  The check is `skipped` and, by the runner's rollup, the **lane** is `skipped` — never `pass`. A lane
   that has not seen the product may not certify it.
-- **an unusable session is `skipped`, not `fail`.** Each authenticated check has a second precondition,
-  `session-live.py <url> --min-remaining <timeout_s + 300>`: it exits 0 only when the variable holds a
-  session this deployment still accepts, with enough life left to outlast the run. Missing, malformed,
-  expired, too-close-to-expiry, or refused with 401/403 all make the check — and the lane — `skipped`,
-  with one instruction. That verdict is taken before a browser opens, deliberately: a `fail` lane
-  *reverts the application*, and a browser session lasts about an hour, so the likeliest thing that
-  goes wrong here is a paste that went stale, not a broken app. The accessibility README's "A stale
-  session is `skipped`, not `fail`" states the reasoning and the one window this does not close.
+- **an unusable session is `skipped`, not `fail`.** That verdict is taken before a browser opens,
+  deliberately: a `fail` lane *reverts the application*, and none of the cases above is a defect of it.
+  The accessibility README's "A stale session is `skipped`, not `fail`" states the reasoning and the one
+  window this does not close.
 - **a token the server refuses measures nothing, so it grades nothing.** Each surface first asks the
   deployment itself (read-only `GET /api/ops/orgs` with that bearer). 401/403 marks the row
   `not-covered`, names the status, and exits 2 — never `pass`, and never a quiet fall back to the
   shell.
 - **a surface that renders the signed-out shell fails.** Each names a control that appears only with
   its own content, and the census is compared against the same URL loaded with no session. If signing
-  in changed nothing, the row says so rather than measuring the shell twice.
+  in changed nothing, the row says so rather than measuring the shell twice. The builder is backed by
+  the task-workflow service; a deployment without it has no builder, and the row says so.
+- **an operator's session wins.** If `MOLD_V1_SESSION_TOKEN` is already set the helper mints nothing.
 - **read-only, enforced.** Signed in, the app writes on its own and this lane clicks. Every non-GET the
   page attempts is aborted and counted, and the count is in the footer of every run. The click denylist
   (`save`, `publish`, `delete`, `invite`, `export`, …) is the second fence behind it.
@@ -180,6 +192,34 @@ Twelve of the sixteen layout rows pass, and the four that fail are real: on a 32
 composer's own action row cannot be reached at all. Signed out, those same four viewports produced
 nothing but green.
 
+### Measured today (2026-09-09): with no human in the loop
+
+Against a throwaway `target: vm` application (`sess_probe`: stamped by intake, database from
+`provision.py --verify-db`, the mold built from a scratch copy and started on 127.0.0.1 with that app's
+own `.env`, its workspace seeded by the mold's own `fde:new-org`; the key pair written into its `.env`
+by hand, because the vm lane does not generate one), each check exactly as `lane.json` runs it:
+
+    python3 .claude/scripts/lib/session.py sess_probe -- node …/responsive.mjs --url http://127.0.0.1:3123 --only layout --auth
+    session minted for operator@example.com on sess_probe (ES256, key from infra/vm/apps/sess_probe/.env, 1800s of life)
+    layout / chat @ reflow-320               fail  4 controls unreachable even after scrolling ("Customer context" right=406 > 320,
+                                                   "Search"/"Browser" clipped by an overflow-x:hidden ancestor)
+    layout /workspace people @ 320 and 390   fail  "Actions" clipped by an overflow-x:hidden ancestor
+    layout / chat @ mobile-390               fail  "Browser", "Build" clipped
+    layout … audit @ 320/390, all @ 820/1440 pass  8 rows, CLS 0.0000–0.0174, hOverflow 0px
+    layout /workspace builder (4 viewports)  fail  "New workflow" absent, 9 controls vs 8 signed out — the builder is the
+                                                   task-workflow service, which this fixture does not run
+    --only targets --auth                          6 pass (13–20 targets each, none under 24px), builder x2 as above
+    --only interaction --auth                      12 pass (INP 32–192ms, budget 200ms), builder x4 as above
+    footer, every run                              0 requests to the live projects or /eve/v1 blocked · 0 non-GET blocked
+
+The precondition, the same way: `session.py sess_probe -- session-live.py http://127.0.0.1:3123
+--min-remaining 1200` -> `200 · session accepted for operator@example.com · member of 1 workspace(s)`.
+A fresh key pair the deployment does not hold -> 401 -> `skipped`; an FDE identity with no membership
+-> "lists no workspace for that identity" -> `skipped`. `lanes.py`'s own `unmet()` resolves the rewired
+precondition MET for this app and URL; the runner itself could not drive the lane end to end because a
+`target: vm` app may hold no `production_url` (mold_v1-053). The first Vercel application whose pair
+`provision.py` generated is the run still to be made.
+
 ## What this lane does *not* cover
 
 Listed in `lane.json` under `not_covered` and reprinted verbatim at the foot of every report, so a green
@@ -188,7 +228,10 @@ lane cannot imply more than it measured. What is left after the signed-in half:
 - **the surfaces the session does not open** — the data room, connectors and agents tabs, the ops-centre
   modal inside the chat shell, and anything needing a write (creating a workflow, sending a message).
   This lane is read-only on the application it grades;
-- **the signed-in half itself, whenever `MOLD_V1_SESSION_TOKEN` is absent** — those checks are `skipped`
-  and so is the lane. Never `pass`;
+- **the signed-in half itself, whenever no usable session exists** — no key in the app's secret store
+  (a `target: vm` app), a key the deployment does not run with, an FDE identity with no workspace there,
+  and no operator-lent session: those checks are `skipped` and so is the lane. Never `pass`;
+- **any identity but the application's own FDE** — the minted session is the workspace owner's; a
+  `member`'s layout is measured only when an operator lends such a session;
 - **which identity, and how much data.** A workspace with a hundred members lays out differently from
   the one the supplied session resolves to. The report names the identity it measured.

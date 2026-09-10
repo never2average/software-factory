@@ -10,7 +10,7 @@ brief (5 lines) ──intake──▶ state/application/<app_id>/ ──provisio
                                      └──────────────── revert (failed lane → task) ◀────────┘
 ```
 
-1. **Molds** (`molds/<mold_id>/`). A mold is a snapshot of a codebase plus its test lanes. `mold_v1` is fde-agent at a pinned commit: eve framework, Next.js 16, Drizzle on Postgres, Vercel Blob data room, GLM 5.2 on Cloudflare Workers AI. `mold_v2` and `mold_v3` hold a `MOLD.md` and a roadmap and no codebase at all; nothing has been stamped from either. Molds are never edited in place; they are refreshed from upstream or forked.
+1. **Molds** (`molds/<mold_id>/`). A mold is a snapshot of a codebase plus its test lanes. `mold_v1` is fde-agent at a pinned commit: eve framework, Next.js 16, Drizzle on Postgres, Vercel Blob data room, and one of two inference providers chosen at intake — GLM 5.2 on Cloudflare Workers AI (the default) or Claude Sonnet 5 through the Vercel AI Gateway (`docs/INTAKE.md`, Inference providers). `mold_v2` and `mold_v3` hold a `MOLD.md` and a roadmap and no codebase at all; nothing has been stamped from either. Molds are never edited in place; they are refreshed from upstream or forked.
 
 2. **State** (`state/`). JSON that describes the factory and every application, validated by schemas.
    - `factory.json`: operator, the six-item service surface, the molds, the service/revert loop, and `defaults` (the answers that apply to every app).
@@ -23,7 +23,7 @@ brief (5 lines) ──intake──▶ state/application/<app_id>/ ──provisio
 3. **Scripts** (`.claude/scripts/`). Stdlib Python (plus node 24 for the `lib/*.mjs` probes), no pip installs.
    - `factory.py`: status, next, tasks, add, set, close, validate — validate also refuses an RLS claim with no evidence.
    - `intake.py`: brief in, four state files out, questions for anything unresolved.
-   - `provision.py`: state in, datastore created, secrets checked by name, deploy — and `--verify-db` / `--verify-rls`.
+   - `provision.py`: state in; a read-only check that prints what a deploy will create, secrets checked by name, then `--deploy` (creates the datastores, then deploys) — and `--verify-db` / `--verify-rls`.
    - `lanes.py`: the five testing lanes, their reports, and the revert gate.
    - `branding.py`: a per-app branded copy of the mold under `build/<app_id>/`.
    - `clone.py`: stamp, deploy and regression-diff a replica of the live deployment.
@@ -36,43 +36,56 @@ brief (5 lines) ──intake──▶ state/application/<app_id>/ ──provisio
 
 **Intake.** `intake.py briefs/x.md --app x` reads the brief for hints (target, customer, domain, "no browser", "no web search"), fills what factory defaults cover, and writes `questions.json` for the rest, exiting 2. The `intake` subagent asks those questions in batches of four and re-runs with `--answers`. The first intake ever also confirms the defaults; after that a new app asks one question: fresh database or shared with live. Output: validated state, app registered in `factory.json` and under its product.
 
-**Provision, check mode — NOT read-only on a Vercel app.** `provision.py x` (or `--check`) counts the secret
-names the app declares against the store and prints what is still missing. It builds and deploys nothing. But on
-`target: vercel` it is not a look: before it can count a secret it (1) creates the three Vercel projects `<proj>`,
-`<proj>-api`, `<proj>-workflow` if they do not exist, (2) provisions the datastores the state names — for a fresh
-`neon` database it adopts an unattached free Neon resource on the team if one exists **and is empty**, otherwise
-runs `vercel integration add neon` (no checkout page); plus a private **Blob store created inside the app's own
-Vercel project**, whose connection is what injects `BLOB_READ_WRITE_TOKEN` — and (3) mints the app-internal secrets
-(`CRON_SECRET`, `OPS_SECRETS_KEY`, the `AUTH_JWT_*` sign-in key pair) into the project. So a `--check` of an app
-whose datastores are not provisioned yet creates real, team-visible, potentially billable resources. That is task
-**mold_v1-041, still open**: read `provision.py <app>` as "check *and provision*, do not build"; only `--deploy` puts
-code in front of traffic. There is no copy-from-live path for external credentials: Vercel stores them write-only
-(`sensitive`), so the user sets each one with `provision.py <app> --set-secret NAME` (value typed at a hidden
-prompt, written as `encrypted` to all three projects, never to a file). `DATABASE_URL` is not written here at all —
-only the RLS gate inside `--deploy` / `--verify-db` writes it.
+**Provision, check mode — read-only.** `provision.py x` (or `--check`) creates, deletes and writes nothing
+remote, on every target (mold_v1-041, closed; it used to create the projects and provision the datastores before
+it counted a secret). On `target: vercel` it runs exactly five kinds of read: `GET /v9/projects/<proj>`,
+`/<proj>-api`, `/<proj>-workflow`; `vercel integration list --all --json`; `GET /v1/storage/stores`; and `vercel env
+ls production --project <proj>` only if `<proj>` exists. From those it prints each project as `exists` / `does not
+exist`, then `a deploy will create:` — the projects to create; the Neon action (adopt one of N named unattached
+resources if one is empty, else provision `<app-id-dashed>` on the free plan, each candidate inspected through a
+temporary `sf-neon-inspect-*` project created and deleted in the same run); the Blob store `<app-id-dashed>` (create,
+or connect if the team already has one); and the env it mints (`CRON_SECRET`, `OPS_SECRETS_KEY`,
+`AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY`) — then `secrets present: n/N`, one `--set-secret NAME` line per
+missing operator secret, `a deploy will create: <derived names>`, `set during --deploy: <deploy-time names>`, and the
+closing line `check only, read-only: nothing was created. Set the secret(s) above, then run: ... --deploy` (exit 1)
+or `... Ready: ... --deploy` (exit 0). It never sweeps `sf-neon-inspect-*` projects and no longer writes
+`infrastructure.json`. There is no copy-from-live path for external credentials: Vercel stores them write-only
+(`sensitive`), so the user sets each one with `provision.py <app> --set-secret NAME` (value typed at a hidden prompt,
+written as `encrypted` to all three projects, never to a file). On a vercel app whose three projects do not exist,
+`--set-secret` creates them first — three empty, free projects, no deployment, git-disconnected immediately — and
+prints `creating the Vercel project(s) ... to hold NAME` before doing so; that is the one creation it performs.
+`DATABASE_URL` is not written by any of this — only the RLS gate inside `--deploy` / `--verify-db` writes it.
 
-**What check mode DELETES.** To learn whether a candidate Neon database is empty the factory must connect it
-somewhere, and it must not be somewhere that matters. So it creates a throwaway Vercel project named
-`sf-neon-inspect-<8 hex chars>` (pattern `^sf-neon-inspect-[0-9a-f]{8}$`, `SCRATCH_RE` in `provision.py`), connects
-the candidate to it on the `development` environment only, reads the table count, disconnects, and deletes that
+**Where creation lives now.** `--deploy` prints the same plan as `about to create:`, then, if any operator secret is
+missing, exits with `refusing to deploy: N secret(s) above are not set, so NOTHING was created` (measured: only the
+five reads ran). Otherwise it creates the projects, the database, the Blob store and the minted env, and continues
+into the deploy below. `--verify-db` on a vercel app is the database half of that writer: it prints `about to
+create:`, creates projects + datastores and bootstraps the database, and does not gate on operator secrets. There is
+no separate provision flag: "deploy prints, then creates" behind the refusal-before-creation gate is the whole
+safety, chosen because the operator is non-technical.
+
+**What a writer DELETES.** To learn whether a candidate Neon database is empty the factory must connect it
+somewhere, and it must not be somewhere that matters. So `--deploy` / `--verify-db` create a throwaway Vercel project
+named `sf-neon-inspect-<8 hex chars>` (pattern `^sf-neon-inspect-[0-9a-f]{8}$`, `SCRATCH_RE` in `provision.py`),
+connect the candidate to it on the `development` environment only, read the table count, disconnect, and delete that
 project by REST `DELETE /v9/projects/<id> --dangerously-skip-permissions` — the one deletion that works
 unattended on Vercel CLI 59.11.7 (`project rm` has no `--yes`; the flag name is Vercel's, it means "the
-confirmation was deliberate", it grants nothing extra). This happens on every `--check`, `--deploy` or
-`--verify-db` of a **vercel** app with `postgres.scope: fresh`, `provider: neon` and no `DATABASE_URL_UNPOOLED` on
-its project yet — once per candidate resource, and once more for a freshly created resource (which is created into
-an inspection project too, then read the same way). Before creating one it also **sweeps** the team: every project
-whose name matches `SCRATCH_RE` and whose `createdAt` is older than **30 minutes** (`SCRATCH_STALE_S`) is deleted
-the same way, because a probe that died mid-run left a project holding a database URL. Younger matches are left
-alone (a parallel run may be using one) and so is any match whose age cannot be read. Nothing else is ever
-deleted: not the app's projects, not a Neon resource, not a Blob store, never anything named outside that pattern.
-A deletion is reported only after Vercel answers 404 for the name; a lookup that merely failed prints a NOTE with the
-dashboard path instead of claiming success.
+confirmation was deliberate", it grants nothing extra). This happens on a `--deploy` or `--verify-db` of a
+**vercel** app with `postgres.scope: fresh`, `provider: neon` and no `DATABASE_URL_UNPOOLED` on its project yet —
+once per candidate resource, and once more for a freshly created resource (which is created into an inspection
+project too, then read the same way). A `--check` only names this in its plan; it deletes nothing. Before creating
+one the writer also **sweeps** the team: every project whose name matches `SCRATCH_RE` and whose `createdAt` is
+older than **30 minutes** (`SCRATCH_STALE_S`) is deleted the same way, because a probe that died mid-run left a
+project holding a database URL. Younger matches are left alone (a parallel run may be using one) and so is any
+match whose age cannot be read. Nothing else is ever deleted: not the app's projects, not a Neon resource, not a
+Blob store, never anything named outside that pattern. A deletion is reported only after Vercel answers 404 for
+the name; a lookup that merely failed prints a NOTE with the dashboard path instead of claiming success.
 
 For the VM target it instead REGENERATES `infra/vm/apps/x/` from the four state files (compose for the app's own
 private-network Postgres, `.env.example`, README) and checks `.env`. The VM target verifies; it does not deploy — see
 `infra/vm/README.md`.
 
-**Provision, deploy mode.** `provision.py x --deploy` refuses if anything is missing, then mirrors the mold's own `Makefile deploy` target:
+**Provision, deploy mode.** `provision.py x --deploy`, once the plan is printed, every operator secret is present and the projects and datastores exist, mirrors the mold's own `Makefile deploy` target:
 
 1. `drizzle-kit push` (the schema is the source of truth; the journal is two tables behind it), then the Drizzle migration journal, then the database bootstrap for a fresh Postgres. Drizzle does not model row-level security or the `app_rw` login role, so the mold's `.bootstrap-supabase.mjs` applies the org-isolation policies and creates that role without bypass rights; `DATABASE_URL` on all three projects then points at it — and `.claude/scripts/lib/verify-apprw.mjs` proves that exact URL is `app_rw`, `NOBYPASSRLS`, policied, encrypted and pooler-safe before it is written anywhere. Skipping this leaves the app connecting as a superuser with every isolation policy silently ignored. Re-runs reuse the deployed password, because rotating it invalidates deployments already built against the old one.
 2. The task-workflow microservice from `services/task-workflow` (a Next.js app, preset `nextjs`), then the Eve API (`vercel build` with the experimental framework, shipped `--prebuilt`, preset `eve`), then the web dashboard. Presets are set through the API and verified by slug, since auto-detection picks Next.js for the Eve output and then rejects it.

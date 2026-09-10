@@ -5,38 +5,55 @@ description: Check and deploy a stamped application to its target. Use after int
 # provision
 
 ```
-python3 .claude/scripts/provision.py <app_id>                     # check AND provision: counts secrets by name, creates what is missing
-python3 .claude/scripts/provision.py <app_id> --set-secret NAME   # type one credential at a hidden prompt (human terminal only)
-python3 .claude/scripts/provision.py <app_id> --deploy            # vercel: schema, app_rw + RLS proof, three deploys, health
-python3 .claude/scripts/provision.py <app_id> --verify-db         # the database half only (vercel: on Neon; vm: on a private local Postgres)
+python3 .claude/scripts/provision.py <app_id>                     # check, READ-ONLY: what exists, what a deploy will create, which secrets to set
+python3 .claude/scripts/provision.py <app_id> --set-secret NAME   # type one credential at a hidden prompt (human terminal only); creates the three empty projects if absent
+python3 .claude/scripts/provision.py <app_id> --deploy            # prints the plan, refuses before creating if a secret is missing, else creates + deploys
+python3 .claude/scripts/provision.py <app_id> --verify-db         # the database half of --deploy (vercel: creates projects + datastores, bootstraps Neon; vm: a private local Postgres)
 python3 .claude/scripts/provision.py <app_id> --verify-rls [--no-repair]   # re-prove isolation on what runs now; writes rls_verified
 ```
 
 Launch the `provisioner` subagent for the check; a human runs `--set-secret` and `--deploy` (the agent runtime
 may not handle secret values). Missing secrets are the user's to set; report names, never collect values.
 
-## `provision.py <app>` is NOT read-only on a Vercel app (mold_v1-041, open)
+## The sequence, and what each command creates (mold_v1-041)
 
-The bare command (`--check`) builds and deploys nothing, but on `target: vercel` it creates before it counts:
+1. **`provision.py <app>`** (same as `--check`) is **read-only on every target**. On `target: vercel` it runs exactly
+   five kinds of read: `GET /v9/projects/<proj>`, `/<proj>-api`, `/<proj>-workflow`; `vercel integration list --all
+   --json`; `GET /v1/storage/stores`; and `vercel env ls production --project <proj>` only if `<proj>` exists. It prints
+   each project as `exists` / `does not exist`, then `a deploy will create:` followed by the projects to create, the
+   Neon action (adopt one of N named unattached resources if one is empty, else provision `<app-id-dashed>` on the
+   free plan — each candidate inspected through a temporary `sf-neon-inspect-*` project created and deleted in the
+   same run), the Blob store `<app-id-dashed>` (create, or connect if the team already has one) and the env it mints
+   (`CRON_SECRET`, `OPS_SECRETS_KEY`, `AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY`); then `secrets present: n/N`, one
+   `--set-secret NAME` line per missing operator secret, `a deploy will create: <derived names>`, `set during
+   --deploy: <deploy-time names>`, and the closing line `check only, read-only: nothing was created. Set the secret(s)
+   above, then run: ... --deploy` (exit 1) or `... Ready: ... --deploy` (exit 0). It never creates, deletes or writes
+   anything remote, never sweeps `sf-neon-inspect-*` projects, and does not write `infrastructure.json`. On
+   `target: vm` it only regenerates `infra/vm/apps/<app>/` (local files).
+2. **`--set-secret NAME`** for each name listed. On a vercel app whose three projects do not exist, this command
+   creates them first — three empty, free projects, no deployment, git-disconnected immediately — and prints
+   `creating the Vercel project(s) ... to hold NAME` before doing so. That is the one creation `--set-secret` performs.
+3. **`--deploy`** prints the same plan as `about to create:`, then, if any operator secret is missing, exits with
+   `refusing to deploy: N secret(s) above are not set, so NOTHING was created` (only the five reads ran). Otherwise it
+   creates the projects, database, Blob store and minted env, then runs schema, the app_rw + RLS gate, the three
+   deploys and the health checks.
+4. **`--verify-db`** on a vercel app is a **writer** (the database half of `--deploy`): it prints `about to create:`
+   then creates projects + datastores and bootstraps the database; it does not gate on operator secrets. On vm it is
+   local only (`localpg.py down <app>` removes the container).
 
-1. the three Vercel projects `<proj>`, `<proj>-api`, `<proj>-workflow` if absent (`ensure_projects`);
-2. the datastores the state names — a fresh `neon` database (adopts an unattached, proven-empty resource on the
-   team, else `vercel integration add neon`) and a Blob store inside the app's own project;
-3. the app-internal secrets `CRON_SECRET`, `OPS_SECRETS_KEY`, `AUTH_JWT_PRIVATE_KEY`/`AUTH_JWT_PUBLIC_KEY`.
-
-A `--check` of an app whose datastores are not provisioned yet therefore creates real, team-visible, potentially
-billable resources. Do not run it on a vercel app to "just look"; `factory.py validate` and `lanes.py <app> --list`
-are the read-only views. A `target: vm` app is safe: `--check` regenerates `infra/vm/apps/<app_id>/` and
-`--verify-db` creates only a local docker container (`localpg.py down <app>` removes it).
+There is no separate provision step: "deploy prints, then creates" with the refusal-before-creation gate is the
+whole safety, chosen because the operator is non-technical. `factory.py validate` and `lanes.py <app> --list` are
+the other read-only views.
 
 ## What it deletes, and when
 
 Only ever Vercel projects named `sf-neon-inspect-<8 hex>` — the exact pattern `^sf-neon-inspect-[0-9a-f]{8}$`
 (`SCRATCH_RE` in `provision.py`), which is the only name this file mints. Never the app's projects, never a Neon
-resource or Blob store, never the live `fde-agent*` projects.
+resource or Blob store, never the live `fde-agent*` projects. A `--check` deletes nothing: it only names the
+inspection in its plan.
 
-- **When:** during a `--check`, `--deploy` or `--verify-db` of a **vercel** app with `postgres.scope: fresh`,
-  `provider: neon`, and no `DATABASE_URL_UNPOOLED` on its project yet (i.e. the database is not provisioned).
+- **When:** during a `--deploy` or `--verify-db` of a **vercel** app with `postgres.scope: fresh`, `provider: neon`,
+  and no `DATABASE_URL_UNPOOLED` on its project yet (i.e. the database is not provisioned).
 - **Per probe:** to see whether a candidate Neon resource is empty it is connected (`development` env only) to a
   throwaway `sf-neon-inspect-*` project the run just created; the table count is read, the resource is
   disconnected, and that project is deleted with `vercel api /v9/projects/<id> -X DELETE

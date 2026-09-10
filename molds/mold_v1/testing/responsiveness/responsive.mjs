@@ -63,12 +63,15 @@ const PROXY_PATHS = /\/(eve\/v1|\.well-known\/workflow)\//;
 // of the thing customers actually use at 320px, the tap targets in the ops centre, the latency of the
 // workflow builder: all UNMEASURED behind a green lane (mold_v1-040).
 //
-// `--auth` measures those. The session is one this deployment ITSELF minted through its own sign-in
-// (POST /api/auth/email/verify — lib/auth-session.ts), handed over BY NAME in an environment variable
-// and stored under the same localStorage key the app's own sign-in writes. Nothing here mints, forges
-// or weakens anything:
-//   - no variable, no run: the check is gated on the variable's presence in lane.json, so the lane goes
-//     `skipped`, never `pass` (a lane cannot certify a surface it never saw);
+// `--auth` measures those. The session is the app's OWN kind: the ES256 "email-session" token
+// lib/auth-session.ts defines and lib/ops-auth.ts admits on its signature alone (the emailed code gates
+// the mint route, not the token). The factory holds a provisioned app's AUTH_JWT_PRIVATE_KEY by name,
+// so .claude/scripts/lib/session.py signs one for the app's own FDE (application.workspace.fde_self.email)
+// and hands it over BY NAME in an environment variable — lane.json runs each --auth check through it,
+// and a session an operator signed in for and lent wins over a minted one. It is stored under the same
+// localStorage key the app's own sign-in writes. Nothing HERE mints, forges or weakens anything:
+//   - no variable, no run: this file reads one variable and never sees a key; the precondition in
+//     lane.json makes a missing or unusable session a `skipped` lane, never `pass`;
 //   - a token the SERVER refuses grades nothing: the deployment's own read-only GET /api/ops/orgs is
 //     the verdict, not the client's opinion of its own localStorage. The row is `not-covered` and the
 //     run exits 2 — never `pass`, and not `fail` either, because a refused credential says the

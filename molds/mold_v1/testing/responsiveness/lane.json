@@ -2,7 +2,7 @@
   "$schema": "../lane.schema.json",
   "lane": "responsiveness",
   "order": 50,
-  "summary": "A Playwright chromium viewport matrix (320/390/820/1440) grading horizontal overflow, cumulative layout shift, content a user cannot reach, tap target size and interaction latency against published budgets — over the mold's three page routes signed OUT, and over the product itself (chat thread, ops centre, workflow builder) signed IN with a session this deployment minted. A route that answers 2xx and renders no interactive control fails, a tap-target row that finds no target fails, and a signed-in surface that renders only the signed-out shell fails: nothing measured is never a pass. The two timing budgets (CLS, INP) must be exceeded on every one of 3 runs before a row fails.",
+  "summary": "A Playwright chromium viewport matrix (320/390/820/1440) grading horizontal overflow, cumulative layout shift, content a user cannot reach, tap target size and interaction latency against published budgets \u2014 over the mold's three page routes signed OUT, and over the product itself (chat thread, ops centre, workflow builder) signed IN with a session the factory signs for the application's own FDE identity with the app's own AUTH_JWT_PRIVATE_KEY (.claude/scripts/lib/session.py) \u2014 the same ES256 email-session token the app's verify route hands that person. A route that answers 2xx and renders no interactive control fails, a tap-target row that finds no target fails, and a signed-in surface that renders only the signed-out shell fails: nothing measured is never a pass. The two timing budgets (CLS, INP) must be exceeded on every one of 3 runs before a row fails.",
   "requires": [
     {
       "cmd": "node {testing}/responsiveness/deps-check.mjs",
@@ -34,7 +34,7 @@
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
       "why": "A page that scrolls sideways at 320px, or that shifts under the reader's finger, or that hides a control where no scroll can reach it, is a customer who cannot finish the task on the device they actually own."
@@ -63,7 +63,7 @@
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
       "why": "A control smaller than a fingertip, with another control beside it, is a mis-tap: on a touch screen that is the difference between sending a message and deleting one."
@@ -92,14 +92,14 @@
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
-      "why": "Interaction to Next Paint over 200ms is the lag where a person taps a second time because the first tap looked ignored — the layout can be perfect and the app still feel broken."
+      "why": "Interaction to Next Paint over 200ms is the lag where a person taps a second time because the first tap looked ignored \u2014 the layout can be perfect and the app still feel broken."
     },
     {
       "name": "layout.matrix.authenticated",
-      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only layout --auth",
+      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs --url {url} --only layout --auth",
       "cwd": "root",
       "timeout_s": 900,
       "expect": {
@@ -122,22 +122,18 @@
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "env": "MOLD_V1_SESSION_TOKEN",
-          "else": "This check measures the signed-in product (chat thread, ops centre, workflow builder), so it needs a session for it: sign in to the app as the factory's test identity, copy that browser's `fde-google-token` value out of localStorage, and re-run the lane with it in MOLD_V1_SESSION_TOKEN — step by step in molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this lane is `skipped`, never `pass`: it has not seen the product."
-        },
-        {
-          "cmd": "python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
-          "else": "The session in MOLD_V1_SESSION_TOKEN is missing, expired, too close to expiry to outlast this check, or refused by this deployment, so this run would measure the signed-out shell instead of the product. Sign in to the app as the factory's test identity, copy that browser's `fde-google-token` value out of localStorage, and re-run the lane with it in MOLD_V1_SESSION_TOKEN — step by step in molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: it is never `pass`, and never `fail` either — a stale credential is not a defect of the application."
+          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
+          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 1200s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
         }
       ],
       "why": "The workspace a customer actually works in is the one that has to reflow at 320px. Signed out this matrix measured a sign-in page with two buttons on it and printed 12 green rows."
     },
     {
       "name": "tap.targets.authenticated",
-      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only targets --auth",
+      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs --url {url} --only targets --auth",
       "cwd": "root",
       "timeout_s": 600,
       "expect": {
@@ -160,22 +156,18 @@
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "env": "MOLD_V1_SESSION_TOKEN",
-          "else": "This check measures the signed-in product (chat thread, ops centre, workflow builder), so it needs a session for it: sign in to the app as the factory's test identity, copy that browser's `fde-google-token` value out of localStorage, and re-run the lane with it in MOLD_V1_SESSION_TOKEN — step by step in molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this lane is `skipped`, never `pass`: it has not seen the product."
-        },
-        {
-          "cmd": "python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 900",
-          "else": "The session in MOLD_V1_SESSION_TOKEN is missing, expired, too close to expiry to outlast this check, or refused by this deployment, so this run would measure the signed-out shell instead of the product. Sign in to the app as the factory's test identity, copy that browser's `fde-google-token` value out of localStorage, and re-run the lane with it in MOLD_V1_SESSION_TOKEN — step by step in molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: it is never `pass`, and never `fail` either — a stale credential is not a defect of the application."
+          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 900",
+          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 900s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 900` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
         }
       ],
-      "why": "The ops centre is where the small controls live — row actions, pagination, filter chips. Signed out none of them is on screen, so the tap-target budget was being enforced against a page with two full-width buttons."
+      "why": "The ops centre is where the small controls live \u2014 row actions, pagination, filter chips. Signed out none of them is on screen, so the tap-target budget was being enforced against a page with two full-width buttons."
     },
     {
       "name": "interaction.latency.authenticated",
-      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only interaction --auth",
+      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs --url {url} --only interaction --auth",
       "cwd": "root",
       "timeout_s": 900,
       "expect": {
@@ -198,23 +190,20 @@
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /workspace — either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "env": "MOLD_V1_SESSION_TOKEN",
-          "else": "This check measures the signed-in product (chat thread, ops centre, workflow builder), so it needs a session for it: sign in to the app as the factory's test identity, copy that browser's `fde-google-token` value out of localStorage, and re-run the lane with it in MOLD_V1_SESSION_TOKEN — step by step in molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this lane is `skipped`, never `pass`: it has not seen the product."
-        },
-        {
-          "cmd": "python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
-          "else": "The session in MOLD_V1_SESSION_TOKEN is missing, expired, too close to expiry to outlast this check, or refused by this deployment, so this run would measure the signed-out shell instead of the product. Sign in to the app as the factory's test identity, copy that browser's `fde-google-token` value out of localStorage, and re-run the lane with it in MOLD_V1_SESSION_TOKEN — step by step in molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: it is never `pass`, and never `fail` either — a stale credential is not a defect of the application."
+          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
+          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 1200s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
         }
       ],
       "why": "Switching a workspace tab and typing in the composer are the interactions this product IS. INP measured on a sign-in page is a number about a page nobody spends time on."
     }
   ],
   "not_covered": [
-    "Anything the session token cannot reach. The signed-in checks measure four surfaces (chat thread, People, Audit trail, workflow builder); the data room, connectors and agents tabs, the ops-centre modal inside the chat shell, and anything that needs a write (creating a workflow, sending a message) are NOT measured — this lane is read-only on the application it grades and every non-GET the browser attempts is aborted and counted.",
-    "The signed-in surface at all, whenever MOLD_V1_SESSION_TOKEN is absent, expired, too close to expiry to outlast the run, or refused by this deployment: session-live.py makes those checks `skipped` before a browser opens, and the LANE is then `skipped`. It is never `pass` on the strength of the signed-out rows alone (mold_v1-040), and never `fail` — a stale credential is not a defect of the application.",
+    "Anything the session token cannot reach. The signed-in checks measure four surfaces (chat thread, People, Audit trail, workflow builder); the data room, connectors and agents tabs, the ops-centre modal inside the chat shell, and anything that needs a write (creating a workflow, sending a message) are NOT measured \u2014 this lane is read-only on the application it grades and every non-GET the browser attempts is aborted and counted.",
+    "The signed-in surface at all, whenever no usable session exists: the factory mints one from the application's own key (.claude/scripts/lib/session.py), so this is now the case where that key is not in the app's secret store (a `target: vm` app \u2014 the vm lane does not generate the pair), is not the key the deployment runs with, or the FDE identity belongs to no workspace there \u2014 and no operator lent a session in MOLD_V1_SESSION_TOKEN. session-live.py makes those checks `skipped` before a browser opens, and the LANE is then `skipped`. It is never `pass` on the strength of the signed-out rows alone (mold_v1-040), and never `fail` \u2014 an unusable session is not a defect of the application.",
+    "Any identity but the application's own FDE. The minted session is for application.workspace.fde_self.email, the workspace owner; what a `member` or an invitee sees is measured only when an operator signs in as one and lends that session.",
     "Which identity's data is on screen, and how much of it. A workspace with a hundred members lays out differently from the one this session resolves to; the lane measures the workspace it was given.",
     "Real devices, real networks and real fingers. Chromium's mobile emulation sets viewport, touch and device pixel ratio; it does not reproduce a slow CPU, a slow radio, a notch, a software keyboard covering the field being typed into, or a browser's own chrome eating vertical space.",
     "Orientation change, browser zoom to 200-400% (WCAG 1.4.4 Resize Text), reduced motion, forced-colors and print layout.",

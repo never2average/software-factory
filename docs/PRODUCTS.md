@@ -43,8 +43,17 @@ codes) carry the product name too.
 Three Vercel deployments per application — the web dashboard (Next.js), the eve agent API, the task-workflow
 service — on the projects `<project>`, `<project>-api`, `<project>-workflow`; one free Neon Postgres with an
 `app_rw` role and row-level security proven before `DATABASE_URL` is written; one private Vercel Blob store;
-four crons; GLM 5.2 on Cloudflare Workers AI as the only model. The customer brings four credentials
-(`docs/RUNBOOK.md` §0). Inference cost per workspace: `docs/COST_MODEL.md`.
+four crons; and one inference provider chosen at intake (`infrastructure.inference.provider`):
+
+| `inference_provider` | model the app runs (`application.model`) | credential the customer brings | `MODEL_PROVIDER` |
+|---|---|---|---|
+| `cloudflare_workers_ai` (default) | `@cf/zai-org/glm-5.2` (GLM 5.2), context window 262144; `factory.defaults.inference_model` can override the id | `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | `cloudflare` |
+| `vercel_ai_gateway` | `anthropic/claude-sonnet-5` (Claude Sonnet 5, the mold's free-tier-safe default; the gateway's free tier refuses Opus); no context window recorded, the gateway looks it up | `AI_GATEWAY_API_KEY` | `gateway` |
+
+Everything else — projects, database, Blob, crons, RLS gate, branding — is the same for both. The customer also
+brings `RESEND_API_KEY` and `PLATFORM_NOTIFY_FROM` (and `EXA_API_KEY` / `BROWSERBASE_API_KEY` when web search /
+the browser are on): four credentials on Cloudflare, three on the gateway (`docs/RUNBOOK.md` §0). Inference cost
+per workspace: `docs/COST_MODEL.md` (Cloudflare path only; the gateway path is not costed yet).
 
 ## Stage gates for mold_v1 products (`delivered`, `dover`)
 
@@ -52,7 +61,7 @@ four crons; GLM 5.2 on Cloudflare Workers AI as the only model. The customer bri
 |---|---|---|
 | stamped | state filled against all four schemas; mold builds on the VM | both apps of `delivered` were stamped; `dover` has none |
 | lanes_passing | all five lanes pass; every lane has a harness | all five harnesses exist (load's `stress.py` landed with mold_v1-024); no app has all five passing — the replica is `reverted` on the accessibility lane |
-| deployed | production URL on Vercel; secrets by name only; GLM 5.2 configured and smoke-tested | the replica is deployed at `claudecode-web-opal.vercel.app` but predates the RLS gate (mold_v1-026) |
+| deployed | production URL on Vercel; secrets by name only; the app's inference provider (GLM 5.2 on Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway) configured and smoke-tested | the replica is deployed at `claudecode-web-opal.vercel.app` but predates the RLS gate (mold_v1-026) |
 | released | onboarding path works end to end (`fde:onboard-self`, `fde:new-org`, `fde:new-customer`); docs + pricing/packaging decided; inference budget per workspace known | docs exist as of this file; the onboarding path has not been executed end to end on a stamped app; pricing is a placeholder in the cost model |
 
 Both products are at `defined`: a stage only moves when the tasks that carry it close, and no task has.

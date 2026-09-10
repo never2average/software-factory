@@ -28,17 +28,19 @@
 // (the chat thread, the ops centre, the workflow builder) was never rendered, never traversed, and the
 // one row that admitted it said `not-covered`.
 //
-// So `--only auth` grades the product. It signs in the only honest way a harness can: with a session
-// token this deployment ITSELF minted (POST /api/auth/email/verify, after a one-time code to an
-// address that already has a workspace membership — lib/auth-session.ts, app/api/auth/email/*), handed
-// to the harness by NAME through an environment variable. The harness stores it under the same
-// localStorage key the app's own sign-in writes (app/_components/auth-gate.tsx), which is the whole of
-// what "being signed in" means to this client.
+// So `--only auth` grades the product. It signs in with the app's OWN kind of session: the ES256
+// "email-session" token lib/auth-session.ts defines and lib/ops-auth.ts admits on its signature alone
+// (the emailed one-time code gates the mint ROUTE, app/api/auth/email/verify, not the token). For an
+// application the factory provisioned, the factory holds that app's AUTH_JWT_PRIVATE_KEY by name, so
+// .claude/scripts/lib/session.py signs one for the app's own FDE (application.workspace.fde_self.email)
+// and hands it to this harness by NAME in an environment variable — lane.json runs the check through
+// it. An operator who signed in and lent that browser's session wins over a minted one. The harness
+// stores whichever it was given under the same localStorage key the app's own sign-in writes
+// (app/_components/auth-gate.tsx), which is the whole of what "being signed in" means to this client.
 //
 // It cannot be faked into a pass, and that is deliberate:
-//   - the token is never minted here. There is no signing key in this repo and there is no code path
-//     that makes one up; without the environment variable this check does not run at all and the lane
-//     is `skipped` (lane.json gates it on `env`), never `pass`;
+//   - THIS FILE never mints, and never sees a key. It reads one variable. Without it this check does not
+//     run at all and the lane is `skipped` (the precondition in lane.json), never `pass`;
 //   - a token the SERVER refuses grades nothing. Every authenticated surface first asks the deployment
 //     itself (a read-only GET /api/ops/orgs carrying the token) whether the credential resolves to a
 //     workspace. 401/403 prints the status and the surface is `not-covered`, and the run exits 2 —

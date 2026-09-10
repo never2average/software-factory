@@ -25,7 +25,10 @@ So this emits two rows that cannot be satisfied by a status code:
                    change only takes effect on the next build, so this row is the one that covers the
                    process actually serving traffic.
 
-An app whose datastores.postgres.rls is "off" gets `skipped`, not `pass`.
+An app whose datastores.postgres.rls is "off" gets `skipped`, not `pass`. An app whose datastores.json
+never declares postgres.rls at all gets `fail`: the schema does not require the key, so ABSENT used to
+read as "off" here and skip the whole verdict with a detail line asserting a declaration that was never
+made (mold_v1-052). Absent is unmeasured, and unmeasured is one instruction, never a silent skip.
 """
 import json, os, subprocess, sys, urllib.request
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
@@ -35,9 +38,13 @@ def main(a):
     app_id = a[0]; adir = os.path.join(ROOT, "state/application", app_id)
     ds = json.load(open(os.path.join(adir, "datastores.json")))
     infra = json.load(open(os.path.join(adir, "infrastructure.json")))
-    want = ds.get("postgres", {}).get("rls", "off")
+    want = ds.get("postgres", {}).get("rls")   # no default: ABSENT is not "off" (see the docstring)
     rows, ok = [], True
-    if want == "off":
+    if want is None:
+        # The safe value: nothing declared means nothing asked for, nothing measured, and no row may say otherwise.
+        rows.append(("rls.isolation", "fail", f'datastores.postgres.rls is ABSENT: set it to "fail_closed" or "on" in state/application/{app_id}/datastores.json, then run python3 .claude/scripts/lanes.py {app_id} --lane functional'))
+        ok = False
+    elif want == "off":
         rows.append(("rls.isolation", "skipped", 'datastores.postgres.rls is "off": this app did not ask for tenant isolation'))
     else:
         r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/provision.py"), app_id, "--verify-rls", "--no-repair"],

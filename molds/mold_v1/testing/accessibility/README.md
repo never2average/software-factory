@@ -6,8 +6,9 @@ only, and never against the live factory projects (see "Safety" below).
 
 Two halves. **Signed out**: the mold's three page routes, which is a sign-in page and an empty shell.
 **Signed in** (`--only auth`): the product — the chat thread, the ops centre and the workflow builder —
-graded with a session this deployment itself minted. Until this second half existed, a green
-accessibility lane certified a sign-in page and nothing else (mold_v1-040).
+graded with a session the factory signs for the application's own FDE with the app's own key (see
+"Authenticated coverage"). Until this second half existed, a green accessibility lane certified a
+sign-in page and nothing else (mold_v1-040).
 
 Run it through the runner, which is what writes state and the report:
 
@@ -18,7 +19,9 @@ Or drive the harness directly against any URL — a deployment, or a locally sta
 
     node molds/mold_v1/testing/accessibility/a11y.mjs --url https://<app>.vercel.app
     node molds/mold_v1/testing/accessibility/a11y.mjs --url http://127.0.0.1:3110 --only keyboard
-    MOLD_V1_SESSION_TOKEN='<a session for that app>' \
+    python3 .claude/scripts/lib/session.py <app_id> -- \
+      node molds/mold_v1/testing/accessibility/a11y.mjs --url https://<app>.vercel.app --only auth
+    MOLD_V1_SESSION_TOKEN='<a session you signed in for>' \
       node molds/mold_v1/testing/accessibility/a11y.mjs --url https://<app>.vercel.app --only auth
     node molds/mold_v1/testing/accessibility/deps-check.mjs   # is the browser here?
 
@@ -77,55 +80,84 @@ while something it declared went unmeasured, and a row printed `skipped` reads a
    `pass`. With them it is `skipped`, with one instruction. The markers live in `lane.json`, so a future
    mold edits its own declaration rather than the probe.
 
-3. For the signed-in check only, `session-live.py <url> --min-remaining <seconds>` exits 0 — the
-   variable holds a session **this deployment still accepts**, with enough life left to outlast the
-   check that is about to run. A missing, malformed, expired, nearly-expired or refused session makes
-   the check `skipped` and the lane `skipped`, with one instruction. See "A stale session is `skipped`,
-   not `fail`" below for why that verdict is taken here rather than in the harness.
+3. For the signed-in check only, `session.py <app_id> -- session-live.py <url> --min-remaining <seconds>`
+   exits 0 — the helper could sign a session for this application (or an operator lent one), the
+   deployment **accepts it**, lists **a workspace** for that identity, and it has enough life left to
+   outlast the check that is about to run. No key, a refused session, no membership, or too little life
+   makes the check `skipped` and the lane `skipped`, with one instruction. See "A stale session is
+   `skipped`, not `fail`" below for why that verdict is taken here rather than in the harness.
 
 Lane-level, `deps-check.mjs` must find Playwright chromium and the vendored rule set; if the VM has no
 browser the whole lane is `skipped` with the install command, not a red lane blamed on the app.
 
 ## Authenticated coverage
 
-`--only auth` is the half that grades the product. It needs one thing the factory does not otherwise
-hold: **a session for the application under test**, passed in by name.
+`--only auth` is the half that grades the product. It needs **a session for the application under
+test**, and since this round the factory makes one itself:
 
-    MOLD_V1_SESSION_TOKEN='<paste the token>' python3 .claude/scripts/lanes.py <app_id> --lane accessibility
+    python3 .claude/scripts/lanes.py <app_id> --lane accessibility
 
-Where the token comes from, honestly: **you sign in, and lend the harness the session you got.**
+`lane.json` runs the check — and its precondition — through `.claude/scripts/lib/session.py <app_id> -- …`,
+which signs a session and hands it to the harness by name in `MOLD_V1_SESSION_TOKEN`. Nothing is typed,
+pasted or stored.
+
+**Why that is a real session and not a fake.** Read from the mold, not assumed (`lib/auth-session.ts`,
+`lib/ops-auth.ts`, `proxy.ts`, `app/_components/auth-gate.tsx`): every `/api/ops/*` call carries a
+bearer that is either a Google ID token — signed by Google, with an `hd` claim, which the factory cannot
+produce and must not try — or the app's **own** "email-session" token: ES256, signed with the app's
+`AUTH_JWT_PRIVATE_KEY`, claims `{email, kind: "email-session", iss: "delivered", aud: "delivered-app",
+exp}`. `verifyOpsAuth` checks that kind first and asks nothing else of it. The emailed six-digit code
+gates the **route** that mints (`/api/auth/email/verify`), not the token: what that route returns after a
+code is exactly this token for that email. The browser's "signed in" is the same token under
+`localStorage["fde-google-token"]`. The factory generates and holds a provisioned application's key pair
+by name, so it can sign the same bytes — for **the app's own FDE**, `application.workspace.fde_self.email`,
+the person the app was stamped for and seeded as its workspace owner; never a hard-coded address.
+
+**What the token does not do.** It proves an email. Membership is read from the application's database
+on every request (`lib/org-context.ts`), so an identity with no workspace there lands on onboarding, and
+the precondition refuses that as `skipped` ("lists no workspace for that identity") rather than grading
+an empty shell.
+
+**Where the key is read from**, by name, from the app's own secret store: `infra/vm/apps/<app_id>/.env`
+for `vm_env_file`, a `vercel env pull` into a 0600 temp file (read once, deleted) for `vercel_env`. The
+key is used for one signature in node's environment, the token goes into the harness's environment, and
+neither ever reaches argv, a file, stdout or state. The minted session lives 30 minutes — the longest
+check here is 15 and asks for 20 — not the seven days the app's own sessions get.
+
+**An operator's session still wins.** If `MOLD_V1_SESSION_TOKEN` is already set the helper mints nothing
+and runs the check with that. To measure as yourself, or as a `member` rather than the owner:
 
 1. Open the application in Chrome and sign in the way you normally would.
 2. `F12` -> **Application** -> **Local Storage** -> the app's own URL -> the row `fde-google-token`.
-3. Copy that value and put it in the command above, in front of the command, for that one run.
+3. Copy that value and put it in the environment of one run:
+   `MOLD_V1_SESSION_TOKEN='<paste>' python3 .claude/scripts/lanes.py <app_id> --lane accessibility`.
 
-Treat it as a password: it is a live session for that workspace. Do not save it in a file, a commit,
-or a chat message — it belongs in the environment of one run and nowhere else. The harness prints the
-identity it signed in as and the expiry, never the token. It expires on its own (seven days for an
-emailed code session, about an hour for a Google one); a stale one makes the lane `skipped` with one
-instruction rather than silently grading the shell — never `pass`, and never `fail` either.
+Treat it as a password. The harness prints the identity it signed in as and the expiry, never the token.
 
 **What the harness does with it.** It stores the token under `fde-google-token` for the app's own
-origin only — the same key the app's own sign-in writes (`app/_components/auth-gate.tsx`), which is
-the whole of what "signed in" means to this client. It then opens `/`, `/workspace?tab=people`,
+origin only — the same key the app's own sign-in writes — then opens `/`, `/workspace?tab=people`,
 `?tab=audit` and `?tab=workflows` (the app's own deep links) and grades them exactly as the signed-out
 rows are graded.
 
 **What it refuses to do.** There is no way to reach a green row without a session this deployment
 accepts:
 
-- no token, no run. `lane.json` gates the check on the variable's presence, so the check is `skipped`
-  and, by the runner's rollup, the **lane** is `skipped` — never `pass`. A lane that has not seen the
-  product may not certify it.
+- no usable session, no run. `session-live.py` is the check's precondition; it exits 1 when nothing could
+  be signed (a `target: vm` app — the vm lane does not generate the pair), when the deployment answers
+  401/403 (the factory's key is not the one the deployment runs with), when the identity belongs to no
+  workspace, or when the session cannot outlive the check. The check is `skipped` and, by the runner's
+  rollup, the **lane** is `skipped` — never `pass`.
 - a token the **server** refuses grades nothing. Before grading, each surface asks the deployment
   itself — a read-only `GET /api/ops/orgs` carrying that bearer, the same call the app's own ops client
   makes. 401 or 403 prints the status, marks the surface `not-covered` and exits 2 — never a quiet fall
-  back to grading the shell, and never `pass`. A token minted by another key, or expired, or
-  hand-written, lands here.
+  back to grading the shell, and never `pass`.
 - a surface that renders the shell anyway fails. Each surface names a control that exists only once its
   own content has rendered (the builder's "New workflow", People's "Invite", Audit's actor filter), and
   the row also compares the control census against the *same URL loaded with no session*. If signing in
-  changed nothing, the row says so and fails instead of grading the shell twice.
+  changed nothing, the row says so and fails instead of grading the shell twice. Note the builder is
+  backed by the task-workflow service (`/api/ops/workflow-definitions` answers "Task workflow service is
+  not configured" without it): a deployment without that service has no builder to grade, and this row
+  says so rather than passing.
 
 ### A stale session is `skipped`, not `fail`
 
@@ -157,10 +189,10 @@ lane `fail`. The margin above removes ordinary expiry from that window; what is 
 and needs a deliberate act elsewhere. Closing it entirely needs the runner to be able to read "nothing
 was measured" back from a harness, which is a change to `.claude/scripts/lanes.py`, not to this lane.
 
-**The harness never mints a token.** No signing key is read here and none is in this repo; the mold's
-private key (`AUTH_JWT_PRIVATE_KEY`) lives in the deployment. Minting one for a test identity would
-need a factory-owned test membership in the app's database plus that key — see "What would make this
-automatic" at the bottom.
+**The harness never mints a token.** `a11y.mjs` reads one variable and never sees a key. Signing happens
+in `.claude/scripts/lib/session.py`, from the application's own key, for the application's own FDE —
+see "Authenticated coverage". A session that key cannot produce is the `skipped` case above, not a
+`fail`.
 
 **Read-only, enforced.** In signed-in mode the app writes on its own (presence, telemetry, a
 chat-session backfill). Every non-GET request the page attempts is aborted and counted, and the count
@@ -189,8 +221,11 @@ is printed, so grading a real deployment cannot change it.
   Audit trail, workflow builder). The data room, connectors and agents tabs, the ops-centre modal inside
   the chat shell, and anything that needs a write (creating a workflow, sending a message) are not
   graded — this lane is read-only on the application it grades.
-- **The signed-in surface at all, when `MOLD_V1_SESSION_TOKEN` is absent** — the check is `skipped` and
-  so is the lane. Not `pass`.
+- **The signed-in surface at all, when no usable session exists** — no key in the app's secret store (a
+  `target: vm` app), a key the deployment does not run with, an FDE identity with no workspace there, and
+  no operator-lent session: the check is `skipped` and so is the lane. Not `pass`.
+- **Any identity but the application's own FDE.** The minted session is the workspace owner's; a
+  `member`'s or an invitee's controls are graded only when an operator lends such a session.
 - **Which identity is on screen.** A member and an owner see different controls; the lane grades the
   workspace the supplied session resolves to, and the report names that identity.
 - Screen-reader output: axe checks the accessibility tree, not what NVDA or VoiceOver announces.
@@ -238,19 +273,48 @@ only after a 200), each state was run end to end — the harness on its own, and
 The two rows that matter are the last two: a stale credential can never revert an application, and a
 deployment that takes the session and still shows nothing can never pass.
 
-## What would make this automatic
+## Measured today (2026-09-09): the signed-in half, with no human in the loop
 
-Today a human signs in once per run. To let the factory do it unattended, three things it does not yet
-have, none of which belong to this lane:
+Against a throwaway `target: vm` application (`sess_probe`, stamped by intake, database from
+`provision.py --verify-db`, the mold built from a scratch copy and started on 127.0.0.1 with that app's
+own `.env`, its workspace seeded by the mold's own `fde:new-org`), the lane's exact commands:
 
-1. a **test identity per application** in state (an address the factory owns, recorded as
-   `testing.identity_ref`), seeded as an `org_members` row when the app is provisioned;
-2. a **mint step in `provision.py`** that signs a session for that identity with the app's own
-   `AUTH_JWT_PRIVATE_KEY` (already a named secret in `infrastructure.json`) and hands it to the runner
-   in the environment, never to disk;
-3. the runner passing that variable through to the lane.
+    python3 .claude/scripts/lib/session.py sess_probe -- \
+      python3 molds/mold_v1/testing/accessibility/session-live.py http://127.0.0.1:3123 --min-remaining 1200
+    session minted for operator@example.com on sess_probe (ES256, key from infra/vm/apps/sess_probe/.env, 1800s of life)
+    http://127.0.0.1:3123/api/ops/orgs 200 · session accepted for operator@example.com · member of 1 workspace(s) · 1799s left
 
-Each is outside `molds/mold_v1/testing/`, so each is a task, not a patch to this harness.
+    python3 .claude/scripts/lib/session.py sess_probe -- node …/a11y.mjs --url http://127.0.0.1:3123 --only auth
+    auth axe / chat thread            fail  color-contrast[serious x1]                  20 controls (shell alone: 2)
+    auth keyboard / chat thread       pass  20 tabbable of 22, every one with a focus indicator
+    auth axe /workspace people        pass  16 controls (shell alone: 8), 36 rules passed
+    auth keyboard /workspace people   fail  SELECT "Rows per page" takes focus with no focus indicator
+    auth axe /workspace audit         fail  select-name[critical x1]                    15 controls (shell alone: 8)
+    auth keyboard /workspace audit    fail  SELECT "Rows per page" takes focus with no focus indicator
+    auth /workspace builder           fail  "New workflow" absent; 9 controls vs 8 signed out — the builder is the
+                                            task-workflow service, which this fixture does not run
+
+And the two ways it refuses, each measured: a key the deployment does not hold (a fresh pair written into
+the app's `.env`) -> `GET /api/ops/orgs` 401 -> exit 1 -> `skipped`; an FDE identity with no membership
+(`fde_self.email` swapped in state) -> 200, "lists no workspace for that identity" -> exit 1 -> `skipped`.
+
+The same manifests, resolved by `lanes.py`'s own `unmet()` with this app and URL, report the rewired
+precondition MET. `lanes.py` itself could not run the lane end to end: a `target: vm` app may hold no
+`production_url` (mold_v1-053), so the runner's URL gate stops first — the vm lane never serves a web
+process. The first application deployed on Vercel with its pair generated by `provision.py` is the run
+that remains to be made.
+
+## What is still manual
+
+- **A `target: vm` application has no key pair.** `provision.py` generates `AUTH_JWT_PRIVATE_KEY` /
+  `AUTH_JWT_PUBLIC_KEY` on the vercel lane only ("not produced on this target"); `session.py` says so in
+  one sentence and the lane is `skipped`. For the run above the pair was written into the throwaway's
+  `.env` by hand with the same command the vercel lane uses.
+- **A key stored Sensitive on Vercel** cannot be read by the CLI; the helper refuses and points at the
+  manual path.
+- **The workspace must exist.** `fde_self` is seeded as owner by whatever stamped the application
+  (`fde:new-org`, a live snapshot, the onboarding wizard). Nothing in this lane writes it, and the
+  precondition refuses to grade an identity with no workspace.
 - **Which mold_v1 application is serving this URL.** The precondition checks that the HTML carries this
   mold's markers, which catches an undeployed URL and a URL now served by something else. It cannot
   tell two mold_v1 applications apart — they render the same markup. A wrong-but-same-mold
