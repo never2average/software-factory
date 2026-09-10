@@ -2,7 +2,7 @@
   "$schema": "../lane.schema.json",
   "lane": "accessibility",
   "order": 40,
-  "summary": "axe-core 4.13.0 (WCAG 2.1 A/AA) and keyboard-only traversal, driven by Playwright chromium against the application's own deployed URL: the mold's three page routes signed OUT, and the product itself \u2014 chat thread, ops centre, workflow builder \u2014 signed IN with a session the factory signs for the application's own FDE identity with the app's own AUTH_JWT_PRIVATE_KEY (.claude/scripts/lib/session.py) \u2014 the same ES256 email-session token the app's verify route hands that person. A route that answers 2xx and then renders no interactive control fails the row, and so does a signed-in surface that renders only the signed-out shell: nothing measured is never a pass.",
+  "summary": "axe-core 4.13.0 (WCAG 2.1 A/AA) and keyboard-only traversal, driven by Playwright chromium against the application's own deployed URL \u2014 or, for a `target: vm` fixture that has none, the mold started on this box at the loopback address the operator names in MOLD_V1_LANE_URL (lane-url.py refuses anything else): the mold's three page routes signed OUT, and the product itself \u2014 chat thread, ops centre, workflow builder \u2014 signed IN with a session the factory signs for the application's own FDE identity with the app's own AUTH_JWT_PRIVATE_KEY (.claude/scripts/lib/session.py) \u2014 the same ES256 email-session token the app's verify route hands that person. A route that answers 2xx and then renders no interactive control fails the row, and so does a signed-in surface that renders only the signed-out shell: nothing measured is never a pass.",
   "requires": [
     {
       "cmd": "node {testing}/accessibility/deps-check.mjs",
@@ -16,7 +16,7 @@
   "checks": [
     {
       "name": "axe.wcag21aa",
-      "run": "node {testing}/accessibility/a11y.mjs --url {url} --only axe",
+      "run": "node {testing}/accessibility/a11y.mjs $(python3 {testing}/accessibility/lane-url.py {app_id} --harness) --only axe",
       "cwd": "root",
       "timeout_s": 300,
       "expect": {
@@ -28,12 +28,11 @@
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane grades rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
+          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/accessibility/target-up.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
@@ -41,7 +40,7 @@
     },
     {
       "name": "keyboard.traversal",
-      "run": "node {testing}/accessibility/a11y.mjs --url {url} --only keyboard",
+      "run": "node {testing}/accessibility/a11y.mjs $(python3 {testing}/accessibility/lane-url.py {app_id} --harness) --only keyboard",
       "cwd": "root",
       "timeout_s": 300,
       "expect": {
@@ -53,12 +52,11 @@
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane grades rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
+          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/accessibility/target-up.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
@@ -66,7 +64,7 @@
     },
     {
       "name": "authenticated.surface",
-      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/accessibility/a11y.mjs --url {url} --only auth",
+      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/accessibility/a11y.mjs $(python3 {testing}/accessibility/lane-url.py {app_id} --harness) --only auth",
       "cwd": "root",
       "timeout_s": 900,
       "expect": {
@@ -77,23 +75,22 @@
         "stdout_not": [
           "\\| fail \\|",
           "\\| skipped \\|",
-          "\\| not-covered \\|"
+          "\\| not-covered \\| (?!declared off on this fixture)"
         ]
       },
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane grades rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
+          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/accessibility/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/accessibility/target-up.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/accessibility/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
-          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 1200s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/accessibility/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/accessibility/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
+          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/accessibility/session-live.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
+          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 1200s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/accessibility/session-live.py <the URL lane-url.py prints> --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/accessibility/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
         }
       ],
       "why": "Signed out, this lane reaches a sign-in page and an empty shell \u2014 2 to 9 controls, none of them the product. A green lane over that certifies nothing a customer uses. This is the check that grades the workspace they actually work in, and the first run of it found 20 serious contrast violations and a select with no name."
@@ -101,7 +98,8 @@
   ],
   "not_covered": [
     "Anything the session token cannot reach. The signed-in check grades four surfaces (chat thread, People, Audit trail, workflow builder); the data room, connectors, agents tabs and the ops-centre modal inside the chat shell are NOT graded, and neither is any state that needs a write (creating a workflow, sending a message) \u2014 this lane is read-only on the application it grades and every non-GET the browser attempts is aborted and counted.",
-    "The signed-in surface at all, whenever no usable session exists: the factory mints one from the application's own key (.claude/scripts/lib/session.py), so this is now the case where that key is not in the app's secret store (a `target: vm` app that has not run --verify-db, which mints the pair), is not the key the deployment runs with, or the FDE identity belongs to no workspace there \u2014 and no operator lent a session in MOLD_V1_SESSION_TOKEN. session-live.py makes those checks `skipped` before a browser opens, and the LANE is then `skipped`. It is never `pass` on the strength of the signed-out rows alone (mold_v1-040), and never `fail` \u2014 an unusable session is not a defect of the application.",
+    "The workflow builder on a `target: vm` fixture. The vm lane runs the web app alone; the builder is a client of the task-workflow service, one of the deployables the vm lane does not run (infra/vm/README.md), so on a fixture named in MOLD_V1_LANE_URL lane-url.py passes `--without task-workflow` and the builder rows print `not-covered` (\"declared off on this fixture\") instead of failing on a control the service would have rendered. On a deployment the builder is measured, and its absence is a fail. Three signed-in surfaces (chat thread, People, Audit trail) are measured on both.",
+    "The signed-in surface at all, whenever no usable session exists: the factory mints one from the application's own key (.claude/scripts/lib/session.py), so this is now the case where that key is not in the app's secret store (a `target: vm` app that has not run --verify-db, which mints the pair into infra/vm/apps/<app>/.env), is not the key the deployment runs with, or the FDE identity belongs to no workspace there \u2014 and no operator lent a session in MOLD_V1_SESSION_TOKEN. session-live.py makes those checks `skipped` before a browser opens, and the LANE is then `skipped`. It is never `pass` on the strength of the signed-out rows alone (mold_v1-040), and never `fail` \u2014 an unusable session is not a defect of the application.",
     "Any identity but the application's own FDE. The minted session is for application.workspace.fde_self.email, the workspace owner; what a `member` or an invitee sees is measured only when an operator signs in as one and lends that session.",
     "Which identity's data is on screen. The lane measures the workspace the supplied session resolves to; a different role (member vs owner) renders different controls, and only the one supplied is graded.",
     "Screen-reader output. axe-core checks the accessibility tree, not what NVDA/VoiceOver actually announces.",

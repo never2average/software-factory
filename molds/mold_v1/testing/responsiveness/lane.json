@@ -2,7 +2,7 @@
   "$schema": "../lane.schema.json",
   "lane": "responsiveness",
   "order": 50,
-  "summary": "A Playwright chromium viewport matrix (320/390/820/1440) grading horizontal overflow, cumulative layout shift, content a user cannot reach, tap target size and interaction latency against published budgets \u2014 over the mold's three page routes signed OUT, and over the product itself (chat thread, ops centre, workflow builder) signed IN with a session the factory signs for the application's own FDE identity with the app's own AUTH_JWT_PRIVATE_KEY (.claude/scripts/lib/session.py) \u2014 the same ES256 email-session token the app's verify route hands that person. A route that answers 2xx and renders no interactive control fails, a tap-target row that finds no target fails, and a signed-in surface that renders only the signed-out shell fails: nothing measured is never a pass. The two timing budgets (CLS, INP) must be exceeded on every one of 3 runs before a row fails.",
+  "summary": "A Playwright chromium viewport matrix (320/390/820/1440) grading horizontal overflow, cumulative layout shift, content a user cannot reach, tap target size and interaction latency against published budgets, against the application's own deployed URL \u2014 or, for a `target: vm` fixture that has none, the mold started on this box at the loopback address the operator names in MOLD_V1_LANE_URL (lane-url.py refuses anything else) \u2014 over the mold's three page routes signed OUT, and over the product itself (chat thread, ops centre, workflow builder) signed IN with a session the factory signs for the application's own FDE identity with the app's own AUTH_JWT_PRIVATE_KEY (.claude/scripts/lib/session.py) \u2014 the same ES256 email-session token the app's verify route hands that person. A route that answers 2xx and renders no interactive control fails, a tap-target row that finds no target fails, and a signed-in surface that renders only the signed-out shell fails: nothing measured is never a pass. The two timing budgets (CLS, INP) must be exceeded on every one of 3 runs before a row fails.",
   "requires": [
     {
       "cmd": "node {testing}/responsiveness/deps-check.mjs",
@@ -12,7 +12,7 @@
   "checks": [
     {
       "name": "layout.matrix",
-      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only layout",
+      "run": "node {testing}/responsiveness/responsive.mjs $(python3 {testing}/responsiveness/lane-url.py {app_id} --harness) --only layout",
       "cwd": "root",
       "timeout_s": 600,
       "expect": {
@@ -28,12 +28,11 @@
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
@@ -41,7 +40,7 @@
     },
     {
       "name": "tap.targets",
-      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only targets",
+      "run": "node {testing}/responsiveness/responsive.mjs $(python3 {testing}/responsiveness/lane-url.py {app_id} --harness) --only targets",
       "cwd": "root",
       "timeout_s": 400,
       "expect": {
@@ -57,12 +56,11 @@
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
@@ -70,7 +68,7 @@
     },
     {
       "name": "interaction.latency",
-      "run": "node {testing}/responsiveness/responsive.mjs --url {url} --only interaction",
+      "run": "node {testing}/responsiveness/responsive.mjs $(python3 {testing}/responsiveness/lane-url.py {app_id} --harness) --only interaction",
       "cwd": "root",
       "timeout_s": 400,
       "expect": {
@@ -86,12 +84,11 @@
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ],
@@ -99,7 +96,7 @@
     },
     {
       "name": "layout.matrix.authenticated",
-      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs --url {url} --only layout --auth",
+      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs $(python3 {testing}/responsiveness/lane-url.py {app_id} --harness) --only layout --auth",
       "cwd": "root",
       "timeout_s": 900,
       "expect": {
@@ -110,30 +107,29 @@
         "stdout_not": [
           "\\| fail \\|",
           "\\| skipped \\|",
-          "\\| not-covered \\|"
+          "\\| not-covered \\| (?!declared off on this fixture)"
         ]
       },
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
-          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 1200s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
+          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
+          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 1200s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py <the URL lane-url.py prints> --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
         }
       ],
       "why": "The workspace a customer actually works in is the one that has to reflow at 320px. Signed out this matrix measured a sign-in page with two buttons on it and printed 12 green rows."
     },
     {
       "name": "tap.targets.authenticated",
-      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs --url {url} --only targets --auth",
+      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs $(python3 {testing}/responsiveness/lane-url.py {app_id} --harness) --only targets --auth",
       "cwd": "root",
       "timeout_s": 600,
       "expect": {
@@ -144,30 +140,29 @@
         "stdout_not": [
           "\\| fail \\|",
           "\\| skipped \\|",
-          "\\| not-covered \\|"
+          "\\| not-covered \\| (?!declared off on this fixture)"
         ]
       },
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 900",
-          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 900s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 900` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
+          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 900",
+          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 900s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py <the URL lane-url.py prints> --session-env MOLD_V1_SESSION_TOKEN --min-remaining 900` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
         }
       ],
       "why": "The ops centre is where the small controls live \u2014 row actions, pagination, filter chips. Signed out none of them is on screen, so the tap-target budget was being enforced against a page with two full-width buttons."
     },
     {
       "name": "interaction.latency.authenticated",
-      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs --url {url} --only interaction --auth",
+      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- node {testing}/responsiveness/responsive.mjs $(python3 {testing}/responsiveness/lane-url.py {app_id} --harness) --only interaction --auth",
       "cwd": "root",
       "timeout_s": 900,
       "expect": {
@@ -178,23 +173,22 @@
         "stdout_not": [
           "\\| fail \\|",
           "\\| skipped \\|",
-          "\\| not-covered \\|"
+          "\\| not-covered \\| (?!declared off on this fixture)"
         ]
       },
       "emits": "markdown_table",
       "requires": [
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "This lane measures rendered pages, so the app has to be deployed first: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
-          "cmd": "python3 {testing}/responsiveness/target-up.py {url} / /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
+          "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /workspace --expect '<title>[^<]*Delivered' --expect 'self.__next_f'",
           "else": "The deployed app did not serve this application on /, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
         },
         {
-          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
-          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 1200s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py {url} --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
+          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
+          "else": "No usable session for the signed-in product: the factory signs one for this application's own FDE (application.workspace.fde_self.email) with the app's AUTH_JWT_PRIVATE_KEY, read by name from its secret store, and this deployment must then accept it, list a workspace for that identity, and leave it 1200s of life. Run `python3 .claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py <the URL lane-url.py prints> --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` to see which of those failed, in one sentence (no key on this target, a key the deployment does not run with, no membership); or sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, which the helper leaves untouched \u2014 molds/mold_v1/testing/responsiveness/README.md, \"Authenticated coverage\". Until then this check is `skipped` and so is the LANE: never `pass`, and never `fail` either \u2014 an unusable session is not a defect of the application."
         }
       ],
       "why": "Switching a workspace tab and typing in the composer are the interactions this product IS. INP measured on a sign-in page is a number about a page nobody spends time on."
@@ -202,7 +196,8 @@
   ],
   "not_covered": [
     "Anything the session token cannot reach. The signed-in checks measure four surfaces (chat thread, People, Audit trail, workflow builder); the data room, connectors and agents tabs, the ops-centre modal inside the chat shell, and anything that needs a write (creating a workflow, sending a message) are NOT measured \u2014 this lane is read-only on the application it grades and every non-GET the browser attempts is aborted and counted.",
-    "The signed-in surface at all, whenever no usable session exists: the factory mints one from the application's own key (.claude/scripts/lib/session.py), so this is now the case where that key is not in the app's secret store (a `target: vm` app that has not run --verify-db, which mints the pair), is not the key the deployment runs with, or the FDE identity belongs to no workspace there \u2014 and no operator lent a session in MOLD_V1_SESSION_TOKEN. session-live.py makes those checks `skipped` before a browser opens, and the LANE is then `skipped`. It is never `pass` on the strength of the signed-out rows alone (mold_v1-040), and never `fail` \u2014 an unusable session is not a defect of the application.",
+    "The workflow builder on a `target: vm` fixture. The vm lane runs the web app alone; the builder is a client of the task-workflow service, one of the deployables the vm lane does not run (infra/vm/README.md), so on a fixture named in MOLD_V1_LANE_URL lane-url.py passes `--without task-workflow` and the builder rows print `not-covered` (\"declared off on this fixture\") instead of failing on a control the service would have rendered. On a deployment the builder is measured, and its absence is a fail. Three signed-in surfaces (chat, People, Audit trail) are measured on both.",
+    "The signed-in surface at all, whenever no usable session exists: the factory mints one from the application's own key (.claude/scripts/lib/session.py), so this is now the case where that key is not in the app's secret store (a `target: vm` app that has not run --verify-db, which mints the pair into infra/vm/apps/<app>/.env), is not the key the deployment runs with, or the FDE identity belongs to no workspace there \u2014 and no operator lent a session in MOLD_V1_SESSION_TOKEN. session-live.py makes those checks `skipped` before a browser opens, and the LANE is then `skipped`. It is never `pass` on the strength of the signed-out rows alone (mold_v1-040), and never `fail` \u2014 an unusable session is not a defect of the application.",
     "Any identity but the application's own FDE. The minted session is for application.workspace.fde_self.email, the workspace owner; what a `member` or an invitee sees is measured only when an operator signs in as one and lends that session.",
     "Which identity's data is on screen, and how much of it. A workspace with a hundred members lays out differently from the one this session resolves to; the lane measures the workspace it was given.",
     "Real devices, real networks and real fingers. Chromium's mobile emulation sets viewport, touch and device pixel ratio; it does not reproduce a slow CPU, a slow radio, a notch, a software keyboard covering the field being typed into, or a browser's own chrome eating vertical space.",
