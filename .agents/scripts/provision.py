@@ -410,6 +410,16 @@ def ensure_blob_store(app_id, mold_dir, infra, proj):
                  f"""--input - <<< '{{"envVarEnvironments":["production","preview","development"],"projectId":"{meta['id']}","type":"integration"}}'""")
     print(f"  BLOB_READ_WRITE_TOKEN injected into {proj}")
 
+def mint_jwt_pair():
+    """The app's ES256 sign-in key pair (lib/auth-session.ts), as (private, public): base64 of PKCS8 / SPKI PEM.
+    ONE generator for both stores: provision_datastores writes it to the Vercel env, verify_db to
+    infra/vm/apps/<app_id>/.env, so lib/session.py can sign a session for a vm app the same way it does
+    for a vercel one (mold_v1-040). Never printed; the values go straight to the store."""
+    js = ("const{generateKeyPairSync}=require('crypto');const{publicKey:a,privateKey:b}=generateKeyPairSync('ec',{namedCurve:'P-256'});"
+          "console.log(Buffer.from(b.export({type:'pkcs8',format:'pem'})).toString('base64'));console.log(Buffer.from(a.export({type:'spki',format:'pem'})).toString('base64'))")
+    priv, pub = subprocess.check_output(["node", "-e", js], text=True).split()
+    return priv, pub
+
 def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
     pg, blob = ds.get("postgres", {}), ds.get("blob", {})
@@ -438,9 +448,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
         if name not in present:
             _add_env(name, subprocess.check_output(cmd, shell=True, text=True).strip(), mold_dir, proj); print(f"generated {name}")
     if "AUTH_JWT_PRIVATE_KEY" not in present:
-        js = ("const{generateKeyPairSync}=require('crypto');const{publicKey:a,privateKey:b}=generateKeyPairSync('ec',{namedCurve:'P-256'});"
-              "console.log(Buffer.from(b.export({type:'pkcs8',format:'pem'})).toString('base64'));console.log(Buffer.from(a.export({type:'spki',format:'pem'})).toString('base64'))")
-        priv, pub = subprocess.check_output(["node", "-e", js], text=True).split()
+        priv, pub = mint_jwt_pair()
         _add_env("AUTH_JWT_PRIVATE_KEY", priv, mold_dir, proj); _add_env("AUTH_JWT_PUBLIC_KEY", pub, mold_dir, proj); print("generated AUTH_JWT key pair")
     present = vercel_env_names(mold_dir, proj)
     if "POSTGRES_ADMIN_URL" not in present and "SUPABASE_POSTGRES_URL" in present:
@@ -1164,8 +1172,16 @@ def verify_db(app_id, mold_dir, ds, adir, infra):
         ev["running_app"], ev["running_app_detail"] = _health_rls(infra)
         record_rls(adir, ds, ev)
         _vm_env(app_id, {"POSTGRES_ADMIN_URL": adm, "DATABASE_URL": m.group(1)})
+        envf = os.path.join(ROOT, "infra/vm/apps", app_id, ".env")
+        have = {l.split("=", 1)[0] for l in open(envf) if "=" in l and l.split("=", 1)[1].strip()}
+        if "AUTH_JWT_PRIVATE_KEY" not in have:
+            # The same pair the vercel lane mints (provision_datastores), kept across re-runs like .pg-admin:
+            # a re-mint would orphan every session the lanes signed with the old key. It is what lets
+            # lib/session.py sign in as this app's own FDE on this box (mold_v1-040).
+            priv, pub = mint_jwt_pair()
+            _vm_env(app_id, {"AUTH_JWT_PRIVATE_KEY": priv, "AUTH_JWT_PUBLIC_KEY": pub}); print("generated AUTH_JWT key pair")
         print(f"verified: {app_id}'s local database is ready (no host port; `docker port {localpg.cont(app_id)}` is empty)")
-        print(f"  DATABASE_URL and POSTGRES_ADMIN_URL written to infra/vm/apps/{app_id}/.env — 0600, and ignored by\n"
+        print(f"  DATABASE_URL, POSTGRES_ADMIN_URL and the AUTH_JWT key pair written to infra/vm/apps/{app_id}/.env — 0600, and ignored by\n"
               f"  both infra/vm/apps/{app_id}/.gitignore and the root .gitignore, as are .pg-admin and pg/server.key")
     finally:
         if os.path.exists(envsup): os.remove(envsup)
@@ -1183,7 +1199,7 @@ VM_NOT_A_DEPLOY_TARGET = (
   '  To put it in front of users:     set "target": "vercel" in state/application/{app_id}/infrastructure.json,\n'
   '                                   then: python3 .claude/scripts/provision.py {app_id} --check')
 
-VM_PRODUCED = ("POSTGRES_ADMIN_URL", "DATABASE_URL")   # the only two secrets the vm lane creates (--verify-db)
+VM_PRODUCED = ("POSTGRES_ADMIN_URL", "DATABASE_URL", "AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY")   # all the vm lane creates (--verify-db)
 VM_STATUSES = ("planned", "reverted", "retired")        # the only statuses a vm app can hold (factory.py:VM_STATUSES)
 
 def vm_report(app_id, d, infra, ds):
@@ -1408,6 +1424,34 @@ def _revert(adir, app, reason):
     save(os.path.join(adir, "application.json"), app)
     print(f"  status set to reverted: {reason[:200]}")
 
+LIVE_PROJECTS = ("fde-agent", "fde-agent-api", "fde-task-workflow")   # read-only by the factory's founding rule
+
+def _refuse_live_or_shared_project(app_id, infra):
+    """Two refusals that every Vercel writer must pass, --set-secret first of all.
+
+    The live projects are read-only to this factory (AGENTS.md); until today nothing in provision.py
+    checked the name, so an infrastructure.json pointing vercel.project at fde-agent would have been
+    written to. And --set-secret returned before the "others already deploy to this project" check,
+    so a value could land in another app's environment namespace. Both found by the round-4 critic."""
+    proj = (infra.get("vercel") or {}).get("project", "")
+    mine = {proj, f"{proj}-api", f"{proj}-workflow"}
+    if mine & set(LIVE_PROJECTS) or proj in LIVE_PROJECTS:
+        sys.exit(f"{app_id}: vercel.project is {proj!r}, one of the LIVE projects this factory never writes to "
+                 f"({', '.join(LIVE_PROJECTS)}). Give the app its own project name in state/application/{app_id}/"
+                 f"infrastructure.json and rerun. Nothing was written.")
+    others = []
+    for o in sorted(os.listdir(os.path.join(ST, "application"))):
+        if o in (app_id, "app_id"): continue
+        f = os.path.join(ST, "application", o, "infrastructure.json")
+        try: op = (load(f).get("vercel") or {}).get("project", "")
+        except Exception: continue
+        if op and op == proj: others.append(o)
+    if others:
+        sys.exit(f"{app_id}: {', '.join(others)} already deploy to the Vercel project {proj}. One project is one "
+                 f"environment namespace and one app_rw password, so writing this app's secrets or resources there "
+                 f"would land in that app's environment. Give this app its own project in state/application/{app_id}/"
+                 f"infrastructure.json (vercel.project) and rerun. Nothing was written.")
+
 def main(a):
     if not a or a[0].startswith("-"): sys.exit(__doc__)   # `--help`, or a flag where the app id goes
     app_id = a[0]; deploy = "--deploy" in a
@@ -1437,6 +1481,8 @@ def main(a):
         sys.exit(f"{app_id}: status is {app.get('status')!r} but target is \"vm\", which never serves traffic and "
                  f"never reaches that status. Set \"status\": \"planned\" in state/application/{app_id}/"
                  f"application.json and rerun, or set \"target\": \"vercel\" to deploy it for real.")
+    if target == "vercel":
+        _refuse_live_or_shared_project(app_id, infra)   # ahead of --set-secret: it writes env into the project
     if "--set-secret" in a:
         return set_secret(app_id, a[a.index("--set-secret") + 1], infra, mold_dir)
     if "--verify-rls" in a:
@@ -1508,15 +1554,17 @@ def main(a):
         # overwrites this app's production deployment and its build cache.
         for p_, link in plan["git_links"].items(): sys.exit(GIT_LINK_MSG.format(project=p_, link=link))
         if writer:
-            if deploy:
-                # Refuse BEFORE creating: a database and a Blob store bought for an app the operator has
-                # not finished configuring is exactly the "check created things" shape, one flag over.
-                missing_user = [x for x in infra.get("secrets_user", secrets) if x not in present]
-                if missing_user:
-                    print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
-                    for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
-                    sys.exit(f"refusing to deploy: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
-                             f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} --deploy")
+            # Refuse BEFORE creating, for BOTH writers: a database and a Blob store bought for an app the
+            # operator has not finished configuring is exactly the "check created things" shape, one flag
+            # over — and --verify-db used to skip this gate, so it could buy resources --deploy would have
+            # refused to (found by the round-4 critic).
+            missing_user = [x for x in infra.get("secrets_user", secrets) if x not in present]
+            if missing_user:
+                verb = "--deploy" if deploy else "--verify-db"
+                print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
+                for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
+                sys.exit(f"refusing {verb}: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
+                         f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} {verb}")
             ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
             present = provision_datastores(app_id, ds, mold_dir, present, infra, proj)
             save(os.path.join(adir, "infrastructure.json"), infra)

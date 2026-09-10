@@ -149,7 +149,7 @@ same client.
 The short version:
 
 - **no usable session, no run.** `session-live.py`, each authenticated check's precondition, exits 1
-  when nothing could be signed (a `target: vm` app — the vm lane does not generate the pair), when the
+  when nothing could be signed (a `target: vm` app that has not run --verify-db, which mints the pair), when the
   deployment answers 401/403 (the factory's key is not the one it runs with), when the identity belongs
   to no workspace there, or when the session cannot outlive the run (`--min-remaining <timeout_s + 300>`).
   The check is `skipped` and, by the runner's rollup, the **lane** is `skipped` — never `pass`. A lane
@@ -197,7 +197,7 @@ nothing but green.
 Against a throwaway `target: vm` application (`sess_probe`: stamped by intake, database from
 `provision.py --verify-db`, the mold built from a scratch copy and started on 127.0.0.1 with that app's
 own `.env`, its workspace seeded by the mold's own `fde:new-org`; the key pair written into its `.env`
-by hand, because the vm lane does not generate one), each check exactly as `lane.json` runs it:
+by hand at the time; `--verify-db` now mints it, as the vercel lane does), each check exactly as `lane.json` runs it:
 
     python3 .claude/scripts/lib/session.py sess_probe -- node …/responsive.mjs --url http://127.0.0.1:3123 --only layout --auth
     session minted for priyesh@onfinance.in on sess_probe (ES256, key from infra/vm/apps/sess_probe/.env, 1800s of life)

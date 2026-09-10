@@ -143,7 +143,7 @@ rows are graded.
 accepts:
 
 - no usable session, no run. `session-live.py` is the check's precondition; it exits 1 when nothing could
-  be signed (a `target: vm` app — the vm lane does not generate the pair), when the deployment answers
+  be signed (a `target: vm` app that has not run --verify-db, which mints the pair), when the deployment answers
   401/403 (the factory's key is not the one the deployment runs with), when the identity belongs to no
   workspace, or when the session cannot outlive the check. The check is `skipped` and, by the runner's
   rollup, the **lane** is `skipped` — never `pass`.

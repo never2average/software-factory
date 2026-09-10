@@ -179,12 +179,43 @@ def _vm_url(app_id, docs):
     that field was typed in and names a server this factory did not deploy. Nothing this factory trusts
     reads it either — _health_rls returns `unmeasured` by construction — but lanes.py still takes it as
     the lane URL when vercel has none, so a stranger's endpoint could be graded as this app. Removing the
-    key from the schema alone would let it validate silently (the vm object is open); this names it."""
+    key from the schema alone let it validate silently while the vm object was open; the object is now closed
+    (additionalProperties false) AND this names it, and _target_objects closes the other door — the same URL
+    typed under `vercel` on a vm app, which lanes.py read first."""
     vm = (docs.get("infrastructure") or {}).get("vm") or {}
     if "production_url" not in vm: return []
     return [f"{app_id}/infrastructure.json: vm.production_url is set, but nothing on the vm lane starts a web process "
             f"(provision.py --deploy refuses target vm), so that URL names a server this factory did not deploy — "
             f"delete the vm.production_url line from state/application/{app_id}/infrastructure.json"]
+# The object each target owns; the other must be absent (lanes.py reads vercel.production_url FIRST, whatever the target).
+TARGET_OBJECT = {"vercel": "vercel", "vm": "vm"}
+def _target_objects(app_id, docs):
+    """A target=vm app must carry no `vercel` object, a target=vercel app no `vm` object (mold_v1-053).
+
+    _vm_url refuses vm.production_url by name, but nothing tied the `vercel` object to target=vercel: a vm
+    app with `"vercel": {"production_url": "http://127.0.0.1:3123"}` validated ok, and lanes.py's context()
+    reads vercel.production_url BEFORE vm.production_url, so that app was graded against whatever server
+    was typed there — the exact bypass the name-only refusal claimed to close. The schema cannot say
+    "vercel only when target is vercel" (this validator has no if/then), so the rule is here, and it is
+    the whole object, not just the URL keys: workflow_url, api_url and project all feed provision.py's
+    vercel path, and a vm app has no vercel path. The lanes group's dry run wanted a local URL for a vm
+    app; the honest home for that is a named field the schema documents and lanes.py reads on purpose,
+    never a key that a different target's deploy is supposed to write."""
+    infra = docs.get("infrastructure") or {}; target = infra.get("target")
+    if target not in TARGET_OBJECT: return []           # an unknown target is already a schema enum error
+    other = next(o for t, o in TARGET_OBJECT.items() if t != target)
+    if other not in infra: return []
+    keys = ", ".join(sorted(infra[other])) if isinstance(infra[other], dict) and infra[other] else "empty"
+    if target == "vm":
+        return [f"{app_id}/infrastructure.json: target is 'vm' but a vercel object is present ({keys}), and lanes.py grades "
+                f"vercel.production_url as this app's URL while nothing on the vm lane deploys one, so whatever server is typed "
+                f"there would be graded as this app — delete the whole \"vercel\" object from "
+                f"state/application/{app_id}/infrastructure.json, or set target to 'vercel' and run: "
+                f"python3 .claude/scripts/provision.py {app_id} --deploy"]
+    return [f"{app_id}/infrastructure.json: target is 'vercel' but a vm object is present ({keys}); the vm object describes the "
+            f"local-verification host of a vm app, which this app is not, so nothing here reads it and a host typed there is a "
+            f"dead claim — delete the whole \"vm\" object from state/application/{app_id}/infrastructure.json, or set target "
+            f"to 'vm' if this app is meant for local verification only"]
 def _rls_claim(app_id, docs):
     """`"rls": "fail_closed"` used to be a string literal that nothing in the factory ever read: intake
     stamped it into every app regardless of provider, scope or tenancy, validate checked it against a
@@ -378,7 +409,7 @@ def cmd_validate(a):
             if os.path.exists(f):
                 docs[name] = load(f); errs += _check(docs[name], load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
             else: errs.append(f"{app}: missing {name}.json")
-        errs += _vm_status(app, docs) + _vm_url(app, docs) + _rls_claim(app, docs)
+        errs += _vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _rls_claim(app, docs)
     errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)

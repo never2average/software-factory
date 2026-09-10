@@ -52,6 +52,20 @@ def state(app_id):
         die(f"{app_id}: no such application (state/application/{app_id}/application.json does not exist), so there is "
             f"no identity to sign in as. Nothing was minted.")
     app, infra = load(os.path.join(adir, "application.json")), load(os.path.join(adir, "infrastructure.json"))
+    # A HARNESS IDENTITY, NEVER A USER'S. The mold's own sign-in demands inbox proof (a six-digit code
+    # emailed to the person) and this helper supplies none, so a token it signs is legitimate ONLY as a
+    # test fixture against a database that serves nobody: a target=vm app on this box, in a status that
+    # says it serves nothing, with no production URL, whose key the FACTORY generated. Any app that could
+    # have a real user — a vercel target, a deployed status, a production URL — is refused outright.
+    # Found by the round-4 critic: the first version would have signed for any app's fde_self.
+    st = app.get("status"); tgt = infra.get("target"); purl = (infra.get("vercel") or {}).get("production_url")
+    if tgt != "vm" or infra.get("secret_store") != "vm_env_file":
+        die(f"{app_id}: target is {tgt!r} — this helper mints a HARNESS session for a local vm fixture only, never "
+            f"for an app that can serve a real person. Nothing was minted.")
+    if st not in ("planned", "reverted", "retired") or purl:
+        die(f"{app_id}: status {st!r}" + (f" with production_url {purl!r}" if purl else "") + " — a session may only be "
+            f"minted for a fixture that serves nobody. Nothing was minted.")
+    print(f"{app_id}: minting a HARNESS session for the local vm fixture (not a user sign-in)", file=sys.stderr)
     email = ((app.get("workspace") or {}).get("fde_self") or {}).get("email", "").strip().lower()
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", email):
         die(f"{app_id}: application.workspace.fde_self.email is missing, so there is no named person to sign in as. "
@@ -91,6 +105,9 @@ def env_file_value(path, name):
 def private_key(app_id, infra):
     """The app's private key by name, from its own store. Returns (pem, where) or dies with one instruction."""
     store = infra.get("secret_store")
+    if store != "vm_env_file":
+        die(f"{app_id}: secret_store is {store!r}; a session is only ever minted from a key the factory generated for a "
+            f"local vm fixture (infra/vm/apps/<app>/.env). A Vercel-held key is never used to sign one. Nothing was minted.")
     if store == "vm_env_file":
         f = os.path.join(ROOT, "infra/vm/apps", app_id, ".env"); where = f"infra/vm/apps/{app_id}/.env"
         if not os.path.isfile(f):
@@ -98,10 +115,10 @@ def private_key(app_id, infra):
                 f"first: python3 .claude/scripts/provision.py {app_id} --verify-db")
         raw = env_file_value(f, KEY)
         if raw is None:
-            die(f"{app_id}: {where} has no {KEY}. The vm lane does not generate the sign-in key pair (provision.py "
-                f"mints it on the vercel lane only), so nothing can sign a session for this app. Either sign in "
-                f"to the app yourself and pass that browser's fde-google-token as the lane's session variable, "
-                f"or add the pair to that file the way the vercel lane does.")
+            die(f"{app_id}: {where} has no {KEY}, so nothing can sign a session for this app. --verify-db mints the "
+                f"pair into that file (the same one the vercel lane mints): python3 .claude/scripts/provision.py "
+                f"{app_id} --verify-db. Or sign in to the app yourself and pass that browser's fde-google-token as "
+                f"the lane's session variable.")
         pem = pem_of(raw)
         if not pem: die(f"{app_id}: {KEY} in {where} is neither a PEM nor base64 of one. Regenerate the pair.")
         return pem, where

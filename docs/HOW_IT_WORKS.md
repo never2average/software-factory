@@ -46,7 +46,8 @@ resources if one is empty, else provision `<app-id-dashed>` on the free plan, ea
 temporary `sf-neon-inspect-*` project created and deleted in the same run); the Blob store `<app-id-dashed>` (create,
 or connect if the team already has one); and the env it mints (`CRON_SECRET`, `OPS_SECRETS_KEY`,
 `AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY`) — then `secrets present: n/N`, one `--set-secret NAME` line per
-missing operator secret, `a deploy will create: <derived names>`, `set during --deploy: <deploy-time names>`, and the
+missing operator secret, `a deploy will create: <derived names>`, `set during --deploy: <deploy-time names>`, a `--verify-rls` reminder
+while nothing has measured isolation yet, and the
 closing line `check only, read-only: nothing was created. Set the secret(s) above, then run: ... --deploy` (exit 1)
 or `... Ready: ... --deploy` (exit 0). It never sweeps `sf-neon-inspect-*` projects and no longer writes
 `infrastructure.json`. There is no copy-from-live path for external credentials: Vercel stores them write-only

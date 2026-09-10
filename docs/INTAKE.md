@@ -55,7 +55,7 @@ provider. `target: vm` starts no process, so nothing is forwarded there.
 | `vercel_ai_gateway` | `provider: gateway`, `model: anthropic/claude-sonnet-5`, no `context_window` (`model.ts` returns undefined in gateway mode and eve looks it up) | `gateway` | `AI_GATEWAY_API_KEY`, `RESEND_API_KEY`, `PLATFORM_NOTIFY_FROM` | `AI_GATEWAY_API_KEY`, plus the optional `GATEWAY_MODEL_ORCHESTRATOR`, `GATEWAY_MODEL_SPECIALIST`, `GATEWAY_REASONING_EFFORT` |
 
 Plus `EXA_API_KEY` / `BROWSERBASE_API_KEY` in `secrets_user` when web search / the browser are on, for either
-provider. `anthropic/claude-sonnet-5` is `agent/lib/model.ts`'s own default (lines 114-115): free-tier-safe, since the
+provider. `anthropic/claude-sonnet-5` is `agent/lib/model.ts`'s own default (lines 113-114): free-tier-safe, since the
 gateway's free tier refuses Opus. The gateway branch reads no Cloudflare name, so a gateway app declares none. The
 three `GATEWAY_*` names are optional and never asked for: set them on `<project>` by hand only to change the model
 or the reasoning effort; absent, the mold defaults apply. Brief hints: `ai gateway` / `vercel's gateway` select the
