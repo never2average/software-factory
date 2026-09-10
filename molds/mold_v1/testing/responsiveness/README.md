@@ -231,9 +231,9 @@ deployment the builder is measured. The accessibility README, "Measuring a vm fi
 starting the fixture took (the four env names `--verify-db` writes, the database host rewritten from the
 network alias to the container's address, `fde:new-org` for the workspace). Then:
 
-    MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py lane_probe --lane responsiveness --dry-run
+    MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py v040fix --lane responsiveness --dry-run
 
-    responsiveness   fail     4/6 passed  molds/mold_v1/testing/responsiveness/reports/dry/lane_probe-2026-09-10T033722Z.md
+    responsiveness   fail     5/6 passed  molds/mold_v1/testing/responsiveness/reports/dry/v040fix-2026-09-10T053842Z.md
 
     layout.matrix, tap.targets, interaction.latency   pass   signed out: 12 + 6 + 8 rows, every one measured
     layout.matrix.authenticated        fail   16 rows: 8 pass, 4 fail, 4 declared not covered (builder x4)
@@ -243,17 +243,17 @@ network alias to the container's address, `fde:new-org` for the workspace). Then
       layout /workspace people @ 320 and 390  fail  "Actions" clipped by an overflow-x:hidden ancestor
       layout audit x4, chat/people @ 820/1440 pass  hOverflow 0px, CLS 0.0000-0.0174
     tap.targets.authenticated          pass   8 rows: 6 pass (13-20 targets each, none under 24px), builder x2 not-covered
-    interaction.latency.authenticated  fail   16 rows: 11 pass, 1 fail, builder x4 not-covered
-      interaction / chat click @ desktop-1440 fail  INP over budget 200ms on all 3 runs: 208/208/224ms
-      the other 11                            pass  INP 32-144ms
+    interaction.latency.authenticated  pass   16 rows: 12 pass, builder x4 not-covered; INP 16-184ms, the desktop chat
+                                              click needed the repeat (240ms then 184ms, best under the 200ms budget)
     footer, every signed-in run               0 requests to the live projects or /eve/v1 blocked · 0 non-GET blocked
 
-The layout rows are the same defects the hand-driven run found on 2026-09-09; the one INP miss is a
-marginal overshoot on this shared box (208ms against 200ms, three times), which is exactly the case the
-repeat-and-confirm rule prints every sample for. Either way the verdict is a `fail` reached by `lanes.py`
-itself, over the product surface, with no human in the loop — which is what mold_v1-040 asked for. The
-report was a `--dry-run` on a throwaway that was then removed with its container, volume, network and
-state.
+This is the run of 2026-09-10 (throwaway `v040fix`; the accessibility README's "Measuring a vm fixture"
+lists the five steps it took, verbatim). An earlier attempt the same morning against `v040probe` left a
+0-byte report for this lane — the run was interrupted, so until this one no `lanes.py` run had measured
+the signed-in half of responsiveness. The layout rows are the same defects the hand-driven run found on
+2026-09-09. The verdict is a `fail` reached by `lanes.py` itself, over the product surface, with no human
+in the loop — which is what mold_v1-040 asked for. The report was a `--dry-run` on a throwaway that was
+then removed with its container, volume, network and state.
 
 ## What this lane does *not* cover
 

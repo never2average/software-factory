@@ -324,20 +324,34 @@ the factory did not verify. The same script hands the harness `--without task-wo
 so the workflow builder is declared `not-covered` with that reason instead of failing on a control the
 task-workflow service would have rendered; on a deployment it is measured.
 
-What it took, against a throwaway `lane_probe` (intake from a five-line brief; `provision.py lane_probe
---verify-db`; the mold copied to a scratch directory — never built in place — with a hard-linked
-`node_modules`, `npm run build`, then `next start -H 127.0.0.1 -p 3123`). The env the app needed was
-exactly the four names `--verify-db` wrote into `infra/vm/apps/lane_probe/.env` — `DATABASE_URL`,
-`POSTGRES_ADMIN_URL`, `AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY` — with the database host rewritten
-from the network alias `db` to the container's address, because the mold ran on the host rather than on
-the app's private docker network; the workspace was seeded with the mold's own `fde:new-org` (owner =
-`application.workspace.fde_self.email`), run once with `DATABASE_URL` set to the admin URL because the
-seed writes rows the app_rw role's policies do not let it insert. Beyond `NEXT_TELEMETRY_DISABLED=1` no other
-variable was set. Then:
+What it took, run today (2026-09-10) against a throwaway `v040fix` — a copy of a validated vm app's
+state under a new id, registered in `state/factory.json` and `state/products.json`, then removed with its
+container, volume, network, state and reports. Every step below was executed in that order and the
+outputs quoted are the ones it printed:
 
-    MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py lane_probe --lane accessibility --dry-run
+1. `python3 .claude/scripts/provision.py v040fix --verify-db` — brought up `pg-v040fix` on the private
+   network `sf-v040fix`, ran the mold's schema chain, proved isolation (52/52 org-scoped tables), and
+   wrote exactly four names into `infra/vm/apps/v040fix/.env` (mode 600): `POSTGRES_ADMIN_URL`,
+   `DATABASE_URL`, `AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY` (`generated AUTH_JWT key pair`).
+2. The mold copied to a scratch directory — never built in place — with a hard-linked `node_modules`,
+   `npm run build` (exit 0), then `next start -H 127.0.0.1 -p 3123`. **The env the app needed was those
+   four names and nothing else** (plus `NEXT_TELEMETRY_DISABLED=1`), with the database host in the two
+   URLs rewritten from the network alias `db` to the container's address (`docker inspect` of
+   `pg-v040fix`), because the mold ran on the host rather than on the app's private network. No inference,
+   blob, mail or task-workflow variable was set; the three signed-in surfaces render without them.
+3. The workspace seeded once with the mold's own `npm run fde:new-org -- --name "Fix 040" --id fix-040
+   --domain onfinance.in --owner <application.workspace.fde_self.email>`, with a `.env.local` in the
+   SCRATCH copy holding `DATABASE_URL=<the admin URL>` (the seed writes rows the app_rw role's policies do
+   not let it insert; the file was deleted right after). It created the `orgs` row and the owner +
+   platform-admin membership, then its own `recipes` insert failed on a NULL `org_id` — a defect of the
+   mold's seed script, not of the lane; membership is what the session needs and it was there.
+4. `python3 .claude/scripts/lib/session.py v040fix -- python3 molds/mold_v1/testing/accessibility/session-live.py http://127.0.0.1:3123 --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` printed
+   `session accepted for <fde_self.email> · member of 1 workspace(s) · 1798s left (needs 1200s)`.
+5. Then the runner itself:
 
-    accessibility    fail     2/3 passed  molds/mold_v1/testing/accessibility/reports/dry/lane_probe-2026-09-10T033649Z.md
+    MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py v040fix --lane accessibility --dry-run
+
+    accessibility    fail     2/3 passed  molds/mold_v1/testing/accessibility/reports/dry/v040fix-2026-09-10T053805Z.md
 
     axe.wcag21aa            pass   3 rows: /, /onboard, /workspace signed out
     keyboard.traversal      pass   3 rows + the builder signpost (not-covered, as always signed out)
@@ -355,13 +369,14 @@ variable was set. Then:
 The four failing rows are the same mold defects the hand-driven run found on 2026-09-09 — a real
 verdict on the product surface, reached by `lanes.py` with no human in the loop, which is what
 mold_v1-040 asked for. It is a `fail`, as it should be: a lane that measures the ops centre and finds
-a select with no name does not pass. The report was a `--dry-run` (reports/dry/, no state written) on a
-throwaway that was then removed with its container, volume, network and state.
+a select with no name does not pass. The report was a `--dry-run` (reports/dry/, no state written).
 
-Without `MOLD_V1_LANE_URL` the same command is `skipped` at the gate with the instruction above
-(`lanes.py lane_probe --list --lane accessibility` shows it); with a non-loopback address
-(`http://10.0.0.5:3123`), an https URL, or a vercel app, `lane-url.py` refuses and the lane is
-`skipped` — never measured against a server the factory did not verify.
+The guards, measured the same day: without `MOLD_V1_LANE_URL` the same command is `skipped` at the
+gate with the instruction above (`0/3 passed`, no browser opened); `MOLD_V1_LANE_URL=http://10.0.0.5:3123`
+is refused by `lane-url.py`; for a vercel app the variable is ignored and `production_url` wins;
+`session.py <vercel app> --explain` refuses (`target is 'vercel'`); and a session signed with ANOTHER
+vm app's key against this fixture is refused by the fixture itself (`/api/ops/orgs` 401) and the check is
+`skipped`, never graded.
 
 ## What is still manual
 
