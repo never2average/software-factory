@@ -26,7 +26,7 @@ may not handle secret values). Missing secrets are the user's to set; report nam
    same run), the Blob store `<app-id-dashed>` (create, or connect if the team already has one) and the env it mints
    (`CRON_SECRET`, `OPS_SECRETS_KEY`, `AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY`); then `secrets present: n/N`, one
    `--set-secret NAME` line per missing operator secret, `a deploy will create: <derived names>`, `set during
-   --deploy: <deploy-time names>`, and the closing line `check only, read-only: nothing was created. Set the secret(s)
+   --deploy: <deploy-time names>`, a `--verify-rls` reminder while nothing has measured isolation, and the closing line `check only, read-only: nothing was created. Set the secret(s)
    above, then run: ... --deploy` (exit 1) or `... Ready: ... --deploy` (exit 0). It never creates, deletes or writes
    anything remote, never sweeps `sf-neon-inspect-*` projects, and does not write `infrastructure.json`. On
    `target: vm` it only regenerates `infra/vm/apps/<app>/` (local files).

@@ -85,10 +85,12 @@ This creates nothing, anywhere. On a Vercel app it only reads: whether the three
 and Blob stores the team has. Then it prints, in this order: each project as `exists` / `does not exist`; `a deploy
 will create:` with the projects, the Neon database (adopt a spare if one is empty, else a fresh one on the free
 plan), the Blob store and the internal secrets it will mint; `secrets present: n/N`; one `--set-secret` line for
-every credential from §0 you still have to set; and the last line `check only, read-only: nothing was created.`
-followed by either `Set the secret(s) above, then run: ... --deploy` or `Ready: ... --deploy`. Run it as often as
-you like. If it stops with a one-line instruction (a project reconnected to git, a provider the target cannot use),
-do that and run it again.
+every credential from §0 you still have to set; `a deploy will create: <the names the deploy mints>` and `set during
+--deploy: <the names the deploy fills>` (neither is yours to set); a reminder to run `--verify-rls` while nothing
+has measured tenant isolation yet (a new app always shows it; §5 measures it); and the last line `check only,
+read-only: nothing was created.` followed by either `Set the secret(s) above, then run: ... --deploy` or `Ready: ...
+--deploy`. Run it as often as you like. If it stops with a one-line instruction (a project reconnected to git, a
+provider the target cannot use), do that and run it again.
 
 ## 4. The credentials (you, at the terminal)
 

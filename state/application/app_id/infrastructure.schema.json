@@ -13,7 +13,8 @@
       "enum": [
         "vercel",
         "vm"
-      ]
+      ],
+      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app \u2014 which this factory never deploys \u2014 with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here."
     },
     "vercel": {
       "type": "object",
@@ -93,7 +94,8 @@
           "type": "string"
         }
       },
-      "description": "Only what the lane provisions. There is deliberately NO production_url here: nothing on the vm lane starts a web process (infra/vm/README.md; provision.py VM_NO_PROCESS), so any URL typed into this object names a server this factory did not deploy, and factory.py validate refuses the key by name rather than letting a dead field validate silently (mold_v1-053)."
+      "description": "Only what the lane provisions, and nothing else (additionalProperties is false): the vm lane never starts a web process (infra/vm/README.md; provision.py VM_NO_PROCESS), so a URL under ANY key here would name a server this factory did not deploy. production_url was removed and is also refused by name in factory.py validate (mold_v1-053); an open object let any other spelling validate silently, so the object is now closed. A target=vercel app must not carry this object at all \u2014 validate refuses it, see `target`.",
+      "additionalProperties": false
     },
     "inference": {
       "type": "object",
