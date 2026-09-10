@@ -10,7 +10,7 @@ Products live in `state/products.json` (what a product is: `docs/PRODUCTS.md`). 
 2. Work tasks via the `task` skill. `close` auto-advances the stage once every task marked with that `advances_stage` is done.
 3. Never edit `stage` by hand. Never edit a gate to make it pass; edit it only when it names something that is no longer true, and say so in the commit.
 
-Stage meaning: stamped = an app exists and builds. lanes_passing = five lanes pass. deployed = reachable in production with secrets by name and GLM 5.2 live. released = onboarding, docs and cost model done; a customer can be onboarded without the operator.
+Stage meaning: stamped = an app exists and builds. lanes_passing = five lanes pass. deployed = reachable in production with secrets by name and the app's inference provider live (GLM 5.2 on Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway). released = onboarding, docs and cost model done; a customer can be onboarded without the operator.
 
 ## The `released` deliverables (mold_v1-012)
 
@@ -18,7 +18,7 @@ Documentation, not mold code. Each file must match the scripts as they are — a
 
 | Deliverable | File | Test |
 |---|---|---|
-| Onboarding runbook | `docs/RUNBOOK.md` | every command in it exists; the four credentials it asks for are the ones `intake.py` puts in `secrets_user` |
+| Onboarding runbook | `docs/RUNBOOK.md` | every command in it exists; the credentials it asks for are the ones `intake.py` puts in `secrets_user` for each inference provider (four on Cloudflare, three on the gateway) |
 | Packaging | `docs/PRODUCTS.md` | matches `state/products.json` and `products.schema.json`; stage-gate text in the JSON is currently true |
 | Cost model | `docs/COST_MODEL.md` | every number is measured, fetched with a URL and date, or marked `PLACEHOLDER`; nothing invented |
 

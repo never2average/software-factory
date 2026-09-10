@@ -23,13 +23,14 @@ Fable + sol --service--> [dm.md, browser(o/o), web search(o/o), primary_context,
 
 ```
 python3 .claude/scripts/intake.py briefs/<app>.md --app <app> [--ask]   # brief -> state, asks only unresolved questions
-python3 .claude/scripts/provision.py <app>                              # check secrets by name — on a vercel app this also CREATES projects and datastores (mold_v1-041)
-python3 .claude/scripts/provision.py <app> --set-secret NAME            # type one credential at a hidden prompt (human terminal)
-python3 .claude/scripts/provision.py <app> --deploy                     # deploy to vercel (proves app_rw + RLS first)
+python3 .claude/scripts/provision.py <app>                              # check, READ-ONLY: what exists, what a deploy will create, which secrets you still set
+python3 .claude/scripts/provision.py <app> --set-secret NAME            # type one credential at a hidden prompt (human terminal); creates the three empty projects if absent, and says so first
+python3 .claude/scripts/provision.py <app> --deploy                     # prints "about to create:", refuses if a secret is missing (nothing created), else creates projects + datastores and deploys (proves app_rw + RLS first)
 python3 .claude/scripts/lanes.py <app>                                  # the five testing lanes; a fail reverts the app
 ```
 
-Subagents `intake` and `provisioner` run `intake.py` and `provision.py` and ask the user through the harness; the `run-lanes` skill runs `lanes.py`. Questions and their resolution rules: `docs/INTAKE.md`.
+The check creates, deletes and writes nothing remote; resource creation happens only under `--deploy` (and `--verify-db`, its
+database half), after the plan is printed and every operator secret is present. Subagents `intake` and `provisioner` run `intake.py` and `provision.py` and ask the user through the harness; the `run-lanes` skill runs `lanes.py`. Questions and their resolution rules: `docs/INTAKE.md`.
 
 ## Tasking
 

@@ -3,18 +3,21 @@
 
   provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]
 
---check (default): verify every secret named in infrastructure.json exists in the
-  secret store (Vercel env for vercel_env; infra/vm/apps/<app_id>/.env for vm_env_file),
-  regenerate the app's local artifact, print what is missing. It builds and deploys nothing.
-  IT IS NOT READ-ONLY, and on target=vercel it is not local either. Before it can count a
-  secret it calls ensure_projects (creates <proj>, <proj>-api, <proj>-workflow if absent) and
-  provision_datastores (adopts a spare Neon resource or provisions a new one on the Marketplace,
-  and creates a temporary sf-neon-inspect-* project per candidate to read the table count from —
-  a project it deletes through the REST API (the only delete that works unattended on CLI 59.11.7),
-  after first sweeping any sf-neon-inspect-* project an earlier interrupted run left behind). A --check of an app whose
-  datastores are not provisioned yet therefore creates real, billable, team-visible resources.
-  Read it as "check and provision, do not build"; only --deploy puts code in front of traffic.
---deploy: run the deploy for the target. Refuses if any secret is missing.
+--check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
+  projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare
+  Neon resources and Blob store the team has (list calls), whether a project is still git-linked, and
+  prints (a) what is missing, (b) the secrets the operator must set, and (c) exactly what a deploy WILL
+  create. No project, database, Blob store, scratch project or env var is created, deleted or written
+  (mold_v1-041: it used to call ensure_projects and provision_datastores before counting a secret, so a
+  "check" built real, billable, team-visible resources). Exit 0 = ready for --deploy, 1 = the operator
+  still has to set a secret. On target=vm it regenerates infra/vm/apps/<app_id>/ (local files only).
+--set-secret NAME: type one credential at a hidden prompt; written encrypted to all three projects.
+  On a vercel app whose projects do not exist yet, it CREATES them first (three empty, free projects
+  with no deployment — the value needs somewhere to live) and says so before it does.
+--deploy: prints the plan — the projects, database, Blob store and minted env it is about to create —
+  then, if every operator-set secret is present, creates them and runs the deploy. If one is missing it
+  refuses BEFORE creating anything and lists the --set-secret commands. Resource creation lives here
+  and in --verify-db only; the check never creates.
 --verify-db: stand up this app's LOCAL database (private docker network, no host port) and run
   the whole mold chain against it — push, migrate, RLS + app_rw bootstrap, task-workflow — then
   cover every org-scoped table and PROVE the resulting URL cannot read another workspace's rows.
@@ -134,6 +137,10 @@ def ensure_projects(proj, mold_dir):
         if not _project_meta(p, mold_dir).get("id"):
             sys.exit(f"could not create the Vercel project {p}: " + (r.stdout + r.stderr).strip()[-200:])
         print(f"  created Vercel project {p}")
+        # `project add` runs inside the factory checkout and the CLI may auto-connect the new project to
+        # that repo; every push would then build the factory root as this app. Unlink it in the same
+        # breath it was created, not after the first deploy.
+        disconnect_git(p, mold_dir)
 
 def _neon_spares(mold_dir):
     """Every Neon resource on this team that is available and attached to no project."""
@@ -456,10 +463,54 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
 # Set during --deploy, so `--check` must not report them missing. DATABASE_URL belongs here now that
 # nothing else may write it: bring_up_schema mints it from the app_rw bootstrap once the gate passes.
 DEPLOY_TIME = ["TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT_PUBLIC_EVE_API_URL", "MODEL_PROVIDER", "DATABASE_URL"]
-API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CRON_SECRET", "DATABASE_URL", "OPS_MULTI_TENANT",
+# Everything the eve API process (agent/lib/model.ts runs there) may read, for BOTH inference providers.
+# The gateway names were absent (mold_v1-051): MODEL_PROVIDER=gateway hands a bare model id to the AI SDK,
+# whose gateway provider (@ai-sdk/gateway 4.0.12, dist/index.js:2656) authenticates with AI_GATEWAY_API_KEY,
+# and model.ts:114-115 reads GATEWAY_MODEL_ORCHESTRATOR / GATEWAY_MODEL_SPECIALIST (default
+# anthropic/claude-sonnet-5) and agentReasoning() GATEWAY_REASONING_EFFORT. Without the key here a gateway
+# app passed --check and ran without a credential. intake.py reads this list to refuse a provider whose
+# secret is not forwarded; sync_env reports a missing name only when THIS app declares it.
+API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "AI_GATEWAY_API_KEY",
+           "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT", "CRON_SECRET", "DATABASE_URL", "OPS_MULTI_TENANT",
            "MODEL_PROVIDER", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "EXA_API_KEY", "BROWSERBASE_API_KEY",
            "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID"]
+# Absent means "feature off" or "the mold's default", never a broken deploy.
+OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GOOGLE_CLIENT_ID", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT")
 WORKFLOW_ENV = ["DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN"]
+
+def vercel_plan(app_id, infra, ds, mold_dir, proj):
+    """What EXISTS for this app on Vercel and what a writer (--deploy, --verify-db, --set-secret) WOULD
+    create. Built from GET and list calls only — this is the whole of what --check may do remotely, and
+    --deploy prints it before creating anything. Every creator this names lives in ensure_projects,
+    provision_datastores and set_secret; nothing here calls them."""
+    projects = {p: bool(_project_meta(p, mold_dir).get("id")) for p in (proj, f"{proj}-api", f"{proj}-workflow")}
+    present = vercel_env_names(mold_dir, proj) if projects[proj] else set()
+    pg, blob = ds.get("postgres", {}), ds.get("blob", {}); prov = pg.get("provider", "supabase")
+    create = []
+    missing = [p for p, ok in projects.items() if not ok]
+    if missing: create.append(f"Vercel project(s) {', '.join(missing)} — empty, free, no deployment (also created by --set-secret, which needs them)")
+    if pg.get("scope") == "fresh" and prov in DB_SENTINEL and DB_SENTINEL[prov] not in present:
+        if prov == "neon":
+            spares = _neon_spares(mold_dir)
+            create.append(f"a Neon database: adopt one of the team's {len(spares)} unattached resource(s) ({', '.join(spares) or 'none'}) "
+                          f"if it is empty, else provision a fresh '{app_id.replace('_', '-')}' on the Marketplace free plan; each candidate is "
+                          f"inspected through a temporary sf-neon-inspect-* project, created and deleted in the same run")
+        elif prov == "supabase": create.append(f"a Supabase project '{app_id}' on the Marketplace")
+        else: create.append(f"nothing for postgres.provider={prov!r}: it has no provisioner on target=vercel and the deploy will refuse")
+    if blob.get("provider") == "vercel_blob" and "BLOB_READ_WRITE_TOKEN" not in present:
+        name = app_id.replace("_", "-")
+        create.append(f"connect the team's existing Blob store '{name}' to {proj}" if _blob_store(name, mold_dir)
+                      else f"a private Blob store '{name}', connected to {proj}")
+    minted = [n for n in (*GENERATED, "AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY") if n not in present]
+    if minted: create.append(f"env on {proj}: {', '.join(minted)} (minted locally; never an external credential)")
+    links = {p: git_link(p, mold_dir) for p, ok in projects.items() if ok}
+    return {"projects": projects, "present": present, "create": create, "git_links": {p: l for p, l in links.items() if l}}
+
+def print_plan(plan, heading):
+    for p, ok in plan["projects"].items(): print(f"  project {p}: {'exists' if ok else 'does not exist'}")
+    if not plan["create"]: return print("  nothing remote left to create")
+    print(heading)
+    for c in plan["create"]: print(f"  - {c}")
 
 def pull_env(mold_dir, project, environment="production", required=True):
     """This app's env values. `required=False` returns {} instead of exiting: the candidate-database
@@ -534,7 +585,10 @@ def deploy(cfg, mold_dir):
     if r.returncode or not urls: sys.exit(f"deploy with {cfg} failed:\n" + (r.stdout + r.stderr).strip()[-1500:])
     return urls[-1]
 
-def sync_env(names, vals, project, mold_dir):
+def sync_env(names, vals, project, mold_dir, declared=None):
+    """Copy `names` from the main project's values onto `project`. `declared` (infrastructure.secrets)
+    limits the "set once by hand" report to names THIS app uses: API_ENV carries both providers'
+    credentials, and the other provider's name is unused, not unreadable."""
     have = vercel_env_names(mold_dir, project); n = 0
     # with pull_env dropping [SENSITIVE], vals.get(k) is None for anything unreadable at the source
     blocked = [k for k in names if k not in have and not vals.get(k)]
@@ -543,7 +597,7 @@ def sync_env(names, vals, project, mold_dir):
     for k in names:
         if k in have or not vals.get(k): continue
         _set_env(k, vals[k], mold_dir, project=project); n += 1
-    blocked = [k for k in blocked if k not in ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GOOGLE_CLIENT_ID")]   # optional
+    blocked = [k for k in blocked if k not in OPTIONAL_ENV and (declared is None or k in declared)]
     print(f"  {project}: synced {n} env var(s)" + (f"; unreadable at the source, set once by hand: {', '.join(blocked)}" if blocked else ""))
 
 def _node_lib(script, env, mold_dir):
@@ -888,7 +942,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=proj)
         vals = pull_env(mold_dir, proj)
         # eve api: build here with the experimental framework, ship prebuilt
-        print("deploying eve api (vercel build --prebuilt)"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir); set_framework(f"{proj}-api", "eve", mold_dir)
+        print("deploying eve api (vercel build --prebuilt)"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir, declared=infra.get("secrets")); set_framework(f"{proj}-api", "eve", mold_dir)
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=f"{proj}-api")
         subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
@@ -1181,6 +1235,12 @@ def set_secret(app_id, name, infra, mold_dir):
     if not value: sys.exit("nothing entered")
     if infra.get("target") == "vercel":
         proj = infra["vercel"]["project"]; projects = [proj, f"{proj}-api", f"{proj}-workflow"]
+        absent = [p for p in projects if not _project_meta(p, mold_dir).get("id")]
+        if absent:
+            # The value needs somewhere to live and the API answers 404 for a project that does not exist.
+            # --check never creates these (mold_v1-041); this writer does, and says so first.
+            print(f"creating the Vercel project(s) {', '.join(absent)} to hold {name} (empty, free, no deployment) ...")
+            ensure_projects(proj, mold_dir)
         for p in projects: _set_env(name, value, mold_dir, project=p)
         where = f"{len(projects)} project(s)"
     else:
@@ -1438,15 +1498,28 @@ def main(a):
                      f"environment namespace and one app_rw password, so provisioning this app would rewrite that "
                      f"app's DATABASE_URL and rotate its database password. Give this app its own project in "
                      f"state/application/{app_id}/infrastructure.json (vercel.project) and rerun.")
-        ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
-        present = vercel_env_names(mold_dir, proj)
-        present = provision_datastores(app_id, ds, mold_dir, present, infra, proj)
-        save(os.path.join(adir, "infrastructure.json"), infra)
+        # A CHECK IS READ-ONLY (mold_v1-041). Everything below up to `writer` is GETs and list calls; the
+        # plan says what a writer would create, and only --deploy / --verify-db go on to create it.
+        writer = deploy or "--verify-db" in a
+        plan = vercel_plan(app_id, infra, ds, mold_dir, proj)
+        print_plan(plan, "about to create:" if writer else "a deploy will create:")
+        present = plan["present"]
         # report a reconnected project before anyone deploys: a git-sourced build of the factory repo
         # overwrites this app's production deployment and its build cache.
-        for p_ in (proj, f"{proj}-api", f"{proj}-workflow"):
-            link = git_link(p_, mold_dir)
-            if link: sys.exit(GIT_LINK_MSG.format(project=p_, link=link))
+        for p_, link in plan["git_links"].items(): sys.exit(GIT_LINK_MSG.format(project=p_, link=link))
+        if writer:
+            if deploy:
+                # Refuse BEFORE creating: a database and a Blob store bought for an app the operator has
+                # not finished configuring is exactly the "check created things" shape, one flag over.
+                missing_user = [x for x in infra.get("secrets_user", secrets) if x not in present]
+                if missing_user:
+                    print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
+                    for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
+                    sys.exit(f"refusing to deploy: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
+                             f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} --deploy")
+            ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
+            present = provision_datastores(app_id, ds, mold_dir, present, infra, proj)
+            save(os.path.join(adir, "infrastructure.json"), infra)
         if "--verify-db" in a:
             # the database half of --deploy, on its own: no build, no deployment, no service touched
             _, ev = bring_up_schema(app_id, mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
@@ -1483,7 +1556,7 @@ def main(a):
         print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
         for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
     if missing_derived:
-        print("provisioner still has to create:"); [print(f"  {m}") for m in missing_derived]
+        print(("a deploy will create: " if not deploy else "the provisioner did not produce: ") + ", ".join(missing_derived))
     pending_deploy = [x for x in DEPLOY_TIME if x not in present]
     if pending_deploy: print(f"set during --deploy: {', '.join(pending_deploy)}")
     ev = ds.get("postgres", {}).get("rls_verified")
@@ -1494,7 +1567,11 @@ def main(a):
         print(f"  python3 .claude/scripts/provision.py {app_id} --verify-rls")
     elif ev: print(f"tenant isolation last proven {ev['at']} on {ev['backend']} ({ev.get('protected')}/{ev.get('org_scoped_tables')} org-scoped tables protected)")
     if not deploy:
-        print("check only; re-run with --deploy once nothing is missing"); sys.exit(1 if (missing_user or missing_derived) else 0)
+        # Exit 1 only for something the OPERATOR must do; derived names are the deploy's job and were
+        # listed above as what it will create.
+        print("check only, read-only: nothing was created. " + (f"Set the secret(s) above, then run:" if missing_user else "Ready:")
+              + f" python3 .claude/scripts/provision.py {app_id} --deploy")
+        sys.exit(1 if missing_user else 0)
     if missing_user or missing_derived: sys.exit("refusing to deploy with missing secrets")
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
     try:

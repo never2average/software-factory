@@ -87,6 +87,16 @@ def slug(s): return re.sub(r"[^a-z0-9-]+", "-", s.lower()).strip("-")
 # app must never name a secret its provider does not read.
 INFERENCE_SECRETS = {"cloudflare_workers_ai": ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"],
                      "vercel_ai_gateway": ["AI_GATEWAY_API_KEY"]}
+# What each provider SERVES, read from agent/lib/model.ts — (MODEL_PROVIDER value, model id, context window):
+#   cloudflare: CLOUDFLARE_MODEL, default "@cf/zai-org/glm-5.2", window CLOUDFLARE_CONTEXT_WINDOW default 262144;
+#   gateway:    GATEWAY_MODEL_ORCHESTRATOR / GATEWAY_MODEL_SPECIALIST, both default "anthropic/claude-sonnet-5"
+#               (the free-tier-safe defaults; Opus is refused there), and NO window: modelContextWindowTokens()
+#               returns undefined in gateway mode and eve looks it up, so none is recorded.
+# application.model used to be the factory default for every app, so a gateway app recorded the Cloudflare
+# model id while its runtime served Claude (mold_v1-051). The factory default `inference_model` is a
+# Cloudflare id and only ever overrides the cloudflare row.
+INFERENCE_MODEL = {"cloudflare_workers_ai": ("cloudflare", "@cf/zai-org/glm-5.2", 262144),
+                   "vercel_ai_gateway": ("gateway", "anthropic/claude-sonnet-5", None)}
 def unforwarded(target, provider):
     """Names in INFERENCE_SECRETS[provider] that the target's deploy never hands to the process running
     agent/lib/model.ts. On Vercel that process is the `<project>-api` deployment, and the ONLY list
@@ -215,6 +225,8 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     if ans["inference_provider"] not in INFERENCE_SECRETS:
         sys.exit(f"inference_provider must be one of {', '.join(INFERENCE_SECRETS)}, not {ans['inference_provider']!r}")
     user_secrets = [*INFERENCE_SECRETS[ans["inference_provider"]], "RESEND_API_KEY", "PLATFORM_NOTIFY_FROM"]
+    model_provider, model_id, window = INFERENCE_MODEL[ans["inference_provider"]]
+    if model_provider == "cloudflare": model_id = d.get("inference_model") or model_id
     if ans["web_search"]: user_secrets.append("EXA_API_KEY")
     if ans["browser"]: user_secrets.append("BROWSERBASE_API_KEY")
     # Provider-dependent, because provision.py blocks the deploy on every name in this list. It used to
@@ -247,7 +259,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
       "web_search": {"enabled": ans["web_search"], "default_on_for_agent": ans["web_search"]},
       "primary_context": {
         "corpus": corpus,
-        "instructions": {"default_mode": "build", "model": d.get("inference_model", "@cf/zai-org/glm-5.2"), "subagents": []},
+        "instructions": {"default_mode": "build", "model": model_id, "subagents": []},
         "memory": {"scopes": ["team", "customer", "person"], "sensitivity_ceiling": "internal"},
         "entity_vocabulary": {"account_noun": hints.get("account_noun", "customer")}},
       "multiplayer_context": {
@@ -267,7 +279,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         surface["primary_context"]["entity_vocabulary"]["note"] = "mold_v1 cannot rename accounts; recorded for the parity audit"
     app = {"$schema":"../app_id/application.schema.json","app_id":app_id,"mold_id":mold_id,"mold_commit":mold.get("source",{}).get("commit",""),
       "status":"planned","brief":os.path.relpath(brief_path, ROOT),"product_id":prod["product_id"],
-      "model":{"provider":"cloudflare" if ans["inference_provider"]=="cloudflare_workers_ai" else "gateway","model":d.get("inference_model","@cf/zai-org/glm-5.2"),"context_window":262144},
+      "model":{"provider":model_provider,"model":model_id,**({"context_window":window} if window else {})},
       "capabilities":{"web_search":ans["web_search"],"browser":ans["browser"],"multi_tenant":ans["multi_tenant"]},
       "service_surface":[s["name"] for s in factory["service_surface"] if not s.get("optional") or ans.get(s["name"], True)],
       "workspace": workspace, "surface": surface,

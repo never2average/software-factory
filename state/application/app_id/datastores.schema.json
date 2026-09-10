@@ -54,7 +54,9 @@
           "properties": {
             "at": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+              "description": "The instant of the measurement, as an RFC 3339 date-time WITH offset (provision.py's NOW, e.g. 2026-09-09T14:03:27+00:00). factory.py validate orders this exactly against infrastructure.deployed_at and refuses an offset-less value; the schema pattern now refuses the same spellings, so schema and reader agree for every timestamp they share, not only deployed_at (mold_v1-053)."
             },
             "backend": {
               "type": "string",
@@ -229,7 +231,9 @@
             },
             "taken_at": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+              "description": "When the snapshot was taken, as an RFC 3339 date-time WITH offset (clone.py's NOW). Ordered exactly against rls_verified.at by factory.py validate and clone.py, which refuse an offset-less value; the pattern refuses it at the schema too (mold_v1-053)."
             },
             "method": {
               "type": "string",
@@ -327,7 +331,9 @@
             },
             "taken_at": {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+              "description": "When the snapshot was taken, as an RFC 3339 date-time WITH offset (clone.py's NOW). Ordered exactly against rls_verified.at by factory.py validate and clone.py, which refuse an offset-less value; the pattern refuses it at the schema too (mold_v1-053)."
             }
           }
         }

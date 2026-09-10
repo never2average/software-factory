@@ -1,5 +1,9 @@
 # Per-workspace inference cost model (mold_v1, GLM 5.2 on Cloudflare Workers AI)
 
+This costs the default provider only. An app stamped with `inference_provider: vercel_ai_gateway` runs
+`anthropic/claude-sonnet-5` through the Vercel AI Gateway on `AI_GATEWAY_API_KEY` (`docs/INTAKE.md`, Inference
+providers) and its per-turn price is `PLACEHOLDER` — nothing below applies to it, and no gateway turn has been measured.
+
 A parametrised model. Every number is one of three kinds and is labelled: **measured** (from the mold's
 code or a run on this factory), **fetched** (from a vendor page, with URL and date), or **PLACEHOLDER** (not
 measured; fill it in from the app's own telemetry before quoting a price to anyone). Nothing here is

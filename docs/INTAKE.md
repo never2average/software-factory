@@ -40,15 +40,26 @@ The secret NAMES an app declares now follow its provider (`infrastructure.secret
 `self_hosted` adds `POSTGRES_ADMIN_URL`. Before this, every app declared `SUPABASE_URL` — a name that
 exists nowhere in the mold codebase, which `provision.py` then required before it would deploy, so a
 non-Supabase app could never pass the gate.
-`infrastructure.secrets_user` follows the inference provider the same way: `cloudflare_workers_ai` adds
-`CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`, `vercel_ai_gateway` adds `AI_GATEWAY_API_KEY` and no
-Cloudflare name at all — the gateway branch of `agent/lib/model.ts` never reads one, and until this an
-app on the gateway was blocked on two secrets it would never use. A name is only worth requiring if the
-deploy delivers it: on `target: vercel` the process running `model.ts` is the `<project>-api` deployment
-and the only list `provision.py` syncs onto it is `API_ENV`, so intake reads that list and refuses a
-provider whose secret is not in it (today: `vercel_ai_gateway` on Vercel — `AI_GATEWAY_API_KEY` is not
-forwarded), instead of writing state that passes `--check` and runs without its key. The refusal lifts
-by itself once `API_ENV` carries the name. `target: vm` starts no process, so nothing is forwarded there.
+`infrastructure.secrets_user` follows the inference provider the same way (next section). A name is only worth
+requiring if the deploy delivers it: on `target: vercel` the process running `model.ts` is the `<project>-api`
+deployment and the only list `provision.py` syncs onto it is `API_ENV`, so intake reads that list and refuses a
+provider whose secret is not in it, instead of writing state that passes `--check` and runs without its key.
+Both providers' names are in `API_ENV` today, so nothing is refused; the check stays in place for the next
+provider. `target: vm` starts no process, so nothing is forwarded there.
+
+## Inference providers
+
+| `inference_provider` | `application.model` | `MODEL_PROVIDER` | `secrets_user` | forwarded to `<project>-api` (`API_ENV`) |
+| --- | --- | --- | --- | --- |
+| `cloudflare_workers_ai` **(default)** | `provider: cloudflare`, `model: @cf/zai-org/glm-5.2`, `context_window: 262144` (`factory.defaults.inference_model` overrides the id, for this provider only) | `cloudflare` | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `RESEND_API_KEY`, `PLATFORM_NOTIFY_FROM` | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` |
+| `vercel_ai_gateway` | `provider: gateway`, `model: anthropic/claude-sonnet-5`, no `context_window` (`model.ts` returns undefined in gateway mode and eve looks it up) | `gateway` | `AI_GATEWAY_API_KEY`, `RESEND_API_KEY`, `PLATFORM_NOTIFY_FROM` | `AI_GATEWAY_API_KEY`, plus the optional `GATEWAY_MODEL_ORCHESTRATOR`, `GATEWAY_MODEL_SPECIALIST`, `GATEWAY_REASONING_EFFORT` |
+
+Plus `EXA_API_KEY` / `BROWSERBASE_API_KEY` in `secrets_user` when web search / the browser are on, for either
+provider. `anthropic/claude-sonnet-5` is `agent/lib/model.ts`'s own default (lines 114-115): free-tier-safe, since the
+gateway's free tier refuses Opus. The gateway branch reads no Cloudflare name, so a gateway app declares none. The
+three `GATEWAY_*` names are optional and never asked for: set them on `<project>` by hand only to change the model
+or the reasoning effort; absent, the mold defaults apply. Brief hints: `ai gateway` / `vercel's gateway` select the
+gateway; `cloudflare workers ai` the default.
 
 ## What intake decides without asking
 
@@ -62,9 +73,10 @@ by itself once `API_ENV` carries the name. `target: vm` starts no process, so no
 ## After intake
 
 ```
-python3 .claude/scripts/provision.py <app>                  # secrets by name, local artifact, nothing deployed
-python3 .claude/scripts/provision.py <app> --deploy         # vercel; proves app_rw + RLS before DATABASE_URL is written
-python3 .claude/scripts/provision.py <app> --verify-db      # self_hosted / local: bring the private Postgres up and run the whole chain
+python3 .claude/scripts/provision.py <app>                  # read-only check: what exists, what a deploy will create, secrets by name (vm: regenerates the local artifact)
+python3 .claude/scripts/provision.py <app> --set-secret NAME  # one credential at a hidden prompt; creates the three empty projects if absent, and says so first
+python3 .claude/scripts/provision.py <app> --deploy         # vercel; prints "about to create:", refuses if a secret is missing, else creates the datastores and proves app_rw + RLS before DATABASE_URL is written
+python3 .claude/scripts/provision.py <app> --verify-db      # vercel: creates projects + datastores and bootstraps the database (a writer); self_hosted / vm: bring the private Postgres up and run the whole chain
 python3 .claude/scripts/provision.py <app> --verify-rls     # re-prove isolation on whatever is running now
 python3 .claude/scripts/lanes.py <app>                      # the five lanes; a failure reverts the app and files a task
 ```

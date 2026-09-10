@@ -91,12 +91,9 @@
         },
         "compose": {
           "type": "string"
-        },
-        "production_url": {
-          "type": "string",
-          "format": "uri"
         }
-      }
+      },
+      "description": "Only what the lane provisions. There is deliberately NO production_url here: nothing on the vm lane starts a web process (infra/vm/README.md; provision.py VM_NO_PROCESS), so any URL typed into this object names a server this factory did not deploy, and factory.py validate refuses the key by name rather than letting a dead field validate silently (mold_v1-053)."
     },
     "inference": {
       "type": "object",
@@ -258,7 +255,8 @@
     "configured_at": {
       "type": "string",
       "format": "date-time",
-      "description": "When the surface configuration was last applied to the running app"
+      "description": "When the surface configuration was last applied to the running app. Same spelling as deployed_at (written from the same NOW): an RFC 3339 date-time WITH offset; the pattern is enforced, so a bare date or an offset-less time is a schema error (mold_v1-053).",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
     },
     "note": {
       "type": "string"

@@ -6,26 +6,36 @@ inside `/root/software-factory` (`ssh digitalocean`, then `cd /root/software-fac
 
 Two kinds of step: **agent** (say it to Claude Code, the `intake` / `provisioner` subagents run it) and **you,
 at the terminal** — every step that touches a secret value, because the agent runtime is not allowed to handle
-one. The whole path is: brief → intake → provision (check) → the four credentials → deploy → first sign-in →
-lanes.
+one. The whole path is: brief → intake → provision (check, read-only) → the credentials → deploy (prints its plan,
+then creates) → first sign-in → lanes.
 
 ## 0. What you get and what you must bring
 
-The factory gives an application everything except four credentials. It mints the database (a free Neon
+The factory gives an application everything except a handful of credentials. It mints the database (a free Neon
 Postgres on the Vercel Marketplace), the file store (a Vercel Blob store), the app's own cron secret, the key
-that seals connector credentials, and the sign-in key pair. It cannot mint these four, and every one of them
-is unavoidable:
+that seals connector credentials, and the sign-in key pair. It cannot mint these, and every one of them
+is unavoidable. Which inference credential you bring depends on the provider the brief chose — the default is
+Cloudflare Workers AI; say `use the Vercel AI Gateway` in the brief for the other one:
 
 | Secret name | What it is | Why the app cannot run without it |
 |---|---|---|
-| `CLOUDFLARE_ACCOUNT_ID` | your Cloudflare account id | the agent runs GLM 5.2 on Cloudflare Workers AI; `agent/lib/model.ts` builds the API URL from this id. Without it every agent turn fails at request time |
-| `CLOUDFLARE_API_TOKEN` | a Workers AI token (Cloudflare dashboard: Account → AI → Workers AI, permission *read/run*) | same file: the bearer token on every model call. GLM 5.2 also requires a paid billing method on the Cloudflare account (its pricing page says so) |
+| `CLOUDFLARE_ACCOUNT_ID` (Cloudflare Workers AI only) | your Cloudflare account id | the agent runs GLM 5.2 (`@cf/zai-org/glm-5.2`) on Cloudflare Workers AI; `agent/lib/model.ts` builds the API URL from this id. Without it every agent turn fails at request time |
+| `CLOUDFLARE_API_TOKEN` (Cloudflare Workers AI only) | a Workers AI token (Cloudflare dashboard: Account → AI → Workers AI, permission *read/run*) | same file: the bearer token on every model call. GLM 5.2 also requires a paid billing method on the Cloudflare account (its pricing page says so) |
+| `AI_GATEWAY_API_KEY` (Vercel AI Gateway only) | an AI Gateway API key (Vercel dashboard: AI Gateway → API keys) | in gateway mode `model.ts` hands the model id `anthropic/claude-sonnet-5` to the AI SDK, whose gateway provider authenticates with this key. Claude Sonnet 5 is the free-tier-safe default; the gateway's free tier refuses Opus. No Cloudflare name is read at all |
 | `RESEND_API_KEY` | an API key from resend.com | **sign-in is an emailed one-time code and it has no other delivery path.** `lib/platform-notify.ts` `sendLoginCode` is "Email ONLY — no Slack fallback": if the key is missing it returns `delivered: false` and the person sees "email delivery is not configured" — nobody can get in |
 | `PLATFORM_NOTIFY_FROM` | the From address, e.g. `Delivered <no-reply@yourdomain.com>` — the domain must be verified in Resend | the same function refuses to send without a From address, and Resend refuses an unverified domain. Invites and notices use it too |
 
 There is a second front door in the mold, Google One Tap, but it needs a Google OAuth client id the factory
 does not provision (`GOOGLE_CLIENT_ID` / `NEXT_PUBLIC_GOOGLE_CLIENT_ID` are optional in state and unset by
 default) and it refuses personal-mail domains. With the factory defaults, the emailed code is the only way in.
+
+So a Cloudflare app brings four names and a gateway app brings three. What else changes on a gateway app:
+`state/application/<app_id>/application.json` records `model.provider: gateway` and `model.model:
+anthropic/claude-sonnet-5` with no `context_window` (the gateway looks it up), `MODEL_PROVIDER=gateway` is set on
+the api project at deploy, and the only pieces of the app that differ are the model and the credential — everything
+else in this runbook is identical. To change the model or reasoning later, set `GATEWAY_MODEL_ORCHESTRATOR`,
+`GATEWAY_MODEL_SPECIALIST` or `GATEWAY_REASONING_EFFORT` on `<project>` by hand in the Vercel dashboard and redeploy;
+absent, the mold defaults apply. `docs/COST_MODEL.md` prices the Cloudflare path only.
 
 Two more appear only if the brief turns the feature on: `EXA_API_KEY` (web search; the default brief keeps
 search on, say "no web search" to drop it) and `BROWSERBASE_API_KEY` (the browser subagent; "no browser").
@@ -64,23 +74,25 @@ screen: add `--ask`. Result: `state/application/<app_id>/` (four JSON files, sec
 registered in `state/factory.json` and under its product, and `factory.py validate` printing `ok`. The last line
 tells you how many secret names the app declares.
 
-## 3. Provision, check mode (agent) — this creates things
+## 3. Provision, check mode (agent) — read-only
 
 ```
 python3 .claude/scripts/provision.py <app_id>
 ```
 
-Read this as "check *and provision*, do not build": on a Vercel app it creates the three Vercel projects
-(`<project>`, `<project>-api`, `<project>-workflow`), gets the app a free Neon database and a Blob store, mints the
-internal secrets, and then prints the names still missing — the four above — each with the exact command to run.
-It also creates and deletes short-lived `sf-neon-inspect-*` projects while checking that a database is empty;
-that is expected and explained in `docs/HOW_IT_WORKS.md`. It does not deploy. Run it once; if it stops with a
-one-line instruction (a Marketplace link to accept the free Neon plan, a Blob token to connect), do that and run
-it again.
+This creates nothing, anywhere. On a Vercel app it only reads: whether the three projects (`<project>`,
+`<project>-api`, `<project>-workflow`) exist, which secret names are already set, and which spare Neon databases
+and Blob stores the team has. Then it prints, in this order: each project as `exists` / `does not exist`; `a deploy
+will create:` with the projects, the Neon database (adopt a spare if one is empty, else a fresh one on the free
+plan), the Blob store and the internal secrets it will mint; `secrets present: n/N`; one `--set-secret` line for
+every credential from §0 you still have to set; and the last line `check only, read-only: nothing was created.`
+followed by either `Set the secret(s) above, then run: ... --deploy` or `Ready: ... --deploy`. Run it as often as
+you like. If it stops with a one-line instruction (a project reconnected to git, a provider the target cannot use),
+do that and run it again.
 
-## 4. The four credentials (you, at the terminal)
+## 4. The credentials (you, at the terminal)
 
-For each name the check printed:
+For each name the check printed (the Cloudflare pair, or `AI_GATEWAY_API_KEY` for a gateway app):
 
 ```
 python3 .claude/scripts/provision.py <app_id> --set-secret CLOUDFLARE_ACCOUNT_ID
@@ -89,10 +101,13 @@ python3 .claude/scripts/provision.py <app_id> --set-secret RESEND_API_KEY
 python3 .claude/scripts/provision.py <app_id> --set-secret PLATFORM_NOTIFY_FROM
 ```
 
-Each asks for the value with input hidden and writes it to all three Vercel projects. If it stops saying the
-value was stored as `sensitive`, turn off *Team Settings → Environment Variables → Sensitive Environment
-Variables* in Vercel and rerun; a sensitive value can never be read back, so the factory refuses it. Then rerun
-step 3 and expect `secrets present: N/N` and `check only; re-run with --deploy once nothing is missing`.
+Each asks for the value with input hidden and writes it to all three Vercel projects. The first one has to have
+somewhere to live: if the three projects do not exist yet, this command creates them (empty, free, no deployment)
+and prints `creating the Vercel project(s) ... to hold <NAME>` before it does — the one thing `--set-secret`
+creates. If it stops saying the value was stored as `sensitive`, turn off *Team Settings → Environment Variables →
+Sensitive Environment Variables* in Vercel and rerun; a sensitive value can never be read back, so the factory
+refuses it. Then rerun step 3 and expect `secrets present: N/N` and `check only, read-only: nothing was created.
+Ready: python3 .claude/scripts/provision.py <app_id> --deploy`.
 
 ## 5. Deploy (you, at the terminal)
 
@@ -100,8 +115,12 @@ step 3 and expect `secrets present: N/N` and `check only; re-run with --deploy o
 python3 .claude/scripts/provision.py <app_id> --deploy
 ```
 
-In order: schema push and migrations on the Neon database, the `app_rw` role and the row-level-security
-policies, a proof that the credential about to become `DATABASE_URL` cannot read another workspace's rows
+First it prints the same plan as `about to create:`. If any credential from §4 is still missing it stops right
+there with `refusing to deploy: N secret(s) above are not set, so NOTHING was created` and the `--set-secret`
+lines to run — nothing has been made yet. Otherwise it creates what the plan named: the three projects if absent,
+the Neon database (it inspects each spare through a short-lived `sf-neon-inspect-*` project that it deletes in the
+same run, explained in `docs/HOW_IT_WORKS.md`), the Blob store, the internal secrets. Then, in order: schema push
+and migrations on the Neon database, the `app_rw` role and the row-level-security policies, a proof that the credential about to become `DATABASE_URL` cannot read another workspace's rows
 (the deploy refuses otherwise and records the app `reverted`), the three deployments (task-workflow, eve API,
 web), the three health checks. The last line is `deployed: https://<project>.vercel.app`. If it stops, the last
 line is one sentence saying what to do; fix that and run the same command again. Re-runs are safe.
@@ -145,6 +164,8 @@ step you skipped. A failing lane puts the app in `reverted` and control back wit
 | re-prove tenant isolation after any restore or migration | `python3 .claude/scripts/provision.py <app_id> --verify-rls` |
 | redeploy after changing a secret (env changes take effect on the next build) | `python3 .claude/scripts/provision.py <app_id> --deploy` |
 | rehearse the database locally without touching Vercel | brief says `vm` and `self-host the postgres`; then `provision.py <app_id> --verify-db`, and `python3 .claude/scripts/lib/localpg.py down <app_id>` to remove it |
+| set up only the database on Vercel, deploy later | `python3 .claude/scripts/provision.py <app_id> --verify-db` on a vercel app — this one **creates** (projects, database, Blob store) and bootstraps the database without waiting for your credentials; it prints `about to create:` first |
+| change the gateway model or reasoning effort | set `GATEWAY_MODEL_ORCHESTRATOR` / `GATEWAY_MODEL_SPECIALIST` / `GATEWAY_REASONING_EFFORT` on `<project>` in the Vercel dashboard, then `--deploy` again |
 | know what a workspace will cost in inference | `docs/COST_MODEL.md` |
 
 ## What this runbook does not cover
