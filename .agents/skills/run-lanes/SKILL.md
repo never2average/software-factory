@@ -37,7 +37,10 @@ address the operator names in `MOLD_V1_LANE_URL` for one run —
 (`docs/RUNBOOK.md` §7). Anything but `http://127.0.0.1:<port>` / `http://localhost:<port>`, any vercel app, a vm
 app with a `production_url`, or a status that serves somebody is refused in one sentence, and the check is
 `skipped`. `lane-url.py --harness` also emits `--without task-workflow` for such a fixture; the harness honours
-it only when `--url` is loopback, so the builder's `not-covered` row exists on a fixture and nowhere else.
+it only when `--url` is loopback, so the builder's `not-covered` row exists on a fixture and nowhere else — and
+where it appears, the check's `expect.skip_on` records the check `skipped` (its measured rows still print), so the
+lane is `skipped`, never `pass`, with one product surface unopened. `skip_on` is judged after `exit`/`stdout`/
+`stdout_not`, so a measured failure is never hidden by it.
 
 Anything richer than an exit code belongs in a harness script in the lane folder that prints a
 markdown table and exits 0/1 — like `functional/tenant-isolation.py` — with `"emits":

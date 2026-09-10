@@ -150,7 +150,14 @@ def run_check(c, docs, ctx):
         if not re.search(rx, out, re.S): bad.append(f"output never matched /{rx}/")
     for rx in exp.get("stdout_not", []):
         if re.search(rx, out, re.S): bad.append(f"output matched the forbidden /{rx}/")
-    return dict(res, status="fail" if bad else "pass", reason="; ".join(bad) or f"exit {code}", out=out)
+    if bad: return dict(res, status="fail", reason="; ".join(bad), out=out)
+    # `skip_on`: the check ran, but its own output says a surface it names was declared off (not opened).
+    # The safe verdict is `skipped` — a lane with a skipped check is never `pass` — and never `pass` with
+    # one product surface unmeasured. Judged AFTER the fail rules, so a measured failure is never hidden by
+    # a declared-off row beside it. The rows it did measure stay in the report (`out` is kept).
+    for sk in exp.get("skip_on", []):
+        if re.search(sk["stdout"], out, re.S): return dict(res, status="skipped", reason=subst(sk["else"], ctx), out=out)
+    return dict(res, status="pass", reason=f"exit {code}", out=out)
 
 def _deref(s, root):
     """factory._check has no $ref, and lane.schema.json needs one (a precondition appears twice)."""
@@ -242,7 +249,9 @@ def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet
             L += ["Rows marked with a task id are defects of the mold snapshot itself, not of this application. "
                   "Fixing them needs a mold refresh from source per `MOLD.md`; they are reported here rather than "
                   "muted, and they still fail the lane.", ""]
-    rows = [r for r in results if r["emits"] == "markdown_table" and r["status"] != "skipped"]
+    # A check skipped by a precondition has no output; one skipped on its own output (skip_on) measured
+    # rows, and those are printed — the report shows what was measured and the verdict stays `skipped`.
+    rows = [r for r in results if r["emits"] == "markdown_table" and (r["status"] != "skipped" or r["out"])]
     if rows:
         L += ["", "## Measured rows", ""]
         for r in rows: L += [f"### `{r['name']}`", "", (r["out"] or "").strip(), ""]

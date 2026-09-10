@@ -101,7 +101,8 @@ const AUTH = args.includes("--auth");
 const SESSION_ENV = arg("--session-env", "MOLD_V1_SESSION_TOKEN");
 // Services the target does not run (`--without task-workflow`, repeatable). Only lane-url.py emits it, and
 // only for a vm fixture; a surface that `needs` one is printed `not-covered` — "declared off on this
-// fixture", the one phrase lane.json's stdout_not lets through — instead of failed, and never `pass`.
+// fixture", the one phrase lane.json's stdout_not lets through and its skip_on then records the whole
+// check `skipped` (the lane cannot be `pass` with a surface unopened) — instead of failed, and never `pass`.
 const WITHOUT = new Set(args.flatMap((x, i) => (x === "--without" && args[i + 1] ? [args[i + 1]] : [])));
 const declaredOff = (su) => AUTH && su.needs && WITHOUT.has(su.needs)
   ? `declared off on this fixture: it does not run the ${su.needs} service, which ${su.what} needs (--without ${su.needs} from lane-url.py), so this surface was not opened and nothing here measures it`

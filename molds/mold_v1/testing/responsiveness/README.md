@@ -226,14 +226,18 @@ loopback address the operator names in **`MOLD_V1_LANE_URL`**, honoured only for
 `secret_store: vm_env_file`, no `production_url`, a status that serves nobody, and a URL that is plain
 `http://127.0.0.1:<port>` / `http://localhost:<port>` — anything else, and any vercel app, is refused
 with one sentence. For a fixture it also hands the harness `--without task-workflow`, so the builder
-rows are declared `not-covered` (the vm lane does not run that service) rather than failed; on a
-deployment the builder is measured. The accessibility README, "Measuring a vm fixture", lists what
+rows are declared `not-covered` (the vm lane does not run that service) rather than failed, and each
+authenticated check that carries that row is recorded `skipped`, not `pass` (`expect.skip_on`). On a
+deployment the factory mints no session (`session.py` refuses every `target: vercel` app), so the builder
+is measured only with an operator-lent `MOLD_V1_SESSION_TOKEN` — no run of this lane has had one. The
+accessibility README, "Measuring a vm fixture", lists what
 starting the fixture took (the four env names `--verify-db` writes, the database host rewritten from the
 network alias to the container's address, `fde:new-org` for the workspace). Then:
 
     MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py v040fix --lane responsiveness --dry-run
 
     responsiveness   fail     5/6 passed  molds/mold_v1/testing/responsiveness/reports/dry/v040fix-2026-09-10T053842Z.md
+    (that report was removed with the fixture; the rows it held are inlined below)
 
     layout.matrix, tap.targets, interaction.latency   pass   signed out: 12 + 6 + 8 rows, every one measured
     layout.matrix.authenticated        fail   16 rows: 8 pass, 4 fail, 4 declared not covered (builder x4)
@@ -265,7 +269,8 @@ lane cannot imply more than it measured. What is left after the signed-in half:
   This lane is read-only on the application it grades;
 - **the workflow builder on a `target: vm` fixture** — the vm lane does not run the task-workflow
   service the builder is a client of, so on a fixture named in `MOLD_V1_LANE_URL` those rows are
-  declared `not-covered` with the reason; the builder is measured on a deployment;
+  declared `not-covered` with the reason and the check is `skipped`, never `pass` (`expect.skip_on`);
+  on a deployment the factory mints no session at all (`session.py` refuses every `target: vercel` app), so the builder has been measured by no run of this lane; it is measured only with a session an operator signs in for and lends in `MOLD_V1_SESSION_TOKEN`, and its absence is then a fail;
 - **the signed-in half itself, whenever no usable session exists** — no key in the app's secret store
   (a `target: vm` app that has not run `--verify-db`), a key the deployment does not run with, an FDE
   identity with no workspace there, and no operator-lent session: those checks are `skipped` and so is

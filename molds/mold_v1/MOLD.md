@@ -30,4 +30,24 @@
 git clone --depth 1 git@github-fde:never2average/fde-agent.git /tmp/fde-agent
 rsync -a --delete --exclude .git --exclude node_modules --exclude test-results --exclude .next /tmp/fde-agent/ molds/mold_v1/codebase/
 ```
-Then update the commit hash above.
+Then update the commit hash above **and** `molds[].source.commit` / `snapshot_date` in `state/factory.json`
+(lanes.py prints that commit in every report header), and prove the snapshot is the source:
+
+```
+diff -rq --exclude .git --exclude node_modules --exclude test-results --exclude .next /tmp/fde-agent molds/mold_v1/codebase && test ! -e molds/mold_v1/codebase/.next && echo IDENTICAL
+```
+
+The snapshot is only ever written by this refresh. The mold's own scripts write INTO their cwd when the
+functional lane runs them — `next dev` (the `test:cards` Playwright webServer) rewrites `next-env.d.ts` to import
+`./.next/dev/types/routes.d.ts` and writes `.next/dev/` and `test-results/`; `test:dataroom` / `test:syncs` scratch
+under `.dataroom/` — so `testing/functional/lane.json` wraps those three checks to put the file back and remove the
+directories, with the test's own exit status. Each wrapped test runs under an inner `timeout` shorter than the
+check's `timeout_s`, because lanes.py kills the whole shell on its own timeout and the cleanup would never run.
+That inner timeout does not reach the `next dev` server Playwright spawns detached, so the `test:cards` wrapper
+also kills it (by the snapshot's own `next` path, then any port-3000 listener whose cwd is this snapshot — never a
+server an operator started elsewhere) and removes the chromium profiles that run left under `/tmp` before removing
+`.next/`; otherwise the orphan re-creates `.next/` and the next run adopts it (`reuseExistingServer: true` in
+playwright.config.ts).
+A clean clone has no `.next/` at all (it is gitignored and excluded from the rsync, so a refresh never clears it):
+the proof asserts it is absent. If the `diff` above ever shows `next-env.d.ts`, or `.next/` exists between runs, a
+run wrote into the snapshot outside those wrappers: the refresh restores the file; remove the directory by hand.
