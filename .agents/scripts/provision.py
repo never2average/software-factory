@@ -14,10 +14,14 @@
 --set-secret NAME: type one credential at a hidden prompt; written encrypted to all three projects.
   On a vercel app whose projects do not exist yet, it CREATES them first (three empty, free projects
   with no deployment — the value needs somewhere to live) and says so before it does.
---deploy: prints the plan — the projects, database, Blob store and minted env it is about to create —
-  then, if every operator-set secret is present, creates them and runs the deploy. If one is missing it
-  refuses BEFORE creating anything and lists the --set-secret commands. Resource creation lives here
-  and in --verify-db only; the check never creates.
+--deploy: prints the plan — EVERYTHING the run creates, writes or rotates, in the order it happens: the
+  projects, the database resource, the Blob store, the minted env, the build-time env writes, the
+  TASK_WORKFLOW_SERVICE_TOKEN mint, the schema bring-up with its app_rw password rotation, the three
+  production deployments with their framework PATCHes and URL env writes, and the state files
+  (mold_v1-056: it used to name the first four only) — then, if every operator-set secret is present,
+  does them. If one is missing it refuses BEFORE creating anything and lists the --set-secret commands.
+  --check prints the same list as `a deploy will create:`. Resource creation lives here and in
+  --verify-db only; the check never creates.
 --verify-db: stand up this app's LOCAL database (private docker network, no host port) and run
   the whole mold chain against it — push, migrate, RLS + app_rw bootstrap, task-workflow — then
   cover every org-scoped table and PROVE the resulting URL cannot read another workspace's rows.
@@ -486,17 +490,26 @@ API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_I
 OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GOOGLE_CLIENT_ID", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT")
 WORKFLOW_ENV = ["DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN"]
 
-def vercel_plan(app_id, infra, ds, mold_dir, proj):
-    """What EXISTS for this app on Vercel and what a writer (--deploy, --verify-db, --set-secret) WOULD
-    create. Built from GET and list calls only — this is the whole of what --check may do remotely, and
-    --deploy prints it before creating anything. Every creator this names lives in ensure_projects,
-    provision_datastores and set_secret; nothing here calls them."""
+def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
+    """What EXISTS for this app on Vercel and EVERYTHING a writer would create, write or rotate, in the
+    order it happens. Built from GET and list calls only — this is the whole of what --check may do
+    remotely — and --deploy / --verify-db print it before doing any of it. `mode` names the writer whose
+    steps are listed: "deploy" (also what --check reports, as `a deploy will create:`) or "verify-db".
+
+    mold_v1-056: this used to stop after the minted env, while the same --deploy went on to write four
+    build-time flags to two projects, mint TASK_WORKFLOW_SERVICE_TOKEN, rotate the app_rw password, PATCH
+    two projects' framework, create three production deployments and write four URL/env values — none of
+    it announced. Every step below is read off deploy_vercel / bring_up_schema / provision_datastores in
+    their own order; nothing here calls them."""
     projects = {p: bool(_project_meta(p, mold_dir).get("id")) for p in (proj, f"{proj}-api", f"{proj}-workflow")}
     present = vercel_env_names(mold_dir, proj) if projects[proj] else set()
     pg, blob = ds.get("postgres", {}), ds.get("blob", {}); prov = pg.get("provider", "supabase")
+    shared = pg.get("scope") == "shared_with_live"; api, wf = f"{proj}-api", f"{proj}-workflow"
     create = []
+    if mode == "deploy" and app.get("surface", {}).get("branding"):
+        create.append(f"build/{app_id}/: a branded copy of the mold to build from (local files only; the snapshot is never edited)")
     missing = [p for p, ok in projects.items() if not ok]
-    if missing: create.append(f"Vercel project(s) {', '.join(missing)} — empty, free, no deployment (also created by --set-secret, which needs them)")
+    if missing: create.append(f"Vercel project(s) {', '.join(missing)} — empty, free, no deployment, git integration disconnected (also created by --set-secret, which needs them)")
     if pg.get("scope") == "fresh" and prov in DB_SENTINEL and DB_SENTINEL[prov] not in present:
         if prov == "neon":
             spares = _neon_spares(mold_dir)
@@ -511,6 +524,44 @@ def vercel_plan(app_id, infra, ds, mold_dir, proj):
                       else f"a private Blob store '{name}', connected to {proj}")
     minted = [n for n in (*GENERATED, "AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY") if n not in present]
     if minted: create.append(f"env on {proj}: {', '.join(minted)} (minted locally; never an external credential)")
+    if prov == "supabase" and "POSTGRES_ADMIN_URL" not in present:
+        create.append(f"env on {proj}: POSTGRES_ADMIN_URL (copied from SUPABASE_POSTGRES_URL; admin only)")
+    if mode == "deploy":
+        cfg = {"MODEL_PROVIDER": app.get("model", {}).get("provider", "?"),
+               "ENABLE_WEB_SEARCH": str(app.get("capabilities", {}).get("web_search", "?")).lower(),
+               "ENABLE_BROWSER": str(app.get("capabilities", {}).get("browser", "?")).lower(),
+               "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
+        create.append(f"env on {proj} and {api}, rewritten on every deploy: " + ", ".join(f"{k}={v}" for k, v in cfg.items()))
+        if not shared and "TASK_WORKFLOW_SERVICE_TOKEN" not in present:
+            create.append(f"env on {proj}: TASK_WORKFLOW_SERVICE_TOKEN (minted locally)")
+    if mode == "verify-db" or not shared:
+        # bootstrap_database reuses the password only when an app_rw DATABASE_URL is already deployed on the
+        # main project; the check cannot read the value, so "present" is the closest honest reading.
+        rot = ("REUSES the deployed app_rw password" if "DATABASE_URL" in present
+               else "ROTATES the app_rw password: every build made against an older one stops connecting")
+        create.append(f"the database: schema push, migration journal, RLS + app_rw bootstrap ({rot}), task-workflow "
+                      f"migration, the RLS coverage pass, then the isolation proof; ONLY after the proof passes, env "
+                      f"DATABASE_URL (app_rw) on {proj}, {api}, {wf}")
+    if mode == "deploy":
+        if not shared:
+            create.append(f"{wf}: env {', '.join(WORKFLOW_ENV)} copied from {proj}; framework PATCHed to nextjs; a PRODUCTION "
+                          f"deployment of services/task-workflow; git disconnected if the deploy re-linked it; then env "
+                          f"TASK_WORKFLOW_SERVICE_URL on {proj}")
+            create.append(f"{api}: every API_ENV name {proj} holds copied over ({', '.join(API_ENV)}); framework PATCHed to eve; "
+                          f"env TASK_WORKFLOW_SERVICE_URL; a PRODUCTION build and deployment of the eve API; git disconnected "
+                          f"if the deploy re-linked it; then env NEXT_PUBLIC_EVE_API_URL on {proj}")
+        else:
+            create.append(f"{os.path.relpath(mold_dir, ROOT)}/vercel.nocron.json: vercel.json with its crons stripped "
+                          f"(shared_with_live: the crons stay with the live app); no schema, no app_rw, no isolation proof")
+        origin = infra.get("vercel", {}).get("production_url") or f"https://{proj}.vercel.app"
+        create.append(f"env WEB_ORIGIN={origin} on {proj} and {api}; a PRODUCTION deployment of the web app on {proj}; git "
+                      f"disconnected if the deploy re-linked it; WEB_ORIGIN rewritten on both if the deployment's URL differs")
+        create.append(f"then reads only (three health endpoints), and state: state/application/{app_id}/application.json status "
+                      f"stamping -> stamped (or reverted, with the reason), infrastructure.json (the three URLs, deployed_at), "
+                      f"datastores.json postgres.rls_verified")
+    elif mode == "verify-db":
+        create.append(f"state: state/application/{app_id}/datastores.json postgres.rls_verified — nothing is built or deployed, "
+                      f"and the RUNNING app keeps the DATABASE_URL of its last build")
     links = {p: git_link(p, mold_dir) for p, ok in projects.items() if ok}
     return {"projects": projects, "present": present, "create": create, "git_links": {p: l for p, l in links.items() if l}}
 
@@ -787,6 +838,16 @@ def _retarget(app_url, runtime_url):
     host = b.netloc.rsplit("@", 1)[-1]
     return urllib.parse.urlunsplit((a.scheme, f"{userinfo}@{host}" if userinfo else host, a.path, urllib.parse.urlencode(q), a.fragment))
 
+def _seed_env_local(envloc):
+    """.bootstrap-supabase.mjs READS .env.local (readFileSync, line 219) before it writes the app_rw URL into
+    it, and the mold snapshot ships without one (gitignored, excluded by MOLD.md), so on a fresh checkout
+    both lanes died with `ENOENT: open '.env.local'` after the RLS work had already been done. An empty,
+    0600 file is enough; the caller's `finally` removes it again when there was none before."""
+    if os.path.exists(envloc): return
+    old = os.umask(0o077)
+    try: open(envloc, "w").close()
+    finally: os.umask(old)
+
 def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_url=""):
     """A fresh Postgres needs what Drizzle does not model: row-level security and the app_rw
     login role (NOBYPASSRLS). The mold ships .bootstrap-supabase.mjs for exactly this; it reads
@@ -805,6 +866,7 @@ def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_u
     task-workflow migration — which creates three more org-scoped tables — had not even run yet."""
     envsup = os.path.join(mold_dir, ".env.supabase"); envloc = os.path.join(mold_dir, ".env.local")
     saved = open(envloc).read() if os.path.exists(envloc) else None
+    _seed_env_local(envloc)
     # Reuse the existing app_rw password when one is already deployed. The bootstrap rotates on every
     # run, and a rotation invalidates every deployment built against the old value until it is rebuilt.
     env = dict(os.environ)
@@ -1150,6 +1212,7 @@ def verify_db(app_id, mold_dir, ds, adir, infra):
     envloc = os.path.join(mold_dir, ".env.local"); saved = open(envloc).read() if os.path.exists(envloc) else None
     envsup = os.path.join(mold_dir, ".env.supabase")
     try:
+        _seed_env_local(envloc)
         with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={adm}\n")
         os.chmod(envsup, 0o600)
         for label, cmd, env in [("schema push", "npx drizzle-kit push --force", {"DATABASE_URL": adm}),
@@ -1461,14 +1524,7 @@ def main(a):
                  f"Registered: {', '.join(sorted(os.listdir(os.path.join(ST, 'application'))) or ['none'])}. "
                  f"Stamp one first: python3 .claude/scripts/intake.py briefs/{app_id}.md --app {app_id}")
     app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
-    mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
-    if deploy and app.get("surface", {}).get("branding"):
-        # Build from a branded copy of the mold. branding.py refuses if any rule stopped matching,
-        # so a half-branded app can never ship; the snapshot itself is never edited.
-        r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/branding.py"), app_id, "prepare"], capture_output=True, text=True)
-        print((r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else "")
-        if r.returncode: sys.exit("branding failed; not deploying")
-        mold_dir = os.path.join(ROOT, "build", app_id)
+    mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")   # a branded build dir replaces this after the plan is printed
     secrets = infra.get("secrets", []); target = infra["target"]; store = infra.get("secret_store")
     ds = load(os.path.join(adir, "datastores.json")); prov = ds.get("postgres", {}).get("provider", "supabase")
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
@@ -1547,12 +1603,20 @@ def main(a):
         # A CHECK IS READ-ONLY (mold_v1-041). Everything below up to `writer` is GETs and list calls; the
         # plan says what a writer would create, and only --deploy / --verify-db go on to create it.
         writer = deploy or "--verify-db" in a
-        plan = vercel_plan(app_id, infra, ds, mold_dir, proj)
+        plan = vercel_plan(app_id, app, infra, ds, mold_dir, proj, "verify-db" if "--verify-db" in a else "deploy")
         print_plan(plan, "about to create:" if writer else "a deploy will create:")
         present = plan["present"]
         # report a reconnected project before anyone deploys: a git-sourced build of the factory repo
         # overwrites this app's production deployment and its build cache.
         for p_, link in plan["git_links"].items(): sys.exit(GIT_LINK_MSG.format(project=p_, link=link))
+        if deploy and app.get("surface", {}).get("branding"):
+            # Build from a branded copy of the mold. branding.py refuses if any rule stopped matching, so a
+            # half-branded app can never ship; the snapshot itself is never edited. AFTER the plan, which
+            # names build/<app_id>/ as its first step: nothing is written before the plan is printed.
+            r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/branding.py"), app_id, "prepare"], capture_output=True, text=True)
+            print((r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else "")
+            if r.returncode: sys.exit("branding failed; not deploying")
+            mold_dir = os.path.join(ROOT, "build", app_id)
         if writer:
             # Refuse BEFORE creating, for BOTH writers: a database and a Blob store bought for an app the
             # operator has not finished configuring is exactly the "check created things" shape, one flag

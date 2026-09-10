@@ -185,11 +185,31 @@ def run(app_id, cmd, mold_dir, env=None, extra=()):
     args += [NODE_IMAGE, "sh", "-lc", cmd]
     return _d(*args)
 
+def _exists(kind, name):
+    """`docker [kind] inspect` exit 0 — the only evidence that a resource is (still) there."""
+    return _d(*kind, "inspect", name).returncode == 0
+
 def down(app_id, keep_data=False):
-    _d("rm", "-f", cont(app_id))
-    if not keep_data: _d("volume", "rm", vol(app_id))
-    _d("network", "rm", net(app_id))
-    print(f"{cont(app_id)} removed" + ("" if keep_data else f"; volume {vol(app_id)} deleted"))
+    """Remove the container, its data volume (unless --keep-data) and the network — and REPORT ONLY WHAT
+    DOCKER ACTUALLY REMOVED. This used to print "pg-x removed; volume pg-x-data deleted" unconditionally,
+    for an app that had never been created: a deletion verdict written by the script, not read from
+    docker. The verdict is now built from `inspect` before and after each `rm`: a resource that was not
+    there is named as such ("nothing to remove" when none of them were), one that was there and is still
+    there afterwards (a volume held by another container, say) is a failure, exit 1, never a "deleted"."""
+    kinds = [("container", (), cont(app_id))] + ([] if keep_data else [("volume", ("volume",), vol(app_id))]) \
+            + [("network", ("network",), net(app_id))]
+    removed, kept, stuck = [], [], []
+    for label, kind, name in kinds:
+        if not _exists(kind, name): continue
+        r = _d(*kind, "rm", *(("-f",) if label == "container" else ()), name)
+        if _exists(kind, name): stuck.append(f"{label} {name}: " + (r.stderr.strip().splitlines() or ["still present"])[-1])
+        else: removed.append(f"{label} {name}")
+    if keep_data and _exists(("volume",), vol(app_id)): kept.append(f"volume {vol(app_id)} kept (--keep-data)")
+    if stuck:
+        sys.exit(f"could not remove {app_id}'s local database completely:\n  " + "\n  ".join(stuck)
+                 + ("\n  removed: " + ", ".join(removed) if removed else "")
+                 + "\n  Rerun this command; if it fails again, run `docker ps -a` to see what still holds it.")
+    print(f"{app_id}: " + ("removed " + ", ".join(removed) if removed else "nothing to remove") + ("; " + "; ".join(kept) if kept else ""))
 
 def ls():
     out = _d("ps", "-a", "--filter", "name=^pg-", "--format", "{{.Names}}\t{{.Status}}\t{{.Ports}}").stdout

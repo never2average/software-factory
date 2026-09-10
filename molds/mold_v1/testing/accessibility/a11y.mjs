@@ -77,7 +77,11 @@ const AUTH_SURFACES = [
   { name: "/ chat thread",            path: "/",                      marker: /new chat/i,      what: 'the chat thread\'s "New chat" control' },
   { name: "/workspace people",        path: "/workspace?tab=people",   marker: /\binvite\b/i,    what: 'the People tab\'s "Invite" control' },
   { name: "/workspace audit",         path: "/workspace?tab=audit",    marker: /\bactor\b/i,     what: "the Audit trail's actor filter" },
-  { name: "/workspace builder",       path: "/workspace?tab=workflows", marker: /new workflow/i, what: 'the workflow builder\'s "New workflow" control' },
+  // `needs`: a service beyond the web app that this surface is a client of. lane-url.py passes
+  // `--without <service>` for a target=vm fixture, which runs the web app alone (infra/vm/README.md), and
+  // the surface is then declared `not-covered` with that reason rather than failed on a control the
+  // service would have rendered. A deployment gets no such flag: there, an absent builder IS a defect.
+  { name: "/workspace builder",       path: "/workspace?tab=workflows", marker: /new workflow/i, what: 'the workflow builder\'s "New workflow" control', needs: "task-workflow" },
 ];
 
 const arg = (n, d) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : d; };
@@ -86,7 +90,11 @@ const only = arg("--only", "all");
 const routes = arg("--routes", DEFAULT_ROUTES.join(",")).split(",").map(s => s.trim()).filter(Boolean);
 const jsonOut = arg("--json", "");
 const SESSION_ENV = arg("--session-env", "MOLD_V1_SESSION_TOKEN");
-if (!base) { console.error("usage: a11y.mjs --url <base> [--only axe|keyboard|auth] [--routes a,b] [--json f] [--session-env NAME]"); process.exit(2); }
+// Services the target does not run (`--without task-workflow`, repeatable). Only lane-url.py emits it, and
+// only for a vm fixture; a surface that `needs` one is printed `not-covered` — "declared off on this
+// fixture", the one phrase lane.json's stdout_not lets through — instead of failed, and never `pass`.
+const WITHOUT = new Set(process.argv.flatMap((x, i) => (x === "--without" && process.argv[i + 1] ? [process.argv[i + 1]] : [])));
+if (!base) { console.error("usage: a11y.mjs --url <base> [--only axe|keyboard|auth] [--routes a,b] [--json f] [--session-env NAME] [--without <service>]"); process.exit(2); }
 const ORIGIN = new URL(base).origin;
 
 // ESM ignores NODE_PATH, so the global playwright is reached through a require rooted at it.
@@ -304,6 +312,12 @@ if (only === "all" || only === "auth") {
   console.error(`signed in as ${s.who}${s.exp ? ` (token expires ${new Date(s.exp * 1000).toISOString()})` : ""}` +
                 `${s.expired ? " — ALREADY EXPIRED" : ""}; the token itself is never printed`);
   for (const su of AUTH_SURFACES) {
+    if (su.needs && WITHOUT.has(su.needs)) {
+      // Not measured, and said so: this fixture does not run the service the surface is a client of.
+      row(`auth ${su.name}`, "not-covered", `declared off on this fixture: it does not run the ${su.needs} service, which ${su.what} ` +
+        `needs (--without ${su.needs} from lane-url.py), so this surface was not opened and nothing here grades it`);
+      continue;
+    }
     // The same url with NO session, first. It is the control sample: if the signed-in render is the
     // same size as the signed-out one, the session bought nothing and the shell is what got measured.
     const shell = await open(anon, su.path);
