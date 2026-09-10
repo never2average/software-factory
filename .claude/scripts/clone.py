@@ -79,8 +79,20 @@ def isolation_findings(app_id, pg):
     verdict on that evidence, kept apart from main() so it can be exercised with constructed blocks and
     without a database. It mirrors factory.py's _rls_claim for the fields both read, and stays STRICTER
     where a clone is concerned: a clone's whole point is to stand in front of traffic as a replica of live."""
-    want = pg.get("rls", "off"); ev = pg.get("rls_verified") or {}
-    if want == "off": return []
+    want = pg.get("rls"); ev = pg.get("rls_verified") or {}
+    # `off` is an explicit, schema-validated declaration (datastores.schema.json enum) that asks for no isolation
+    # and is asked nothing, same as factory.py. ABSENT is not `off`: the schema does not require postgres.rls,
+    # so a clone whose datastores.json never said what it asks for used to read as `off` here and skip this
+    # whole verdict — running_app included — and pass the context lane with nothing measured. An absent
+    # declaration is UNMEASURED and one instruction (mold_v1-052); what the serving process reported is still
+    # read below, because a definitive `not_enforced` from /api/ops/health is a finding whatever was declared.
+    # `off` asks for nothing from the STORED credential, but a definitive `not_enforced` read off the serving
+    # process is a fact about a replica of live whatever it declared: it is reported, never discarded. Anything
+    # short of definitive (`unmeasured`, absent) is what `off` opted out of, so only that one token survives.
+    if want == "off": return [f for f in _running_app_findings(app_id, ev) if ev.get("running_app") == "not_enforced"]
+    if want is None:
+        iso = [f"datastores.json declares no postgres.rls at all, so nothing says what this replica asks for and nothing measured it — set postgres.rls to \"fail_closed\" (or \"on\") in state/application/{app_id}/datastores.json, then run `python3 .claude/scripts/clone.py {app_id} rls`"]
+        return iso + (_running_app_findings(app_id, ev) if ev else [])
     if not ev or str(ev.get("source", "")).startswith("not verified"): return [f"declares rls {want} but nothing has measured it"]
     iso = []
     # Instants, not strings. "2026-09-09T01:00:00+09:00" sorts AFTER "2026-09-08T18:00:00+00:00" as text and is the
@@ -110,10 +122,15 @@ def isolation_findings(app_id, pg):
     # reading and only a new build clears it. `unmeasured`, absent, or any spelling outside the enum reads as a
     # FAIL, not a pass: nothing measured the serving process, and unmeasured is not measured-good — the
     # convenient reading ("absent, so nothing to fail") is exactly how the old verdict passed this replica.
+    return iso + _running_app_findings(app_id, ev)
+
+def _running_app_findings(app_id, ev):
+    """The running_app verdict alone (isolation_findings says why it exists); split out so an absent declaration
+    still reads what the serving process reported instead of skipping it with the rest."""
     ra = ev.get("running_app"); rd = str(ev.get("running_app_detail") or "").strip()[:160]; rd = f" ({rd})" if rd else ""
-    if ra == "not_enforced": iso.append(f"the app SERVING TRAFFIC reports row-level security is not enforced on /api/ops/health{rd} — only a new build replaces the credential it holds: run `python3 .claude/scripts/provision.py {app_id} --deploy`")
-    elif ra != "enforced": iso.append(f"nothing usable was read from the app SERVING TRAFFIC (rls_verified.running_app is {ra!r}){rd} — the process answering requests is not known to be enforcing it: run `python3 .claude/scripts/provision.py {app_id} --verify-rls`")
-    return iso
+    if ra == "not_enforced": return [f"the app SERVING TRAFFIC reports row-level security is not enforced on /api/ops/health{rd} — only a new build replaces the credential it holds: run `python3 .claude/scripts/provision.py {app_id} --deploy`"]
+    if ra != "enforced": return [f"nothing usable was read from the app SERVING TRAFFIC (rls_verified.running_app is {ra!r}){rd} — the process answering requests is not known to be enforcing it: run `python3 .claude/scripts/provision.py {app_id} --verify-rls`"]
+    return []
 
 def node(cmd, env, cwd, stdin=None, extra=()):
     r = subprocess.run(["node", os.path.join(ROOT, ".claude/scripts/lib/surface.mjs"), cmd, *extra], cwd=cwd, env=env, input=stdin, capture_output=True, text=True)
@@ -257,7 +274,7 @@ def main(a):
         rdir = os.path.join(ROOT, "molds", app["mold_id"], "testing", "context", "reports")
         # The isolation evidence is part of the verdict (isolation_findings above says why and what it reads).
         ds = load(os.path.join(adir, "datastores.json")); pg = ds.get("postgres", {})
-        want = pg.get("rls", "off"); ev = pg.get("rls_verified") or {}
+        want = pg.get("rls"); ev = pg.get("rls_verified") or {}   # None prints as ABSENT below, never as `off`
         iso = isolation_findings(app_id, pg)
         status = "pass" if (rep["ok"] and not iso) else "fail"
         L = [f"# {app_id} vs live ({LIVE['web']}) — {status}", "", f"run_at: {NOW}  org: {org}  prefix: {prefix}", "", "## Tables (row counts)", "", "| table | clone | live | |", "|---|---|---|---|"]
@@ -268,7 +285,7 @@ def main(a):
             n = len(r["only_clone"]) + len(r["only_live"]) + len(r["changed"])
             L.append(f"- {t}: clone={r['clone']} live={r['live']} " + ("ok" if not n else f"DIFF only_clone={r['only_clone'][:10]} only_live={r['only_live'][:10]} changed={[c['key']+':'+','.join(c['cols']) for c in r['changed'][:10]]}"))
         L += ["", "## Tenant isolation", "",
-              f"- declared: `{want}`" + (f" · measured `{ev.get('mode')}` on {ev.get('backend')} at {ev.get('at')} ({ev.get('source')})" if ev else " · NO evidence"),
+              (f"- declared: `{want}`" if want else "- declared: ABSENT (datastores.json has no postgres.rls)") + (f" · measured `{ev.get('mode')}` on {ev.get('backend')} at {ev.get('at')} ({ev.get('source')})" if ev else " · NO evidence"),
               f"- role `{ev.get('role')}` superuser={ev.get('superuser')} bypassrls={ev.get('bypassrls')}" if ev.get("role") else "- role: not measured",
               f"- org-scoped tables enabled+forced+policied: {ev.get('protected')}/{ev.get('org_scoped_tables')}" + (f" · unprotected: {', '.join(ev['unprotected'][:10])}" if ev.get("unprotected") else ""),
               f"- cross-workspace read across {ev.get('probe_tables')} probed table(s): {ev.get('foreign_rows_readable')} row(s) · write refused with `{ev.get('cross_org_write')}`" if ev.get("probe_table") else "- cross-workspace probe: not run",
