@@ -20,10 +20,10 @@
         "deployed": [
           "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
-          "GLM 5.2 provider configured and smoke-tested"
+          "the app's inference provider configured and smoke-tested (GLM 5.2 on Cloudflare Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway)"
         ],
         "released": [
-          "onboarding path works end to end on a stamped app (docs/RUNBOOK.md: intake, provision, the four customer credentials, deploy, clone.py configure, emailed-code sign-in, then the mold's fde:onboard-self / fde:new-org / fde:new-customer)",
+          "onboarding path works end to end on a stamped app (docs/RUNBOOK.md: intake, provision, the customer credentials (four on Cloudflare Workers AI, three on the Vercel AI Gateway), deploy, clone.py configure, emailed-code sign-in, then the mold's fde:onboard-self / fde:new-org / fde:new-customer)",
           "docs + pricing/packaging decided (docs/PRODUCTS.md; pricing still a placeholder)",
           "budget of inference cost per workspace known (docs/COST_MODEL.md: prices fetched, volumes measured from automation_runs rather than placeholders)"
         ]
@@ -77,10 +77,10 @@
         "deployed": [
           "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
-          "GLM 5.2 provider configured and smoke-tested"
+          "the app's inference provider configured and smoke-tested (GLM 5.2 on Cloudflare Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway)"
         ],
         "released": [
-          "onboarding path works end to end on a stamped app (docs/RUNBOOK.md: intake, provision, the four customer credentials, deploy, clone.py configure, emailed-code sign-in, then the mold's fde:onboard-self / fde:new-org / fde:new-customer)",
+          "onboarding path works end to end on a stamped app (docs/RUNBOOK.md: intake, provision, the customer credentials (four on Cloudflare Workers AI, three on the Vercel AI Gateway), deploy, clone.py configure, emailed-code sign-in, then the mold's fde:onboard-self / fde:new-org / fde:new-customer)",
           "docs + pricing/packaging decided (docs/PRODUCTS.md; pricing still a placeholder)",
           "budget of inference cost per workspace known (docs/COST_MODEL.md: prices fetched, volumes measured from automation_runs rather than placeholders)"
         ]
