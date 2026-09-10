@@ -85,9 +85,9 @@ This creates nothing, anywhere. On a Vercel app it only reads: whether the three
 and Blob stores the team has. Then it prints, in this order: each project as `exists` / `does not exist`; `a deploy
 will create:` — every step a deploy performs, in the order it happens: a branded build copy (if your app has branding),
 the projects, the Neon database (adopt a spare if one is empty, else a fresh one on the free plan), the Blob store, the
-internal secrets it will mint, the build-time flags it rewrites, the database step (it says whether it REUSES the
-database password already deployed or ROTATES it — a rotation means the previous build stops connecting until this
-one replaces it), then the three production deployments (workflow, api, web; "framework PATCHed" means the project's
+internal secrets it will mint, the build-time flags it rewrites, the database step (it ROTATES the database
+password unless the one already deployed is the app's own — the check reads secret names, not values, so it cannot
+tell in advance; a rotation means the previous build stops connecting until this one replaces it), then the three production deployments (workflow, api, web; "framework PATCHed" means the project's
 framework setting is changed by an API call before deploying) and the state files it updates; `secrets present: n/N`;
 one `--set-secret` line for every credential from §0 you still have to set; `secrets a deploy will mint (not yours to
 set): <the names the deploy mints>` and `set during
@@ -175,9 +175,13 @@ MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py <app_i
 The variable is honoured only for a `target: vm` app with no `production_url`, in a status that serves nobody, and
 only for `http://127.0.0.1:<port>` or `http://localhost:<port>`; anything else is refused with one sentence, and a
 `target: vercel` app ignores it — its `production_url` always wins. On such a fixture the workflow builder is printed
-`not-covered` (the vm lane does not run the task-workflow service it needs) rather than failed; on a deployment it
-is measured. That is the only way this factory ever runs the app on the vm target, and it is a measurement on your
-own machine, not a place customers can reach.
+`not-covered` (the vm lane does not run the task-workflow service it needs) and each signed-in check that carries that
+row, and so the lane, is recorded `skipped` — never `pass`. On a deployment the factory mints no session at all, so no
+`lanes.py` run measures the builder either: it is measured only when you sign in to the deployed app yourself and lend
+that session for one run (`MOLD_V1_SESSION_TOKEN=... python3 .claude/scripts/lanes.py <app_id> --lane accessibility`
+on a `target: vercel` app with a `production_url`; `molds/mold_v1/testing/accessibility/README.md`, "Authenticated
+coverage"). Until then every report says the builder is unmeasured. The loopback variable is the only way this factory
+ever runs the app on the vm target, and it is a measurement on your own machine, not a place customers can reach.
 
 ## 8. Later
 
