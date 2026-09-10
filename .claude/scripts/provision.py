@@ -551,7 +551,11 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
                           f"env TASK_WORKFLOW_SERVICE_URL; a PRODUCTION build and deployment of the eve API; git disconnected "
                           f"if the deploy re-linked it; then env NEXT_PUBLIC_EVE_API_URL on {proj}")
         else:
-            create.append(f"{os.path.relpath(mold_dir, ROOT)}/vercel.nocron.json: vercel.json with its crons stripped "
+            # deploy_vercel writes this file into the directory it BUILDS from, which for a branded app is
+            # build/<app_id>/ (main() swaps mold_dir after this plan is printed), so name that directory here
+            # rather than the snapshot the run never touches.
+            bdir = f"build/{app_id}" if app.get("surface", {}).get("branding") else os.path.relpath(mold_dir, ROOT)
+            create.append(f"{bdir}/vercel.nocron.json: vercel.json with its crons stripped "
                           f"(shared_with_live: the crons stay with the live app); no schema, no app_rw, no isolation proof")
         origin = infra.get("vercel", {}).get("production_url") or f"https://{proj}.vercel.app"
         create.append(f"env WEB_ORIGIN={origin} on {proj} and {api}; a PRODUCTION deployment of the web app on {proj}; git "
@@ -866,7 +870,6 @@ def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_u
     task-workflow migration — which creates three more org-scoped tables — had not even run yet."""
     envsup = os.path.join(mold_dir, ".env.supabase"); envloc = os.path.join(mold_dir, ".env.local")
     saved = open(envloc).read() if os.path.exists(envloc) else None
-    _seed_env_local(envloc)
     # Reuse the existing app_rw password when one is already deployed. The bootstrap rotates on every
     # run, and a rotation invalidates every deployment built against the old value until it is rebuilt.
     env = dict(os.environ)
@@ -874,6 +877,11 @@ def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_u
     m0 = re.match(r"postgres(?:ql)?://app_rw[^:]*:([^@]+)@", cur)
     if m0: env["APP_RW_PASSWORD"] = urllib.parse.unquote(m0.group(1)); print("  reusing the deployed app_rw password (no rotation)")
     try:
+        # Seeded INSIDE the try, after pull_env: that call sys.exits when the production env cannot be
+        # pulled, and a seed placed before it was never removed on that exit (the finally below is what
+        # removes it), leaving a stray .env.local in build/<app_id>/ or in the mold snapshot. verify_db
+        # seeds at the same point for the same reason.
+        _seed_env_local(envloc)
         with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={admin}\n")
         os.chmod(envsup, 0o600)
         r = subprocess.run("node .bootstrap-supabase.mjs", shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
@@ -1668,7 +1676,9 @@ def main(a):
         print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
         for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
     if missing_derived:
-        print(("a deploy will create: " if not deploy else "the provisioner did not produce: ") + ", ".join(missing_derived))
+        # Not the plan above (that is `a deploy will create:`, every step in order); this is the shorter list of
+        # derived secret NAMES the deploy mints, kept apart so the two lines cannot be read as one.
+        print(("secrets a deploy will mint (not yours to set): " if not deploy else "the provisioner did not produce: ") + ", ".join(missing_derived))
     pending_deploy = [x for x in DEPLOY_TIME if x not in present]
     if pending_deploy: print(f"set during --deploy: {', '.join(pending_deploy)}")
     ev = ds.get("postgres", {}).get("rls_verified")

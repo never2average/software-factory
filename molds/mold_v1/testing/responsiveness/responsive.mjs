@@ -108,6 +108,15 @@ const declaredOff = (su) => AUTH && su.needs && WITHOUT.has(su.needs)
   : null;
 if (!BASE) { console.error("usage: responsive.mjs --url <base> [--only layout|targets|interaction] [--auth] [--session-env NAME] [--without <service>]"); process.exit(2); }
 const ORIGIN = new URL(BASE).origin;
+// `--without` is a statement about a FIXTURE — the mold started on this box, which lane-url.py only ever names
+// at a loopback address. So it is honoured only when --url is loopback (the same two hosts lane-url.py
+// accepts) and dropped, loudly, anywhere else: on a deployment every surface is measured and an absent
+// service is a defect, and no future lane.json edit can reach the `declared off on this fixture` row there.
+const LOOPBACK = ["127.0.0.1", "localhost"].includes(new URL(BASE).hostname);
+if (WITHOUT.size && !LOOPBACK) {
+  console.error(`--without ${[...WITHOUT].join(", ")} ignored: ${BASE} is not a loopback fixture, so every surface is measured and a missing service fails its row`);
+  WITHOUT.clear();
+}
 
 // The credential is read BY NAME and never printed: only the identity it names and its expiry, so a
 // report can say who the product was measured as without becoming the place the token leaks. Claims

@@ -83,9 +83,14 @@ python3 .claude/scripts/provision.py <app_id>
 This creates nothing, anywhere. On a Vercel app it only reads: whether the three projects (`<project>`,
 `<project>-api`, `<project>-workflow`) exist, which secret names are already set, and which spare Neon databases
 and Blob stores the team has. Then it prints, in this order: each project as `exists` / `does not exist`; `a deploy
-will create:` with the projects, the Neon database (adopt a spare if one is empty, else a fresh one on the free
-plan), the Blob store and the internal secrets it will mint; `secrets present: n/N`; one `--set-secret` line for
-every credential from §0 you still have to set; `a deploy will create: <the names the deploy mints>` and `set during
+will create:` — every step a deploy performs, in the order it happens: a branded build copy (if your app has branding),
+the projects, the Neon database (adopt a spare if one is empty, else a fresh one on the free plan), the Blob store, the
+internal secrets it will mint, the build-time flags it rewrites, the database step (it says whether it REUSES the
+database password already deployed or ROTATES it — a rotation means the previous build stops connecting until this
+one replaces it), then the three production deployments (workflow, api, web; "framework PATCHed" means the project's
+framework setting is changed by an API call before deploying) and the state files it updates; `secrets present: n/N`;
+one `--set-secret` line for every credential from §0 you still have to set; `secrets a deploy will mint (not yours to
+set): <the names the deploy mints>` and `set during
 --deploy: <the names the deploy fills>` (neither is yours to set); a reminder to run `--verify-rls` while nothing
 has measured tenant isolation yet (a new app always shows it; §5 measures it); and the last line `check only,
 read-only: nothing was created.` followed by either `Set the secret(s) above, then run: ... --deploy` or `Ready: ...
@@ -158,6 +163,22 @@ session for the factory's test identity, and the functional lane carries three k
 step you skipped. A failing lane puts the app in `reverted` and control back with you: read the task it filed
 (`python3 .claude/scripts/factory.py next mold_v1`).
 
+The two browser lanes measure the app at its deployed URL (`infrastructure.vercel.production_url`). A `target: vm` app
+has no such URL, so those lanes are `skipped` for it — unless you have started the mold yourself on this machine
+against that app's env (`molds/mold_v1/testing/accessibility/README.md`, "Measuring a vm fixture", lists the steps)
+and tell the lane where, for one run:
+
+```
+MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py <app_id> --lane accessibility
+```
+
+The variable is honoured only for a `target: vm` app with no `production_url`, in a status that serves nobody, and
+only for `http://127.0.0.1:<port>` or `http://localhost:<port>`; anything else is refused with one sentence, and a
+`target: vercel` app ignores it — its `production_url` always wins. On such a fixture the workflow builder is printed
+`not-covered` (the vm lane does not run the task-workflow service it needs) rather than failed; on a deployment it
+is measured. That is the only way this factory ever runs the app on the vm target, and it is a measurement on your
+own machine, not a place customers can reach.
+
 ## 8. Later
 
 | Want to | Run |
@@ -174,5 +195,6 @@ step you skipped. A failing lane puts the app in `reverted` and control back wit
 
 - A custom domain (`domain: <host>` is recorded in state; attaching it is a Vercel dashboard step).
 - A clone of the live deployment: `.claude/skills/clone/SKILL.md`.
-- `target: vm` as a place to run the app. It is a local verification target only; the reasons are in
-  `infra/vm/README.md`.
+- `target: vm` as a place to run the app for anyone. It is a local verification target only (the reasons are in
+  `infra/vm/README.md`); the one exception is §7's `MOLD_V1_LANE_URL`, which lets the browser lanes measure a mold
+  you started yourself on this machine, at a loopback address, and nowhere else.

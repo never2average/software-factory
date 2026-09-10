@@ -70,6 +70,16 @@ rotates app #1's password. Measured, not assumed: `app_two credential -> app_one
 (read confidential rows, wrote one), and a silent `ALTER ROLE app_rw` broke app #1's live deployment
 with `FAIL 28P01`. See `infra/vm/README.md`.
 
+## infrastructure.vercel
+Closed (`additionalProperties: false`, mold_v1-057) and present only when `target` is `vercel`; a `target: vm` app
+carries a `vm` object instead and never a URL (mold_v1-053). Keys: `team`, `project` (the web project; the api and
+workflow projects are `<project>-api` / `<project>-workflow`), `production_url`, `api_url`, `workflow_url` (the three
+deployment URLs, written by `provision.py --deploy`), `custom_domain`, `functions`, `crons` (`stripped
+(shared_with_live)` when the deploy wrote a `vercel.nocron.json`), and `health` — the deploy's own verdict on the
+three health endpoints (`workflow`, `api`, `web`), each the HTTP status as a string (`"200"`) or `"no answer"`,
+written by `--deploy` and carried across a re-intake by `intake.py`, never by hand. A status code there is not proof
+of isolation: that verdict is `datastores.postgres.rls_verified`.
+
 ## application.testing and application.status
 `testing` holds the last result per lane — `{status, run_at, report}` for each of `functional`, `context`,
 `load`, `accessibility`, `responsiveness`, and `additionalProperties: false`, so a sixth lane has nowhere
@@ -84,7 +94,8 @@ is `reverted` — which it does, plus a task against the mold, on any lane failu
 
 What a lane needs from state, declared per check in the lane's `lane.json` rather than in the runner:
 `infrastructure.vercel.production_url` (accessibility, responsiveness, and the functional `rls` row all
-grade the deployed app), `datastores.postgres.rls` (the `rls` row is skipped when it is `off`), and
+grade the deployed app; the two browser lanes read it through `<lane>/lane-url.py`, which for a `target: vm`
+fixture accepts a loopback `MOLD_V1_LANE_URL` instead — `docs/RUNBOOK.md` §7), `datastores.postgres.rls` (the `rls` row is skipped when it is `off`), and
 `application.clone_of.ref` (the context lane's `clone.regression` row only applies to a replica).
 
 ## capabilities and runtime env

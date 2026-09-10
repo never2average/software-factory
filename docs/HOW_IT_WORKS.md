@@ -41,12 +41,7 @@ remote, on every target (mold_v1-041, closed; it used to create the projects and
 it counted a secret). On `target: vercel` it runs exactly five kinds of read: `GET /v9/projects/<proj>`,
 `/<proj>-api`, `/<proj>-workflow`; `vercel integration list --all --json`; `GET /v1/storage/stores`; and `vercel env
 ls production --project <proj>` only if `<proj>` exists. From those it prints each project as `exists` / `does not
-exist`, then `a deploy will create:` — the projects to create; the Neon action (adopt one of N named unattached
-resources if one is empty, else provision `<app-id-dashed>` on the free plan, each candidate inspected through a
-temporary `sf-neon-inspect-*` project created and deleted in the same run); the Blob store `<app-id-dashed>` (create,
-or connect if the team already has one); and the env it mints (`CRON_SECRET`, `OPS_SECRETS_KEY`,
-`AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY`) — then `secrets present: n/N`, one `--set-secret NAME` line per
-missing operator secret, `a deploy will create: <derived names>`, `set during --deploy: <deploy-time names>`, a `--verify-rls` reminder
+exist`, then `a deploy will create:` — every step the deploy performs, in the order it happens, so nothing it writes or rotates is a surprise (mold_v1-056): `build/<app_id>/`, a branded copy of the mold to build from (branded apps only; local files); the projects to create; the Neon action (adopt one of N named unattached resources if one is empty, else provision `<app-id-dashed>` on the free plan, each candidate inspected through a temporary `sf-neon-inspect-*` project created and deleted in the same run); the Blob store `<app-id-dashed>` (create, or connect if the team already has one); the env it mints (`CRON_SECRET`, `OPS_SECRETS_KEY`, `AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY`, `TASK_WORKFLOW_SERVICE_TOKEN`); the four build-time flags rewritten on `<project>` and `<project>-api` on every deploy (`MODEL_PROVIDER`, `ENABLE_WEB_SEARCH`, `ENABLE_BROWSER`, `OPS_MULTI_TENANT`); the database step — schema push, migration journal, the RLS + `app_rw` bootstrap, which says whether it REUSES the deployed `app_rw` password or ROTATES it (a rotation means every build made against the older password stops connecting until it is rebuilt), the task-workflow migration, the RLS coverage pass, the isolation proof, and only after that proof `DATABASE_URL` on all three projects; then the three production deployments in order — `<project>-workflow` (env copied from `<project>`, framework PATCHed to `nextjs`, i.e. the project's framework setting is changed by an API call, then `TASK_WORKFLOW_SERVICE_URL` written), `<project>-api` (API env copied, framework PATCHed to `eve`, a prebuilt deployment, then `NEXT_PUBLIC_EVE_API_URL` written) and `<project>` itself (`WEB_ORIGIN` written on web and api, rewritten if the deployment's URL differs), each git-disconnected again if the deploy re-linked it; and last, reads only (the three health endpoints) and the state files it updates. A `shared_with_live` app lists `build/<app_id>/vercel.nocron.json` (the snapshot path when unbranded) — `vercel.json` with its crons stripped — in place of the database, workflow and api steps. Then `secrets present: n/N`, one `--set-secret NAME` line per missing operator secret, `secrets a deploy will mint (not yours to set): <derived names>` (a different, shorter line: the names only), `set during --deploy: <deploy-time names>`, a `--verify-rls` reminder
 while nothing has measured isolation yet, and the
 closing line `check only, read-only: nothing was created. Set the secret(s) above, then run: ... --deploy` (exit 1)
 or `... Ready: ... --deploy` (exit 0). It never sweeps `sf-neon-inspect-*` projects and no longer writes
@@ -173,6 +168,17 @@ Nothing about a lane is coded into the runner. Each lane declares itself in
 would make the check run. So a new check, harness or precondition in a future mold never edits the runner;
 only a sixth *lane* would, because `application.testing` has one key per lane and a result for an unknown
 lane has nowhere legal to live. A lane folder outside the five is announced on stdout, never ignored.
+
+Where a browser lane points is itself a lane decision, not a runner one: accessibility and responsiveness gate
+every check on `<lane>/lane-url.py <app_id>`, which prints `infrastructure.vercel.production_url` when it exists,
+else — for a `target: vm` app only, which has no URL because the vm lane starts no web process — the loopback
+address the operator names in `MOLD_V1_LANE_URL` for one run (`docs/RUNBOOK.md` §7). It refuses anything but
+`http://127.0.0.1:<port>` / `http://localhost:<port>` on a vm app with no `production_url` in a status that serves
+nobody, so the lane cannot be aimed at a server the factory did not verify, and a vercel app never reads the variable.
+With `--harness` the same script also hands the harness `--without task-workflow` for such a fixture, and the harness
+honours that flag only when its `--url` is loopback: the workflow builder is then printed `not-covered` with the
+reason ("declared off on this fixture"), the one unmeasured row `lane.json` lets through; on any other URL the flag
+is dropped and the builder is measured, so a deployment can never reach that exemption.
 
 The rollup is deliberately hard to fake, in this order: no `lane.json`, no checks, or an unmet lane-level
 precondition → `skipped`; any check failed → `fail`; every check *ran* and passed → `pass`; anything else
