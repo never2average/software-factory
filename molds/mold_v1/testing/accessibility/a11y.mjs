@@ -96,6 +96,15 @@ const SESSION_ENV = arg("--session-env", "MOLD_V1_SESSION_TOKEN");
 const WITHOUT = new Set(process.argv.flatMap((x, i) => (x === "--without" && process.argv[i + 1] ? [process.argv[i + 1]] : [])));
 if (!base) { console.error("usage: a11y.mjs --url <base> [--only axe|keyboard|auth] [--routes a,b] [--json f] [--session-env NAME] [--without <service>]"); process.exit(2); }
 const ORIGIN = new URL(base).origin;
+// `--without` is a statement about a FIXTURE — the mold started on this box, which lane-url.py only ever names
+// at a loopback address. So it is honoured only when --url is loopback (the same two hosts lane-url.py
+// accepts) and dropped, loudly, anywhere else: on a deployment every surface is measured and an absent
+// service is a defect, and no future lane.json edit can reach the `declared off on this fixture` row there.
+const LOOPBACK = ["127.0.0.1", "localhost"].includes(new URL(base).hostname);
+if (WITHOUT.size && !LOOPBACK) {
+  console.error(`--without ${[...WITHOUT].join(", ")} ignored: ${base} is not a loopback fixture, so every surface is measured and a missing service fails its row`);
+  WITHOUT.clear();
+}
 
 // ESM ignores NODE_PATH, so the global playwright is reached through a require rooted at it.
 let chromium;

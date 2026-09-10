@@ -34,6 +34,10 @@ task-workflow` and prints that one surface `not-covered` with the reason (a11y.m
 such flag: there, an absent builder IS a defect. The flag is emitted here, next to the URL decision, so the
 declaration and the fixture it describes cannot drift apart.
 
+The operator-facing description of MOLD_V1_LANE_URL is docs/RUNBOOK.md §7 and .claude/skills/run-lanes/SKILL.md;
+the harness (a11y.mjs / responsive.mjs) honours `--without` only when its --url is loopback, so the flag emitted here
+cannot declare anything off on a deployment.
+
 (The accessibility and responsiveness lanes carry a copy each. The duplication is on purpose — a lane
 folder is meant to be self-contained, so copying it into a future mold brings everything it needs.)
 """
