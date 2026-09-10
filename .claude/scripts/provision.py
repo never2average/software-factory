@@ -535,9 +535,13 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
         if not shared and "TASK_WORKFLOW_SERVICE_TOKEN" not in present:
             create.append(f"env on {proj}: TASK_WORKFLOW_SERVICE_TOKEN (minted locally)")
     if mode == "verify-db" or not shared:
-        # bootstrap_database reuses the password only when an app_rw DATABASE_URL is already deployed on the
-        # main project; the check cannot read the value, so "present" is the closest honest reading.
-        rot = ("REUSES the deployed app_rw password" if "DATABASE_URL" in present
+        # bootstrap_database reuses the password ONLY when the DATABASE_URL already deployed on the main
+        # project is app_rw's own (it matches postgres://app_rw...); any other value there — an admin URL, a
+        # stranger's — is ignored and the password rotates. The check reads names, never values, so it
+        # cannot tell those apart: the safe statement is the rotation, with the one condition that averts it.
+        rot = ("ROTATES the app_rw password unless the DATABASE_URL already on the project is app_rw's own (then it is "
+               "reused; --check reads names, not values, so it cannot tell) — a rotation stops every build made against the older one"
+               if "DATABASE_URL" in present
                else "ROTATES the app_rw password: every build made against an older one stops connecting")
         create.append(f"the database: schema push, migration journal, RLS + app_rw bootstrap ({rot}), task-workflow "
                       f"migration, the RLS coverage pass, then the isolation proof; ONLY after the proof passes, env "
@@ -640,13 +644,6 @@ def disconnect_git(project, mold_dir):
     link = git_link(project, mold_dir)
     if link: sys.exit(GIT_LINK_MSG.format(project=project, link=link))
     print(f"  {project}: git integration disconnected")
-
-def deploy(cfg, mold_dir):
-    """Production deploy from the mold dir; returns the deployment URL. The CLI prints progress on stderr and the URL on stdout, but a build error arrives as JSON, so never trust the last line blindly."""
-    r = subprocess.run(f"vercel deploy --prod --yes --local-config {cfg}", shell=True, cwd=mold_dir, capture_output=True, text=True)
-    urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", r.stdout + r.stderr)
-    if r.returncode or not urls: sys.exit(f"deploy with {cfg} failed:\n" + (r.stdout + r.stderr).strip()[-1500:])
-    return urls[-1]
 
 def sync_env(names, vals, project, mold_dir, declared=None):
     """Copy `names` from the main project's values onto `project`. `declared` (infrastructure.secrets)
@@ -1245,12 +1242,17 @@ def verify_db(app_id, mold_dir, ds, adir, infra):
         _vm_env(app_id, {"POSTGRES_ADMIN_URL": adm, "DATABASE_URL": m.group(1)})
         envf = os.path.join(ROOT, "infra/vm/apps", app_id, ".env")
         have = {l.split("=", 1)[0] for l in open(envf) if "=" in l and l.split("=", 1)[1].strip()}
-        if "AUTH_JWT_PRIVATE_KEY" not in have:
+        halves = {"AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY"} & have
+        if len(halves) < 2:
             # The same pair the vercel lane mints (provision_datastores), kept across re-runs like .pg-admin:
             # a re-mint would orphan every session the lanes signed with the old key. It is what lets
-            # lib/session.py sign in as this app's own FDE on this box (mold_v1-040).
+            # lib/session.py sign in as this app's own FDE on this box (mold_v1-040). Kept only as a PAIR:
+            # a file holding one half (a partial write, a hand edit) gets BOTH re-minted, because a private
+            # key without its public half signs sessions the mold can never verify, and keeping it would
+            # print "key pair" for a file that has none.
             priv, pub = mint_jwt_pair()
-            _vm_env(app_id, {"AUTH_JWT_PRIVATE_KEY": priv, "AUTH_JWT_PUBLIC_KEY": pub}); print("generated AUTH_JWT key pair")
+            _vm_env(app_id, {"AUTH_JWT_PRIVATE_KEY": priv, "AUTH_JWT_PUBLIC_KEY": pub})
+            print("generated AUTH_JWT key pair" + (f" (re-minted both: only {halves.pop()} was present)" if halves else ""))
         print(f"verified: {app_id}'s local database is ready (no host port; `docker port {localpg.cont(app_id)}` is empty)")
         print(f"  DATABASE_URL, POSTGRES_ADMIN_URL and the AUTH_JWT key pair written to infra/vm/apps/{app_id}/.env — 0600, and ignored by\n"
               f"  both infra/vm/apps/{app_id}/.gitignore and the root .gitignore, as are .pg-admin and pg/server.key")
@@ -1514,8 +1516,11 @@ def _refuse_live_or_shared_project(app_id, infra):
     for o in sorted(os.listdir(os.path.join(ST, "application"))):
         if o in (app_id, "app_id"): continue
         f = os.path.join(ST, "application", o, "infrastructure.json")
-        try: op = (load(f).get("vercel") or {}).get("project", "")
+        try:
+            op = (load(f).get("vercel") or {}).get("project", "")
+            ost = load(os.path.join(ST, "application", o, "application.json")).get("status")
         except Exception: continue
+        if ost in ("retired", "dropped"): continue   # it deploys nothing, so it shares nothing (claudecode_web_internal)
         if op and op == proj: others.append(o)
     if others:
         sys.exit(f"{app_id}: {', '.join(others)} already deploy to the Vercel project {proj}. One project is one "

@@ -22,8 +22,9 @@ token proves an email, and membership is read from the app's database on every r
 an identity with no membership sees an empty isolated workspace and the lane's probe says so instead of grading.
 
 WHERE THE KEY COMES FROM, by name, from the app's own secret store (infrastructure.secret_store):
-  vm_env_file  infra/vm/apps/<app_id>/.env            (0600, gitignored)
-  vercel_env   `vercel env pull` of the app's project into a 0600 temp file, read into memory, deleted
+  vm_env_file  infra/vm/apps/<app_id>/.env            (0600, gitignored) — the ONLY store this helper reads.
+  A Vercel-held key (secret_store vercel_env) is never pulled and never used to sign: such an app can serve a real
+  person, and the fixture guard in state() refuses it before any key is looked for.
 Nothing is written anywhere: the value goes from the store to node's stdin-free environment for one `sign`
 call, the token goes into the child's environment, and neither reaches argv, a file, stdout or state.
 
@@ -35,7 +36,7 @@ WHY THE OPERATOR'S OWN SESSION WINS. If <MOLD>_SESSION_TOKEN is already set, the
 nothing is minted — a human who signed in and lent that session (the READMEs' manual path) is measuring the
 product as themselves, on purpose, and a minted token silently replacing theirs would measure someone else.
 """
-import base64, json, os, re, subprocess, sys, tempfile, time
+import base64, json, os, re, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 REDACTED = "[SENSITIVE]"    # what `vercel env pull` writes for a variable the CLI may not read (provision.py)
@@ -46,12 +47,15 @@ def die(msg): print(msg, file=sys.stderr); sys.exit(1)
 def load(p): return json.load(open(p))
 def b64u(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
-def state(app_id):
+def docs(app_id):
     adir = os.path.join(ROOT, "state/application", app_id)
     if not os.path.isfile(os.path.join(adir, "application.json")):
         die(f"{app_id}: no such application (state/application/{app_id}/application.json does not exist), so there is "
             f"no identity to sign in as. Nothing was minted.")
-    app, infra = load(os.path.join(adir, "application.json")), load(os.path.join(adir, "infrastructure.json"))
+    return load(os.path.join(adir, "application.json")), load(os.path.join(adir, "infrastructure.json"))
+
+def state(app_id):
+    app, infra = docs(app_id)
     # A HARNESS IDENTITY, NEVER A USER'S. The mold's own sign-in demands inbox proof (a six-digit code
     # emailed to the person) and this helper supplies none, so a token it signs is legitimate ONLY as a
     # test fixture against a database that serves nobody: a target=vm app on this box, in a status that
@@ -122,38 +126,6 @@ def private_key(app_id, infra):
         pem = pem_of(raw)
         if not pem: die(f"{app_id}: {KEY} in {where} is neither a PEM nor base64 of one. Regenerate the pair.")
         return pem, where
-    if store == "vercel_env":
-        proj, team = (infra.get("vercel") or {}).get("project"), (infra.get("vercel") or {}).get("team")
-        if not proj: die(f"{app_id}: infrastructure.vercel.project is not set, so there is no project to read the key from.")
-        where = f"Vercel project {proj} (production env)"
-        d = tempfile.mkdtemp(prefix="sf-session-"); tmp = os.path.join(d, ".env.pull")
-        try:
-            # provision.py's pull_env, minus its home in the mold directory: a temp dir this run owns, mode 0700,
-            # and the file is removed before this function returns whatever happened in between.
-            scope = f" --scope {team}" if team else ""
-            r = subprocess.run(f"vercel env pull --yes --environment=production --project {proj}{scope} {tmp}",
-                               shell=True, cwd=d, capture_output=True, text=True)
-            if not os.path.isfile(tmp):
-                tail = (r.stdout + r.stderr).strip().splitlines()[-1:] or ["no output"]
-                die(f"{app_id}: could not read {proj}'s production environment ({tail[0][:160]}). Run `vercel login` "
-                    f"on this box, or sign in to the app yourself and pass that browser's fde-google-token as the "
-                    f"lane's session variable.")
-            raw = env_file_value(tmp, KEY)
-        finally:
-            if os.path.exists(tmp): os.remove(tmp)
-            os.rmdir(d)
-        if raw is None:
-            die(f"{app_id}: {proj} carries no {KEY}, so the app has no sign-in key pair yet. Provision it: "
-                f"python3 .claude/scripts/provision.py {app_id} --check")
-        if raw.strip().strip('"') == REDACTED:
-            die(f"{app_id}: {KEY} on {proj} is stored Sensitive, which the CLI may not read, so the factory cannot "
-                f"sign a session for this app. Sign in to the app yourself and pass that browser's fde-google-token "
-                f"as the lane's session variable.")
-        pem = pem_of(raw)
-        if not pem: die(f"{app_id}: {KEY} on {proj} is neither a PEM nor base64 of one. Regenerate the pair.")
-        return pem, where
-    die(f"{app_id}: infrastructure.secret_store is {store!r}, which this helper cannot read a key from "
-        f"(vm_env_file or vercel_env). Nothing was minted.")
 
 def sign(pem, signing_input):
     """ES256 = ECDSA P-256 over SHA-256 with the signature as raw r||s (ieee-p1363), which is what jose verifies.
@@ -187,8 +159,16 @@ def main(a):
         except (IndexError, ValueError): die("--ttl needs a number of seconds")
         del rest[i:i + 2]
         if not MIN_TTL <= ttl <= MAX_TTL: die(f"--ttl must be between {MIN_TTL} and {MAX_TTL} seconds (the mold's own ceiling)")
-    mold_id, email, infra = state(app_id)
+    mold_id = docs(app_id)[0].get("mold_id") or die(f"{app_id}: application.json has no mold_id")
     var = f"{re.sub(r'[^A-Za-z0-9]', '_', mold_id).upper()}_SESSION_TOKEN"
+    # The operator's own session wins BEFORE the fixture guard below: the command then runs with the
+    # environment it already had and nothing is minted, so there is nothing for the guard to refuse. This
+    # is the only way a signed-in surface on a deployment (a target=vercel app, which the guard refuses to
+    # mint for) is ever measured by a lane, and it is the operator's sign-in, never the factory's.
+    if rest[:1] == ["--"] and len(rest) >= 2 and os.environ.get(var, "").strip():
+        print(f"{var} is already set: running with that session, nothing minted (an operator's own sign-in wins)", file=sys.stderr)
+        return subprocess.run(rest[1:]).returncode
+    mold_id, email, infra = state(app_id)
     if rest[:1] == ["--explain"]:
         c = contract(mold_id)
         print(f"{app_id}: would sign in as {email} ({c['alg']}, iss {c['iss']}, aud {c['aud']}, kind {c['kind']}), "
@@ -196,9 +176,6 @@ def main(a):
         return 0
     if rest[:1] != ["--"] or len(rest) < 2: sys.exit(__doc__)
     cmd = rest[1:]
-    if os.environ.get(var, "").strip():
-        print(f"{var} is already set: running with that session, nothing minted (an operator's own sign-in wins)", file=sys.stderr)
-        return subprocess.run(cmd).returncode
     c = contract(mold_id); pem, where = private_key(app_id, infra)
     tok = mint(email, c, pem, ttl)
     print(f"session minted for {email} on {app_id} ({c['alg']}, key from {where}, {ttl}s of life); handed to the "

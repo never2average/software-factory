@@ -122,7 +122,7 @@ the precondition refuses that as `skipped` ("lists no workspace for that identit
 an empty shell.
 
 **Where the key is read from**, by name, from the app's own secret store: `infra/vm/apps/<app_id>/.env`
-for `vm_env_file`, a `vercel env pull` into a 0600 temp file (read once, deleted) for `vercel_env`. The
+for `vm_env_file`, the only store it reads (a `vercel_env` app is refused before any key is looked for). The
 key is used for one signature in node's environment, the token goes into the harness's environment, and
 neither ever reaches argv, a file, stdout or state. The minted session lives 30 minutes — the longest
 check here is 15 and asks for 20 — not the seven days the app's own sessions get.
@@ -226,7 +226,8 @@ is printed, so grading a real deployment cannot change it.
   graded — this lane is read-only on the application it grades.
 - **The workflow builder on a `target: vm` fixture.** The vm lane does not run the task-workflow service
   the builder is a client of, so on a fixture named in `MOLD_V1_LANE_URL` its rows are declared
-  `not-covered` with the reason; on a deployment the builder is measured and its absence is a fail.
+  `not-covered` with the reason and the check is recorded `skipped` (`expect.skip_on`), so the lane cannot be
+  `pass` with that surface unopened; on a deployment the factory mints no session at all (`session.py` refuses every `target: vercel` app), so the builder has been measured by no run of this lane; it is measured only with a session an operator signs in for and lends in `MOLD_V1_SESSION_TOKEN`, and its absence is then a fail.
 - **The signed-in surface at all, when no usable session exists** — no key in the app's secret store (a
   `target: vm` app that has not run `--verify-db`), a key the deployment does not run with, an FDE identity with no workspace there, and
   no operator-lent session: the check is `skipped` and so is the lane. Not `pass`.
@@ -322,7 +323,10 @@ the URL is plain `http://127.0.0.1:<port>` or `http://localhost:<port>` with not
 address, and any vercel app, is refused with one sentence — this is not a way to aim the lane at a server
 the factory did not verify. The same script hands the harness `--without task-workflow` for a fixture,
 so the workflow builder is declared `not-covered` with that reason instead of failing on a control the
-task-workflow service would have rendered; on a deployment it is measured.
+task-workflow service would have rendered, and the authenticated check is then `skipped`, not `pass`
+(`expect.skip_on`). On a deployment nothing here can mint a session (`session.py` refuses every
+`target: vercel` app), so the builder is measured only with an operator-lent `MOLD_V1_SESSION_TOKEN` —
+which no run of this lane has had.
 
 What it took, run today (2026-09-10) against a throwaway `v040fix` — a copy of a validated vm app's
 state under a new id, registered in `state/factory.json` and `state/products.json`, then removed with its
@@ -359,6 +363,7 @@ outputs quoted are the ones it printed:
     MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py v040fix --lane accessibility --dry-run
 
     accessibility    fail     2/3 passed  molds/mold_v1/testing/accessibility/reports/dry/v040fix-2026-09-10T053805Z.md
+    (that report was removed with the fixture; the rows it held are inlined below)
 
     axe.wcag21aa            pass   3 rows: /, /onboard, /workspace signed out
     keyboard.traversal      pass   3 rows + the builder signpost (not-covered, as always signed out)
@@ -393,9 +398,10 @@ vm app's key against this fixture is refused by the fixture itself (`/api/ops/or
   `MOLD_V1_LANE_URL` is how the lane is told where. "Measuring a vm fixture" lists exactly what that took.
 - **The workflow builder on a vm fixture.** It is a client of the task-workflow service, which the vm
   lane does not run, so on a fixture it is declared `not-covered` rather than measured — the row and the
-  report say so. It is measured on a deployment, where its absence is a fail.
-- **A key stored Sensitive on Vercel** cannot be read by the CLI; the helper refuses and points at the
-  manual path.
+  report say so, and the check is `skipped`, never `pass`. It is not measured on a deployment either, by any
+  run to date: `session.py` mints only for a vm fixture, so on a deployment the builder is opened only with a
+  session an operator signs in for and lends (`MOLD_V1_SESSION_TOKEN`), where its absence is a fail.
+- **A Vercel-held key is never used.** `session.py` mints only from a key the factory generated for a local vm fixture (`infra/vm/apps/<app>/.env`); an app on Vercel is refused outright, whatever its key's storage type.
 - **The workspace must exist.** `fde_self` is seeded as owner by whatever stamped the application
   (`fde:new-org`, a live snapshot, the onboarding wizard). Nothing in this lane writes it, and the
   precondition refuses to grade an identity with no workspace.

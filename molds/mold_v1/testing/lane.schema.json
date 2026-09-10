@@ -35,7 +35,20 @@
             "properties": {
               "exit": { "type": "integer", "description": "Default 0." },
               "stdout": { "type": "array", "items": { "type": "string" }, "description": "Every regex must match combined stdout+stderr." },
-              "stdout_not": { "type": "array", "items": { "type": "string" }, "description": "None may match. This is how a lane refuses to grade on a status code." }
+              "stdout_not": { "type": "array", "items": { "type": "string" }, "description": "None may match. This is how a lane refuses to grade on a status code." },
+              "skip_on": {
+                "type": "array",
+                "description": "Judged after exit/stdout/stdout_not, so a failure is never hidden: if `stdout` matches, the check ran but declared part of what it names unmeasured, and is recorded `skipped` (never `pass`) with `else` as the reason; its measured rows still print. The lane is then `skipped`, never `pass`.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["stdout", "else"],
+                  "properties": {
+                    "stdout": { "type": "string", "description": "Regex over combined stdout+stderr." },
+                    "else": { "type": "string", "description": "What the operator should do, in one sentence with the command in it; placeholders allowed." }
+                  }
+                }
+              }
             }
           },
           "requires": { "type": "array", "items": { "$ref": "#/$defs/precondition" }, "description": "Check-level: unmet means this check is SKIPPED, never failed — and a lane with a skipped check can never be `pass`." },

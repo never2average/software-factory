@@ -92,7 +92,8 @@ const jsonOut = arg("--json", "");
 const SESSION_ENV = arg("--session-env", "MOLD_V1_SESSION_TOKEN");
 // Services the target does not run (`--without task-workflow`, repeatable). Only lane-url.py emits it, and
 // only for a vm fixture; a surface that `needs` one is printed `not-covered` — "declared off on this
-// fixture", the one phrase lane.json's stdout_not lets through — instead of failed, and never `pass`.
+// fixture", the one phrase lane.json's stdout_not lets through and its skip_on then records the whole
+// check `skipped` (the lane cannot be `pass` with a surface unopened) — instead of failed, and never `pass`.
 const WITHOUT = new Set(process.argv.flatMap((x, i) => (x === "--without" && process.argv[i + 1] ? [process.argv[i + 1]] : [])));
 if (!base) { console.error("usage: a11y.mjs --url <base> [--only axe|keyboard|auth] [--routes a,b] [--json f] [--session-env NAME] [--without <service>]"); process.exit(2); }
 const ORIGIN = new URL(base).origin;
