@@ -1881,6 +1881,9 @@ def main(a):
                  f"  Open {infra.get('vercel', {}).get('production_url', 'the app URL')}{HEALTH_PATH} in a browser. If it asks "
                  f"for a login, turn off Vercel Deployment Protection for this project, then run: "
                  f"python3 .claude/scripts/provision.py {app_id} --deploy")
+    # A deploy that reached three healthy endpoints supersedes the revert a failed one recorded; leaving
+    # that block beside status "stamped" is the self-contradictory state a critic caught once already.
+    app.pop("revert", None)
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
 if __name__ == "__main__": main(sys.argv[1:])
