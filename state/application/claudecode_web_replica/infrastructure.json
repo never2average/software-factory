@@ -25,13 +25,17 @@
     "PLATFORM_NOTIFY_FROM",
     "RESEND_API_KEY",
     "TASK_WORKFLOW_SERVICE_TOKEN",
-    "TASK_WORKFLOW_SERVICE_URL"
+    "TASK_WORKFLOW_SERVICE_URL",
+    "GOOGLE_CLIENT_ID",
+    "NEXT_PUBLIC_GOOGLE_CLIENT_ID"
   ],
   "secrets_user": [
     "CLOUDFLARE_ACCOUNT_ID",
     "CLOUDFLARE_API_TOKEN",
     "RESEND_API_KEY",
-    "PLATFORM_NOTIFY_FROM"
+    "PLATFORM_NOTIFY_FROM",
+    "GOOGLE_CLIENT_ID",
+    "NEXT_PUBLIC_GOOGLE_CLIENT_ID"
   ],
   "secrets_derived": [
     "DATABASE_URL",
@@ -46,10 +50,7 @@
     "TASK_WORKFLOW_SERVICE_URL",
     "NEXT_PUBLIC_EVE_API_URL"
   ],
-  "secrets_optional": [
-    "GOOGLE_CLIENT_ID",
-    "NEXT_PUBLIC_GOOGLE_CLIENT_ID"
-  ],
+  "secrets_optional": [],
   "runtime_env": {
     "OPS_MULTI_TENANT": "1",
     "ENABLE_WEB_SEARCH": "false",
@@ -76,7 +77,7 @@
     "blob_store": "claudecode-web-internal (store_yYAYEISeeQYrb12F, private, iad1)",
     "neon_resource": "claudecode-web-replica"
   },
-  "deployed_at": "2026-09-13T10:25:21+00:00",
+  "deployed_at": "2026-09-13T11:02:59+00:00",
   "configured_at": "2026-09-06T12:14:56+00:00",
-  "note": "migrated to the Neon shape on 2026-09-08 (task mold_v1-037): SUPABASE_URL and SUPABASE_POSTGRES_URL_NON_POOLING removed \u2014 the first appears nowhere in the mold codebase and the second is Supabase's name for the admin URL \u2014 and DATABASE_URL_UNPOOLED added, which is what the Neon connection injects and what admin_url_ref now names. The Supabase resource this app was first configured onto is not its database any more; it must be re-provisioned (task mold_v1-026). deployed_at migrated on 2026-09-09 (task mold_v1-046) from the bare date 2026-09-06 to midnight UTC of that day: the exact deploy instant was never recorded, so this is the earliest it could have been; the next --deploy writes the exact instant."
+  "note": "migrated to the Neon shape on 2026-09-08 (task mold_v1-037): SUPABASE_URL and SUPABASE_POSTGRES_URL_NON_POOLING removed — the first appears nowhere in the mold codebase and the second is Supabase's name for the admin URL — and DATABASE_URL_UNPOOLED added, which is what the Neon connection injects and what admin_url_ref now names. The Supabase resource this app was first configured onto is not its database any more; it must be re-provisioned (task mold_v1-026). deployed_at migrated on 2026-09-09 (task mold_v1-046) from the bare date 2026-09-06 to midnight UTC of that day: the exact deploy instant was never recorded, so this is the earliest it could have been; the next --deploy writes the exact instant."
 }
