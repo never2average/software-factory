@@ -69,12 +69,31 @@ const sql = postgres(url, { ssl: needsSsl ? "require" : false, prepare: false, c
 const ORG_A = "zz-iso-a";
 const ORG_B = "zz-iso-b";
 
+/**
+ * Every row this test touches is touched WITH A WORKSPACE IN SCOPE, the way the
+ * application itself writes. Under a fail-closed policy a statement with no
+ * app.org_id set reaches no row at all: an unscoped INSERT is refused and an
+ * unscoped DELETE silently deletes nothing, so the old unscoped seed died with
+ * "new row violates row-level security policy" and the old cleanup left the
+ * throwaway orgs behind. Scoping is not a concession to the test — it is the
+ * contract the policies enforce.
+ */
+async function asWorkspace(org, fn) {
+  return sql.begin(async (tx) => {
+    await tx`select set_config('app.org_id', ${org}, true)`;
+    return fn(tx);
+  });
+}
 async function cleanup() {
-  try {
-    await sql`DELETE FROM customers WHERE customer_id LIKE 'zz-iso-%'`;
-    await sql`DELETE FROM orgs WHERE org_id IN (${ORG_A}, ${ORG_B})`;
-  } catch {
-    /* best-effort */
+  for (const org of [ORG_A, ORG_B]) {
+    try {
+      await asWorkspace(org, async (tx) => {
+        await tx`DELETE FROM customers WHERE org_id = ${org} AND customer_id LIKE 'zz-iso-%'`;
+        await tx`DELETE FROM orgs WHERE org_id = ${org}`;
+      });
+    } catch {
+      /* best-effort */
+    }
   }
 }
 
@@ -141,9 +160,14 @@ try {
 
   /* 4 + 5. What the DATABASE permits, not what a WHERE clause returns ------ */
   await cleanup();
-  await sql`INSERT INTO orgs (org_id, name) VALUES (${ORG_A}, 'A'), (${ORG_B}, 'B')`;
-  await sql`INSERT INTO customers (customer_id, org_id, customer_name)
-            VALUES ('zz-iso-a-c', ${ORG_A}, 'A Corp'), ('zz-iso-b-c', ${ORG_B}, 'B Corp')`;
+  await asWorkspace(ORG_A, async (tx) => {
+    await tx`INSERT INTO orgs (org_id, name) VALUES (${ORG_A}, 'A')`;
+    await tx`INSERT INTO customers (customer_id, org_id, customer_name) VALUES ('zz-iso-a-c', ${ORG_A}, 'A Corp')`;
+  });
+  await asWorkspace(ORG_B, async (tx) => {
+    await tx`INSERT INTO orgs (org_id, name) VALUES (${ORG_B}, 'B')`;
+    await tx`INSERT INTO customers (customer_id, org_id, customer_name) VALUES ('zz-iso-b-c', ${ORG_B}, 'B Corp')`;
+  });
 
   const visible = await sql.begin(async (tx) => {
     await tx`select set_config('app.org_id', ${ORG_A}, true)`;

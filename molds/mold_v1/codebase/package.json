@@ -25,7 +25,7 @@
     "test:memory": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-memory.mjs",
     "test:prompt-context": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-prompt-context.mjs",
     "test:browser-security": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-browser-security.mjs",
-    "test:org-isolation": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/test-org-isolation.mjs",
+    "test:org-isolation": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file-if-exists=.env.local scripts/test-org-isolation.mjs",
     "seed:postgres": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/seed-postgres.ts",
     "fde:onboard-self": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/fde/onboard-self.mjs",
     "fde:new-customer": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/fde/new-customer.mjs",
