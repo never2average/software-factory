@@ -197,6 +197,14 @@ try {
       `ALTER ROLE ${APP_ROLE} NOSUPERUSER NOBYPASSRLS as the admin, then rerun.`);
     process.exit(1);
   }
+  // Measuring runs AS the app role via SET ROLE, which needs the connecting admin to be a MEMBER of it.
+  // Supabase's admin is `postgres`, which may become any role; Neon's is `neondb_owner`, which may not,
+  // and the first Neon deploy failed here with 42501 "permission denied to set role" — 53 policies
+  // unmeasured, app reverted. Membership adds nothing the owner does not already have, and a refusal
+  // (some managed Postgres forbid GRANTs to the admin) is left for measurePolicies to report honestly.
+  if (who.u !== APP_ROLE) {
+    try { await sql.unsafe(`GRANT ${q(APP_ROLE)} TO CURRENT_USER`); } catch (e) { /* reported below if SET ROLE still fails */ }
+  }
   const beh = await measurePolicies(sql, { tables: after, policies: applying, mode, control: CONTROL_PLANE,
                                            assume: who.u === APP_ROLE ? null : APP_ROLE });
   for (const l of beh.leaking) { const t = l.split(":")[0]; if (!unprotected.includes(t)) unprotected.push(t); }
