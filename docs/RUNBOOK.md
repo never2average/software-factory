@@ -25,9 +25,7 @@ Cloudflare Workers AI; say `use the Vercel AI Gateway` in the brief for the othe
 | `RESEND_API_KEY` | an API key from resend.com | **sign-in is an emailed one-time code and it has no other delivery path.** `lib/platform-notify.ts` `sendLoginCode` is "Email ONLY — no Slack fallback": if the key is missing it returns `delivered: false` and the person sees "email delivery is not configured" — nobody can get in |
 | `PLATFORM_NOTIFY_FROM` | the From address, e.g. `Delivered <no-reply@yourdomain.com>` — the domain must be verified in Resend | the same function refuses to send without a From address, and Resend refuses an unverified domain. Invites and notices use it too |
 
-There is a second front door in the mold, Google One Tap, but it needs a Google OAuth client id the factory
-does not provision (`GOOGLE_CLIENT_ID` / `NEXT_PUBLIC_GOOGLE_CLIENT_ID` are optional in state and unset by
-default) and it refuses personal-mail domains. With the factory defaults, the emailed code is the only way in.
+The front door is "Continue with Google", and it needs a Google OAuth client id the factory does not provision: `GOOGLE_CLIENT_ID` (written under both names the app reads) is required and comes from YOUR Google Cloud project. It is per app: each stamped application can sit in a different Google project, and `--set-secret GOOGLE_CLIENT_ID` records which one in `infrastructure.google.project_number` (the id's numeric prefix; an identifier, not a secret). Google refuses personal-mail domains at sign-in, so the person signing in needs a Workspace account. The emailed six-digit code is the second way in.
 
 So a Cloudflare app brings four names and a gateway app brings three. What else changes on a gateway app:
 `state/application/<app_id>/application.json` records `model.provider: gateway` and `model.model:
