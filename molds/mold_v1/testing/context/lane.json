@@ -2,10 +2,10 @@
   "$schema": "../lane.schema.json",
   "lane": "context",
   "order": 20,
-  "summary": "Primary context assembly, memory persistence, the quality/hardening bundle, cross-org isolation of multiplayer context, and \u2014 for a clone \u2014 the regression verdict against the deployment it replicates.",
+  "summary": "Primary context assembly, memory persistence, the quality/hardening bundle, cross-org isolation of multiplayer context, and — for a clone — the regression verdict against the deployment it replicates.",
   "not_covered": [
     "Model quality: these checks prove what reaches the model, not what the model then says.",
-    "Live cross-org traffic \u2014 test:org-isolation measures a database, the functional lane's rls rows measure the deployed one."
+    "Live cross-org traffic — test:org-isolation measures a database, the functional lane's rls rows measure the deployed one."
   ],
   "checks": [
     {
@@ -28,12 +28,15 @@
       "name": "test:org-isolation",
       "run": "npm run test:org-isolation",
       "timeout_s": 600,
-      "why": "Multiplayer context is shared processes across one workspace; a leak here hands one customer another customer's work.",
+      "why": "Multiplayer context is shared processes across one workspace; a leak here hands one customer another customer's work. Runs AS the deployed application: the runner places the app's own DATABASE_URL (app_rw) in the environment by name.",
       "requires": [
         {
-          "cmd": "grep -q '^DATABASE_URL=' {codebase}/.env.local",
-          "else": "Needs DATABASE_URL in molds/mold_v1/codebase/.env.local, pointing at the app_rw role \u2014 as postgres the check cannot detect a leak at all, because postgres has BYPASSRLS. Bring a database up on this box and let provision.py write the file: python3 .claude/scripts/lib/localpg.py up {app_id}, then python3 .claude/scripts/provision.py {app_id} --verify-rls. The runner only ever tests for the NAME; it never reads the value."
+          "env": "DATABASE_URL",
+          "else": "Needs this app's own DATABASE_URL (the app_rw role) in the environment — as postgres the check cannot detect a leak at all, because postgres has BYPASSRLS. The runner reads it by name from the app's secret store once the app is deployed (provision.py <app_id> --deploy; a vm app: --verify-db). The value is never printed."
         }
+      ],
+      "app_env": [
+        "DATABASE_URL"
       ]
     },
     {

@@ -214,18 +214,32 @@ def main(a):
         # has_table_privilege('app_rw', 'customers', 'SELECT') t -> f, exit code 0, and `regress` then
         # reported pass because it compares row counts and never looks at pg_policies. The clone was a
         # replica of live with tenant isolation silently removed.
-        print(f"pg_restore into {proj} (--data-only, into the schema the deploy already created) ...")
-        r = subprocess.run(["pg_restore", "--data-only", "--disable-triggers", "--no-owner", "--no-privileges",
-                            "--dbname", dst, dump], capture_output=True, text=True)
+        # --disable-triggers emits ALTER TABLE ... DISABLE TRIGGER ALL, which touches the FK (system)
+        # triggers and needs a SUPERUSER. Supabase's admin is one; Neon's owner is not, and the first
+        # Neon restore printed fifteen "permission denied: RI_ConstraintTrigger is a system trigger"
+        # errors while every COPY succeeded with the triggers on (nine foreign keys, no cycles, dump
+        # order satisfied them) — and then exited 1 with a message blaming a missing schema. Only a
+        # superuser gets the flag; everyone else restores with the triggers on, and a real FK violation
+        # is reported as what it is.
+        su = subprocess.run(["psql", "-Atc", "select rolsuper from pg_roles where rolname = current_user", dst],
+                            capture_output=True, text=True).stdout.strip() == "t"
+        print(f"pg_restore into {proj} (--data-only, into the schema the deploy already created"
+              f"{', triggers disabled' if su else ', triggers on: the admin is not a superuser'}) ...")
+        r = subprocess.run(["pg_restore", "--data-only", *(["--disable-triggers"] if su else []), "--no-owner",
+                            "--no-privileges", "--dbname", dst, dump], capture_output=True, text=True)
         shutil.rmtree(os.path.dirname(dump))
         # pg_restore prints "errors ignored on restore: N" for ANY non-zero error count, so that phrase
         # alone cannot mean success. A data-only load has no --clean noise to forgive; a row that is
         # already there is the one benign case.
         errs = [l for l in r.stderr.splitlines() if "error:" in l.lower()]
         fatal = [l for l in errs if "already exists" not in l and "duplicate key" not in l]
-        if fatal: sys.exit("pg_restore reported errors:\n" + "\n".join(fatal[:15]) +
-                           "\n\nA data-only restore needs the schema to be in place first. Run "
-                           f"`python3 .claude/scripts/provision.py {app_id} --deploy` before `snapshot --apply`.")
+        if fatal:
+            fk = [l for l in fatal if "violates foreign key" in l]
+            sys.exit("pg_restore reported errors:\n" + "\n".join(fatal[:15]) + "\n\n" +
+                     ("Rows arrived before the rows they reference; the dump's table order did not satisfy a foreign key "
+                      "and this admin role cannot disable the constraint triggers. The database now holds a PARTIAL copy."
+                      if fk else "These are not the benign 'already exists' / 'duplicate key' errors of a re-run; read them "
+                      "before rerunning `snapshot --apply`."))
         print(f"  restored ({len(errs)} ignorable error(s))" if errs else "  restored")
         # Rows in connector_secrets / browser_credentials are sealed with the SOURCE app's OPS_SECRETS_KEY
         # (agent/lib/secret-crypto.ts). The clone mints its own key and Vercel will not reveal live's, so
