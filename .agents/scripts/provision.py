@@ -1402,10 +1402,12 @@ GUIDE = {
   "GOOGLE_CLIENT_ID": {
     "what": "the Google OAuth client id for the web sign-in button (an identifier, public by construction — it ships in the browser bundle)",
     "where": "console.cloud.google.com -> APIs & Services -> Credentials -> your OAuth 2.0 Client ID of type Web application -> "
-             "under 'Authorized JavaScript origins' ADD this app's production URL (e.g. https://<project>.vercel.app) and save -> copy the Client ID",
-    "why": "Google sign-in is the product's front door; without the id the page shows 'Google sign-in is not configured'. The origin step is not optional: "
-           "Google refuses the button on any origin the client does not list. This one value is written under both names the app reads "
-           "(GOOGLE_CLIENT_ID for the server, NEXT_PUBLIC_GOOGLE_CLIENT_ID for the browser; the latter is baked in at build, so a --deploy follows)",
+             "under 'Authorized JavaScript origins' ADD this app's production URL (e.g. https://<project>.vercel.app), and under "
+             "'Authorized redirect URIs' ADD the same URL again, exactly, no trailing slash — the button redirects to Google and back "
+             "with redirect_uri = the page's origin — then save -> copy the Client ID",
+    "why": "Google sign-in is the product's front door; without the id the page shows 'Google sign-in is not configured'. The two Google-side entries are not optional: "
+           "One Tap needs the origin listed and the button's redirect needs the redirect URI listed; Google refuses with origin_mismatch / redirect_uri_mismatch otherwise. "
+           "This one value is written under both names the app reads (GOOGLE_CLIENT_ID for the server, NEXT_PUBLIC_GOOGLE_CLIENT_ID for the browser; the latter is baked in at build, so a --deploy follows)",
     "shape": (r"^[0-9]{6,20}-[a-z0-9]{10,64}\.apps\.googleusercontent\.com$", "a Google web client id ending in .apps.googleusercontent.com"),
   },
   "NEXT_PUBLIC_GOOGLE_CLIENT_ID": {
