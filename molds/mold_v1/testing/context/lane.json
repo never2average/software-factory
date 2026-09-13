@@ -26,9 +26,9 @@
     },
     {
       "name": "test:org-isolation",
-      "run": "npm run test:org-isolation",
+      "run": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-org-isolation.mjs",
       "timeout_s": 600,
-      "why": "Multiplayer context is shared processes across one workspace; a leak here hands one customer another customer's work. Runs AS the deployed application: the runner places the app's own DATABASE_URL (app_rw) in the environment by name.",
+      "why": "Multiplayer context is shared processes across one workspace; a leak here hands one customer another customer's work. Runs AS the deployed application: the runner places the app's own DATABASE_URL (app_rw) in the environment by name. Invoked directly rather than through `npm run test:org-isolation`: that script hardcodes Node's --env-file=.env.local, which aborts with exit 9 before the test starts whenever the file is absent, although the test itself reads DATABASE_URL from the environment first (measured 2026-09-13: the first run of this check ended at `node: .env.local: not found`).",
       "requires": [
         {
           "env": "DATABASE_URL",
