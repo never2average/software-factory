@@ -1290,7 +1290,8 @@ def vm_report(app_id, d, infra, ds):
     print(f"secrets present in {os.path.relpath(envf, ROOT)}: {len([x for x in names if x in present])}/{len(names)}")
     missing_user = [x for x in infra.get("secrets_user", names) if x not in present]
     if missing_user:
-        print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
+        print("Set these once (the value is read from your terminal, never stored here or shown in chat; each command "
+              "first tells you where that value comes from):")
         for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
     pending = [x for x in VM_PRODUCED if x not in present]
     if pending: print(f"--verify-db writes: {', '.join(pending)}")
@@ -1313,6 +1314,64 @@ def vm_report(app_id, d, infra, ds):
               f"state/application/{app_id}/infrastructure.json and rerun --check.")
     sys.exit(1 if (missing_user or pending) else 0)
 
+# WHERE EACH OPERATOR CREDENTIAL COMES FROM, derived from what the mold does with it — printed at the
+# moment the operator is asked, because the hard part of `--set-secret` was never the command; it was
+# the browser tab. `permission` is the LEAST the value needs: the token only ever reaches
+# accounts/<id>/ai/v1 (agent/lib/model.ts), and the sign-in code is one POST to api.resend.com/emails
+# with PLATFORM_NOTIFY_FROM as the sender verbatim (lib/platform-notify.ts). `shape` is checked before
+# the value is written, so a pasted-in-the-wrong-box mistake fails here in a sentence, not in a deploy.
+GUIDE = {
+  "CLOUDFLARE_ACCOUNT_ID": {
+    "what": "your Cloudflare account id (an identifier, not a secret)",
+    "where": "dash.cloudflare.com -> Workers & Pages -> the right-hand column shows 'Account ID' with a copy button",
+    "why": "GLM 5.2 runs on Workers AI under this account; the app calls api.cloudflare.com/client/v4/accounts/<this>/ai/v1",
+    "shape": (r"^[0-9a-f]{32}$", "32 hex characters"),
+  },
+  "CLOUDFLARE_API_TOKEN": {
+    "what": "a Cloudflare API token that may run Workers AI",
+    "where": "dash.cloudflare.com -> My Profile (top right) -> API Tokens -> Create Token -> 'Workers AI' template "
+             "(or Custom with permission Account / Workers AI / Read) -> Continue -> Create Token -> copy it once",
+    "why": "this is the model. Without it the app has no inference at all. Workers AI Read is the ONLY permission it needs; do not grant more",
+    "shape": (r"^[A-Za-z0-9_\-]{30,}$", "a single token, 30+ characters, no spaces"),
+  },
+  "RESEND_API_KEY": {
+    "what": "a Resend API key with sending permission",
+    "where": "resend.com -> API Keys -> Create API Key -> permission 'Sending access' -> copy it once",
+    "why": "sign-in is a six-digit code sent by email, with NO fallback by design: without this key nobody can log in, including you",
+    "shape": (r"^re_[A-Za-z0-9_\-]{10,}$", "starts with re_"),
+  },
+  "PLATFORM_NOTIFY_FROM": {
+    "what": "the address the sign-in emails come FROM",
+    "where": "resend.com -> Domains -> Add Domain -> add the DNS records it shows at your registrar -> wait for 'Verified'. "
+             "Then use any address at that domain, e.g. Delivered <signin@yourdomain.com>",
+    "why": "Resend rejects a sender whose domain it has not verified, so every login code would bounce",
+    "shape": (r"^(?:[^<>@\s]+\s*<)?[^<>@\s]+@[^<>@\s]+\.[A-Za-z]{2,}>?$", "an email address, optionally as Name <address>"),
+  },
+  "AI_GATEWAY_API_KEY": {
+    "what": "a Vercel AI Gateway key",
+    "where": "vercel.com -> your team -> AI Gateway -> API Keys -> Create",
+    "why": "the model for a vercel_ai_gateway app is served through this key instead of Cloudflare",
+    "shape": (r"^\S{20,}$", "a single key, no spaces"),
+  },
+  "EXA_API_KEY": {"what": "an Exa search key", "where": "dashboard.exa.ai -> API Keys", "why": "web search is on for this app", "shape": (r"^\S{16,}$", "a single key")},
+  "BROWSERBASE_API_KEY": {"what": "a Browserbase key", "where": "browserbase.com -> Settings -> API Keys", "why": "the browser is on for this app", "shape": (r"^\S{16,}$", "a single key")},
+}
+
+def explain(name):
+    """One paragraph, printed before the hidden prompt, so the operator never has to leave the terminal to
+    find out what is being asked for."""
+    g = GUIDE.get(name)
+    if not g: return
+    print(f"\n{name} — {g['what']}.\n  where: {g['where']}\n  why:   {g['why']}\n")
+
+def check_shape(name, value):
+    g = GUIDE.get(name)
+    if not g: return
+    pat, human = g["shape"]
+    if not re.fullmatch(pat, value):
+        sys.exit(f"{name}: that does not look like {human}, so it was not written. Nothing was stored. "
+                 f"Check the value against 'where' above and rerun.")
+
 def set_secret(app_id, name, infra, mold_dir):
     """Prompt for one credential and write it where this app's secrets live.
     The value is read from the terminal, never passed on a command line and never stored here.
@@ -1320,8 +1379,10 @@ def set_secret(app_id, name, infra, mold_dir):
     `infra["vercel"]` used to be read unconditionally, so this — the ONE command a non-technical
     operator is ever told to run — died with KeyError: 'vercel' on any app that is not on Vercel."""
     import getpass
+    explain(name)
     value = getpass.getpass(f"{name} (input hidden): ").strip()
     if not value: sys.exit("nothing entered")
+    check_shape(name, value)
     if infra.get("target") == "vercel":
         proj = infra["vercel"]["project"]; projects = [proj, f"{proj}-api", f"{proj}-workflow"]
         absent = [p for p in projects if not _project_meta(p, mold_dir).get("id")]
@@ -1678,7 +1739,8 @@ def main(a):
     missing_derived = [x for x in derived_s if x not in present and x not in DEPLOY_TIME]
     print(f"secrets present: {len([x for x in secrets if x in present])}/{len(secrets)}")
     if missing_user:
-        print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
+        print("Set these once (the value is read from your terminal, never stored here or shown in chat; each command "
+              "first tells you where that value comes from):")
         for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
     if missing_derived:
         # Not the plan above (that is `a deploy will create:`, every step in order); this is the shorter list of
