@@ -91,7 +91,35 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     "skillsSummary": "",
     "tools": [
       {
-        "name": "browser",
+        "name": "browser_act",
+        "description": null
+      },
+      {
+        "name": "browser_close",
+        "description": null
+      },
+      {
+        "name": "browser_goto",
+        "description": null
+      },
+      {
+        "name": "browser_login",
+        "description": null
+      },
+      {
+        "name": "browser_open",
+        "description": null
+      },
+      {
+        "name": "browser_read",
+        "description": null
+      },
+      {
+        "name": "browser_screenshot",
+        "description": null
+      },
+      {
+        "name": "browser_wait",
         "description": null
       }
     ]
