@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "stamped",
+  "status": "reverted",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "delivered",
   "model": {
@@ -983,28 +983,28 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-09-13T11:11:21+00:00",
-      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-13T111121Z.md"
+      "run_at": "2026-09-13T13:22:21+00:00",
+      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-13T132221Z.md"
     },
     "context": {
       "status": "pass",
-      "run_at": "2026-09-13T11:11:04+00:00",
-      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-13T111104Z.md"
+      "run_at": "2026-09-13T13:22:04+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-13T132204Z.md"
     },
     "functional": {
       "status": "pass",
-      "run_at": "2026-09-13T11:09:28+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-13T110928Z.md"
+      "run_at": "2026-09-13T13:20:29+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-13T132029Z.md"
     },
     "accessibility": {
       "status": "skipped",
-      "run_at": "2026-09-13T11:13:02+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-13T111302Z.md"
+      "run_at": "2026-09-13T13:24:02+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-13T132402Z.md"
     },
     "responsiveness": {
-      "status": "skipped",
-      "run_at": "2026-09-13T11:13:16+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-13T111316Z.md"
+      "status": "fail",
+      "run_at": "2026-09-13T13:24:18+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-13T132418Z.md"
     }
   },
   "customer_id": "internal",
@@ -1064,5 +1064,10 @@
       "deployments": 0,
       "recipes": 0
     }
+  },
+  "revert": {
+    "lane": "responsiveness",
+    "at": "2026-09-13T13:24:18+00:00",
+    "reason": "responsiveness lane failed on 2 check(s): layout.matrix, tap.targets; report molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-13T132418Z.md; task mold_v1-062."
   }
 }
