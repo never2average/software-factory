@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "stamped",
+  "status": "reverted",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "delivered",
   "model": {
@@ -961,7 +961,7 @@
     "branding": {
       "product_name": "Delivered",
       "tagline": "The operations console for forward-deployed teams.",
-      "description": "Delivered — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
+      "description": "Delivered \u2014 the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
       "brand_color": "oklch(0.19 0 0)",
       "neutral_chroma": 0,
       "radius": "0.625rem",
@@ -982,27 +982,27 @@
   },
   "testing": {
     "load": {
-      "status": "pending"
+      "status": "fail",
+      "run_at": "2026-09-13T10:53:04+00:00",
+      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-13T105304Z.md"
     },
     "context": {
-      "status": "fail",
-      "run_at": "2026-09-06T12:15:18+00:00",
-      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-regression-2026-09-06.md"
+      "status": "pass",
+      "run_at": "2026-09-13T10:52:47+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-13T105247Z.md"
     },
     "functional": {
-      "status": "fail",
-      "run_at": "2026-09-06T00:00:00Z",
-      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-06.md"
+      "status": "pass",
+      "run_at": "2026-09-13T10:51:20+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-13T105120Z.md"
     },
     "accessibility": {
-      "status": "fail",
-      "run_at": "2026-09-08T10:33:51+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-08.md"
+      "status": "pending",
+      "run_at": "2026-09-13T10:53:04+00:00"
     },
     "responsiveness": {
-      "status": "pass",
-      "run_at": "2026-09-08T10:32:33+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-08.md"
+      "status": "pending",
+      "run_at": "2026-09-13T10:53:04+00:00"
     }
   },
   "customer_id": "internal",
@@ -1011,9 +1011,9 @@
     "ref": "fde-agent",
     "snapshot_date": "2026-09-06",
     "regression": {
-      "status": "fail",
-      "run_at": "2026-09-06T12:15:18+00:00",
-      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-regression-2026-09-06.md"
+      "status": "pass",
+      "run_at": "2026-09-13T10:45:12+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-regression-2026-09-13T104512Z.md"
     },
     "live_evidence": {
       "workflows": [
@@ -1062,5 +1062,10 @@
       "deployments": 0,
       "recipes": 0
     }
+  },
+  "revert": {
+    "lane": "load",
+    "at": "2026-09-13T10:53:04+00:00",
+    "reason": "load lane failed on 1 check(s): test:task-workflow:stress; report molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-13T105304Z.md; task mold_v1-061. The run stopped here: accessibility, responsiveness did not run, so testing.{accessibility, responsiveness} was reset to `pending` rather than left showing an earlier run's verdict. Unmeasured lanes right now (`pending`): accessibility, responsiveness. claudecode_web_replica is not gate-green until `python3 .claude/scripts/lanes.py claudecode_web_replica` runs all five in order and none fails."
   }
 }
