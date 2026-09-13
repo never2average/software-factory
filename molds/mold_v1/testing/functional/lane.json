@@ -145,15 +145,15 @@
       "name": "signin.google",
       "cwd": "root",
       "timeout_s": 60,
-      "run": "curl -s --max-time 30 \"$(python3 {testing}/accessibility/lane-url.py {app_id})/\"",
-      "why": "Google sign-in is the product's front door. The page prints 'Google sign-in is not configured' when the browser bundle was built without NEXT_PUBLIC_GOOGLE_CLIENT_ID — the first deployed app greeted its operator with exactly that.",
+      "run": "python3 {testing}/functional/signin-google.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\"",
+      "why": "Google sign-in is the product's front door. The page prints 'Google sign-in is not configured' from the browser when the bundle was built without NEXT_PUBLIC_GOOGLE_CLIENT_ID, so the check reads the served bundle for a client id — the first version grepped the page for the sentence and could never fail.",
       "expect": {
         "exit": 0,
         "stdout": [
-          "self.__next_f"
+          "signin\\.google: pass"
         ],
         "stdout_not": [
-          "Google sign-in is not configured"
+          "signin\\.google: fail"
         ]
       },
       "requires": [
