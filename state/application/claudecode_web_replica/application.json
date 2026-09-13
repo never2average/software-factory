@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "reverted",
+  "status": "stamped",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "delivered",
   "model": {
@@ -982,27 +982,29 @@
   },
   "testing": {
     "load": {
-      "status": "fail",
-      "run_at": "2026-09-13T10:53:04+00:00",
-      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-13T105304Z.md"
+      "status": "pass",
+      "run_at": "2026-09-13T11:11:21+00:00",
+      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-13T111121Z.md"
     },
     "context": {
       "status": "pass",
-      "run_at": "2026-09-13T10:52:47+00:00",
-      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-13T105247Z.md"
+      "run_at": "2026-09-13T11:11:04+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-13T111104Z.md"
     },
     "functional": {
       "status": "pass",
-      "run_at": "2026-09-13T10:51:20+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-13T105120Z.md"
+      "run_at": "2026-09-13T11:09:28+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-13T110928Z.md"
     },
     "accessibility": {
-      "status": "pending",
-      "run_at": "2026-09-13T10:53:04+00:00"
+      "status": "skipped",
+      "run_at": "2026-09-13T11:13:02+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-13T111302Z.md"
     },
     "responsiveness": {
-      "status": "pending",
-      "run_at": "2026-09-13T10:53:04+00:00"
+      "status": "skipped",
+      "run_at": "2026-09-13T11:13:16+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-13T111316Z.md"
     }
   },
   "customer_id": "internal",
@@ -1062,10 +1064,5 @@
       "deployments": 0,
       "recipes": 0
     }
-  },
-  "revert": {
-    "lane": "load",
-    "at": "2026-09-13T10:53:04+00:00",
-    "reason": "load lane failed on 1 check(s): test:task-workflow:stress; report molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-13T105304Z.md; task mold_v1-061. The run stopped here: accessibility, responsiveness did not run, so testing.{accessibility, responsiveness} was reset to `pending` rather than left showing an earlier run's verdict. Unmeasured lanes right now (`pending`): accessibility, responsiveness. claudecode_web_replica is not gate-green until `python3 .claude/scripts/lanes.py claudecode_web_replica` runs all five in order and none fails."
   }
 }
