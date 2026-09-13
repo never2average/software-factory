@@ -99,6 +99,8 @@ provider the target cannot use), do that and run it again.
 
 ## 4. The credentials (you, at the terminal)
 
+There are five: the two Cloudflare values, the two Resend values, and the Google OAuth client id — Google sign-in is the product's front door and is required. For the Google one the browser tab matters more than the value: in Google Cloud Console (APIs & Services → Credentials → your *Web application* OAuth client) add this app's production URL under **Authorized JavaScript origins** *and* under **Authorized redirect URIs** (the same URL, exactly, no trailing slash — the button signs in by redirecting to Google and back to the page's origin), or Google refuses with `origin_mismatch` / `redirect_uri_mismatch` whatever id you set. One `--set-secret GOOGLE_CLIENT_ID` writes both names the app reads; the browser one is baked in at build, so `--deploy` again afterwards.
+
 You do not need to look anything up before you start. Each `--set-secret` command first prints **what** the
 value is, **where** in the Cloudflare or Resend dashboard to get it (the exact clicks), and **why** the app
 cannot run without it — then asks for it with hidden input. It also checks the value's shape before writing
