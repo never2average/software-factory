@@ -238,7 +238,12 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
                         "rds": [], "self_hosted": ["POSTGRES_ADMIN_URL"]}
     derived_secrets = ["DATABASE_URL", *PROVIDER_SECRETS.get(ans["postgres_provider"], []), "BLOB_READ_WRITE_TOKEN", "CRON_SECRET", "OPS_SECRETS_KEY",
                        "AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY", "MODEL_PROVIDER", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT_PUBLIC_EVE_API_URL"]
-    optional_secrets = ["GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"]
+    # Google sign-in is the product's front door (lib/ops-auth.ts accepts a Google ID token or the
+    # emailed-code session; the sign-in page renders the Google button first). It was "optional" here
+    # and the first deployed app greeted its operator with "Google sign-in is not configured
+    # (NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset)". Required from 2026-09-13; one --set-secret writes both.
+    optional_secrets = []
+    secrets_user = secrets_user + [n for n in ("GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID") if n not in secrets_user]
     top_level = ["Customers","Platform","Deployments","Solutions","Implementation","Tickets","People","Uploads"]
     members = [{"email": fde, "role": "owner"}] + [{"email": e, "role": "member"} for e in hints.get("members", []) if e != fde]
     corpus = []

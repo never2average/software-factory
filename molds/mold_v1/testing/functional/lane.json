@@ -4,9 +4,9 @@
   "order": 10,
   "summary": "Feature-parity of the mold's own surface: data room, syncs, alerts, schedules, rendering, system of record, chat persistence, gates, and the tenant-isolation rows that cannot be satisfied by a status code.",
   "not_covered": [
-    "The Playwright card/stickloop specs \u2014 the /preview routes they drive are absent from this snapshot (see the `test:cards` row).",
+    "The Playwright card/stickloop specs — the /preview routes they drive are absent from this snapshot (see the `test:cards` row).",
     "Anything behind a signed-in session: these scripts run offline against the mold's own fixtures.",
-    "Performance, accessibility and viewport behaviour \u2014 the load, accessibility and responsiveness lanes own those."
+    "Performance, accessibility and viewport behaviour — the load, accessibility and responsiveness lanes own those."
   ],
   "checks": [
     {
@@ -106,7 +106,7 @@
       "name": "test:cards",
       "run": "t=$(mktemp) && cp next-env.d.ts \"$t\" && timeout -k 30 840 npm run test:cards; s=$?; pkill -TERM -f \"$PWD/node_modules/.bin/next dev\" 2>/dev/null; for p in $(fuser 3000/tcp 2>/dev/null); do [ \"$(readlink /proc/$p/cwd 2>/dev/null)\" = \"$PWD\" ] && kill -TERM $p 2>/dev/null; done; sleep 2; pkill -KILL -f \"$PWD/node_modules/.bin/next dev\" 2>/dev/null; for p in $(fuser 3000/tcp 2>/dev/null); do [ \"$(readlink /proc/$p/cwd 2>/dev/null)\" = \"$PWD\" ] && kill -KILL $p 2>/dev/null; done; find /tmp -maxdepth 1 -type d -name \"playwright_chromiumdev_profile-*\" -newer \"$t\" -exec rm -rf {} + 2>/dev/null; cp \"$t\" next-env.d.ts; rm -f \"$t\"; rm -rf .next test-results; exit $s",
       "timeout_s": 900,
-      "why": "The card and stickloop Playwright specs are the only browser-level functional coverage in the mold. Its Playwright webServer is `next dev`, which rewrites next-env.d.ts to point at .next/dev/ and writes .next/ into the snapshot; the wrapper puts the file back and removes .next/ (a clean clone has none at all) and Playwright's test-results/, with the test's own exit status, so the snapshot stays byte-identical to its source commit (MOLD.md). The test itself runs under `timeout -k 30 840`, below this check's timeout_s: lanes.py kills the whole shell on timeout_s, so the cleanup tail would otherwise never run; the inner timeout exits 124 (a fail) and leaves the shell alive. That inner timeout kills npm and Playwright but not the `next dev` webServer Playwright spawns detached in its own session, which would otherwise stay on 127.0.0.1:3000, re-create .next/ seconds after the rm, and be adopted by the next run (playwright.config.ts has reuseExistingServer: true), so before cleaning up the wrapper kills it explicitly: by argv keyed on this snapshot's own node_modules/.bin/next path (the unexpanded `$PWD` in the wrapper's argv means pkill cannot match the wrapper itself; a bare `pkill -f 'next dev'` would), then by the loopback port as a backstop, TERM then KILL. The port backstop is NOT unconditional: it kills a 3000/tcp listener only when that process's cwd (/proc/<pid>/cwd) is this snapshot directory, which is where Playwright starts its webServer; an operator's own dev server on the same port, started elsewhere, would be adopted by that run (reuseExistingServer: true) and its result is then not the mold's \u2014 but it is left running, never killed by this wrapper. On a clean pass Playwright has already stopped the server and all kills are no-ops. The inner timeout also leaves chromium's /tmp/playwright_chromiumdev_profile-* behind (a killed browser never removes its profile), so the wrapper removes the ones created after its own start (-newer the mktemp file), and none from any other run.",
+      "why": "The card and stickloop Playwright specs are the only browser-level functional coverage in the mold. Its Playwright webServer is `next dev`, which rewrites next-env.d.ts to point at .next/dev/ and writes .next/ into the snapshot; the wrapper puts the file back and removes .next/ (a clean clone has none at all) and Playwright's test-results/, with the test's own exit status, so the snapshot stays byte-identical to its source commit (MOLD.md). The test itself runs under `timeout -k 30 840`, below this check's timeout_s: lanes.py kills the whole shell on timeout_s, so the cleanup tail would otherwise never run; the inner timeout exits 124 (a fail) and leaves the shell alive. That inner timeout kills npm and Playwright but not the `next dev` webServer Playwright spawns detached in its own session, which would otherwise stay on 127.0.0.1:3000, re-create .next/ seconds after the rm, and be adopted by the next run (playwright.config.ts has reuseExistingServer: true), so before cleaning up the wrapper kills it explicitly: by argv keyed on this snapshot's own node_modules/.bin/next path (the unexpanded `$PWD` in the wrapper's argv means pkill cannot match the wrapper itself; a bare `pkill -f 'next dev'` would), then by the loopback port as a backstop, TERM then KILL. The port backstop is NOT unconditional: it kills a 3000/tcp listener only when that process's cwd (/proc/<pid>/cwd) is this snapshot directory, which is where Playwright starts its webServer; an operator's own dev server on the same port, started elsewhere, would be adopted by that run (reuseExistingServer: true) and its result is then not the mold's — but it is left running, never killed by this wrapper. On a clean pass Playwright has already stopped the server and all kills are no-ops. The inner timeout also leaves chromium's /tmp/playwright_chromiumdev_profile-* behind (a killed browser never removes its profile), so the wrapper removes the ones created after its own start (-newer the mktemp file), and none from any other run.",
       "requires": [
         {
           "path": "{codebase}/app/preview",
@@ -138,6 +138,28 @@
           "state": "infrastructure.vercel.production_url",
           "must": "nonempty",
           "else": "Deploy it first, then re-run: python3 .claude/scripts/provision.py {app_id} --deploy"
+        }
+      ]
+    },
+    {
+      "name": "signin.google",
+      "cwd": "root",
+      "timeout_s": 60,
+      "run": "curl -s --max-time 30 \"$(python3 {testing}/accessibility/lane-url.py {app_id})/\"",
+      "why": "Google sign-in is the product's front door. The page prints 'Google sign-in is not configured' when the browser bundle was built without NEXT_PUBLIC_GOOGLE_CLIENT_ID — the first deployed app greeted its operator with exactly that.",
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "self.__next_f"
+        ],
+        "stdout_not": [
+          "Google sign-in is not configured"
+        ]
+      },
+      "requires": [
+        {
+          "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
+          "else": "This check reads the deployed sign-in page and this application has no URL yet: python3 .claude/scripts/provision.py {app_id} --deploy"
         }
       ]
     }
