@@ -108,7 +108,15 @@ def _add_env(name, value, cwd, project):
 # could never deploy. The sentinel is now whatever that provider actually injects.
 DB_SENTINEL = {"supabase": "SUPABASE_URL", "neon": "DATABASE_URL_UNPOOLED",
                "rds": "DATABASE_URL", "self_hosted": "POSTGRES_ADMIN_URL"}
-ADMIN_KEYS = ("SUPABASE_POSTGRES_URL_NON_POOLING", "DATABASE_URL_UNPOOLED", "POSTGRES_ADMIN_URL", "DATABASE_URL")
+# THE ADMIN URL IS THE ONE THE APP'S STATE NAMES, AND NO OTHER. This used to be a chain that preferred
+# Supabase's name over Neon's over self-hosted's; a project migrating providers keeps the old provider's
+# variables around, and the chain then did every deploy's schema push, bootstrap and coverage on the
+# RETIRED database while the isolation proof ran against the new, empty one — four times, on
+# 2026-09-13, each failing "password authentication failed" for a role that never existed there.
+# main() narrows this to datastores.postgres.admin_url_ref (or the provider's own name) before any
+# writer runs; an absent value fails closed as "no usable admin database URL" rather than borrowing.
+PROVIDER_ADMIN = {"supabase": "SUPABASE_POSTGRES_URL_NON_POOLING", "neon": "DATABASE_URL_UNPOOLED", "self_hosted": "POSTGRES_ADMIN_URL", "rds": "POSTGRES_ADMIN_URL"}
+ADMIN_KEYS = tuple(PROVIDER_ADMIN.values())   # narrowed to ONE name in main(); this default only serves callers that never reach main()
 
 def admin_url(vals):
     """The URL that owns the schema, whichever provider named it.
@@ -775,11 +783,12 @@ def _verify_app_rw(run, url, mode, backend, source, hint):
 
     The URL travels in the environment, never in argv: /proc/<pid>/cmdline is world-readable. Nothing
     printed here contains a credential — only role names, flags and counts."""
-    # A POOLED endpoint lags a password rotation. The bootstrap tests app_rw on the direct host and
-    # passes; this proof is the first connection through the pooler seconds later, and Neon's pooler
-    # (like Supavisor, whose lag the mold's own bootstrap retries for) answered "password
-    # authentication failed" with the correct password — measured 2026-09-13, third deploy. Retry that
-    # ONE error class, bounded, on the exact URL that will be deployed; anything else fails at once.
+    # A POOLED endpoint can lag a password rotation: the bootstrap tests app_rw on the direct host,
+    # this proof is the first connection through the pooler seconds later, and the mold's own bootstrap
+    # retries exactly that lag for Supavisor. Retry that ONE error class, bounded, on the exact URL that
+    # will be deployed; anything else fails at once. (The 2026-09-13 "password authentication failed"
+    # was NOT lag — it was ADMIN_KEYS bootstrapping the retired Supabase database, see above — and the
+    # retry correctly did not save it: six attempts, same refusal.)
     for attempt in range(7):
         r = run("verify-apprw.mjs", {"APP_RW_URL": url, "RLS_MODE": mode})
         lagging = r.returncode and re.search(r"password authentication failed|28P01", r.stdout + r.stderr)
@@ -1663,6 +1672,8 @@ def main(a):
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")   # a branded build dir replaces this after the plan is printed
     secrets = infra.get("secrets", []); target = infra["target"]; store = infra.get("secret_store")
     ds = load(os.path.join(adir, "datastores.json")); prov = ds.get("postgres", {}).get("provider", "supabase")
+    global ADMIN_KEYS
+    ADMIN_KEYS = (ds.get("postgres", {}).get("admin_url_ref") or PROVIDER_ADMIN.get(prov, "POSTGRES_ADMIN_URL"),)
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
     if target == "vm" and not deploy and app.get("status") not in VM_STATUSES:
         # The same refusal factory.py validate makes (_vm_status), at the writer: a vm app never serves
