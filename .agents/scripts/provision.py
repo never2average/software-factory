@@ -1341,9 +1341,7 @@ def vm_report(app_id, d, infra, ds):
     print(f"secrets present in {os.path.relpath(envf, ROOT)}: {len([x for x in names if x in present])}/{len(names)}")
     missing_user = [x for x in infra.get("secrets_user", names) if x not in present]
     if missing_user:
-        print("Set these once (the value is read from your terminal, never stored here or shown in chat; each command "
-              "first tells you where that value comes from):")
-        for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
+        ask_nicely_for(app_id, missing_user)
     pending = [x for x in VM_PRODUCED if x not in present]
     if pending: print(f"--verify-db writes: {', '.join(pending)}")
     orphan = [x for x in infra.get("secrets_derived", []) if x not in present and x not in VM_PRODUCED]
@@ -1400,11 +1398,14 @@ GUIDE = {
     "shape": (r"^(?:[^<>@\s]+\s*<)?[^<>@\s]+@[^<>@\s]+\.[A-Za-z]{2,}>?$", "an email address, optionally as Name <address>"),
   },
   "GOOGLE_CLIENT_ID": {
-    "what": "the Google OAuth client id for the web sign-in button (an identifier, public by construction — it ships in the browser bundle)",
-    "where": "console.cloud.google.com -> APIs & Services -> Credentials -> your OAuth 2.0 Client ID of type Web application -> "
-             "under 'Authorized JavaScript origins' ADD this app's production URL (e.g. https://<project>.vercel.app), and under "
-             "'Authorized redirect URIs' ADD the same URL again, exactly, no trailing slash — the button redirects to Google and back "
-             "with redirect_uri = the page's origin — then save -> copy the Client ID",
+    "what": "the Google client id for the 'Continue with Google' button (an identifier, public by construction — it ships in the browser bundle)",
+    "where": "open console.cloud.google.com/apis/credentials and sign in with the Google account that owns the app's login -> "
+             "at the top, pick the project the app belongs to (if you see only one, that is it) -> "
+             "under 'OAuth 2.0 Client IDs', click the entry of type 'Web application' -> "
+             "in 'Authorised JavaScript origins' click 'Add URI' and paste this app's web address, e.g. https://<project>.vercel.app, with no slash at the end -> "
+             "scroll to 'Authorised redirect URIs', click 'Add URI' and paste the very same address again -> "
+             "click Save at the bottom (Google can take up to five minutes to apply it) -> "
+             "copy the 'Client ID' shown at the top right; it ends in .apps.googleusercontent.com",
     "why": "Google sign-in is the product's front door; without the id the page shows 'Google sign-in is not configured'. The two Google-side entries are not optional: "
            "One Tap needs the origin listed and the button's redirect needs the redirect URI listed; Google refuses with origin_mismatch / redirect_uri_mismatch otherwise. "
            "This one value is written under both names the app reads (GOOGLE_CLIENT_ID for the server, NEXT_PUBLIC_GOOGLE_CLIENT_ID for the browser; the latter is baked in at build, so a --deploy follows)",
@@ -1442,11 +1443,35 @@ def brand_sender(app, value):
     return f"{name} <{m.group(1)}>" if name else m.group(1)
 
 def explain(name):
-    """One paragraph, printed before the hidden prompt, so the operator never has to leave the terminal to
-    find out what is being asked for."""
+    """A friendly walk-through, printed before the hidden prompt, for someone who does not work in terminals
+    or dashboards every day: what the thing is, why the app needs it, then the clicks as numbered steps
+    (GUIDE['where'] is written as 'A -> B -> C'; each arrow becomes one step)."""
     g = GUIDE.get(name)
     if not g: return
-    print(f"\n{name} — {g['what']}.\n  where: {g['where']}\n  why:   {g['why']}\n")
+    steps = [x.strip() for x in g["where"].split("->") if x.strip()]
+    print(f"\nHi! One thing is needed before this app can run: {g['what']}.")
+    print(f"Why it matters: {g['why']}.")
+    if len(steps) > 1:
+        print("Here is how to get it, one click at a time:")
+        for i, st in enumerate(steps, 1): print(f"  {i}. {st}")
+    else:
+        print(f"Where to find it: {steps[0] if steps else g['where']}")
+    print("When you have it, paste it at the prompt below. The screen stays blank while you paste; that is on purpose,")
+    print("so the value is never shown, saved here, or sent to chat. Then press Enter. Take your time.\n")
+
+def ask_nicely_for(app_id, missing):
+    """The one message a non-technical operator sees when secrets are missing. Names what is needed in plain
+    words, one command per item, and promises what happens next."""
+    n = len(missing)
+    print(f"\nAlmost there. {n} thing{'s' if n != 1 else ''} still need{'s' if n == 1 else ''} to come from you, "
+          "because only you can log in to those accounts:")
+    for m in missing:
+        g = GUIDE.get(m, {})
+        print(f"  - {m}: {g.get('what', 'a credential')}")
+    print("Run each line below, one at a time. Each one explains where to find the value and then asks you to paste it "
+          "(hidden, never stored here or shown in chat):")
+    for m in missing: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
+    print("After the last one, run the check again and it will say Ready.")
 
 def check_shape(name, value):
     g = GUIDE.get(name)
@@ -1794,8 +1819,7 @@ def main(a):
             missing_user = [x for x in infra.get("secrets_user", secrets) if x not in present]
             if missing_user:
                 verb = "--deploy" if deploy else "--verify-db"
-                print("Set these once (the value is read from your terminal, never stored here or shown in chat):")
-                for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
+                ask_nicely_for(app_id, missing_user)
                 sys.exit(f"refusing {verb}: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
                          f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} {verb}")
             ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
@@ -1834,9 +1858,7 @@ def main(a):
     missing_derived = [x for x in derived_s if x not in present and x not in DEPLOY_TIME]
     print(f"secrets present: {len([x for x in secrets if x in present])}/{len(secrets)}")
     if missing_user:
-        print("Set these once (the value is read from your terminal, never stored here or shown in chat; each command "
-              "first tells you where that value comes from):")
-        for m in missing_user: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
+        ask_nicely_for(app_id, missing_user)
     if missing_derived:
         # Not the plan above (that is `a deploy will create:`, every step in order); this is the shorter list of
         # derived secret NAMES the deploy mints, kept apart so the two lines cannot be read as one.
