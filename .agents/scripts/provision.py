@@ -46,7 +46,7 @@ DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier 
 Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.
 `self_hosted` means a Postgres on a PRIVATE docker network with no host port — never a public one.
 """
-import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse
+import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse, time
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
@@ -775,7 +775,17 @@ def _verify_app_rw(run, url, mode, backend, source, hint):
 
     The URL travels in the environment, never in argv: /proc/<pid>/cmdline is world-readable. Nothing
     printed here contains a credential — only role names, flags and counts."""
-    r = run("verify-apprw.mjs", {"APP_RW_URL": url, "RLS_MODE": mode})
+    # A POOLED endpoint lags a password rotation. The bootstrap tests app_rw on the direct host and
+    # passes; this proof is the first connection through the pooler seconds later, and Neon's pooler
+    # (like Supavisor, whose lag the mold's own bootstrap retries for) answered "password
+    # authentication failed" with the correct password — measured 2026-09-13, third deploy. Retry that
+    # ONE error class, bounded, on the exact URL that will be deployed; anything else fails at once.
+    for attempt in range(7):
+        r = run("verify-apprw.mjs", {"APP_RW_URL": url, "RLS_MODE": mode})
+        lagging = r.returncode and re.search(r"password authentication failed|28P01", r.stdout + r.stderr)
+        if not lagging or attempt == 6: break
+        print(f"  the pooled endpoint has not accepted the rotated password yet; retrying in 12s ({attempt + 1}/6)")
+        time.sleep(12)
     line = (r.stdout.strip().splitlines() or [""])[-1]
     if line.startswith("{"): print("  isolation proof: " + line[:400])
     if r.returncode and (r.returncode != 1 or not line.startswith("{")):
