@@ -216,7 +216,7 @@ check-and-report half runs fine from an agent. Two kinds of name appear in `infr
 (only the user can supply: `RESEND_API_KEY` and `PLATFORM_NOTIFY_FROM` always, plus the inference credential the
 provider needs — `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` for Cloudflare Workers AI, `AI_GATEWAY_API_KEY` for
 `vercel_ai_gateway` (see docs/INTAKE.md) — plus `EXA_API_KEY` with web search on and `BROWSERBASE_API_KEY` with the browser on) and `secrets_derived` (the
-factory mints or derives them during provisioning). The runbook for a new operator is `docs/RUNBOOK.md`.
+factory mints or derives them during provisioning). The runbook for a new operator is `docs/RUNBOOK.md`. The repository enables the Resend and Cloudflare connectors project-wide (`.claude/settings.json`); they help with everything *after* a credential exists — domain verification, account lookup — and are never used to mint one, because a minted key would pass through the agent's context.
 
 **`OPS_SECRETS_KEY` is minted per app, and sealed rows do not travel.** The mold seals every connector credential
 and browser credential with AES-256-GCM under `OPS_SECRETS_KEY` (`lib/secret-crypto.ts`; tables `connector_secrets`
