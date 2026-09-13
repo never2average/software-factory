@@ -99,6 +99,13 @@ provider the target cannot use), do that and run it again.
 
 ## 4. The credentials (you, at the terminal)
 
+You do not need to look anything up before you start. Each `--set-secret` command first prints **what** the
+value is, **where** in the Cloudflare or Resend dashboard to get it (the exact clicks), and **why** the app
+cannot run without it — then asks for it with hidden input. It also checks the value's shape before writing
+it, so a value pasted from the wrong box is refused in one sentence and nothing is stored. The Cloudflare
+token needs only the *Workers AI Read* permission; grant nothing more. The sender address must be at a
+domain Resend shows as *Verified*, or every sign-in code bounces.
+
 For each name the check printed (the Cloudflare pair, or `AI_GATEWAY_API_KEY` for a gateway app):
 
 ```
