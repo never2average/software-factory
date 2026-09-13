@@ -518,7 +518,7 @@ API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_I
            "MODEL_PROVIDER", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "EXA_API_KEY", "BROWSERBASE_API_KEY",
            "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID"]
 # Absent means "feature off" or "the mold's default", never a broken deploy.
-OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GOOGLE_CLIENT_ID", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT")
+OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT")
 WORKFLOW_ENV = ["DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN"]
 
 def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
@@ -1399,6 +1399,21 @@ GUIDE = {
     "why": "Resend rejects a sender whose domain it has not verified, so every login code would bounce",
     "shape": (r"^(?:[^<>@\s]+\s*<)?[^<>@\s]+@[^<>@\s]+\.[A-Za-z]{2,}>?$", "an email address, optionally as Name <address>"),
   },
+  "GOOGLE_CLIENT_ID": {
+    "what": "the Google OAuth client id for the web sign-in button (an identifier, public by construction — it ships in the browser bundle)",
+    "where": "console.cloud.google.com -> APIs & Services -> Credentials -> your OAuth 2.0 Client ID of type Web application -> "
+             "under 'Authorized JavaScript origins' ADD this app's production URL (e.g. https://<project>.vercel.app) and save -> copy the Client ID",
+    "why": "Google sign-in is the product's front door; without the id the page shows 'Google sign-in is not configured'. The origin step is not optional: "
+           "Google refuses the button on any origin the client does not list. This one value is written under both names the app reads "
+           "(GOOGLE_CLIENT_ID for the server, NEXT_PUBLIC_GOOGLE_CLIENT_ID for the browser; the latter is baked in at build, so a --deploy follows)",
+    "shape": (r"^[0-9]{6,20}-[a-z0-9]{10,64}\.apps\.googleusercontent\.com$", "a Google web client id ending in .apps.googleusercontent.com"),
+  },
+  "NEXT_PUBLIC_GOOGLE_CLIENT_ID": {
+    "what": "the same Google OAuth client id, under the name the browser bundle reads",
+    "where": "set GOOGLE_CLIENT_ID instead; the factory writes this name from it",
+    "why": "one value, two names; setting them separately is how they drift",
+    "shape": (r"^[0-9]{6,20}-[a-z0-9]{10,64}\.apps\.googleusercontent\.com$", "a Google web client id ending in .apps.googleusercontent.com"),
+  },
   "AI_GATEWAY_API_KEY": {
     "what": "a Vercel AI Gateway key",
     "where": "vercel.com -> your team -> AI Gateway -> API Keys -> Create",
@@ -1454,6 +1469,10 @@ def set_secret(app_id, name, infra, mold_dir):
         value = brand_sender(app, value)
         print(f"  display name taken from this app's branding: {value.split(' <')[0] if ' <' in value else '(none)'}")
     check_shape(name, value)
+    names = [name]
+    if name in ("GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"):
+        names = ["GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"]   # one client id, both names the app reads
+        print("  written under both names the app reads (server and browser); NEXT_PUBLIC_ is baked in at build, so run --deploy after")
     if infra.get("target") == "vercel":
         proj = infra["vercel"]["project"]; projects = [proj, f"{proj}-api", f"{proj}-workflow"]
         absent = [p for p in projects if not _project_meta(p, mold_dir).get("id")]
@@ -1462,7 +1481,8 @@ def set_secret(app_id, name, infra, mold_dir):
             # --check never creates these (mold_v1-041); this writer does, and says so first.
             print(f"creating the Vercel project(s) {', '.join(absent)} to hold {name} (empty, free, no deployment) ...")
             ensure_projects(proj, mold_dir)
-        for p in projects: _set_env(name, value, mold_dir, project=p)
+        for n_ in names:
+            for p in projects: _set_env(n_, value, mold_dir, project=p)
         where = f"{len(projects)} project(s)"
     else:
         f = os.path.join(ROOT, "infra/vm/apps", app_id, ".env")
