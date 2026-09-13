@@ -80,7 +80,7 @@ export function EmailSignIn({ onToken }: { readonly onToken: (token: string) => 
       <button
         type="button"
         onClick={() => setStage("email")}
-        className="mt-3 cursor-pointer text-muted-foreground text-xs underline-offset-4 hover:text-foreground hover:underline"
+        className="mt-2 min-h-6 cursor-pointer py-1 text-muted-foreground text-xs underline-offset-4 hover:text-foreground hover:underline"
       >
         Invited by email? Sign in with a code
       </button>

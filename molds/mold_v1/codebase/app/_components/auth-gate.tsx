@@ -512,8 +512,18 @@ export function AuthGate() {
             </button>
             {/* Google renders its own button in here for One Tap's benefit, but
                 it must never intercept: pointer-events-none is the whole point
-                of keeping it. Zero size so it cannot cover anything either. */}
-            <div ref={buttonRef} className="pointer-events-none absolute size-0 overflow-hidden opacity-0" />
+                of keeping it. Zero size so it cannot cover anything either.
+                `invisible` + inert + aria-hidden, not opacity-0: an opacity-0
+                button is still in the tab order and the accessibility tree, so a
+                keyboard or screen-reader user landed on a Google button clipped
+                to nothing — the responsiveness lane measured exactly that, at
+                every viewport. visibility:hidden removes it from both. */}
+            <div
+              ref={buttonRef}
+              inert
+              aria-hidden="true"
+              className="pointer-events-none invisible absolute size-0 overflow-hidden"
+            />
         </div>
         {error ? (
           <p className="mt-3 w-full rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-center text-destructive text-xs">
