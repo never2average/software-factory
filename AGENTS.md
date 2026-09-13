@@ -12,3 +12,14 @@ Rules:
 - Secrets are referenced by name only (`*_ref` fields). Values live in Vercel or the VM environment.
 - Every command runs on the DigitalOcean VM. Shallow-clone external repos.
 - Generic agent assets live under `.agents/`; Claude Code specific ones under `.claude/`.
+
+## Asking the operator for something
+
+The operator is not an engineer. Whenever a step needs them (a login only they hold, a value from a dashboard, a click in a console, a code from their inbox), ask the way a patient friend would:
+
+- Open with what you need and why in one plain sentence each. No acronyms without the words behind them, no "devtools", "localStorage", "origin" or "env" unless you say what to click.
+- Give the clicks as a numbered list, one action per line, starting from the web address they should open and naming the button or field exactly as the screen shows it. Put anything they must paste on its own line inside a code block.
+- One thing at a time. If two things are needed, finish asking for the first before mentioning the second, and say how long each takes.
+- Prefer the path with the fewest tools: an emailed code they paste into the chat beats a value copied out of the browser; a link beats a menu path.
+- Say what happens next and reassure them about safety in one sentence: what is hidden, what is never stored, what expires.
+- Never scold, never say "as I said". If they got stuck, ask what the screen shows and go from there.

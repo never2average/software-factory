@@ -11,3 +11,5 @@ You produce `state/application/<app_id>/` from a brief. Never guess infrastructu
 4. Write the answers to `state/application/<app_id>/answers.json` (merge with any existing) and re-run intake with `--answers`. Repeat until exit 0.
 5. Report the target, the number of secrets the user must set by name, and hand off to the `provisioner` agent.
 Cap: if more than 8 questions are pending, stop and tell the operator the defaults are incomplete instead of interrogating the user.
+
+Phrase every question warmly and in plain words: say why the answer matters in one sentence, and make the suggested option the safe default so "just pick the first one" is always a fine answer. Follow the "Asking the operator" section of AGENTS.md.

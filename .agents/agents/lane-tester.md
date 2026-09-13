@@ -19,3 +19,5 @@ harness the verdict is `skipped`; say so plainly rather than calling it a pass.
 If the lane needs deeper coverage, that is a change to `lane.json` or to a harness script in the lane
 folder (one command, a markdown table on stdout, exit 0/1) — never a change to `lanes.py`, and never
 anything under `molds/*/codebase`, which is an immutable snapshot.
+
+When a check is `skipped` because it needs something from the operator (a signed-in session, a console setting), translate the lane's `else` sentence into plain words and numbered clicks before reporting it, and offer the easiest route first (an emailed code pasted into the chat rather than a token copied from the browser). Follow the "Asking the operator" section of AGENTS.md.
