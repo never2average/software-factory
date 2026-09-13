@@ -103,7 +103,16 @@ You do not need to look anything up before you start. Each `--set-secret` comman
 value is, **where** in the Cloudflare or Resend dashboard to get it (the exact clicks), and **why** the app
 cannot run without it — then asks for it with hidden input. It also checks the value's shape before writing
 it, so a value pasted from the wrong box is refused in one sentence and nothing is stored. The Cloudflare
-token needs only the *Workers AI Read* permission; grant nothing more. The sender address must be at a
+token needs only the *Workers AI Read* permission; grant nothing more.
+
+**Two connectors ship with this repository** (`.claude/settings.json` enables the `resend` and `cloudflare`
+plugins for anyone who opens it). Run `/mcp` once and log in to each; from then on the operator's agent can add
+your sending domain, hand you the exact DNS records and confirm it is *Verified* before you set
+`PLATFORM_NOTIFY_FROM`, and can read your Cloudflare account id instead of you copying it. What they cannot
+do — by both services' design — is mint the first credential: the Cloudflare API token and the Resend API key
+are created by the account owner in a browser. The Resend connector *can* create API keys, and this factory
+never asks it to: a key it created would pass through the agent's context, and secret values never enter the
+chat. You create the key; the connector uses it. The sender address must be at a
 domain Resend shows as *Verified*, or every sign-in code bounces.
 
 For each name the check printed (the Cloudflare pair, or `AI_GATEWAY_API_KEY` for a gateway app):
