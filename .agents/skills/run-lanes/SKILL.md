@@ -92,3 +92,5 @@ an open task for the same lane and app, and filing nothing when every failing ch
 
 `lanes.py` is the only writer of `testing.<lane>`, and `reverted` is the only status it may write.
 Promotion to `lanes_passing` is a product stage and stays with the operator (`productize`).
+
+A check may declare `app_env` (see `molds/<mold>/testing/lane.schema.json`): the names of the application's own secrets to place in its environment, read at run time from the app's secret store. Values never appear in output or reports. A name that cannot be supplied makes the check `skipped`.
