@@ -1520,6 +1520,14 @@ def set_secret(app_id, name, infra, mold_dir):
         finally: os.umask(old)
         os.chmod(f, 0o600); where = os.path.relpath(f, ROOT)
     print(f"{name} set on {where}.")
+    if name in ("GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"):
+        # The client id's numeric prefix IS the Google Cloud project number, so the app's Google project is
+        # recorded from the value itself: an identifier, public by construction, never a secret. Every app
+        # carries its own, so two apps in this factory may sit in two different Google projects.
+        ip = os.path.join(ST, "application", app_id, "infrastructure.json"); doc = load(ip)
+        doc["google"] = {"project_number": value.split("-", 1)[0], "client_id": value, "set_at": NOW}
+        save(ip, doc)
+        print(f"  this app's Google project is number {doc['google']['project_number']} (recorded in infrastructure.google; other apps may use other projects)")
 
 HEALTH_PATH = "/api/ops/health"
 # The mold's ONE affirmative health sentence, and the only thing that may score `enforced` below.
@@ -1857,6 +1865,8 @@ def main(a):
     # project returns [SENSITIVE] and copying it would write that literal string as the credential.
     missing_derived = [x for x in derived_s if x not in present and x not in DEPLOY_TIME]
     print(f"secrets present: {len([x for x in secrets if x in present])}/{len(secrets)}")
+    g = infra.get("google")
+    if g: print(f"Google project for 'Continue with Google': number {g['project_number']} (this app's own; each app may use a different one)")
     if missing_user:
         ask_nicely_for(app_id, missing_user)
     if missing_derived:

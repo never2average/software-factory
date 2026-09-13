@@ -280,6 +280,27 @@
     },
     "note": {
       "type": "string"
+    },
+    "google": {
+      "type": "object",
+      "description": "The Google Cloud project this app's 'Continue with Google' client lives in, recorded by --set-secret GOOGLE_CLIENT_ID from the id itself (its numeric prefix is the project number). Per app: two apps may use two projects. Identifiers only, never secrets.",
+      "properties": {
+        "project_number": {
+          "type": "string",
+          "pattern": "^[0-9]{6,20}$"
+        },
+        "client_id": {
+          "type": "string",
+          "pattern": "^[0-9]{6,20}-[a-z0-9]{10,64}\\.apps\\.googleusercontent\\.com$"
+        },
+        "set_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_number",
+        "client_id"
+      ]
     }
   }
 }
