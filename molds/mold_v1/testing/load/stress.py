@@ -230,6 +230,16 @@ def build_database(stack):
     with open(os.path.join(stack.app, ".env.supabase"), "w") as f:
         f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={admin}\n")
     os.chmod(os.path.join(stack.app, ".env.supabase"), 0o600)
+    # .bootstrap-supabase.mjs READS .env.local before it writes the app_rw URL into it, and the mold
+    # snapshot ships without one (gitignored, excluded by MOLD.md). This lane passed on 2026-09-08 only
+    # because a stray .env.local happened to be lying in the snapshot; once that was removed the copy
+    # here had none and the bootstrap died with ENOENT after its RLS work was done. An empty 0600 file
+    # is what provision.py seeds for the same reason.
+    loc = os.path.join(stack.app, ".env.local")
+    if not os.path.exists(loc):
+        old = os.umask(0o077)
+        try: open(loc, "w").close()
+        finally: os.umask(old)
     steps = [("schema push", 'DATABASE_URL="$ADMIN_URL" npx drizzle-kit push --force'),
              ("rls + app_rw", "node .bootstrap-supabase.mjs"),
              ("task-workflow tables", "node .migrate-task-workflow-service.mjs")]
