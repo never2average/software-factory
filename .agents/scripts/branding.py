@@ -63,6 +63,49 @@ def parse_oklch(v):
     if not m: sys.exit(f"cannot read the brand colour {v!r}; use #rrggbb or oklch(L C H)")
     return float(m.group(1)), float(m.group(2)), float(m.group(3))
 
+def _oklch_to_srgb(v):
+    """oklch(L C H) -> (r, g, b) in 0..1, sRGB gamma-encoded, clipped. Alpha is ignored."""
+    L, C, H = parse_oklch(v)
+    import math
+    a, b = C * math.cos(math.radians(H)), C * math.sin(math.radians(H))
+    l_ = L + 0.3963377774 * a + 0.2158037573 * b
+    m_ = L - 0.1055613458 * a - 0.0638541728 * b
+    s_ = L - 0.0894841775 * a - 1.2914855480 * b
+    l, m, s3 = l_ ** 3, m_ ** 3, s_ ** 3
+    lin = (4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s3,
+           -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s3,
+           -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s3)
+    g = lambda c: 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+    return tuple(min(1.0, max(0.0, g(c))) for c in lin)
+
+def contrast(v1, v2):
+    """WCAG 2.1 contrast ratio between two oklch() colours."""
+    def lum(rgb):
+        lin = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        r, g, b = (lin(c) for c in rgb); return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    a, b = lum(_oklch_to_srgb(v1)), lum(_oklch_to_srgb(v2))
+    hi, lo = max(a, b), min(a, b); return (hi + 0.05) / (lo + 0.05)
+
+# Text-on-surface pairs every generated palette must keep at WCAG AA (4.5:1). The overlay REPLACES the
+# mold's palette blocks, so a fix made upstream in globals.css is overwritten by this formula on every
+# build: on 2026-09-13 the mold had --muted-foreground at 0.52 (fixed after axe found seven serious
+# contrast failures on /workspace) while this generator still wrote 0.6, and the deployed app failed
+# the accessibility lane on exactly those seven. A palette that fails here is refused before it is
+# written, in prepare and in check alike.
+CONTRAST_PAIRS = [("muted-foreground", "background"), ("muted-foreground", "card"), ("muted-foreground", "muted"),
+                  ("foreground", "background"), ("primary-foreground", "primary"), ("accent-foreground", "accent"),
+                  ("secondary-foreground", "secondary")]
+
+def contrast_guard(pal):
+    bad = []
+    for scheme in ("light", "dark"):
+        for fg, bg in CONTRAST_PAIRS:
+            a, b = pal[scheme].get(fg), pal[scheme].get(bg)
+            if not a or not b or "/" in a or "/" in b: continue     # an alpha token is a blend, not a colour
+            r = contrast(a, b)
+            if r < 4.5: bad.append(f"{scheme} --{fg} on --{bg}: {r:.2f}:1 (WCAG AA needs 4.5:1)")
+    if bad: sys.exit("the generated palette fails contrast; refusing to write it:\n  " + "\n  ".join(bad))
+
 def palette(brand_hex, neutral_chroma=0.006):
     """The mold's greyscale palette, tinted toward one brand colour.
 
@@ -76,7 +119,7 @@ def palette(brand_hex, neutral_chroma=0.006):
         "popover": oklch(1, 0, H), "popover-foreground": n(0.16),
         "primary": oklch(max(0.18, min(L, 0.55)), C, H), "primary-foreground": n(0.985),
         "secondary": n(0.94), "secondary-foreground": n(0.19),
-        "muted": n(0.94), "muted-foreground": n(0.6),
+        "muted": n(0.94), "muted-foreground": n(0.52),     # 0.6 measured 3.3-3.9:1 on these surfaces; 0.52 is 4.6-5.5:1
         "accent": oklch(0.94, min(C * 0.35, 0.05), H), "accent-foreground": oklch(max(0.19, min(L, 0.45)), C, H),
         "destructive": "oklch(0.577 0.245 27.325)",
         "border": n(0.916), "input": n(0.916), "ring": oklch(min(max(L, 0.5), 0.75), C * 0.8, H),
@@ -92,7 +135,9 @@ def palette(brand_hex, neutral_chroma=0.006):
         "border": "oklch(1 0 0 / 10%)", "input": "oklch(1 0 0 / 15%)",
         "ring": oklch(min(max(L + 0.2, 0.5), 0.75), C * 0.7, H),
     }
-    return {"light": light, "dark": dark}
+    pal = {"light": light, "dark": dark}
+    contrast_guard(pal)
+    return pal
 
 # ----------------------------------------------------------------- brand ----
 def resolve(app):
