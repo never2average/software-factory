@@ -274,13 +274,36 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
     exit on the create path) left the resource attached. The app's project is now connected to exactly
     one thing: a database already proven empty. Everything before that happens in a project created
     for the inspection and deleted after it."""
+    def clear_stale_db_env():
+        """Vercel refuses to connect a Marketplace database over an existing DATABASE_URL — and this
+        function only runs when no Neon is attached, so any DATABASE_URL here is a leftover of a database
+        this app no longer uses (the replica's was the Supabase-era superuser URL, task mold_v1-026). The
+        deploy rewrites DATABASE_URL after the isolation proof anyway; clearing it first is the only way
+        the connect can succeed. Measured 2026-09-13: both an adoption and a fresh provision were refused
+        with "env var DATABASE_URL already exists on project", and the fall-through then provisioned a
+        second resource with the same name."""
+        for key in ("DATABASE_URL", "DATABASE_URL_UNPOOLED"):
+            for env_ in ("production", "preview", "development"):
+                subprocess.run(f"vercel env rm {key} {env_} --project {proj} --yes", shell=True, cwd=mold_dir,
+                               capture_output=True, text=True)
+        print(f"  cleared the stale DATABASE_URL on {proj} (a leftover of a database this app no longer uses)")
+
     def attach(name):
         """Connect a database already PROVEN empty to the app's project, and confirm what landed.
         Anything unexpected disconnects again: the failure path leaves nothing attached."""
+        clear_stale_db_env()
         c = subprocess.run(f"vercel integration-resource connect {name} {proj} -e production -e preview -e development --yes",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         if c.returncode:
-            print("  could not connect it: " + _cli_err(c.stdout + c.stderr)[:160]); return False
+            err = _cli_err(c.stdout + c.stderr)
+            print("  could not connect it: " + err[:160])
+            if "already exists on project" in err:
+                # The project, not the resource, is what refused. Provisioning another resource would
+                # be refused the same way and leave a duplicate behind (it did, once).
+                sys.exit(f"{proj} still refuses a database connection ({err[:120]}). Nothing was provisioned. "
+                         f"Remove the conflicting variable in the Vercel dashboard (Settings -> Environment "
+                         f"Variables on {proj}) and rerun: python3 .claude/scripts/provision.py {app_id} --deploy")
+            return False
         st = _db_stat(mold_dir, proj)
         if st and st.get("tables") == 0:
             infra.setdefault("datastores", {})["neon_resource"] = name; return True
@@ -513,7 +536,7 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
     if pg.get("scope") == "fresh" and prov in DB_SENTINEL and DB_SENTINEL[prov] not in present:
         if prov == "neon":
             spares = _neon_spares(mold_dir)
-            create.append(f"a Neon database: adopt one of the team's {len(spares)} unattached resource(s) ({', '.join(spares) or 'none'}) "
+            create.append(f"a Neon database: clear the stale DATABASE_URL on the project, then adopt one of the team's {len(spares)} unattached resource(s) ({', '.join(spares) or 'none'}) "
                           f"if it is empty, else provision a fresh '{app_id.replace('_', '-')}' on the Marketplace free plan; each candidate is "
                           f"inspected through a temporary sf-neon-inspect-* project, created and deleted in the same run")
         elif prov == "supabase": create.append(f"a Supabase project '{app_id}' on the Marketplace")
@@ -531,7 +554,8 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
                "ENABLE_WEB_SEARCH": str(app.get("capabilities", {}).get("web_search", "?")).lower(),
                "ENABLE_BROWSER": str(app.get("capabilities", {}).get("browser", "?")).lower(),
                "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
-        create.append(f"env on {proj} and {api}, rewritten on every deploy: " + ", ".join(f"{k}={v}" for k, v in cfg.items()))
+        create.append(f"env on {proj} and {api}, rewritten on every deploy: " + ", ".join(f"{k}={v}" for k, v in cfg.items())
+                      + "; PLATFORM_NOTIFY_FROM's display name set to this app's product name on all three projects")
         if not shared and "TASK_WORKFLOW_SERVICE_TOKEN" not in present:
             create.append(f"env on {proj}: TASK_WORKFLOW_SERVICE_TOKEN (minted locally)")
     if mode == "verify-db" or not shared:
@@ -999,6 +1023,14 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
            "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=proj)
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=f"{proj}-api")   # build-time flags of the eve bundle: the API must agree with the web door
+    # The sender's display name is this app's brand, re-derived on every deploy so it cannot drift from
+    # the product name the overlay writes into the email text (the operator only ever supplies the address).
+    cur = pull_env(mold_dir, proj).get("PLATFORM_NOTIFY_FROM", "")
+    if cur and cur != REDACTED:
+        want = brand_sender(app, cur)
+        if want != cur:
+            for p_ in (proj, f"{proj}-api", f"{proj}-workflow"): _set_env("PLATFORM_NOTIFY_FROM", want, mold_dir, project=p_)
+            print(f"  PLATFORM_NOTIFY_FROM display name set from this app's branding: {want.split(' <')[0]}")
     def run(cmd, env=None, label=""):
         r = subprocess.run(cmd, shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
         urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", r.stdout + r.stderr)
@@ -1343,7 +1375,8 @@ GUIDE = {
   "PLATFORM_NOTIFY_FROM": {
     "what": "the address the sign-in emails come FROM",
     "where": "resend.com -> Domains -> Add Domain -> add the DNS records it shows at your registrar -> wait for 'Verified'. "
-             "Then use any address at that domain, e.g. Delivered <signin@yourdomain.com>",
+             "Then give ONLY the address at that domain, e.g. signin@yourdomain.com — the display name is this app's own "
+             "brand and is filled in for you",
     "why": "Resend rejects a sender whose domain it has not verified, so every login code would bounce",
     "shape": (r"^(?:[^<>@\s]+\s*<)?[^<>@\s]+@[^<>@\s]+\.[A-Za-z]{2,}>?$", "an email address, optionally as Name <address>"),
   },
@@ -1356,6 +1389,21 @@ GUIDE = {
   "EXA_API_KEY": {"what": "an Exa search key", "where": "dashboard.exa.ai -> API Keys", "why": "web search is on for this app", "shape": (r"^\S{16,}$", "a single key")},
   "BROWSERBASE_API_KEY": {"what": "a Browserbase key", "where": "browserbase.com -> Settings -> API Keys", "why": "the browser is on for this app", "shape": (r"^\S{16,}$", "a single key")},
 }
+
+def brand_sender(app, value):
+    """PLATFORM_NOTIFY_FROM with THIS app's product name as the display name, whatever was typed.
+
+    The name a person sees on a sign-in email is a brand, and the brand belongs to the application
+    (surface.branding.product_name, copied from its product at stamp time) — the same value the
+    branding overlay writes into the email text itself. It is never typed by hand, so an app stamped
+    from a different product cannot be sent out under another product's name. The operator supplies
+    only the address; a display name they typed is replaced, not kept."""
+    m = re.fullmatch(r"\s*(?:[^<>]*<)?\s*([^<>\s]+@[^<>\s]+)\s*>?\s*", value or "")
+    if not m: return value
+    name = ((app.get("surface") or {}).get("branding") or {}).get("product_name") or \
+           ((app.get("workspace") or {}).get("org") or {}).get("name") or ""
+    name = re.sub(r'[<>"\r\n]', "", name).strip()
+    return f"{name} <{m.group(1)}>" if name else m.group(1)
 
 def explain(name):
     """One paragraph, printed before the hidden prompt, so the operator never has to leave the terminal to
@@ -1382,6 +1430,10 @@ def set_secret(app_id, name, infra, mold_dir):
     explain(name)
     value = getpass.getpass(f"{name} (input hidden): ").strip()
     if not value: sys.exit("nothing entered")
+    if name == "PLATFORM_NOTIFY_FROM":
+        app = load(os.path.join(ST, "application", app_id, "application.json"))
+        value = brand_sender(app, value)
+        print(f"  display name taken from this app's branding: {value.split(' <')[0] if ' <' in value else '(none)'}")
     check_shape(name, value)
     if infra.get("target") == "vercel":
         proj = infra["vercel"]["project"]; projects = [proj, f"{proj}-api", f"{proj}-workflow"]
