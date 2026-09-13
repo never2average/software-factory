@@ -121,23 +121,51 @@ def unmet(p, docs, ctx):
         elif "must_not" in p: ok = v != p["must_not"]
         else: ok = v is not None
         return None if ok else e
-    if "env" in p: return None if os.environ.get(p["env"]) else e   # presence BY NAME; the value is never read
+    if "env" in p: return None if (ctx.get("_env") or os.environ).get(p["env"]) else e   # presence BY NAME; the value is never read
     if "path" in p: return None if os.path.exists(os.path.join(ROOT, subst(p["path"], ctx))) else e
     if "cmd" in p:
         r = subprocess.run(subst(p["cmd"], ctx), shell=True, cwd=ROOT, capture_output=True, text=True)
         return None if r.returncode == 0 else e
     return e
 
+def app_secret_values(docs, names, app_id):
+    """The application's OWN secrets, by name, from where its state says they live — never from a file
+    someone copied by hand, never printed. vercel_env: the project's production env, pulled the way
+    provision.py pulls it (a Sensitive variable comes back redacted and counts as absent).
+    vm_env_file: infra/vm/apps/<app>/.env, the file --verify-db writes."""
+    infra = docs.get("infrastructure") or {}; store = infra.get("secret_store"); vals = {}
+    if store == "vm_env_file":
+        f = os.path.join(ROOT, "infra/vm/apps", app_id, ".env")
+        if os.path.isfile(f):
+            for l in open(f):
+                if "=" in l and not l.startswith("#"): k, v = l.split("=", 1); vals[k.strip()] = v.strip().strip('"')
+    elif store == "vercel_env" and (infra.get("vercel") or {}).get("project"):
+        import provision
+        vals = provision.pull_env(os.path.join(ROOT, "molds", docs["application"]["mold_id"], "codebase"),
+                                  infra["vercel"]["project"], required=False)
+    return {n: vals[n] for n in names if vals.get(n) and vals[n] != "[SENSITIVE]"}
+
 def run_check(c, docs, ctx):
     res = {"name": c["name"], "defect": c.get("known_defect"), "why": c.get("why", ""),
            "emits": c.get("emits"), "cmd": subst(c["run"], ctx), "out": ""}
+    env = dict(os.environ)
+    if c.get("app_env"):
+        got = app_secret_values(docs, c["app_env"], ctx["app_id"])
+        missing = [n for n in c["app_env"] if n not in got]
+        if missing:
+            return dict(res, status="skipped", reason=f"this app's {', '.join(missing)} could not be read from its secret "
+                        f"store ({(docs.get('infrastructure') or {}).get('secret_store')}); the check must connect as the "
+                        f"application itself. Deploy it first: python3 .claude/scripts/provision.py {ctx['app_id']} --deploy "
+                        f"(a vm app: --verify-db).")
+        env.update(got); res["app_env"] = list(got)      # names only, for the report
+    ctx = dict(ctx, _env=env)
     for p in c.get("requires", []):
         e = unmet(p, docs, ctx)
         if e: return dict(res, status="skipped", reason=e)
     cwd = {"codebase": ctx["codebase"], "testing": ctx["testing"], "root": ROOT}[c.get("cwd", "codebase")]
     t = c.get("timeout_s", 600)
     try:
-        r = subprocess.run(res["cmd"], shell=True, cwd=cwd, capture_output=True, text=True, timeout=t)
+        r = subprocess.run(res["cmd"], shell=True, cwd=cwd, capture_output=True, text=True, timeout=t, env=env)
         out, code = redact((r.stdout or "") + (r.stderr or "")), r.returncode
     except subprocess.TimeoutExpired as x:
         got = lambda b: b.decode(errors="replace") if isinstance(b, bytes) else (b or "")
@@ -328,7 +356,11 @@ def main(a):
             ctx = context(app_id, l, mold_id, docs, os.path.join(ROOT, "molds", mold_id, "testing", l, "reports",
                           *(["dry"] if dry else []), f"{app_id}-{TODAY}T<hhmmss>Z.md"))   # pattern: --list writes nothing
             u = [e for e in (unmet(p, docs, ctx) for p in s.get("requires", [])) if e]
-            u += [e for c in s.get("checks", []) for e in (unmet(p, docs, ctx) for p in c.get("requires", [])) if e]
+            # A check with app_env is judged with the same environment the run would give it, so --list and
+            # the run can never disagree about whether a precondition holds.
+            u += [e for c in s.get("checks", []) for e in
+                  (unmet(p, docs, dict(ctx, _env={**os.environ, **app_secret_values(docs, c.get("app_env", []), app_id)})
+                         if c.get("app_env") else ctx) for p in c.get("requires", [])) if e]
             print(f"{l:16} {'yes':8} {len(s.get('checks', [])):>6}  " + ("; ".join(dict.fromkeys(u))[:160] if u else "all met"))
         return 0
 

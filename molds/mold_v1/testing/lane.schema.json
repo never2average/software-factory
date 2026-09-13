@@ -5,56 +5,154 @@
   "description": "molds/<mold_id>/testing/<lane>/lane.json — what .claude/scripts/lanes.py runs for this lane. The lane declares itself; adding a lane to a future mold never edits the runner.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["lane", "checks"],
+  "required": [
+    "lane",
+    "checks"
+  ],
   "properties": {
-    "$schema": { "type": "string" },
+    "$schema": {
+      "type": "string"
+    },
     "lane": {
       "type": "string",
-      "enum": ["load", "context", "functional", "accessibility", "responsiveness"],
+      "enum": [
+        "load",
+        "context",
+        "functional",
+        "accessibility",
+        "responsiveness"
+      ],
       "description": "Must be one of the five the application schema can record. Anything else is a runner error, not a silent skip: the result would have nowhere legal to live."
     },
-    "order": { "type": "integer", "description": "Run order across lanes; ties broken by name. functional 10, context 20, load 30, accessibility 40, responsiveness 50." },
-    "summary": { "type": "string", "description": "One line, printed in the report header." },
-    "not_covered": { "type": "array", "items": { "type": "string" }, "description": "What this lane does NOT check, printed verbatim in the report so a green lane cannot imply more than it measured." },
-    "requires": { "type": "array", "items": { "$ref": "#/$defs/precondition" }, "description": "Lane-level: any unmet precondition skips the WHOLE lane, quoting its `else`." },
+    "order": {
+      "type": "integer",
+      "description": "Run order across lanes; ties broken by name. functional 10, context 20, load 30, accessibility 40, responsiveness 50."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One line, printed in the report header."
+    },
+    "not_covered": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What this lane does NOT check, printed verbatim in the report so a green lane cannot imply more than it measured."
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/precondition"
+      },
+      "description": "Lane-level: any unmet precondition skips the WHOLE lane, quoting its `else`."
+    },
     "checks": {
       "type": "array",
       "description": "Empty or absent means the lane has no harness: `skipped`, never `pass`.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "run"],
+        "required": [
+          "name",
+          "run"
+        ],
         "properties": {
-          "name": { "type": "string", "description": "Unique within the lane; becomes the report row." },
-          "run": { "type": "string", "description": "One shell command. Placeholders: {app_id} {root} {mold} {codebase} {testing} {lane} {date} {url} {report}." },
-          "cwd": { "type": "string", "enum": ["codebase", "testing", "root"], "description": "Default codebase = molds/<mold_id>/codebase." },
-          "timeout_s": { "type": "integer", "description": "Default 600. A timeout is a FAIL with reason 'timed out after Ns'." },
+          "name": {
+            "type": "string",
+            "description": "Unique within the lane; becomes the report row."
+          },
+          "run": {
+            "type": "string",
+            "description": "One shell command. Placeholders: {app_id} {root} {mold} {codebase} {testing} {lane} {date} {url} {report}."
+          },
+          "cwd": {
+            "type": "string",
+            "enum": [
+              "codebase",
+              "testing",
+              "root"
+            ],
+            "description": "Default codebase = molds/<mold_id>/codebase."
+          },
+          "timeout_s": {
+            "type": "integer",
+            "description": "Default 600. A timeout is a FAIL with reason 'timed out after Ns'."
+          },
           "expect": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "exit": { "type": "integer", "description": "Default 0." },
-              "stdout": { "type": "array", "items": { "type": "string" }, "description": "Every regex must match combined stdout+stderr." },
-              "stdout_not": { "type": "array", "items": { "type": "string" }, "description": "None may match. This is how a lane refuses to grade on a status code." },
+              "exit": {
+                "type": "integer",
+                "description": "Default 0."
+              },
+              "stdout": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every regex must match combined stdout+stderr."
+              },
+              "stdout_not": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "None may match. This is how a lane refuses to grade on a status code."
+              },
               "skip_on": {
                 "type": "array",
                 "description": "Judged after exit/stdout/stdout_not, so a failure is never hidden: if `stdout` matches, the check ran but declared part of what it names unmeasured, and is recorded `skipped` (never `pass`) with `else` as the reason; its measured rows still print. The lane is then `skipped`, never `pass`.",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["stdout", "else"],
+                  "required": [
+                    "stdout",
+                    "else"
+                  ],
                   "properties": {
-                    "stdout": { "type": "string", "description": "Regex over combined stdout+stderr." },
-                    "else": { "type": "string", "description": "What the operator should do, in one sentence with the command in it; placeholders allowed." }
+                    "stdout": {
+                      "type": "string",
+                      "description": "Regex over combined stdout+stderr."
+                    },
+                    "else": {
+                      "type": "string",
+                      "description": "What the operator should do, in one sentence with the command in it; placeholders allowed."
+                    }
                   }
                 }
               }
             }
           },
-          "requires": { "type": "array", "items": { "$ref": "#/$defs/precondition" }, "description": "Check-level: unmet means this check is SKIPPED, never failed — and a lane with a skipped check can never be `pass`." },
-          "emits": { "type": "string", "enum": ["markdown_table"], "description": "stdout is a markdown table, inlined verbatim under 'Measured rows'." },
-          "known_defect": { "type": "string", "description": "A task id. ANNOTATION ONLY: it never changes the verdict. It links the task in the report and stops a duplicate task being filed." },
-          "why": { "type": "string", "description": "One sentence: what a failure here actually means." }
+          "requires": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/precondition"
+            },
+            "description": "Check-level: unmet means this check is SKIPPED, never failed — and a lane with a skipped check can never be `pass`."
+          },
+          "emits": {
+            "type": "string",
+            "enum": [
+              "markdown_table"
+            ],
+            "description": "stdout is a markdown table, inlined verbatim under 'Measured rows'."
+          },
+          "known_defect": {
+            "type": "string",
+            "description": "A task id. ANNOTATION ONLY: it never changes the verdict. It links the task in the report and stops a duplicate task being filed."
+          },
+          "why": {
+            "type": "string",
+            "description": "One sentence: what a failure here actually means."
+          },
+          "app_env": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of THIS application's own secrets to place in the check's environment, read at run time from where the app's state says they live (the Vercel project's env for secret_store vercel_env, infra/vm/apps/<app>/.env for vm_env_file). Values are never printed, logged or stored; the report shows names only. A name that cannot be supplied makes the check skipped, never failed. Exists so a check that must connect AS the application (test:org-isolation, which is meaningless as a BYPASSRLS role) can run against a deployed app without anyone copying a URL into a file."
+          }
         }
       }
     }
@@ -63,16 +161,37 @@
     "precondition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["else"],
+      "required": [
+        "else"
+      ],
       "description": "Exactly one of state/env/path/cmd, plus `else`: one imperative sentence naming a runnable command.",
       "properties": {
-        "state": { "type": "string", "description": "<application|infrastructure|datastores|datainfra>.<dotted path>" },
-        "must": { "description": "'nonempty', or a literal the value must equal." },
-        "must_not": { "description": "A literal the value must not equal." },
-        "env": { "type": "string", "description": "Environment variable presence BY NAME. The value is never read, logged or stored." },
-        "path": { "type": "string", "description": "Path relative to the repo root; placeholders allowed." },
-        "cmd": { "type": "string", "description": "Probe command; must exit 0." },
-        "else": { "type": "string", "description": "What the operator should do, in one sentence with the command in it." }
+        "state": {
+          "type": "string",
+          "description": "<application|infrastructure|datastores|datainfra>.<dotted path>"
+        },
+        "must": {
+          "description": "'nonempty', or a literal the value must equal."
+        },
+        "must_not": {
+          "description": "A literal the value must not equal."
+        },
+        "env": {
+          "type": "string",
+          "description": "Environment variable presence BY NAME. The value is never read, logged or stored."
+        },
+        "path": {
+          "type": "string",
+          "description": "Path relative to the repo root; placeholders allowed."
+        },
+        "cmd": {
+          "type": "string",
+          "description": "Probe command; must exit 0."
+        },
+        "else": {
+          "type": "string",
+          "description": "What the operator should do, in one sentence with the command in it."
+        }
       }
     }
   }
