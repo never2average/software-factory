@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "reverted",
+  "status": "stamped",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "delivered",
   "model": {
@@ -1064,10 +1064,5 @@
       "deployments": 0,
       "recipes": 0
     }
-  },
-  "revert": {
-    "lane": "responsiveness",
-    "at": "2026-09-14T09:22:53+00:00",
-    "reason": "responsiveness lane failed on 3 check(s): layout.matrix.authenticated, tap.targets.authenticated, interaction.latency.authenticated; report molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-14T092253Z.md; task mold_v1-064."
   }
 }
