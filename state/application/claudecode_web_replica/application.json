@@ -983,28 +983,28 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-09-14T10:57:34+00:00",
-      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-14T105734Z.md"
+      "run_at": "2026-09-14T16:32:45+00:00",
+      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-14T163245Z.md"
     },
     "context": {
       "status": "pass",
-      "run_at": "2026-09-14T10:57:17+00:00",
-      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-14T105717Z.md"
+      "run_at": "2026-09-14T16:32:28+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-14T163228Z.md"
     },
     "functional": {
       "status": "pass",
-      "run_at": "2026-09-14T10:55:42+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-14T105542Z.md"
+      "run_at": "2026-09-14T16:30:41+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-14T163041Z.md"
     },
     "accessibility": {
       "status": "pass",
-      "run_at": "2026-09-14T10:59:30+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-14T105930Z.md"
+      "run_at": "2026-09-14T16:34:41+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-14T163441Z.md"
     },
     "responsiveness": {
       "status": "pass",
-      "run_at": "2026-09-14T11:00:13+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-14T110013Z.md"
+      "run_at": "2026-09-14T16:35:23+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-14T163523Z.md"
     }
   },
   "customer_id": "internal",
