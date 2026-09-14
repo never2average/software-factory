@@ -2506,11 +2506,11 @@ function Badge({
   const cls =
     className ??
     (tone === "high"
-      ? "bg-red-500/15 text-red-500"
+      ? "bg-red-500/15 text-red-700 dark:text-red-400"
       : tone === "medium"
-        ? "bg-amber-500/15 text-amber-500"
+        ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
         : tone === "low"
-          ? "bg-emerald-500/15 text-emerald-500"
+          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
           : "bg-muted text-muted-foreground");
   return (
     <span className={cn("shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-3xs", cls)}>

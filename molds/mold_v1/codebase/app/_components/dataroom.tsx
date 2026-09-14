@@ -520,11 +520,11 @@ export function getCustomerSummary(id: string): CustomerContextSummary | undefin
 
 /** Canonical ticket-category colors (shared by the cards and the Tickets sheet). */
 const TICKET_CATEGORY_TONE: Record<string, string> = {
-  "Feature Request": "bg-violet-500/15 text-violet-500",
-  "Bug Report": "bg-red-500/15 text-red-500",
-  "Data Migration Request": "bg-sky-500/15 text-sky-500",
-  "Configuration Change Request": "bg-amber-500/15 text-amber-500",
-  "Workflow Customization Request": "bg-emerald-500/15 text-emerald-500",
+  "Feature Request": "bg-violet-500/15 text-violet-700 dark:text-violet-400",
+  "Bug Report": "bg-red-500/15 text-red-700 dark:text-red-400",
+  "Data Migration Request": "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+  "Configuration Change Request": "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+  "Workflow Customization Request": "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
 };
 /** Compact labels so the category fits the small card badge. */
 const TICKET_CATEGORY_SHORT: Record<string, string> = {
@@ -2781,9 +2781,9 @@ function Health({ value }: { readonly value?: string }) {
   if (!value) return <span className="text-muted-foreground/50">—</span>;
   const tone =
     value === "healthy"
-      ? "bg-emerald-500/15 text-emerald-500"
+      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
       : value === "degraded" || value === "unknown"
-        ? "bg-amber-500/15 text-amber-500"
-        : "bg-red-500/15 text-red-500";
+        ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+        : "bg-red-500/15 text-red-700 dark:text-red-400";
   return <span className={cn("rounded-full px-2 py-0.5 text-xs capitalize", tone)}>{value}</span>;
 }
