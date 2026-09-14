@@ -336,6 +336,16 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const customerIdSetRef = useRef<ReadonlySet<string>>(new Set());
   customerIdSetRef.current = new Set(customerOptions.map((c) => c.id.toLowerCase()));
   const [collapsed, setCollapsed] = useState(false);
+  // On a phone the sidebar cannot sit beside the chat: at 320px wide it left 64px for the whole
+  // conversation and the header's controls fell off the right edge (measured by the factory's
+  // responsiveness lane, signed in). Below md it starts closed and, once opened, overlays the chat.
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    if (mq.matches) setCollapsed(true);
+    const onChange = (e: MediaQueryListEvent) => { if (e.matches) setCollapsed(true); };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
   const [searchOpen, setSearchOpen] = useState(false);
   // True while a clicked thread is replaying its transcript from the server
   // (uncached open) — drives a loading overlay so the click feels immediate.
@@ -1619,6 +1629,14 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         </div>
       ) : null}
       {collapsed ? null : (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-30 bg-black/40 md:hidden"
+            aria-label="Close sidebar"
+            onClick={() => setCollapsed(true)}
+          />
+          <div className="fixed inset-y-0 left-0 z-40 md:static md:z-auto">
         <ChatSidebar
           sessions={ordered}
           listStale={listStale}
@@ -1640,6 +1658,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           onCollapse={() => setCollapsed(true)}
           onSignOut={onSignOut}
         />
+          </div>
+        </>
       )}
 
       <div className="relative flex min-w-0 flex-1 overflow-hidden">

@@ -983,27 +983,28 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-09-14T09:53:06+00:00",
-      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-14T095306Z.md"
+      "run_at": "2026-09-14T10:05:37+00:00",
+      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-14T100537Z.md"
     },
     "context": {
       "status": "pass",
-      "run_at": "2026-09-14T09:52:48+00:00",
-      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-14T095248Z.md"
+      "run_at": "2026-09-14T10:05:19+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-14T100519Z.md"
     },
     "functional": {
       "status": "pass",
-      "run_at": "2026-09-14T09:51:13+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-14T095113Z.md"
+      "run_at": "2026-09-14T10:03:42+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-14T100342Z.md"
     },
     "accessibility": {
-      "status": "fail",
-      "run_at": "2026-09-14T09:54:47+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-14T095447Z.md"
+      "status": "pass",
+      "run_at": "2026-09-14T10:07:23+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-14T100723Z.md"
     },
     "responsiveness": {
-      "status": "pending",
-      "run_at": "2026-09-14T09:54:47+00:00"
+      "status": "fail",
+      "run_at": "2026-09-14T10:08:02+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-14T100802Z.md"
     }
   },
   "customer_id": "internal",
@@ -1065,8 +1066,8 @@
     }
   },
   "revert": {
-    "lane": "accessibility",
-    "at": "2026-09-14T09:54:47+00:00",
-    "reason": "accessibility lane failed on 1 check(s): authenticated.surface; report molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-14T095447Z.md; task mold_v1-063. The run stopped here: responsiveness did not run, so testing.{responsiveness} was reset to `pending` rather than left showing an earlier run's verdict. Unmeasured lanes right now (`pending`): responsiveness. claudecode_web_replica is not gate-green until `python3 .claude/scripts/lanes.py claudecode_web_replica` runs all five in order and none fails."
+    "lane": "responsiveness",
+    "at": "2026-09-14T10:08:02+00:00",
+    "reason": "responsiveness lane failed on 1 check(s): layout.matrix.authenticated; report molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-14T100802Z.md; task mold_v1-064."
   }
 }

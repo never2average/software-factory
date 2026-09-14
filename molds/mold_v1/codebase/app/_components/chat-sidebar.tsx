@@ -90,7 +90,7 @@ export function ChatSidebar({
     return (idOrName: string) => m.get(idOrName.toLowerCase()) ?? idOrName;
   }, [customers]);
   return (
-    <aside className="flex h-dvh w-64 shrink-0 flex-col border-border border-r bg-muted/20">
+    <aside className="flex h-dvh w-64 shrink-0 flex-col border-border border-r bg-background md:bg-muted/20">
       {/* Brand + actions */}
       {/* Brand + switcher together: which workspace you are in, and how to
           change it, in the one place people look for it. It lived at the

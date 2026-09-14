@@ -518,14 +518,36 @@ export function getCustomerSummary(id: string): CustomerContextSummary | undefin
   };
 }
 
-/** Canonical ticket-category colors (shared by the cards and the Tickets sheet). */
-const TICKET_CATEGORY_TONE: Record<string, string> = {
-  "Feature Request": "bg-violet-500/15 text-violet-700 dark:text-violet-400",
-  "Bug Report": "bg-red-500/15 text-red-700 dark:text-red-400",
-  "Data Migration Request": "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  "Configuration Change Request": "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  "Workflow Customization Request": "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-};
+/**
+ * Ticket-category colours come from the category text itself: a stable hash picks one of a
+ * fixed palette, so any category — including ones a workspace defines later — gets a
+ * consistent colour without a table to maintain. Every class string is written out in full so
+ * Tailwind compiles it; each pair reads at 4.5:1 or better on the /15 tint in both themes.
+ */
+const CATEGORY_PALETTE = [
+  "bg-violet-500/15 text-violet-700 dark:text-violet-400",
+  "bg-red-500/15 text-red-700 dark:text-red-400",
+  "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+  "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+  "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+  "bg-rose-500/15 text-rose-700 dark:text-rose-400",
+  "bg-teal-500/15 text-teal-700 dark:text-teal-400",
+  "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400",
+  "bg-orange-500/15 text-orange-700 dark:text-orange-400",
+  "bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-400",
+] as const;
+function hashLabel(label: string): number {
+  // FNV-1a over the normalised label: case and surrounding space do not change the colour.
+  let h = 0x811c9dc5;
+  for (const ch of label.trim().toLowerCase()) {
+    h ^= ch.codePointAt(0) ?? 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
+export function ticketCategoryTone(category: string): string {
+  return CATEGORY_PALETTE[hashLabel(category) % CATEGORY_PALETTE.length];
+}
 /** Compact labels so the category fits the small card badge. */
 const TICKET_CATEGORY_SHORT: Record<string, string> = {
   "Feature Request": "Feature",
@@ -554,7 +576,7 @@ export const URGENT_TICKETS: DataItem[] = customers
       summary: ticket.summary as string,
       action: "Investigate the issue",
       badge: category ? (TICKET_CATEGORY_SHORT[category] ?? category) : "Ticket",
-      badgeClass: category ? TICKET_CATEGORY_TONE[category] : undefined,
+      badgeClass: category ? ticketCategoryTone(category) : undefined,
       badgeTone: priorityTone(ticket.ticketPriority, ticket.ticketDueDate),
       meta: age != null ? `${age}d old` : "new",
       spoc: customerLead(id),
@@ -2768,10 +2790,10 @@ function DigestCell({ text }: { readonly text: string }) {
   );
 }
 
-/** Colored badge for a ticket's canonical request category (shares TICKET_CATEGORY_TONE). */
+/** Colored badge for a ticket's canonical request category (colour from ticketCategoryTone). */
 function TicketCategory({ value }: { readonly value?: string }) {
   if (!value) return <span className="text-muted-foreground/50">—</span>;
-  const tone = TICKET_CATEGORY_TONE[value] ?? "bg-muted text-muted-foreground";
+  const tone = value ? ticketCategoryTone(value) : "bg-muted text-muted-foreground";
   return (
     <span className={cn("whitespace-nowrap rounded-full px-2 py-0.5 text-xs", tone)}>{value}</span>
   );
