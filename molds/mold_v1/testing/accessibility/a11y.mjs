@@ -74,7 +74,7 @@ const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
 // `?tab=` is the app's own deep link into a workspace tab (app/_components/ops/workspace-panel.tsx),
 // so these are real addresses, not a click path this harness invented.
 const AUTH_SURFACES = [
-  { name: "/ chat thread",            path: "/",                      marker: /new chat/i,      what: 'the chat thread\'s "New chat" control' },
+  { name: "/ chat thread",            path: "/",                      marker: /new chat|open sidebar/i, what: 'the chat thread\'s "New chat" control (or "Open sidebar" on a phone, where the sidebar starts closed and "New chat" lives inside it)' },
   { name: "/workspace people",        path: "/workspace?tab=people",   marker: /\binvite\b/i,    what: 'the People tab\'s "Invite" control' },
   { name: "/workspace audit",         path: "/workspace?tab=audit",    marker: /\bactor\b/i,     what: "the Audit trail's actor filter" },
   // `needs`: a service beyond the web app that this surface is a client of. lane-url.py passes
