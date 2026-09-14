@@ -1,0 +1,52 @@
+# Load lane — claudecode_web_replica (2026-09-14T102552Z)
+
+Mold: mold_v1 (commit dc98cb6c0c25ef81304fb6cf1db172396e62b805).
+Run at 2026-09-14T10:25:52+00:00. Lane status: **pass** (1 of 1 checks passed).
+Command: `python3 .claude/scripts/lanes.py claudecode_web_replica`
+This file: `molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-14T102552Z.md` — written once, then left read-only. The runner creates a report O_EXCL and never reopens one, so a later run of this lane writes its own file beside this one rather than editing it. If the bytes here ever change, something other than lanes.py changed them.
+
+Task-workflow throughput, latency and journal integrity under concurrency, measured against a service built from this mold snapshot on a private, throwaway Postgres.
+
+## Checks
+
+| check | status | reason | output tail |
+|---|---|---|---|
+| `test:task-workflow:stress` | pass | exit 0 |  container pg-claudecode-web-replica--loadlane, volume pg-claudecode-web-replica--loadlane-data, network sf-claudecode-web-replica--loadlane |
+
+## Measured rows
+
+### `test:task-workflow:stress`
+
+| row | result | budget | measured |
+|---|---|---|---|
+| service.health | pass | 200, ok=true, service=task-workflow | 200 ok=true service=task-workflow db.role=app_rw db.ms=1 (probed at http://127.0.0.1:3000 with the spec's own client) |
+| stress.executed | pass | >= 186 operations | 186 operations at concurrency 8 over 24 lifecycles |
+| stress.status | pass | 0 responses >= 400 | 0 of 186; statuses {'200': 162, '201': 24} |
+| stress.p95 | pass | p95 <= 1000 ms | median of 1 (attempt 1): p95 274 ms (p50 137, p99 517, max 638) |
+| stress.throughput | pass | >= 2.0 lifecycles/s | median of 1 (attempt 1): 6.7 lifecycles/s in 3584 ms |
+| stress.invariants | pass | the spec's own assertions pass | playwright exit 0: ordering, idempotency replay and terminal state held |
+| stress.residue | pass | 0 tasks and 0 workflow instances left | todos=0 instances=0 after 1 attempt(s) |
+| stress.journal | pass | 112 transition events for the run of record | 112 written and retained by attempt 1 (append-only by design: engine.ts deletes the task, not its journal) |
+
+Samples (every attempt, in order):
+
+- attempt 1: ops=186 p50=137ms p95=274ms p99=517ms max=638ms tps=6.7 statuses={'200': 162, '201': 24} playwright exit 0
+
+[load] scratch /tmp/mold_v1-load-vrlkqnby
+pg-claudecode-web-replica--loadlane up on sf-claudecode-web-replica--loadlane as db:6543 (no host port; TLS on)  [no compose artifact yet: run provision.py claudecode_web_replica__loadlane --check]
+  schema push: ok
+  rls + app_rw: ok
+  task-workflow tables: ok
+  npm ci: ok
+  next build: ok
+[load] tearing down
+claudecode_web_replica__loadlane: removed container pg-claudecode-web-replica--loadlane, volume pg-claudecode-web-replica--loadlane-data, network sf-claudecode-web-replica--loadlane
+
+
+## Not covered by this lane
+
+- Thread-open latency for a signed-in operator. NOT COVERED, permanently, and not merely skipped. `scripts/fde/thread-open-perf.mjs` needs a Google ID token copied out of a signed-in browser's localStorage (or an emailed sign-in code): lib/ops-auth.ts admits exactly those two human identities and says so — "There is deliberately no shared service key: every caller is a real, named human" — and such a token lives about an hour. No factory script can mint one for a stamped app, and asking a non-technical operator to open a browser console is not an instruction this factory gives. The check used to sit in `checks` guarded by FDE_OPS_TOKEN, which is a name that appears NOWHERE in the mold (the script reads --token, --token-file or FDE_GOOGLE_TOKEN), so setting it would have run an unauthenticated baseline that exits 0 having measured no thread open at all — a `pass` with nothing behind it — and, with FDE_OPS_URL unset, against the LIVE fde-agent projects rather than this app. See README.md for what would have to change for it to become measurable.
+- The DEPLOYED application. This lane builds services/task-workflow from the mold snapshot and runs it on this machine against a local Postgres; it does not touch the app's Vercel deployment or its database, so it measures the mold's engine, not the hosting.
+- GLM 5.2 inference throughput and the sandbox prewarm saturation budget — neither has a harness yet (mold_v1 backlog).
+- Concurrent multi-workspace chat load: the scenario drives one org's task workflow, not many workspaces at once (mold_v1 backlog).
+- Sustained soak. The spec is a burst of about four seconds, not an hour, so connection-pool exhaustion, leaks and autovacuum pressure are outside what any row here can claim.

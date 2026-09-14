@@ -9,6 +9,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { BotIcon, FileTextIcon, Share2Icon, UserPlusIcon } from "lucide-react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import { CustomerMark } from "./customer-mark";
 import {
   type SharedThread,
@@ -35,6 +36,34 @@ export function ChatSearchDialog({
   sharedThreads = [],
   onSelectShared,
 }: ChatSearchDialogProps) {
+  // The click that opens this dialog used to paint every chat row in the same frame — each one
+  // walking its session's events for tool counts — and measured 200-320ms from click to paint on a
+  // 1440px desktop (factory responsiveness lane, INP budget 200ms). Two changes: the per-row facts
+  // are computed once per sessions list, not once per open; and the rows mount in a transition
+  // after the dialog and its input have painted, so the click is answered within a frame.
+  const rows = useMemo(
+    () =>
+      sessions.map((s) => {
+        // Customers = manually-set, else the auto-inferred ones (so workflow chats surface their customer too).
+        const manual = sessionCustomers(s);
+        const custs = manual.length ? manual : (s.derivedCustomers ?? []);
+        return {
+          s,
+          custs,
+          counts: chatToolCounts(s),
+          invitees: s.invitees ?? [],
+        };
+      }),
+    [sessions],
+  );
+  const [listReady, setListReady] = useState(false);
+  useEffect(() => {
+    if (!open) {
+      setListReady(false);
+      return;
+    }
+    startTransition(() => setListReady(true));
+  }, [open]);
   return (
     <CommandDialog
       open={open}
@@ -46,56 +75,61 @@ export function ChatSearchDialog({
       <CommandInput placeholder="Search chats…" />
       <CommandList className="max-h-[65vh]">
         <CommandEmpty>No chats found.</CommandEmpty>
-        <CommandGroup>
-          {sessions.map((s) => {
-            // Customers = manually-set, else the auto-inferred ones (so workflow
-            // chats surface their customer too).
-            const manual = sessionCustomers(s);
-            const custs = manual.length ? manual : (s.derivedCustomers ?? []);
-            const counts = chatToolCounts(s);
-            const invitees = s.invitees ?? [];
-            return (
-              <CommandItem
-                key={s.id}
-                value={`${s.title} ${custs.join(" ")} ${invitees.join(" ")} ${s.id}`}
-                onSelect={() => onSelect(s)}
-                className="flex flex-col items-start gap-1.5 rounded-lg px-3 py-2.5"
-              >
-                <div className="flex w-full items-center justify-between gap-3">
-                  <span className="min-w-0 truncate font-medium text-sm">
-                    {s.title || "New chat"}
-                  </span>
-                  <span className="shrink-0 text-2xs text-muted-foreground">
-                    {formatRelativeTime(s.updatedAt)}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
-                  {custs.length > 0 ? (
-                    <span className="flex items-center gap-1.5 text-muted-foreground/90">
-                      <CustomerMark name={custs[0]} size="sm" />
-                      {custs.length === 1 ? custs[0] : `${custs[0]} +${custs.length - 1}`}
+        {listReady ? (
+          <CommandGroup>
+            {rows.map(({ s, custs, counts, invitees }) => {
+              return (
+                <CommandItem
+                  key={s.id}
+                  value={`${s.title} ${custs.join(" ")} ${invitees.join(" ")} ${s.id}`}
+                  onSelect={() => onSelect(s)}
+                  className="flex flex-col items-start gap-1.5 rounded-lg px-3 py-2.5"
+                >
+                  <div className="flex w-full items-center justify-between gap-3">
+                    <span className="min-w-0 truncate font-medium text-sm">
+                      {s.title || "New chat"}
                     </span>
-                  ) : null}
-                  {invitees.length > 0 ? (
-                    <span className="flex items-center gap-1" title={invitees.join(", ")}>
-                      <UserPlusIcon className="size-2.5" />
-                      {invitees.length === 1 ? invitees[0].split("@")[0] : `${invitees.length} invitees`}
+                    <span className="shrink-0 text-2xs text-muted-foreground">
+                      {formatRelativeTime(s.updatedAt)}
                     </span>
-                  ) : null}
-                  <span className="flex items-center gap-1">
-                    <FileTextIcon className="size-2.5" />
-                    {counts.artifacts} artifact{counts.artifacts === 1 ? "" : "s"}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <BotIcon className="size-2.5" />
-                    {counts.subagents} subagent{counts.subagents === 1 ? "" : "s"}
-                  </span>
-                </div>
-              </CommandItem>
-            );
-          })}
-        </CommandGroup>
-        {sharedThreads.length > 0 ? (
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
+                    {custs.length > 0 ? (
+                      <span className="flex items-center gap-1.5 text-muted-foreground/90">
+                        <CustomerMark name={custs[0]} size="sm" />
+                        {custs.length === 1
+                          ? custs[0]
+                          : `${custs[0]} +${custs.length - 1}`}
+                      </span>
+                    ) : null}
+                    {invitees.length > 0 ? (
+                      <span
+                        className="flex items-center gap-1"
+                        title={invitees.join(", ")}
+                      >
+                        <UserPlusIcon className="size-2.5" />
+                        {invitees.length === 1
+                          ? invitees[0].split("@")[0]
+                          : `${invitees.length} invitees`}
+                      </span>
+                    ) : null}
+                    <span className="flex items-center gap-1">
+                      <FileTextIcon className="size-2.5" />
+                      {counts.artifacts} artifact
+                      {counts.artifacts === 1 ? "" : "s"}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <BotIcon className="size-2.5" />
+                      {counts.subagents} subagent
+                      {counts.subagents === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ) : null}
+        {listReady && sharedThreads.length > 0 ? (
           <CommandGroup heading="Shared with you">
             {sharedThreads.map((t) => (
               <CommandItem
@@ -105,7 +139,9 @@ export function ChatSearchDialog({
                 className="flex flex-col items-start gap-1.5 rounded-lg px-3 py-2.5"
               >
                 <div className="flex w-full items-center justify-between gap-3">
-                  <span className="min-w-0 truncate font-medium text-sm">{t.title || "Shared chat"}</span>
+                  <span className="min-w-0 truncate font-medium text-sm">
+                    {t.title || "Shared chat"}
+                  </span>
                   <span className="shrink-0 text-2xs text-muted-foreground">
                     {formatRelativeTime(Date.parse(t.updatedAt))}
                   </span>

@@ -22,7 +22,7 @@
     "pooling": "transaction",
     "sslmode": "require",
     "rls_verified": {
-      "at": "2026-09-14T10:04:58+00:00",
+      "at": "2026-09-14T10:36:31+00:00",
       "backend": "neon",
       "mode": "fail_closed",
       "source": "provision.py --verify-rls",

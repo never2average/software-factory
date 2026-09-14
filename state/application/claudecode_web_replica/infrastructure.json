@@ -77,7 +77,7 @@
     "blob_store": "claudecode-web-internal (store_yYAYEISeeQYrb12F, private, iad1)",
     "neon_resource": "claudecode-web-replica"
   },
-  "deployed_at": "2026-09-14T09:57:19+00:00",
+  "deployed_at": "2026-09-14T10:17:39+00:00",
   "configured_at": "2026-09-06T12:14:56+00:00",
   "note": "migrated to the Neon shape on 2026-09-08 (task mold_v1-037): SUPABASE_URL and SUPABASE_POSTGRES_URL_NON_POOLING removed \u2014 the first appears nowhere in the mold codebase and the second is Supabase's name for the admin URL \u2014 and DATABASE_URL_UNPOOLED added, which is what the Neon connection injects and what admin_url_ref now names. The Supabase resource this app was first configured onto is not its database any more; it must be re-provisioned (task mold_v1-026). deployed_at migrated on 2026-09-09 (task mold_v1-046) from the bare date 2026-09-06 to midnight UTC of that day: the exact deploy instant was never recorded, so this is the earliest it could have been; the next --deploy writes the exact instant.",
   "google": {
