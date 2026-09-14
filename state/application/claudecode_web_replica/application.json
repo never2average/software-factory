@@ -993,8 +993,8 @@
     },
     "functional": {
       "status": "pass",
-      "run_at": "2026-09-14T16:30:41+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-14T163041Z.md"
+      "run_at": "2026-09-14T17:55:23+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-14T175523Z.md"
     },
     "accessibility": {
       "status": "pass",
