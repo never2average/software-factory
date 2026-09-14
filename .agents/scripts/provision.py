@@ -519,7 +519,7 @@ API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_I
            "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID"]
 # Absent means "feature off" or "the mold's default", never a broken deploy.
 OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT")
-WORKFLOW_ENV = ["DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN"]
+WORKFLOW_ENV = ["DATABASE_URL"]   # TASK_WORKFLOW_SERVICE_TOKEN is minted onto both projects directly, never copied
 
 def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
     """What EXISTS for this app on Vercel and EVERYTHING a writer would create, write or rotate, in the
@@ -564,8 +564,8 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
                "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
         create.append(f"env on {proj} and {api}, rewritten on every deploy: " + ", ".join(f"{k}={v}" for k, v in cfg.items())
                       + "; PLATFORM_NOTIFY_FROM's display name set to this app's product name on all three projects")
-        if not shared and "TASK_WORKFLOW_SERVICE_TOKEN" not in present:
-            create.append(f"env on {proj}: TASK_WORKFLOW_SERVICE_TOKEN (minted locally)")
+        if not shared:
+            create.append(f"env on {proj} and {proj}-workflow: TASK_WORKFLOW_SERVICE_TOKEN (minted fresh on every deploy, one value on both ends)")
     if mode == "verify-db" or not shared:
         # bootstrap_database reuses the password ONLY when the DATABASE_URL already deployed on the main
         # project is app_rw's own (it matches postgres://app_rw...); any other value there — an admin URL, a
@@ -1056,8 +1056,15 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         if r.returncode: sys.exit(f"{label or cmd} failed:\n" + (r.stdout + r.stderr).strip()[-1500:])
         return urls[-1] if urls else ""
     if not shared:
-        if "TASK_WORKFLOW_SERVICE_TOKEN" not in have:
-            _add_env("TASK_WORKFLOW_SERVICE_TOKEN", subprocess.check_output("openssl rand -hex 32", shell=True, text=True).strip(), mold_dir, proj); print("minted TASK_WORKFLOW_SERVICE_TOKEN")
+        # Minted on EVERY deploy and written to both ends at once. It used to be minted only when the main
+        # project had no copy, then copied to the workflow project by reading the main project's value back;
+        # a write-only (sensitive) copy read back as [SENSITIVE], the copy was refused, and the two projects
+        # ran with different tokens: every builder request answered 401 Unauthorized while /api/ops/* worked,
+        # and the signed-in lanes measured "the workflow builder did not render" (2026-09-14). Both projects
+        # are deployed in this same run, so a fresh value has no window in which one end is stale.
+        _wf_tok = subprocess.check_output("openssl rand -hex 32", shell=True, text=True).strip()
+        for p_ in (proj, f"{proj}-workflow"): _set_env("TASK_WORKFLOW_SERVICE_TOKEN", _wf_tok, mold_dir, project=p_)
+        del _wf_tok; print("minted TASK_WORKFLOW_SERVICE_TOKEN (same value on the web and workflow projects)")
         vals, ev = bring_up_schema(app_id, mold_dir, ds, proj, [proj, f"{proj}-api", f"{proj}-workflow"])
         record_rls(adir, ds, ev)
         # workflow service: its own Next.js app under services/task-workflow
