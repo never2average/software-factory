@@ -1,7 +1,7 @@
 # mold_v1
 
 **Status:** active
-**Source:** github.com/never2average/fde-agent @ 94c4b43 (`main`, snapshot 2026-09-14; PR #11 merged)
+**Source:** github.com/never2average/fde-agent @ 79df480 (`main`, snapshot 2026-09-14; PRs #11 and #12 merged)
 
 **Node:** 24.x (package.json engines; VM and Vercel project both on 24)
 **Target model:** GLM 5.2 via OpenAI-compatible provider
