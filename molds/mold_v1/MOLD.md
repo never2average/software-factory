@@ -1,7 +1,7 @@
 # mold_v1
 
 **Status:** active
-**Source:** github.com/never2average/fde-agent @ 87e3a06 (branch `fix/signed-in-surfaces`, snapshot 2026-09-14, five commits ahead of main: PR #11, the signed-in accessibility and reflow fixes; re-snapshot from `main` after it merges)
+**Source:** github.com/never2average/fde-agent @ 9bab9aa (branch `fix/signed-in-surfaces`, snapshot 2026-09-14, six commits ahead of main: PR #11, the signed-in accessibility and reflow fixes; re-snapshot from `main` after it merges)
 
 **Node:** 24.x (package.json engines; VM and Vercel project both on 24)
 **Target model:** GLM 5.2 via OpenAI-compatible provider
