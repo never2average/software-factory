@@ -62,4 +62,18 @@ if failed: fail(f"the turn failed ({terminal}) after {elapsed:.0f}s: {failed}")
 if not terminal: fail(f"no terminal event within {timeout}s; events seen: {types}")
 if not answer.strip(): fail(f"the turn ended ({terminal}) after {elapsed:.0f}s with no assistant message; events seen: {types}")
 print(f"| answer | pass | {answer.strip()[:80]!r} in {elapsed:.0f}s ({terminal}) |")
-print(f"chat.turn: pass — one turn answered in {elapsed:.0f}s; reasoning events: {'yes' if reasoning else 'none seen'}")
+# The app keeps its own ledger of every turn (chat_turn_usage, filled by agent/hooks/chat-usage.ts, read through
+# GET /api/ops/usage). A turn that answered but left no row is a turn nobody can bill, so it fails here.
+# The hook writes after the stream ends, so the ledger is polled for a few seconds.
+ledger = None
+for _ in range(10):
+    try:
+        req = urllib.request.Request(f"{base}/api/ops/usage?days=1", headers=H)
+        with urllib.request.urlopen(req, timeout=30) as r: ledger = json.loads(r.read().decode())
+        if (ledger.get("totals") or {}).get("steps", 0) >= 1: break
+    except Exception as e: ledger = {"error": str(e)}
+    time.sleep(2)
+tot = (ledger or {}).get("totals") or {}
+if not tot.get("steps"): fail(f"the turn answered but the app's usage ledger shows no step for today: {json.dumps(ledger)[:200]}")
+print(f"| usage ledger | pass | today: {tot.get('turns')} turn(s), {tot.get('steps')} step(s), {tot.get('input_tokens')} in / {tot.get('output_tokens')} out, est ${tot.get('est_cost_usd')} |")
+print(f"chat.turn: pass — one turn answered in {elapsed:.0f}s and the app's ledger recorded it; reasoning events: {'yes' if reasoning else 'none seen'}")
