@@ -99,11 +99,16 @@ export function agentReasoning(): ReasoningEffort | undefined {
   return "medium";
 }
 
-export function agentModel(role: AgentRole): LanguageModel {
+/**
+ * The model ID a role runs on, as a plain string — what a usage row records so
+ * the read side can price it later (`lib/inference-pricing.ts`). Kept beside
+ * `agentModel` so the two can never name different models.
+ */
+export function agentModelId(role: AgentRole): string {
   if (providerChoice === "cloudflare") {
     // One model for the whole fleet on Workers AI — GLM 5.2, a thinking model
     // (streams `reasoning_content`, which is what surfaces as reasoning parts).
-    return cloudflare(envTrim(process.env.CLOUDFLARE_MODEL) ?? "@cf/zai-org/glm-5.2");
+    return envTrim(process.env.CLOUDFLARE_MODEL) ?? "@cf/zai-org/glm-5.2";
   }
   // Vercel AI Gateway (Claude), tiered by role. NOTE: Opus is blocked on the
   // gateway's FREE tier (403 "Free tier users do not have access to this model"),
@@ -113,4 +118,11 @@ export function agentModel(role: AgentRole): LanguageModel {
   const orchestrator = process.env.GATEWAY_MODEL_ORCHESTRATOR ?? "anthropic/claude-sonnet-5";
   const specialist = process.env.GATEWAY_MODEL_SPECIALIST ?? "anthropic/claude-sonnet-5";
   return role === "orchestrator" ? orchestrator : specialist;
+}
+
+export function agentModel(role: AgentRole): LanguageModel {
+  const id = agentModelId(role);
+  // A gateway id is a plain string the AI SDK resolves itself; Workers AI needs
+  // the OpenAI-compatible provider wrapped around it.
+  return providerChoice === "cloudflare" ? cloudflare(id) : id;
 }

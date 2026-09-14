@@ -1271,6 +1271,54 @@ export const automationRuns = pgTable(
   ],
 );
 
+/**
+ * Token usage of ORDINARY chat turns — the main agent, not a workflow.
+ *
+ * `automation_runs` accounts for subagent (workflow) turns through each
+ * subagent's `hooks/usage.ts`; the root agent had no such hook, so every chat
+ * turn a person typed was billed nowhere. Measured on Workers AI, a first turn
+ * is ~32,400 input tokens (about 4.5 cents) and nothing in the product showed
+ * it. This table is the missing ledger: one row per (eve session, turn),
+ * ASSEMBLED from a stream of `step.completed` events exactly like the
+ * workflow rows — each step ADDS its usage and bumps `steps`; `turn.completed`
+ * / `turn.failed` / `turn.cancelled` set the terminal status.
+ *
+ * Org-scoped and under `org_isolation` like every other tenanted table. The
+ * hook resolves the workspace from the session's authenticated caller and
+ * writes NOTHING when it cannot — a row with a guessed org is worse than none.
+ * Cost is deliberately not stored: prices change, tokens do not. The read API
+ * prices rows at request time from `lib/inference-pricing.ts`.
+ */
+export const chatTurnUsage = pgTable(
+  "chat_turn_usage",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    eveSessionId: text("eve_session_id").notNull(),
+    turnId: text("turn_id").notNull(),
+    /** The signed-in person who sent the turn, when the session carries one. */
+    actorEmail: text("actor_email"),
+    /** The configured model id at the time (e.g. `@cf/zai-org/glm-5.2`). */
+    model: text("model"),
+    /** Model calls in the turn so far. */
+    steps: integer("steps").notNull().default(0),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    cacheReadTokens: bigint("cache_read_tokens", { mode: "number" }).notNull().default(0),
+    cacheWriteTokens: bigint("cache_write_tokens", { mode: "number" }).notNull().default(0),
+    // "running" | "success" | "failed" | "cancelled"
+    status: text("status").notNull().default("running"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    // One row per turn: the upsert key the hook accumulates into.
+    uniqueIndex("chat_turn_usage_turn_uidx").on(t.eveSessionId, t.turnId),
+    // The read API's shape: one workspace over a date range.
+    index("chat_turn_usage_org_started_idx").on(t.orgId, t.startedAt),
+  ],
+);
+
 export const automationAudit = pgTable(
   "automation_audit",
   {
