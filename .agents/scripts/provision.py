@@ -482,9 +482,16 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     for name, cmd in GENERATED.items():
         if name not in present:
             _add_env(name, subprocess.check_output(cmd, shell=True, text=True).strip(), mold_dir, proj); print(f"generated {name}")
-    if "AUTH_JWT_PRIVATE_KEY" not in present:
+    # The pair must be READABLE on the main project: the api project verifies sessions with the public half
+    # and gets it by copy at every deploy. A write-only (Sensitive) pair cannot be copied, so the api kept
+    # whatever it held — and on 2026-09-14 that was a key the web's sessions were not signed with: every
+    # /eve/v1 call as a signed-in person answered 401 while /api/ops/* worked. An unreadable pair is
+    # re-minted as encrypted entries (that signs everyone out once; sessions last seven days anyway).
+    readable = pull_env(mold_dir, proj, required=False)
+    if "AUTH_JWT_PRIVATE_KEY" not in present or not readable.get("AUTH_JWT_PRIVATE_KEY") or not readable.get("AUTH_JWT_PUBLIC_KEY"):
         priv, pub = mint_jwt_pair()
-        _add_env("AUTH_JWT_PRIVATE_KEY", priv, mold_dir, proj); _add_env("AUTH_JWT_PUBLIC_KEY", pub, mold_dir, proj); print("generated AUTH_JWT key pair")
+        _set_env("AUTH_JWT_PRIVATE_KEY", priv, mold_dir, project=proj); _set_env("AUTH_JWT_PUBLIC_KEY", pub, mold_dir, project=proj)
+        print("generated AUTH_JWT key pair" + ("" if "AUTH_JWT_PRIVATE_KEY" not in present else " (the previous pair was write-only, so it could never reach the api project; every session signed with it is now invalid)"))
     present = vercel_env_names(mold_dir, proj)
     if "POSTGRES_ADMIN_URL" not in present and "SUPABASE_POSTGRES_URL" in present:
         # NOT DATABASE_URL. This line used to copy SUPABASE_POSTGRES_URL — the pooled URL whose user is
@@ -1076,6 +1083,9 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         vals = pull_env(mold_dir, proj)
         # eve api: build here with the experimental framework, ship prebuilt
         print("deploying eve api (vercel build --prebuilt)"); sync_env(API_ENV, vals, f"{proj}-api", mold_dir, declared=infra.get("secrets")); set_framework(f"{proj}-api", "eve", mold_dir)
+        # sync_env copies only names the api does not hold yet; the public key is the one value that must
+        # MATCH the main project's, not merely exist, so it is written every deploy.
+        if vals.get("AUTH_JWT_PUBLIC_KEY"): _set_env("AUTH_JWT_PUBLIC_KEY", vals["AUTH_JWT_PUBLIC_KEY"], mold_dir, project=f"{proj}-api"); print(f"  {proj}-api: AUTH_JWT_PUBLIC_KEY set to the main project's current public key")
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=f"{proj}-api")
         subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
