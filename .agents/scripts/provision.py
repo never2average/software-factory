@@ -1469,6 +1469,8 @@ def explain(name):
 def ask_nicely_for(app_id, missing):
     """The one message a non-technical operator sees when secrets are missing. Names what is needed in plain
     words, one command per item, and promises what happens next."""
+    # One client id feeds both Google names, so the browser-side name is not a separate thing to fetch.
+    if "GOOGLE_CLIENT_ID" in missing: missing = [m for m in missing if m != "NEXT_PUBLIC_GOOGLE_CLIENT_ID"]
     n = len(missing)
     print(f"\nAlmost there. {n} thing{'s' if n != 1 else ''} still need{'s' if n == 1 else ''} to come from you, "
           "because only you can log in to those accounts:")
