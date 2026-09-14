@@ -3,7 +3,7 @@
   "app_id": "claudecode_web_replica",
   "mold_id": "mold_v1",
   "mold_commit": "dc98cb6c0c25ef81304fb6cf1db172396e62b805",
-  "status": "reverted",
+  "status": "stamped",
   "brief": "briefs/claudecode_web_replica.md",
   "product_id": "delivered",
   "model": {
@@ -983,28 +983,28 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-09-14T10:37:08+00:00",
-      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-14T103708Z.md"
+      "run_at": "2026-09-14T10:57:34+00:00",
+      "report": "molds/mold_v1/testing/load/reports/claudecode_web_replica-2026-09-14T105734Z.md"
     },
     "context": {
       "status": "pass",
-      "run_at": "2026-09-14T10:36:50+00:00",
-      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-14T103650Z.md"
+      "run_at": "2026-09-14T10:57:17+00:00",
+      "report": "molds/mold_v1/testing/context/reports/claudecode_web_replica-2026-09-14T105717Z.md"
     },
     "functional": {
       "status": "pass",
-      "run_at": "2026-09-14T10:35:13+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-14T103513Z.md"
+      "run_at": "2026-09-14T10:55:42+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/claudecode_web_replica-2026-09-14T105542Z.md"
     },
     "accessibility": {
       "status": "pass",
-      "run_at": "2026-09-14T10:38:55+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-14T103855Z.md"
+      "run_at": "2026-09-14T10:59:30+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/claudecode_web_replica-2026-09-14T105930Z.md"
     },
     "responsiveness": {
-      "status": "fail",
-      "run_at": "2026-09-14T10:39:35+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-14T103935Z.md"
+      "status": "pass",
+      "run_at": "2026-09-14T11:00:13+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-14T110013Z.md"
     }
   },
   "customer_id": "internal",
@@ -1064,10 +1064,5 @@
       "deployments": 0,
       "recipes": 0
     }
-  },
-  "revert": {
-    "lane": "responsiveness",
-    "at": "2026-09-14T10:39:35+00:00",
-    "reason": "responsiveness lane failed on 1 check(s): interaction.latency.authenticated; report molds/mold_v1/testing/responsiveness/reports/claudecode_web_replica-2026-09-14T103935Z.md; task mold_v1-064."
   }
 }
