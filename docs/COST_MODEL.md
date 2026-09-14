@@ -31,12 +31,12 @@ thinking model: it streams `reasoning_content`, and reasoning tokens are **outpu
 
 | Symbol | Meaning | Value | Kind |
 |---|---|---|---|
-| `C_stable` | the stable system prompt (identity, tools, policy) sent every call | PLACEHOLDER (tokens) — read it off `automation_runs.input_tokens` for a one-step turn | placeholder |
+| `C_stable + C_dyn` | everything the model reads on a FIRST turn with no history: system prompt, tools, policy, dynamic context | **32,400 tokens** — two one-step turns on claudecode_web_replica (a one-word prompt, no tools, no history) each billed exactly 32,400 input tokens; Cloudflare `aiInferenceAdaptiveGroups`, 2026-09-14T16:30Z and 16:32Z | measured |
 | `C_dyn_max` | the dynamic context caps in `agent/lib/prompt-context.ts` `CONTEXT_BUDGETS`: memory 1,200 + schedules 900 + rooms 500 + roster 700 + operator override 500 + agent configuration 600 + profile 500 + workflow definitions 1,400 | **6,300 tokens max** (each block is truncated at 4 chars/token) | measured (upper bound) |
 | `W` | context window eve compacts against | 262,144 tokens (`CLOUDFLARE_CONTEXT_WINDOW` default) | measured |
-| `S` | model calls (steps) per turn — one per tool round-trip | PLACEHOLDER | placeholder |
-| `H` | conversation history re-sent per step (grows through a thread until compaction) | PLACEHOLDER | placeholder |
-| `O_step` | output tokens per step, reasoning included | PLACEHOLDER | placeholder |
+| `S` | model calls (steps) per turn — one per tool round-trip | 1 on the one-word turn; for real work PLACEHOLDER — read `automation_runs` (steps per run) on the replica database, a read the factory session was not permitted to make on 2026-09-14 | measured (trivial) / placeholder (real work) |
+| `H` | conversation history re-sent per step (grows through a thread until compaction) | PLACEHOLDER; the account-wide mean of 41,800 input tokens per GLM 5.3 call (Sep 5-14) against the 32,400 first-turn floor suggests H+tool results average ~9,400 per step in live use | placeholder (bounded) |
+| `O_step` | output tokens per step, reasoning included | **4 tokens** on the one-word turn (no reasoning streamed); across every GLM 5.2 call on this account 2026-08-15..09-14 the mean is 56 output per call, and on GLM 5.3 (not this mold's model, but the same app shape) 2,028 | measured (one-word) / observed (account means) |
 | `r_cache` | fraction of input served as cached input (Workers AI prices it separately; whether the OpenAI-compatible endpoint the mold uses reports cache hits is not measured) | PLACEHOLDER, use 0 for a conservative bound | placeholder |
 
 Input tokens per turn:
@@ -47,12 +47,38 @@ O_turn = S * O_step
 cost_turn = (I_turn * (1 - r_cache) * P_in + I_turn * r_cache * P_cached + O_turn * P_out) / 1e6
 ```
 
+## 2a. What one turn actually cost (measured 2026-09-14)
+
+A one-word turn ("Reply with exactly one word: PONG") on the deployed replica, signed in, one model call,
+no tools, no history — the floor under every turn this mold makes:
+
+| | value | source |
+|---|---|---|
+| input tokens | 32,400 | Cloudflare analytics, `aiInferenceAdaptiveGroups` filtered to `@cf/zai-org/glm-5.2`, two samples identical |
+| output tokens | 4 | same |
+| neurons | 4,125.24 | same |
+| **price** | **$0.0454 per turn** (4,125 neurons × $0.011 / 1,000; cross-checks with 32,400 × $1.40/M = $0.0454) | computed |
+| inference time | 2.9 s and 3.9 s | same |
+
+So the stable prompt alone is 4.5 cents per model call at list price. A turn that takes S tool steps
+costs at least S × $0.045 before any history or output: ten steps is 45 cents, and that is the number
+to watch when a workspace is quoted.
+
+Account-wide observation over the same window (all workloads on this Cloudflare account, not only this
+mold; refresh before quoting): GLM 5.2, 2026-08-15..09-14: 2,364 calls, 4.12M input, 133K output,
+285,107 neurons ≈ **$3.14 for the month**. GLM 5.3 (a different, pricier model that something on this
+account runs; 2026-09-05..09-14): 1,810 calls, 75.6M input, 3.67M output, 4.32M neurons ≈ **$47.5 in ten
+days**, 41,800 input tokens per call. If the live app was moved to GLM 5.3, that is where the money goes.
+
+To refresh: the Cloudflare connector's `execute` tool, `POST /graphql`, dataset `aiInferenceAdaptiveGroups`
+with `sum { totalInputTokens totalOutputTokens totalNeurons }` and `dimensions { date modelId }`.
+
 ## 3. Volume per workspace (placeholders)
 
 | Symbol | Meaning | Value | Kind |
 |---|---|---|---|
-| `U` | active people per workspace | PLACEHOLDER | placeholder |
-| `T_user` | agent turns per active person per working day | PLACEHOLDER | placeholder |
+| `U` | active people per workspace | PLACEHOLDER — `select count(distinct email) from org_members` per org on the replica database (a copy of live), a read the factory session was not permitted to make on 2026-09-14; allow it or run it yourself | placeholder |
+| `T_user` | agent turns per active person per working day | PLACEHOLDER — `chat_sessions` / `automation_runs` per day per email on the replica database, same permission | placeholder |
 | `T_auto` | automated turns per workspace per day: four crons in `vercel.json`, schedules, connector-driven workflows (`automation_runs.automation_type`) | PLACEHOLDER | placeholder |
 | `D` | working days per month | 22 | assumption, edit |
 
