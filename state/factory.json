@@ -85,7 +85,8 @@
   },
   "applications": [
     "claudecode_web_internal",
-    "claudecode_web_replica"
+    "claudecode_web_replica",
+    "sf_gateway_probe"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",

@@ -27,7 +27,7 @@ Cloudflare Workers AI; say `use the Vercel AI Gateway` in the brief for the othe
 
 The front door is "Continue with Google", and it needs a Google OAuth client id the factory does not provision: `GOOGLE_CLIENT_ID` (written under both names the app reads) is required and comes from YOUR Google Cloud project. It is per app: each stamped application can sit in a different Google project, and `--set-secret GOOGLE_CLIENT_ID` records which one in `infrastructure.google.project_number` (the id's numeric prefix; an identifier, not a secret). Google refuses personal-mail domains at sign-in, so the person signing in needs a Workspace account. The emailed six-digit code is the second way in.
 
-So a Cloudflare app brings four names and a gateway app brings three. What else changes on a gateway app:
+So a Cloudflare app brings five names (the Cloudflare pair, the Resend pair, the Google client id) and a gateway app brings four. What else changes on a gateway app:
 `state/application/<app_id>/application.json` records `model.provider: gateway` and `model.model:
 anthropic/claude-sonnet-5` with no `context_window` (the gateway looks it up), `MODEL_PROVIDER=gateway` is set on
 the api project at deploy, and the only pieces of the app that differ are the model and the credential — everything
@@ -97,7 +97,7 @@ provider the target cannot use), do that and run it again.
 
 ## 4. The credentials (you, at the terminal)
 
-There are five: the two Cloudflare values, the two Resend values, and the Google OAuth client id — Google sign-in is the product's front door and is required. For the Google one the browser tab matters more than the value: in Google Cloud Console (APIs & Services → Credentials → your *Web application* OAuth client) add this app's production URL under **Authorized JavaScript origins** *and* under **Authorized redirect URIs** (the same URL, exactly, no trailing slash — the button signs in by redirecting to Google and back to the page's origin), or Google refuses with `origin_mismatch` / `redirect_uri_mismatch` whatever id you set. One `--set-secret GOOGLE_CLIENT_ID` writes both names the app reads; the browser one is baked in at build, so `--deploy` again afterwards.
+There are five on a Cloudflare app (four on a gateway app, which swaps the Cloudflare pair for `AI_GATEWAY_API_KEY`): the two Cloudflare values, the two Resend values, and the Google OAuth client id — Google sign-in is the product's front door and is required. For the Google one the browser tab matters more than the value: in Google Cloud Console (APIs & Services → Credentials → your *Web application* OAuth client) add this app's production URL under **Authorized JavaScript origins** *and* under **Authorized redirect URIs** (the same URL, exactly, no trailing slash — the button signs in by redirecting to Google and back to the page's origin), or Google refuses with `origin_mismatch` / `redirect_uri_mismatch` whatever id you set. One `--set-secret GOOGLE_CLIENT_ID` writes both names the app reads; the browser one is baked in at build, so `--deploy` again afterwards.
 
 You do not need to look anything up before you start. Each `--set-secret` command first prints **what** the
 value is, **where** in the Cloudflare or Resend dashboard to get it (the exact clicks), and **why** the app
