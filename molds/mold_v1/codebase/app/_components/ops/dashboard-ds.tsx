@@ -88,7 +88,7 @@ export function Surface({
 /** A widget's heading, uppercase and quiet. */
 export function SectionLabel({ children }: { readonly children: React.ReactNode }) {
   return (
-    <h4 className={cn("mb-2.5 font-medium text-muted-foreground/80 uppercase tracking-wide", TYPE.micro)}>
+    <h4 className={cn("mb-2.5 font-medium text-muted-foreground uppercase tracking-wide", TYPE.micro)}>
       {children}
     </h4>
   );

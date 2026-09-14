@@ -132,13 +132,13 @@ function KpiWidget({ block }: { readonly block: KpiBlock }) {
         clickable && "cursor-pointer transition-colors hover:border-foreground/30 hover:bg-muted/20",
       )}
     >
-      <span className={cn("flex items-center gap-1 truncate font-medium text-muted-foreground/70 uppercase tracking-wide", TYPE.micro)}>
+      <span className={cn("flex items-center gap-1 truncate font-medium text-muted-foreground uppercase tracking-wide", TYPE.micro)}>
         {block.label}
         {clickable ? <ArrowUpRightIcon className="size-3 opacity-50" /> : null}
       </span>
       <span className={cn("mt-1 font-semibold text-2xl tabular-nums", TONE[t].text)}>{block.value}</span>
       {block.sub ? (
-        <span className={cn("mt-0.5 truncate text-muted-foreground/70", TYPE.micro)}>{block.sub}</span>
+        <span className={cn("mt-0.5 truncate text-muted-foreground", TYPE.micro)}>{block.sub}</span>
       ) : null}
     </section>
   );
@@ -227,7 +227,7 @@ function KanbanCard({
         {clickable ? <ArrowUpRightIcon className="size-3 shrink-0 opacity-40" /> : null}
       </span>
       {card.sub ? (
-        <span className={cn("mt-0.5 block truncate text-muted-foreground/70", TYPE.micro)}>
+        <span className={cn("mt-0.5 block truncate text-muted-foreground", TYPE.micro)}>
           {card.sub}
         </span>
       ) : null}
@@ -252,7 +252,7 @@ function TimelineWidget({ block }: { readonly block: TimelineBlock }) {
               ) : null}
               <span className={cn("font-medium", TYPE.meta)}>{e.title}</span>
               {e.detail ? (
-                <span className={cn("text-muted-foreground/70", TYPE.micro)}>{e.detail}</span>
+                <span className={cn("text-muted-foreground", TYPE.micro)}>{e.detail}</span>
               ) : null}
             </span>
           </li>

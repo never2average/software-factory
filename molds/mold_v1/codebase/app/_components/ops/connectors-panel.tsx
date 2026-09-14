@@ -375,7 +375,7 @@ function SecretRow({
         <span className={cn("ml-auto shrink-0", TYPE.micro, tone)}>{status}</span>
       </div>
       <div className="flex items-center gap-2">
-        <p className={cn("min-w-0 flex-1 truncate text-muted-foreground/70", TYPE.micro)}>
+        <p className={cn("min-w-0 flex-1 truncate text-muted-foreground", TYPE.micro)}>
           {secret.purpose}
         </p>
         {editing ? null : (

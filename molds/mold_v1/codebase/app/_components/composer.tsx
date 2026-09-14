@@ -42,8 +42,11 @@ export function ChatComposer({
     <PromptInput onSubmit={onSubmit}>
       {header ? <PromptInputHeader>{header}</PromptInputHeader> : null}
       <PromptInputTextarea placeholder={placeholder} className="min-h-11 text-sm!" />
-      <PromptInputFooter>
-        <PromptInputTools>{tools}</PromptInputTools>
+      {/* Tools wrap on narrow screens instead of running under the composer's
+          overflow-hidden frame; the right padding keeps the wrapped row clear
+          of the absolutely-positioned submit button + accessory. */}
+      <PromptInputFooter className="pr-20">
+        <PromptInputTools className="flex-wrap">{tools}</PromptInputTools>
       </PromptInputFooter>
       {submitAccessory ? (
         <div className="absolute right-14 bottom-3 flex items-center">{submitAccessory}</div>

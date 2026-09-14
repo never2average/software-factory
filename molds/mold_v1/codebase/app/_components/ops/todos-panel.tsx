@@ -225,7 +225,7 @@ function FilterMenu({ groups }: { readonly groups: readonly FilterGroup[] }) {
         <Fragment key={g.label}>
           {i > 0 ? <DropdownMenuSeparator /> : null}
           <DropdownMenuLabel className="flex items-center justify-between gap-4">
-            <span className={cn("text-muted-foreground/70", TYPE.micro)}>{g.label}</span>
+            <span className={cn("text-muted-foreground", TYPE.micro)}>{g.label}</span>
             {g.selected.length > 0 ? (
               <button
                 type="button"
@@ -307,7 +307,7 @@ function TabToolbar({
       ) : null}
       {filter}
       <ToolbarMenu label="Views" icon={SlidersHorizontalIcon}>
-        <DropdownMenuLabel className="text-muted-foreground/70">Ordering</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-muted-foreground">Ordering</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={sort} onValueChange={setSort}>
           {sortOptions.map((o) => (
             <DropdownMenuRadioItem key={o.value} value={o.value}>
@@ -1602,7 +1602,7 @@ function SlugText({ slug }: { readonly slug: string }) {
         });
       }}
       className={cn(
-        "max-w-full truncate font-mono text-muted-foreground/70 transition-colors hover:text-foreground",
+        "max-w-full truncate font-mono text-muted-foreground transition-colors hover:text-foreground",
         TYPE.micro,
       )}
     >
@@ -1851,7 +1851,7 @@ function SubtaskList({
                 type="button"
                 onClick={() => onToggle(t.id, !t.done)}
                 title={t.done ? "Mark open" : "Mark done"}
-                className="shrink-0 text-muted-foreground/70 transition-colors hover:text-foreground"
+                className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
               >
                 {t.done ? (
                   <CheckIcon className="size-4 text-emerald-500" />
@@ -2096,7 +2096,7 @@ function CycleDetail({
           type="button"
           disabled={busy}
           onClick={onRollover}
-          className={cn("text-muted-foreground/70 transition-colors hover:text-foreground disabled:opacity-50", TYPE.meta)}
+          className={cn("text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50", TYPE.meta)}
         >
           Roll over unfinished
         </button>

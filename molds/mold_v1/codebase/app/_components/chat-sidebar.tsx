@@ -164,7 +164,7 @@ export function ChatSidebar({
       <hr className="mx-3 my-1.5 border-border" />
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pt-0.5 pb-2">
-        <p className="px-3 pt-1 pb-0.5 font-medium text-3xs text-muted-foreground/70 uppercase tracking-wide">
+        <p className="px-3 pt-1 pb-0.5 font-medium text-3xs text-muted-foreground uppercase tracking-wide">
           Chats
         </p>
         {sessions.length === 0 ? (
@@ -204,7 +204,7 @@ export function ChatSidebar({
                   <span className="block w-full truncate pr-0 font-medium text-xs leading-tight transition-[padding] group-hover:pr-12 group-focus-within:pr-12">
                     {s.title || "New chat"}
                   </span>
-                  <span className="flex min-w-0 w-full items-center gap-2 text-3xs text-muted-foreground/80">
+                  <span className="flex min-w-0 w-full items-center gap-2 text-3xs text-muted-foreground">
                     {customers.length > 0 ? (
                       <span className="flex min-w-0 items-center gap-1.5">
                         <CustomerMark name={nameOf(customers[0])} size="xs" />
@@ -261,7 +261,7 @@ export function ChatSidebar({
 
         {sharedThreads.length > 0 ? (
           <>
-            <p className="px-3 pt-4 pb-0.5 font-medium text-3xs text-muted-foreground/70 uppercase tracking-wide">
+            <p className="px-3 pt-4 pb-0.5 font-medium text-3xs text-muted-foreground uppercase tracking-wide">
               Shared with you
             </p>
             <ul className="flex flex-col gap-0.5">
@@ -290,7 +290,7 @@ export function ChatSidebar({
                             icon every row carries says nothing. */}
                         <Share2Icon className="size-3 shrink-0 text-muted-foreground/70" />
                       </span>
-                      <span className="flex min-w-0 items-center gap-1.5 text-3xs text-muted-foreground/80">
+                      <span className="flex min-w-0 items-center gap-1.5 text-3xs text-muted-foreground">
                         <CustomerMark name={t.ownerEmail} size="xs" />
                         <span className="truncate">
                           {t.ownerEmail.split("@")[0]}

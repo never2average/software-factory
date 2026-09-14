@@ -122,7 +122,7 @@ export function WorkspaceSummary({
                 {/* One example, because a count alone rarely tells you whether
                     it matters. The rest are in the tooltip. */}
                 {s.sample[0] ? (
-                  <span className="block truncate text-3xs text-muted-foreground/70">{s.sample[0]}</span>
+                  <span className="block truncate text-3xs text-muted-foreground">{s.sample[0]}</span>
                 ) : null}
               </button>
             </li>

@@ -692,7 +692,7 @@ export function WorkflowMultiSelect({
         {stale.length ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className={cn("text-muted-foreground/70", TYPE.micro)}>
+            <DropdownMenuLabel className={cn("text-muted-foreground", TYPE.micro)}>
               Not a workflow — left over from free text
             </DropdownMenuLabel>
             {stale.map((v) => (
@@ -1200,7 +1200,7 @@ export function ListFooter({
             onChange={(e) => onPageSize(Number(e.target.value))}
             aria-label="Rows per page"
             className={cn(
-              "h-6 rounded-md border border-border bg-background px-1.5 text-muted-foreground outline-none hover:text-foreground focus:border-ring",
+              "h-6 rounded-md border border-border bg-background px-1.5 text-muted-foreground outline-none hover:text-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring",
               TYPE.meta,
             )}
           >
@@ -1231,7 +1231,7 @@ export function ListFooter({
           {page}
         </span>
         {pages > 1 ? (
-          <span className={cn("text-muted-foreground/60 tabular-nums", TYPE.meta)}>of {pages}</span>
+          <span className={cn("text-muted-foreground tabular-nums", TYPE.meta)}>of {pages}</span>
         ) : null}
         <IconButton
           intent="secondary"
@@ -1360,11 +1360,14 @@ export function TableCard({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-1 flex-col overflow-hidden",
+        // No `overflow-hidden` on the frame: it clipped rows below the fold
+        // behind a box nobody can scroll. The inner region is the ONE scroll
+        // container (both axes) and rounds its own top corners instead.
+        "flex min-h-0 flex-1 flex-col",
         flush ? "rounded-none border-0 bg-transparent" : SURFACE.card,
       )}
     >
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded-t-[inherit]">
         {/* No min-width: the columns compress (and truncate) when the panel
             squeezes the table to 30% rather than forcing a horizontal scroll. */}
         <table className={cn("w-full text-left", TYPE.body)}>{children}</table>

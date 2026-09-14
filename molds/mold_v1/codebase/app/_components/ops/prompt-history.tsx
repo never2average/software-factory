@@ -173,7 +173,7 @@ function PromptHistoryDialog({
                     <span className={cn("w-full truncate text-muted-foreground", TYPE.micro)}>
                       {fmt(v.createdAt)}
                     </span>
-                    <span className={cn("w-full truncate text-muted-foreground/70", TYPE.micro)}>
+                    <span className={cn("w-full truncate text-muted-foreground", TYPE.micro)}>
                       {v.actor}
                     </span>
                   </button>

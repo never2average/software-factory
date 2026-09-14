@@ -1769,7 +1769,7 @@ export function AgentChat({
           agent.error and nukes the turn). componentDidCatch logs the component
           stack the minified store error can't carry. */}
       <ErrorBoundary label="Chat body" resetKeys={[sessionId]}>
-      <header className="flex h-12 shrink-0 items-center gap-2 px-3">
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 px-3">
         {sidebarCollapsed ? (
           <button
             type="button"
@@ -1780,7 +1780,7 @@ export function AgentChat({
             <PanelLeftIcon className="size-4" />
           </button>
         ) : null}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
           {sharedThreadId ? <PresenceStack online={presence.online} /> : null}
           {canShare ? <ShareThreadButton getPayload={getSharePayload} /> : null}
           <CustomerSelect
@@ -2161,7 +2161,7 @@ export function AgentChat({
           ) : null}
           {queued.length > 0 ? (
             <div className="mb-2 flex flex-col gap-1">
-              <p className="px-1 text-3xs text-muted-foreground/80">
+              <p className="px-1 text-3xs text-muted-foreground">
                 Queued — sending after the current reply
               </p>
               {queued.map((q, i) => (
@@ -2484,10 +2484,10 @@ function PersonCard({
         <p className="font-medium text-sm">{person.name}</p>
         {person.role ? <p className="text-muted-foreground text-xs">{person.role}</p> : null}
         {person.org ?? customer ? (
-          <p className="truncate text-2xs text-muted-foreground/70">{person.org ?? customer}</p>
+          <p className="truncate text-2xs text-muted-foreground">{person.org ?? customer}</p>
         ) : null}
         {person.email ? (
-          <p className="mt-1 truncate text-2xs text-muted-foreground/70">{person.email}</p>
+          <p className="mt-1 truncate text-2xs text-muted-foreground">{person.email}</p>
         ) : null}
       </div>
     </div>
@@ -2805,7 +2805,7 @@ function CustomerSelect({
           ) : infOverflow > 0 ? (
             <span className="font-medium text-foreground">+{infOverflow}</span>
           ) : null}
-          <span className="text-2xs text-muted-foreground/70">· inferred</span>
+          <span className="text-2xs text-muted-foreground">· inferred</span>
         </span>
       );
     }

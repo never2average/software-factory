@@ -88,10 +88,10 @@ function RunCard({ card }: { readonly card: RunCardModel }) {
           <span className={cn("min-w-0 truncate font-medium", TYPE.meta)}>{card.runByLabel}</span>
           <RunStatusDot status={card.status} />
         </div>
-        <span className={cn("flex items-center gap-1.5 tabular-nums text-muted-foreground/70", TYPE.micro)}>
+        <span className={cn("flex items-center gap-1.5 tabular-nums text-muted-foreground", TYPE.micro)}>
           {whenLabel(card.whenIso)}
           {card.note ? (
-            <span className="rounded-sm bg-muted px-1 py-0.5 font-medium text-[10px] text-muted-foreground/80 uppercase tracking-wide">
+            <span className="rounded-sm bg-muted px-1 py-0.5 font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
               {card.note}
             </span>
           ) : null}
@@ -311,7 +311,7 @@ function WorkflowStepSteer({ sessionId }: { readonly sessionId: string }) {
           <SendHorizontalIcon className="size-3.5" />
         </button>
       </div>
-      {note ? <p className={cn("text-muted-foreground/70", TYPE.micro)}>{note}</p> : null}
+      {note ? <p className={cn("text-muted-foreground", TYPE.micro)}>{note}</p> : null}
     </div>
   );
 }

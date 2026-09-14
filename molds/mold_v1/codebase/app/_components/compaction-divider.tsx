@@ -23,7 +23,7 @@ export function CompactionDivider({
         ? "Context manually compacted"
         : "Context automatically compacted";
   return (
-    <div className="not-prose my-2 flex w-full items-center gap-3 text-muted-foreground/70">
+    <div className="not-prose my-2 flex w-full items-center gap-3 text-muted-foreground">
       <span className="h-px flex-1 bg-border" />
       <span className="flex shrink-0 items-center gap-2 text-xs">
         {kind === "compacting" ? (

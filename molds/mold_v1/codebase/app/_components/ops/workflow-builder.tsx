@@ -126,7 +126,7 @@ function AssignField({
     <label className="block">
       <span className="mb-0.5 flex items-baseline gap-1.5">
         <span className="font-medium text-2xs text-foreground/80">{label}</span>
-        {hint ? <span className="truncate text-2xs text-muted-foreground/70">{hint}</span> : null}
+        {hint ? <span className="truncate text-2xs text-muted-foreground">{hint}</span> : null}
       </span>
       {children}
     </label>

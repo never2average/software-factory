@@ -441,7 +441,7 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
   return (
     <div className="flex h-full flex-col">
       {/* Header: the ONE workspace scope selector everything inherits. */}
-      <div className="flex items-center gap-3 border-b border-border px-6 py-3">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={onPickLogo} />
         <button
           type="button"
@@ -460,12 +460,13 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
             </span>
           ) : null}
         </button>
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           {orgs && orgs.length > 1 ? (
             <select
               value={orgId ?? ""}
               onChange={(e) => setOrgId(e.target.value)}
-              className="h-8 rounded-md border border-input bg-transparent px-2 text-sm font-medium"
+              aria-label="Workspace"
+              className="h-8 max-w-full rounded-md border border-input bg-transparent px-2 text-sm font-medium outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               {orgs.map((o) => (
                 <option key={o.orgId} value={o.orgId}>
@@ -474,9 +475,9 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
               ))}
             </select>
           ) : (
-            <div className="text-sm font-semibold">{current?.name ?? "Workspace"}</div>
+            <div className="truncate text-sm font-semibold">{current?.name ?? "Workspace"}</div>
           )}
-          <div className="text-xs text-muted-foreground">
+          <div className="truncate text-xs text-muted-foreground">
             {orgId ? (
               <>
                 <span className="font-mono">{orgId}</span>
@@ -498,8 +499,8 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
             onClick={() => setTab(t.key)}
             className={
               tab === t.key
-                ? "border-b-2 border-foreground px-3 py-2 text-sm font-medium"
-                : "border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+                ? "shrink-0 whitespace-nowrap border-b-2 border-foreground px-3 py-2 text-sm font-medium"
+                : "shrink-0 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
             }
           >
             {t.label}
@@ -598,7 +599,7 @@ function AgentDetailPanel({
                 <span className="size-1.5 rounded-full bg-amber-500" /> Paused
               </span>
             )}
-            <span className={cn("text-muted-foreground/60", TYPE.micro)}>
+            <span className={cn("text-muted-foreground", TYPE.micro)}>
               {busy ? "Saving…" : saved ? "Saved" : canEdit ? "Saves as you type" : "Read-only"}
             </span>
             {/* The prompt is the behaviour, so its history matters as much as
@@ -1008,7 +1009,7 @@ function SettingsTab({ orgId, role }: { orgId: string; role: Role }) {
       {canEdit && (
         <div className="flex items-center gap-3">
           <Button onClick={save}>Save changes</Button>
-          {saved && <span className="text-xs text-emerald-600 dark:text-emerald-400">Saved</span>}
+          {saved && <span className="text-xs text-emerald-700 dark:text-emerald-400">Saved</span>}
         </div>
       )}
 
@@ -1155,7 +1156,7 @@ function AuditTab({ orgId }: { orgId: string }) {
             <span className="inline-flex items-center gap-1 text-2xs text-muted-foreground">
               <ClockIcon className="size-3.5" />
             </span>
-            <select value={preset} onChange={(e) => setPreset(e.target.value)} className={selectCls}>
+            <select value={preset} onChange={(e) => setPreset(e.target.value)} className={selectCls} aria-label="Time range">
               {RANGE_PRESETS.map((r) => (
                 <option key={r.key} value={r.key}>{r.label}</option>
               ))}
@@ -2470,7 +2471,7 @@ function PeopleTab({ orgId, role, authorEmail }: { orgId: string; role: Role; au
         <div className="space-y-2 rounded-xl border border-border bg-card p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="name@company.com" className="min-w-[14rem] flex-1" />
-            <select value={newRole} onChange={(e) => setNewRole(e.target.value as Role)} className="h-9 rounded-md border border-input bg-transparent px-2 text-sm capitalize">
+            <select value={newRole} onChange={(e) => setNewRole(e.target.value as Role)} aria-label="Role for new member" className="h-9 rounded-md border border-input bg-transparent px-2 text-sm capitalize outline-none focus-visible:ring-1 focus-visible:ring-ring">
               {roleOptions.map((x) => (
                 <option key={x} value={x}>{x}</option>
               ))}
@@ -2510,9 +2511,9 @@ function PeopleTab({ orgId, role, authorEmail }: { orgId: string; role: Role; au
                       <span className="capitalize">{invite.role}</span>
                       <span aria-hidden="true">·</span>
                       {invite.status === "accepted" ? (
-                        <span className="text-emerald-600 dark:text-emerald-400">already joined</span>
+                        <span className="text-emerald-700 dark:text-emerald-400">already joined</span>
                       ) : invite.status === "expired" ? (
-                        <span className="text-amber-600 dark:text-amber-400">expired {fmtTime(invite.expiresAt)}</span>
+                        <span className="text-amber-700 dark:text-amber-400">expired {fmtTime(invite.expiresAt)}</span>
                       ) : (
                         <span>expires {fmtTime(invite.expiresAt)}</span>
                       )}
@@ -2582,6 +2583,7 @@ function PeopleTab({ orgId, role, authorEmail }: { orgId: string; role: Role; au
                 <select
                   value={p.role}
                   onChange={(e) => void setRoleFor(p.email, e.target.value as Role)}
+                  aria-label={`Role for ${p.email}`}
                   className="rounded-md border border-input bg-transparent px-2 py-1 text-sm capitalize outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
                   {(p.role === "owner" ? ROLES : roleOptions).map((x) => (

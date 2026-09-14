@@ -1028,7 +1028,7 @@ function Section({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <p className="flex items-center gap-1.5 px-1 font-medium text-3xs text-muted-foreground/70 uppercase tracking-wide">
+      <p className="flex items-center gap-1.5 px-1 font-medium text-3xs text-muted-foreground uppercase tracking-wide">
         <Icon className="size-3" />
         {title}
         <span className="text-muted-foreground/50">{count}</span>
@@ -1500,7 +1500,7 @@ function ReportingEscalationTimeline({
               ) : e.k === "up" || e.k === "down" ? (
                 <>
                   <span className="truncate font-medium text-xs">{e.name}</span>
-                  <span className="truncate text-2xs text-muted-foreground/70">· {e.sub}</span>
+                  <span className="truncate text-2xs text-muted-foreground">· {e.sub}</span>
                   <span className="ml-auto shrink-0 text-2xs text-muted-foreground/50">
                     {e.k === "up" ? "escalates ↑" : "reports ↓"}
                   </span>
@@ -1771,7 +1771,7 @@ function PersonModal({
                   </DialogTitle>
                   <DialogDescription className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
                     {id?.title ? <span className="truncate">{id.title}</span> : null}
-                    {id?.email ? <span className="font-mono text-2xs text-muted-foreground/70">{id.email}</span> : null}
+                    {id?.email ? <span className="font-mono text-2xs text-muted-foreground">{id.email}</span> : null}
                   </DialogDescription>
                 </div>
               </div>
@@ -3246,7 +3246,7 @@ function AppRunDetail({
         </p>
       ) : null}
       {refreshing && !app.contentMd ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-muted-foreground/70">
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
           <Spinner className="size-4" />
           <span className="text-xs">Generating the dashboard…</span>
         </div>

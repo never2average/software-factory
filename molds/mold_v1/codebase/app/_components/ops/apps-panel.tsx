@@ -552,7 +552,7 @@ function AppDetail({
       <header className="flex shrink-0 items-center gap-4 border-border border-b px-6 py-3.5 pr-20">
         <div className="min-w-0 flex-1">
           <h3 className={cn("truncate", TYPE.title)}>{app.name}</h3>
-          <p className={cn("mt-1 flex items-center gap-1.5 text-muted-foreground/80", TYPE.micro)}>
+          <p className={cn("mt-1 flex items-center gap-1.5 text-muted-foreground", TYPE.micro)}>
             {app.lastError ? (
               <RunStatusDot status="failed" />
             ) : app.contentUpdatedAt ? (
@@ -790,7 +790,7 @@ function VersionList({
                       <span
                         className={cn(
                           "truncate",
-                          v.error ? "text-red-400/80" : "text-muted-foreground/70",
+                          v.error ? "text-red-400/80" : "text-muted-foreground",
                           TYPE.micro,
                         )}
                       >

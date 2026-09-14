@@ -41,7 +41,7 @@ export function HeaderCard({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
+    <div className="flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
       <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted text-foreground">
         <Icon className="size-5" />
       </span>
@@ -174,7 +174,7 @@ export function PaginatedTable<T>({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       {title && icon ? <HeaderCard icon={icon} title={title} blurb={blurb ?? ""} action={action} /> : null}
-      <div className="flex shrink-0 items-center gap-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <SearchBox
             noun={noun}

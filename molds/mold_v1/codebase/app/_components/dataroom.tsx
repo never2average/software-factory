@@ -2693,7 +2693,7 @@ function Table({
         <span className="grid h-6 min-w-6 place-items-center rounded-md bg-foreground px-1 font-medium text-background tabular-nums">
           {current}
         </span>
-        <span className="text-muted-foreground/60 tabular-nums">of {pages}</span>
+        <span className="text-muted-foreground tabular-nums">of {pages}</span>
         <button
           type="button"
           aria-label="Next page"

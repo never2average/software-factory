@@ -197,7 +197,7 @@ export function TaskCard({
           ) : null}
           <span className="ml-auto flex items-center gap-2">
             {task.due ? (
-              <span className={cn("flex items-center gap-1 font-medium text-xs", task.due.overdue ? "text-red-400" : "text-muted-foreground/70")}>
+              <span className={cn("flex items-center gap-1 font-medium text-xs", task.due.overdue ? "text-red-400" : "text-muted-foreground")}>
                 <ClockIcon className="size-3.5" />
                 {task.due.text}
               </span>

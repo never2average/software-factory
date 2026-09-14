@@ -155,7 +155,7 @@ function FileDiff({ prepared, showPath = true }: { readonly prepared: Prepared; 
                 {/* The unified-diff address. A gap marker says lines were
                     skipped; this says which ones, which is the difference
                     between "some context is hidden" and knowing where you are. */}
-                <div className="flex items-center gap-2 border-border/40 border-y bg-primary/[0.07] px-2.5 py-0.5 text-muted-foreground/80">
+                <div className="flex items-center gap-2 border-border/40 border-y bg-primary/[0.07] px-2.5 py-0.5 text-muted-foreground">
                   <span className="tabular-nums">
                     @@ −{h.aStart},{h.aCount} +{h.bStart},{h.bCount} @@
                   </span>

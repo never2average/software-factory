@@ -384,7 +384,7 @@ function ShareDialog({
         ) : null}
 
         {/* Footer note */}
-        <p className="border-border/60 border-t px-5 py-2.5 text-2xs text-muted-foreground/70">
+        <p className="border-border/60 border-t px-5 py-2.5 text-2xs text-muted-foreground">
           Anyone with a work email can be added — personal accounts can&apos;t sign in.
           They&apos;ll see it in “Shared with you”.
         </p>

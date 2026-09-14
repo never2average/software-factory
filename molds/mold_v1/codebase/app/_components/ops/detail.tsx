@@ -75,7 +75,7 @@ export function DetailLabel({
   readonly children: React.ReactNode;
 }) {
   return (
-    <p className={cn("flex items-center gap-1.5 text-muted-foreground/70", TYPE.sectionLabel)}>
+    <p className={cn("flex items-center gap-1.5 text-muted-foreground", TYPE.sectionLabel)}>
       <Icon className="size-3" />
       {children}
     </p>

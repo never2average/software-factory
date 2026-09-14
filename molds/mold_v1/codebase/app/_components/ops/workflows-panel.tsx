@@ -946,7 +946,7 @@ function WorkflowOverrideEditor({
             <div className="border-border border-t px-2.5 py-2">
               <div className="mb-1.5 flex items-baseline justify-between gap-2">
                 <p className={cn("font-medium", TYPE.meta)}>Run with</p>
-                <p className={cn("truncate text-muted-foreground/70", TYPE.micro)}>
+                <p className={cn("truncate text-muted-foreground", TYPE.micro)}>
                   reads {argsKeys.join(", ")}
                 </p>
               </div>
@@ -964,7 +964,7 @@ function WorkflowOverrideEditor({
                 )}
               />
               {argsNote ? (
-                <p className={cn("mt-1 text-muted-foreground/70", TYPE.micro)}>{argsNote}</p>
+                <p className={cn("mt-1 text-muted-foreground", TYPE.micro)}>{argsNote}</p>
               ) : null}
               {draftError ? (
                 <p className={cn("mt-1 text-red-600 dark:text-red-400", TYPE.micro)}>{draftError}</p>
@@ -1002,7 +1002,7 @@ function WorkflowOverrideEditor({
             </div>
           ) : null}
           <div className="flex shrink-0 items-center gap-2 border-t border-border px-2.5 py-1.5">
-            <p className={cn("truncate text-muted-foreground/70", TYPE.micro)}>
+            <p className={cn("truncate text-muted-foreground", TYPE.micro)}>
               {isScript
                 ? "TypeScript, run sandboxed. agent() delegates a step; parallel() and pipeline() fan out."
                 : overrideReachesSubagent
