@@ -6,7 +6,7 @@
       "mold_id": "mold_v1",
       "name": "Delivered",
       "tagline": "The FDE operations console: onboarding, deployments and the data room for the forward-deployed team.",
-      "stage": "defined",
+      "stage": "released",
       "target_model": "GLM 5.2",
       "gates": {
         "stamped": [
@@ -30,7 +30,8 @@
       },
       "app_ids": [
         "claudecode_web_internal",
-        "claudecode_web_replica"
+        "claudecode_web_replica",
+        "sf_gateway_probe"
       ],
       "deploy_targets": [
         "vercel"
@@ -63,7 +64,7 @@
       "mold_id": "mold_v1",
       "name": "Dover",
       "tagline": "TODO: Dover's one-line positioning.",
-      "stage": "defined",
+      "stage": "released",
       "target_model": "GLM 5.2",
       "gates": {
         "stamped": [

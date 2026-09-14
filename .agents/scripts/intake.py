@@ -243,7 +243,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     # and the first deployed app greeted its operator with "Google sign-in is not configured
     # (NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset)". Required from 2026-09-13; one --set-secret writes both.
     optional_secrets = []
-    secrets_user = secrets_user + [n for n in ("GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID") if n not in secrets_user]
+    user_secrets = user_secrets + [n for n in ("GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID") if n not in user_secrets]
     top_level = ["Customers","Platform","Deployments","Solutions","Implementation","Tickets","People","Uploads"]
     members = [{"email": fde, "role": "owner"}] + [{"email": e, "role": "member"} for e in hints.get("members", []) if e != fde]
     corpus = []
