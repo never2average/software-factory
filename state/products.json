@@ -18,7 +18,7 @@
           "every lane has a harness: accessibility (a11y.mjs) and responsiveness (responsive.mjs) built 2026-09-08, load (testing/load/stress.py) built 2026-09-09 (mold_v1-024); functional and context are the mold's own suites"
         ],
         "deployed": [
-          "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
+          "production URL on Vercel — the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
           "the app's inference provider configured and smoke-tested (GLM 5.2 on Cloudflare Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway)"
         ],
@@ -40,7 +40,7 @@
       "brand": {
         "product_name": "Delivered",
         "tagline": "The operations console for forward-deployed teams.",
-        "description": "Delivered \u2014 the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
+        "description": "Delivered — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
         "brand_color": "oklch(0.19 0 0)",
         "neutral_chroma": 0,
         "radius": "0.625rem",
@@ -76,7 +76,7 @@
           "every lane has a harness: accessibility (a11y.mjs) and responsiveness (responsive.mjs) built 2026-09-08, load (testing/load/stress.py) built 2026-09-09 (mold_v1-024); functional and context are the mold's own suites"
         ],
         "deployed": [
-          "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
+          "production URL on Vercel — the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
           "the app's inference provider configured and smoke-tested (GLM 5.2 on Cloudflare Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway)"
         ],
@@ -93,14 +93,14 @@
       "vercel_project": "dover",
       "brand": {
         "product_name": "Dover",
-        "tagline": "TODO: Dover's one-line positioning, shown under the sign-in wordmark.",
-        "description": "TODO: Dover \u2014 one sentence for the browser tab and link previews.",
+        "tagline": "The operations console for forward-deployed teams.",
+        "description": "Dover — The operations console for forward-deployed teams.",
         "brand_color": "#1F6F5C",
         "neutral_chroma": 0.006,
         "radius": "0.625rem",
         "icon_bg": "#1F6F5C",
-        "icon_fg": "#FFFFFF",
-        "icon_svg": "<svg width=\"32\" height=\"32\" viewBox=\"0 0 32 32\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n  <rect width=\"32\" height=\"32\" rx=\"8\" fill=\"#1F6F5C\"/>\n  <path d=\"M11 22V10H15.5C19.0899 10 22 12.6863 22 16C22 19.3137 19.0899 22 15.5 22H11Z\" stroke=\"#FFFFFF\" stroke-width=\"3\" stroke-linejoin=\"round\"/>\n</svg>"
+        "icon_fg": "#FAFAFA",
+        "icon_svg": "<svg width=\"32\" height=\"32\" viewBox=\"0 0 32 32\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"32\" height=\"32\" rx=\"8\" fill=\"#1F6F5C\"/><text x=\"16\" y=\"21\" font-family=\"system-ui,-apple-system,Segoe UI,Roboto,sans-serif\" font-size=\"14\" font-weight=\"600\" fill=\"#FAFAFA\" text-anchor=\"middle\">D</text></svg>"
       }
     },
     {

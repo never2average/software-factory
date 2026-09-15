@@ -97,7 +97,7 @@
           },
           "brand": {
             "type": "object",
-            "description": "The product's visual identity. Copied into an application's surface.branding when it is stamped, so an app is self-contained: editing this later does not change an app that already exists.",
+            "description": "The visual identity, complete and self-contained. THE SHORT WAY: `branding.py <app_id> set --name \"Acme Ops\" --color #1F6F5C --logo brands/acme/logo.png` fills every field below from those three inputs (palette, icon, sign-in mark, legible foreground, description). The long fields exist for a designer who wants an exact value. The product's visual identity. Copied into an application's surface.branding when it is stamped, so an app is self-contained: editing this later does not change an app that already exists.",
             "properties": {
               "product_name": {
                 "type": "string"
@@ -146,6 +146,10 @@
                     }
                   }
                 }
+              },
+              "logo": {
+                "type": "string",
+                "description": "Where the mark came from: a PNG, JPG, WebP or SVG file path relative to the repo root (e.g. brands/acme/logo.png). Provenance only; icon_svg carries the inlined result."
               }
             },
             "required": [
