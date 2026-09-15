@@ -947,7 +947,7 @@
         },
         "branding": {
           "type": "object",
-          "description": "This application's visual identity, complete and self-contained: no pointer to shared files, so what this app looks like is readable here and cannot change under it. Copied from the product's `brand` at stamp time. branding.py applies it to a per-app copy of the mold at build time; molds/<mold_id>/branding/rules.json says which files in that mold carry each surface.",
+          "description": "The visual identity, complete and self-contained. THE SHORT WAY: `branding.py <app_id> set --name \"Acme Ops\" --color #1F6F5C --logo brands/acme/logo.png` fills every field below from those three inputs (palette, icon, sign-in mark, legible foreground, description). The long fields exist for a designer who wants an exact value. This application's visual identity, complete and self-contained: no pointer to shared files, so what this app looks like is readable here and cannot change under it. Copied from the product's `brand` at stamp time. branding.py applies it to a per-app copy of the mold at build time; molds/<mold_id>/branding/rules.json says which files in that mold carry each surface.",
           "properties": {
             "product_name": {
               "type": "string",
@@ -1003,6 +1003,10 @@
             "icon_svg": {
               "type": "string",
               "description": "32x32 SVG source used for the app icon, favicon and sign-in mark"
+            },
+            "logo": {
+              "type": "string",
+              "description": "Where the mark came from: a PNG, JPG, WebP or SVG file path relative to the repo root (e.g. brands/acme/logo.png). Provenance only; icon_svg carries the inlined result."
             }
           },
           "required": [

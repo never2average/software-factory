@@ -15,7 +15,7 @@ gates. An **application** is one stamped, deployable instance of a product. `sta
 | `app_ids` | the applications stamped from it (intake appends; a retired or reverted app stays listed with its status in its own state) |
 | `deploy_targets` | `vercel` (the one committed deploy target) and/or `vm` (local verification only) |
 | `vercel_project` | project name for the product's first app; later apps get `<project>-<suffix>` |
-| `brand` | the visual identity: `product_name`, `tagline`, `description`, `brand_color`, `neutral_chroma`, `radius`, `icon_bg`/`icon_fg`, a 32x32 `icon_svg`, and optional light/dark `tokens` overrides |
+| `brand` | the visual identity. Set it from three inputs and let the rest derive: `python3 .claude/scripts/branding.py --product <id> set --name "Acme Ops" --color #1F6F5C --logo brands/acme/logo.png` (optional `--tagline`). The stored block also carries the derived fields (`description`, `neutral_chroma`, `radius`, `icon_bg`/`icon_fg`, the inlined `icon_svg`, optional `tokens` pins) for a designer who wants an exact value |
 
 ## What an application carries
 

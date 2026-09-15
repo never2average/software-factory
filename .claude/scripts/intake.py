@@ -71,6 +71,13 @@ def parse_brief(text):
     if re.search(r"\bno branding\b|\bunbranded\b|\bmold branding\b", t): h["no_branding"] = True
     m = re.search(r"\bbrand colou?r:\s*(#[0-9a-fA-F]{3,6})", text, re.I)
     if m: h["brand_color"] = m.group(1)
+    # The short way to brand an app from the brief: `brand: Acme Ops`, `logo: brands/acme/logo.png`, `tagline: …`
+    m = re.search(r"^\s*brand(?: name)?:\s*([^\n]+?)\s*$", text, re.I | re.M)
+    if m and not re.fullmatch(r"#[0-9a-fA-F]{3,6}", m.group(1)): h["brand_name"] = m.group(1).strip()
+    m = re.search(r"^\s*logo:\s*(\S+)", text, re.I | re.M)
+    if m: h["brand_logo"] = m.group(1).strip()
+    m = re.search(r"^\s*tagline:\s*([^\n]+?)\s*$", text, re.I | re.M)
+    if m: h["brand_tagline"] = m.group(1).strip()
     m = re.search(r"(?:workflows?)[:\s]+(all|none|library)", t)
     if m: h["library"] = "all" if m.group(1) in ("all", "library") else "none"
     return h
@@ -276,8 +283,11 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     # The product's identity is COPIED into the app, not referenced: an application must be readable
     # on its own, and editing a product's brand later must not change an app that already exists.
     brand = {} if hints.get("no_branding") else dict(prod.get("brand") or {})
-    if brand:
-        if hints.get("brand_color"): brand["brand_color"] = hints["brand_color"]
+    if brand or any(hints.get(k) for k in ("brand_name", "brand_color", "brand_logo", "brand_tagline")):
+        # The brief's brand lines override the product's brand; everything not named is derived.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from branding import normalize
+        brand = normalize(brand, hints.get("brand_name"), hints.get("brand_color"), hints.get("brand_logo"), hints.get("brand_tagline"))
         surface["branding"] = brand
 
     if hints.get("account_noun") and hints["account_noun"] != "customer":

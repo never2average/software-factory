@@ -33,12 +33,20 @@ is stamped. mold_v1 carries two products on one codebase:
 | Product | Identity |
 |---|---|
 | `delivered` | The mold's own, pinned so a build is byte-identical to the unbranded mold |
-| `dover` | Name is right; colour, mark, tagline and description are placeholders |
+| `dover` | Name, colour `#1F6F5C`, a monogram mark; the tagline is the mold's until someone writes one |
 
-A brief picks one with `product: dover`, may override the colour with `brand color: #hex`, or opt out
-with `no branding`. After stamping, the app owns its brand: edit it in the app's own state.
+A brief picks one with `product: dover`, or brands the app directly with up to four lines — `brand: Acme Ops`,
+`brand color: #1F6F5C`, `logo: brands/acme/logo.png`, `tagline: …` — or opts out with `no branding`. After
+stamping, the app owns its brand: change it with
 
-## The brand shape
+    python3 .claude/scripts/branding.py <app_id> set --name "Acme Ops" --color #1F6F5C --logo brands/acme/logo.png
+    python3 .claude/scripts/branding.py <app_id> preview     # build/<app_id>/brand-preview.html, light and dark
+
+and redeploy. Those three inputs (name, one colour, a logo file: PNG, JPG, WebP or SVG under `brands/`) are
+the whole ask; a monogram stands in when there is no logo. A logo is shown as itself on the sign-in tile
+and as the app icon; a drawn 32x32 SVG mark is recoloured to the tile.
+
+## The brand shape (what `set` writes)
 
 `product_name`, `tagline`, `description`, `brand_color` (`#rrggbb` or `oklch(L C H)`),
 `neutral_chroma`, `radius`, `icon_bg`, `icon_fg`, `icon_svg` (32x32, `viewBox="0 0 32 32"`), and

@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
 """Branding: apply an application's own theme and logo to a per-app copy of the mold.
 
+  branding.py <app_id> set --name "Acme Ops" [--color #1F6F5C] [--logo path.png|.svg] [--tagline "..."]
+                                            the whole brand from three inputs; everything else is derived
+  branding.py --product <product_id> set …  the same, onto a product in state/products.json (future stamps)
   branding.py <app_id> show                 this app's brand and the palette it derives
+  branding.py <app_id> preview              build/<app_id>/brand-preview.html: sign-in tile and palette, light and dark
   branding.py <app_id> prepare [--force]    build/<app_id>/ = mold copy + brand overlay; prints the path
   branding.py <app_id> check                verify a prepared copy carries the brand and no stale name
+
+THE SHORT WAY. A brand is three things a person actually has: a name, one colour, a logo file (PNG, JPG
+or SVG). `set` derives the rest — the light and dark palette from the colour, the app icon and sign-in
+mark from the logo (or a monogram when there is none), a legible icon foreground, the description from
+name and tagline — and writes the complete block into the app's state, so nothing below needs to be
+typed by hand. The long fields (tokens, radius, neutral_chroma, icon_bg/icon_fg, icon_svg) still
+exist for a designer who wants an exact value; `set` fills them, it does not remove them.
 
 The mold under molds/<mold_id>/codebase is a snapshot and is never edited. `prepare` copies the
 source tree (11 MB; node_modules is hard-linked, never written) into build/<app_id>/ and rewrites
@@ -157,12 +168,132 @@ def read_mark(b):
         inner = re.sub(r"^<svg[^>]*>|</svg>\s*$", "", svg, flags=re.S).strip()
         return svg, inner
     initials = "".join(w[0] for w in re.findall(r"[A-Za-z]+", b.get("product_name", "App"))[:2]).upper() or "A"
-    bg, fg = b.get("icon_bg", "#0A0A0A"), b.get("icon_fg", "#FAFAFA")
+    bg = b.get("icon_bg") or (b["brand_color"] if str(b.get("brand_color", "")).startswith("#") else "#0A0A0A")
+    fg = b.get("icon_fg") or legible_on(bg)
     inner = (f'<rect width="32" height="32" rx="8" fill="{bg}"/>'
              f'<text x="16" y="21" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" '
              f'font-size="14" font-weight="600" fill="{fg}" text-anchor="middle">{initials}</text>')
     return (f'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" '
             f'xmlns="http://www.w3.org/2000/svg">{inner}</svg>'), inner
+
+def legible_on(hex_bg):
+    """White or near-black, whichever reads better on this background (WCAG contrast)."""
+    bg = hex_to_oklch(hex_bg)
+    return "#FAFAFA" if contrast(bg, "oklch(0.985 0 0)") >= contrast(bg, "oklch(0.16 0 0)") else "#0A0A0A"
+
+LOGO_MAX_BYTES = 256 * 1024
+def logo_to_icon_svg(path):
+    """A logo file -> the 32x32 SVG every mark slot expects. SVG sources are nested as-is (their own
+    viewBox scaled to fit); raster sources are embedded as a data URI and scaled by the browser.
+    Bounded in size: the icon ships in every page, the org row and the sign-in tile."""
+    p = path if os.path.isabs(path) else os.path.join(ROOT, path)
+    if not os.path.isfile(p): sys.exit(f"logo not found: {path}")
+    raw = open(p, "rb").read()
+    if len(raw) > LOGO_MAX_BYTES: sys.exit(f"logo is {len(raw)//1024} KB; keep it under {LOGO_MAX_BYTES//1024} KB (a 256px PNG is plenty)")
+    ext = os.path.splitext(p)[1].lower()
+    if ext == ".svg":
+        txt = raw.decode("utf-8", "replace")
+        m = re.search(r"<svg\b[^>]*>", txt, re.S)
+        if not m: sys.exit(f"{path} is not an SVG (no <svg> element)")
+        head = m.group(0); inner = txt[m.end():txt.rfind("</svg>")]
+        vb = re.search(r'viewBox="([^"]+)"', head)
+        w = re.search(r'\bwidth="([\d.]+)', head); h = re.search(r'\bheight="([\d.]+)', head)
+        viewbox = vb.group(1) if vb else (f"0 0 {w.group(1)} {h.group(1)}" if w and h else "0 0 32 32")
+        inner_el = f'<svg x="0" y="0" width="32" height="32" viewBox="{viewbox}" preserveAspectRatio="xMidYMid meet">{inner.strip()}</svg>'
+    elif ext in (".png", ".jpg", ".jpeg", ".webp"):
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}[ext[1:]]
+        inner_el = f'<image href="data:{mime};base64,{base64.b64encode(raw).decode()}" x="0" y="0" width="32" height="32" preserveAspectRatio="xMidYMid meet"/>'
+    else:
+        sys.exit(f"logo must be .png, .jpg, .webp or .svg, not {ext or 'a file with no extension'}")
+    return f'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">{inner_el}</svg>'
+
+def is_logo_mark(inner):
+    """A mark that came from a logo file (raster or nested SVG) is shown as itself; a drawn mark is recoloured."""
+    return bool(re.search(r"<image\b|<svg\b", inner))
+
+DEFAULT_TAGLINE = "The operations console for forward-deployed teams."
+def normalize(b, name=None, color=None, logo=None, tagline=None):
+    """The complete brand block from the inputs (name, colour, logo, tagline), with every DERIVED field
+    recomputed from them: description, icon colours, neutral tint, the inlined mark. Inputs the caller
+    does not name keep their current value. Pinned tokens survive only while the colour is unchanged:
+    they were tuned for that colour, and a pin left behind under a new one is how a brand ends up
+    with a grey primary in dark mode (seen on the first trial of this command)."""
+    b = dict(b or {}); old_color = b.get("brand_color")
+    if name: b["product_name"] = name.strip()
+    if not b.get("product_name"): sys.exit("a brand needs a name: --name \"Acme Ops\"")
+    if color:
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}", color): sys.exit(f"--color must be a hex colour like #1F6F5C, not {color!r}")
+        b["brand_color"] = color.upper()
+    if tagline is not None: b["tagline"] = tagline.strip()
+    b.setdefault("tagline", DEFAULT_TAGLINE)
+    # derived, always from the inputs as they now stand
+    desc = b.get("description") or ""
+    if not desc or desc.startswith("TODO") or not desc.startswith(b["product_name"]):
+        b["description"] = f"{b['product_name']} — {b['tagline']}".rstrip(" —")
+    b.setdefault("radius", "0.625rem")
+    if b.get("brand_color") != old_color: b.pop("tokens", None)
+    if b.get("brand_color"):
+        if color or "neutral_chroma" not in b: b["neutral_chroma"] = 0.006 if b["brand_color"].startswith("#") else 0
+        if b["brand_color"].startswith("#") and (color or not b.get("icon_bg")):
+            b["icon_bg"] = b["brand_color"]; b["icon_fg"] = legible_on(b["icon_bg"])
+    if logo:
+        b["logo"] = os.path.relpath(logo if os.path.isabs(logo) else os.path.join(ROOT, logo), ROOT)
+        b["icon_svg"] = logo_to_icon_svg(b["logo"])
+    elif not b.get("logo") and (color or name or not b.get("icon_svg")):
+        b.pop("icon_svg", None); b["icon_svg"] = read_mark(b)[0]     # a fresh monogram in the new colours
+    if b.get("brand_color"): palette(b["brand_color"], b.get("neutral_chroma", 0.006))   # contrast guard
+    return b
+
+def set_brand(target, args):
+    """`set` for an app (state/application/<id>/application.json) or a product (state/products.json)."""
+    opt = lambda k: (args[args.index(k) + 1] if k in args and args.index(k) + 1 < len(args) else None)
+    kind, ident = target
+    if kind == "app":
+        p = os.path.join(ST, "application", ident, "application.json"); doc = load(p)
+        cur = doc.setdefault("surface", {}).get("branding") or {}
+        nb = normalize(cur, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"))
+        doc["surface"]["branding"] = nb
+        # the workspace tile follows the mark, unless the source deployment already had one
+        org = doc.setdefault("workspace", {}).setdefault("org", {})
+        if not org.get("logo_url") or org["logo_url"].startswith("data:image/svg+xml"):
+            org["logo_url"] = "data:image/svg+xml;base64," + base64.b64encode(nb["icon_svg"].encode()).decode()
+    else:
+        p = os.path.join(ST, "products.json"); doc = load(p)
+        prods = [x for x in doc["products"] if x["product_id"] == ident]
+        if not prods: sys.exit(f"no product {ident!r} in state/products.json")
+        prods[0]["brand"] = nb = normalize(prods[0].get("brand") or {}, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"))
+    json.dump(doc, open(p, "w"), indent=2, ensure_ascii=False); open(p, "a").write("\n")
+    mark = "logo file " + nb["logo"] if nb.get("logo") else "a monogram"
+    print(f"{kind} {ident}: brand set — {nb['product_name']!r}, colour {nb.get('brand_color', 'the mold greyscale')}, mark from {mark}, tagline {nb['tagline']!r}.")
+    print(f"  see it: python3 .claude/scripts/branding.py {ident} preview" if kind == "app" else "  stamps of this product from now on carry it; existing apps keep theirs")
+
+def preview(app_id, b):
+    """One HTML file showing what the brand does to the sign-in tile and the palette, light and dark."""
+    pal = palette(b["brand_color"], b.get("neutral_chroma", 0.006)) if b.get("brand_color") else None
+    if pal:
+        for scheme in ("light", "dark"):
+            for tok, val in (b.get("tokens", {}).get(scheme) or {}).items():
+                if tok in pal[scheme]: pal[scheme][tok] = val
+    svg = b.get("icon_svg") or read_mark(b)[0]
+    uri = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+    def side(scheme):
+        v = (lambda t: pal[scheme][t]) if pal else (lambda t: {"background": "#f7f7f7" if scheme == "light" else "#171717", "foreground": "#262626" if scheme == "light" else "#fafafa", "primary": "#303030" if scheme == "light" else "#ebebeb", "primary-foreground": "#fafafa" if scheme == "light" else "#343434", "muted-foreground": "#777", "border": "#e5e5e5" if scheme == "light" else "#333", "card": "#fff" if scheme == "light" else "#343434", "accent": "#efefef" if scheme == "light" else "#444", "ring": "#b4b4b4"}[t])
+        sw = "".join(f'<div style="flex:1;min-width:64px"><div style="height:36px;border-radius:8px;background:{v(t)};border:1px solid {v("border")}"></div><div style="font-size:11px;opacity:.7;margin-top:4px">{t}</div></div>' for t in ("background", "foreground", "primary", "accent", "muted-foreground", "border", "ring"))
+        return f'''<section style="flex:1;min-width:300px;background:{v("background")};color:{v("foreground")};padding:28px;border-radius:16px;border:1px solid {v("border")}">
+  <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.6;margin-bottom:18px">{scheme}</div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px"><img src="{uri}" alt="" style="width:40px;height:40px;border-radius:10px"><div style="font-size:22px;font-weight:600">{b["product_name"]}</div></div>
+  <div style="font-size:14px;color:{v("muted-foreground")};margin-bottom:20px">{b.get("tagline","")}</div>
+  <button style="background:{v("primary")};color:{v("primary-foreground")};border:0;border-radius:{b.get("radius","0.625rem")};padding:10px 16px;font-size:14px;font-weight:500">Continue with Google</button>
+  <div style="margin-top:10px;font-size:12px;color:{v("muted-foreground")};text-decoration:underline">Invited by email? Sign in with a code</div>
+  <div style="display:flex;gap:8px;margin-top:24px;flex-wrap:wrap">{sw}</div>
+</section>'''
+    html = f'''<title>{b["product_name"]} brand preview</title>
+<style>body{{margin:0;padding:24px;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#e9e9e9;color:#222}} h1{{font-size:16px;font-weight:600;margin:0 0 16px}}</style>
+<h1>{b["product_name"]} — what the sign-in page and palette will look like</h1>
+<div style="display:flex;gap:20px;flex-wrap:wrap">{side("light")}{side("dark")}</div>
+<p style="font-size:12px;opacity:.7;margin-top:16px">Derived from colour {b.get("brand_color","(mold greyscale)")}, mark from {"logo file " + b["logo"] if b.get("logo") else "a monogram"}. Change with: branding.py {app_id} set --name … --color … --logo …</p>'''
+    out = os.path.join(ROOT, "build", app_id, "brand-preview.html"); os.makedirs(os.path.dirname(out), exist_ok=True)
+    open(out, "w").write(html); print(f"preview written: {os.path.relpath(out, ROOT)}"); return out
 
 def auth_mark_jsx(inner):
     """The brand mark as JSX for the sign-in tile.
@@ -170,6 +301,10 @@ def auth_mark_jsx(inner):
     The tile already paints a foreground-coloured square, so the mark's own background rect is
     dropped and its strokes and fills are re-pointed at the background colour. SVG attributes are
     hyphenated; JSX wants them camel-cased."""
+    if is_logo_mark(inner):
+        svg = f'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">{inner}</svg>'
+        uri = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+        return f'<img src="{uri}" alt="" className="size-8 rounded-md" aria-hidden />'
     body = re.sub(r"<rect\b[^>]*/>", "", inner, count=1).strip()
     body = re.sub(r'\sfill="none"', "", body)
     body = re.sub(r'\sstroke="[^"]*"', ' className="stroke-background"', body)
@@ -277,8 +412,16 @@ def check(app_id, app, mold_dir):
 
 def main(a):
     if len(a) < 2: sys.exit(__doc__)
+    if a[0] == "--product":
+        if len(a) < 3 or a[2] != "set": sys.exit(__doc__)
+        return set_brand(("product", a[1]), a[3:])
     app_id, step = a[0], a[1]
+    if step == "set": return set_brand(("app", app_id), a[2:])
     app = load(os.path.join(ST, "application", app_id, "application.json"))
+    if step == "preview":
+        b = resolve(app)
+        if not b: sys.exit("no branding on this app; set one first: branding.py <app_id> set --name …")
+        return preview(app_id, b)
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
     if step == "show":
         b = resolve(app)
