@@ -104,6 +104,7 @@ import {
 import { SURFACE, TYPE } from "./tokens";
 
 
+import { SUBAGENT_KEYS } from "../subagent-meta.generated";
 /* ------------------- Workflow instructions: ⌘K inline editor -------------- */
 
 /**
@@ -176,16 +177,7 @@ return { worst, reply };
 `;
 
 /** The declared eve subagents — the only names an override can actually reach. */
-const SUBAGENT_IDS = new Set([
-  "workflow-author",
-  "deployment",
-  "configuration",
-  "evals",
-  "data-migration",
-  "customer-context",
-  "follow-ups",
-  "research",
-]);
+const SUBAGENT_IDS = new Set<string>(SUBAGENT_KEYS);
 
 function slugOf(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "-");

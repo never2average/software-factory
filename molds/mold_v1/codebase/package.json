@@ -62,7 +62,7 @@
     "prebuild": "npm run build:generated",
     "build:subagent-meta": "node scripts/gen-subagent-meta.mjs",
     "build:generated": "npm run build:skill-library && npm run build:workflow-library && npm run build:subagent-meta",
-    "check:generated": "npm run build:generated && git diff HEAD --exit-code -- setup/skills agent/lib/workflow-library.generated.ts app/_components/subagent-meta.generated.ts",
+    "check:generated": "npm run build:generated && git diff HEAD --exit-code -- setup/skills agent/lib/workflow-library.generated.ts app/_components/subagent-meta.generated.ts agent/lib/subagent-registry.generated.ts",
     "check:tenancy": "node scripts/check-tenancy.mjs",
     "test:workflow-args": "node --experimental-strip-types scripts/test-workflow-args.mjs",
     "deploy:web": "node scripts/deploy.mjs web",
@@ -75,7 +75,11 @@
     "test:chat-turn-state": "node --experimental-strip-types scripts/test-chat-turn-state.mjs",
     "test:attachment-e2e": "node --conditions=react-server --experimental-strip-types scripts/test-attachment-e2e.mjs",
     "test:chat-attachments": "node --experimental-strip-types scripts/test-chat-attachments.mjs",
-    "test:chat-usage": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-usage.mjs"
+    "test:chat-usage": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-usage.mjs",
+    "sync:subagent-shared": "node scripts/sync-subagent-shared.mjs",
+    "check:subagent-shared": "node scripts/sync-subagent-shared.mjs --check",
+    "check:subagents": "python3 scripts/check-subagents.py",
+    "fde:seed-subagent-rows": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/fde/seed-subagent-rows.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

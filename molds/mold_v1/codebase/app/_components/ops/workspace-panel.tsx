@@ -74,6 +74,7 @@ import { afterMenuClose } from "./after-menu-close";
 import { RosterImportDialog } from "./roster-import";
 import { WorkflowBuilder } from "./workflow-builder";
 
+import { SUBAGENT_META } from "../subagent-meta.generated";
 type Role = "owner" | "admin" | "engineer" | "member";
 type WorkspaceTab =
   | "dataroom"
@@ -539,8 +540,9 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
 
 /* -------------------------------- Agents --------------------------------- */
 
-/** The specialist subagents the orchestrator delegates to. */
-const SUBAGENTS: { key: string; name: string; description: string }[] = [
+/** The specialist subagents the orchestrator delegates to: curated copy for the built-in ones, then every other
+ *  declared subagent (discovered from agent/subagents/ by scripts/gen-subagent-meta.mjs) with what it declares. */
+const CURATED_SUBAGENTS: { key: string; name: string; description: string }[] = [
   { key: "research", name: "Research", description: "Investigates questions across the data room and the web, then returns synthesized findings." },
   { key: "customer-context", name: "Customer context", description: "Assembles the full history and current state for a customer before work begins." },
   { key: "configuration", name: "Configuration", description: "Sets up platform, solution, and agent configuration for a customer." },
@@ -551,6 +553,12 @@ const SUBAGENTS: { key: string; name: string; description: string }[] = [
   { key: "app-author", name: "App author", description: "Generates the living dashboard apps the agent refreshes on a schedule." },
   { key: "follow-ups", name: "Follow-ups", description: "Tracks and drafts the follow-ups coming out of meetings and threads." },
   { key: "browser", name: "Browser", description: "Drives a real browser to navigate, read, and capture pages." },
+];
+const SUBAGENTS: { key: string; name: string; description: string }[] = [
+  ...CURATED_SUBAGENTS.filter((row) => row.key in SUBAGENT_META),
+  ...Object.entries(SUBAGENT_META)
+    .filter(([key]) => !CURATED_SUBAGENTS.some((row) => row.key === key))
+    .map(([key, meta]) => ({ key, name: meta.name, description: meta.summary })),
 ];
 
 interface AgentConfig {

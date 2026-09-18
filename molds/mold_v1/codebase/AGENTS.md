@@ -24,6 +24,27 @@ Start with the **`onboard-self`** skill (get yourself signed in, wired, and reco
 as an FDE) before any customer work. Then `onboard-customer`, and the backfill
 skills for reconstructing customization and integration history.
 
+## Customising the eve agents
+
+Adding or changing a specialist subagent is guided by seven skills in
+[`.claude/skills/`](.claude/skills/). A subagent is a **full workspace** (rulebook, skills per
+format variation, sandbox scripts with self-tests, schemas, validators), and registering one
+is creating its directory and running `npm run build:subagent-meta`: no list is edited by hand.
+
+| Skill | Use it to |
+|---|---|
+| `eve-subagent-workspace` | build a new subagent end to end; the entry point and the standard `npm run check:subagents` enforces |
+| `eve-subagent-skills` | write the skill packages a subagent loads for each way its input varies |
+| `eve-sandbox-workspace` | give it a sandbox with parsers, seeded scripts, schemas, validators and shared helper families |
+| `eve-subagent-tools` | pick the narrowest tool set; `web_search` only through the gate |
+| `eve-subagent-wiring` | `subagent.json`, data-room path templates, root delegation text, the `workflows` row, what reads the generated registry |
+| `eve-subagent-verify` | prove it: the offline checks, both builds, a smoke turn, CI steps |
+| `eve-customize-existing-agent` | change an existing agent with the right lever (code vs per-workspace data) |
+
+A vertical (a set of subagents for one line of work) ships as a **subagent pack**: files
+dropped in, no fork, no edits to base files. See
+[`docs/SUBAGENT_PACKS.md`](docs/SUBAGENT_PACKS.md).
+
 ## Configuration
 
 Every environment variable the platform reads is documented in
@@ -60,3 +81,7 @@ Two consequences:
   full web access while the flag reads "off". If you add a flag, `grep` for
   every declaration of the tool first; a flag that covers some callers is worse
   than none, because it reports a guarantee it does not provide.
+  Subagents added by a pack ([`docs/SUBAGENT_PACKS.md`](docs/SUBAGENT_PACKS.md))
+  are declaring sites too and must use the same gated re-export
+  (`WEB_SEARCH_ENABLED ? webSearchTool : disableTool()`); `npm run check:subagents`
+  fails any `agent/**/tools/web_search.ts` that does not.

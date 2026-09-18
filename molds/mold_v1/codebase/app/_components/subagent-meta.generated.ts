@@ -7,6 +7,10 @@ export interface SubagentToolMeta {
 }
 
 export interface SubagentMeta {
+  /** Display name: subagent.json "name", else the title-cased key. */
+  readonly name: string;
+  /** One line for lists: subagent.json "summary", else the first sentence of the description. */
+  readonly summary: string;
   readonly description: string;
   readonly skillNames: readonly string[];
   readonly skillsSummary: string;
@@ -15,6 +19,8 @@ export interface SubagentMeta {
 
 export const SUBAGENT_META: Record<string, SubagentMeta> = {
   "app-author": {
+    "name": "App Author",
+    "summary": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots).",
     "description": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots). Delegate here whenever the task is to PRODUCE a document from the data room's current state: it gathers the relevant read-only signals (customers, tickets, FDEs, on-call, SLAs, interactions) and returns GitHub-flavored Markdown and nothing else. It reads and writes prose — it never mutates state, pages anyone, or files a ticket.",
     "skillNames": [],
     "skillsSummary": "",
@@ -86,45 +92,21 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "browser": {
+    "name": "Browser",
+    "summary": "Drive a real web browser to verify and interact with web pages: load a deployed customer UI and confirm a change rendered, scrape a console the platform has no API for, capture screenshots as signoff evidence, and — with human approval — click/type/fill/select to complete a flow.",
     "description": "Drive a real web browser to verify and interact with web pages: load a deployed customer UI and confirm a change rendered, scrape a console the platform has no API for, capture screenshots as signoff evidence, and — with human approval — click/type/fill/select to complete a flow. Delegate here for any 'open this page and tell me / show me / do X on it' task. Page actions are approval-gated; it cannot log in with stored credentials yet.",
     "skillNames": [],
     "skillsSummary": "",
     "tools": [
       {
-        "name": "browser_act",
-        "description": null
-      },
-      {
-        "name": "browser_close",
-        "description": null
-      },
-      {
-        "name": "browser_goto",
-        "description": null
-      },
-      {
-        "name": "browser_login",
-        "description": null
-      },
-      {
-        "name": "browser_open",
-        "description": null
-      },
-      {
-        "name": "browser_read",
-        "description": null
-      },
-      {
-        "name": "browser_screenshot",
-        "description": null
-      },
-      {
-        "name": "browser_wait",
+        "name": "browser",
         "description": null
       }
     ]
   },
   "configuration": {
+    "name": "Configuration",
+    "summary": "Configure a customer's platform: models, connections, feature flags, and guardrails.",
     "description": "Configure a customer's platform: models, connections, feature flags, and guardrails. Delegate here to review or change how a customer's deployment is set up.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
@@ -164,6 +146,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "customer-context": {
+    "name": "Customer Context",
+    "summary": "Keep the customer system of record current from meetings (Granola), email (Gmail), and Slack.",
     "description": "Keep the customer system of record current from meetings (Granola), email (Gmail), and Slack. Delegate here to capture what happened with a customer and write it back as interactions, follow-ups, or record updates.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
@@ -263,6 +247,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "data-migration": {
+    "name": "Data Migration",
+    "summary": "Plan and execute customer data migrations and imports (legacy CRM exports, historical data, bulk records).",
     "description": "Plan and execute customer data migrations and imports (legacy CRM exports, historical data, bulk records). Delegate here to move a customer's data into their platform safely.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
@@ -298,6 +284,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "deployment": {
+    "name": "Deployment",
+    "summary": "Deploy and operate customer platforms: Vercel deployments, releases, rollbacks, and health checks.",
     "description": "Deploy and operate customer platforms: Vercel deployments, releases, rollbacks, and health checks. Delegate here to ship or diagnose a customer environment.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
@@ -317,6 +305,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "evals": {
+    "name": "Evals",
+    "summary": "Build, run, and improve eval suites and interpret regressions for a customer.",
     "description": "Build, run, and improve eval suites and interpret regressions for a customer. Delegate here to check quality before/after a change or to investigate an eval score drop.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
@@ -352,6 +342,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "follow-ups": {
+    "name": "Follow Ups",
+    "summary": "Chase open customer follow-ups and prepare the daily stand-up summary.",
     "description": "Chase open customer follow-ups and prepare the daily stand-up summary. Delegate here to draft follow-up emails/Slack nudges and to produce the ranked, per-customer stand-up brief.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
@@ -443,6 +435,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "research": {
+    "name": "Research",
+    "summary": "Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders.",
     "description": "Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders. Delegate here to enrich or (re)build a customer's data room: it pulls the current record, meeting notes, and the web, writes findings back, and produces the six per-section Excel workbooks (Customers, Platform, Deployments, Solutions, Implementation, Tickets).",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
@@ -526,9 +520,14 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "workflow-author": {
+    "name": "Workflow Author",
+    "summary": "Write, lint and review Ops Center workflow scripts.",
     "description": "Write, lint and review Ops Center workflow scripts. Delegate here whenever someone asks for a workflow script to be written or changed: it authors the TypeScript that the sandbox executes (phase/agent/parallel/pipeline), holds the sandbox's hard limits in its head, and reviews an existing script for the things the validator and the sandbox will refuse. It writes code and nothing else — it never runs a workflow, never touches the data room, and never calls a tool.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": []
   }
 };
+
+/** Every declared subagent, discovered from agent/subagents/<key>/agent.ts. */
+export const SUBAGENT_KEYS: readonly string[] = Object.keys(SUBAGENT_META);

@@ -10,6 +10,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { agentConfigs } from "./db/schema.ts";
+import { SUBAGENT_LABELS } from "./subagent-registry.generated.ts";
 
 export interface AgentConfigRow {
   agentKey: string;
@@ -49,7 +50,7 @@ export function renderAgentConfigs(rows: AgentConfigRow[]): string | null {
   const paused = rows.filter((r) => r.paused);
   const custom = rows.filter((r) => r.instructions && r.instructions.trim());
   if (paused.length === 0 && custom.length === 0) return null;
-  const label = (k: string) => AGENT_LABELS[k] ?? k;
+  const label = (k: string) => AGENT_LABELS[k] ?? SUBAGENT_LABELS[k] ?? k;
   const lines: string[] = ["## Workspace agent configuration", ""];
   if (paused.length > 0) {
     lines.push(

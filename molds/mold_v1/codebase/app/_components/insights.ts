@@ -5,6 +5,8 @@
 // Events are typed loosely on purpose — this is display logic that degrades
 // gracefully if a shape shifts, rather than coupling the UI to internal types.
 
+import { SUBAGENT_KEYS } from "./subagent-meta.generated";
+
 export interface SubagentRun {
   callId: string;
   name: string;
@@ -323,7 +325,7 @@ function applyToolResult(state: Insights, tool: string, out: Record<string, unkn
   return next;
 }
 
-const SUBAGENT_NAMES = new Set([
+const SUBAGENT_NAMES = new Set<string>([
   "configuration",
   "customer-context",
   "data-migration",
@@ -333,6 +335,8 @@ const SUBAGENT_NAMES = new Set([
   // The document-generation / data-room builder. Without this it fell through to
   // applyToolResult and its runs never appeared in the Control Panel.
   "research",
+  // Every declared subagent (discovered), so one added as a directory is attributed like the built-in ones.
+  ...SUBAGENT_KEYS,
 ]);
 
 /**

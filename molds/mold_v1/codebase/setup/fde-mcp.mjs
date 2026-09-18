@@ -348,7 +348,10 @@ const dataroom = {
 
 const json = (v) => JSON.stringify(v, null, 2);
 
-/** The eve subagents the orchestrator can delegate to. */
+/** The built-in eve subagents, used for listings and hints. A deployment may declare more (a subagent is a
+ *  directory under agent/subagents/, and packs add them), and this CLI ships without the codebase, so the list
+ *  is a hint, never a gate: any well-formed key is passed through and the server decides. */
+const SUBAGENT_KEY = /^[a-z][a-z0-9-]{0,79}$/;
 const SUBAGENT_IDS = [
   "research", "customer-context", "configuration", "deployment", "data-migration",
   "evals", "workflow-author", "app-author", "follow-ups", "browser",
@@ -657,7 +660,8 @@ const TOOLS = [
       const { items = [] } = await api("GET", "/api/ops/agent-configs").catch(() => ({ items: [] }));
       const cfg = new Map(items.map((i) => [i.agentKey, i]));
       return json(
-        SUBAGENT_IDS.map((key) => ({
+        // Built-in keys, then any other key this workspace has configured (a subagent the deployment added).
+        [...SUBAGENT_IDS, ...[...cfg.keys()].filter((k) => !SUBAGENT_IDS.includes(k))].map((key) => ({
           agent: key,
           paused: cfg.get(key)?.paused ?? false,
           instructions: cfg.get(key)?.instructions ?? null,
@@ -672,15 +676,15 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        agent: { type: "string", description: "One of: " + SUBAGENT_IDS.join(", ") },
+        agent: { type: "string", description: "A subagent key. Built in: " + SUBAGENT_IDS.join(", ") + ". A deployment may declare more; agent_configs lists what is set." },
         paused: { type: "boolean" },
         instructions: { type: "string", description: "Standing instructions; pass an empty string to clear." },
       },
       required: ["agent"],
     },
     handler: async ({ agent, paused, instructions }) => {
-      if (!SUBAGENT_IDS.includes(agent)) {
-        throw new Error(`Unknown subagent "${agent}". One of: ${SUBAGENT_IDS.join(", ")}`);
+      if (typeof agent !== "string" || !SUBAGENT_KEY.test(agent)) {
+        throw new Error(`"${agent}" is not a subagent key (lowercase letters, digits and hyphens). Built in: ${SUBAGENT_IDS.join(", ")}`);
       }
       const body = { agentKey: agent };
       if (paused !== undefined) body.paused = paused;

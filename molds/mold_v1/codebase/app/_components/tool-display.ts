@@ -3,6 +3,8 @@
  * Used by the chat's tool-cluster rows and standalone tool-card headers so the
  * transcript never shows raw identifiers like "eve:subagent:research".
  */
+import { SUBAGENT_META } from "./subagent-meta.generated";
+
 
 const SUBAGENT_PREFIX = "eve:subagent:";
 
@@ -70,6 +72,8 @@ const SUBAGENT_DESCRIPTIONS: Record<string, string> = {
 export function subagentDescription(name: string): string {
   return (
     SUBAGENT_DESCRIPTIONS[name] ??
+    // A subagent added as a directory (or by a pack) has no curated copy here: use what it declares.
+    (SUBAGENT_META[name]?.summary || undefined) ??
     "A delegated specialist agent with its own instructions, tools, and session."
   );
 }
@@ -78,7 +82,7 @@ export function subagentDescription(name: string): string {
  *  chat's delegation cards all format through here so the name never appears as
  *  a raw hyphenated identifier anywhere. */
 export function subagentDisplayName(name: string): string {
-  const known = SUBAGENT_NAMES[name];
+  const known = SUBAGENT_NAMES[name] ?? SUBAGENT_META[name]?.name;
   if (known) return known;
   return name
     .split(/[-_\s]+/)

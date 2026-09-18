@@ -32,6 +32,7 @@
  */
 import { and, eq, sql } from "drizzle-orm";
 import { recipes, workflows } from "./db/schema.ts";
+import { SUBAGENT_KEYS, SUBAGENT_SUMMARIES } from "./subagent-registry.generated.ts";
 import { WORKFLOW_LIBRARY } from "./workflow-library.generated.ts";
 
 /**
@@ -141,5 +142,56 @@ export async function provisionWorkspace(
     created++;
   }
 
+  // One "on delegation" row per declared subagent (see seedSubagentWorkflowRows).
+  const sub = await seedSubagentWorkflowRows(db, orgId, actor);
+  created += sub.created;
+  skipped += sub.skipped;
+
   return { recipesCreated, recipesSkipped, workflowsCreated: created, workflowsSkipped: skipped };
+}
+
+/**
+ * One "on delegation" `workflows` row per declared subagent, idempotent.
+ *
+ * The row's NAME is what a subagent's hooks/usage.ts files its runs under (workflow-usage.ts resolves by name)
+ * and what its operator override is read from, so a subagent without one runs unrecorded and cannot be tuned.
+ * Discovered from the generated registry, not listed: a subagent added as a directory, or by a pack, gets its
+ * row the next time this runs. provisionWorkspace calls it for a new workspace; for an EXISTING workspace run
+ * `npm run fde:seed-subagent-rows -- --org <id>`, which touches nothing else.
+ *
+ * `db` must already be scoped to `orgId` (withOrgDb / withOrgRls), as for provisionWorkspace.
+ */
+export async function seedSubagentWorkflowRows(
+  db: AnyDb,
+  orgId: string,
+  actor = "system",
+): Promise<{ created: number; skipped: number }> {
+  if (!orgId) throw new Error("seedSubagentWorkflowRows: orgId is required");
+  let created = 0;
+  let skipped = 0;
+  for (const key of SUBAGENT_KEYS) {
+    const existing = await (db as any)
+      .select({ id: workflows.id })
+      .from(workflows)
+      .where(and(eq(workflows.name, key), eq(workflows.orgId, orgId)))
+      .limit(1);
+    if (existing.length > 0) {
+      skipped++;
+      continue;
+    }
+    await (db as any).insert(workflows).values({
+      orgId,
+      name: key,
+      description: SUBAGENT_SUMMARIES[key] ?? "",
+      trigger: "on delegation",
+      steps: [],
+      script: null,
+      instructions: null,
+      instructionsEnabled: false,
+      enabled: true,
+      createdBy: actor,
+    });
+    created++;
+  }
+  return { created, skipped };
 }

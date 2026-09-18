@@ -1,8 +1,11 @@
-// Generates app/_components/subagent-meta.generated.ts from the agent's
-// subagent definitions (instructions.md, tools/, skills/, agent.ts) so the
-// Control Panel's info dialog can show the REAL system instructions, skills,
-// and tool roster. Re-run after changing any subagent:
-//   node scripts/gen-subagent-meta.mjs
+// Discovers the subagents under agent/subagents/ and generates everything the rest of the codebase needs to know
+// about them, so ADDING A SUBAGENT IS ADDING A DIRECTORY — no list anywhere is edited by hand:
+//   app/_components/subagent-meta.generated.ts   keys, display names, summaries, skills, tool roster (the UI)
+//   agent/lib/subagent-registry.generated.ts     keys, labels, extra data-room path templates (the agent + scripts)
+// A subagent may carry an optional `subagent.json` next to its agent.ts:
+//   { "name": "Display Name", "summary": "one line for the UI", "dataroomPaths": ["Customers/{customer_id}/filings/**"] }
+// Without it the name is the title-cased key and the summary is the first sentence of the agent.ts description.
+// See docs/SUBAGENT_PACKS.md. Re-run after changing any subagent:  npm run build:subagent-meta
 import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -51,9 +54,56 @@ function toolDescription(subDir, name) {
   return null;
 }
 
+const titleCase = (key) => key.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+const firstSentence = (text) => (text.match(/^.*?[.!?](?=\s|$)/s)?.[0] ?? text).replace(/\s+/g, " ").trim();
+const TEMPLATE_OK = /^[A-Za-z][A-Za-z0-9_-]*(\/(\{[a-z_]+\}|[A-Za-z0-9_.{}-]+))*\/(\*\*|[A-Za-z0-9_.{}-]+)$/;
+
+// The generator must refuse what the data room would refuse: compileTemplate() in agent/lib/dataroom-store.ts
+// throws at MODULE LOAD on an unknown domain or token, so one bad template in one subagent.json would take down
+// every data-room tool. The domains and tokens are read from the source files, so they cannot drift.
+function listBetween(file, startMarker, endMarker, pattern) {
+  const src = readFileSync(join(ROOT, file), "utf8");
+  const at = src.indexOf(startMarker);
+  if (at === -1) return null;
+  const body = src.slice(at, src.indexOf(endMarker, at));
+  return [...body.matchAll(pattern)].map((m) => m[1]);
+}
+const DOMAINS = listBetween("agent/lib/dataroom-schema.ts", "export const dataroomDomainSchema = z.enum([", "]);", /^\s*"([A-Za-z]+)",/gm);
+const TOKENS = listBetween("agent/lib/dataroom-store.ts", "const TOKEN_PATTERNS", "\n};", /^\s*([a-z_]+):/gm);
+function templateProblem(t) {
+  if (typeof t !== "string" || !TEMPLATE_OK.test(t) || t.includes("..")) return "is not a data-room path template";
+  const segments = t.split("/");
+  if (DOMAINS && !DOMAINS.includes(segments[0])) return `starts with "${segments[0]}", which is not a data-room domain (${DOMAINS.join(", ")})`;
+  if (segments.slice(0, -1).includes("**")) return "uses ** before the final segment";
+  for (const m of t.matchAll(/\{([a-z_]+)\}/g)) {
+    if (TOKENS && !TOKENS.includes(m[1])) return `uses unknown token {${m[1]}} (known: ${TOKENS.join(", ")})`;
+  }
+  return null;
+}
+
 const meta = {};
+const extraTemplates = [];
 for (const name of readdirSync(SUB).sort()) {
   const dir = join(SUB, name);
+  // A directory is a subagent only if it declares one; stray folders are not registered.
+  if (!existsSync(join(dir, "agent.ts"))) continue;
+  let decl = {};
+  if (existsSync(join(dir, "subagent.json"))) {
+    try {
+      decl = JSON.parse(readFileSync(join(dir, "subagent.json"), "utf8"));
+    } catch (error) {
+      console.error(`agent/subagents/${name}/subagent.json is not valid JSON: ${error.message}`);
+      process.exit(1);
+    }
+  }
+  for (const t of decl.dataroomPaths ?? []) {
+    const problem = templateProblem(t);
+    if (problem) {
+      console.error(`agent/subagents/${name}/subagent.json: dataroomPaths entry ${JSON.stringify(t)} ${problem}`);
+      process.exit(1);
+    }
+    if (!extraTemplates.includes(t)) extraTemplates.push(t);
+  }
   const read = (f) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8").trim() : "");
   // Skills: a one-paragraph summary plus the named SKILL.md procedures —
   // the dialog doesn't render the full doc.
@@ -74,8 +124,11 @@ for (const name of readdirSync(SUB).sort()) {
         .sort()
         .map((t) => ({ name: t, description: toolDescription(dir, t) }))
     : [];
+  const description = extractDescription(read("agent.ts")) ?? "";
   meta[name] = {
-    description: extractDescription(read("agent.ts")) ?? "",
+    name: typeof decl.name === "string" && decl.name.trim() ? decl.name.trim() : titleCase(name),
+    summary: typeof decl.summary === "string" && decl.summary.trim() ? decl.summary.trim() : firstSentence(description),
+    description,
     skillNames,
     skillsSummary,
     tools,
@@ -91,6 +144,10 @@ export interface SubagentToolMeta {
 }
 
 export interface SubagentMeta {
+  /** Display name: subagent.json "name", else the title-cased key. */
+  readonly name: string;
+  /** One line for lists: subagent.json "summary", else the first sentence of the description. */
+  readonly summary: string;
   readonly description: string;
   readonly skillNames: readonly string[];
   readonly skillsSummary: string;
@@ -98,8 +155,36 @@ export interface SubagentMeta {
 }
 
 export const SUBAGENT_META: Record<string, SubagentMeta> = ${JSON.stringify(meta, null, 2)};
+
+/** Every declared subagent, discovered from agent/subagents/<key>/agent.ts. */
+export const SUBAGENT_KEYS: readonly string[] = Object.keys(SUBAGENT_META);
 `;
 writeFileSync(join(ROOT, "app/_components/subagent-meta.generated.ts"), out);
+
+const registry = `// AUTO-GENERATED by scripts/gen-subagent-meta.mjs — do not edit by hand.
+// The agent-side view of the declared subagents. Plain data, no imports, so scripts can load it too.
+
+/** Every declared subagent, discovered from agent/subagents/<key>/agent.ts. */
+export const SUBAGENT_KEYS: readonly string[] = ${JSON.stringify(Object.keys(meta), null, 2)};
+
+/** Display label per subagent key. */
+export const SUBAGENT_LABELS: Record<string, string> = ${JSON.stringify(
+  Object.fromEntries(Object.entries(meta).map(([k, v]) => [k, v.name])),
+  null,
+  2,
+)};
+
+/** One-line summary per subagent key. */
+export const SUBAGENT_SUMMARIES: Record<string, string> = ${JSON.stringify(
+  Object.fromEntries(Object.entries(meta).map(([k, v]) => [k, v.summary])),
+  null,
+  2,
+)};
+
+/** Data-room path templates contributed by subagents (subagent.json "dataroomPaths"), appended to dm.md's own. */
+export const EXTRA_DATAROOM_PATH_TEMPLATES: readonly string[] = ${JSON.stringify(extraTemplates, null, 2)};
+`;
+writeFileSync(join(ROOT, "agent/lib/subagent-registry.generated.ts"), registry);
 console.log(
   "generated:",
   Object.entries(meta)

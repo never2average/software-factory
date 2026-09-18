@@ -43,6 +43,7 @@ import {
   type DataroomDomain,
   type JsonValue,
 } from "./dataroom-schema.ts";
+import { EXTRA_DATAROOM_PATH_TEMPLATES } from "./subagent-registry.generated.ts";
 
 // ---------------------------------------------------------------------------
 // Path grammar — the dm.md tree as validated templates
@@ -191,6 +192,10 @@ export const DATAROOM_PATH_TEMPLATES: readonly string[] = [
   // --- Uploads -------------------------------------------------------------
   // Files a signed-in user uploads through the chat, filed under their identity.
   "Uploads/{person_id}/**",
+  // --- Contributed by subagents ---------------------------------------------
+  // A subagent that keeps its own files declares their templates in its subagent.json ("dataroomPaths");
+  // scripts/gen-subagent-meta.mjs validates and collects them. dm.md stays the canonical core.
+  ...EXTRA_DATAROOM_PATH_TEMPLATES,
 ];
 
 interface CompiledTemplate {
