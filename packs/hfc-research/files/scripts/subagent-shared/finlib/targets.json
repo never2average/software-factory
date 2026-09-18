@@ -1,0 +1,1 @@
+{ "subagents": ["hfc-kpi-extraction", "lodr-filings", "investor-presentations", "annual-report-format"] }

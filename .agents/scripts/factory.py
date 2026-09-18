@@ -384,18 +384,24 @@ def _lane_specs():
     return errs
 
 def _agent_keys(app_id, docs):
-    """The agent_key enum in application.schema.json is the union over every mold, so the schema alone lets a
-    mold_v1 app name a subagent only mold_fin ships: state that validates and configures nothing. A key is
-    real only if the app's own mold has agent/subagents/<key>/agent.ts."""
+    """Which subagents exist differs per application (its mold plus its packs), so the schema only checks the
+    key's shape. A key is real only if the app's mold, or one of its packs, has agent/subagents/<key>/agent.ts;
+    and every pack the app names must exist."""
     app = docs.get("application") or {}
     mold = app.get("mold_id"); base = os.path.join(ROOT, "molds", str(mold), "codebase", "agent", "subagents")
     subs = (((app.get("surface") or {}).get("primary_context") or {}).get("instructions") or {}).get("subagents") or []
-    errs = []
+    errs = []; packs = app.get("packs") or []
+    for p in packs:
+        if not os.path.exists(os.path.join(ROOT, "packs", str(p), "pack.json")):
+            errs.append(f"{app_id}/application.json: pack '{p}' does not exist (no packs/{p}/pack.json)")
+    def has(k):
+        return os.path.exists(os.path.join(base, k, "agent.ts")) or any(
+            os.path.exists(os.path.join(ROOT, "packs", str(p), "files", "agent", "subagents", k, "agent.ts")) for p in packs)
     for s in subs:
         k = s.get("agent_key") if isinstance(s, dict) else None
-        if k and not os.path.exists(os.path.join(base, k, "agent.ts")):
-            errs.append(f"{app_id}/application.json: subagent '{k}' does not exist in {mold} "
-                        f"(no molds/{mold}/codebase/agent/subagents/{k}/agent.ts), so its instructions would reach nothing")
+        if k and not has(k):
+            errs.append(f"{app_id}/application.json: subagent '{k}' exists neither in {mold} nor in this application's packs "
+                        f"({', '.join(packs) or 'none'}), so its instructions would reach nothing")
     return errs
 def cmd_validate(a):
     errs = []

@@ -1,0 +1,4 @@
+{
+  "name": "HFC KPI Extraction",
+  "summary": "Builds the standard quarterly KPI table for a housing finance company from its LODR results and investor presentation, cited to the filing and page."
+}

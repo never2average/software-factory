@@ -1,8 +1,8 @@
 {
   "$schema": "../app_id/application.schema.json",
   "app_id": "onfinance_hfc",
-  "mold_id": "mold_fin",
-  "mold_commit": "79df480edf4ba9095f98a4e288e1c71699b13e81",
+  "mold_id": "mold_v1",
+  "mold_commit": "a735e5e485f24bbb347d53797af2a75221a5797a",
   "status": "planned",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
@@ -83,7 +83,7 @@
         {
           "kind": "custom",
           "dataroom_path": "Customers/{customer_id}/filings/lodr/**",
-          "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) — the analysts' Quarterly Report — plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
+          "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) \u2014 the analysts' Quarterly Report \u2014 plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
           "sync": "manual_entry",
           "required": true,
           "seeded_from": "none"
@@ -116,10 +116,6 @@
           {
             "agent_key": "annual-report-format",
             "paused": false
-          },
-          {
-            "agent_key": "browser",
-            "paused": true
           }
         ],
         "workspace": "This workspace does financial analysis of Indian housing finance companies only, equity-listed and debt-listed. Primary sources are SEBI LODR filings and investor presentations kept under each company's filings folder. Every figure is cited to its document and page or slide, reported in Rs crore, on a standalone basis where both exist, for the discrete quarter. The KPI definitions, source precedence and formulas are fixed by the analysts and applied by the hfc-kpi-extraction specialist; restructured-book details are excluded.",
@@ -136,7 +132,7 @@
       },
       "entity_vocabulary": {
         "account_noun": "company",
-        "note": "a customer record is a covered company; the mold's UI still says customer (mold_fin keeps mold_v1's hardcoded noun)"
+        "note": "mold_v1 cannot rename accounts; recorded for the parity audit"
       }
     },
     "multiplayer_context": {
@@ -180,7 +176,7 @@
       "product_name": "OnFinance AI",
       "brand_color": "#2D2D2D",
       "tagline": "Research workspace for listed and debt-listed Indian housing finance companies.",
-      "description": "OnFinance AI — Research workspace for listed and debt-listed Indian housing finance companies.",
+      "description": "OnFinance AI \u2014 Research workspace for listed and debt-listed Indian housing finance companies.",
       "radius": "0.625rem",
       "neutral_chroma": 0.006,
       "icon_bg": "#2D2D2D",
@@ -206,5 +202,8 @@
       "status": "pending"
     }
   },
-  "customer_id": "internal"
+  "customer_id": "internal",
+  "packs": [
+    "hfc-research"
+  ]
 }

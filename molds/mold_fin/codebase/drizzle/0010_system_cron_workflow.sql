@@ -1,1 +1,0 @@
-ALTER TABLE "system_cron_overrides" ADD COLUMN "workflow" text;

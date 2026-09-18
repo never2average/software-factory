@@ -1,7 +1,7 @@
 {
   "$schema": "../app_id/datainfra.schema.json",
   "dataroom": {
-    "spec": "molds/mold_fin/codebase/dm.md",
+    "spec": "molds/mold_v1/codebase/dm.md",
     "top_level": [
       "Customers",
       "Platform",

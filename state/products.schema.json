@@ -155,6 +155,14 @@
             "required": [
               "product_name"
             ]
+          },
+          "packs": {
+            "type": "array",
+            "description": "Packs every application of this product gets (packs/<pack_id>/). Products differ by pack and brand, never by forking a mold.",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{1,40}$"
+            }
           }
         },
         "description": "One product. Several products may share a mold: same codebase, different brand and packaging (a brief picks one with `product: <id>`)."

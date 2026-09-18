@@ -1,0 +1,48 @@
+{
+  "pack_id": "hfc-research",
+  "name": "Housing finance research",
+  "version": "1.0.0",
+  "description": "Financial analysis of Indian housing finance companies (equity-listed and debt-listed) from SEBI LODR filings and investor presentations: four specialist subagents as full workspaces, the analysts' KPI rulebook, and the shared finlib parsing helpers.",
+  "subagents": [
+    "hfc-kpi-extraction",
+    "lodr-filings",
+    "investor-presentations",
+    "annual-report-format"
+  ],
+  "shared_families": [
+    "finlib"
+  ],
+  "instructions": [
+    "agent/instructions/50-pack-hfc-research.md"
+  ],
+  "requires": {
+    "mold": "a mold whose codebase has subagent packs (fde-agent with docs/SUBAGENT_PACKS.md)",
+    "capabilities": {
+      "web_search": "lodr-filings and investor-presentations fetch filings with it; they work from the data room only when it is off"
+    }
+  },
+  "rulebook": "files/agent/subagents/hfc-kpi-extraction/schemas/kpi-spec.md",
+  "state": {
+    "corpus": [
+      {
+        "kind": "custom",
+        "dataroom_path": "Customers/{customer_id}/filings/lodr/**",
+        "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) — the analysts' Quarterly Report — plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
+        "sync": "manual_entry",
+        "required": true,
+        "seeded_from": "none"
+      },
+      {
+        "kind": "custom",
+        "dataroom_path": "Customers/{customer_id}/filings/presentations/**",
+        "description": "Investor presentations and earnings call transcripts per covered company; for an unlisted HFC, the parent company's presentation. Fetched and read by the investor-presentations subagent.",
+        "sync": "manual_entry",
+        "required": true,
+        "seeded_from": "none"
+      }
+    ],
+    "workspace": "This workspace does financial analysis of Indian housing finance companies only, equity-listed and debt-listed. Primary sources are SEBI LODR filings and investor presentations kept under each company's filings folder. Every figure is cited to its document and page or slide, reported in Rs crore, on a standalone basis where both exist, for the discrete quarter. The KPI definitions, source precedence and formulas are fixed by the analysts and applied by the hfc-kpi-extraction specialist; restructured-book details are excluded.",
+    "persona_name": "OnFinance Research",
+    "tone": "precise, sourced, no opinion on whether a number is good or bad"
+  }
+}

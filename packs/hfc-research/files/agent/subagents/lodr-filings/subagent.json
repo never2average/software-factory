@@ -1,0 +1,7 @@
+{
+  "name": "LODR Filings",
+  "summary": "Finds, files and reads a company's SEBI LODR disclosures by regulation and keeps its dated filing log.",
+  "dataroomPaths": [
+    "Customers/{customer_id}/filings/**"
+  ]
+}
