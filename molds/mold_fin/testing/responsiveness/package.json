@@ -1,0 +1,14 @@
+{
+  "name": "mold-v1-responsiveness-lane",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Responsiveness lane harness for mold_fin. Lives beside the lane so nothing is installed into the immutable mold codebase.",
+  "scripts": {
+    "check": "node deps-check.mjs",
+    "layout": "node responsive.mjs --only layout --url",
+    "targets": "node responsive.mjs --only targets --url",
+    "interaction": "node responsive.mjs --only interaction --url"
+  },
+  "comment": "There are no dependencies to install. Playwright and chromium are the VM-wide install, reached with createRequire because Node ESM ignores NODE_PATH; the layout-shift, event-timing and target-size measurements are plain DOM and Performance APIs. This lane never adds a dependency to molds/mold_fin/codebase, and never runs npm install there."
+}

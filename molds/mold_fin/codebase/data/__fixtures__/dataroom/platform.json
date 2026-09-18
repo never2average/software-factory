@@ -1,0 +1,40 @@
+{
+  "platformVersionId": "2026.06.3",
+  "changelogs": [
+    {
+      "date": "2026-06-14",
+      "path": "Platform/2026.06.3/2026-06-14_changelog_manager.md",
+      "title": "2026.06.3 — guardrail policy engine v2, SAML SCIM sync fixes"
+    }
+  ],
+  "designDecisions": {
+    "tenancy": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://onfinance.in/schemas/2026.06.3/tenancy.schemas.json",
+      "title": "Tenancy contract",
+      "type": "object",
+      "properties": {
+        "tenantId": { "type": "string" },
+        "isolationMode": { "type": "string", "enum": ["shared", "dedicated"] }
+      },
+      "required": ["tenantId", "isolationMode"]
+    },
+    "pipelineConfig": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://onfinance.in/schemas/2026.06.3/pipeline_config.schemas.json",
+      "title": "Pipeline config contract",
+      "type": "object",
+      "properties": {
+        "pipelineId": { "type": "string" },
+        "steps": { "type": "array" }
+      },
+      "required": ["pipelineId", "steps"]
+    }
+  },
+  "helmVariants": [
+    "Platform/2026.06.3/architecture/helm/single-tenant-vpc",
+    "Platform/2026.06.3/architecture/helm/customer-cloud-byoc"
+  ],
+  "terraformVariants": ["Platform/2026.06.3/architecture/infrastructure/aws-vpc-baseline"],
+  "securityArtifacts": ["Platform/2026.06.3/security/sbom-2026.06.3.spdx.json"]
+}

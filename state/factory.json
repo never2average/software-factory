@@ -70,6 +70,20 @@
         "multi_role_isolation"
       ],
       "path": "molds/mold_v3"
+    },
+    {
+      "mold_id": "mold_fin",
+      "status": "active",
+      "base": "mold_v1",
+      "definition": "mold_v1 specialised for financial research on listed Indian housing finance companies: SEBI LODR filings and investor presentations as primary sources, four dedicated research subagents",
+      "target_model": "GLM 5.2",
+      "capabilities": [],
+      "path": "molds/mold_fin",
+      "source": {
+        "repo": "github.com/never2average/fde-agent",
+        "commit": "79df480edf4ba9095f98a4e288e1c71699b13e81",
+        "snapshot_date": "2026-09-18"
+      }
     }
   ],
   "loop": {

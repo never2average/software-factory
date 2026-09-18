@@ -1,0 +1,37 @@
+{
+  "name": "@delivery-agents/cli",
+  "version": "0.11.2",
+  "description": "Sign in to Delivered and connect your coding agent to the workspace over MCP.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "bin": {
+    "cli": "./fde-cli.mjs",
+    "fde-login": "./fde-login.mjs",
+    "fde-mcp": "./fde-mcp.mjs",
+    "fde-install-skill": "./fde-install-skill.mjs"
+  },
+  "files": [
+    "fde-cli.mjs",
+    "fde-login.mjs",
+    "fde-mcp.mjs",
+    "dm.md",
+    "README.md",
+    "fde-install-skill.mjs",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "delivered",
+    "fde",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepublishOnly": "node ../scripts/build-skill-library.mjs"
+  }
+}

@@ -1,0 +1,173 @@
+@import "tailwindcss";
+@source "../node_modules/streamdown/dist/*.js";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+}
+
+/*
+ * Type scale — one source of truth for every font size.
+ *
+ * Pixels on purpose: the scale is fixed and does not rescale with the browser
+ * root font size (no "zoom" behaviour). Sizes are tuned a step smaller than
+ * Tailwind's rem defaults (base 16→14, 4xl 36→30) so the UI reads compact
+ * rather than oversized. Use these `text-*` utilities everywhere instead of
+ * arbitrary `text-[13px]` values so sizing stays consistent.
+ */
+@theme {
+  --text-4xs: 9px;
+  --text-4xs--line-height: 12px;
+  --text-3xs: 10px;
+  --text-3xs--line-height: 14px;
+  --text-2xs: 11px;
+  --text-2xs--line-height: 15px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+  --text-base: 14px;
+  --text-base--line-height: 21px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 18px;
+  --text-xl--line-height: 26px;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 28px;
+  --text-3xl: 26px;
+  --text-3xl--line-height: 32px;
+  --text-4xl: 30px;
+  --text-4xl--line-height: 34px;
+}
+
+:root {
+  color-scheme: light;
+  /* Soft neutral page with white elevated surfaces so cards/composer pop. */
+  --background: oklch(0.971 0 0);
+  --foreground: oklch(0.16 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.16 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.16 0 0);
+  --primary: oklch(0.19 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.94 0 0);
+  --secondary-foreground: oklch(0.19 0 0);
+  --muted: oklch(0.94 0 0);
+  /* 0.52, not 0.6: secondary text sits on background, card AND muted, and must
+   * read 4.5:1 (WCAG AA) on all three — 0.6 was 3.6:1 on the page itself. */
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.94 0 0);
+  --accent-foreground: oklch(0.19 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.916 0 0);
+  --input: oklch(0.916 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+}
+
+/*
+ * Dark palette, applied two ways:
+ *   - system preference, UNLESS the user has explicitly chosen light
+ *   - an explicit [data-theme="dark"] choice, which wins over the system
+ *
+ * The token list is duplicated because a media query and an attribute selector
+ * cannot be combined into one rule. They must stay in sync — if you edit one,
+ * edit the other.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+  }
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+}
+
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--background);
+  font-family: var(--font-sans);
+}
+
+/* MUST stay inside @layer base. Unlayered CSS beats every @layer, so an
+   unlayered `font: inherit` here silently defeats `text-xs`/`text-2xs` on every
+   button, input and textarea in the app — the class lands in the DOM and does
+   nothing. Layered, it still gives controls the app's font family while letting
+   a utility override the size. */
+@layer base {
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+}

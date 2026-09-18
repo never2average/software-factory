@@ -1,0 +1,78 @@
+{
+  "internalStaffAssignments": [
+    {
+      "customer_id": "acme-bank",
+      "staffRole": "solution_engineer",
+      "name": "Operator Jain",
+      "title": "Lead Forward-Deployed Engineer",
+      "employerOrg": "OnFinance",
+      "email": "operator@example.com",
+      "lastContact": "2026-07-06"
+    },
+    {
+      "customer_id": "northwind-cap",
+      "staffRole": "solution_engineer",
+      "name": "Operator Jain",
+      "title": "Lead Forward-Deployed Engineer",
+      "employerOrg": "OnFinance",
+      "email": "operator@example.com",
+      "lastContact": "2026-07-06"
+    },
+    {
+      "customer_id": "acme-bank",
+      "staffRole": "account_executive",
+      "name": "Rohan Gupta",
+      "title": "Enterprise AE",
+      "employerOrg": "OnFinance",
+      "email": "operator@example.com",
+      "lastContact": "2026-06-30"
+    },
+    {
+      "customer_id": "northwind-cap",
+      "staffRole": "account_executive",
+      "name": "Lena Ortiz",
+      "title": "Growth AE",
+      "employerOrg": "OnFinance",
+      "email": "operator@example.com",
+      "lastContact": "2026-07-05"
+    }
+  ],
+  "customerStakeholders": [
+    {
+      "customer_id": "acme-bank",
+      "stakeholderRole": "decision_maker",
+      "name": "Sam Cole",
+      "title": "CISO",
+      "employerOrg": "Acme Bank",
+      "email": "sam@acmebank.com",
+      "lastContact": "2026-06-28"
+    },
+    {
+      "customer_id": "northwind-cap",
+      "stakeholderRole": "key_user",
+      "name": "Alex Kim",
+      "title": "Ops Manager",
+      "employerOrg": "Northwind Capital",
+      "email": "alex@northwind.com",
+      "lastContact": "2026-07-06"
+    },
+    {
+      "customer_id": "acme-bank",
+      "stakeholderRole": "champion",
+      "name": "Dana Reed",
+      "title": "VP Engineering",
+      "employerOrg": "Acme Bank",
+      "email": "dana@acmebank.com",
+      "lastContact": "2026-07-03"
+    },
+    {
+      "customer_id": "northwind-cap",
+      "stakeholderRole": "decision_maker",
+      "name": "Priya Nair",
+      "title": "COO",
+      "employerOrg": "Northwind Capital",
+      "email": "priya@northwind.com",
+      "lastContact": "2026-07-01"
+    }
+  ]
+}
