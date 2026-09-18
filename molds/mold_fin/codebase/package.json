@@ -75,7 +75,10 @@
     "test:chat-turn-state": "node --experimental-strip-types scripts/test-chat-turn-state.mjs",
     "test:attachment-e2e": "node --conditions=react-server --experimental-strip-types scripts/test-attachment-e2e.mjs",
     "test:chat-attachments": "node --experimental-strip-types scripts/test-chat-attachments.mjs",
-    "test:chat-usage": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-usage.mjs"
+    "test:chat-usage": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-usage.mjs",
+    "sync:fin-workspace": "node scripts/sync-fin-workspace.mjs",
+    "check:fin-workspace": "node scripts/sync-fin-workspace.mjs --check",
+    "check:subagents": "python3 scripts/check-subagents.py"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

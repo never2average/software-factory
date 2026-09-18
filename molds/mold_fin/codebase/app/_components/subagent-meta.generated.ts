@@ -14,6 +14,72 @@ export interface SubagentMeta {
 }
 
 export const SUBAGENT_META: Record<string, SubagentMeta> = {
+  "annual-report-format": {
+    "description": "Navigate and extract an Indian housing finance company's annual report (SEBI LODR Reg 34) section by section: Directors' Report, Management Discussion and Analysis, standalone versus consolidated statements, Ind AS 109 expected-credit-loss notes, the RBI HFC Directions disclosures (asset-liability maturity, exposures, concentration, capital adequacy schedule), related-party transactions, BRSR, and the auditor's report with CARO. Delegate here when an analyst needs a specific annual-report section located, extracted into a consistent structure, or compared across years. Works only from annual reports already in the data room.",
+    "skillNames": [
+      "auditors-report-and-caro",
+      "build-the-section-map",
+      "directors-report-and-annexures",
+      "financial-statements-division-iii",
+      "ind-as-109-staging-and-ecl",
+      "loans-and-borrowings-notes",
+      "mdna",
+      "multi-year-comparison",
+      "rbi-hfc-directions-disclosures",
+      "related-parties-and-aoc2",
+      "report-layout-variants",
+      "scanned-or-image-reports",
+      "transfer-of-loan-exposures-and-securitisation",
+      "validate-and-write"
+    ],
+    "skillsSummary": "",
+    "tools": [
+      {
+        "name": "dataroom_append_jsonl",
+        "description": "Durably append one record (or an array of records) to a `.jsonl` artifact in the dm.md data room (interactions, tickets, eval dataset/benchmark/output/trace streams), creating it on demand. Records are validated against their dm.md contract when the path has one. Gated on approval since it mutates the team's shared streams."
+      },
+      {
+        "name": "dataroom_fetch_to_sandbox",
+        "description": "Get a data-room file into your bash sandbox so you can PARSE it (spreadsheets, PDFs, images, archives — anything that is not plain text). Returns a short-lived download URL plus the exact curl command to run. Use this instead of dataroom_read whenever the file is binary: dataroom_read decodes as text and will hand you mangled bytes for an .xlsx. Typical flow: call this, run the command in bash, then parse the local file (openpyxl is installed)."
+      },
+      {
+        "name": "dataroom_list",
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+      },
+      {
+        "name": "dataroom_read",
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+      },
+      {
+        "name": "dataroom_write",
+        "description": "Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.md, config/contract JSON, etc.) at its canonical path. Binary workbooks (.xlsx) are built in the sandbox and published, not text-written here. The store overwrites IN PLACE, so open a changeset with backfill_start and pass its `changesetId` here whenever you are writing more than two or three files — that is what makes the batch revertible. Gated on approval since it mutates the team's shared document store."
+      },
+      {
+        "name": "get_customer",
+        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+      },
+      {
+        "name": "list_customers",
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+      },
+      {
+        "name": "list_memories",
+        "description": null
+      },
+      {
+        "name": "publish_artifact",
+        "description": "Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link (not a public URL — the blob is stored privately and the link expires). For TEXT artifacts (HTML report/dashboard, Markdown, CSV, SVG, JSON, plain text) pass `content`. For BINARY/OFFICE artifacts (.xlsx, .docx, .pptx, .pdf, images) GENERATE the file in the bash sandbox first (e.g. python openpyxl / python-docx / python-pptx / reportlab) and pass its sandbox `path` instead. Returns a signed https URL to hand back as a deliverable."
+      },
+      {
+        "name": "remember",
+        "description": null
+      },
+      {
+        "name": "render_account_report",
+        "description": "Render a deterministic, self-contained HTML account report for one customer straight from the system of record (header, ranked open follow-ups, recent interactions, deployments, platform summary) and PUBLISH it via the private signed-link artifact path. Pass scope:'dataroom' for the all-customers data-room index instead. Returns the signed url + expiresAt."
+      }
+    ]
+  },
   "app-author": {
     "description": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots). Delegate here whenever the task is to PRODUCE a document from the data room's current state: it gathers the relevant read-only signals (customers, tickets, FDEs, on-call, SLAs, interactions) and returns GitHub-flavored Markdown and nothing else. It reads and writes prose — it never mutates state, pages anyone, or files a ticket.",
     "skillNames": [],
@@ -91,35 +157,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     "skillsSummary": "",
     "tools": [
       {
-        "name": "browser_act",
-        "description": null
-      },
-      {
-        "name": "browser_close",
-        "description": null
-      },
-      {
-        "name": "browser_goto",
-        "description": null
-      },
-      {
-        "name": "browser_login",
-        "description": null
-      },
-      {
-        "name": "browser_open",
-        "description": null
-      },
-      {
-        "name": "browser_read",
-        "description": null
-      },
-      {
-        "name": "browser_screenshot",
-        "description": null
-      },
-      {
-        "name": "browser_wait",
+        "name": "browser",
         "description": null
       }
     ]
@@ -439,6 +477,201 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       {
         "name": "run_email_intake",
         "description": "Run the FULL email intake in one deterministic step: read unread inbox mail (last `sinceDays` days), match each sender to a customer, and stage a Needs-Triage DRAFT ticket for every matched customer email (skips automated/no-reply; dedups by Message-ID). Returns { read, skipped, staged:[{ticketId,customerId,customerName,subject}], unmatched:[{sender,subject}] }. This IS the whole intake — do NOT also call email_list_inbox / match_customer_by_email / create_triage_ticket; just call this once and report its result."
+      }
+    ]
+  },
+  "hfc-kpi-extraction": {
+    "description": "Extract the standard quarterly KPI table for an Indian housing finance company (HFC) from its SEBI LODR quarterly results and investor presentation: scale (AUM, loan book, disbursements, sell down, buy out), asset quality (GNPA, NNPA, Stage-3 PCR), margin and yield, capital and leverage, efficiency, return and productivity metrics. Delegate here whenever an analyst asks for KPIs, a KPI table, a quarter's numbers, or a peer comparison. It applies the workspace's fixed source-precedence, unit-conversion and formula rules, cites the filing and page for every value, and writes the result to the company's data room.",
+    "skillNames": [
+      "asset-quality-staging",
+      "computed-ratios",
+      "discrete-quarter-from-cumulative",
+      "margin-yield-variants",
+      "missing-data-and-carry-forward",
+      "scale-and-aum-vs-loan-book",
+      "sell-down-and-buy-out",
+      "source-precedence-and-conflicts",
+      "standalone-vs-consolidated",
+      "units-and-number-formats",
+      "validate-and-publish"
+    ],
+    "skillsSummary": "",
+    "tools": [
+      {
+        "name": "dataroom_append_jsonl",
+        "description": "Durably append one record (or an array of records) to a `.jsonl` artifact in the dm.md data room (interactions, tickets, eval dataset/benchmark/output/trace streams), creating it on demand. Records are validated against their dm.md contract when the path has one. Gated on approval since it mutates the team's shared streams."
+      },
+      {
+        "name": "dataroom_fetch_to_sandbox",
+        "description": "Get a data-room file into your bash sandbox so you can PARSE it (spreadsheets, PDFs, images, archives — anything that is not plain text). Returns a short-lived download URL plus the exact curl command to run. Use this instead of dataroom_read whenever the file is binary: dataroom_read decodes as text and will hand you mangled bytes for an .xlsx. Typical flow: call this, run the command in bash, then parse the local file (openpyxl is installed)."
+      },
+      {
+        "name": "dataroom_list",
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+      },
+      {
+        "name": "dataroom_read",
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+      },
+      {
+        "name": "dataroom_write",
+        "description": "Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.md, config/contract JSON, etc.) at its canonical path. Binary workbooks (.xlsx) are built in the sandbox and published, not text-written here. The store overwrites IN PLACE, so open a changeset with backfill_start and pass its `changesetId` here whenever you are writing more than two or three files — that is what makes the batch revertible. Gated on approval since it mutates the team's shared document store."
+      },
+      {
+        "name": "get_customer",
+        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+      },
+      {
+        "name": "list_customers",
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+      },
+      {
+        "name": "list_memories",
+        "description": null
+      },
+      {
+        "name": "publish_artifact",
+        "description": "Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link (not a public URL — the blob is stored privately and the link expires). For TEXT artifacts (HTML report/dashboard, Markdown, CSV, SVG, JSON, plain text) pass `content`. For BINARY/OFFICE artifacts (.xlsx, .docx, .pptx, .pdf, images) GENERATE the file in the bash sandbox first (e.g. python openpyxl / python-docx / python-pptx / reportlab) and pass its sandbox `path` instead. Returns a signed https URL to hand back as a deliverable."
+      },
+      {
+        "name": "remember",
+        "description": null
+      }
+    ]
+  },
+  "investor-presentations": {
+    "description": "Read a housing finance company's investor presentations and earnings-call transcripts: slide-by-slide operational metrics (branches, employees, disbursements, AUM mix, sell down and buy out), management guidance and how it changed from the previous quarter, and the company's own metric definitions. For an unlisted HFC it reads the parent company's presentation. Delegate here to fetch or summarise a quarter's deck or concall, to track guidance, or to supply the operational inputs the KPI table needs.",
+    "skillNames": [
+      "aum-mix-and-off-book",
+      "chart-only-figures",
+      "concall-guidance-tracking",
+      "deck-layout-variants",
+      "find-the-deck-and-transcript",
+      "metric-definitions-glossary",
+      "mixed-periods-on-a-slide",
+      "operational-metrics",
+      "parent-deck-for-unlisted-hfc",
+      "sell-down-and-buy-out-in-appendix",
+      "units-in-decks",
+      "validate-and-hand-off"
+    ],
+    "skillsSummary": "",
+    "tools": [
+      {
+        "name": "dataroom_append_jsonl",
+        "description": "Durably append one record (or an array of records) to a `.jsonl` artifact in the dm.md data room (interactions, tickets, eval dataset/benchmark/output/trace streams), creating it on demand. Records are validated against their dm.md contract when the path has one. Gated on approval since it mutates the team's shared streams."
+      },
+      {
+        "name": "dataroom_fetch_to_sandbox",
+        "description": "Get a data-room file into your bash sandbox so you can PARSE it (spreadsheets, PDFs, images, archives — anything that is not plain text). Returns a short-lived download URL plus the exact curl command to run. Use this instead of dataroom_read whenever the file is binary: dataroom_read decodes as text and will hand you mangled bytes for an .xlsx. Typical flow: call this, run the command in bash, then parse the local file (openpyxl is installed)."
+      },
+      {
+        "name": "dataroom_list",
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+      },
+      {
+        "name": "dataroom_read",
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+      },
+      {
+        "name": "dataroom_write",
+        "description": "Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.md, config/contract JSON, etc.) at its canonical path. Binary workbooks (.xlsx) are built in the sandbox and published, not text-written here. The store overwrites IN PLACE, so open a changeset with backfill_start and pass its `changesetId` here whenever you are writing more than two or three files — that is what makes the batch revertible. Gated on approval since it mutates the team's shared document store."
+      },
+      {
+        "name": "get_customer",
+        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+      },
+      {
+        "name": "list_customers",
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+      },
+      {
+        "name": "list_memories",
+        "description": null
+      },
+      {
+        "name": "publish_artifact",
+        "description": "Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link (not a public URL — the blob is stored privately and the link expires). For TEXT artifacts (HTML report/dashboard, Markdown, CSV, SVG, JSON, plain text) pass `content`. For BINARY/OFFICE artifacts (.xlsx, .docx, .pptx, .pdf, images) GENERATE the file in the bash sandbox first (e.g. python openpyxl / python-docx / python-pptx / reportlab) and pass its sandbox `path` instead. Returns a signed https URL to hand back as a deliverable."
+      },
+      {
+        "name": "record_interaction",
+        "description": "Append ONE interaction (meeting, email, call, Slack thread) to a customer's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
+      },
+      {
+        "name": "remember",
+        "description": null
+      },
+      {
+        "name": "web_search",
+        "description": null
+      }
+    ]
+  },
+  "lodr-filings": {
+    "description": "Find, file and read a housing finance company's SEBI LODR disclosures, indexed by regulation: financial results (Reg 33 equity, Reg 52 debt), material events and rating actions (Reg 30, 51, 55), shareholding and pledges (Reg 31), related-party transactions (Reg 23(9)), security cover (Reg 54), deviation in use of proceeds (Reg 32), governance and secretarial compliance (Reg 27, 24A), and the annual report (Reg 34). Delegate here to fetch a company's latest filings into its data room, to keep its dated filing log current, or to answer what a company disclosed to the exchanges and when. Uses web search against BSE, NSE and the company's investor-relations page when web search is enabled.",
+    "skillNames": [
+      "classify-a-filing",
+      "filing-log-and-naming",
+      "find-filings-on-exchanges",
+      "material-events-and-ratings",
+      "notes-asset-quality-and-ecl",
+      "notes-transfer-of-loan-exposures",
+      "reg52-debt-listed-results",
+      "related-party-and-governance",
+      "results-filing-layouts",
+      "results-table-columns",
+      "scanned-and-image-pdfs",
+      "shareholding-pattern"
+    ],
+    "skillsSummary": "",
+    "tools": [
+      {
+        "name": "dataroom_append_jsonl",
+        "description": "Durably append one record (or an array of records) to a `.jsonl` artifact in the dm.md data room (interactions, tickets, eval dataset/benchmark/output/trace streams), creating it on demand. Records are validated against their dm.md contract when the path has one. Gated on approval since it mutates the team's shared streams."
+      },
+      {
+        "name": "dataroom_fetch_to_sandbox",
+        "description": "Get a data-room file into your bash sandbox so you can PARSE it (spreadsheets, PDFs, images, archives — anything that is not plain text). Returns a short-lived download URL plus the exact curl command to run. Use this instead of dataroom_read whenever the file is binary: dataroom_read decodes as text and will hand you mangled bytes for an .xlsx. Typical flow: call this, run the command in bash, then parse the local file (openpyxl is installed)."
+      },
+      {
+        "name": "dataroom_list",
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+      },
+      {
+        "name": "dataroom_read",
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+      },
+      {
+        "name": "dataroom_write",
+        "description": "Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.md, config/contract JSON, etc.) at its canonical path. Binary workbooks (.xlsx) are built in the sandbox and published, not text-written here. The store overwrites IN PLACE, so open a changeset with backfill_start and pass its `changesetId` here whenever you are writing more than two or three files — that is what makes the batch revertible. Gated on approval since it mutates the team's shared document store."
+      },
+      {
+        "name": "get_customer",
+        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+      },
+      {
+        "name": "list_customers",
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+      },
+      {
+        "name": "list_memories",
+        "description": null
+      },
+      {
+        "name": "publish_artifact",
+        "description": "Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link (not a public URL — the blob is stored privately and the link expires). For TEXT artifacts (HTML report/dashboard, Markdown, CSV, SVG, JSON, plain text) pass `content`. For BINARY/OFFICE artifacts (.xlsx, .docx, .pptx, .pdf, images) GENERATE the file in the bash sandbox first (e.g. python openpyxl / python-docx / python-pptx / reportlab) and pass its sandbox `path` instead. Returns a signed https URL to hand back as a deliverable."
+      },
+      {
+        "name": "remember",
+        "description": null
+      },
+      {
+        "name": "upsert_customer",
+        "description": "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only provided fields are changed; nested domains (platform, deployments, solutions, implementation, tickets, interactions) are upserted alongside the customer row. Gated on approval since this mutates the team's source of truth."
+      },
+      {
+        "name": "web_search",
+        "description": null
       }
     ]
   },

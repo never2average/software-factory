@@ -24,6 +24,24 @@ Start with the **`onboard-self`** skill (get yourself signed in, wired, and reco
 as an FDE) before any customer work. Then `onboard-customer`, and the backfill
 skills for reconstructing customization and integration history.
 
+## Customising the eve agents
+
+Everything needed to add or change a subagent is in this codebase, as skills in
+[`.claude/skills/`](.claude/skills/). A subagent here is a full workspace (rulebook,
+instructions contract, skills per format variation, sandbox scripts, schemas, validators),
+not a single instructions file, and `npm run check:subagents`
+([`scripts/check-subagents.py`](scripts/check-subagents.py)) enforces that.
+
+| Skill | Use it to |
+|---|---|
+| `eve-subagent-workspace` | add a new specialist subagent end to end; start here |
+| `eve-subagent-skills` | write the subagent's own skill packages, one per way its input varies |
+| `eve-sandbox-workspace` | give it a sandbox with parsers, scripts, schemas and validators; the shared `finlib` |
+| `eve-subagent-tools` | choose its tools; the gated `web_search`; tool or script |
+| `eve-subagent-wiring` | register the key in every hardcoded list, the root instructions, the data room and the Ops Center |
+| `eve-subagent-verify` | prove it: checks, builds, a smoke turn that leaves an `automation_runs` row, the functional lane |
+| `eve-customize-existing-agent` | change an existing agent with the right lever: code, per-workspace configuration, operator override, model, flags |
+
 ## Configuration
 
 Every environment variable the platform reads is documented in
@@ -55,8 +73,9 @@ Two consequences:
   not just an environment change. That is the price of the tool being absent
   rather than merely refusing.
 * **A capability must be gated everywhere it is declared.** `web_search` exists
-  in four places — the root agent plus the `research`, `app-author` and
-  `customer-context` subagents. Gating only the root leaves three subagents with
-  full web access while the flag reads "off". If you add a flag, `grep` for
+  in six places — the root agent plus the `research`, `app-author`,
+  `customer-context`, `lodr-filings` and `investor-presentations` subagents.
+  Gating only the root leaves five subagents with full web access while the flag
+  reads "off". If you add a flag, `grep` for
   every declaration of the tool first; a flag that covers some callers is worse
   than none, because it reports a guarantee it does not provide.

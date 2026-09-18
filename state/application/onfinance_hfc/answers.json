@@ -1,0 +1,19 @@
+{
+  "deploy_target": "vercel",
+  "postgres_provider": "neon",
+  "postgres_ref": "DATABASE_URL",
+  "postgres_scope": "fresh",
+  "blob_provider": "vercel_blob",
+  "inference_provider": "cloudflare_workers_ai",
+  "inference_account": "CLOUDFLARE_ACCOUNT_ID",
+  "secret_store": "vercel_env",
+  "web_search": true,
+  "browser": false,
+  "multi_tenant": true,
+  "customer_id": "internal",
+  "custom_domain": "",
+  "vercel_project": "onfinance-hfc",
+  "workspace_name": "OnFinance AI",
+  "fde_email": "priyesh@onfinance.in",
+  "library": "all"
+}

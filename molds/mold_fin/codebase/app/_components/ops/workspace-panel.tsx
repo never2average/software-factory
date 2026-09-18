@@ -541,6 +541,10 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
 
 /** The specialist subagents the orchestrator delegates to. */
 const SUBAGENTS: { key: string; name: string; description: string }[] = [
+  { key: "hfc-kpi-extraction", name: "HFC KPI extraction", description: "Builds the standard quarterly KPI table for a housing finance company, cited to the filing and page." },
+  { key: "lodr-filings", name: "LODR filings", description: "Finds, files and reads a company's SEBI LODR disclosures by regulation and keeps its filing log." },
+  { key: "investor-presentations", name: "Investor presentations", description: "Reads investor decks and concall transcripts: operational metrics, guidance and definitions." },
+  { key: "annual-report-format", name: "Annual report format", description: "Maps an HFC annual report and extracts its sections into a consistent structure." },
   { key: "research", name: "Research", description: "Investigates questions across the data room and the web, then returns synthesized findings." },
   { key: "customer-context", name: "Customer context", description: "Assembles the full history and current state for a customer before work begins." },
   { key: "configuration", name: "Configuration", description: "Sets up platform, solution, and agent configuration for a customer." },

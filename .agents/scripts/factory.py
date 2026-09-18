@@ -383,6 +383,20 @@ def _lane_specs():
                                 f"the other's result. {LANE_FIX}")
     return errs
 
+def _agent_keys(app_id, docs):
+    """The agent_key enum in application.schema.json is the union over every mold, so the schema alone lets a
+    mold_v1 app name a subagent only mold_fin ships: state that validates and configures nothing. A key is
+    real only if the app's own mold has agent/subagents/<key>/agent.ts."""
+    app = docs.get("application") or {}
+    mold = app.get("mold_id"); base = os.path.join(ROOT, "molds", str(mold), "codebase", "agent", "subagents")
+    subs = (((app.get("surface") or {}).get("primary_context") or {}).get("instructions") or {}).get("subagents") or []
+    errs = []
+    for s in subs:
+        k = s.get("agent_key") if isinstance(s, dict) else None
+        if k and not os.path.exists(os.path.join(base, k, "agent.ts")):
+            errs.append(f"{app_id}/application.json: subagent '{k}' does not exist in {mold} "
+                        f"(no molds/{mold}/codebase/agent/subagents/{k}/agent.ts), so its instructions would reach nothing")
+    return errs
 def cmd_validate(a):
     errs = []
     fs = load(os.path.join(ST,"factory.schema.json")); fj = load(os.path.join(ST,"factory.json"))
@@ -410,7 +424,7 @@ def cmd_validate(a):
             if os.path.exists(f):
                 docs[name] = load(f); errs += _check(docs[name], load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
             else: errs.append(f"{app}: missing {name}.json")
-        errs += _vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _rls_claim(app, docs)
+        errs += _vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _rls_claim(app, docs) + _agent_keys(app, docs)
     errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)

@@ -185,6 +185,10 @@ const SUBAGENT_IDS = new Set([
   "customer-context",
   "follow-ups",
   "research",
+  "hfc-kpi-extraction",
+  "lodr-filings",
+  "investor-presentations",
+  "annual-report-format",
 ]);
 
 function slugOf(name: string): string {

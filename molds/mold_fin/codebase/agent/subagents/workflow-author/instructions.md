@@ -26,7 +26,9 @@ These globals are injected. **Nothing else exists.**
 | `args` | `unknown` | Whatever the run was started with. |
 
 The subagents `agent()` may name: `deployment`, `configuration`, `evals`,
-`data-migration`, `customer-context`, `follow-ups`, `research`.
+`data-migration`, `customer-context`, `follow-ups`, `research`, and the research
+specialists `hfc-kpi-extraction`, `lodr-filings`, `investor-presentations`,
+`annual-report-format`.
 
 Be honest about what `agent()` is: eve's subagents declare no channels, so a step
 is a strong **instruction** to the orchestrator, not an RPC. Write prompts that

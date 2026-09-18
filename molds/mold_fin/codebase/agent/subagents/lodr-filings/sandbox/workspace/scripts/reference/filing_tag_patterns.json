@@ -1,0 +1,198 @@
+{
+  "_about": "Regulation-to-tag map and subject-line cue regexes used by classify_filing.py. Documented for the agent in skills/classify-a-filing/references/tag-regex-table.md. All regexes are case-insensitive and run on whitespace-collapsed text. If SEBI renumbers a regulation, the document in front of you wins: record what it says and report the difference.",
+  "regulation_to_tag": {
+    "33": "reg33_results",
+    "52": "reg52_results",
+    "30": "reg30_event",
+    "51": "reg51_event",
+    "31": "reg31_shareholding",
+    "23": "reg23_rpt",
+    "32": "reg32_deviation",
+    "54": "reg54_security_cover",
+    "55": "reg55_rating",
+    "57": "reg57_payment",
+    "27": "reg27_cg",
+    "24A": "reg24a_secretarial",
+    "29": "reg29_notice",
+    "50": "reg29_notice",
+    "34": "reg34_annual_report",
+    "53": "reg34_annual_report"
+  },
+  "subclause_overrides": [
+    {
+      "regulation": "52",
+      "subclause_regex": "^\\(7a?\\)",
+      "tag": "reg32_deviation",
+      "why": "Reg 52(7)/(7A) is the statement of utilisation / deviation of debt issue proceeds"
+    },
+    {
+      "regulation": "52",
+      "subclause_regex": "^\\(8\\)",
+      "tag": "other",
+      "why": "Reg 52(8) is the newspaper publication of debt-listed results, not the results themselves"
+    }
+  ],
+  "known_other_regulations": {
+    "7": "share transfer agent compliance certificate",
+    "13": "statement of investor complaints",
+    "39": "loss of share certificates / issue of duplicates",
+    "40": "transfer and transmission of securities certificate",
+    "42": "record date or book closure (equity)",
+    "44": "voting results of a shareholders' meeting",
+    "46": "website disclosure",
+    "47": "newspaper advertisement (including the published results extract)",
+    "56": "documents furnished to the debenture trustee",
+    "58": "documents sent to holders of debt securities",
+    "60": "record date (debt)",
+    "62": "website disclosure (debt-listed)"
+  },
+  "carrier_tags": [
+    "reg30_event",
+    "reg51_event"
+  ],
+  "results_tags": [
+    "reg33_results",
+    "reg52_results"
+  ],
+  "results_bundle_tags": [
+    "reg32_deviation",
+    "reg54_security_cover",
+    "reg23_rpt"
+  ],
+  "subject_cues": [
+    {
+      "id": "results.financial_results_period",
+      "tag_group": "results",
+      "regex": "(un-?audited|audited)?\\s*(standalone|consolidated)?\\s*(and|&|/)?\\s*(standalone|consolidated)?\\s*financial results\\b.{0,80}?\\b(quarter|half[- ]year|nine months|year|period)\\b.{0,30}?\\bended\\b"
+    },
+    {
+      "id": "results.outcome_with_results",
+      "tag_group": "results",
+      "regex": "outcome of (the )?(board|meeting).{0,200}?financial results"
+    },
+    {
+      "id": "results.limited_review",
+      "tag_group": "results",
+      "regex": "(limited review report|auditor'?s'? report).{0,120}?financial results"
+    },
+    {
+      "id": "reg29.prior_intimation",
+      "tag": "reg29_notice",
+      "regex": "(prior )?intimation (of|for|regarding|about) (the )?(date of )?(a )?(board|committee) meeting|notice of (the )?board meeting|board meeting (is |will be )?(scheduled|to be held)|meeting of the board of directors.{0,60}?(is|will be) (scheduled|held)"
+    },
+    {
+      "id": "reg31.shareholding_pattern",
+      "tag": "reg31_shareholding",
+      "regex": "share ?holding pattern"
+    },
+    {
+      "id": "reg23.rpt",
+      "tag": "reg23_rpt",
+      "regex": "(disclosure|statement|details) (of|on) related party transactions?|related party transactions? (disclosure|for the half[- ]year)"
+    },
+    {
+      "id": "reg32.deviation",
+      "tag": "reg32_deviation",
+      "regex": "statement of (material )?deviations?( or |/| and )?(variations?)?|deviation or variation|utili[sz]ation of (issue |the )?proceeds"
+    },
+    {
+      "id": "reg54.security_cover",
+      "tag": "reg54_security_cover",
+      "regex": "security cover (certificate|available)|certificate (of|on|for) (the )?security cover|asset cover certificate|asset cover available"
+    },
+    {
+      "id": "reg55.rating",
+      "tag": "reg55_rating",
+      "regex": "credit ratings?\\b.{0,80}?\\b(review|reviewed|reaffirm\\w*|re-affirm\\w*|upgrad\\w*|downgrad\\w*|revis\\w*|assign\\w*|withdraw\\w*|outlook)|\\b(revision|reaffirmation|upgrade|downgrade|review) (in|of) (the )?(credit )?ratings?"
+    },
+    {
+      "id": "reg57.payment",
+      "tag": "reg57_payment",
+      "regex": "(payment|paid|servicing) of (the )?(interest|principal|redemption)|interest( and |/| or )(principal|redemption) (payment|amount)|certificate (of|for|regarding) (timely )?payment|status of payment|due dates? (of|for) (payment of )?(interest|principal)|redemption of (the )?(non[- ]convertible )?(debentures|ncds)"
+    },
+    {
+      "id": "reg27.cg",
+      "tag": "reg27_cg",
+      "regex": "(quarterly )?(compliance )?report on corporate governance|corporate governance report"
+    },
+    {
+      "id": "reg24a.secretarial",
+      "tag": "reg24a_secretarial",
+      "regex": "(annual )?secretarial compliance report"
+    },
+    {
+      "id": "reg34.annual_report",
+      "tag": "reg34_annual_report",
+      "regex": "(submission of |copy of (the )?)?annual report\\b.{0,60}?\\b(financial year|fy|f\\.y\\.)|annual report (and|along with|together with) (the )?notice of (the )?(annual general meeting|agm)|notice of (the )?\\d{1,3}(st|nd|rd|th) (annual general meeting|agm) (and|along with) (the )?annual report"
+    },
+    {
+      "id": "event.rating_generic",
+      "tag_group": "event",
+      "regex": "\\b(icra|crisil|care ratings?|india ratings|acuite|brickwork)\\b.{0,120}?\\b(rating|outlook)"
+    },
+    {
+      "id": "event.fund_raise",
+      "tag_group": "event",
+      "regex": "(allotment|issue|issuance) of (secured |unsecured |rated |listed |redeemable |senior |subordinated )*(non[- ]convertible debentures|ncds|commercial papers?|equity shares|bonds)|qualified institutions? placement|preferential (issue|allotment)|rights issue|raising of funds|fund ?rais\\w+"
+    },
+    {
+      "id": "event.kmp_change",
+      "tag_group": "event",
+      "regex": "(appointment|re-?appointment|resignation|cessation|retirement|change) (of|in) (the )?(a |an )?(managing director|md ?(&|and) ?ceo|chief executive officer|ceo|chief financial officer|cfo|company secretary|key managerial personnel|kmp|director|independent director|chairman|chairperson|compliance officer)"
+    },
+    {
+      "id": "event.auditor_change",
+      "tag_group": "event",
+      "regex": "(appointment|re-?appointment|resignation|change) (of|in) (the )?(joint )?(statutory |secretarial )?auditors?"
+    },
+    {
+      "id": "event.investor_meet",
+      "tag_group": "event",
+      "regex": "(analysts?|institutional investors?)( ?/ ?| or | and )?(institutional )?(investors?|analysts?)? ?(meet|meeting|call|conference)|earnings (conference )?call|schedule of .{0,40}?(investor|analyst)|investor presentation|transcript of (the )?(earnings|conference|investor|analyst)|audio (recording|link)"
+    },
+    {
+      "id": "event.regulatory_order",
+      "tag_group": "event",
+      "regex": "(order|penalty|fine|show cause notice|direction|inspection|supervisory action|search|seizure)s? (passed|imposed|levied|issued|received|conducted) (by|from)|(reserve bank of india|rbi|national housing bank|nhb|sebi|income tax|gst|enforcement directorate).{0,80}?(order|penalty|fine|notice)"
+    },
+    {
+      "id": "event.scheme_acquisition",
+      "tag_group": "event",
+      "regex": "scheme of (amalgamation|arrangement|merger)|acquisition of (shares|stake|control|business)|sale of (stake|shares|subsidiary)|change in (control|promoters?)"
+    },
+    {
+      "id": "event.esop",
+      "tag_group": "event",
+      "regex": "(grant|allotment) of .{0,40}?(stock options|esops?|employee stock)"
+    },
+    {
+      "id": "event.outcome_generic",
+      "tag_group": "event",
+      "regex": "outcome of (the )?(board|committee) meeting"
+    }
+  ],
+  "tag_group_resolution": {
+    "results": "reg33_results for equity listing, reg52_results for debt listing; with no listing given and no citation the cue alone cannot choose, so the result is ambiguous between the two",
+    "event": "reg30_event for equity listing, reg51_event for debt listing; with no listing given and no citation the cue alone cannot choose, so the result is ambiguous between the two"
+  },
+  "foreign_regulation_context": {
+    "regex": "insider trading|\\bpit\\b|substantial acquisition|takeovers?|\\bsast\\b|depositor(y|ies)|buy-?back|\\bicdr\\b|issue of capital|debenture trustees?\\) regulations|share based employee|\\bsbeb\\b|non-convertible securities\\) regulations|\\bncs regulations",
+    "window_chars": 90,
+    "why": "a regulation number followed by the name of a different SEBI regulation set is not a LODR citation and is not mapped to a tag"
+  },
+  "other_cues": [
+    {
+      "id": "other.newspaper",
+      "regex": "newspaper (advertisement|publication|clippings?|cuttings?)s?|copy of (the )?(newspaper|advertisement)|extract of .{0,80}?results.{0,60}?published",
+      "requires_regulation": [
+        "47",
+        "52(8)"
+      ],
+      "what": "newspaper publication of the results extract; not the results filing"
+    }
+  ],
+  "carries_document_cues": [
+    "results.outcome_with_results",
+    "results.limited_review"
+  ]
+}

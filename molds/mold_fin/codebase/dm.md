@@ -5,6 +5,12 @@
        |-context.md
        |-personas.jsonl (this customer's user archetypes — one persona record per line; see personaSchema)
        |-agreements/
+       |-filings/ (mold_fin: a covered company's source documents and what the research subagents extracted)
+          |-lodr/ (SEBI LODR filings, {YYYY-MM-DD}_{tag}_{name}; annual report maps and extracts)
+          |-presentations/ (investor presentations, concall transcripts, ip-metrics.jsonl, guidance.jsonl)
+          |-filing-log.jsonl
+          |-kpis.jsonl
+          |-annual-report-data.jsonl
     |-syncs/
        |-manual_entry/
        |-email/

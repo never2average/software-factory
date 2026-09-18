@@ -1,0 +1,483 @@
+{
+  "version": 1,
+  "about": "Section-heading regex table for Indian housing finance company annual reports. Read by section_map.py, validate_section_map.py and render_section_map_md.py. Patterns are Python regexes applied case-insensitively to a cleaned title (straight quotes, plain hyphens, single spaces). Order matters: the first entry whose pattern matches (and whose exclude does not) wins. A copy sits in skills/build-the-section-map/references/; ar_common.py --self-test fails when the two differ.",
+  "contents_headers": [
+    "^(table of )?contents?$",
+    "^index$",
+    "^(what'?s )?inside( this report| the report)?$",
+    "^in this report$",
+    "^across the pages$"
+  ],
+  "group_headers": [
+    "^corporate (overview|review)$",
+    "^company overview$",
+    "^strategic (review|report)$",
+    "^statutory (reports?|section)$",
+    "^management reports?$",
+    "^financial (section|reports?)$",
+    "^governance$",
+    "^(about|know) (us|the company)$",
+    "^overview$"
+  ],
+  "protected_phrases": [
+    "\\bind\\s*-?\\s*as\\s*-?\\s*\\d+",
+    "\\bsection\\s+\\d+[a-z]{0,2}(\\s*\\(\\d+\\))?",
+    "\\bregulation\\s+\\d+[a-z]?(\\s*\\(\\d+\\))?",
+    "\\brule\\s+\\d+(\\s*\\(\\d+\\))?",
+    "\\b(form\\s+)?(no\\.?\\s*)?(aoc|mr|mgt|dpt)\\s*-?\\s*\\d+",
+    "\\bschedule\\s+([ivx]+|\\d+)\\b",
+    "\\bdivision\\s+([ivx]+|\\d+)\\b",
+    "\\bnote\\s+(no\\.?\\s*)?\\d+",
+    "\\bannexure\\s*-?\\s*(\\d+|[ivx]+)\\b",
+    "\\bpart\\s*-?\\s*(\\d+|[ivx]+)\\b",
+    "\\b(19|20)\\d{2}\\s*[-/]\\s*(19|20)?\\d{2}\\b",
+    "\\b(19|20)\\d{2}\\b",
+    "\\b\\d+(st|nd|rd|th)\\b",
+    "\\d+\\.\\d+",
+    "\\d+\\s*%",
+    "\\b(fy|q[1-4]|h[12]|9m)\\s*'?\\d{2,4}\\b"
+  ],
+  "sections": [
+    {
+      "key": "auditors_report",
+      "title": "Independent Auditor's Report",
+      "index_section": "auditors_report",
+      "slug": "independent-auditors-report",
+      "level": "top",
+      "contextual": true,
+      "required": true,
+      "search": "top_of_page",
+      "patterns": [
+        "^(independent )?auditor'?s'? report\\b",
+        "^report of the (independent |statutory )?auditors?\\b",
+        "\\bindependent auditor'?s'? report\\b"
+      ],
+      "exclude": ["^annexure", "secretarial", "certificate", "\\bcaro\\b", "internal financial controls"]
+    },
+    {
+      "key": "caro_annexure",
+      "title": "CARO annexure to the auditor's report",
+      "index_section": "auditors_report",
+      "slug": "independent-auditors-report",
+      "level": "sub",
+      "parent": "standalone_auditors_report",
+      "required": false,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "companies \\(auditor'?s'? report\\) order",
+        "\\bcaro\\b,? ?20\\d{2}",
+        "^annexure.{0,6}to the (independent )?auditor'?s'? report.{0,80}(other legal and regulatory requirements|clause \\(?i\\)?)"
+      ]
+    },
+    {
+      "key": "ifc_annexure",
+      "title": "Auditor's report on internal financial controls",
+      "index_section": "auditors_report",
+      "slug": "independent-auditors-report",
+      "level": "sub",
+      "parent": "standalone_auditors_report",
+      "required": false,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "report on the internal financial controls",
+        "internal financial controls (over financial reporting|with reference to).{0,80}(section 143|clause \\(i\\))"
+      ]
+    },
+    {
+      "key": "consolidated_financial_statements",
+      "title": "Consolidated financial statements",
+      "index_section": "consolidated_financial_statements",
+      "slug": "consolidated-financial-statements",
+      "level": "top",
+      "basis": "consolidated",
+      "required": true,
+      "search": "top_of_page",
+      "patterns": [
+        "^consolidated (ind as )?(financial statements?|financials|accounts)\\b",
+        "^consolidated$"
+      ],
+      "exclude": ["auditor", "salient features", "\\baoc\\b"]
+    },
+    {
+      "key": "standalone_financial_statements",
+      "title": "Standalone financial statements",
+      "index_section": "standalone_financial_statements",
+      "slug": "standalone-financial-statements",
+      "level": "top",
+      "basis": "standalone",
+      "required": true,
+      "search": "top_of_page",
+      "patterns": [
+        "^standalone (ind as )?(financial statements?|financials|accounts)\\b",
+        "^standalone$"
+      ],
+      "patterns_unlabelled": [
+        "^financial statements?$",
+        "^(annual )?accounts$",
+        "^financials$"
+      ],
+      "exclude": ["auditor"]
+    },
+    {
+      "key": "balance_sheet",
+      "title": "Balance sheet",
+      "index_section": "financial_statements",
+      "slug": "financial-statements",
+      "level": "sub",
+      "contextual": true,
+      "parent": "financial_statements",
+      "required": false,
+      "search": "top_of_page",
+      "patterns": [
+        "^(standalone |consolidated )?balance sheet\\b",
+        "^(standalone |consolidated )?statement of assets and liabilities\\b"
+      ],
+      "exclude": ["abstract", "^notes"]
+    },
+    {
+      "key": "statement_of_profit_and_loss",
+      "title": "Statement of profit and loss",
+      "index_section": "financial_statements",
+      "slug": "financial-statements",
+      "level": "sub",
+      "contextual": true,
+      "parent": "financial_statements",
+      "required": false,
+      "search": "top_of_page",
+      "patterns": [
+        "^(standalone |consolidated )?statement of profit (and|&) loss\\b",
+        "^(standalone |consolidated )?profit (and|&) loss (account|statement)\\b"
+      ]
+    },
+    {
+      "key": "cash_flow_statement",
+      "title": "Statement of cash flows",
+      "index_section": "financial_statements",
+      "slug": "financial-statements",
+      "level": "sub",
+      "contextual": true,
+      "parent": "financial_statements",
+      "required": false,
+      "search": "top_of_page",
+      "patterns": [
+        "^(standalone |consolidated )?(statement of cash ?flows?|cash ?flow statement)\\b"
+      ]
+    },
+    {
+      "key": "statement_of_changes_in_equity",
+      "title": "Statement of changes in equity",
+      "index_section": "financial_statements",
+      "slug": "financial-statements",
+      "level": "sub",
+      "contextual": true,
+      "parent": "financial_statements",
+      "required": false,
+      "search": "top_of_page",
+      "patterns": [
+        "^(standalone |consolidated )?statement of changes in equity\\b"
+      ]
+    },
+    {
+      "key": "notes_to_financial_statements",
+      "title": "Notes to the financial statements",
+      "index_section": "financial_statements",
+      "slug": "financial-statements",
+      "level": "sub",
+      "contextual": true,
+      "parent": "financial_statements",
+      "required": false,
+      "search": "top_of_page",
+      "patterns": [
+        "^notes (to|forming part of|annexed to)( and forming part of)? the (standalone |consolidated )?(ind as )?(financial statements|accounts)\\b",
+        "^notes to (standalone |consolidated )?(financial statements|accounts)\\b",
+        "^(significant|material|summary of (significant|material)) accounting polic(y|ies)\\b"
+      ]
+    },
+    {
+      "key": "directors_report",
+      "title": "Board's / Directors' Report",
+      "index_section": "directors_report",
+      "slug": "directors-report",
+      "level": "top",
+      "required": true,
+      "search": "top_of_page",
+      "patterns": [
+        "^(the )?(board'?s'?|directors'?|director'?s) report\\b",
+        "^report of the (board of )?directors\\b",
+        "^(board'?s'?|directors'?) report (and|&|including) (its )?(annexures?|management discussion)"
+      ],
+      "exclude": ["^annexure"]
+    },
+    {
+      "key": "mdna",
+      "title": "Management Discussion and Analysis",
+      "index_section": "mdna",
+      "slug": "management-discussion-and-analysis",
+      "level": "top",
+      "required": true,
+      "search": "top_of_page",
+      "patterns": [
+        "management'?s? discussion (and|&) analysis",
+        "^md ?(&|and) ?a\\b"
+      ]
+    },
+    {
+      "key": "corporate_governance_report",
+      "title": "Corporate Governance Report",
+      "index_section": "corporate_governance_report",
+      "slug": "corporate-governance-report",
+      "level": "top",
+      "required": true,
+      "search": "top_of_page",
+      "patterns": [
+        "^(report on |the )?corporate governance( report)?$",
+        "^report on corporate governance\\b",
+        "^corporate governance report\\b"
+      ],
+      "exclude": ["certificate", "compliance certificate"]
+    },
+    {
+      "key": "brsr",
+      "title": "Business Responsibility and Sustainability Report",
+      "index_section": "brsr",
+      "slug": "brsr",
+      "level": "top",
+      "required": true,
+      "search": "top_of_page",
+      "patterns": [
+        "business responsibility (and|&) sustainability report",
+        "^brsr\\b",
+        "^business responsibility report\\b"
+      ],
+      "exclude": ["assurance"]
+    },
+    {
+      "key": "corporate_information",
+      "title": "Corporate information",
+      "index_section": "corporate_information",
+      "slug": "corporate-information",
+      "level": "top",
+      "required": true,
+      "search": "top_of_page",
+      "patterns": [
+        "^(corporate|company|general|statutory) information$",
+        "^corporate (details|directory)$",
+        "^corporate information\\b"
+      ]
+    },
+    {
+      "key": "notice_of_agm",
+      "title": "Notice of the annual general meeting",
+      "index_section": null,
+      "slug": null,
+      "level": "top",
+      "required": false,
+      "search": "top_of_page",
+      "patterns": [
+        "^notice$",
+        "^(agm )?notice (of|to|for|convening)( the)? .{0,40}(annual general meeting|agm)\\b",
+        "^notice of (the )?(\\w+ )?(annual general meeting|agm)\\b",
+        "^agm notice\\b"
+      ]
+    },
+    {
+      "key": "aoc_2",
+      "title": "Form AOC-2 (related-party contracts)",
+      "index_section": "directors_report",
+      "slug": "directors-report",
+      "level": "sub",
+      "parent": "directors_report",
+      "required": false,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^form (no\\.? ?)?aoc ?- ?2\\b",
+        "\\baoc ?- ?2\\b.{0,80}(contracts|arrangements)",
+        "particulars of contracts?( or |/)arrangements? .{0,40}related parties"
+      ]
+    },
+    {
+      "key": "aoc_1",
+      "title": "Form AOC-1 (salient features of subsidiaries, associates, joint ventures)",
+      "index_section": "directors_report",
+      "slug": "directors-report",
+      "level": "sub",
+      "parent": "directors_report",
+      "required": false,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^form (no\\.? ?)?aoc ?- ?1\\b",
+        "salient features of (the )?financial statements? of subsidiar"
+      ]
+    },
+    {
+      "key": "secretarial_audit_report",
+      "title": "Secretarial audit report (Form MR-3)",
+      "index_section": "directors_report",
+      "slug": "directors-report",
+      "level": "sub",
+      "parent": "directors_report",
+      "required": false,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^secretarial audit report\\b",
+        "^form (no\\.? ?)?mr ?- ?3\\b"
+      ]
+    },
+    {
+      "key": "csr_report",
+      "title": "Annual report on CSR activities",
+      "index_section": "directors_report",
+      "slug": "directors-report",
+      "level": "sub",
+      "parent": "directors_report",
+      "required": false,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^annual report on (csr|corporate social responsibility)\\b",
+        "^report on (csr|corporate social responsibility) activities\\b"
+      ]
+    },
+    {
+      "key": "particulars_of_employees",
+      "title": "Particulars of employees and remuneration ratios",
+      "index_section": "directors_report",
+      "slug": "directors-report",
+      "level": "sub",
+      "parent": "directors_report",
+      "required": false,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^(particulars|details|disclosures?) (of|on|pertaining to) (employees|remuneration)\\b",
+        "section 197\\(12\\)",
+        "ratio of (the )?remuneration of each director"
+      ]
+    },
+    {
+      "key": "conservation_of_energy",
+      "title": "Conservation of energy, technology absorption, foreign exchange",
+      "index_section": "directors_report",
+      "slug": "directors-report",
+      "level": "sub",
+      "parent": "directors_report",
+      "required": false,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "conservation of energy,? ?(and )?technology absorption"
+      ]
+    },
+    {
+      "key": "loans_note",
+      "title": "Note: Loans",
+      "index_section": "loans_and_borrowings_notes",
+      "slug": "loans-and-borrowings-notes",
+      "level": "sub",
+      "parent": "standalone_financial_statements",
+      "required": true,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^(note )?(no\\.? ?)?\\d{1,2}[a-z]?(\\.\\d{1,2})? ?[.:)-]? ?loans( \\(at amortised cost\\)| and advances| at amortised cost)?$"
+      ]
+    },
+    {
+      "key": "borrowings_notes",
+      "title": "Notes: Debt securities, borrowings, deposits, subordinated liabilities",
+      "index_section": "loans_and_borrowings_notes",
+      "slug": "loans-and-borrowings-notes",
+      "level": "sub",
+      "parent": "standalone_financial_statements",
+      "required": true,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^(note )?(no\\.? ?)?\\d{1,2}[a-z]?(\\.\\d{1,2})? ?[.:)-]? ?debt securities\\b",
+        "^(note )?(no\\.? ?)?\\d{1,2}[a-z]?(\\.\\d{1,2})? ?[.:)-]? ?borrowings \\(other than debt securities\\)",
+        "^(note )?(no\\.? ?)?\\d{1,2}[a-z]?(\\.\\d{1,2})? ?[.:)-]? ?borrowings$",
+        "^(note )?(no\\.? ?)?\\d{1,2}[a-z]?(\\.\\d{1,2})? ?[.:)-]? ?subordinated (liabilities|debts?)\\b"
+      ]
+    },
+    {
+      "key": "ind_as_109_notes",
+      "title": "Ind AS 109 notes: staging, ECL, credit risk",
+      "index_section": "ind_as_109_notes",
+      "slug": "ind-as-109-notes",
+      "level": "sub",
+      "parent": "standalone_financial_statements",
+      "required": true,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^(note )?(no\\.? ?)?\\d{1,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?(financial )?risk management\\b",
+        "^(note )?(no\\.? ?)?\\d{1,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?credit risk\\b",
+        "(analysis|reconciliation|movement) (of|in) (changes in )?(the )?(gross carrying amount|ecl|expected credit loss|impairment (loss )?allowance)",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?credit quality of (assets|loans|exposure)",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?(impairment|expected credit loss(es)?) (assessment|allowance)\\b",
+        "stage[- ]?wise (classification|break ?up|analysis)"
+      ],
+      "exclude": ["^the company", "^refer"]
+    },
+    {
+      "key": "transfer_of_loan_exposures",
+      "title": "Transfer of loan exposures / securitisation",
+      "index_section": "transfer_of_loan_exposures",
+      "slug": "transfer-of-loan-exposures",
+      "level": "sub",
+      "parent": "standalone_financial_statements",
+      "required": true,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "transfer of loan exposures",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?(disclosures? (on|of|relating to|pertaining to) )?securiti[sz]ation\\b",
+        "details of (loans |financial assets )?(transferred|acquired|sold|assigned)( / ?acquired)? (through|by way of) (direct )?assignment",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?(details of )?(direct )?assignment (transactions|of loans)",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?transferred financial assets"
+      ]
+    },
+    {
+      "key": "rbi_hfc_disclosures",
+      "title": "RBI HFC Directions disclosures",
+      "index_section": "rbi_hfc_disclosures",
+      "slug": "rbi-hfc-directions-disclosures",
+      "level": "sub",
+      "parent": "standalone_financial_statements",
+      "required": true,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "disclosures? (as )?(required|pursuant|in terms of|under|in accordance with|as per).{0,80}(master direction|reserve bank|\\brbi\\b|national housing bank|\\bnhb\\b|housing finance compan)",
+        "housing finance company \\(reserve bank\\) directions",
+        "housing finance companies \\(nhb\\) directions",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?(capital to risk|crar\\b|capital adequacy)",
+        "maturity pattern of (certain items of )?assets and liabilities",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?exposure to real estate sector",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?principal business criteria"
+      ]
+    },
+    {
+      "key": "related_party_transactions",
+      "title": "Related-party transactions (Ind AS 24)",
+      "index_section": "related_party_transactions",
+      "slug": "related-party-transactions",
+      "level": "sub",
+      "parent": "standalone_financial_statements",
+      "required": true,
+      "search": "anywhere_in_range",
+      "patterns": [
+        "^(note )?(no\\.? ?)?\\d{1,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?related part(y|ies) (transactions?|disclosures?)\\b",
+        "^(note )?(no\\.? ?)?\\d{0,2}[a-z]?(\\.\\d{1,2}){0,2} ?[.:)-]? ?disclosures? (of|on|in respect of) related part(y|ies)",
+        "related party disclosures? .{0,40}ind ?as ?-? ?24"
+      ]
+    }
+  ],
+  "index_sections": {
+    "corporate_information": {"title": "Corporate information", "slug": "corporate-information"},
+    "directors_report": {"title": "Board's / Directors' Report", "slug": "directors-report"},
+    "mdna": {"title": "Management Discussion & Analysis", "slug": "management-discussion-and-analysis"},
+    "corporate_governance_report": {"title": "Corporate Governance Report", "slug": "corporate-governance-report"},
+    "brsr": {"title": "BRSR", "slug": "brsr"},
+    "standalone_financial_statements": {"title": "Standalone financial statements", "slug": "standalone-financial-statements"},
+    "consolidated_financial_statements": {"title": "Consolidated financial statements", "slug": "consolidated-financial-statements"},
+    "ind_as_109_notes": {"title": "Ind AS 109 notes", "slug": "ind-as-109-notes"},
+    "loans_and_borrowings_notes": {"title": "Loans and borrowings notes", "slug": "loans-and-borrowings-notes"},
+    "transfer_of_loan_exposures": {"title": "Transfer of loan exposures / securitisation notes", "slug": "transfer-of-loan-exposures"},
+    "rbi_hfc_disclosures": {"title": "RBI HFC Directions disclosures", "slug": "rbi-hfc-directions-disclosures"},
+    "related_party_transactions": {"title": "Related-party transactions", "slug": "related-party-transactions"},
+    "auditors_report": {"title": "Independent Auditor's Report", "slug": "independent-auditors-report"}
+  }
+}
