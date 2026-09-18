@@ -1,36 +1,38 @@
 ---
 name: subagent
-description: Build a specialist subagent in a forked mold as a full workspace (instructions, skills for format variations, sandbox scripts, schemas, validators, tests), not as a single instructions file. Use whenever a product needs a new subagent or an existing one is only a prompt.
+description: Build a specialist subagent inside a pack (never a mold fork) as a full workspace (instructions, skills for format variations, sandbox scripts, schemas, validators, tests), not as a single instructions file. Use whenever a product needs a new subagent or an existing one is only a prompt.
 ---
 
 # Build a subagent as a full workspace
 
 A subagent that is only `agent.ts` plus `instructions.md` is a prompt, not a specialist. It
 fails the first time a source document is laid out differently from the one the author
-pictured. The factory's standard is the workspace below. `subagent_check.py` enforces it,
+pictured. The factory's standard is the workspace below. `packs.py verify` (the mold's own `check-subagents.py`) enforces it,
 and a subagent that does not pass is not done.
 
-Subagents are code, so they live only in a forked mold (`molds/<mold_id>/codebase`, where
-`MOLD.md` says edits are allowed). Never build them in a snapshot mold such as `mold_v1`.
+**Subagents live in a pack, never in a fork.** Molds are general-purpose checkpoints. Stamping an application
+never forks one.
 
-**The mold carries its own authoring skills.** A forked mold has these under
-`codebase/.claude/skills/eve-*`:
+- An application's own code is a **pack**, `packs/<pack_id>/`. It is a directory tree that only ADDS files to the
+  application's build copy (`build/<app_id>/`).
+- An application names its packs in its brief ("Packs: hfc-research") or inherits them from its product.
+- `python3 .claude/scripts/packs.py` lists, checks, applies and verifies packs. `provision.py --deploy` applies them
+  after the brand.
 
-- `eve-subagent-workspace`
-- `eve-subagent-skills`
-- `eve-sandbox-workspace`
-- `eve-subagent-tools`
-- `eve-subagent-wiring`
-- `eve-subagent-verify`
-- `eve-customize-existing-agent`
+```
+packs/<pack_id>/
+  pack.json                                   pack_id, name, description, subagents[], shared_families[], state{corpus, workspace, persona_name, tone}
+  files/agent/subagents/<key>/**              the subagent workspaces (section 2), each with a subagent.json (name, summary, dataroomPaths)
+  files/agent/instructions/NN-pack-<id>.md    the root agent's section for this pack (eve loads it after agent/instructions.md)
+  files/scripts/subagent-shared/<family>/**   shared sandbox helpers + targets.json
+```
 
-It also carries its own checker, `codebase/scripts/check-subagents.py`. That way anyone
-working inside the mold can customise its agents without this repo.
-
-- Those skills are the concrete, file-by-file procedure. This document is the standard they
-  implement.
-- When forking a new mold, copy them from `molds/mold_fin/codebase` and adjust the paths.
-- When the standard changes, change both.
+- A pack may add files only under those paths, and it never replaces a mold file.
+- This works because the mold discovers subagents from their directories (`scripts/gen-subagent-meta.mjs`) and
+  carries its own authoring skills (`codebase/.claude/skills/eve-*`), its own checker
+  (`scripts/check-subagents.py`) and `docs/SUBAGENT_PACKS.md`.
+- If a vertical genuinely needs a change to base code, that is a pull request to the mold's upstream, followed by
+  a snapshot refresh. It is never a fork.
 
 ## 1. Get the operator's rulebook first
 
@@ -135,27 +137,32 @@ The instructions make validation the last step before any `dataroom_append_jsonl
 
 ## 6. Register and wire
 
-In the fork, wire the new key in these places:
+No list anywhere is edited by hand. In the pack:
 
-- Add the key to every hardcoded key list (grep an existing key such as `"research"`).
-- Add the delegation paragraph to the root `agent/instructions.md`.
-- Add any data-room paths to `DATAROOM_PATH_TEMPLATES` and `dm.md`.
-- Add the key to the `agent_key` enum in `state/application/app_id/application.schema.json`.
-- Run `node scripts/gen-subagent-meta.mjs`.
+- Give each subagent a `subagent.json` with its display name, a one-line summary and any data-room path
+  templates it writes to.
+- Put the root agent's delegation text in `files/agent/instructions/NN-pack-<id>.md`.
+- Name the subagents in `pack.json`.
+- Put what the pack means for application state (corpus, workspace instructions) in `pack.json` "state". Intake
+  reads it, so the state is reproducible from the brief.
+
+`packs.py apply` runs the mold's generator, which registers everything.
 
 ## 7. Prove it
 
 ```
-python3 .claude/scripts/subagent_check.py <mold_id>            # structure, skills, schemas, self-tests, registration
-cd molds/<mold_id>/codebase && npm run typecheck && npm run build
+python3 .claude/scripts/packs.py check <pack_id>              # the pack on its own
+python3 .claude/scripts/packs.py apply <app_id>               # into build/<app_id>/, generators run
+python3 .claude/scripts/packs.py verify <app_id>              # the mold's check-subagents.py + shared-helper drift
+cd build/<app_id> && npm run typecheck && npm run build:eve   # eve build is the final word on skill frontmatter
 ```
 
-Add the self-tests to the mold's functional lane (`molds/<mold_id>/testing/functional/lane.json`)
-so a stamped application cannot pass with a broken workspace. Close the task with the check's
+`lanes.py` runs a packed application's codebase checks in `build/<app_id>/`, and the mold's functional lane
+includes `check:subagents`, so a stamped application cannot pass with a broken workspace. Close the task with the check's
 output as evidence.
 
 ## Fanning out
 
-One subagent is one `mold-engineer` with a write scope of exactly `agent/subagents/<key>/`.
+One subagent is one `mold-engineer` with a write scope of exactly `packs/<pack_id>/files/agent/subagents/<key>/`.
 Build the shared helpers and this standard first, then run the subagents in parallel, then
 run the check over all of them.

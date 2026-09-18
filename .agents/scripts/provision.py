@@ -1838,6 +1838,16 @@ def main(a):
             print((r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else "")
             if r.returncode: sys.exit("branding failed; not deploying")
             mold_dir = os.path.join(ROOT, "build", app_id)
+        if deploy and app.get("packs"):
+            # The application's own code (subagent packs) goes into the same build copy, after the brand. The mold
+            # is a general-purpose checkpoint and is never edited or forked for an application (packs.py).
+            r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/packs.py"), "apply", app_id], capture_output=True, text=True)
+            print((r.stdout + r.stderr).strip())
+            if r.returncode: sys.exit("packs failed; not deploying")
+            r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/packs.py"), "verify", app_id], capture_output=True, text=True)
+            print("\n".join((r.stdout + r.stderr).strip().splitlines()[-3:]))
+            if r.returncode: sys.exit("a pack's subagents do not pass the mold's own checks; not deploying")
+            mold_dir = os.path.join(ROOT, "build", app_id)
         if writer:
             # Refuse BEFORE creating, for BOTH writers: a database and a Blob store bought for an app the
             # operator has not finished configuring is exactly the "check created things" shape, one flag
