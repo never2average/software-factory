@@ -1,7 +1,7 @@
 # mold_v1
 
 **Status:** active
-**Source:** github.com/never2average/fde-agent @ 79df480 (`main`, snapshot 2026-09-14; PRs #11 and #12 merged)
+**Source:** github.com/never2average/fde-agent @ 95777a6 (`main`, snapshot 2026-09-18; PR #13 merged: subagent packs)
 
 **Node:** 24.x (package.json engines; VM and Vercel project both on 24)
 **Target model:** GLM 5.2 via OpenAI-compatible provider
@@ -22,6 +22,10 @@
 | primary_context | `codebase/agent/instructions/`, memory + prompt-context |
 | multiplayer_context | chat threads/presence, org tenancy, RLS |
 | custom workflow builder | task-workflow service, workflow definitions/library |
+
+## Packs
+
+This mold is a general-purpose checkpoint and is never forked to stamp an application. An application's own code (subagents, a root-instructions section, shared sandbox helpers) is a pack under `packs/<pack_id>/`, applied to `build/<app_id>/` by `.claude/scripts/packs.py`. The codebase supports this since 95777a6: subagents are discovered (`scripts/gen-subagent-meta.mjs`, `docs/SUBAGENT_PACKS.md`), and it carries its own `eve-*` authoring skills and `scripts/check-subagents.py`.
 
 ## Refreshing the snapshot
 
