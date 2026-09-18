@@ -1,0 +1,320 @@
+/**
+ * The bridge from a workflow script's `agent()` call to the real agent.
+ *
+ * eve's declared subagents "do not declare channels" — there is no HTTP address
+ * for the `deployment` subagent, and which subagent handles a task is decided by
+ * the orchestrator's model. So a step becomes a message to the root agent that
+ * NAMES the subagent and asks it to hand the work over, and the step's return
+ * value is the final assistant text of that turn.
+ *
+ * Be honest about what that means: `agent("…", { subagent: "deployment" })` is a
+ * strong instruction, not a function call. The orchestrator normally complies,
+ * but nothing in the protocol guarantees it — the UI says as much rather than
+ * dressing this up as an RPC.
+ *
+ * Auth: the caller's own Google ID token is forwarded, so a workflow run can
+ * never do anything the operator who started it could not do themselves.
+ */
+import "server-only";
+
+const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
+
+/** How long one delegated step may take before the run gives up on it. */
+const STEP_TIMEOUT_MS = 120_000;
+/** Browser steps are slow (cold remote-browser attach + multi-page read/act),
+ *  so they get a longer budget — still under the 300s route maxDuration. The
+ *  global cap stays 120s for every other subagent. */
+const BROWSER_STEP_TIMEOUT_MS = 280_000;
+
+/**
+ * What a step is FOR, not just what it must do.
+ *
+ * Every agent() call opens a brand-new eve session, so a step arrives knowing
+ * nothing but its prompt string: not which workflow it belongs to, not which
+ * phase, not which run, not what came before. Anything the script did not spell
+ * out in the prompt itself was simply absent — which is why an opened step
+ * reads as blank, and why a prompt that says "now do the same for the others"
+ * has nothing to refer to.
+ *
+ * Kept short on purpose. This is prepended to EVERY step, so it competes with
+ * the actual instruction for attention; it carries identity and provenance, and
+ * leaves the task to the prompt.
+ */
+export interface StepContext {
+  /** The workflow's name, as the operator knows it. */
+  workflow?: string;
+  /** The phase() this call sits under, when the script declared one. */
+  phase?: string;
+  /** Durable run id — the thread to look under when tracing what happened. */
+  runId?: string;
+  /** 1-based position across the whole run. */
+  call?: number;
+  /** The customer this run is about, when the script is scoped to one. */
+  customerId?: string;
+}
+
+/** One line naming the run, or "" when there is nothing to say. */
+function identity(ctx?: StepContext): string {
+  if (!ctx) return "";
+  const bits: string[] = [];
+  if (ctx.workflow) bits.push(`Workflow: ${ctx.workflow}${ctx.phase ? ` · phase "${ctx.phase}"` : ""}`);
+  if (ctx.call) bits.push(`Step ${ctx.call}`);
+  if (ctx.customerId) bits.push(`Customer: ${ctx.customerId}`);
+  if (ctx.runId) bits.push(`Run: ${ctx.runId}`);
+  return bits.length ? `[${bits.join(" · ")}]` : "";
+}
+
+const MACHINE_READER =
+  "You are one step of an automated workflow. Your reply is consumed by a program, so return the result and nothing else.";
+
+/**
+ * Compose the message that opens the step's session.
+ *
+ * The subagent case is the subtle one. A subagent is reached by ASKING the
+ * orchestrator to hand the work over, so the subagent sees only what the
+ * orchestrator chooses to forward — put the run's identity in a preamble
+ * addressed to the orchestrator and the subagent never learns it, which is
+ * exactly the "opens blank" complaint one level down.
+ *
+ * So the identity line goes INSIDE the <task> block, and the block is what the
+ * orchestrator is told to pass on verbatim. Then the subagent knows which
+ * workflow, phase, run and customer it is working for even though nothing but
+ * text ever crossed the boundary.
+ */
+export function composeStepMessage(prompt: string, subagent?: string, ctx?: StepContext): string {
+  const id = identity(ctx);
+  // The step's own brief: identity, then who is reading the answer, then the work.
+  const task = id ? [id, MACHINE_READER, "", prompt] : [prompt];
+  if (!subagent) return task.join("\n");
+  return [
+    ...(id ? [id, ""] : []),
+    `Delegate this task to the \`${subagent}\` subagent and let it do the work — do not carry it out yourself.`,
+    "Pass everything between the <task> markers to it VERBATIM, including the bracketed context line: that line is how it knows which run and customer this is for. Do not summarise or rewrite it.",
+    "",
+    "<task>",
+    ...task,
+    "</task>",
+    "",
+    "Reply with the subagent's result and nothing else — no preamble, no commentary. Your reply is consumed by a program, not read by a person.",
+  ].join("\n");
+}
+
+/**
+ * Which customer a run is about, read from the args the operator submitted.
+ *
+ * Scripts are hand-written, so the key is whatever the author reached for. Only
+ * these spellings are accepted — guessing from any key that merely looks like an
+ * id would sooner or later tell a step it is working for the wrong account,
+ * which is worse than telling it nothing. When this returns undefined the caller
+ * falls back to the workflow's own `customer_id` column.
+ */
+const CUSTOMER_KEYS = ["customerId", "customer_id", "customer", "accountId", "account_id"] as const;
+
+export function customerFromArgs(args: unknown): string | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return undefined;
+  const bag = args as Record<string, unknown>;
+  for (const key of CUSTOMER_KEYS) {
+    const value = bag[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+/** Fired as soon as a step's session is known (and again when its child subagent
+ *  session appears), so the caller can record a steerable RUNNING step. */
+export type OnStepSession = (info: { sessionId: string; childSessionId?: string }) => void;
+
+/** A base delegate: runs one workflow step, calling onSession when its session
+ *  opens. Wrapped by makeDurableDelegate to add journaling + retry. */
+export type StepDelegate = (
+  prompt: string,
+  subagent?: string,
+  onSession?: OnStepSession,
+  /** What only the runtime knows: where this call sits in the run. Merged over
+   *  the run-wide context the caller supplied when it built the delegate. */
+  step?: Pick<StepContext, "call" | "phase">,
+) => Promise<string>;
+
+function requestSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([timeout, signal]) : timeout;
+}
+
+async function cancelEveSession(sessionId: string, bearer: string): Promise<void> {
+  await fetch(`${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: "{}",
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => undefined);
+}
+
+export function makeDelegate(
+  bearer: string,
+  timeoutMs: number = STEP_TIMEOUT_MS,
+  signal?: AbortSignal,
+  /** Identity of the run these steps belong to; prepended to every prompt. */
+  context?: StepContext,
+): StepDelegate {
+  return async function delegate(
+    prompt: string,
+    subagent?: string,
+    onSession?: OnStepSession,
+    step?: Pick<StepContext, "call" | "phase">,
+  ): Promise<string> {
+    if (!AGENT_URL) throw new Error("The agent's URL is not configured (NEXT_PUBLIC_EVE_API_URL).");
+    const stepContext: StepContext | undefined =
+      context || step ? { ...context, ...step } : undefined;
+
+    // The browser subagent's steps get the longer budget.
+    const effectiveTimeout = subagent === "browser" ? Math.max(timeoutMs, BROWSER_STEP_TIMEOUT_MS) : timeoutMs;
+
+    const started = await fetch(`${AGENT_URL}/eve/v1/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+      body: JSON.stringify({ message: composeStepMessage(prompt, subagent, stepContext) }),
+      signal: requestSignal(effectiveTimeout, signal),
+    });
+    if (!started.ok) {
+      throw new Error(`The agent refused the step (${started.status}).`);
+    }
+    const { sessionId } = (await started.json()) as { sessionId?: string };
+    if (!sessionId) throw new Error("The agent did not open a session for this step.");
+    // Surface the session immediately — the step is now steerable while it runs.
+    onSession?.({ sessionId });
+    // Eve cancellation is cooperative and durable. The session's stream remains
+    // the source of truth (`turn.cancelled` -> `session.waiting`); aborting our
+    // local fetch alone would merely detach and leave the turn running.
+    const onAbort = () => void cancelEveSession(sessionId, bearer);
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    // Read the turn's NDJSON stream and keep the LAST finalized assistant text:
+    // interim `message.completed` events narrate tool calls, and the terminal one
+    // is the answer (docs/concepts/sessions-runs-and-streaming.md).
+    // The orchestrator's own final reply. When it DELEGATES to a subagent it
+    // often ends its own turn without echoing the subagent's output — that
+    // output lives in the CHILD session, so we read it directly (below).
+    let answer = "";
+    let childSessionId: string | undefined;
+
+    // Prefer the orchestrator's own reply; else the delegated subagent's own
+    // final message, read from its session.
+    const finish = async (): Promise<string> => {
+      if (answer.trim() || !childSessionId) return answer;
+      const child = await readSessionAnswer(childSessionId, bearer).catch(() => "");
+      return child || answer;
+    };
+
+    // The Eve stream is durable. Persist a local event-count cursor for this
+    // request and reconnect to the SAME session by startIndex after transient
+    // disconnects; never start a replacement turn or maintain an in-memory
+    // pseudo-stream.
+    let streamIndex = 0;
+    let reconnects = 0;
+    try {
+      while (reconnects <= 3) {
+        const stream = await fetch(
+          `${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=${streamIndex}`,
+          {
+            headers: { authorization: `Bearer ${bearer}` },
+            signal: requestSignal(effectiveTimeout, signal),
+          },
+        );
+        if (!stream.ok || !stream.body) {
+          throw new Error(`The agent's stream could not be read (${stream.status}).`);
+        }
+        const reader = stream.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              let event: { type?: string; data?: Record<string, unknown> };
+              try {
+                event = JSON.parse(line);
+              } catch {
+                continue;
+              }
+              streamIndex++;
+              if (event.type === "message.completed" && typeof event.data?.message === "string") {
+                answer = event.data.message as string;
+              }
+              if (event.type === "subagent.called" && typeof event.data?.childSessionId === "string") {
+                childSessionId = event.data.childSessionId as string;
+                onSession?.({ sessionId, childSessionId });
+              }
+              if (event.type === "turn.failed") {
+                throw new Error(`The agent failed this step: ${String(event.data?.message ?? "the turn failed")}`);
+              }
+              if (event.type === "turn.cancelled") {
+                throw signal?.reason instanceof Error ? signal.reason : new Error("The agent step was cancelled.");
+              }
+              if (event.type === "turn.completed" || event.type === "session.completed") {
+                await reader.cancel();
+                return finish();
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        reconnects++;
+      }
+      throw new Error("The agent stream disconnected repeatedly before the turn settled.");
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
+  };
+}
+
+/**
+ * Read a session's FINAL assistant text — the last `message.completed`. Used to
+ * pull a delegated subagent's output out of its own session when the parent
+ * turn doesn't echo it. Bounded so a still-running child mounts at its current
+ * state rather than hanging forever.
+ */
+async function readSessionAnswer(sessionId: string, bearer: string): Promise<string> {
+  const res = await fetch(`${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=0`, {
+    headers: { authorization: `Bearer ${bearer}` },
+    signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
+  });
+  if (!res.ok || !res.body) return "";
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let answer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let event: { type?: string; data?: { message?: unknown } };
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (event.type === "message.completed" && typeof event.data?.message === "string") {
+        answer = event.data.message;
+      }
+      if (
+        event.type === "turn.completed" ||
+        event.type === "session.completed" ||
+        event.type === "session.waiting"
+      ) {
+        await reader.cancel();
+        return answer;
+      }
+    }
+  }
+  return answer;
+}
