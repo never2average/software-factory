@@ -352,6 +352,7 @@ const json = (v) => JSON.stringify(v, null, 2);
 const SUBAGENT_IDS = [
   "research", "customer-context", "configuration", "deployment", "data-migration",
   "evals", "workflow-author", "app-author", "follow-ups", "browser",
+  "hfc-kpi-extraction", "lodr-filings", "investor-presentations", "annual-report-format",
 ];
 
 // -------------------------------------------------------------------- the tools

@@ -115,6 +115,9 @@ export const DATAROOM_PATH_TEMPLATES: readonly string[] = [
   "Customers/{customer_id}/context.md",
   "Customers/{customer_id}/personas.jsonl",
   "Customers/{customer_id}/agreements/**",
+  // mold_fin: a covered company's SEBI LODR filings (filings/lodr/), investor presentations and
+  // concalls (filings/presentations/), and the jsonl logs the research subagents keep beside them.
+  "Customers/{customer_id}/filings/**",
   "Customers/syncs/**",
   // --- Platform ------------------------------------------------------------
   "Platform/Master.xlsx",

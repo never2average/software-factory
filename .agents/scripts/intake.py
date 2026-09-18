@@ -59,7 +59,9 @@ def parse_brief(text):
     m = re.search(r"\b(?:members?|team):\s*((?:" + EMAIL + r"[,\s]*)+)", t)
     if m: h["members"] = re.findall(EMAIL, m.group(1))
     m = re.search(r"(?:accounts?|customers?) are called ([a-z]+)|call (?:accounts|customers) ([a-z]+)", t)
-    if m: h["account_noun"] = (m.group(1) or m.group(2)).rstrip("s")
+    if m:
+        n = m.group(1) or m.group(2)   # singular: companies -> company, patients -> patient, classes -> class
+        h["account_noun"] = n[:-3] + "y" if n.endswith("ies") else n[:-2] if n.endswith("sses") else n.rstrip("s")
     m = re.search(r"(?:clone|replica|copy) of (?:the )?live(?: fde.agent)?(?:\s+at\s+(https?://\S+|[a-z0-9.-]+\.[a-z]{2,}))?", t)
     if m: h["clone_of"] = {"kind": "live_deployment", "ref": (m.group(1) or "fde-agent").rstrip(".,)")}
     m = re.search(r"primary context[:\s]+([^\n.]+)", t)
