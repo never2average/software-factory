@@ -30,3 +30,7 @@ scripts/.ui-log
 
 # Playwright output (screenshots, traces).
 test-results
+
+# python bytecode (finance subagent workspace scripts)
+__pycache__/
+*.pyc

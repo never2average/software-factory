@@ -44,10 +44,22 @@ const SUBAGENT_NAMES: Record<string, string> = {
   evals: "Evals",
   "follow-ups": "Follow-ups",
   "workflow-author": "Workflow Author",
+  "hfc-kpi-extraction": "HFC KPI Extraction",
+  "lodr-filings": "LODR Filings",
+  "investor-presentations": "Investor Presentations",
+  "annual-report-format": "Annual Report Format",
 };
 
 /** What each declared subagent DOES — shown in the rail's info modal. */
 const SUBAGENT_DESCRIPTIONS: Record<string, string> = {
+  "hfc-kpi-extraction":
+    "Builds the standard quarterly KPI table for a housing finance company from its LODR results and investor presentation, with the workspace's source-precedence, unit and formula rules and a citation for every value.",
+  "lodr-filings":
+    "Finds, files and reads a company's SEBI LODR disclosures by regulation — results, material events, shareholding, related parties, security cover, annual report — and keeps its dated filing log.",
+  "investor-presentations":
+    "Reads investor presentations and concall transcripts slide by slide: operational metrics, management guidance and how it changed, and the company's own metric definitions. Uses the parent's deck for unlisted HFCs.",
+  "annual-report-format":
+    "Maps an HFC annual report and extracts its sections into a consistent structure: Directors' Report, MD&A, Ind AS 109 notes, RBI HFC disclosures, related parties, auditor's report and CARO.",
   research:
     "Builds an account's full context from scratch: company research (web + Granola), the customer's data-room domains (Platform, Deployments, Solutions, Implementation, Tickets, People), and publishes the domain workbooks.",
   configuration:

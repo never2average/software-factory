@@ -333,6 +333,10 @@ const SUBAGENT_NAMES = new Set([
   // The document-generation / data-room builder. Without this it fell through to
   // applyToolResult and its runs never appeared in the Control Panel.
   "research",
+  "hfc-kpi-extraction",
+  "lodr-filings",
+  "investor-presentations",
+  "annual-report-format",
 ]);
 
 /**

@@ -1,0 +1,1244 @@
+{
+ "version": 1,
+ "about": "Label-normalisation table for the financial statements of an Indian housing finance company (NBFC format, Division III of Schedule III). Read by normalise_statement.py and validate_ar_data.py. Patterns are Python regexes applied case-insensitively to a cleaned label: enumerators such as (a), (i), I., 1. and a trailing note reference are removed first. 'side' restricts a balance-sheet label to the assets, liabilities or equity half, which the script tracks from the statement's own ASSETS / LIABILITIES AND EQUITY heading rows. 'component_of': borrowings is the analysts' total = debt securities + borrowings (other than debt securities) + deposits + subordinated liabilities. value_kind per_share values are never unit-converted. A label that matches nothing is kept as the company printed it and listed as unknown; a label that matches two different entries is kept as-is and listed as ambiguous. A copy sits in skills/financial-statements-division-iii/references/.",
+ "side_headers": {
+  "assets": [
+   "^assets$",
+   "^i\\.? ?assets$",
+   "^financial assets$",
+   "^non[- ]?financial assets$"
+  ],
+  "liabilities": [
+   "^liabilities$",
+   "^liabilities and equity$",
+   "^equity and liabilities$",
+   "^financial liabilities$",
+   "^non[- ]?financial liabilities$"
+  ],
+  "equity": [
+   "^equity$"
+  ]
+ },
+ "restructured_patterns": [
+  "restructur",
+  "resolution (framework|plan)",
+  "one[- ]time (restructuring|settlement scheme for msme)",
+  "\\botr\\b",
+  "covid[- ]?19.{0,40}(resolution|regulatory package|moratorium)"
+ ],
+ "derived": {
+  "borrowings": {
+   "sum_of": [
+    "debt_securities",
+    "borrowings_other_than_debt_securities",
+    "deposits",
+    "subordinated_liabilities"
+   ],
+   "statement": "balance_sheet"
+  }
+ },
+ "labels": [
+  {
+   "normalised": "cash_and_cash_equivalents",
+   "statements": [
+    "balance_sheet",
+    "cash_flow"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^cash and cash equivalents( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "bank_balances_other",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(other )?bank balances?( other than .*)?$",
+    "^bank balances? other than"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "derivative_financial_instruments_assets",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^derivative financial (instruments|assets)( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "trade_receivables",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(receivables ?[-:]? ?)?(\\(?i\\)? ?)?trade receivables( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "other_receivables",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?ii\\)? ?)?other receivables( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "loan_book",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^loans( \\(.*\\))?$",
+    "^loans and advances( \\(.*\\))?$",
+    "^housing and other loans( \\(.*\\))?$"
+   ],
+   "side": "assets",
+   "note": "The analysts' Loan Book Value: the balance-sheet Loans line, net of the impairment allowance as the balance sheet shows it."
+  },
+  {
+   "normalised": "investments",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^investments( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "other_financial_assets",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^other financial assets( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "total_financial_assets",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(sub ?-? ?)?total ?-? ?financial assets( \\(.*\\))?$",
+    "^financial assets total$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "current_tax_assets_net",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^current tax assets?( \\(.*\\))?$",
+    "^income tax assets?( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "deferred_tax_assets_net",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^deferred tax assets?( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "investment_property",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^investment propert(y|ies)( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "property_plant_and_equipment",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^property,? plant (and|&) equipments?( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "right_of_use_assets",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^right[- ]of[- ]use assets?( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "capital_work_in_progress",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^capital work[- ]in[- ]progress( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "intangible_assets_under_development",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^intangible assets under development( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "goodwill",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^goodwill( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "other_intangible_assets",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(other )?intangible assets( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "other_non_financial_assets",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^other non[- ]?financial assets( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "assets_held_for_sale",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(non[- ]current )?assets (classified as )?held for sale( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "total_non_financial_assets",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(sub ?-? ?)?total ?-? ?non[- ]?financial assets( \\(.*\\))?$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "total_assets",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total assets$"
+   ],
+   "side": "assets"
+  },
+  {
+   "normalised": "derivative_financial_instruments_liabilities",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^derivative financial (instruments|liabilities)( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "payables_dues_msme",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "total outstanding dues of micro,? ?(enterprises )?(and|&) small enterprises$"
+   ],
+   "side": "liabilities",
+   "note": "Appears once under trade payables and once under other payables; the label alone does not say which, so both rows get this label and the agent keeps the company's own label beside it."
+  },
+  {
+   "normalised": "payables_dues_other_than_msme",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "total outstanding dues of creditors other than micro"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "debt_securities",
+   "statements": [
+    "balance_sheet",
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^debt securities( \\(.*\\))?$"
+   ],
+   "side": "liabilities",
+   "component_of": "borrowings"
+  },
+  {
+   "normalised": "borrowings_other_than_debt_securities",
+   "statements": [
+    "balance_sheet",
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^borrowings \\(other than debt securit(y|ies)\\)( \\(.*\\))?$",
+    "^borrowings other than debt securit(y|ies)$",
+    "^borrowings$"
+   ],
+   "side": "liabilities",
+   "component_of": "borrowings"
+  },
+  {
+   "normalised": "deposits",
+   "statements": [
+    "balance_sheet",
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^deposits( \\(.*\\))?$",
+    "^public deposits( \\(.*\\))?$"
+   ],
+   "side": "liabilities",
+   "component_of": "borrowings"
+  },
+  {
+   "normalised": "subordinated_liabilities",
+   "statements": [
+    "balance_sheet",
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^subordinated (liabilities|debts?)( \\(.*\\))?$"
+   ],
+   "side": "liabilities",
+   "component_of": "borrowings"
+  },
+  {
+   "normalised": "lease_liabilities",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^lease liabilit(y|ies)( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "other_financial_liabilities",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^other financial liabilities( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "total_financial_liabilities",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(sub ?-? ?)?total ?-? ?financial liabilities( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "current_tax_liabilities_net",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^current tax liabilit(y|ies)( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "provisions",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^provisions( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "deferred_tax_liabilities_net",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^deferred tax liabilit(y|ies)( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "other_non_financial_liabilities",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^other non[- ]?financial liabilities( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "total_non_financial_liabilities",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(sub ?-? ?)?total ?-? ?non[- ]?financial liabilities( \\(.*\\))?$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "total_liabilities",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total liabilities$"
+   ],
+   "side": "liabilities"
+  },
+  {
+   "normalised": "equity_share_capital",
+   "statements": [
+    "balance_sheet",
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^equity share capital( \\(.*\\))?$",
+    "^share capital( \\(.*\\))?$"
+   ],
+   "side": "equity"
+  },
+  {
+   "normalised": "other_equity",
+   "statements": [
+    "balance_sheet",
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^other equity( \\(.*\\))?$",
+    "^reserves (and|&) surplus( \\(.*\\))?$"
+   ],
+   "side": "equity"
+  },
+  {
+   "normalised": "equity_attributable_to_owners",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(total )?equity attributable to (the )?(owners|equity holders|shareholders)"
+   ],
+   "side": "equity"
+  },
+  {
+   "normalised": "non_controlling_interest",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^non[- ]controlling interests?( \\(.*\\))?$"
+   ],
+   "side": "equity"
+  },
+  {
+   "normalised": "total_equity",
+   "statements": [
+    "balance_sheet",
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total equity$",
+    "^total ?-? ?equity$"
+   ],
+   "side": "equity",
+   "note": "Total equity as printed. It is not relabelled as net worth: a company's own net worth figure may deduct items, so take net worth only from where the company states it."
+  },
+  {
+   "normalised": "total_liabilities_and_equity",
+   "statements": [
+    "balance_sheet"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total (liabilities and equity|equity and liabilities)$"
+   ],
+   "side": "equity"
+  },
+  {
+   "normalised": "interest_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^interest income( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "dividend_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^dividend income( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "rental_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^rental income( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "fees_and_commission_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^fees? (and|&) commission income( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "net_gain_on_fair_value_changes",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^net gain on fair value changes( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "net_gain_on_derecognition_amortised_cost",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^net gain on de-?recognition of financial instruments( under amortised cost category)?( \\(.*\\))?$",
+    "^(net )?gain on (direct )?assignment"
+   ],
+   "note": "Where income from assigned (sold-down) loans is usually shown. The company's own label is kept."
+  },
+  {
+   "normalised": "sale_of_services",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^sale of services( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "other_operating_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^other operating (income|revenues?)( \\(.*\\))?$",
+    "^others$"
+   ]
+  },
+  {
+   "normalised": "total_revenue_from_operations",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total revenue from operations( \\(.*\\))?$",
+    "^revenue from operations( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "other_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^other income( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "total_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total income( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "finance_costs",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^finance costs?( \\(.*\\))?$",
+    "^interest and finance charges$"
+   ]
+  },
+  {
+   "normalised": "fees_and_commission_expense",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^fees? (and|&) commission expenses?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "net_loss_on_fair_value_changes",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^net loss on fair value changes( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "net_loss_on_derecognition_amortised_cost",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^net loss on de-?recognition of financial instruments( under amortised cost category)?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "impairment_on_financial_instruments",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^impairment (on|of) financial (instruments|assets)( \\(.*\\))?$",
+    "^impairment (on|of) financial instruments \\(including.*\\)$"
+   ]
+  },
+  {
+   "normalised": "employee_benefits_expense",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^employee benefits? expenses?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "depreciation_and_amortisation",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^depreciation,? ?(and )?amorti[sz]ation( and impairment)?( expenses?)?( \\(.*\\))?$",
+    "^depreciation and amorti[sz]ation expenses?$"
+   ]
+  },
+  {
+   "normalised": "other_expenses",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^other(s)? expenses( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "total_expenses",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total expenses( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "profit_before_exceptional_items_and_tax",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^profit ?/? ?(\\(loss\\) )?before exceptional items and tax( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "exceptional_items",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^exceptional items( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "profit_before_tax",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^profit ?/? ?(\\(loss\\) )?before tax( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "current_tax",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?\\d?[a-z]?\\)? ?)?current tax( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "deferred_tax",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^deferred tax( charge| credit| expense)?( ?/ ?\\(credit\\))?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "tax_of_earlier_years",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(income )?tax (adjustments? )?(of|for|relating to|pertaining to) (earlier|prior|previous) (years?|periods?)( \\(.*\\))?$",
+    "^(short|excess) ?/? ?\\(?(short|excess)?\\)? provision .*earlier years"
+   ]
+  },
+  {
+   "normalised": "total_tax_expense",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total tax expenses?( \\(.*\\))?$",
+    "^tax expenses?:?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "profit_after_tax",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^profit ?/? ?(\\(loss\\) )?(for the (year|period)|after tax)( from continuing operations)?( \\(.*\\))?$",
+    "^net profit (after tax|for the (year|period))( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "other_comprehensive_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(total )?other comprehensive income( ?/ ?\\(loss\\))?( for the (year|period))?(,? net of tax)?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "total_comprehensive_income",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total comprehensive income( ?/ ?\\(loss\\))?( for the (year|period))?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "eps_basic",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "per_share",
+   "patterns": [
+    "^(\\(?[a-z0-9]\\)? ?)?basic( \\(.*\\))?$",
+    "^basic (eps|earnings per (equity )?share)( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "eps_diluted",
+   "statements": [
+    "profit_and_loss"
+   ],
+   "value_kind": "per_share",
+   "patterns": [
+    "^(\\(?[a-z0-9]\\)? ?)?diluted( \\(.*\\))?$",
+    "^diluted (eps|earnings per (equity )?share)( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "net_cash_from_operating_activities",
+   "statements": [
+    "cash_flow"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^net cash (flows? )?(generated from|from|used in|\\(used in\\)|generated by|provided by)?.*operating activities"
+   ]
+  },
+  {
+   "normalised": "net_cash_from_investing_activities",
+   "statements": [
+    "cash_flow"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^net cash (flows? )?(generated from|from|used in|\\(used in\\)|generated by|provided by)?.*investing activities"
+   ]
+  },
+  {
+   "normalised": "net_cash_from_financing_activities",
+   "statements": [
+    "cash_flow"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^net cash (flows? )?(generated from|from|used in|\\(used in\\)|generated by|provided by)?.*financing activities"
+   ]
+  },
+  {
+   "normalised": "net_increase_in_cash",
+   "statements": [
+    "cash_flow"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^net (increase|decrease|\\(decrease\\))( ?/ ?\\(?(decrease|increase)\\)?)? in cash and cash equivalents"
+   ]
+  },
+  {
+   "normalised": "cash_at_beginning",
+   "statements": [
+    "cash_flow"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^cash and cash equivalents (at|as at) (the )?beginning of the (year|period)"
+   ]
+  },
+  {
+   "normalised": "cash_at_end",
+   "statements": [
+    "cash_flow"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^cash and cash equivalents (at|as at) (the )?end of the (year|period)"
+   ]
+  },
+  {
+   "normalised": "statutory_reserve_29c",
+   "statements": [
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(statutory|special) reserve.*29 ?c",
+    "^reserve fund.*29 ?c",
+    "^statutory reserve( \\(.*\\))?$"
+   ],
+   "note": "Reserve under s.29C of the NHB Act. Companies often show it together with the special reserve under s.36(1)(viii) of the Income-tax Act; keep the company's split."
+  },
+  {
+   "normalised": "special_reserve_36_1_viii",
+   "statements": [
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^special reserve.*36 ?\\(1\\) ?\\(viii\\)",
+    "^special reserve( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "securities_premium",
+   "statements": [
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^securities premium( account| reserve)?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "general_reserve",
+   "statements": [
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^general reserve( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "retained_earnings",
+   "statements": [
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^retained earnings( \\(.*\\))?$",
+    "^surplus in (the )?statement of profit and loss( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "share_options_outstanding",
+   "statements": [
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(employee )?(share|stock) options? outstanding( account| reserve)?( \\(.*\\))?$",
+    "^share[- ]based payments? reserve( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "cash_flow_hedge_reserve",
+   "statements": [
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(effective portion of )?cash flow hedges?( reserve)?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "debenture_redemption_reserve",
+   "statements": [
+    "changes_in_equity"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^debenture redemption reserve( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "transfer_to_statutory_reserve",
+   "statements": [
+    "changes_in_equity",
+    "profit_and_loss"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^transfer(red)? to (statutory|special) reserve",
+    "^transfer(red)? to reserve fund"
+   ],
+   "note": "Also appears among the appropriations in the Board's Report's financial summary, which is normalised as profit_and_loss."
+  },
+  {
+   "normalised": "dividend_paid",
+   "statements": [
+    "changes_in_equity",
+    "cash_flow"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(final |interim )?dividends? paid( \\(.*\\))?$",
+    "^dividend on equity shares( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "gross_loans",
+   "statements": [
+    "loans_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total( \\([a-c]\\))? ?-? ?gross$",
+    "^gross loans( \\(.*\\))?$",
+    "^total gross( loans)?$"
+   ]
+  },
+  {
+   "normalised": "impairment_loss_allowance",
+   "statements": [
+    "loans_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^less ?:? ?(impairment (loss )?allowance|allowance for (impairment|expected credit) loss(es)?|provision for expected credit loss(es)?)( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "net_loans",
+   "statements": [
+    "loans_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^total( \\([a-c]\\))? ?-? ?net$",
+    "^net loans( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "loans_secured_by_tangible_assets",
+   "statements": [
+    "loans_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?[ivx]+\\)? ?)?secured by tangible assets( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "loans_unsecured",
+   "statements": [
+    "loans_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?[ivx]+\\)? ?)?unsecured( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "loans_in_india",
+   "statements": [
+    "loans_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?[ivx]+\\)? ?)?loans in india( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "loans_outside_india",
+   "statements": [
+    "loans_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?[ivx]+\\)? ?)?loans outside india( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "term_loans_from_banks",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?[a-z]\\)? ?)?(secured |unsecured )?term loans? ?(\\(?[ivx]+\\)? ?)?(- )?from (scheduled )?banks?( \\(.*\\))?$",
+    "^(\\(?[ivx]+\\)? ?)?from banks( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "refinance_from_nhb",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "(national housing bank|\\bnhb\\b)"
+   ]
+  },
+  {
+   "normalised": "term_loans_from_financial_institutions",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?[a-z]\\)? ?)?(secured |unsecured )?term loans? ?(\\(?[ivx]+\\)? ?)?(- )?from (other parties|financial institutions|others)( \\(.*\\))?$",
+    "^(\\(?[ivx]+\\)? ?)?from (other parties|financial institutions)( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "non_convertible_debentures",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "non[- ]convertible debentures",
+    "^(secured |unsecured )?(redeemable )?debentures( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "commercial_paper",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^commercial papers?( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "external_commercial_borrowings",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^external commercial borrowings?( \\(.*\\))?$",
+    "^\\becb\\b"
+   ]
+  },
+  {
+   "normalised": "bank_overdraft_cash_credit_wcdl",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(loans? repayable on demand|cash credit|bank overdraft|working capital (demand )?loans?)"
+   ]
+  },
+  {
+   "normalised": "securitisation_liabilities",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(liabilit(y|ies)|borrowings?) (against|in respect of|towards) securiti[sz].*",
+    "^associated liabilit(y|ies).*securiti[sz]"
+   ]
+  },
+  {
+   "normalised": "public_deposits",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?[ivx]+\\)? ?)?public deposits( \\(.*\\))?$",
+    "^(\\(?[ivx]+\\)? ?)?(deposits )?from public( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "inter_corporate_deposits",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(\\(?[ivx]+\\)? ?)?inter[- ]?corporate deposits( \\(.*\\))?$"
+   ]
+  },
+  {
+   "normalised": "subordinated_debt_instruments",
+   "statements": [
+    "borrowings_note"
+   ],
+   "value_kind": "amount",
+   "patterns": [
+    "^(unsecured )?(subordinated|tier ii) (non[- ]convertible )?(debentures|bonds|debt)"
+   ]
+  }
+ ]
+}

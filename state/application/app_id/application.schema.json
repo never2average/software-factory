@@ -484,7 +484,11 @@
                           "evals",
                           "follow-ups",
                           "research",
-                          "workflow-author"
+                          "workflow-author",
+                          "hfc-kpi-extraction",
+                          "lodr-filings",
+                          "investor-presentations",
+                          "annual-report-format"
                         ]
                       },
                       "paused": {

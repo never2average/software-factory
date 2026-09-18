@@ -1,0 +1,230 @@
+{
+  "_about": "Label synonym table for extract_results_lines.py (NBFC / Division III of Schedule III statement of profit and loss as an HFC presents it). Documented in skills/results-filing-layouts/references/line-item-synonyms.md. Regexes are case-insensitive and run on the row label after the serial number ('1', '(a)', 'ii)') is stripped and whitespace collapsed. Order matters: the first matching entry wins, so the narrower label comes first. 'context_regex' is tried on '<last header row> > <label>' for rows whose own label is too short to identify ('Basic', 'Current tax'). An unmatched row is listed as unmatched, never forced into an item.",
+  "items": [
+    {
+      "item": "interest_income",
+      "group": "revenue",
+      "regex": "^interest income|^interest earned|^income from (interest|lending)|^interest on (loans|housing)"
+    },
+    {
+      "item": "dividend_income",
+      "group": "revenue",
+      "regex": "^dividend income"
+    },
+    {
+      "item": "rental_income",
+      "group": "revenue",
+      "regex": "^rental income"
+    },
+    {
+      "item": "fees_and_commission_income",
+      "group": "revenue",
+      "regex": "^fees? (and|&) commission income|^fee income|^fees and other charges|^commission income|^fees,? commission"
+    },
+    {
+      "item": "net_gain_on_fair_value_changes",
+      "group": "revenue",
+      "regex": "^net gain on fair value changes?|^net gains? on (financial instruments|investments).{0,40}fair value|^gain on fair value"
+    },
+    {
+      "item": "net_gain_on_derecognition",
+      "group": "revenue",
+      "regex": "^net gain on de-?recognition|^gain on de-?recognition|^net gain on (assignment|direct assignment|securiti[sz]ation|transfer of loans)|^income (from|on) (direct )?assignment|^(gain|income) on (assigned|derecognised) loans"
+    },
+    {
+      "item": "sale_of_services",
+      "group": "revenue",
+      "regex": "^sale of services|^income from services"
+    },
+    {
+      "item": "other_operating_income",
+      "group": "revenue",
+      "regex": "^other operating (income|revenue)|^other revenue from operations",
+      "context_regex": "revenue from operations.{0,20}> .{0,8}others?$"
+    },
+    {
+      "item": "total_revenue_from_operations",
+      "group": "total",
+      "regex": "^total revenue from operations|^revenue from operations\\s*\\(?total|^total (operating )?income from operations|^total income from operations"
+    },
+    {
+      "item": "other_income",
+      "group": "revenue_other",
+      "regex": "^other income"
+    },
+    {
+      "item": "total_income",
+      "group": "total",
+      "regex": "^total income|^total revenue$|^total revenue \\(|^income total"
+    },
+    {
+      "item": "net_interest_income",
+      "group": "memo",
+      "regex": "^net interest income|^\\bnii\\b"
+    },
+    {
+      "item": "finance_costs",
+      "group": "expense",
+      "regex": "^finance costs?|^interest (and|&) (other )?(finance )?charges|^interest expen(se|ses|diture)|^interest and finance"
+    },
+    {
+      "item": "fees_and_commission_expense",
+      "group": "expense",
+      "regex": "^fees? (and|&) commission expen"
+    },
+    {
+      "item": "net_loss_on_fair_value_changes",
+      "group": "expense",
+      "regex": "^net loss on fair value changes?|^loss on fair value"
+    },
+    {
+      "item": "net_loss_on_derecognition",
+      "group": "expense",
+      "regex": "^net loss on de-?recognition|^loss on de-?recognition"
+    },
+    {
+      "item": "impairment_on_financial_instruments",
+      "group": "expense",
+      "regex": "^impairment (on|of) financial (instruments|assets)|^impairment (loss(es)? )?(on|of) (loans|financial)|^(expected )?credit loss(es)?( expense)?$|^provisions? (for|and) (contingencies|expected credit|write[- ]?offs?)|^(loan losses|credit costs?)( and provisions)?$|^bad debts (written off )?and provisions|^net loss on de-?recognition.{0,40}impairment"
+    },
+    {
+      "item": "employee_benefits_expense",
+      "group": "expense",
+      "regex": "^employee benefits? expen|^employees? (cost|benefit)|^staff (cost|expenses)|^personnel expenses"
+    },
+    {
+      "item": "depreciation_amortisation",
+      "group": "expense",
+      "regex": "^depreciation|^amorti[sz]ation"
+    },
+    {
+      "item": "other_expenses",
+      "group": "expense",
+      "regex": "^other expen(se|ses|diture)|^administrative (and|&) other expenses|^operating and other expenses|^establishment (and|&) other expenses"
+    },
+    {
+      "item": "total_expenses",
+      "group": "total",
+      "regex": "^total expen(se|ses|diture)|^expenses total"
+    },
+    {
+      "item": "profit_before_exceptional_items_and_tax",
+      "group": "profit",
+      "regex": "^profit\\s*/?\\s*\\(?(loss)?\\)?\\s*before exceptional|^profit before exceptional"
+    },
+    {
+      "item": "exceptional_items",
+      "group": "profit",
+      "regex": "^exceptional items?"
+    },
+    {
+      "item": "share_of_profit_of_associates",
+      "group": "profit",
+      "regex": "^share (of|in) (net )?(profit|loss|profit\\s*/\\s*\\(?loss\\)?) (of|from|in) (associates?|joint ventures?)"
+    },
+    {
+      "item": "profit_before_tax",
+      "group": "profit",
+      "regex": "^profit\\s*/?\\s*\\(?(loss)?\\)?\\s*before tax|^profit before tax|^(net )?profit.{0,20}before tax|^\\bpbt\\b"
+    },
+    {
+      "item": "current_tax",
+      "group": "tax",
+      "regex": "^current tax|^provision for (current )?tax",
+      "context_regex": "tax expense.{0,30}> (\\(?[a-z0-9]{1,3}\\)?[.)]?\\s*)?current"
+    },
+    {
+      "item": "deferred_tax",
+      "group": "tax",
+      "regex": "^deferred tax",
+      "context_regex": "tax expense.{0,30}> (\\(?[a-z0-9]{1,3}\\)?[.)]?\\s*)?deferred"
+    },
+    {
+      "item": "tax_earlier_years",
+      "group": "tax",
+      "regex": "^(tax|short|excess).{0,40}(earlier|prior|previous) (years?|periods?)|^(earlier|prior) (years?|periods?) tax"
+    },
+    {
+      "item": "total_tax_expense",
+      "group": "tax_total",
+      "regex": "^total tax expen|^tax expen(se|ses)\\s*(\\(total\\)|total)?$|^tax expen(se|ses)\\s*\\(|^provision for taxation$|^income tax expense$"
+    },
+    {
+      "item": "profit_after_tax",
+      "group": "profit",
+      "regex": "^(net )?profit\\s*/?\\s*\\(?(loss)?\\)?\\s*(for the (period|quarter|year)(\\s*/\\s*year)?|after tax)|^(net )?profit (for the (period|quarter|year)|after tax)|^profit.{0,20}after tax|^\\bpat\\b",
+      "exclude": "attributable|non-?controlling|owners of|before"
+    },
+    {
+      "item": "pat_attributable_to_owners",
+      "group": "profit",
+      "regex": "^(net )?profit.{0,40}attributable to.{0,20}(owners|equity holders|shareholders)|^owners of the (company|parent)",
+      "context_regex": "profit.{0,40}attributable.{0,40}> .{0,8}(owners|equity holders|shareholders)"
+    },
+    {
+      "item": "pat_attributable_to_nci",
+      "group": "profit",
+      "regex": "^(net )?profit.{0,40}attributable to.{0,20}non-?controlling|^non-?controlling interests?",
+      "context_regex": "profit.{0,40}attributable.{0,40}> .{0,8}non-?controlling"
+    },
+    {
+      "item": "other_comprehensive_income",
+      "group": "oci",
+      "regex": "^(total )?other comprehensive (income|loss)|^other comprehensive income\\s*/?\\s*\\(?loss"
+    },
+    {
+      "item": "total_comprehensive_income",
+      "group": "oci",
+      "regex": "^total comprehensive (income|loss)",
+      "exclude": "attributable"
+    },
+    {
+      "item": "paid_up_equity_share_capital",
+      "group": "capital",
+      "regex": "^paid[- ]?up (equity )?(share )?capital|^equity share capital"
+    },
+    {
+      "item": "other_equity",
+      "group": "capital",
+      "regex": "^other equity|^reserves? (and surplus )?(excluding|\\(excluding) revaluation"
+    },
+    {
+      "item": "eps_basic_and_diluted",
+      "group": "eps",
+      "per_share": true,
+      "regex": "basic (and|&|/) diluted",
+      "context_regex": "(earnings? per|\\beps\\b).{0,80}> .{0,8}basic (and|&|/) diluted"
+    },
+    {
+      "item": "eps_basic",
+      "group": "eps",
+      "per_share": true,
+      "regex": "^basic (eps|earnings? per)|^(eps|earnings? per (equity )?share).{0,40}basic(?!.{0,15}diluted)|^basic\\s*\\(?(₹|rs|in)|^basic$",
+      "context_regex": "(earnings? per|\\beps\\b).{0,80}> .{0,8}basic(?!.{0,15}diluted)"
+    },
+    {
+      "item": "eps_diluted",
+      "group": "eps",
+      "per_share": true,
+      "regex": "^diluted (eps|earnings? per)|^(eps|earnings? per (equity )?share).{0,40}(?<!and )(?<!& )diluted|^diluted\\s*\\(?(₹|rs|in)|^diluted$",
+      "exclude": "^basic",
+      "context_regex": "(earnings? per|\\beps\\b).{0,80}> .{0,8}diluted"
+    }
+  ],
+  "excluded_label_regex": "restructur",
+  "footing": {
+    "_about": "Identities validate_results_extract.py checks per column, in Rs crore. abs_tolerance covers rounding of lakh figures; rel_tolerance_pct is of the total being checked.",
+    "abs_tolerance_crore": 0.05,
+    "rel_tolerance_pct": 0.5,
+    "expense_components": [
+      "finance_costs",
+      "fees_and_commission_expense",
+      "net_loss_on_fair_value_changes",
+      "net_loss_on_derecognition",
+      "impairment_on_financial_instruments",
+      "employee_benefits_expense",
+      "depreciation_amortisation",
+      "other_expenses"
+    ]
+  }
+}

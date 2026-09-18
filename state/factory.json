@@ -100,7 +100,8 @@
   "applications": [
     "redacted",
     "redacted",
-    "sf_gateway_probe"
+    "sf_gateway_probe",
+    "redacted"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",

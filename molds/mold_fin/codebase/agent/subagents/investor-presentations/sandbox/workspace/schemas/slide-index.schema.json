@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Output of scripts/slide_index.py",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document",
+    "kind",
+    "slide_count",
+    "slides"
+  ],
+  "properties": {
+    "document": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "pdf",
+        "pptx",
+        "text"
+      ]
+    },
+    "slide_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "appendix_starts_at": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "deck_unit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The unit named on the most slides; a convenience only, every figure takes the unit of ITS slide."
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "slides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "slide",
+          "title",
+          "title_method",
+          "unit",
+          "units_found",
+          "periods",
+          "section",
+          "section_candidates",
+          "in_appendix",
+          "excluded",
+          "char_count",
+          "image_only"
+        ],
+        "properties": {
+          "slide": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title_method": {
+            "enum": [
+              "placeholder",
+              "largest_text",
+              "first_line",
+              "none"
+            ]
+          },
+          "unit": {
+            "enum": [
+              "crore",
+              "lakh",
+              "million",
+              "billion",
+              "thousand",
+              null
+            ],
+            "description": "null when the slide names no unit OR more than one (see units_found)."
+          },
+          "units_found": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "usd_present": {
+            "type": "boolean"
+          },
+          "periods": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label",
+                "period",
+                "kind"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "period": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "enum": [
+                    "quarter",
+                    "cumulative",
+                    "year",
+                    "as_at",
+                    "trailing",
+                    "unparsed"
+                  ]
+                }
+              }
+            }
+          },
+          "mixed_periods": {
+            "type": "boolean"
+          },
+          "section": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "section_score": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "section_candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "section",
+                "score"
+              ],
+              "properties": {
+                "section": {
+                  "type": "string"
+                },
+                "score": {
+                  "type": "integer"
+                },
+                "matched": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "in_appendix": {
+            "type": "boolean"
+          },
+          "excluded": {
+            "type": "boolean",
+            "description": "true for a restructured-book slide; nothing is extracted from it."
+          },
+          "char_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "image_only": {
+            "type": "boolean"
+          },
+          "text": {
+            "type": "string"
+          },
+          "restructured_mentions": {
+            "type": "boolean",
+            "description": "true when the slide's body mentions a restructured book on an otherwise ordinary slide; skip those lines."
+          }
+        }
+      }
+    }
+  }
+}

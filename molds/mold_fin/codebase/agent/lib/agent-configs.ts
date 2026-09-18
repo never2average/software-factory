@@ -42,6 +42,10 @@ const AGENT_LABELS: Record<string, string> = {
   "app-author": "App author",
   "follow-ups": "Follow-ups",
   browser: "Browser",
+  "hfc-kpi-extraction": "HFC KPI extraction",
+  "lodr-filings": "LODR filings",
+  "investor-presentations": "Investor presentations",
+  "annual-report-format": "Annual report format",
 };
 
 /** Render the config rows as a system-context block, or null if nothing set. */

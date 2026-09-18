@@ -1,0 +1,711 @@
+{
+  "version": 1,
+  "about": "Label synonyms for the metrics the analysts take from an HFC investor presentation. Read by find_metric_slides.py, extract_labelled_numbers.py and validate_ip_metrics.py. Phrases are matched case-insensitively on word boundaries with flexible whitespace; '&' and 'and' are interchangeable. A mirror of this file sits in skills/operational-metrics/references/; the scripts' self-tests fail when the two drift.",
+  "unit_classes": {
+    "count": "a non-negative whole number; unit 'count'",
+    "amount": "rupee amount reported in Rs crore; unit 'crore'",
+    "percent": "a percentage as presented; unit 'percent'"
+  },
+  "metrics": {
+    "branches": {
+      "class": "count",
+      "period_basis": "as_at",
+      "synonyms": [
+        "branches",
+        "branch network",
+        "number of branches",
+        "no. of branches",
+        "no of branches",
+        "branch count",
+        "branch offices",
+        "total branches",
+        "branch presence",
+        "distribution network",
+        "physical presence",
+        "offices"
+      ],
+      "basis_variants": {
+        "branches": [
+          "branches",
+          "branch offices",
+          "branch count",
+          "full-service branches"
+        ],
+        "locations": [
+          "locations",
+          "cities",
+          "towns",
+          "cities and towns"
+        ],
+        "touchpoints": [
+          "touchpoints",
+          "touch points",
+          "points of presence",
+          "service centres",
+          "service centers",
+          "outreach centres",
+          "spokes",
+          "satellite offices",
+          "digital branches",
+          "sourcing points",
+          "business correspondents"
+        ],
+        "districts": [
+          "districts"
+        ],
+        "states": [
+          "states",
+          "states and uts",
+          "states & union territories"
+        ]
+      },
+      "preferred_sections": [
+        "network",
+        "highlights",
+        "company_overview"
+      ],
+      "not": [
+        "per branch",
+        "branch manager",
+        "bank branches"
+      ]
+    },
+    "employees": {
+      "class": "count",
+      "period_basis": "as_at",
+      "synonyms": [
+        "employees",
+        "number of employees",
+        "no. of employees",
+        "no of employees",
+        "employee count",
+        "employee strength",
+        "headcount",
+        "head count",
+        "workforce",
+        "team size",
+        "team strength",
+        "manpower",
+        "people strength",
+        "staff strength",
+        "total employees",
+        "on-roll employees",
+        "on roll employees",
+        "employees on rolls"
+      ],
+      "basis_variants": {
+        "on_roll": [
+          "on-roll",
+          "on roll",
+          "on rolls",
+          "on the rolls",
+          "permanent employees",
+          "on-roll employees"
+        ],
+        "off_roll": [
+          "off-roll",
+          "off roll",
+          "contractual",
+          "outsourced",
+          "third-party staff",
+          "dsa",
+          "direct selling agents"
+        ],
+        "total": [
+          "total employees",
+          "total workforce",
+          "total headcount",
+          "on-roll and off-roll",
+          "including off-roll"
+        ]
+      },
+      "preferred_sections": [
+        "network",
+        "highlights",
+        "company_overview",
+        "esg"
+      ],
+      "not": [
+        "per employee",
+        "employee cost",
+        "employee benefit",
+        "employee expenses",
+        "employee stock",
+        "esop"
+      ]
+    },
+    "disbursements": {
+      "class": "amount",
+      "period_basis": "flow",
+      "synonyms": [
+        "disbursements",
+        "disbursement",
+        "disbursals",
+        "disbursal",
+        "loans disbursed",
+        "loan disbursements",
+        "quarterly disbursements",
+        "disbursements during the quarter",
+        "fresh disbursements",
+        "gross disbursements",
+        "total disbursements",
+        "business volume"
+      ],
+      "preferred_sections": [
+        "aum_disbursements",
+        "highlights"
+      ],
+      "not": [
+        "disbursement per branch",
+        "disbursement per employee",
+        "sanctions",
+        "logins",
+        "co-lending disbursements",
+        "partner share of disbursements",
+        "partner's share of disbursements",
+        "share of disbursements"
+      ]
+    },
+    "aum": {
+      "class": "amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "aum",
+        "assets under management",
+        "asset under management",
+        "total aum",
+        "gross aum",
+        "managed assets",
+        "managed book",
+        "managed loan book",
+        "loan assets under management",
+        "managed aum"
+      ],
+      "preferred_sections": [
+        "aum_disbursements",
+        "highlights"
+      ],
+      "not": [
+        "aum growth guidance",
+        "opex to aum",
+        "opex/aum",
+        "aum per branch"
+      ]
+    },
+    "loan_book": {
+      "class": "amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "loan book",
+        "on-book aum",
+        "on book aum",
+        "on-book loans",
+        "on book loans",
+        "on-balance sheet loans",
+        "on balance sheet loans",
+        "own book",
+        "on-book portfolio",
+        "loans and advances",
+        "loan assets",
+        "gross loan book",
+        "gross loans",
+        "net loans",
+        "on-book"
+      ],
+      "preferred_sections": [
+        "aum_disbursements",
+        "financials",
+        "highlights"
+      ],
+      "not": [
+        "restructured loan book",
+        "opex to loan book"
+      ]
+    },
+    "off_book_aum": {
+      "class": "amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "off-book aum",
+        "off book aum",
+        "off-book",
+        "off book",
+        "off-balance sheet",
+        "off balance sheet",
+        "assigned portfolio",
+        "assigned book",
+        "assigned assets",
+        "assigned pool",
+        "assigned loans outstanding",
+        "direct assignment outstanding",
+        "da outstanding",
+        "da book",
+        "co-lent book",
+        "co-lending book",
+        "co-lending aum",
+        "co-lending portfolio",
+        "securitised portfolio",
+        "securitized portfolio",
+        "securitised book",
+        "securitized book",
+        "derecognised loans",
+        "derecognized loans",
+        "managed off-book"
+      ],
+      "preferred_sections": [
+        "aum_disbursements",
+        "borrowings_alm",
+        "appendix"
+      ],
+      "not": []
+    },
+    "sell_down_volume": {
+      "class": "amount",
+      "period_basis": "flow",
+      "synonyms": [
+        "sell down",
+        "sell-down",
+        "selldown",
+        "sold down",
+        "loans assigned",
+        "loans assigned during the quarter",
+        "assignment during the quarter",
+        "assignment volume",
+        "direct assignment",
+        "direct assignment transactions",
+        "da transactions",
+        "da volume",
+        "assigned during",
+        "loans transferred",
+        "transfer of loan exposures",
+        "loans transferred through assignment",
+        "details of loans transferred",
+        "co-lending disbursements",
+        "co-lending volume",
+        "co-lent during",
+        "securitisation during",
+        "securitization during",
+        "securitisation volume",
+        "securitization volume",
+        "ptc transactions",
+        "pool sold",
+        "pools sold",
+        "portfolio sold",
+        "upfront income on assignment",
+        "income on derecognised loans",
+        "co-lending",
+        "co-lent",
+        "partner share",
+        "partner's share",
+        "partners share"
+      ],
+      "preferred_sections": [
+        "appendix",
+        "borrowings_alm",
+        "aum_disbursements"
+      ],
+      "not": [
+        "restructured"
+      ]
+    },
+    "buy_out_volume": {
+      "class": "amount",
+      "period_basis": "flow",
+      "synonyms": [
+        "buy out",
+        "buy-out",
+        "buyout",
+        "portfolio buyout",
+        "portfolio buy-out",
+        "portfolio buy out",
+        "pool buyout",
+        "pool buy-out",
+        "pool purchase",
+        "pools purchased",
+        "portfolio purchase",
+        "portfolio acquired",
+        "portfolio acquisition",
+        "loans acquired",
+        "loans acquired through assignment",
+        "details of loans acquired",
+        "inorganic book",
+        "inorganic growth",
+        "acquired portfolio",
+        "purchased portfolio",
+        "inward direct assignment"
+      ],
+      "preferred_sections": [
+        "appendix",
+        "aum_disbursements"
+      ],
+      "not": [
+        "share buyback",
+        "buy back of shares",
+        "buyback"
+      ]
+    },
+    "aum_mix_individual_housing": {
+      "class": "percent_or_amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "individual housing loans",
+        "individual home loans",
+        "home loans",
+        "housing loans",
+        "retail home loans",
+        "individual housing",
+        "hl",
+        "ihl",
+        "prime home loans",
+        "retail housing"
+      ],
+      "preferred_sections": [
+        "product_customer_mix",
+        "aum_disbursements"
+      ],
+      "not": [
+        "affordable home loans"
+      ]
+    },
+    "aum_mix_lap": {
+      "class": "percent_or_amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "lap",
+        "loan against property",
+        "loans against property",
+        "non-housing loans",
+        "non housing loans",
+        "non-home loans",
+        "mortgage loans",
+        "msme lap",
+        "secured business loans",
+        "nhl"
+      ],
+      "preferred_sections": [
+        "product_customer_mix",
+        "aum_disbursements"
+      ],
+      "not": []
+    },
+    "aum_mix_construction_finance": {
+      "class": "percent_or_amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "construction finance",
+        "developer finance",
+        "developer loans",
+        "builder loans",
+        "project finance",
+        "project loans",
+        "corporate loans",
+        "wholesale book",
+        "wholesale loans",
+        "corporate and developer",
+        "non-retail",
+        "cf"
+      ],
+      "preferred_sections": [
+        "product_customer_mix",
+        "aum_disbursements"
+      ],
+      "not": [
+        "self-construction",
+        "self construction"
+      ]
+    },
+    "aum_mix_affordable": {
+      "class": "percent_or_amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "affordable housing",
+        "affordable home loans",
+        "affordable housing loans",
+        "affordable segment",
+        "emerging markets",
+        "pmay",
+        "ews/lig",
+        "ews and lig",
+        "low ticket home loans"
+      ],
+      "preferred_sections": [
+        "product_customer_mix",
+        "aum_disbursements"
+      ],
+      "not": []
+    },
+    "aum_mix_other": {
+      "class": "percent_or_amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "others",
+        "other loans",
+        "lease rental discounting",
+        "lrd",
+        "top-up loans",
+        "top up loans",
+        "insurance premium funding"
+      ],
+      "preferred_sections": [
+        "product_customer_mix"
+      ],
+      "not": [
+        "other income",
+        "other expenses",
+        "other borrowings"
+      ]
+    },
+    "aum_mix_salaried": {
+      "class": "percent_or_amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "salaried",
+        "salaried customers",
+        "salaried segment",
+        "formal salaried",
+        "informal salaried",
+        "cash salaried"
+      ],
+      "preferred_sections": [
+        "product_customer_mix"
+      ],
+      "not": []
+    },
+    "aum_mix_self_employed": {
+      "class": "percent_or_amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "self-employed",
+        "self employed",
+        "sep",
+        "senp",
+        "self-employed professional",
+        "self-employed non-professional",
+        "self employed non professional",
+        "non-salaried",
+        "non salaried",
+        "business owners"
+      ],
+      "preferred_sections": [
+        "product_customer_mix"
+      ],
+      "not": []
+    },
+    "avg_ticket_size": {
+      "class": "amount",
+      "period_basis": "as_at",
+      "synonyms": [
+        "average ticket size",
+        "avg ticket size",
+        "avg. ticket size",
+        "ats",
+        "ticket size",
+        "average loan size",
+        "average loan outstanding",
+        "average sanction amount",
+        "incremental ticket size",
+        "ticket size on disbursement",
+        "ticket size at origination"
+      ],
+      "preferred_sections": [
+        "product_customer_mix",
+        "highlights"
+      ],
+      "not": []
+    },
+    "avg_ltv": {
+      "class": "percent",
+      "period_basis": "as_at",
+      "synonyms": [
+        "ltv",
+        "loan to value",
+        "loan-to-value",
+        "average ltv",
+        "avg ltv",
+        "avg. ltv",
+        "ltv at origination",
+        "origination ltv",
+        "portfolio ltv",
+        "weighted average ltv"
+      ],
+      "preferred_sections": [
+        "product_customer_mix",
+        "asset_quality"
+      ],
+      "not": []
+    },
+    "yield": {
+      "class": "percent",
+      "period_basis": "flow",
+      "synonyms": [
+        "yield",
+        "yield on advances",
+        "yield on loans",
+        "portfolio yield",
+        "yield on aum",
+        "yield on average loans",
+        "yield on loan assets",
+        "average yield",
+        "effective interest rate",
+        "lending yield",
+        "yield on interest earning assets",
+        "incremental yield"
+      ],
+      "preferred_sections": [
+        "margins_spreads",
+        "highlights"
+      ],
+      "not": [
+        "dividend yield",
+        "yield on investments"
+      ]
+    },
+    "cost_of_funds": {
+      "class": "percent",
+      "period_basis": "flow",
+      "synonyms": [
+        "cost of funds",
+        "cost of fund",
+        "cof",
+        "cost of borrowings",
+        "cost of borrowing",
+        "borrowing cost",
+        "average cost of borrowings",
+        "average cost of borrowing",
+        "weighted average cost of borrowings",
+        "cost of interest bearing liabilities",
+        "incremental cost of funds",
+        "incremental cost of borrowings"
+      ],
+      "preferred_sections": [
+        "margins_spreads",
+        "borrowings_alm",
+        "highlights"
+      ],
+      "not": []
+    },
+    "spread": {
+      "class": "percent",
+      "period_basis": "flow",
+      "synonyms": [
+        "spread",
+        "spreads",
+        "interest spread",
+        "spread on loans",
+        "loan spread",
+        "gross spread",
+        "portfolio spread",
+        "incremental spread"
+      ],
+      "preferred_sections": [
+        "margins_spreads",
+        "highlights"
+      ],
+      "not": [
+        "credit spread",
+        "spread across",
+        "spread over",
+        "well spread",
+        "geographic spread"
+      ]
+    },
+    "nim": {
+      "class": "percent",
+      "period_basis": "flow",
+      "synonyms": [
+        "nim",
+        "net interest margin",
+        "net interest margins",
+        "nims",
+        "margin on aum",
+        "nim on aum",
+        "nim on average loans",
+        "nim on total assets",
+        "net total income margin"
+      ],
+      "preferred_sections": [
+        "margins_spreads",
+        "highlights"
+      ],
+      "not": []
+    }
+  },
+  "core_metrics": [
+    "branches",
+    "employees",
+    "disbursements",
+    "aum",
+    "loan_book",
+    "sell_down_volume",
+    "buy_out_volume"
+  ],
+  "period_tags": {
+    "quarter": [
+      "for the quarter",
+      "during the quarter",
+      "quarter ended",
+      "q1",
+      "q2",
+      "q3",
+      "q4",
+      "1q",
+      "2q",
+      "3q",
+      "4q",
+      "three months"
+    ],
+    "ytd": [
+      "ytd",
+      "year to date",
+      "h1",
+      "1h",
+      "half year",
+      "half-year",
+      "six months",
+      "9m",
+      "nine months",
+      "cumulative"
+    ],
+    "full_year": [
+      "fy",
+      "full year",
+      "year ended",
+      "annual",
+      "twelve months"
+    ],
+    "trailing": [
+      "ttm",
+      "ltm",
+      "trailing twelve months",
+      "last twelve months",
+      "rolling 12 months"
+    ],
+    "as_at": [
+      "as on",
+      "as at",
+      "as of",
+      "outstanding as on"
+    ]
+  },
+  "excluded": {
+    "restructured_book": {
+      "reason": "The analysts' rulebook excludes restructured-book details from the report.",
+      "phrases": [
+        "restructured",
+        "restructuring",
+        "restructured book",
+        "restructured assets",
+        "restructured portfolio",
+        "restructured pool",
+        "one time restructuring",
+        "one-time restructuring",
+        "otr",
+        "resolution framework",
+        "rf 1.0",
+        "rf 2.0",
+        "covid restructuring",
+        "covid-19 restructuring"
+      ]
+    }
+  }
+}

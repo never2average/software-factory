@@ -39,6 +39,10 @@ const WORKFLOWS = [
   { name: "customer-context", description: "Keep the system of record current from meetings, email, Slack.", trigger: "on delegation" },
   { name: "follow-ups", description: "Chase open follow-ups; prepare the daily stand-up summary.", trigger: "on delegation" },
   { name: "research", description: "Research an account & build its 7 domain workbooks.", trigger: "on delegation" },
+  { name: "hfc-kpi-extraction", description: "Standard quarterly KPI table for a housing finance company, cited to filing and page.", trigger: "on delegation" },
+  { name: "lodr-filings", description: "Find, file & read SEBI LODR disclosures by regulation; keep the filing log.", trigger: "on delegation" },
+  { name: "investor-presentations", description: "Read investor decks & concalls: operational metrics, guidance, definitions.", trigger: "on delegation" },
+  { name: "annual-report-format", description: "Map an HFC annual report & extract its sections consistently.", trigger: "on delegation" },
 ];
 
 const db = getDb();
