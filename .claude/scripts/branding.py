@@ -365,11 +365,10 @@ def apply_overlay(build_dir, b, rules):
         open(p, "w").write(s); applied.append("palette")
     return applied
 
-def prepare(app_id, app, mold_dir, force=False):
+def build_copy(app_id, mold_dir, force=False):
+    """build/<app_id>/: the per-application copy of the mold that brand and packs are applied to. The mold itself
+    is never edited; this is the only place an application's own code exists."""
     build_dir = os.path.join(ROOT, "build", app_id)
-    b = resolve(app)
-    if not b:
-        print("no branding on this app; building from the mold as-is"); return mold_dir
     if os.path.exists(build_dir) and not force: shutil.rmtree(build_dir)
     os.makedirs(build_dir, exist_ok=True)
     # Source tree only. node_modules is hard-linked (never written, so the mold cannot be touched)
@@ -380,6 +379,13 @@ def prepare(app_id, app, mold_dir, force=False):
     nm = os.path.join(build_dir, "node_modules")
     if not os.path.exists(nm):
         subprocess.run(["cp", "-al", os.path.join(mold_dir, "node_modules"), nm], check=True)
+    return build_dir
+
+def prepare(app_id, app, mold_dir, force=False):
+    b = resolve(app)
+    if not b:
+        print("no branding on this app; building from the mold as-is"); return mold_dir
+    build_dir = build_copy(app_id, mold_dir, force)
     rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
     applied = apply_overlay(build_dir, b, rules)
     print(f"branded build copy: {os.path.relpath(build_dir, ROOT)}  ({b['product_name']}, {len(applied)} rule(s))")

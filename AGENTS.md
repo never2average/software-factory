@@ -7,7 +7,8 @@ Work is tasked: run `python3 .claude/scripts/factory.py next <mold_id>` to get t
 To stamp from a description: `intake` subagent (asks the user only unresolved questions, writes state) then `provisioner` subagent (checks secrets by name, deploys). Secret values never enter the repo or the chat.
 
 Rules:
-- Molds under `molds/<mold_id>/codebase` are snapshots. Do not edit them in place; refresh from source per the mold's `MOLD.md`, or fork into a new mold.
+- Molds under `molds/<mold_id>/codebase` are general-purpose snapshots. Do not edit them in place, and do not fork one to stamp an application. Refresh from source per the mold's `MOLD.md`.
+- An application's own code (subagents, a root-instructions section, shared sandbox helpers) is a pack under `packs/<pack_id>/`. The application's state names it, and `.claude/scripts/packs.py` applies it to `build/<app_id>/`. If a vertical needs a base-code change, that is a pull request to the mold's upstream, never a fork.
 - Stamping an application means: copy `state/application/app_id/` to a real id, fill the four JSON files against their schemas, then run the five testing lanes in `molds/<mold_id>/testing/`. A failed lane sets the application to `reverted` and hands control back to the operator.
 - Secrets are referenced by name only (`*_ref` fields). Values live in Vercel or the VM environment.
 - Every command runs on the DigitalOcean VM. Shallow-clone external repos.

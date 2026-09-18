@@ -223,7 +223,15 @@ def context(app_id, lane, mold_id, docs, report):
     # server this factory did not deploy; the old fallback read a field that could no longer validate (mold_v1-057).
     url = ((infra.get("vercel") or {}).get("production_url") or "").rstrip("/")
     mold = os.path.join(ROOT, "molds", mold_id)
-    return {"app_id": app_id, "root": ROOT, "mold": mold, "codebase": os.path.join(mold, "codebase"),
+    app = docs.get("application") or {}
+    # An application with packs has code the mold does not: its checks run in its own build copy
+    # (build/<app_id>/, made by packs.py apply), never in the general-purpose mold.
+    codebase = os.path.join(ROOT, "build", app_id) if app.get("packs") else os.path.join(mold, "codebase")
+    # What the page <title> must carry: the app's own brand, else the mold's default name.
+    rules = os.path.join(mold, "branding", "rules.json")
+    default_name = json.load(open(rules)).get("product_name_default", "") if os.path.exists(rules) else ""
+    product_name = ((app.get("surface") or {}).get("branding") or {}).get("product_name") or default_name
+    return {"app_id": app_id, "root": ROOT, "mold": mold, "codebase": codebase, "product_name": re.escape(product_name),
             "testing": os.path.join(mold, "testing"), "lane": lane, "date": TODAY, "url": url, "report": report}
 
 def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet_lane, not_run,
@@ -335,6 +343,9 @@ def main(a):
         if not os.path.exists(p): die(f"{app_id}/{name}.json is missing, so preconditions cannot be judged. Nothing ran.")
         docs[name] = load(p)
     mold_id = docs["application"].get("mold_id") or die(f"{app_id}/application.json has no mold_id. Nothing ran.")
+    if docs["application"].get("packs") and not os.path.isdir(os.path.join(ROOT, "build", app_id)) and "--list" not in sys.argv:
+        die(f"{app_id} has packs ({', '.join(docs['application']['packs'])}), so its checks run in its own build copy, and "
+            f"build/{app_id}/ does not exist yet. Make it, then re-run: python3 .claude/scripts/packs.py apply {app_id}. Nothing ran.")
     commit = docs["application"].get("mold_commit") or next((m.get("source", {}).get("commit", "?") for m in
              load(os.path.join(ST, "factory.json"))["molds"] if m["mold_id"] == mold_id), "?")
     specs = {l: read_spec(l, mold_id) for l in LANES}

@@ -474,22 +474,8 @@
                     "properties": {
                       "agent_key": {
                         "type": "string",
-                        "enum": [
-                          "app-author",
-                          "browser",
-                          "configuration",
-                          "customer-context",
-                          "data-migration",
-                          "deployment",
-                          "evals",
-                          "follow-ups",
-                          "research",
-                          "workflow-author",
-                          "hfc-kpi-extraction",
-                          "lodr-filings",
-                          "investor-presentations",
-                          "annual-report-format"
-                        ]
+                        "pattern": "^[a-z][a-z0-9-]{0,79}$",
+                        "description": "A subagent key. It must exist in the application's mold (agent/subagents/<key>/agent.ts) or in one of its packs; factory.py validate checks that, since the set differs per application."
                       },
                       "paused": {
                         "type": "boolean",
@@ -1297,6 +1283,14 @@
         "members"
       ],
       "description": "Tenancy and people: who the workspace is and who is in it (orgs, org_members, platform_admins, people_roster, customers). Not a service-surface item; the surface blocks reference it"
+    },
+    "packs": {
+      "type": "array",
+      "description": "Packs applied to this application's build copy (packs/<pack_id>/): the application's own code — subagents, a root-instructions section, shared sandbox helpers — added to the mold WITHOUT forking it. .claude/scripts/packs.py",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{1,40}$"
+      }
     }
   }
 }
