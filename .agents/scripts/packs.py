@@ -29,6 +29,7 @@ ALLOWED = [re.compile(p) for p in (
     r"^agent/instructions/\d{2}-pack-[a-z0-9-]+\.(md|ts)$",
     r"^scripts/subagent-shared/[a-z][a-z0-9_-]*/.+",
     r"^docs/packs/[A-Za-z0-9_.-]+\.md$",
+    r"^profiles/\d{2}-pack-[a-z0-9-]+\.json$",   # the pack's deployment profile: wording, data-room shape, agent briefing
 )]
 SKIP = ("__pycache__", ".pyc", ".DS_Store")
 
@@ -60,7 +61,7 @@ def check_pack(pack_id, files=None, manifest=None):
     for f in files:
         if not any(a.match(f) for a in ALLOWED):
             errs.append(f"{pack_id}: {f} is outside what a pack may add (agent/subagents/<key>/, "
-                        f"agent/instructions/NN-pack-<name>.md, scripts/subagent-shared/<family>/, docs/packs/)")
+                        f"agent/instructions/NN-pack-<name>.md, scripts/subagent-shared/<family>/, profiles/NN-pack-<name>.json, docs/packs/)")
     have = {f.split("/")[2] for f in files if f.startswith("agent/subagents/") and f.endswith("/agent.ts") and f.count("/") == 3}
     want = set(manifest.get("subagents") or [])
     for k in sorted(want - have): errs.append(f"{pack_id}: pack.json names subagent '{k}' but files/agent/subagents/{k}/agent.ts is not there")
@@ -114,7 +115,10 @@ def apply(app_id, lane=False):
     for f, p in sorted(seen.items()):
         dest = os.path.join(build, f); os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copyfile(os.path.join(PACKS, p, "files", f), dest)
-    for cmd in (["node", "scripts/sync-subagent-shared.mjs"], ["node", "scripts/gen-subagent-meta.mjs"]):
+    cmds = [["node", "scripts/sync-subagent-shared.mjs"], ["node", "scripts/gen-subagent-meta.mjs"]]
+    if os.path.exists(os.path.join(build, "scripts", "gen-deployment-profile.mjs")): cmds.append(["node", "scripts/gen-deployment-profile.mjs"])
+    elif any(f.startswith("profiles/") for f in seen): sys.exit(f"{app['mold_id']} has no deployment profile (scripts/gen-deployment-profile.mjs), so a pack's profile would change nothing. Refresh the mold.")
+    for cmd in cmds:
         r = subprocess.run(cmd, cwd=build, capture_output=True, text=True)
         if r.returncode:
             print((r.stdout + r.stderr).strip(), file=sys.stderr); sys.exit(f"{' '.join(cmd)} failed in {os.path.relpath(build, ROOT)}/")

@@ -50,6 +50,21 @@
         },
         "context_window": {
           "type": "integer"
+        },
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-role models on Cloudflare Workers AI (mold: CLOUDFLARE_MODEL_ORCHESTRATOR / CLOUDFLARE_MODEL_SPECIALIST; each falls back to `model`). The orchestrator talks to the person, so it must be a vision model if the deployment wants native image input; the specialist runs delegated text-heavy work.",
+          "properties": {
+            "orchestrator": {
+              "type": "string",
+              "pattern": "^@cf/[A-Za-z0-9._/-]+$"
+            },
+            "specialist": {
+              "type": "string",
+              "pattern": "^@cf/[A-Za-z0-9._/-]+$"
+            }
+          }
         }
       }
     },

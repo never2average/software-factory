@@ -298,7 +298,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     # names them ("packs: hfc-research") or the product carries them. A pack may also say what it means for the
     # application's STATE (pack.json "state"): its corpus, the workspace instructions and the subagents it adds —
     # so a packed app's state is reproducible from the brief, not patched by hand after intake.
-    packs = hints.get("packs") or list(prod.get("packs") or [])
+    packs = hints.get("packs") or list(prod.get("packs") or []); pack_model_roles = None
     for pid in packs:
         mp = os.path.join(ROOT, "packs", pid, "pack.json")
         if not os.path.exists(mp): sys.exit(f"the brief names pack '{pid}' but packs/{pid}/pack.json does not exist")
@@ -308,6 +308,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         for k in ("workspace", "persona_name", "tone"):
             if st.get(k): ins[k] = st[k]
         ins["subagents"] += [{"agent_key": k, "paused": False} for k in pm.get("subagents", [])]
+        if st.get("model_roles"): pack_model_roles = dict(st["model_roles"])
 
     if hints.get("account_noun") and hints["account_noun"] != "customer":
         surface["primary_context"]["entity_vocabulary"]["note"] = "mold_v1 cannot rename accounts; recorded for the parity audit"
@@ -320,6 +321,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
       "testing":{l:{"status":"pending"} for l in ["load","context","functional","accessibility","responsiveness"]}}
     if ans.get("customer_id"): app["customer_id"] = ans["customer_id"]
     if packs: app["packs"] = packs
+    if pack_model_roles and model_provider == "cloudflare": app["model"]["roles"] = pack_model_roles
     if hints.get("clone_of"): app["clone_of"] = dict(hints["clone_of"], snapshot_date=TODAY, regression={"status": "pending"})
     ex_app = existing.get("application", {})  # re-running intake never resets progress already made
     if ex_app.get("clone_of", {}).get("extracted_at"):  # the surface came from a live deployment; the brief cannot know better
