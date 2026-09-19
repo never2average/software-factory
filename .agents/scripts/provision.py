@@ -58,7 +58,10 @@ def sh(cmd, cwd=None, check=True):
     return r.stdout
 
 def vercel_env_names(cwd, project):
-    out = sh(f"vercel env ls production --project {project} 2>/dev/null", cwd=cwd, check=False)
+    out = sh(f"NO_COLOR=1 FORCE_COLOR=0 vercel env ls production --project {project} 2>/dev/null", cwd=cwd, check=False)
+    # Strip ANSI anyway: under FORCE_COLOR the CLI wraps each name in bold codes, whose trailing 'm' made
+    # isupper() false for EVERY name, so a project with all its secrets set read as "0 present" (2026-09-19).
+    out = re.sub(r"\x1b\[[0-9;]*m", "", out)
     return {l.split()[0] for l in out.splitlines() if l.strip() and l.split()[0].isupper()}
 
 GENERATED = {  # app-internal secrets the factory may mint itself (never external credentials)
@@ -1507,8 +1510,26 @@ def set_secret(app_id, name, infra, mold_dir):
     `infra["vercel"]` used to be read unconditionally, so this — the ONE command a non-technical
     operator is ever told to run — died with KeyError: 'vercel' on any app that is not on Vercel."""
     import getpass
+    declared = list(infra.get("secrets_user") or []) + list(infra.get("secrets") or [])
+    if name not in declared and name not in GUIDE:
+        # The operator pasted the VALUE where the NAME goes (2026-09-19). Say so; never echo it back, never store it.
+        ask = [n for n in (infra.get("secrets_user") or []) if n in GUIDE]
+        sys.exit("That does not look like the NAME of a credential; it looks like the value itself. The name goes on the "
+                 "command line and the value is asked for afterwards. Names this app needs: " + ", ".join(ask) +
+                 f".\nExample: python3 .claude/scripts/provision.py {app_id} --set-secret {ask[0] if ask else 'NAME'}")
     explain(name)
-    value = getpass.getpass(f"{name} (input hidden): ").strip()
+    if sys.stdin.isatty():
+        value = getpass.getpass(f"{name} (input hidden): ").strip()
+    else:
+        # No terminal to hide typing in (the `!` shortcut inside a chat, a pipe, a script). getpass used to die
+        # here with a traceback. A piped value is accepted; with nothing piped, point at the web form instead.
+        value = sys.stdin.readline().strip()
+        if not value:
+            where = (f"https://vercel.com/{infra['vercel']['team']}/{infra['vercel']['project']}/settings/environment-variables"
+                     if infra.get("target") == "vercel" else "a terminal on the machine (not the chat)")
+            sys.exit(f"\nThis window cannot hide what you type, so nothing was asked and nothing was saved.\n"
+                     f"Enter {name} in the web form instead: {where}\n"
+                     f"  Key: {name}   Value: (paste)   Environment: Production   Sensitive: OFF   then Save.")
     if not value: sys.exit("nothing entered")
     if name == "PLATFORM_NOTIFY_FROM":
         app = load(os.path.join(ST, "application", app_id, "application.json"))
