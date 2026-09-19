@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatShell } from "./chat-shell";
 import { EmailSignIn } from "./email-sign-in";
 import { Spinner } from "@/components/ui/spinner";
+import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
 
 // Minimal typing for the Google Identity Services client we load at runtime.
 declare global {
@@ -472,9 +473,9 @@ export function AuthGate() {
             />
           </svg>
         </span>
-        <h1 className="mt-5 font-semibold text-3xl tracking-tight">Delivered</h1>
+        <h1 className="mt-5 font-semibold text-3xl tracking-tight">{PRODUCT_NAME}</h1>
         <p className="mt-2 text-center text-muted-foreground text-sm leading-relaxed">
-          The operations console for forward-deployed teams.
+          {fillProfileText(DEPLOYMENT_PROFILE.product.tagline)}
         </p>
 
         {/* ONE control, and it is ours.
@@ -547,7 +548,7 @@ export function AuthGate() {
 
       {/* Footer — quiet, no dead links. */}
       <footer className="absolute inset-x-0 bottom-5 flex items-center justify-center gap-2 text-3xs text-muted-foreground/50">
-        <span>© {new Date().getFullYear()} Delivered</span>
+        <span>© {new Date().getFullYear()} {PRODUCT_NAME}</span>
         <span aria-hidden>·</span>
         <span>By continuing you agree to your organization's usage policies.</span>
       </footer>

@@ -10,6 +10,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
+import { DEPLOYMENT_PROFILE, fillProfileText } from "@/lib/deployment-profile.generated";
 import { CustomerMark } from "./customer-mark";
 import { getCustomerSummary, type CustomerContextSummary } from "./dataroom";
 
@@ -89,16 +90,16 @@ export function CustomerSearchDialog({
     <CommandDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Customer context"
-      description="Pick the customers this conversation is about — the agent grounds itself in their record."
+      title={fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.title)}
+      description={fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.description)}
       // sm:max-w-* is required: DialogContent ships `sm:max-w-lg`, and
       // tailwind-merge keeps it (different modifier) — a base-only max-width is
       // silently capped at 32rem on every desktop viewport.
       className="w-[min(96vw,64rem)] max-w-[64rem] rounded-2xl border border-white/10 bg-popover shadow-2xl ring-1 ring-white/5 sm:max-w-[64rem]"
     >
-      <CommandInput placeholder="Search customers…" />
+      <CommandInput placeholder={fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.placeholder)} />
       <CommandList className="max-h-[70vh]">
-        <CommandEmpty>No customers found.</CommandEmpty>
+        <CommandEmpty>{fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.empty)}</CommandEmpty>
         <CommandGroup>
           {selected.length > 0 ? (
             <CommandItem

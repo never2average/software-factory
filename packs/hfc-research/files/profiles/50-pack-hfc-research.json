@@ -1,0 +1,89 @@
+{
+  "$comment": "hfc-research pack: equity and credit research on Indian housing finance companies. Wording only — identifiers (customer_id, Customers/, list_customers) are unchanged.",
+  "product": {
+    "tagline": "Research workspace for Indian housing finance companies.",
+    "description": "{product} — a research workspace for analysts covering Indian housing finance companies: an agent that fetches SEBI LODR filings and investor presentations, reads them, and builds cited KPI tables."
+  },
+  "vocabulary": {
+    "account": {
+      "singular": "company",
+      "plural": "companies"
+    },
+    "member": {
+      "singular": "analyst",
+      "plural": "analysts"
+    },
+    "owner": "Covering analyst",
+    "account_context": "Company context"
+  },
+  "chat": {
+    "hero_lines": [
+      "{product}",
+      "Which company are we looking at?",
+      "Pull the latest quarterly results",
+      "Build the KPI table",
+      "What changed in guidance?",
+      "Find it in the annual report"
+    ],
+    "empty_sections": {
+      "stalled": "Companies not looked at recently"
+    },
+    "starter_cards": {
+      "owner_label": "Covering analyst",
+      "quiet_title": "Refresh the coverage",
+      "quiet_summary": "Nothing logged in {days} days.",
+      "quiet_summary_long": "Nothing logged for over a month.",
+      "quiet_prompt": "{name} has had nothing logged for {days} days. Check the exchanges for filings and any new investor presentation since then, file what you find, and tell me what changed."
+    },
+    "account_search": {
+      "title": "Company context",
+      "description": "Pick the companies this conversation is about — the agent grounds itself in their filings and record.",
+      "placeholder": "Search companies…",
+      "empty": "No companies found.",
+      "pill_empty": "Set the company context for this chat"
+    }
+  },
+  "dataroom": {
+    "root_label": "Research Room",
+    "domains": {
+      "Customers": {
+        "label": "Companies",
+        "description": "One folder per covered company: its SEBI LODR filings, investor presentations and concalls, and the KPI tables built from them.",
+        "visible": true
+      },
+      "People": {
+        "label": "People",
+        "description": "Management and investor-relations contacts at covered companies.",
+        "visible": true
+      },
+      "Platform": {
+        "visible": false
+      },
+      "Deployments": {
+        "visible": false
+      },
+      "Solutions": {
+        "visible": false
+      },
+      "Implementation": {
+        "visible": false
+      },
+      "Tickets": {
+        "visible": false
+      }
+    },
+    "seed": [
+      {
+        "path": "README.md",
+        "content": "# {workspace} — research room\n\nEverything the analysts and the agent know about the covered companies lives here as plain files. Every figure the agent reports is cited to a file in this room and a page or slide in it.\n\n## The tree\n\n```\nCustomers/{customer_id}/            one folder per covered company (shown as \"Companies\")\n  context.md                        what we know about the company, curated by its covering analyst\n  interactions.jsonl                earnings calls and meetings, append-only\n  filings/\n    lodr/                           SEBI LODR filings: {YYYY-MM-DD}_{tag}_{name}; annual report maps and extracts\n    presentations/                  investor presentations, concall transcripts, ip-metrics.jsonl, guidance.jsonl\n    filing-log.jsonl                the dated log of everything filed\n    kpis.jsonl                      the standard quarterly KPI table, one row per KPI, cited\n    annual-report-data.jsonl        line items extracted from annual reports\nPeople/{person_id}/                 management and IR contacts (external people only)\nUploads/                            files analysts attach in chat\n```\n\nTwo rules the room depends on:\n\n1. A company's material never goes outside its own `Customers/{customer_id}/` folder.\n2. Nothing is written without its validator passing, and nothing is reported without its source.\n"
+      },
+      {
+        "path": "Customers/README.md",
+        "content": "# Companies\n\nOne folder per covered housing finance company, named by its id (the NSE symbol where there is one).\n\n- Listed companies: quarterly results (SEBI LODR Reg 33) and their own investor presentation.\n- Unlisted, debt-listed companies: SEBI LODR filings first (Reg 52), then the parent company's investor presentation.\n- Companies with no listed securities publish no LODR filings; the agent will say so rather than guess.\n\nAsk the agent to \"get the latest filings for <company>\" to start a folder.\n"
+      }
+    ]
+  },
+  "agent": {
+    "briefing": "This is a financial research workspace for analysts covering Indian housing finance companies. Your job here is research, not account management: the stand-up, deployment, signoff, ticket-triage and customer-onboarding parts of your instructions do not apply. For research requests delegate to the research specialists (`lodr-filings`, `investor-presentations`, `annual-report-format`, `hfc-kpi-extraction`) and relay their `needs_review`, `carried_forward` and `not_found` statuses as they are. Every figure carries its document and page or slide; never state a number from memory."
+  }
+}

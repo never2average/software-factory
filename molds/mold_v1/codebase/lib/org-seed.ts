@@ -1,4 +1,5 @@
 import { writeDataroomFile } from "@/lib/dataroom-blob";
+import { DEPLOYMENT_PROFILE, fillProfileText } from "@/lib/deployment-profile.generated";
 
 /**
  * A brand-new workspace used to land completely empty: the wizard finished, the
@@ -77,16 +78,37 @@ context.
  * empty data room is recoverable, but a creation request that 500s because the
  * blob store hiccuped leaves the user with no workspace at all.
  */
-export async function seedWorkspace(orgId: string, name: string): Promise<string[]> {
-  const files: [string, string][] = [
+function seedContentType(path: string): string {
+  if (/\.(md|markdown)$/i.test(path)) return "text/markdown";
+  if (/\.json$/i.test(path)) return "application/json";
+  if (/\.jsonl$/i.test(path)) return "application/x-ndjson";
+  if (/\.csv$/i.test(path)) return "text/csv";
+  return "text/plain";
+}
+
+/**
+ * The files a new workspace starts with. A deployment profile may name its own (dataroom.seed): those REPLACE the
+ * built-in tree, with {workspace}, {org_id} and {product} filled in. With no seed in the profile the built-in tree
+ * below is written exactly as before.
+ */
+function starterFiles(orgId: string, name: string): [string, string][] {
+  const seed = DEPLOYMENT_PROFILE.dataroom.seed;
+  if (Array.isArray(seed)) {
+    return seed.map((f): [string, string] => [f.path, fillProfileText(f.content, { workspace: name, org_id: orgId })]);
+  }
+  return [
     ["README.md", readme(orgId, name)],
     ["Customers/README.md", CUSTOMERS_README],
     ["People/README.md", PEOPLE_README],
   ];
+}
+
+export async function seedWorkspace(orgId: string, name: string): Promise<string[]> {
+  const files = starterFiles(orgId, name);
   const written: string[] = [];
   for (const [path, body] of files) {
     try {
-      await writeDataroomFile(path, body, "text/markdown", orgId);
+      await writeDataroomFile(path, body, seedContentType(path), orgId);
       written.push(path);
     } catch (e) {
       console.error(`[org-seed] ${orgId}: could not write ${path}: ${String(e).slice(0, 160)}`);

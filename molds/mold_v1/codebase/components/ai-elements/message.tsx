@@ -47,6 +47,14 @@ export const MessageContent = ({ children, className, ...props }: MessageContent
       // shows through; borders soften to a translucent primary-foreground.
       "group-[.is-user]:[&_table_*]:text-primary-foreground!",
       "group-[.is-user]:[&_table]:text-primary-foreground!",
+      // The table's CONTAINER is the part that made the text invisible: Streamdown wraps a table in a div with
+      // its own solid `bg-background`, so the forced primary-foreground text sat on the page colour instead of
+      // the bubble — light on light, or dark on dark, in every theme and for any brand colour. Everything that
+      // holds a table inside a user bubble goes transparent, so the text always reads against the bubble itself.
+      "group-[.is-user]:[&_[data-streamdown^=table]]:bg-transparent! group-[.is-user]:[&_div:has(>table)]:bg-transparent! group-[.is-user]:[&_table]:bg-transparent!",
+      "group-[.is-user]:[&_div:has(>table)]:border-primary-foreground/25!",
+      // The copy/download buttons above a table are icons in the muted colour; same treatment.
+      "group-[.is-user]:[&_[data-streamdown^=table]_button]:text-primary-foreground/80!",
       "group-[.is-user]:[&_th]:bg-transparent! group-[.is-user]:[&_td]:bg-transparent!",
       "group-[.is-user]:[&_thead]:bg-primary-foreground/10!",
       "group-[.is-user]:[&_th]:border-primary-foreground/25! group-[.is-user]:[&_td]:border-primary-foreground/20!",

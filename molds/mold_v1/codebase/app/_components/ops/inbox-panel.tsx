@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import { errMessage, opsFetch } from "./lib";
 import { PaginatedTable, type Column } from "./paginated-table";
 
@@ -443,7 +444,7 @@ function Avatar({ who }: { who: string }) {
  */
 function contextFor(thread: InboxThread): string {
   const lines = [
-    `Here is an off-platform conversation from our Delivered inbox. Read it, then tell me: what was agreed, what is outstanding, and whether it implies work we should file.`,
+    `Here is an off-platform conversation from our ${PRODUCT_NAME} inbox. Read it, then tell me: what was agreed, what is outstanding, and whether it implies work we should file.`,
     "",
     `Subject:      ${thread.subject}`,
     `Source:       ${thread.source}`,

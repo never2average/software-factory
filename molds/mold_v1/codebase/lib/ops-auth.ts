@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { verifySessionToken } from "@/lib/auth-session";
+import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 
 /**
  * Who is allowed to call the Ops API (`/api/ops/*`).
@@ -136,7 +137,7 @@ export function explainAuthFailure(reason: AuthFailure, email?: string): string 
     case "no-email":
       return "That sign-in carried no email address.";
     case "not-a-workspace-account":
-      return `${email ?? "That account"} is not a Google Workspace account. Delivered admits work accounts only — a personal Google account on a custom domain carries no workspace claim and cannot sign in.`;
+      return `${email ?? "That account"} is not a Google Workspace account. ${PRODUCT_NAME} admits work accounts only — a personal Google account on a custom domain carries no workspace claim and cannot sign in.`;
     case "consumer-domain":
       return "Personal Google accounts (gmail.com and similar) are not admitted.";
     case "invalid-token":

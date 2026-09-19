@@ -4,6 +4,10 @@
  * transcript never shows raw identifiers like "eve:subagent:research".
  */
 import { SUBAGENT_META } from "./subagent-meta.generated";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+
+/** What this deployment calls a customer. Tool IDENTIFIERS never change — only the label a person reads. */
+const ACCOUNT = DEPLOYMENT_PROFILE.vocabulary.account;
 
 
 const SUBAGENT_PREFIX = "eve:subagent:";
@@ -23,8 +27,8 @@ const KNOWN_NAMES: Record<string, string> = {
   dataroom_list: "List data room",
   dataroom_read: "Read data room",
   dataroom_write_doc: "Write data-room doc",
-  get_customer: "Get customer",
-  list_customers: "List customers",
+  get_customer: `Get ${ACCOUNT.singular}`,
+  list_customers: `List ${ACCOUNT.plural}`,
   publish_artifact: "Publish artifact",
   web_search: "Web search",
 };
@@ -99,7 +103,18 @@ export function toolDisplayName(toolName: string): string {
     const name = toolName.slice(SUBAGENT_PREFIX.length).trim();
     return name ? `${subagentDisplayName(name)} subagent` : "Subagent";
   }
-  return KNOWN_NAMES[toolName] ?? sentenceCase(toolName.replace(/_/g, " ").toLowerCase());
+  // The fallback speaks the deployment's vocabulary too: "update_customer" -> "Update customer" by default,
+  // "Update company" where a profile renames the account noun.
+  return (
+    KNOWN_NAMES[toolName] ??
+    sentenceCase(
+      toolName
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/\bcustomers\b/g, ACCOUNT.plural)
+        .replace(/\bcustomer\b/g, ACCOUNT.singular),
+    )
+  );
 }
 
 function truncate(text: string, max = 80): string {

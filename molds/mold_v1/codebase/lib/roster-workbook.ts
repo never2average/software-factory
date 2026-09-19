@@ -1,5 +1,6 @@
 import "server-only";
 import ExcelJS from "exceljs";
+import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 
 /**
  * The roster workbook — built and read on the SERVER, in one place.
@@ -53,7 +54,7 @@ export async function buildRosterWorkbook(
   generatedAt: string,
 ): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Delivered";
+  wb.creator = PRODUCT_NAME;
   wb.created = new Date(generatedAt);
 
   /* --- How to use ---------------------------------------------------------- */

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
@@ -21,12 +22,11 @@ const mono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Delivered",
-    template: "%s · Delivered",
+    default: PRODUCT_NAME,
+    template: `%s · ${PRODUCT_NAME}`,
   },
-  description:
-    "Delivered — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
-  applicationName: "Delivered",
+  description: fillProfileText(DEPLOYMENT_PROFILE.product.description),
+  applicationName: PRODUCT_NAME,
   icons: {
     icon: "/icon.svg",
     shortcut: "/icon.svg",

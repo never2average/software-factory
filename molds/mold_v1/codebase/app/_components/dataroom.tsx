@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import customersData from "@/data/customers.json";
 import peopleData from "@/data/people.json";
 
@@ -630,15 +631,31 @@ export type DataroomTab =
   | "internal-staff"
   | "customer-stakeholders";
 
-export const DATAROOM_SECTIONS: { key: DataroomTab; label: string; icon: typeof Users }[] = [
-  { key: "customers", label: "Customers", icon: Building2 },
-  { key: "platform", label: "Platform", icon: ServerIcon },
-  { key: "deployments", label: "Deployments", icon: Rocket },
-  { key: "solutions", label: "Solutions", icon: PuzzleIcon },
-  { key: "implementation", label: "Implementation", icon: WrenchIcon },
-  { key: "tickets", label: "Tickets", icon: TicketIcon },
-  { key: "people", label: "People", icon: Users },
+/**
+ * What the deployment profile says about one data-room domain. `domain` is the REAL domain name (the folder,
+ * the Master.xlsx, the sheet): a profile only changes the label people read and whether the domain is shown.
+ */
+function domainDisplay(domain: string): { label: string; visible: boolean; description?: string } {
+  const entry = DEPLOYMENT_PROFILE.dataroom.domains[domain];
+  return { label: entry?.label || domain, visible: entry?.visible !== false, description: entry?.description };
+}
+
+const ALL_DATAROOM_SECTIONS: { key: DataroomTab; domain: string; icon: typeof Users }[] = [
+  { key: "customers", domain: "Customers", icon: Building2 },
+  { key: "platform", domain: "Platform", icon: ServerIcon },
+  { key: "deployments", domain: "Deployments", icon: Rocket },
+  { key: "solutions", domain: "Solutions", icon: PuzzleIcon },
+  { key: "implementation", domain: "Implementation", icon: WrenchIcon },
+  { key: "tickets", domain: "Tickets", icon: TicketIcon },
+  { key: "people", domain: "People", icon: Users },
 ];
+
+/** The domains this deployment shows, labelled the way it names them. Hidden domains are absent. */
+export const DATAROOM_SECTIONS: { key: DataroomTab; label: string; description?: string; icon: typeof Users }[] =
+  ALL_DATAROOM_SECTIONS.filter((s) => domainDisplay(s.domain).visible).map(({ key, domain, icon }) => {
+    const { label, description } = domainDisplay(domain);
+    return { key, label, description, icon };
+  });
 
 interface Sheet {
   name: string;
@@ -1465,7 +1482,12 @@ type FileBody =
   | { status: "error"; message: string };
 interface FolderNode {
   id: string;
+  /** The real folder name (a path segment). Never relabelled. */
   name: string;
+  /** What people read instead of `name`, when the deployment profile relabels a domain. */
+  label?: string;
+  /** Shown as the folder's tooltip. */
+  description?: string;
   folders: FolderNode[];
   files: FileItem[];
 }
@@ -1785,7 +1807,10 @@ const PEOPLE_DOMAIN: FolderNode = dir(
   ],
 );
 
-/** The seven dm.md domains, in canonical order. */
+/**
+ * The dm.md domains this deployment shows, in canonical order. Each keeps its real `name`/`id` (paths, Master.xlsx
+ * and sheet lookups key on those); the deployment profile supplies the label people read and can hide a domain.
+ */
 const DATA_ROOM_DOMAINS: FolderNode[] = [
   CUSTOMERS_DOMAIN,
   PLATFORM_DOMAIN,
@@ -1794,7 +1819,12 @@ const DATA_ROOM_DOMAINS: FolderNode[] = [
   IMPLEMENTATION_DOMAIN,
   TICKETS_DOMAIN,
   PEOPLE_DOMAIN,
-];
+]
+  .filter((node) => domainDisplay(node.name).visible)
+  .map((node) => {
+    const { label, description } = domainDisplay(node.name);
+    return { ...node, label, description };
+  });
 
 /** DataroomTab → the dm.md domain key that carries its Master.xlsx. */
 const TAB_DOMAIN_KEY: Record<DataroomTab, string> = {
@@ -1820,6 +1850,24 @@ const DOMAIN_MASTER_TAB: Record<string, DataroomTab> = {
   tickets: "tickets",
   person: "people",
 };
+
+/** Domain key → the real domain name the deployment profile is keyed on. */
+const DOMAIN_KEY_NAME: Record<string, string> = {
+  customers: "Customers",
+  platform: "Platform",
+  deployments: "Deployments",
+  solutions: "Solutions",
+  implementation: "Implementation",
+  tickets: "Tickets",
+  person: "People",
+};
+
+/** A tab whose domain this deployment hides falls back to the first visible one (Customers is always visible). */
+function visibleTab(tab: DataroomTab): DataroomTab {
+  const domain = TAB_DOMAIN_KEY[tab];
+  if (domainDisplay(DOMAIN_KEY_NAME[domain] ?? domain).visible) return tab;
+  return DATAROOM_SECTIONS[0]?.key ?? "customers";
+}
 
 const DOMAIN_FOLDER_IDS = DATA_ROOM_DOMAINS.map((f) => f.id);
 
@@ -1924,7 +1972,7 @@ function buildUploadsFolder(livePaths: string[] | null, pending: FileItem[]): Fo
 function buildDataroomRoot(domains: FolderNode[], uploads: FolderNode): FolderNode {
   return {
     id: "root",
-    name: "Data Room",
+    name: DEPLOYMENT_PROFILE.dataroom.root_label,
     files: [],
     folders: [...domains, uploads],
   };
@@ -1934,7 +1982,7 @@ function collectFiles(
   node: FolderNode,
   path: string[] = [],
 ): Array<{ file: FileItem; path: string[] }> {
-  const here = node.id === "root" ? path : [...path, node.name];
+  const here = node.id === "root" ? path : [...path, node.label ?? node.name];
   return [
     ...node.files.map((file) => ({ file, path: here })),
     ...node.folders.flatMap((f) => collectFiles(f, here)),
@@ -2012,9 +2060,10 @@ export function Dataroom({
     setSidebarOpen(true);
     // Resolve the requested tab against the dm.md tree: open that domain's
     // Master.xlsx on the requested sheet.
-    const domain = TAB_DOMAIN_KEY[initialTab];
+    const tab = visibleTab(initialTab);
+    const domain = TAB_DOMAIN_KEY[tab];
     setOpenId(`master:${domain}`);
-    const targetSheet = initialSheet ?? SECTION_SHEET[initialTab];
+    const targetSheet = (tab === initialTab ? initialSheet : undefined) ?? SECTION_SHEET[tab];
     const idx = workbookSheets(DOMAIN_MASTER_TAB[domain]).findIndex((s) => s.name === targetSheet);
     setSheetIdx(idx >= 0 ? idx : 0);
   }, [open, initialTab, initialSheet]);
@@ -2144,14 +2193,14 @@ export function Dataroom({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[99vh] w-[99vw] max-w-[99vw] flex-col gap-0 overflow-hidden rounded-2xl border border-white/10 bg-popover p-0 shadow-2xl ring-1 ring-white/5 sm:max-w-[99vw]">
         <DialogHeader className="sr-only">
-          <DialogTitle>Data Room</DialogTitle>
+          <DialogTitle>{DEPLOYMENT_PROFILE.dataroom.root_label}</DialogTitle>
           <DialogDescription>Consolidated system of record.</DialogDescription>
         </DialogHeader>
 
         {/* Title bar — height matched to the dialog close button so their centers align */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-4">
           <FolderTreeIcon className="size-4 text-muted-foreground" />
-          <span className="font-medium text-sm">Data Room</span>
+          <span className="font-medium text-sm">{DEPLOYMENT_PROFILE.dataroom.root_label}</span>
           <button
             type="button"
             onClick={() => setSidebarOpen((v) => !v)}
@@ -2306,6 +2355,7 @@ function FileTree({
             <button
               type="button"
               onClick={() => onToggle(sub.id)}
+              title={sub.description}
               style={{ paddingLeft: depth * 12 + 6 }}
               className="flex w-full items-center gap-1 rounded-md py-1 pr-2 text-left text-2xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
             >
@@ -2313,7 +2363,7 @@ function FileTree({
                 className={cn("size-3 shrink-0 transition-transform", isOpen && "rotate-90")}
               />
               <FolderIcon className="size-3.5 shrink-0" />
-              <span className="truncate">{sub.name}</span>
+              <span className="truncate">{sub.label ?? sub.name}</span>
             </button>
             {isOpen ? (
               <FileTree
@@ -2568,7 +2618,7 @@ function FilePreview({
     return (
       <FileStateCard file={file}>
         <p className="text-muted-foreground text-xs">
-          Preview isn&apos;t wired up yet — this artifact lives in the customer&apos;s data room.
+          Preview isn&apos;t wired up yet — this artifact lives in the {DEPLOYMENT_PROFILE.vocabulary.account.singular}&apos;s data room.
         </p>
       </FileStateCard>
     );

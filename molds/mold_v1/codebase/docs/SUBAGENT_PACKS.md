@@ -12,6 +12,7 @@ A pack is a directory tree that mirrors the codebase root and only **adds** file
 | `agent/instructions/NN-pack-<name>.md` | the root agent's delegation text for the pack: which specialist to use when, in what order, what to put in the message | recommended |
 | `scripts/subagent-shared/<family>/**` | Python helper code several of the pack's subagents share, plus `targets.json` | if they share code |
 | `agent/lib/<pack>-tools.ts` | a new typed tool the pack needs (a **new** file, re-exported from the subagents' `tools/`) | rarely |
+| `profiles/NN-pack-<id>.json` | the pack's deployment profile: what people and the model READ in a deployment of this vertical (vocabulary, data-room labels and visibility, starter tree, hero lines, a short agent briefing). Merged over `profiles/00-default.json` by `npm run build:deployment-profile`; see [`DEPLOYMENT_PROFILE.md`](DEPLOYMENT_PROFILE.md) | if the vertical is not about FDEs and customers |
 | `docs/<PACK>.md` | the pack's own documentation | optional |
 
 ## The one rule
@@ -36,7 +37,8 @@ base file, that is a gap in the base app's extension points: fix it in the base 
 every pack, rather than in the pack.
 
 `git status --short` after applying a pack should show only `??` (added) entries, plus
-` M` on exactly those two generated files.
+` M` on exactly those two generated files (and, when the pack ships a
+`profiles/NN-pack-<id>.json`, on the two `deployment-profile.generated.ts` files).
 
 ## Apply a pack
 
@@ -154,6 +156,7 @@ rm -rf agent/subagents/<key> ...                 # every subagent directory the 
 rm agent/instructions/NN-pack-<name>.md
 rm -rf scripts/subagent-shared/<family> ...      # every family the pack added
 rm -f agent/lib/<pack>-tools.ts docs/<PACK>.md   # if the pack had them
+rm -f profiles/NN-pack-<id>.json                 # if the pack shipped a deployment profile
 npm run build:generated && npm run check:subagents && npm run check:subagent-shared && npm run typecheck && npm run build:eve
 ```
 

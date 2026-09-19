@@ -7,6 +7,7 @@ import {
   loadScheduleContext,
 } from "../lib/prompt-context-blocks.ts";
 import { CONTEXT_BUDGETS, renderContextBlock } from "../lib/prompt-context.ts";
+import { renderDeploymentBriefing } from "../lib/deployment-briefing.ts";
 
 export default defineDynamic({
   events: {
@@ -26,6 +27,11 @@ export default defineDynamic({
         const orgId = await orgForSession(ctx);
         const workspaceName = await orgDisplayName(orgId);
         identityBlock = `## Your workspace\n\nYou work for **${workspaceName}**. Use this name — not any other company's — when you refer to the team you support. Everything you read and write belongs to this workspace alone.`;
+        // What THIS DEPLOYMENT is for (profiles/*.json): its vocabulary, which parts of the product it uses, and the
+        // profile's own briefing. After the stable prompt on purpose — the static instructions cannot carry
+        // variables (test-prompt-context), and a deployment must be able to differ without editing them.
+        const briefing = renderDeploymentBriefing();
+        if (briefing) identityBlock = `${identityBlock}\n\n${briefing}`;
       } catch {
         /* fall through: better no name than a wrong one */
       }

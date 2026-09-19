@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DEPLOYMENT_PROFILE, PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -385,7 +386,7 @@ function NameScreen({
       <div className="space-y-2 text-center">
         <h1 className="text-2xl font-semibold tracking-tight">Set up a company</h1>
         <p className="text-sm text-muted-foreground">
-          Delivered runs one workspace per company — its people, connectors, workflows and customers.
+          {PRODUCT_NAME} runs one workspace per company — its people, connectors, workflows and {DEPLOYMENT_PROFILE.vocabulary.account.plural}.
         </p>
       </div>
       <div className="mx-auto max-w-md space-y-6">
@@ -457,7 +458,7 @@ function ForkScreen({
       <div className="space-y-2 text-center">
         <h1 className="text-2xl font-semibold tracking-tight">Get {company || "your company"} running</h1>
         <p className="text-sm text-muted-foreground">
-          Roster, connectors, workflow library, data room, first customer. Two ways to get there.
+          Roster, connectors, workflow library, data room, first {DEPLOYMENT_PROFILE.vocabulary.account.singular}. Two ways to get there.
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -472,7 +473,7 @@ function ForkScreen({
           icon={<BotIcon className="size-5" />}
           title="Our agents run the recipes"
           badge="~10 min"
-          body="Your coding agents clone the setup recipes Delivered ships and run them against your data room."
+          body={`Your coding agents clone the setup recipes ${PRODUCT_NAME} ships and run them against your data room.`}
           disabled={busy}
           onClick={onAgent}
           footer={
@@ -800,7 +801,7 @@ function InviteScreen({
           <div className="flex items-baseline gap-3 px-4 py-2">
             <dt className="w-14 shrink-0 text-xs text-muted-foreground">Subject</dt>
             <dd className="min-w-0 flex-1 truncate text-xs">
-              {preview?.subject || `Set up ${company} on Delivered`}
+              {preview?.subject || `Set up ${company} on ${PRODUCT_NAME}`}
             </dd>
           </div>
         </dl>
@@ -808,7 +809,7 @@ function InviteScreen({
         {/* Inert: a rendering of the message, not the message. */}
         <div className="space-y-4 px-4 py-4 text-sm">
           <p className="leading-relaxed">
-            {preview?.roleSentence || `You've been added to ${company} on Delivered.`}
+            {preview?.roleSentence || `You've been added to ${company} on ${PRODUCT_NAME}.`}
           </p>
 
           <ol className="space-y-3.5">
@@ -1079,7 +1080,7 @@ function ChecksScreen({ orgId, onInviteAgents }: { orgId: string; onInviteAgents
       <div className="space-y-2 text-center">
         <h1 className="text-2xl font-semibold tracking-tight">Setup checks</h1>
         <p className="text-sm text-muted-foreground">
-          Each one turns green when Delivered can verify it — never on your say-so.
+          Each one turns green when {PRODUCT_NAME} can verify it — never on your say-so.
         </p>
       </div>
 

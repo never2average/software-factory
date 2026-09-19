@@ -14,6 +14,13 @@ import {
   PlugIcon,
   WorkflowIcon,
 } from "lucide-react";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+
+/** What a TODO is filed under — only the containers whose data-room domain this deployment shows. */
+const TODO_CONTAINERS = [
+  DEPLOYMENT_PROFILE.dataroom.domains.Deployments?.visible !== false ? "deployment" : null,
+  DEPLOYMENT_PROFILE.dataroom.domains.Implementation?.visible !== false ? "implementation" : null,
+].filter(Boolean);
 
 /* -------------------------------- Sections ------------------------------- */
 
@@ -47,7 +54,10 @@ export const SECTION_META: Record<
   todos: {
     icon: CircleCheckIcon,
     title: "TODOs",
-    blurb: "The team's internal action list — filed under a deployment/implementation, linked to work.",
+    blurb:
+      TODO_CONTAINERS.length > 0
+        ? `The team's internal action list — filed under a ${TODO_CONTAINERS.join("/")}, linked to work.`
+        : "The team's internal action list — linked to work.",
   },
   connectors: {
     icon: PlugIcon,

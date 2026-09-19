@@ -13,6 +13,7 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { CodeBlock } from "@/components/ai-elements/code-block";
 import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { opsFetch } from "./ops/lib";
 
 /** Map a filename's extension to a shiki highlighting language. Unknown types
@@ -159,7 +160,9 @@ export function useLiveArtifactUrl(url?: string): {
 
 /** A human filename: strip the extension and the trailing content hash, turn
  *  separators into spaces. "People.Master-20kaIFvc…xlsx" → "People Master",
- *  "Customers_Master.xlsx" → "Customers Master". */
+ *  "Customers_Master.xlsx" → "Customers Master". A domain's Master workbook is
+ *  named the way the deployment profile labels that domain (the file itself keeps
+ *  its real name): with Customers labelled "Companies" it reads "Companies Master". */
 export function readableArtifactName(filename: string): string {
   let s = decodeURIComponent(filename).replace(/\.[a-z0-9]{1,5}$/i, "");
   s = s.replace(/[-_. ]+[A-Za-z0-9]{16,}$/, ""); // trailing blob hash
@@ -172,6 +175,13 @@ export function readableArtifactName(filename: string): string {
     .split(" ")
     .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
     .join(" ");
+  const master = /^(\S+) Master$/.exec(s);
+  if (master) {
+    const domain = Object.keys(DEPLOYMENT_PROFILE.dataroom.domains).find(
+      (d) => d.toLowerCase() === master[1].toLowerCase(),
+    );
+    if (domain) s = `${DEPLOYMENT_PROFILE.dataroom.domains[domain].label} Master`;
+  }
   return s || filename;
 }
 

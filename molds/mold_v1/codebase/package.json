@@ -61,8 +61,8 @@
     "build:skill-library": "node scripts/build-skill-library.mjs",
     "prebuild": "npm run build:generated",
     "build:subagent-meta": "node scripts/gen-subagent-meta.mjs",
-    "build:generated": "npm run build:skill-library && npm run build:workflow-library && npm run build:subagent-meta",
-    "check:generated": "npm run build:generated && git diff HEAD --exit-code -- setup/skills agent/lib/workflow-library.generated.ts app/_components/subagent-meta.generated.ts agent/lib/subagent-registry.generated.ts",
+    "build:generated": "npm run build:skill-library && npm run build:workflow-library && npm run build:subagent-meta && npm run build:deployment-profile",
+    "check:generated": "npm run build:generated && git diff HEAD --exit-code -- setup/skills agent/lib/workflow-library.generated.ts app/_components/subagent-meta.generated.ts agent/lib/subagent-registry.generated.ts lib/deployment-profile.generated.ts agent/lib/deployment-profile.generated.ts",
     "check:tenancy": "node scripts/check-tenancy.mjs",
     "test:workflow-args": "node --experimental-strip-types scripts/test-workflow-args.mjs",
     "deploy:web": "node scripts/deploy.mjs web",
@@ -79,7 +79,9 @@
     "sync:subagent-shared": "node scripts/sync-subagent-shared.mjs",
     "check:subagent-shared": "node scripts/sync-subagent-shared.mjs --check",
     "check:subagents": "python3 scripts/check-subagents.py",
-    "fde:seed-subagent-rows": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/fde/seed-subagent-rows.mjs"
+    "fde:seed-subagent-rows": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/fde/seed-subagent-rows.mjs",
+    "build:deployment-profile": "node scripts/gen-deployment-profile.mjs",
+    "test:deployment-profile": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-profile.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

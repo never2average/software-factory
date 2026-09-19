@@ -1,4 +1,5 @@
 import "server-only";
+import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 
 /**
  * DETERMINISTIC platform notifications — plain, coded HTTP sends through the
@@ -154,8 +155,8 @@ export function renderOrgInvite(input: OrgInviteInput): RenderedInvite {
   const tokenPart = input.token ? input.token : "dlv_inv_******";
   const acceptUrl = input.acceptUrl ?? `${input.origin ?? ""}/?invite=${encodeURIComponent(tokenPart)}`;
   const article = /^[AEIOU]/.test(roleLabel) ? "an" : "a";
-  const roleSentence = `You've been added to ${input.workspaceName} on Delivered as ${roleLabel}.`;
-  const subject = `Set up ${input.workspaceName} on Delivered`;
+  const roleSentence = `You've been added to ${input.workspaceName} on ${PRODUCT_NAME} as ${roleLabel}.`;
+  const subject = `Set up ${input.workspaceName} on ${PRODUCT_NAME}`;
 
   /**
    * THESE ARE THE REAL COMMANDS.
@@ -254,7 +255,7 @@ export function renderOrgInvite(input: OrgInviteInput): RenderedInvite {
    * can then walk away.
    */
   const agentPrompt = [
-    `Set up my Delivered workspace "${input.workspace}". I'm ${article} ${roleLabel}.`,
+    `Set up my ${PRODUCT_NAME} workspace "${input.workspace}". I'm ${article} ${roleLabel}.`,
     "",
     "Scout first: check which coding agent and MCP config I'm using, whether the fde server is wired, what's already connected, and which of my files or credentials you'd need. Don't change anything yet.",
     "",
@@ -377,14 +378,14 @@ export async function sendLoginCode(input: { to: string; code: string }): Promis
     return { delivered: false, reason: "email delivery is not configured on this deployment" };
   }
   const text = [
-    `Your Delivered sign-in code is ${input.code}`,
+    `Your ${PRODUCT_NAME} sign-in code is ${input.code}`,
     "",
     "It expires in 10 minutes and can be used once.",
     "",
     "If you didn't ask to sign in, you can ignore this — someone typed your address and got nothing but this email.",
   ].join("\n");
   try {
-    await notifyViaResend(input.to, `${input.code} is your Delivered sign-in code`, text);
+    await notifyViaResend(input.to, `${input.code} is your ${PRODUCT_NAME} sign-in code`, text);
     return { delivered: true, via: "email" };
   } catch (e) {
     return { delivered: false, reason: String(e).slice(0, 160) };

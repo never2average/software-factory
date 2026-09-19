@@ -57,6 +57,21 @@ import { RunStatusDot } from "./ops/detail";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { type ApiWorkflowVersion, authToken, opsFetch, type OpsSection, unkebab } from "./ops/lib";
 import { pickSubagentName } from "@/lib/subagent-names";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+
+/** A deployment can hide a data-room domain; its ownership panels and counts go with it. */
+const domainVisible = (key: "Tickets" | "Deployments" | "Implementation") =>
+  DEPLOYMENT_PROFILE.dataroom.domains[key]?.visible !== false;
+const SHOW_TICKETS = domainVisible("Tickets");
+const SHOW_DEPLOYMENTS = domainVisible("Deployments");
+const SHOW_IMPLEMENTATIONS = domainVisible("Implementation");
+/** "customer" -> "Customer", for field labels. */
+const ACCOUNT_LABEL =
+  DEPLOYMENT_PROFILE.vocabulary.account.singular.charAt(0).toUpperCase() +
+  DEPLOYMENT_PROFILE.vocabulary.account.singular.slice(1);
+/** "a, b, c, and d" — the sentence the dossier has always used for four kinds of work. */
+const listWithAnd = (parts: string[]) =>
+  parts.length <= 1 ? (parts[0] ?? "") : parts.length === 2 ? parts.join(" and ") : `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 import { type RunJournalEntry, type WorkflowRunRow } from "./ops/run-timeline";
 import { type GraphPhase, RunGraph } from "./ops/run-graph";
 
@@ -982,7 +997,7 @@ export function Cockpit({
           ) : null}
           {!hasAnything ? (
             <p className="px-1 py-10 text-center text-muted-foreground text-xs">
-              Live context appears here as the agent pulls customers, people, tasks, runs
+              Live context appears here as the agent pulls {DEPLOYMENT_PROFILE.vocabulary.account.plural}, people, tasks, runs
               subagents, and produces artifacts.
             </p>
           ) : null}
@@ -1651,9 +1666,9 @@ function PersonModal({
     if (acctSummaries[acct]?.text || acctSummaries[acct]?.loading) return;
     let alive = true;
     setAcctSummaries((p) => ({ ...p, [acct]: { loading: true } }));
-    const tk = d.tickets.filter((t) => t.customer === acct);
-    const dp = d.deployments.filter((x) => x.customer === acct);
-    const im = d.implementations.filter((x) => x.customer === acct);
+    const tk = SHOW_TICKETS ? d.tickets.filter((t) => t.customer === acct) : [];
+    const dp = SHOW_DEPLOYMENTS ? d.deployments.filter((x) => x.customer === acct) : [];
+    const im = SHOW_IMPLEMENTATIONS ? d.implementations.filter((x) => x.customer === acct) : [];
     const td = d.todos.filter((t) => t.customer === acct);
     const counts = {
       tickets: tk.length,
@@ -1734,9 +1749,9 @@ function PersonModal({
   };
   const selAcct = d?.accounts.find((a) => a.id === acct) ?? null;
   const inAcct = (c: string | null) => !acct || c === acct;
-  const fTickets = (d?.tickets ?? []).filter((t) => inAcct(t.customer));
-  const fDeps = (d?.deployments ?? []).filter((x) => inAcct(x.customer));
-  const fImpls = (d?.implementations ?? []).filter((x) => inAcct(x.customer));
+  const fTickets = SHOW_TICKETS ? (d?.tickets ?? []).filter((t) => inAcct(t.customer)) : [];
+  const fDeps = SHOW_DEPLOYMENTS ? (d?.deployments ?? []).filter((x) => inAcct(x.customer)) : [];
+  const fImpls = SHOW_IMPLEMENTATIONS ? (d?.implementations ?? []).filter((x) => inAcct(x.customer)) : [];
   const fTodos = (d?.todos ?? []).filter((t) => inAcct(t.customer));
   // Open the task in the Ops Center TODOs (same window), deep-linked to its
   // detail — closing the person modal so the workspace comes forward.
@@ -1850,9 +1865,16 @@ function PersonModal({
                                 <span className="font-medium text-foreground/90">{selAcct.name}</span>
                                 {selAcct.title ? `, ${selAcct.title}` : ""}
                                 {selAcct.lastContact ? ` · last contact ${selAcct.lastContact}` : ""}.{" "}
-                                Owns {fTickets.length} ticket{fTickets.length === 1 ? "" : "s"}, {fDeps.length} deployment
-                                {fDeps.length === 1 ? "" : "s"}, {fImpls.length} implementation{fImpls.length === 1 ? "" : "s"}, and{" "}
-                                {fTodos.length} TODO{fTodos.length === 1 ? "" : "s"} on this account.
+                                Owns{" "}
+                                {listWithAnd(
+                                  [
+                                    SHOW_TICKETS ? `${fTickets.length} ticket${fTickets.length === 1 ? "" : "s"}` : null,
+                                    SHOW_DEPLOYMENTS ? `${fDeps.length} deployment${fDeps.length === 1 ? "" : "s"}` : null,
+                                    SHOW_IMPLEMENTATIONS ? `${fImpls.length} implementation${fImpls.length === 1 ? "" : "s"}` : null,
+                                    `${fTodos.length} TODO${fTodos.length === 1 ? "" : "s"}`,
+                                  ].filter((x): x is string => x !== null),
+                                )}{" "}
+                                on this account.
                                 {s?.loading ? (
                                   <span className="ml-1 inline-flex items-center gap-1 text-muted-foreground/50">
                                     <Spinner className="size-2.5" />
@@ -1871,6 +1893,7 @@ function PersonModal({
 
                   {/* Ownership across the data room (scoped to the account chip) */}
                   <div className="flex flex-col gap-5">
+                    {SHOW_TICKETS ? (
                     <OwnPanel icon={TicketIcon} title="Tickets" count={fTickets.length}>
                       {fTickets.map((t) => (
                         <OwnRow
@@ -1888,6 +1911,8 @@ function PersonModal({
                         />
                       ))}
                     </OwnPanel>
+                    ) : null}
+                    {SHOW_DEPLOYMENTS ? (
                     <OwnPanel icon={RocketIcon} title="Deployments" count={fDeps.length}>
                       {fDeps.map((x) => (
                         <OwnRow
@@ -1903,6 +1928,8 @@ function PersonModal({
                         />
                       ))}
                     </OwnPanel>
+                    ) : null}
+                    {SHOW_IMPLEMENTATIONS ? (
                     <OwnPanel icon={PackageIcon} title="Implementations" count={fImpls.length}>
                       {fImpls.map((x) => (
                         <OwnRow
@@ -1918,6 +1945,7 @@ function PersonModal({
                         />
                       ))}
                     </OwnPanel>
+                    ) : null}
                     <OwnPanel icon={ListTodoIcon} title="TODOs" count={fTodos.length}>
                       {fTodos.map((t) => (
                         <OwnRow
@@ -2078,7 +2106,7 @@ function TaskDetail({
           {/* Field grid */}
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border/60 bg-muted/15 p-3">
             <TaskField label="Owner" value={t.owner} />
-            <TaskField label="Customer" value={t.customerLabel ?? t.customer} />
+            <TaskField label={ACCOUNT_LABEL} value={t.customerLabel ?? t.customer} />
             <TaskField label="Type" value={[t.type, t.category].filter(Boolean).join(" · ") || null} />
             <TaskField label="Domain" value={t.issueDomain} />
             <TaskField label="Opened" value={t.opened} />
@@ -2095,7 +2123,7 @@ function TaskDetail({
           ) : null}
           {t.impactSummary ? (
             <div className="flex flex-col gap-1">
-              <span className="font-medium text-2xs text-muted-foreground/60 uppercase tracking-wide">Customer impact</span>
+              <span className="font-medium text-2xs text-muted-foreground/60 uppercase tracking-wide">{ACCOUNT_LABEL} impact</span>
               <p className="whitespace-pre-wrap text-xs text-foreground/90">{t.impactSummary}</p>
             </div>
           ) : null}
@@ -2953,7 +2981,7 @@ function SubagentDetail({
     }
     if (steerPlanMode) {
       directives.push(
-        "(Plan mode is ON — investigate and plan only, take no action. Use ONLY read-only tools to gather what you need; do NOT write, mutate, send, draft, schedule, post, page, or anything that would prompt for approval. If the request is ambiguous or has real options, ask me a short clarifying question first. Then give a concise plan: the goal, the concrete steps in order, which customers/records/systems each step touches, and how we'll verify it. Then stop and wait for my explicit go — do not act until I approve.)",
+        `(Plan mode is ON — investigate and plan only, take no action. Use ONLY read-only tools to gather what you need; do NOT write, mutate, send, draft, schedule, post, page, or anything that would prompt for approval. If the request is ambiguous or has real options, ask me a short clarifying question first. Then give a concise plan: the goal, the concrete steps in order, which ${DEPLOYMENT_PROFILE.vocabulary.account.plural}/records/systems each step touches, and how we'll verify it. Then stop and wait for my explicit go — do not act until I approve.)`,
       );
     }
     const text = directives.length > 0 ? `${directives.join(" ")}\n\n${raw}` : raw;

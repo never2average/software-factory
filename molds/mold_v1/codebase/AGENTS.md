@@ -45,6 +45,12 @@ A vertical (a set of subagents for one line of work) ships as a **subagent pack*
 dropped in, no fork, no edits to base files. See
 [`docs/SUBAGENT_PACKS.md`](docs/SUBAGENT_PACKS.md).
 
+What a deployment is *for* (the product name, what a "customer" and an "FDE" are called,
+which data-room domains show and under what label, the starter tree, the chat's opening
+lines, a short per-turn briefing for the model) is a **deployment profile**: JSON files
+added under `profiles/`, never an edit to a component. See
+[`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md).
+
 ## Configuration
 
 Every environment variable the platform reads is documented in

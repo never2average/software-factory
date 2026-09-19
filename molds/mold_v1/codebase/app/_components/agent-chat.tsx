@@ -78,7 +78,7 @@ const MODES: {
 function modeDirective(mode: AgentMode): string | null {
   switch (mode) {
     case "plan":
-      return "(Plan mode is ON — investigate and plan only, take no action. Use ONLY read-only tools to gather what you need; do NOT write, mutate, send, draft, schedule, post, page, or anything that would prompt for approval. If the request is ambiguous or has real options, ask me a short clarifying question first. Then give a concise plan: the goal, the concrete steps in order, which customers/records/systems each step touches, and how we'll verify it. Then stop and wait for my explicit go — do not act until I approve.)";
+      return `(Plan mode is ON — investigate and plan only, take no action. Use ONLY read-only tools to gather what you need; do NOT write, mutate, send, draft, schedule, post, page, or anything that would prompt for approval. If the request is ambiguous or has real options, ask me a short clarifying question first. Then give a concise plan: the goal, the concrete steps in order, which ${DEPLOYMENT_PROFILE.vocabulary.account.plural}/records/systems each step touches, and how we'll verify it. Then stop and wait for my explicit go — do not act until I approve.)`;
     default:
       return null; // "build" (normal), "goal"/"loop" (harness outputSchema gate)
   }
@@ -98,6 +98,7 @@ import type { OpsSection } from "./ops-center";
 import { ErrorBoundary } from "./error-boundary";
 import { CustomerSearchDialog, type CustomerListItem } from "./customer-search";
 import { CustomerMark } from "./customer-mark";
+import { DEPLOYMENT_PROFILE, fillProfileText } from "@/lib/deployment-profile.generated";
 import {
   STALLED_CUSTOMERS,
   URGENT_TICKETS,
@@ -1316,10 +1317,12 @@ export function AgentChat({
   // once per delivered plan and reappears for each newly finished plan turn.
   const [planHandledId, setPlanHandledId] = useState<string | null>(null);
 
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = e.target.files;
-    if (!picked) return;
-    for (const file of Array.from(picked)) {
+  // ONE way in for attachments — the picker, a drop and a paste all land here, so
+  // they share the same data-URL handling and end up in the same `files` state
+  // (the only one the send path reads).
+  const addFiles = useCallback((incoming: FileList | File[] | null | undefined) => {
+    if (!incoming) return;
+    for (const file of Array.from(incoming)) {
       const reader = new FileReader();
       reader.onload = () =>
         setFiles((prev) => [
@@ -1334,7 +1337,60 @@ export function AgentChat({
         ]);
       reader.readAsDataURL(file);
     }
+  }, []);
+
+  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    addFiles(e.target.files);
     e.target.value = "";
+  };
+
+  // Drag-and-drop + paste. PromptInput has its own form-level drop handler and
+  // textarea paste handler, but they feed ITS internal attachment store, which
+  // this chat never reads — files dropped there simply vanished. These run in
+  // the CAPTURE phase on the whole chat column (a near-miss still attaches) and
+  // stop the event before PromptInput sees it. Enter/leave are counted because
+  // they fire for every child element the pointer crosses.
+  const canAttach = !readOnly;
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const carriesFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  const onDragEnterFiles = (e: React.DragEvent) => {
+    if (!canAttach || !carriesFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+  const onDragOverFiles = (e: React.DragEvent) => {
+    if (!canAttach || !carriesFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onDragLeaveFiles = (e: React.DragEvent) => {
+    if (!canAttach || !carriesFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDropFiles = (e: React.DragEvent) => {
+    if (!carriesFiles(e)) return;
+    // Always swallow a file drop: unhandled, the browser navigates to the file.
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (canAttach) addFiles(e.dataTransfer.files);
+  };
+  const onPasteFiles = (e: React.ClipboardEvent) => {
+    if (!canAttach) return;
+    const pasted: File[] = [];
+    for (const item of Array.from(e.clipboardData?.items ?? [])) {
+      if (item.kind !== "file") continue;
+      const file = item.getAsFile();
+      if (file) pasted.push(file);
+    }
+    if (pasted.length === 0) return; // plain text: untouched
+    e.preventDefault();
+    e.stopPropagation();
+    addFiles(pasted);
   };
 
   // Persist chat metadata once it has a server session.
@@ -1454,6 +1510,42 @@ export function AgentChat({
   const worthInlining = (f: AttachedFile) =>
     f.mediaType.startsWith("image/") && f.dataUrl.length <= INLINE_LIMIT_BYTES;
 
+  /**
+   * A copy of an image small enough to ride inside the message, or null.
+   *
+   * The original is always stored in the data room at full size. What the MODEL sees is this copy: before it
+   * existed, an image over the inline limit — every phone photo, most full-page screenshots — was stored and
+   * then never shown to the model at all, so a vision model still answered "I cannot see the image". The copy
+   * is drawn in the browser (no network, so the CSP does not apply): longest side stepped down from 1568px
+   * and JPEG quality stepped down until it fits. Text in a scanned page stays legible at these sizes; if even
+   * the smallest attempt does not fit, the model falls back to the stored file like any other attachment.
+   */
+  const inlineCopy = async (f: AttachedFile): Promise<{ dataUrl: string; mediaType: string } | null> => {
+    if (!f.mediaType.startsWith("image/") || f.mediaType === "image/svg+xml") return null;
+    if (f.dataUrl.length <= INLINE_LIMIT_BYTES) return { dataUrl: f.dataUrl, mediaType: f.mediaType };
+    try {
+      const bitmap = await createImageBitmap(f.file);
+      for (const side of [1568, 1280, 1024, 768]) {
+        const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const g = canvas.getContext("2d");
+        if (!g) return null;
+        g.fillStyle = "#fff"; // JPEG has no alpha: a transparent PNG would otherwise turn black
+        g.fillRect(0, 0, canvas.width, canvas.height);
+        g.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        for (const quality of [0.85, 0.7, 0.55]) {
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          if (dataUrl.length <= INLINE_LIMIT_BYTES) return { dataUrl, mediaType: "image/jpeg" };
+        }
+      }
+    } catch {
+      /* an image the browser cannot decode (HEIC, a corrupt file): the stored copy is still there */
+    }
+    return null;
+  };
+
   const sendMessage = async (raw: string, filesToSend: AttachedFile[]) => {
     // Goal / Loop: run in the harness. Frame the objective with the goal
     // preamble and attach the completion-gate schema — the harness injects a
@@ -1499,8 +1591,9 @@ export function AgentChat({
 
     if (messageText) parts.push({ type: "text", text: messageText });
     for (const { file: f } of stored) {
-      if (worthInlining(f)) {
-        parts.push({ type: "file", data: f.dataUrl, mediaType: f.mediaType, filename: f.name });
+      const copy = worthInlining(f) ? { dataUrl: f.dataUrl, mediaType: f.mediaType } : await inlineCopy(f);
+      if (copy) {
+        parts.push({ type: "file", data: copy.dataUrl, mediaType: copy.mediaType, filename: f.name });
       }
     }
     const content: UserContent = parts.length > 1 ? (parts as UserContent) : messageText;
@@ -1762,7 +1855,24 @@ export function AgentChat({
         }
       }}
     >
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
+      <main
+        className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
+        onDragEnterCapture={onDragEnterFiles}
+        onDragOverCapture={onDragOverFiles}
+        onDragLeaveCapture={onDragLeaveFiles}
+        onDropCapture={onDropFiles}
+        onPasteCapture={onPasteFiles}
+      >
+      {dragging ? (
+        <div
+          className="pointer-events-none absolute inset-2 z-30 flex items-end justify-center rounded-2xl bg-primary/5 pb-8 ring-2 ring-primary/40"
+          data-testid="chat-drop-affordance"
+        >
+          <span className="rounded-full border border-border bg-background px-3 py-1 font-medium text-foreground text-xs shadow-sm">
+            Drop to attach
+          </span>
+        </div>
+      ) : null}
       {/* Catches a render loop (#185) anywhere in the chat body — header,
           composer, or the transcript's own inner boundary — BEFORE it reaches
           the eve store's synchronous re-render (where it is swallowed as
@@ -2377,8 +2487,10 @@ export function AgentChat({
                 workspace, so the home screen has something to say from the
                 first day rather than only once tickets exist. */}
             <WorkspaceSummary variant="home" />
-            <DataSection title="Urgent tickets" items={starterCards.urgent} onPick={pickSuggestion} />
-            <DataSection title="Stalled customers" items={starterCards.stalled} onPick={pickSuggestion} />
+            {TICKETS_VISIBLE ? (
+              <DataSection title={DEPLOYMENT_PROFILE.chat.empty_sections.urgent} items={starterCards.urgent} onPick={pickSuggestion} />
+            ) : null}
+            <DataSection title={DEPLOYMENT_PROFILE.chat.empty_sections.stalled} items={starterCards.stalled} onPick={pickSuggestion} />
           </div>
         ) : null}
       </div>
@@ -2433,13 +2545,11 @@ export function AgentChat({
   );
 }
 
-const HERO_LINES = [
-  "Delivered",
-  "What needs doing today?",
-  "Prep the stand-up",
-  "Chase the follow-ups",
-  "Keep every customer close",
-];
+/** The hero's rotating lines come from the deployment profile ("{product}" is the product name). */
+const HERO_LINES = DEPLOYMENT_PROFILE.chat.hero_lines.map((line) => fillProfileText(line));
+
+/** A deployment that hides the Tickets data-room domain gets no ticket-based home-screen cards. */
+const TICKETS_VISIBLE = DEPLOYMENT_PROFILE.dataroom.domains.Tickets?.visible !== false;
 
 function RotatingHero() {
   const [i, setI] = useState(0);
@@ -2566,6 +2676,7 @@ function useStarterCards(
         const { customers = [] } = (await res.json()) as { customers?: StarterCustomer[] };
         if (cancelled) return;
 
+        const copy = DEPLOYMENT_PROFILE.chat.starter_cards;
         /** The FDE who owns the account, as a contact the card can hover. */
         const ownerOf = (c: StarterCustomer) =>
           c.fdeOwner
@@ -2576,7 +2687,7 @@ function useStarterCards(
                   .filter(Boolean)
                   .map((w) => w[0].toUpperCase() + w.slice(1))
                   .join(" "),
-                role: "FDE owner",
+                role: copy.owner_label,
                 org: c.name,
                 email: c.fdeOwner,
               }
@@ -2588,7 +2699,7 @@ function useStarterCards(
           return Number.isNaN(t) ? null : Math.floor((Date.now() - t) / 86_400_000);
         };
 
-        const urgent: DataItem[] = customers
+        const urgent: DataItem[] = (TICKETS_VISIBLE ? customers : [])
           .filter((c) => (c.openTickets ?? 0) > 0)
           .sort((a, b) => (b.openTickets ?? 0) - (a.openTickets ?? 0))
           .slice(0, 4)
@@ -2596,15 +2707,15 @@ function useStarterCards(
             customer: c.name,
             summary:
               c.openTickets === 1
-                ? "One open ticket is waiting on us."
-                : `${c.openTickets} open tickets are waiting on us.`,
-            action: "Triage the open tickets",
-            badge: c.openTickets === 1 ? "1 open" : `${c.openTickets} open`,
+                ? fillProfileText(copy.ticket_waiting, { count: c.openTickets, name: c.name })
+                : fillProfileText(copy.tickets_waiting, { count: c.openTickets, name: c.name }),
+            action: fillProfileText(copy.triage_title, { name: c.name }),
+            badge: fillProfileText(c.openTickets === 1 ? copy.ticket_badge : copy.tickets_badge, { count: c.openTickets }),
             badgeTone: ((c.openTickets ?? 0) >= 3 ? "high" : "medium") as BadgeTone,
             // The card has a proper contact slot with a hover card behind it —
             // use it, rather than flattening the owner into a text footnote.
             spoc: ownerOf(c),
-            prompt: `Triage the open tickets for ${c.name}: what is blocking each one, who owns it, and what should we do next?`,
+            prompt: fillProfileText(copy.triage_prompt, { name: c.name, count: c.openTickets }),
           }));
 
         // "Stalled" is a real signal only when we know when we last spoke; a
@@ -2622,13 +2733,13 @@ function useStarterCards(
             // 2-line card where it can only ever be a truncated fragment.
             summary:
               days >= 30
-                ? `No contact logged for over a month.`
-                : `No contact logged in ${days} days.`,
-            action: "Draft a check-in",
-            badge: `${days}d quiet`,
+                ? fillProfileText(copy.quiet_summary_long, { name: c.name, days })
+                : fillProfileText(copy.quiet_summary, { name: c.name, days }),
+            action: fillProfileText(copy.quiet_title, { name: c.name }),
+            badge: fillProfileText(copy.quiet_badge, { days }),
             badgeTone: (days >= 30 ? "high" : "medium") as BadgeTone,
             spoc: ownerOf(c),
-            prompt: `${c.name} has been quiet for ${days} days. Summarise where we left off and draft a check-in to their main contact.`,
+            prompt: fillProfileText(copy.quiet_prompt, { name: c.name, days }),
           }));
 
         setCards({ stalled, urgent });
@@ -2768,7 +2879,10 @@ function CustomerSelect({
       return (
         <span
           className="flex items-center gap-1.5 rounded-full border border-border bg-muted/40 py-1 pr-2.5 pl-1.5 text-muted-foreground text-xs"
-          title={`Customer context is locked for this chat: ${selected.join(", ")}`}
+          title={fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.pill_locked, {
+            context: DEPLOYMENT_PROFILE.vocabulary.account_context,
+            names: selected.join(", "),
+          })}
         >
           {iconRow}
           {selected.length === 1 ? (
@@ -2828,13 +2942,16 @@ function CustomerSelect({
         )}
         title={
           active
-            ? `Customer context: ${selected.join(", ")} — click to change`
-            : "Set the customer context for this chat"
+            ? fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.pill_active, {
+                context: DEPLOYMENT_PROFILE.vocabulary.account_context,
+                names: selected.join(", "),
+              })
+            : fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.pill_empty)
         }
       >
         {active ? iconRow : <TagIcon className="size-3.5 shrink-0" />}
         {selected.length === 0 ? (
-          <span className="max-w-[10rem] truncate font-medium">Customer context</span>
+          <span className="max-w-[10rem] truncate font-medium">{DEPLOYMENT_PROFILE.vocabulary.account_context}</span>
         ) : selected.length === 1 ? (
           <span className="max-w-[10rem] truncate font-medium">{selected[0]}</span>
         ) : overflow > 0 ? (

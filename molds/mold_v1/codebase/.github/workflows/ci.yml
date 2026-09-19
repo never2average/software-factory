@@ -42,6 +42,11 @@ jobs:
       - name: Generated artifacts are current
         run: npm run check:generated
 
+      # Subagents are discovered, never listed: the registry must match the directories, every subagent.json must
+      # be one the data room can load, and every workspace-standard subagent (incl. any pack's) must pass.
+      - name: Subagent registry and workspaces
+        run: npm run check:subagent-shared && npm run check:subagents
+
       - name: Typecheck
         run: npm run typecheck
 

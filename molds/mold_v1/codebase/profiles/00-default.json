@@ -1,0 +1,57 @@
+{
+  "$comment": "The deployment profile: everything a person or the model READS that is specific to what this deployment is for. These defaults reproduce the product exactly as it was before profiles existed. A deployment changes them by ADDING profiles/NN-<name>.json files (later files win, objects merge deeply, arrays replace); nothing here is edited. Identifiers never change with a profile: database columns, API routes, tool names and data-room path tokens stay as they are. See docs/DEPLOYMENT_PROFILE.md.",
+  "product": {
+    "name": "Delivered",
+    "tagline": "The operations console for forward-deployed teams.",
+    "description": "{product} — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team."
+  },
+  "vocabulary": {
+    "account": { "singular": "customer", "plural": "customers" },
+    "member": { "singular": "FDE", "plural": "FDEs" },
+    "owner": "FDE owner",
+    "account_context": "Customer context"
+  },
+  "chat": {
+    "hero_lines": ["{product}", "What needs doing today?", "Prep the stand-up", "Chase the follow-ups", "Keep every customer close"],
+    "empty_sections": { "urgent": "Urgent tickets", "stalled": "Stalled customers" },
+    "starter_cards": {
+      "owner_label": "FDE owner",
+      "ticket_waiting": "One open ticket is waiting on us.",
+      "tickets_waiting": "{count} open tickets are waiting on us.",
+      "ticket_badge": "1 open",
+      "tickets_badge": "{count} open",
+      "triage_title": "Triage the open tickets",
+      "triage_prompt": "Triage the open tickets for {name}: what is blocking each one, who owns it, and what should we do next?",
+      "quiet_summary": "No contact logged in {days} days.",
+      "quiet_summary_long": "No contact logged for over a month.",
+      "quiet_badge": "{days}d quiet",
+      "quiet_title": "Draft a check-in",
+      "quiet_prompt": "{name} has been quiet for {days} days. Summarise where we left off and draft a check-in to their main contact."
+    },
+    "account_search": {
+      "title": "Customer context",
+      "description": "Pick the customers this conversation is about — the agent grounds itself in their record.",
+      "placeholder": "Search customers…",
+      "empty": "No customers found.",
+      "pill_empty": "Set the customer context for this chat",
+      "pill_active": "{context}: {names} — click to change",
+      "pill_locked": "{context} is locked for this chat: {names}"
+    }
+  },
+  "dataroom": {
+    "root_label": "Data Room",
+    "domains": {
+      "Customers": { "label": "Customers", "visible": true },
+      "Platform": { "label": "Platform", "visible": true },
+      "Deployments": { "label": "Deployments", "visible": true },
+      "Solutions": { "label": "Solutions", "visible": true },
+      "Implementation": { "label": "Implementation", "visible": true },
+      "Tickets": { "label": "Tickets", "visible": true },
+      "People": { "label": "People", "visible": true }
+    },
+    "seed": null
+  },
+  "agent": {
+    "briefing": null
+  }
+}
