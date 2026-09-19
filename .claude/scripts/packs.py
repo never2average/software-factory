@@ -11,6 +11,7 @@ section, shared sandbox helpers). An application names its packs in application.
   apply <app>      copy the app's packs into build/<app_id>/ (created from the mold if it is not there yet),
                    then run the mold's own generators there; refuses if a pack file would REPLACE a mold file
   verify <app>     the mold's own subagent checks inside build/<app_id>/
+  lane-copy <app>  build/<app_id>.lane/: mold + packs, no brand, rebuilt from scratch (what the test lanes grade)
 
 Molds stay general-purpose checkpoints: nothing here ever writes under molds/. A mold supports packs when its
 codebase discovers subagents (scripts/gen-subagent-meta.mjs writes agent/lib/subagent-registry.generated.ts);
@@ -78,9 +79,16 @@ def supports_packs(codebase):
 def conflicts(files, codebase):
     return [f for f in files if os.path.lexists(os.path.join(codebase, f))]
 
-def apply(app_id):
+def apply(app_id, lane=False):
+    """lane=True builds build/<app_id>.lane/ instead: the mold plus the packs and NO brand, always from scratch.
+    The test lanes run the mold's source checks there. Those checks grade source hygiene (one of them refuses any
+    customer's name in code every customer sees), and the brand overlay writes the product name into that code on
+    purpose — so grading the branded copy fails an application whose product is named after its operator. The
+    brand has its own check (branding.py check); the deployed copy stays build/<app_id>/."""
     app = app_docs(app_id); packs = app.get("packs") or []
-    mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase"); build = os.path.join(ROOT, "build", app_id)
+    mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
+    build = os.path.join(ROOT, "build", app_id + (".lane" if lane else ""))
+    if lane and os.path.isdir(build): shutil.rmtree(build)
     if not packs: print(f"{app_id}: no packs; nothing to apply"); return 0
     errs = [e for p in packs for e in check_pack(p)]
     if not supports_packs(mold_dir):
@@ -101,16 +109,16 @@ def apply(app_id):
     if not os.path.isdir(build):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import branding
-        branding.build_copy(app_id, mold_dir)
-        print(f"build copy created: build/{app_id}/ (from {app['mold_id']})")
+        branding.build_copy(os.path.basename(build), mold_dir)
+        print(f"build copy created: {os.path.relpath(build, ROOT)}/ (from {app['mold_id']})")
     for f, p in sorted(seen.items()):
         dest = os.path.join(build, f); os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copyfile(os.path.join(PACKS, p, "files", f), dest)
     for cmd in (["node", "scripts/sync-subagent-shared.mjs"], ["node", "scripts/gen-subagent-meta.mjs"]):
         r = subprocess.run(cmd, cwd=build, capture_output=True, text=True)
         if r.returncode:
-            print((r.stdout + r.stderr).strip(), file=sys.stderr); sys.exit(f"{' '.join(cmd)} failed in build/{app_id}/")
-    print(f"packs applied to build/{app_id}/: {', '.join(packs)} ({len(seen)} file(s)); shared helpers synced, subagent registry regenerated")
+            print((r.stdout + r.stderr).strip(), file=sys.stderr); sys.exit(f"{' '.join(cmd)} failed in {os.path.relpath(build, ROOT)}/")
+    print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)); shared helpers synced, subagent registry regenerated")
     return 0
 
 def verify(app_id):
@@ -148,6 +156,7 @@ def main(a):
     if a[0] == "check":
         errs = check_pack(a[1]); [print(e) for e in errs]; print("ok" if not errs else f"{len(errs)} problem(s)"); return 1 if errs else 0
     if a[0] == "apply": return apply(a[1])
+    if a[0] == "lane-copy": return apply(a[1], lane=True)
     if a[0] == "verify": return verify(a[1])
     sys.exit(__doc__)
 
