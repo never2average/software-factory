@@ -12,10 +12,10 @@
     "admin_url_ref": "DATABASE_URL_UNPOOLED",
     "pooling": "transaction",
     "rls_verified": {
-      "at": "2026-09-19T09:49:59+00:00",
+      "at": "2026-09-19T10:07:56+00:00",
       "backend": "neon",
       "mode": "fail_closed",
-      "source": "provision.py bring_up_schema",
+      "source": "provision.py --verify-rls",
       "role": "app_rw",
       "superuser": false,
       "bypassrls": false,

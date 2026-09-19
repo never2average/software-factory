@@ -83,7 +83,7 @@
         {
           "kind": "custom",
           "dataroom_path": "Customers/{customer_id}/filings/lodr/**",
-          "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) \u2014 the analysts' Quarterly Report \u2014 plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
+          "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) — the analysts' Quarterly Report — plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
           "sync": "manual_entry",
           "required": true,
           "seeded_from": "none"
@@ -176,7 +176,7 @@
       "product_name": "OnFinance AI",
       "brand_color": "#2D2D2D",
       "tagline": "Research workspace for listed and debt-listed Indian housing finance companies.",
-      "description": "OnFinance AI \u2014 Research workspace for listed and debt-listed Indian housing finance companies.",
+      "description": "OnFinance AI — Research workspace for listed and debt-listed Indian housing finance companies.",
       "radius": "0.625rem",
       "neutral_chroma": 0.006,
       "icon_bg": "#2D2D2D",
@@ -187,19 +187,25 @@
   },
   "testing": {
     "load": {
-      "status": "pending"
+      "status": "pending",
+      "run_at": "2026-09-19T10:03:19+00:00"
     },
     "context": {
-      "status": "pending"
+      "status": "pending",
+      "run_at": "2026-09-19T10:03:19+00:00"
     },
     "functional": {
-      "status": "pending"
+      "status": "skipped",
+      "run_at": "2026-09-19T10:06:26+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-19T100626Z.md"
     },
     "accessibility": {
-      "status": "pending"
+      "status": "pending",
+      "run_at": "2026-09-19T10:03:19+00:00"
     },
     "responsiveness": {
-      "status": "pending"
+      "status": "pending",
+      "run_at": "2026-09-19T10:03:19+00:00"
     }
   },
   "customer_id": "internal",
