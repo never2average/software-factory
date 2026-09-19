@@ -226,7 +226,9 @@ def context(app_id, lane, mold_id, docs, report):
     app = docs.get("application") or {}
     # An application with packs has code the mold does not: its checks run in its own build copy
     # (build/<app_id>/, made by packs.py apply), never in the general-purpose mold.
-    codebase = os.path.join(ROOT, "build", app_id) if app.get("packs") else os.path.join(mold, "codebase")
+    # The UNBRANDED copy (packs.py lane-copy): source checks grade the mold plus the packs; the brand overlay
+    # writes the product name into shared code on purpose and has its own check (branding.py check).
+    codebase = os.path.join(ROOT, "build", app_id + ".lane") if app.get("packs") else os.path.join(mold, "codebase")
     # What the page <title> must carry: the app's own brand, else the mold's default name.
     rules = os.path.join(mold, "branding", "rules.json")
     default_name = json.load(open(rules)).get("product_name_default", "") if os.path.exists(rules) else ""
@@ -343,9 +345,10 @@ def main(a):
         if not os.path.exists(p): die(f"{app_id}/{name}.json is missing, so preconditions cannot be judged. Nothing ran.")
         docs[name] = load(p)
     mold_id = docs["application"].get("mold_id") or die(f"{app_id}/application.json has no mold_id. Nothing ran.")
-    if docs["application"].get("packs") and not os.path.isdir(os.path.join(ROOT, "build", app_id)) and "--list" not in sys.argv:
-        die(f"{app_id} has packs ({', '.join(docs['application']['packs'])}), so its checks run in its own build copy, and "
-            f"build/{app_id}/ does not exist yet. Make it, then re-run: python3 .claude/scripts/packs.py apply {app_id}. Nothing ran.")
+    if docs["application"].get("packs") and "--list" not in sys.argv:
+        # Rebuilt every run, so the lane never grades a stale copy of a pack.
+        r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/packs.py"), "lane-copy", app_id], capture_output=True, text=True)
+        if r.returncode: die(f"{app_id} has packs and its lane copy could not be built: {(r.stdout + r.stderr).strip()[-400:]} Nothing ran.")
     commit = docs["application"].get("mold_commit") or next((m.get("source", {}).get("commit", "?") for m in
              load(os.path.join(ST, "factory.json"))["molds"] if m["mold_id"] == mold_id), "?")
     specs = {l: read_spec(l, mold_id) for l in LANES}
