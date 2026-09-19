@@ -326,9 +326,27 @@ def apply_overlay(build_dir, b, rules):
     svg, inner = read_mark(b)
     open(f("icon"), "w").write(svg + "\n"); applied.append("icon")
 
+    # A mold with a deployment profile (scripts/gen-deployment-profile.mjs) takes its NAME, tagline and description
+    # from profiles/*.json, not from literals in source: the brand is written as profiles/90-brand.json (after any
+    # pack's profile, so the application's own brand wins) and the generator is re-run. The rules marked
+    # "via_profile" and the product-name file list are then skipped — those literals no longer exist upstream
+    # (fde-agent #15). The icon, the sign-in mark and the palette are still source rewrites.
+    profiled = os.path.exists(os.path.join(build_dir, "scripts", "gen-deployment-profile.mjs"))
+    if profiled:
+        prod = {"name": name}
+        if b.get("tagline"): prod["tagline"] = b["tagline"]
+        if b.get("description"): prod["description"] = b["description"]
+        os.makedirs(os.path.join(build_dir, "profiles"), exist_ok=True)
+        json.dump({"$comment": "written by the factory's branding step; the application's own brand", "product": prod},
+                  open(os.path.join(build_dir, "profiles", "90-brand.json"), "w"), indent=2, ensure_ascii=False)
+        r_ = subprocess.run(["node", "scripts/gen-deployment-profile.mjs"], cwd=build_dir, capture_output=True, text=True)
+        if r_.returncode: sys.exit("the deployment profile could not be generated with the brand: " + (r_.stdout + r_.stderr).strip()[-400:])
+        applied.append("profile:90-brand")
+
     subs = {"description_literal": esc(b.get("description") or f"{name} — {b.get('tagline', '')}".strip(" —")),
             "tagline": jsx_text(b.get("tagline", "")), "auth_mark_jsx": auth_mark_jsx(inner)}
     for r in rules["replacements"]:
+        if profiled and r.get("via_profile"): continue
         p = f(r["file"]); s = open(p).read()
         if r["find"] not in s:
             sys.exit(f"branding rule {r['id']} no longer matches {rules['files'][r['file']]}; the mold moved. "
@@ -336,7 +354,7 @@ def apply_overlay(build_dir, b, rules):
         s = s.replace(r["find"], r["replace"].format(**subs))
         open(p, "w").write(s); applied.append(r["id"])
 
-    if name != old:
+    if name != old and not profiled:
         for key in rules["product_name_files"]:
             p = f(key); s = open(p).read()
             if old not in s: sys.exit(f"expected the product name {old!r} in {rules['files'][key]}; the mold moved")
@@ -396,7 +414,11 @@ def check(app_id, app, mold_dir):
     if not os.path.isdir(build_dir): sys.exit(f"no build copy at build/{app_id}; run prepare first")
     b = resolve(app); rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
     name = b.get("product_name"); old = rules["product_name_default"]; bad = []
-    if name and name != old:
+    gen = os.path.join(build_dir, "lib", "deployment-profile.generated.ts")
+    if name and name != old and os.path.exists(gen):
+        # profiled mold: the name lives in the generated profile, and nowhere in source
+        if f'"name": {json.dumps(name, ensure_ascii=False)}' not in open(gen).read(): bad.append(f"the generated deployment profile does not carry the product name {name!r}")
+    elif name and name != old:
         for key in rules["product_name_files"]:
             s = open(os.path.join(build_dir, rules["files"][key])).read()
             if old in s: bad.append(f"{rules['files'][key]} still says {old!r}")

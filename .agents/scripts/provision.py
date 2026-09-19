@@ -526,9 +526,10 @@ DEPLOY_TIME = ["TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT
 API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "AI_GATEWAY_API_KEY",
            "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT", "CRON_SECRET", "DATABASE_URL", "OPS_MULTI_TENANT",
            "MODEL_PROVIDER", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "EXA_API_KEY", "BROWSERBASE_API_KEY",
-           "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID"]
+           "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID", "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST"]
 # Absent means "feature off" or "the mold's default", never a broken deploy.
-OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT")
+OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT",
+                "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST")
 WORKFLOW_ENV = ["DATABASE_URL"]   # TASK_WORKFLOW_SERVICE_TOKEN is minted onto both projects directly, never copied
 
 def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
@@ -1050,6 +1051,13 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     have = vercel_env_names(mold_dir, proj)
     cfg = {"MODEL_PROVIDER": app["model"]["provider"], "ENABLE_WEB_SEARCH": str(app["capabilities"]["web_search"]).lower(), "ENABLE_BROWSER": str(app["capabilities"]["browser"]).lower(),
            "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
+    # Per-role models (application.model.roles). Written on every deploy like the flags above, so the running app
+    # can never disagree with its state; the mold falls back to CLOUDFLARE_MODEL, then its default, for a role
+    # the application does not name.
+    if app["model"].get("provider") == "cloudflare":
+        for role, env_name in (("orchestrator", "CLOUDFLARE_MODEL_ORCHESTRATOR"), ("specialist", "CLOUDFLARE_MODEL_SPECIALIST")):
+            v = (app["model"].get("roles") or {}).get(role)
+            if v: cfg[env_name] = v
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=proj)
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=f"{proj}-api")   # build-time flags of the eve bundle: the API must agree with the web door
     # The sender's display name is this app's brand, re-derived on every deploy so it cannot drift from
