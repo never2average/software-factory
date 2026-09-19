@@ -66,5 +66,10 @@
       "api": "vercel.api.json",
       "eve": "vercel.eve.json"
     }
+  },
+  "google": {
+    "project_number": "865110163807",
+    "client_id": "865110163807-f5flo41el8f4oun30626p0gm20cgf9b4.apps.googleusercontent.com",
+    "set_at": "2026-09-19T09:47:52+00:00"
   }
 }
