@@ -103,6 +103,25 @@ Each `SKILL.md` has these parts:
 
 `instructions.md` names every skill and when to load it.
 
+### The always-on prompt budget (the mold tests this)
+
+`instructions.md` is loaded on every turn, and the mold's context lane (`scripts/test-prompt-context.mjs`) holds
+every subagent's file to three rules. The file must:
+
+- be **at most 1,400 words** (aim for 1,350). Keep in it:
+  - the rules, stated tersely
+  - the output contract
+  - the Skills table and the Scripts table, with one short clause per row
+
+  Definitions tables, formula tables, worked detail and explanations belong in skills, which load on demand.
+- contain `<!-- organization-policy -->` exactly once, followed by the workspace-isolation paragraph. Copy it from
+  any built-in subagent.
+- end with `<!-- stable-prompt-end -->`, exactly once, as the last non-blank line.
+
+A pack keeps a `verify-instructions.sh` that checks these together with the naming rules. Run it before
+`packs.py verify`. These rules were found the hard way on hfc-research (2026-09-19): all four files were 1,650 to
+2,080 words with no markers, and the context lane reverted the application.
+
 ## 4. Scripts: deterministic work belongs in code
 
 The model decides and the scripts compute. All arithmetic, unit conversion, period parsing,
