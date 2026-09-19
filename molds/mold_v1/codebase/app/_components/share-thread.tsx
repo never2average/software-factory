@@ -69,7 +69,7 @@ function ShareDialog({
   const [ownerEmail, setOwnerEmail] = useState<string | null>(null);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   /** Per-invite delivery, keyed by email — "did this person actually get told". */
-  const [delivery, setDelivery] = useState<Record<string, { delivered: boolean; reason?: string }>>({});
+  const [delivery, setDelivery] = useState<Record<string, { delivered: boolean; reason?: string; workspaceInvited?: boolean }>>({});
   /**
    * Am I the owner of this thread, or someone it was shared with?
    *
@@ -158,11 +158,25 @@ function ShareDialog({
       setBusy(true);
       setError(null);
       try {
-        const res = await opsFetch<{ delivery?: { delivered: boolean; reason?: string } }>(
+        const res = await opsFetch<{
+          delivery?: { delivered: boolean; reason?: string };
+          workspaceInvite?: { status: string; delivered?: boolean; reason?: string };
+        }>(
           `/api/ops/threads/${threadId}/members`,
           { method: "POST", body: JSON.stringify({ email: target, role: targetRole }) },
         );
-        if (res?.delivery) setDelivery((d) => ({ ...d, [target]: res.delivery! }));
+        // A person outside the workspace is invited to it as well (they could not sign in otherwise); say so, and
+        // say it when that second email did not go out, because then they still cannot get in.
+        const invited = res?.workspaceInvite?.status === "sent" || res?.workspaceInvite?.status === "resent";
+        const inviteFailed = invited && res?.workspaceInvite?.delivered === false;
+        if (res?.delivery) {
+          setDelivery((d) => ({
+            ...d,
+            [target]: inviteFailed
+              ? { delivered: false, reason: `The workspace invite could not be emailed: ${res.workspaceInvite?.reason ?? "unknown reason"}` }
+              : { ...res.delivery!, workspaceInvited: invited },
+          }));
+        }
         await loadMembers(threadId);
         setQuery("");
         inputRef.current?.focus();
@@ -350,7 +364,7 @@ function ShareDialog({
                   notice={
                     delivery[m.email]
                       ? delivery[m.email].delivered
-                        ? { text: "emailed", ok: true }
+                        ? { text: delivery[m.email].workspaceInvited ? "emailed · invited to the workspace" : "emailed", ok: true }
                         : { text: "not emailed", ok: false, title: delivery[m.email].reason }
                       : undefined
                   }

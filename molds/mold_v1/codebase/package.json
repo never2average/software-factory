@@ -85,7 +85,8 @@
     "fde:seed-subagent-rows": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/fde/seed-subagent-rows.mjs",
     "build:deployment-profile": "node scripts/gen-deployment-profile.mjs",
     "test:deployment-profile": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-profile.mjs",
-    "test:session-scope": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-session-scope.mjs"
+    "test:session-scope": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-session-scope.mjs",
+    "test:email-html": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-email-html.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

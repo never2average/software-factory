@@ -6,6 +6,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordActivity } from "@/lib/ops-activity";
 import { accessFor, callerEmail } from "@/lib/chat-threads";
 import { notifyInvite } from "@/lib/platform-notify";
+import { ensureWorkspaceInvite } from "@/lib/org-invites";
 import { CONSUMER_DOMAINS } from "@/lib/ops-auth";
 
 export const runtime = "nodejs";
@@ -67,6 +68,23 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     if (invitee === access.thread.ownerEmail) {
       return NextResponse.json({ error: "The owner is already on the thread." }, { status: 400 });
     }
+    /**
+     * The invitee has to be able to GET IN, so a share brings a workspace invite with it (lib/org-invites.ts):
+     * nothing for someone already in the thread's workspace or already invited to it; otherwise an invite at
+     * the lowest role, with its own email and accept link. Without it the share "succeeded" and the person
+     * could neither sign in nor see the thread.
+     */
+    // tenancy-ok: org_members / org_invites / orgs are the tenancy control plane (no RLS), read by workspace id.
+    const workspaceInvite = await ensureWorkspaceInvite(db, {
+      orgId: access.thread.orgId,
+      email: invitee,
+      role: "member",
+      inviter: caller,
+      origin: new URL(request.url).origin,
+    });
+    if (workspaceInvite.status === "rate-limited") {
+      return NextResponse.json({ error: workspaceInvite.reason }, { status: 429 });
+    }
     // Upsert: re-inviting a revoked member reactivates them.
     const [row] = await withOrgRls(access.thread.orgId, (tx) =>
       tx
@@ -111,7 +129,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
         : undefined,
     });
     return NextResponse.json(
-      { item: { email: row.email, role: row.role, status: row.status, external }, delivery },
+      { item: { email: row.email, role: row.role, status: row.status, external }, delivery, workspaceInvite },
       { status: 201 },
     );
   } catch (e) {

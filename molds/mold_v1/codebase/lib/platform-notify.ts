@@ -1,6 +1,7 @@
 import "server-only";
 import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 
+import { renderBrandedEmail } from "./email-html";
 /**
  * DETERMINISTIC platform notifications — plain, coded HTTP sends through the
  * ORGANISATION's own channel, NOT the individual user's account and NOT the
@@ -47,9 +48,19 @@ export async function notifyInvite(notice: InviteNotice): Promise<InviteDelivery
     `You can ${roleWord} it.`,
   ];
   if (notice.threadUrl) lines.push("", "Open it here:", `  ${notice.threadUrl}`);
-  else lines.push("", "Open the FDE app and look under “Shared with you”.");
+  else lines.push("", `Open ${PRODUCT_NAME} and look under “Shared with you”.`);
   const text = lines.join("\n");
-  const subject = `${notice.inviter} shared a chat thread with you`;
+  // The product is named: this email arrives from someone the reader may not know, about an app they may
+  // never have opened, and it used to say only "the FDE app".
+  const subject = `${notice.inviter} shared a chat thread with you on ${PRODUCT_NAME}`;
+  const html = renderBrandedEmail({
+    heading: "A chat thread was shared with you",
+    paragraphs: [`${notice.inviter} shared “${notice.title}” with you on ${PRODUCT_NAME}. You can ${roleWord} it.`],
+    cta: notice.threadUrl ? { label: "Open the thread", url: notice.threadUrl } : undefined,
+    footnote: notice.threadUrl
+      ? "Sign in with this email address. If you are new here, a separate email invites you to the workspace."
+      : `Open ${PRODUCT_NAME} and look under “Shared with you”.`,
+  });
   try {
     if (process.env.SLACK_BOT_TOKEN) {
       return (await notifyViaSlack(notice.to, `${subject}\n\n${text}`))
@@ -57,7 +68,7 @@ export async function notifyInvite(notice: InviteNotice): Promise<InviteDelivery
         : { delivered: false, reason: `No Slack user matches ${notice.to}.` };
     }
     if (process.env.RESEND_API_KEY && process.env.PLATFORM_NOTIFY_FROM) {
-      await notifyViaResend(notice.to, subject, text);
+      await notifyViaResend(notice.to, subject, text, html);
       return { delivered: true, via: "email" };
     }
     // No org channel configured — the in-app sidebar is the notification.
@@ -331,7 +342,17 @@ export async function sendOrgInvite(
   const rendered = renderOrgInvite(input);
   try {
     if (process.env.RESEND_API_KEY && process.env.PLATFORM_NOTIFY_FROM) {
-      await notifyViaResend(input.to, rendered.subject, rendered.text);
+      await notifyViaResend(
+        input.to,
+        rendered.subject,
+        rendered.text,
+        renderBrandedEmail({
+          heading: rendered.subject,
+          paragraphs: [`You have been invited to ${input.workspaceName} on ${PRODUCT_NAME} as ${input.role}.`],
+          cta: input.acceptUrl ? { label: "Accept the invite", url: input.acceptUrl } : undefined,
+          footnote: "Sign in with this email address; you will be sent a one-time code. The invite expires in 14 days.",
+        }),
+      );
       return { delivered: true, via: "email" };
     }
     if (process.env.SLACK_BOT_TOKEN) {
@@ -385,18 +406,29 @@ export async function sendLoginCode(input: { to: string; code: string }): Promis
     "If you didn't ask to sign in, you can ignore this — someone typed your address and got nothing but this email.",
   ].join("\n");
   try {
-    await notifyViaResend(input.to, `${input.code} is your ${PRODUCT_NAME} sign-in code`, text);
+    await notifyViaResend(
+      input.to,
+      `${input.code} is your ${PRODUCT_NAME} sign-in code`,
+      text,
+      renderBrandedEmail({
+        heading: `Sign in to ${PRODUCT_NAME}`,
+        paragraphs: ["Enter this code to finish signing in."],
+        code: input.code,
+        footnote: "It expires in 10 minutes and can be used once. If you didn't ask to sign in, you can ignore this email — someone typed your address and got nothing but this message.",
+      }),
+    );
     return { delivered: true, via: "email" };
   } catch (e) {
     return { delivered: false, reason: String(e).slice(0, 160) };
   }
 }
 
-async function notifyViaResend(to: string, subject: string, text: string): Promise<void> {
+async function notifyViaResend(to: string, subject: string, text: string, html?: string): Promise<void> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { authorization: `Bearer ${process.env.RESEND_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({ from: process.env.PLATFORM_NOTIFY_FROM, to, subject, text }),
+    // Both parts, always: the branded HTML for people, the text for clients and filters that prefer it.
+    body: JSON.stringify({ from: process.env.PLATFORM_NOTIFY_FROM, to, subject, text, ...(html ? { html } : {}) }),
   });
   // A rejected send (bad key, unverified from-address) is a failure, not a
   // send. Throwing lets sendOrgInvite report it instead of claiming success.
