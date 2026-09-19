@@ -61,7 +61,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { authToken, errMessage, fmtTime, opsFetch } from "./lib";
+import { activeOrg, authToken, errMessage, fmtTime, opsFetch } from "./lib";
 import { ConnectorsPanel } from "./connectors-panel";
 import { HeaderCard, PaginatedTable, type Column } from "./paginated-table";
 import { OpsButton } from "./primitives";
@@ -216,6 +216,24 @@ function SetupAction({ orgId }: { orgId: string | null }) {
   );
 }
 
+
+/**
+ * "Invite agents" — always here, for every workspace, finished setup or not.
+ *
+ * Bringing a coding agent into the workspace (the MCP connection and the setup recipes) is how the agent gets
+ * better over time, not a first-run step. It lived only inside the onboarding flow, behind a "Finish setup"
+ * button that disappears once setup is complete.
+ */
+function InviteAgentsAction({ orgId }: { orgId: string | null }) {
+  if (!orgId) return null;
+  return (
+    <Button variant="outline" size="sm" asChild>
+      <a href={`/onboard?step=invite&org=${encodeURIComponent(orgId)}`} title="Connect a coding agent to this workspace to improve the agent">
+        Invite agents
+      </a>
+    </Button>
+  );
+}
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: "dataroom", label: "Data room" },
@@ -399,7 +417,11 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
     opsFetch<{ items: OrgSummary[] }>("/api/ops/orgs")
       .then((d) => {
         setOrgs(d.items);
-        setOrgId((prev) => prev ?? d.items[0]?.orgId ?? null);
+        // The ACTIVE workspace — the one the sidebar switcher shows and every other screen is already scoped
+        // to — not the first in the list. Settings used to pick items[0] and offer its own dropdown, so the page
+        // could be editing a different workspace from the one on screen everywhere else.
+        const active = activeOrg();
+        setOrgId((prev) => prev ?? d.items.find((o) => o.orgId === active)?.orgId ?? d.items[0]?.orgId ?? null);
       })
       .catch((e) => setError(errMessage(e)));
   }, []);
@@ -462,27 +484,15 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
           ) : null}
         </button>
         <div className="min-w-0 flex-1">
-          {orgs && orgs.length > 1 ? (
-            <select
-              value={orgId ?? ""}
-              onChange={(e) => setOrgId(e.target.value)}
-              aria-label="Workspace"
-              className="h-8 max-w-full rounded-md border border-input bg-transparent px-2 text-sm font-medium outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            >
-              {orgs.map((o) => (
-                <option key={o.orgId} value={o.orgId}>
-                  {o.name} ({o.orgId})
-                </option>
-              ))}
-            </select>
-          ) : (
-            <div className="truncate text-sm font-semibold">{current?.name ?? "Workspace"}</div>
-          )}
+          {/* Not a dropdown: settings are the ACTIVE workspace's. Switching happens in one place, the sidebar
+              switcher, which reloads every screen into the new workspace together. */}
+          <div className="truncate text-sm font-semibold">{current?.name ?? "Workspace"}</div>
           <div className="truncate text-xs text-muted-foreground">
             {orgId ? (
               <>
                 <span className="font-mono">{orgId}</span>
                 {memberCount != null ? ` · ${memberCount} member${memberCount === 1 ? "" : "s"}` : ""}
+                {orgs && orgs.length > 1 ? " · switch workspace from the sidebar" : ""}
               </>
             ) : (
               "loading…"
@@ -490,6 +500,7 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
           </div>
         </div>
         <SetupAction orgId={orgId} />
+        <InviteAgentsAction orgId={orgId} />
       </div>
 
       {/* Tabs */}

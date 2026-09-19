@@ -130,7 +130,7 @@ export default function OnboardPage() {
     // Preserve an explicit ?step=checks — that is a real entry point now, not
     // just a position within a flow someone is part-way through.
     const requested = new URLSearchParams(window.location.search).get("step");
-    if (requested !== "checks") {
+    if (requested !== "checks" && requested !== "invite") {
       window.history.replaceState({ screen: "name" }, "", "?step=name");
     }
     const onPop = (e: PopStateEvent) => {
@@ -150,7 +150,7 @@ export default function OnboardPage() {
     let alive = true;
     void (async () => {
       try {
-        const { items } = await api<{ items: { orgId: string }[] }>("/api/ops/orgs");
+        const { items } = await api<{ items: { orgId: string; name?: string }[] }>("/api/ops/orgs");
         if (!alive) return;
         if (items.length > 0) {
           /**
@@ -161,12 +161,16 @@ export default function OnboardPage() {
            * workspace existed: nothing else in the product links to them, so
            * "finish this later" meant "never".
            */
-          const wantsChecks = new URLSearchParams(window.location.search).get("step") === "checks";
-          if (wantsChecks) {
+          const step = new URLSearchParams(window.location.search).get("step");
+          // "invite" is the other real entry point: the workspace settings always offer "Invite agents", long
+          // after setup is finished. It was reachable only from inside the first-run flow, so the one way to
+          // bring a coding agent in to improve the workspace vanished the moment setup completed.
+          if (step === "checks" || step === "invite") {
             const requestedOrg = new URLSearchParams(window.location.search).get("org");
             const selected = items.find((item) => item.orgId === requestedOrg) ?? items[0];
             setOrgId(selected.orgId);
-            setScreen("checks");
+            if (selected.name) setCompany(selected.name);
+            setScreen(step);
             setGate("ok");
             return;
           }
