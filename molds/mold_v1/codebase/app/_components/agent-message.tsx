@@ -27,6 +27,7 @@ import { ErrorBoundary } from "./error-boundary";
 import { toolCallSummary, toolDisplayName } from "./tool-display";
 import { CodeBlock } from "@/components/ai-elements/code-block";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { CollapsibleUserText } from "./collapsible-user-text";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import {
   Tool,
@@ -463,10 +464,13 @@ function AgentMessagePart({
         return (
           <>
             <AttachmentChips files={files} />
+            {/* Long sent text starts folded; the chips above never do. */}
             {display ? (
-              <MessageResponse caret="block" isAnimating={showCaret}>
-                {display}
-              </MessageResponse>
+              <CollapsibleUserText>
+                <MessageResponse caret="block" isAnimating={showCaret}>
+                  {display}
+                </MessageResponse>
+              </CollapsibleUserText>
             ) : null}
           </>
         );

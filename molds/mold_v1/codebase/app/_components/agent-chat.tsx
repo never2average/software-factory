@@ -3,7 +3,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceSummary } from "./workspace-summary";
 import type { UserContent } from "ai";
-import { useEveAgent } from "eve/react";
+import { resolveTextToResponses } from "eve/client";
+import { defaultMessageReducer, useEveAgent } from "eve/react";
 import {
   AlertCircleIcon,
   ArrowRightIcon,
@@ -83,11 +84,31 @@ function modeDirective(mode: AgentMode): string | null {
       return null; // "build" (normal), "goal"/"loop" (harness outputSchema gate)
   }
 }
+/** Messages held for a chat, by chatKey — see the `queued` state. */
+type QueuedMessage = { text: string; files: AttachedFile[] };
+const heldQueues = new Map<string, QueuedMessage[]>();
+/** chatKey → ordinal of a turn the server reported as not running. */
+const abandonedTurns = new Map<string, number>();
+/**
+ * `${chatKey}:${turn ordinal}` → resyncs spent on that turn. A resync is a full
+ * replay and a remount; if the replay itself comes back short the watcher would
+ * otherwise ask again, forever. Four per turn, then it just keeps the hold.
+ */
+const resyncsSpent = new Map<string, number>();
+const RESYNC_BUDGET = 4;
 const COMPACT_INSTRUCTION =
   "Summarize our entire conversation so far into a compact handoff brief: the goal, the key decisions and facts established, the current state, and what remains to do. Keep every constraint, preference, datum, and reference needed to continue. Reply with ONLY the summary — no preamble.";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Spinner } from "@/components/ui/spinner";
-import { retryStormDetected } from "@/lib/chat-turn-state";
+import {
+  composerRoute,
+  holdLabel,
+  isSessionBoundary,
+  retryStormDetected,
+  sendGate,
+  turnsStarted,
+  withSessionEpochs,
+} from "@/lib/chat-turn-state";
 import { composeAttachmentMessage, wrapDirectives } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { AgentMessage, PendingApprovalCard } from "./agent-message";
@@ -175,6 +196,20 @@ interface AgentChatProps {
    * model to say it again.
    */
   readonly onReattach?: (session: AgentSession, events: AgentEvents) => void;
+  /**
+   * Re-read this chat's session from the server and remount on the result.
+   *
+   * Used when a turn this component stopped listening to has settled: the eve
+   * store streams only from `send()`, so the rest of that reply can only reach
+   * the screen through a replay. `clientEvents` are the answered-input markers
+   * the server has never heard of. Resolves false when nothing was mounted.
+   */
+  readonly onResync?: (
+    sessionId: string,
+    clientEvents: readonly unknown[],
+    /** Server events already on screen; a shorter replay must not replace them. */
+    knownServerEvents?: number,
+  ) => Promise<boolean>;
   /** Open the Ops Center on a section (optionally deep-linked to a row id). */
   readonly onOpenOps?: (section: OpsSection, id?: string) => void;
   readonly sidebarCollapsed: boolean;
@@ -371,6 +406,7 @@ export function AgentChat({
   onCompact,
   onOpenThread,
   onReattach,
+  onResync,
   onOpenOps,
   chatKey,
   onPersist,
@@ -422,7 +458,11 @@ export function AgentChat({
     },
     [getAuthHeaders],
   );
+  // Turn ids restart at turn_0 in every eve session; keep them unique when one
+  // transcript spans two (see withSessionEpochs). Read once, at store creation.
+  const [reducer] = useState(() => withSessionEpochs(defaultMessageReducer()));
   const agent = useEveAgent({
+    reducer,
     headers: getAuthHeaders,
     initialSession,
     initialEvents,
@@ -475,6 +515,18 @@ export function AgentChat({
   useEffect(() => {
     sessionIdRef.current = agent.session?.sessionId ?? null;
   }, [agent.session?.sessionId]);
+  /**
+   * The session this transcript belongs to, SURVIVING a cursor reset.
+   *
+   * eve's client drops its whole cursor — session id included — whenever a
+   * stream ends without a session boundary (`advanceSession` in
+   * node_modules/eve/dist/src/client/session-utils.js): Stop, a severed body
+   * with the reconnect budget spent, an abort. The turn is still running under
+   * that id, and it is the only handle for cancelling it or reading how it
+   * ended.
+   */
+  const liveSessionIdRef = useRef<string | null>(initialSession?.sessionId ?? null);
+  if (agent.session?.sessionId) liveSessionIdRef.current = agent.session.sessionId;
 
   /**
    * The two failures that arrive with no error attached.
@@ -528,7 +580,9 @@ export function AgentChat({
       }
     }
     if (!unfinished) return;
-    setStreamError((prev) => prev ?? "The reply stopped before it finished.");
+    // No amber "the reply stopped" banner any more: that state is now HELD and
+    // watched (sendGate "detached" + the resync watcher below), and says so in
+    // its own status line. Still counted, so it stays queryable.
     report("stream-gave-up", {
       sessionId: sessionIdRef.current ?? undefined,
       detail: `last event: ${lastEventType ?? "none"}`,
@@ -610,8 +664,12 @@ export function AgentChat({
   // reset when the user sends their next real message.
   const compactPendingRef = useRef(false);
   const [compacting, setCompacting] = useState<"compacting" | "done" | null>(null);
+  // `gate` is derived further down (it needs the open input requests); callbacks
+  // declared above it read the latest verdict through this ref.
+  const holdRef = useRef(false);
+  const [remoteTurn, setRemoteTurn] = useState(false);
   const handleCompact = useCallback(() => {
-    if (isBusy) return;
+    if (isBusy || holdRef.current) return;
     compactPendingRef.current = true;
     setCompacting("compacting");
     void agent.send({ message: COMPACT_INSTRUCTION });
@@ -792,6 +850,9 @@ export function AgentChat({
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ ...payload, continuationToken: token }),
       });
+      // Delivered AROUND the store: the turn now runs with no local stream on
+      // it. Until a resync shows how it ended, the session is not idle.
+      if (res.ok) setRemoteTurn(true);
       return res.ok;
     } catch {
       return false;
@@ -1110,6 +1171,70 @@ export function AgentChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.data.messages, respondedRequestIds, expiredRequestIds, dismissedRequestIds, ownActionCallIds, hasSubagent]);
 
+  /**
+   * THE SEND GATE — see lib/chat-turn-state `sendGate` for the why.
+   *
+   * `isBusy` alone let a message out whenever the STORE was idle, which is not
+   * the same as the SESSION being idle: a detached turn (Stop, dropped stream,
+   * reopened mid-turn) and a turn parked on an approval both leave the store
+   * `ready` with a turn that will write again. Anything delivered then sits
+   * below text that keeps arriving above it.
+   */
+  const openInputRequests = useMemo(() => {
+    // The part keeps the request minus its `action`, which the resolver never reads.
+    type OpenRequest = Parameters<typeof resolveTextToResponses>[1][number];
+    const out: OpenRequest[] = [];
+    for (const p of pendingInputParts) {
+      const req = (p as { toolMetadata?: { eve?: { inputRequest?: OpenRequest } } }).toolMetadata?.eve
+        ?.inputRequest;
+      // An expired card stays on screen as a note, but its run is gone.
+      if (req?.requestId && !expiredRequestIds.has(req.requestId)) out.push(req);
+    }
+    return out;
+  }, [pendingInputParts, expiredRequestIds]);
+  const startedTurns = useMemo(
+    () => turnsStarted(agent.events as { type?: string }[]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventCount],
+  );
+  // Set when the cancel route answers `no_active_turn` for a turn with no
+  // terminal event: it is not running and never will finish. Keyed by the turn
+  // ordinal (module scope) so the verdict survives the resync remount.
+  const [abandonedTurn, setAbandonedTurn] = useState<number | null>(
+    () => abandonedTurns.get(chatKey) ?? null,
+  );
+  const gate = useMemo(
+    () =>
+      sendGate({
+        storeBusy: isBusy,
+        events: agent.events as { type?: string }[],
+        pendingInputs: openInputRequests.length,
+        abandoned: abandonedTurn !== null && abandonedTurn === startedTurns,
+        remoteTurn,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isBusy, eventCount, openInputRequests.length, abandonedTurn, startedTurns, remoteTurn],
+  );
+  holdRef.current = gate.hold;
+  const detached = gate.reason === "detached";
+  // A delegation that has not reached a terminal state: "a specialist is running".
+  const specialistRunning = useMemo(
+    () =>
+      agent.data.messages.some((m) =>
+        (m.parts ?? []).some((p) => {
+          const part = p as { type?: string; state?: string; toolName?: string };
+          return (
+            part.type === "dynamic-tool" &&
+            Boolean(part.toolName?.startsWith("eve:subagent:")) &&
+            part.state !== "output-available" &&
+            part.state !== "output-error" &&
+            part.state !== "output-denied"
+          );
+        }),
+      ),
+    [agent.data.messages],
+  );
+
   // A subagent parked on an approval that we've pulled out of the main thread.
   // We surface a single tail notice (not the mis-positioned card) so the run is
   // still discoverable when the rail is closed. The child-proxied event carries
@@ -1244,7 +1369,13 @@ export function AgentChat({
   // record the current state as the outcome. When a stop is requested mid-turn,
   // this flag defers the wrap-up message until the in-flight turn halts.
   const [goalStopping, setGoalStopping] = useState(false);
-  const [queued, setQueued] = useState<{ text: string; files: AttachedFile[] }[]>([]);
+  // Seeded from module scope: a resync REMOUNTS this component (that is the only
+  // way a replay reaches the store), and the held messages must outlive it.
+  const [queued, setQueued] = useState<QueuedMessage[]>(() => heldQueues.get(chatKey) ?? []);
+  useEffect(() => {
+    if (queued.length > 0) heldQueues.set(chatKey, queued);
+    else heldQueues.delete(chatKey);
+  }, [chatKey, queued]);
   // Relay send state for a shared thread this participant contributes to: the
   // optimistic message shown while the server relay runs, and any error.
   const [relayPending, setRelayPending] = useState<string | null>(null);
@@ -1407,6 +1538,13 @@ export function AgentChat({
   // even when neither status nor messageCount changes.
   const responded = respondedInputEvents(agent.data.messages, answeredResponses);
   const respondedCount = responded.length;
+  const respondedRef = useRef(responded);
+  respondedRef.current = responded;
+  /** Client-only markers the server replay lacks — carried through a resync. */
+  const clientMarkers = () => [
+    ...(agent.events as { type?: string }[]).filter((e) => e.type?.startsWith("client.")),
+    ...respondedRef.current,
+  ];
   useEffect(() => {
     if (sessionId && agent.session) {
       persistRef.current(
@@ -1638,12 +1776,91 @@ export function AgentChat({
     }
   };
 
+  /**
+   * STOP THE TURN, not just the listening.
+   *
+   * `agent.stop()` only aborts the local stream: "the server-side turn keeps
+   * running" (eve docs, frontend overview). Worse, a stream that ends without a
+   * session boundary resets eve's whole client cursor, so the very next send
+   * went to a BRAND-NEW eve session — the agent lost the conversation, and the
+   * new session's `turn_0` wrote over this transcript's first exchange.
+   *
+   * eve's cancel route stops the turn itself; it settles on the stream we are
+   * still reading as `turn.cancelled` → `session.waiting`, which is a real
+   * boundary: the store goes idle with its cursor intact and the queue flushes
+   * into the SAME session. Only when that cannot happen (no session yet, the
+   * request failed, no boundary within the grace) do we fall back to the local
+   * detach — and then the gate holds sends until the turn is known to be over.
+   */
+  const [stopping, setStopping] = useState(false);
+  const stopFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopTurn = useCallback(() => {
+    const sid = liveSessionIdRef.current;
+    const storeBusy = agent.status === "submitted" || agent.status === "streaming";
+    if (!sid) {
+      agent.stop();
+      return;
+    }
+    setStopping(true);
+    const wasTurn = turnsStarted(agent.events as { type?: string }[]);
+    void fetch(`/eve/v1/session/${encodeURIComponent(sid)}/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...getAuthHeaders() },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`cancel ${res.status}`);
+        const body = (await res.json().catch(() => ({}))) as { status?: string };
+        if (body.status === "no_active_turn") {
+          // Nothing is running under this id, yet the transcript never saw the
+          // turn end: it is dead (or ended unheard), not slow. Stop reading a
+          // stream that will say nothing, release the hold, pull the truth.
+          if (storeBusy) agent.stop();
+          setRemoteTurn(false);
+          abandonedTurns.set(chatKey, wasTurn);
+          setAbandonedTurn(wasTurn);
+          setStopping(false);
+          // The local cursor was reset by the detach; without the replay's
+          // cursor the next send would open a new, empty eve session.
+          void onResync?.(sid, clientMarkers()).catch(() => false);
+        }
+      })
+      .catch(() => {
+        if (storeBusy) agent.stop();
+        setStopping(false);
+      });
+    if (storeBusy) {
+      if (stopFallbackRef.current) clearTimeout(stopFallbackRef.current);
+      stopFallbackRef.current = setTimeout(() => {
+        // No boundary arrived. Detach so the composer is not frozen; the gate
+        // keeps new messages queued until the turn is seen to settle.
+        agent.stop();
+        setStopping(false);
+      }, 12_000);
+    }
+    report("stop", { sessionId: sid, detail: storeBusy ? "streaming" : "detached" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent, chatKey, getAuthHeaders, report, onResync]);
+  useEffect(() => {
+    if (isBusy) return;
+    if (stopFallbackRef.current) clearTimeout(stopFallbackRef.current);
+    stopFallbackRef.current = null;
+  }, [isBusy]);
+  useEffect(() => {
+    if (!gate.hold) setStopping(false);
+  }, [gate.hold]);
+  useEffect(
+    () => () => {
+      if (stopFallbackRef.current) clearTimeout(stopFallbackRef.current);
+    },
+    [],
+  );
+
   // Stop control for an active goal/loop.
   const requestGoalStop = () => {
     if (agent.status === "submitted" || agent.status === "streaming") {
       // Halt the in-flight turn first; the watcher below delivers the wrap-up
       // once it settles (sending mid-turn would throw "already processing").
-      agent.stop();
+      stopTurn();
       setGoalStopping(true);
     } else {
       void deliverGoalWrapUp();
@@ -1654,11 +1871,13 @@ export function AgentChat({
   // records the outcome and the completion gate clears.
   useEffect(() => {
     if (!goalStopping) return;
-    if (agent.status === "submitted" || agent.status === "streaming") return;
+    // Not merely "the store is idle": after a detach the turn is still running
+    // and the wrap-up would land in the middle of it.
+    if (gate.hold) return;
     setGoalStopping(false);
     void deliverGoalWrapUp();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [goalStopping, agent.status]);
+  }, [goalStopping, gate.hold]);
 
     // The delivered plan: the last assistant message's text once a plan-mode turn
   // has fully finished and nothing is parked on user input.
@@ -1675,7 +1894,7 @@ export function AgentChat({
   const planReady = Boolean(planText) && lastMessage?.id !== planHandledId;
 
   const implementPlan = () => {
-    if (!lastMessage) return;
+    if (!lastMessage || gate.hold) return;
     setPlanHandledId(lastMessage.id);
     setMode("build");
     void agent.send({
@@ -1730,8 +1949,19 @@ export function AgentChat({
     }
     const outgoing = files;
     setFiles([]);
-    // If a turn is in flight, queue this one and send it when the agent is idle.
-    if (isBusy) {
+    // While ANY turn of this session is live — streaming, detached, or parked on
+    // a request — the message is held, never appended as if the chat were idle.
+    const answers =
+      gate.reason === "awaiting-input" && raw ? resolveTextToResponses(raw, openInputRequests) : [];
+    const route = composerRoute({ gate, answers: answers.length, hasFiles: outgoing.length > 0 });
+    if (route === "answer") {
+      // Typed text that answers the open question IS the answer (eve resolves
+      // it the same way server-side). Recorded on the card, not as a new bubble
+      // under a reply that is about to resume above it.
+      await respondToInput(answers);
+      return;
+    }
+    if (route === "queue") {
       setQueued((prev) => [...prev, { text: raw, files: outgoing }]);
       return;
     }
@@ -1768,26 +1998,124 @@ export function AgentChat({
   const bringResult = (h: { callId: string; name: string; result: string }) => {
     setHandledHandoffs((prev) => new Set(prev).add(h.callId));
     const msg = `The ${h.name} subagent finished, but its result did not come through automatically. Here is its final result verbatim:\n\n${h.result}\n\nUse this to continue and complete the task.`;
-    if (isBusy) {
+    if (gate.hold) {
       // The parent turn is stuck — it's "busy" awaiting a child that already
       // finished, so it will NEVER complete on its own and the normal queue
-      // would wait forever. Abort that dead turn, then queue: the flush effect
-      // delivers the result as a fresh turn once the abort lands (isBusy→false).
+      // would wait forever. CANCEL that turn (not a local abort: that left it
+      // running, reset the cursor, and sent this result to a new, empty
+      // session), then queue: the flush effect delivers the result once the
+      // cancellation settles on the stream.
       setQueued((prev) => [...prev, { text: msg, files: [] }]);
-      agent.stop();
+      stopTurn();
     } else {
       void sendMessage(msg, []);
     }
   };
 
-  // Flush any queued messages one at a time as soon as the agent goes idle.
+  // Flush any queued messages one at a time as soon as the SESSION is idle —
+  // not merely the store (see sendGate).
   useEffect(() => {
-    if (isBusy || queued.length === 0) return;
+    if (gate.hold || queued.length === 0 || readOnly) return;
     const [next, ...rest] = queued;
     setQueued(rest);
     if (next.text.trim() || next.files.length > 0) void sendMessage(next.text, next.files);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isBusy, queued]);
+  }, [gate.hold, queued]);
+
+  /**
+   * Watch a DETACHED turn until it settles, then pull the rest of it in.
+   *
+   * Nothing local is reading the stream, so ask the server for its tail event
+   * (`startIndex=-1`, eve docs "Reconnect and rewind") every few seconds: one
+   * event, no replay. A session boundary means the turn is over; the shell then
+   * replays the session and remounts this chat on it, which both shows the rest
+   * of the reply IN ITS OWN MESSAGE and restores a cursor that continues the
+   * same session. The held queue (module scope) flushes on the new mount.
+   */
+  useEffect(() => {
+    if (!detached || readOnly || relayThreadId || !onResync) return;
+    const sid = liveSessionIdRef.current;
+    if (!sid) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let silent = 0;
+    let delay = 3000;
+    const readTail = async (): Promise<{ type?: string } | null> => {
+      const ctrl = new AbortController();
+      const hard = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const res = await fetch(`/eve/v1/session/${encodeURIComponent(sid)}/stream?startIndex=-1`, {
+          headers: getAuthHeaders(),
+          signal: ctrl.signal,
+        });
+        if (!res.ok || !res.body) return null;
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const r = await reader.read();
+          if (r.done) break;
+          buf += dec.decode(r.value, { stream: true });
+          const nl = buf.indexOf("\n");
+          if (nl !== -1) {
+            buf = buf.slice(0, nl);
+            break;
+          }
+        }
+        return buf.trim() ? (JSON.parse(buf) as { type?: string }) : null;
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(hard);
+        ctrl.abort();
+      }
+    };
+    const tick = async () => {
+      if (cancelled) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        timer = setTimeout(tick, delay);
+        return;
+      }
+      const tail = await readTail();
+      if (cancelled) return;
+      let settled = isSessionBoundary(tail ?? undefined);
+      if (!tail && (silent += 1) >= 3) {
+        // The tail read answered nothing, three times. Do not wait forever on a
+        // probe that may not work here: try the full replay instead.
+        silent = 0;
+        settled = true;
+      }
+      const budgetKey = `${chatKey}:${startedTurns}`;
+      const spent = resyncsSpent.get(budgetKey) ?? 0;
+      if (settled && spent < RESYNC_BUDGET) {
+        resyncsSpent.set(budgetKey, spent + 1);
+        report("resync", { sessionId: sid, detail: tail?.type ?? "blind" });
+        const known = (agent.events as { type?: string }[]).filter((e) => !e.type?.startsWith("client.")).length;
+        const mounted = await onResync(sid, clientMarkers(), known).catch(() => false);
+        if (mounted || cancelled) return; // remounting — this instance is done
+        // The server says the session is at rest but the replay could not be
+        // mounted. A turn known only by our own POST has nothing else to hold on.
+        if (isSessionBoundary(tail ?? undefined)) setRemoteTurn(false);
+      }
+      delay = Math.min(delay * 1.5, 15_000);
+      timer = setTimeout(tick, delay);
+    };
+    // A turn delivered around the store needs a moment to START: until then the
+    // tail is still the previous park and would read as "settled".
+    timer = setTimeout(tick, remoteTurn ? 5000 : 1500);
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || cancelled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(tick, 200);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detached, abandonedTurn, readOnly, relayThreadId, remoteTurn]);
 
   const editQueued = (i: number, text: string) =>
     setQueued((prev) => prev.map((q, j) => (j === i ? { ...q, text } : q)));
@@ -1803,7 +2131,7 @@ export function AgentChat({
 
   // Regenerate: re-send the most recent user message (appends a fresh turn).
   const retryLast = () => {
-    if (isBusy) return;
+    if (gate.hold) return;
     const msgs = agent.data.messages;
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role !== "user") continue;
@@ -1823,7 +2151,7 @@ export function AgentChat({
   const starterCards = useStarterCards(isEmpty, getAuthHeaders);
 
   const pickSuggestion = (prompt: string, customer?: string) => {
-    if (isBusy) return;
+    if (gate.hold) return;
     // Map the card's customer as this chat's context (state updates async, so
     // inject it into the message directly rather than relying on selectedCustomers).
     const custs = customer ? [customer] : selectedCustomers;
@@ -2272,10 +2600,35 @@ export function AgentChat({
               </div>
             </div>
           ) : null}
+          {/* A turn is still alive with nothing local listening to it. Say so —
+              and offer the one honest way out, which is stopping THAT turn. */}
+          {detached && !readOnly ? (
+            <div
+              role="status"
+              className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-muted-foreground text-xs"
+            >
+              <Spinner className="size-3 shrink-0" />
+              <span className="flex-1">
+                {stopping
+                  ? "Stopping the earlier reply…"
+                  : specialistRunning
+                    ? "Still working — a specialist is running. The rest of the reply will appear here when it finishes."
+                    : "Still working — the earlier reply is continuing on the server and will appear here when it finishes."}
+              </span>
+              <button
+                type="button"
+                onClick={stopTurn}
+                disabled={stopping}
+                className="shrink-0 rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
+              >
+                Stop it
+              </button>
+            </div>
+          ) : null}
           {queued.length > 0 ? (
             <div className="mb-2 flex flex-col gap-1">
-              <p className="px-1 text-3xs text-muted-foreground">
-                Queued — sending after the current reply
+              <p className="px-1 text-3xs text-muted-foreground" aria-live="polite">
+                {holdLabel(gate.reason, specialistRunning)}
               </p>
               {queued.map((q, i) => (
                 <div
@@ -2380,7 +2733,7 @@ export function AgentChat({
             </div>
           )}
           <ChatComposer
-            onStop={agent.stop}
+            onStop={stopTurn}
             onSubmit={handleSubmit}
             placeholder="Send a message…"
             status={agent.status}

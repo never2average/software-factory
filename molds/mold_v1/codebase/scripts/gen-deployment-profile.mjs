@@ -50,6 +50,8 @@ for (const d of DOMAINS) {
 }
 if (!profile.dataroom.domains.Customers.visible) fail("dataroom.domains.Customers cannot be hidden: every record hangs off it");
 if (!Array.isArray(profile.chat.hero_lines) || !profile.chat.hero_lines.length || profile.chat.hero_lines.some((l) => typeof l !== "string" || !l.trim())) fail("chat.hero_lines must be a non-empty list of strings");
+if (typeof profile.chat.user_messages.collapse !== "boolean") fail("chat.user_messages.collapse must be true or false");
+if (!Number.isInteger(profile.chat.user_messages.collapsed_lines) || profile.chat.user_messages.collapsed_lines < 2 || profile.chat.user_messages.collapsed_lines > 40) fail("chat.user_messages.collapsed_lines must be a whole number from 2 to 40");
 for (const k of ["singular", "plural"]) for (const n of ["account", "member"]) if (typeof profile.vocabulary[n]?.[k] !== "string" || !profile.vocabulary[n][k].trim()) fail(`vocabulary.${n}.${k} must be a non-empty string`);
 if (profile.dataroom.seed !== null) {
   if (!Array.isArray(profile.dataroom.seed)) fail("dataroom.seed must be null (the built-in starter tree) or a list of { path, content }");
@@ -75,6 +77,8 @@ export interface DeploymentProfile {
   chat: {
     hero_lines: string[];
     empty_sections: { urgent: string; stalled: string };
+    /** Long messages a person SENT start folded to collapsed_lines lines, with "Show more". Assistant replies never fold. */
+    user_messages: { collapse: boolean; collapsed_lines: number };
     starter_cards: {
       owner_label: string; ticket_waiting: string; tickets_waiting: string; ticket_badge: string; tickets_badge: string;
       triage_title: string; triage_prompt: string;

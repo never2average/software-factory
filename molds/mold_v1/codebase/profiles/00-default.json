@@ -14,6 +14,7 @@
   "chat": {
     "hero_lines": ["{product}", "What needs doing today?", "Prep the stand-up", "Chase the follow-ups", "Keep every customer close"],
     "empty_sections": { "urgent": "Urgent tickets", "stalled": "Stalled customers" },
+    "user_messages": { "collapse": true, "collapsed_lines": 6 },
     "starter_cards": {
       "owner_label": "FDE owner",
       "ticket_waiting": "One open ticket is waiting on us.",

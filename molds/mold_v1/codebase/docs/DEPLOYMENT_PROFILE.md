@@ -68,6 +68,8 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
 |---|---|---|
 | `chat.hero_lines` | The rotating lines on an empty chat. A non-empty list of non-empty strings. *slots: `{product}`* | `["{product}", "What needs doing today?", "Prep the stand-up", "Chase the follow-ups", "Keep every customer close"]` |
 | `chat.empty_sections.urgent` / `.stalled` | Headings of the two suggestion groups on an empty chat. | `"Urgent tickets"` / `"Stalled customers"` |
+| `chat.user_messages.collapse` | Whether a long message a person sent starts folded, with a "Show more" button. Short messages are never touched and assistant replies never fold. `true` or `false`. | `true` |
+| `chat.user_messages.collapsed_lines` | How many lines of a folded message stay visible. A whole number from 2 to 40. A desk that pastes filings and tables wants it small; one that writes three-line prompts can turn `collapse` off. | `6` |
 | `chat.starter_cards.owner_label` | Label for the owner on a starter card. | `"FDE owner"` |
 | `chat.starter_cards.ticket_waiting` / `.tickets_waiting` | Card summary for one / several open tickets. *slots: `{count}`, `{name}`* | `"One open ticket is waiting on us."` / `"{count} open tickets are waiting on us."` |
 | `chat.starter_cards.ticket_badge` / `.tickets_badge` | The card's badge for one / several open tickets. *slots: `{count}`* | `"1 open"` / `"{count} open"` |

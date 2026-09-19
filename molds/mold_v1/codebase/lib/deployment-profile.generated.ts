@@ -12,6 +12,8 @@ export interface DeploymentProfile {
   chat: {
     hero_lines: string[];
     empty_sections: { urgent: string; stalled: string };
+    /** Long messages a person SENT start folded to collapsed_lines lines, with "Show more". Assistant replies never fold. */
+    user_messages: { collapse: boolean; collapsed_lines: number };
     starter_cards: {
       owner_label: string; ticket_waiting: string; tickets_waiting: string; ticket_badge: string; tickets_badge: string;
       triage_title: string; triage_prompt: string;
@@ -62,6 +64,10 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
     "empty_sections": {
       "urgent": "Urgent tickets",
       "stalled": "Stalled customers"
+    },
+    "user_messages": {
+      "collapse": true,
+      "collapsed_lines": 6
     },
     "starter_cards": {
       "owner_label": "FDE owner",

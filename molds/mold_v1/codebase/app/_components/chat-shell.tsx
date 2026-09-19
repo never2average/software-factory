@@ -815,6 +815,42 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     setAttachNonce((n) => n + 1);
   }, []);
 
+  /**
+   * Re-read the ACTIVE chat's session from eve and remount on it.
+   *
+   * The live chat calls this when a turn it was no longer listening to (Stop
+   * that fell back to a detach, a dropped stream, a thread opened mid-turn) has
+   * settled server-side. It is `openChat`'s replay branch without the
+   * navigation: same events, same cursor rules, same persistence identity.
+   */
+  const mountKeyRef = useRef(mountKey);
+  mountKeyRef.current = mountKey;
+  const replayRef = useRef<
+    ((sessionId: string) => Promise<{ events: unknown[]; continuationToken?: string; index?: number } | null>) | null
+  >(null);
+  const resync = useCallback(
+    async (sessionId: string, clientEvents: readonly unknown[], knownServerEvents = 0): Promise<boolean> => {
+      const forKey = mountKeyRef.current;
+      const fresh = await replayRef.current?.(sessionId);
+      // Moved to another chat while the replay ran, or the replay came back
+      // SHORTER than what is on screen (it hit its own deadline): never trade a
+      // longer transcript for a shorter one.
+      if (!fresh || mountKeyRef.current !== forKey) return false;
+      if ((fresh.events as unknown[]).length < knownServerEvents) return false;
+      const merged = dedupeEvents([...(fresh.events as unknown[]), ...clientEvents]);
+      setInitialEvents(merged as AgentEvents);
+      setInitialSession({
+        sessionId,
+        continuationToken: fresh.continuationToken,
+        // SERVER events only — see openChat for why never `merged.length`.
+        streamIndex: fresh.index ?? (fresh.events as unknown[]).length,
+      } as AgentSession);
+      setAttachNonce((n) => n + 1);
+      return true;
+    },
+    [],
+  );
+
   const handlePersist = useCallback(
     (rawSession: AgentSession, meta: ChatMeta, rawEvents: AgentEvents, chatKey: string) => {
       const id = rawSession.sessionId;
@@ -1265,6 +1301,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     },
     [getAuthHeaders],
   );
+  // `resync` is declared above this (next to reattach); hand it the replay.
+  replayRef.current = replaySession;
 
   const openChat = useCallback(
     async (s: StoredSession) => {
@@ -1676,6 +1714,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         onCompact={compactThread}
         onOpenThread={openThreadById}
         onReattach={reattach}
+        onResync={resync}
         onOpenOps={openOps}
         onPersist={handlePersist}
         onToggleSidebar={() => setCollapsed(false)}

@@ -43,6 +43,7 @@ assert.equal(
   "Customer context: Acme, Globex — click to change",
 );
 assert.equal(fillProfileText("{unknown} stays"), "{unknown} stays", "an unknown slot is left as written");
+assert.deepEqual(DEPLOYMENT_PROFILE.chat.user_messages, { collapse: true, collapsed_lines: 6 }, "long sent messages fold to six lines by default");
 for (const d of Object.values(DEPLOYMENT_PROFILE.dataroom.domains)) assert.equal(d.visible, true, "every domain is visible by default");
 
 // --- the briefing: nothing for the default, a reading rule for anything else ---
