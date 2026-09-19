@@ -5,5 +5,5 @@ export default defineAgent({
   description:
     "Plan and execute customer data migrations and imports (legacy CRM exports, historical data, bulk records). Delegate here to move a customer's data into their platform safely.",
   model: agentModel("specialist"),
-  modelContextWindowTokens: modelContextWindowTokens(),
+  modelContextWindowTokens: modelContextWindowTokens("specialist"),
 });

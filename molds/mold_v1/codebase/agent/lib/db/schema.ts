@@ -1272,6 +1272,31 @@ export const automationRuns = pgTable(
 );
 
 /**
+ * Which workspace, and which person, an agent session belongs to.
+ *
+ * A declared subagent runs in its own child session, and eve gives an internal runtime path no identity:
+ * `auth.current` and `auth.initiator` are both null there (eve docs, auth-and-route-protection). Every tool
+ * resolves its workspace from that identity, so inside a subagent it resolved from nothing and fell back to
+ * the default workspace — and for anyone outside that workspace the database refused the subagent's writes
+ * (fail-closed RLS) while the main agent's, which carry the person's identity, went through.
+ *
+ * The root agent writes one row per session when a turn starts (agent/instructions/runtime-context.ts); a
+ * child session finds its ROOT session's row through `ctx.session.parent.rootSessionId`, which comes from the
+ * framework and never from the model. See agent/lib/session-scope.ts.
+ */
+export const agentSessionScopes = pgTable(
+  "agent_session_scopes",
+  {
+    sessionId: text("session_id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    principalEmail: text("principal_email"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("agent_session_scopes_org_idx").on(t.orgId, t.updatedAt)],
+);
+
+/**
  * Token usage of ORDINARY chat turns — the main agent, not a workflow.
  *
  * `automation_runs` accounts for subagent (workflow) turns through each

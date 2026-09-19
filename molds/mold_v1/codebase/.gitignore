@@ -34,3 +34,7 @@ test-results
 # python bytecode (subagent workspace scripts)
 __pycache__/
 *.pyc
+
+# pdf.js runtime data (wasm decoders, cmaps, fonts) copied from node_modules by
+# scripts/copy-pdfjs-assets.mjs on prebuild/predev.
+public/pdfjs/

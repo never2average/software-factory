@@ -14,7 +14,7 @@ import { agentModel, agentReasoning, modelContextWindowTokens } from "#lib/model
 // write to the same store.
 export default defineAgent({
   model: agentModel("orchestrator"),
-  modelContextWindowTokens: modelContextWindowTokens(),
+  modelContextWindowTokens: modelContextWindowTokens("orchestrator"),
   // Stream extended-thinking (reasoning) tokens on the gateway Claude models.
   // No-op under Zen/Kimi (agentReasoning returns undefined there). See model.ts.
   reasoning: agentReasoning(),

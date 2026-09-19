@@ -35,6 +35,7 @@ import {
 } from "#lib/dataroom-versions.js";
 import { callerFromCtx, orgForSession, type SessionCtxLike } from "#lib/org-context.js";
 
+import { inheritedScope } from "./session-scope.ts";
 /** Re-throw as a model-readable message when the store rejects a path. */
 function pathErrorMessage(error: unknown): string | null {
   if (error instanceof DataroomPathError) return error.message;
@@ -51,8 +52,12 @@ async function storeForSession(ctx: SessionCtxLike | undefined) {
 }
 
 /** Who a version row is attributed to: the verified caller, else the agent itself. */
-function actorFor(ctx: SessionCtxLike | undefined): string {
-  return callerFromCtx(ctx).email ?? "agent";
+async function actorFor(ctx: SessionCtxLike | undefined): Promise<string> {
+  const own = callerFromCtx(ctx).email;
+  if (own) return own;
+  // A subagent's session has no identity of its own; attribute its writes to the person whose root session
+  // delegated to it, not to an anonymous "agent" (agent/lib/session-scope.ts).
+  return (await inheritedScope(ctx?.session?.parent))?.email ?? "agent";
 }
 
 /**
@@ -192,7 +197,7 @@ export const dataroomWriteTool = defineTool({
         orgId: await orgForSession(ctx),
         path,
         content,
-        actor: actorFor(ctx),
+        actor: await actorFor(ctx),
         changesetId,
       });
       return { written: true as const, path };
@@ -273,7 +278,7 @@ export const backfillStartTool = defineTool({
     const { id } = await openChangeset({
       orgId: await orgForSession(ctx),
       label,
-      actor: actorFor(ctx),
+      actor: await actorFor(ctx),
       rationale,
     });
     return {

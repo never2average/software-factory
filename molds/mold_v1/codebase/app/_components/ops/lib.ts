@@ -485,6 +485,20 @@ export function setActiveOrg(orgId: string | null): void {
   }
 }
 
+/**
+ * The same signed-in call as `opsFetch`, but hands back the raw Response — for
+ * the few Ops routes that answer with BYTES (a PDF), where parsing JSON would
+ * throw the body away. The caller reads status and body itself.
+ */
+export async function opsFetchRaw(path: string, init?: RequestInit): Promise<Response> {
+  const token = authToken();
+  const headers: Record<string, string> = { ...(init?.headers as Record<string, string>) };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const org = activeOrg();
+  if (org) headers["x-ops-org"] = org;
+  return fetch(path, { ...init, headers });
+}
+
 export async function opsFetch<T>(path: string, init?: RequestInit): Promise<T> {
   // Every Ops API call now carries the signed-in identity — the middleware
   // (middleware.ts) verifies it. Without this header the API answers 401.

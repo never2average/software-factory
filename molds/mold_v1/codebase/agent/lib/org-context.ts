@@ -19,6 +19,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb, type Db } from "./db/index.ts";
 import { customers, orgMembers, orgs } from "./db/schema.ts";
+import { inheritedScope } from "./session-scope.ts";
 
 export const DEFAULT_ORG = "org-onfinance";
 export const DEFAULT_DOMAIN = "onfinance.in";
@@ -46,6 +47,9 @@ export interface SessionAuthLike {
 }
 export interface SessionCtxLike {
   readonly session?: {
+    readonly id?: string;
+    /** Present on a subagent's child session (eve): the lineage back to the root session. */
+    readonly parent?: { readonly rootSessionId?: string; readonly sessionId?: string } | null;
     readonly auth?: {
       readonly current?: SessionAuthLike | null;
       readonly initiator?: SessionAuthLike | null;
@@ -204,6 +208,16 @@ export async function orgDisplayName(orgId: string): Promise<string> {
 
 export async function orgForSession(ctx: SessionCtxLike | undefined): Promise<string> {
   const { email, hd, org } = callerFromCtx(ctx);
+  /**
+   * A subagent's child session has NO identity (eve runs internal paths with auth null), so everything below
+   * would resolve from nothing and land on the default workspace — whose RLS scope then refuses the write for
+   * anyone who is not in it. A child inherits the workspace its ROOT session recorded instead. Only when there
+   * is no identity at all: a session that has one is never overridden by lineage.
+   */
+  if (!email && !org && ctx?.session?.parent) {
+    const inherited = await inheritedScope(ctx.session.parent);
+    if (inherited) return inherited.orgId;
+  }
   /**
    * A token that NAMES its workspace wins — once membership is confirmed.
    *

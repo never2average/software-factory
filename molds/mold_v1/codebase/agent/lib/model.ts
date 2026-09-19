@@ -18,7 +18,9 @@
  *   MODEL_PROVIDER          "cloudflare" | "gateway"   (default: cloudflare)
  *   CLOUDFLARE_ACCOUNT_ID   your Cloudflare account id
  *   CLOUDFLARE_API_TOKEN    a Workers AI API token (Account > AI > Workers AI read/run)
- *   CLOUDFLARE_MODEL        default "@cf/zai-org/glm-5.2"
+ *   CLOUDFLARE_MODEL        default "@cf/zai-org/glm-5.2" (the whole fleet, unless a role is set below)
+ *   CLOUDFLARE_MODEL_ORCHESTRATOR / CLOUDFLARE_MODEL_SPECIALIST   optional per-role models; the orchestrator
+ *                           must be a vision model for native image input
  *   CLOUDFLARE_BASE_URL     default "https://api.cloudflare.com/client/v4/accounts/${id}/ai/v1"
  *   CLOUDFLARE_CONTEXT_WINDOW default 262144   (GLM 5.2 on Workers AI)
  */
@@ -71,12 +73,24 @@ const cloudflare = createOpenAICompatible({
  * the size to know when to compact. Returns undefined in gateway mode (let eve
  * look it up). Override with CLOUDFLARE_CONTEXT_WINDOW.
  */
-export function modelContextWindowTokens(): number | undefined {
-  if (providerChoice === "cloudflare") {
-    return Number(process.env.CLOUDFLARE_CONTEXT_WINDOW ?? 262_144);
-  }
-  return undefined;
+export function modelContextWindowTokens(role: AgentRole = "orchestrator"): number | undefined {
+  if (providerChoice !== "cloudflare") return undefined;
+  // Per role, because the two roles may now run different models with very different windows
+  // (GLM 5.3 is 1.31M, Kimi K2.6 is 262k). An explicit override wins; then the known window of the role's
+  // model; then the conservative 262,144 every Workers AI model this app has used supports.
+  const override =
+    envTrim(process.env[`CLOUDFLARE_CONTEXT_WINDOW_${role.toUpperCase()}`]) ?? envTrim(process.env.CLOUDFLARE_CONTEXT_WINDOW);
+  if (override && Number.isFinite(Number(override)) && Number(override) > 0) return Number(override);
+  return CLOUDFLARE_CONTEXT_WINDOWS[agentModelId(role)] ?? 262_144;
 }
+
+/** Context windows of the Workers AI models this app is run on (Cloudflare model catalogue, 2026-09-19). */
+const CLOUDFLARE_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
+  "@cf/zai-org/glm-5.2": 262_144,
+  "@cf/zai-org/glm-5.3": 1_310_720,
+  "@cf/zai-org/glm-5.3-flash": 1_310_720,
+  "@cf/moonshotai/kimi-k2.6": 262_144,
+};
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -106,9 +120,17 @@ export function agentReasoning(): ReasoningEffort | undefined {
  */
 export function agentModelId(role: AgentRole): string {
   if (providerChoice === "cloudflare") {
-    // One model for the whole fleet on Workers AI — GLM 5.2, a thinking model
-    // (streams `reasoning_content`, which is what surfaces as reasoning parts).
-    return envTrim(process.env.CLOUDFLARE_MODEL) ?? "@cf/zai-org/glm-5.2";
+    // Tiered by role, like the gateway. CLOUDFLARE_MODEL_ORCHESTRATOR is the model that talks to the person —
+    // so it is the one that must SEE images if the deployment wants native image input (the chat sends
+    // images as file parts; a text-only model answers "I cannot see the image"). CLOUDFLARE_MODEL_SPECIALIST
+    // runs the delegated, text-heavy work. Either falls back to CLOUDFLARE_MODEL (one model for the whole
+    // fleet, the previous behaviour), then to GLM 5.2. All are thinking models (they stream
+    // `reasoning_content`, which is what surfaces as reasoning parts).
+    return (
+      envTrim(process.env[role === "orchestrator" ? "CLOUDFLARE_MODEL_ORCHESTRATOR" : "CLOUDFLARE_MODEL_SPECIALIST"]) ??
+      envTrim(process.env.CLOUDFLARE_MODEL) ??
+      "@cf/zai-org/glm-5.2"
+    );
   }
   // Vercel AI Gateway (Claude), tiered by role. NOTE: Opus is blocked on the
   // gateway's FREE tier (403 "Free tier users do not have access to this model"),

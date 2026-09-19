@@ -1847,6 +1847,9 @@ export function AgentChat({
         // preview instead of downloading — anywhere in the chat or rail.
         const anchor = (e.target as HTMLElement)?.closest?.("a[href]") as HTMLAnchorElement | null;
         if (!anchor) return;
+        // The viewer's own "Open original" / Download links point at the very
+        // file being previewed; they must leave the app, not reopen the preview.
+        if (anchor.hasAttribute("data-open-original") || anchor.hasAttribute("download")) return;
         const art = artifactFromHref(anchor.getAttribute("href") ?? anchor.href);
         if (art) {
           e.preventDefault();

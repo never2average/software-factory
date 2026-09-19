@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
-import { getOpsDb } from "./ops-db";
+import { acrossOrgsRls, getOpsDb, withOrgRls } from "./ops-db";
 import { verifyOpsAuth } from "./ops-auth";
 import { DEFAULT_ORG, resolveOrgForIdentity } from "./org-context";
 
@@ -30,18 +30,29 @@ export type Access = {
 
 /** Load a thread row by id. Exposed so a caller that has other work to overlap
  *  (verifying the bearer token, say) can start this read first. */
-export async function loadThread(db: OpsDb, threadId: string): Promise<ThreadRow | undefined> {
-  const [thread] = await db.select().from(chatThreads).where(eq(chatThreads.id, threadId)).limit(1);
-  return thread;
+/**
+ * Both reads below run INSIDE a workspace's scope. They used to run on the bare handle, which names no
+ * workspace: that works while the org_isolation policy fails open and returns NOTHING once it fails closed
+ * (the production setting) — so every share, presence and stream call answered "Thread not found" for a
+ * thread that was there. A thread id does not say which workspace it lives in, and a member may belong to
+ * another company's workspace than the thread (cross-company shares are allowed), so the lookup sweeps the
+ * workspaces, each in its own scope; the id is an unguessable uuid and access is still decided by
+ * accessFor/accessForThread below, exactly as before. `db` is kept in the signatures for the callers.
+ */
+export async function loadThread(_db: OpsDb, threadId: string): Promise<ThreadRow | undefined> {
+  const rows = await acrossOrgsRls((tx) => tx.select().from(chatThreads).where(eq(chatThreads.id, threadId)).limit(1));
+  return rows[0];
 }
 
-function loadMember(db: OpsDb, threadId: string, email: string): Promise<MemberRow | undefined> {
-  return db
-    .select()
-    .from(chatThreadMembers)
-    .where(and(eq(chatThreadMembers.threadId, threadId), eq(chatThreadMembers.email, email)))
-    .limit(1)
-    .then((rows) => rows[0]);
+async function loadMember(_db: OpsDb, threadId: string, email: string): Promise<MemberRow | undefined> {
+  const rows = await acrossOrgsRls((tx) =>
+    tx
+      .select()
+      .from(chatThreadMembers)
+      .where(and(eq(chatThreadMembers.threadId, threadId), eq(chatThreadMembers.email, email)))
+      .limit(1),
+  );
+  return rows[0];
 }
 
 /**
@@ -110,13 +121,15 @@ function resolveAccess(
    * thread they are entitled to read.
    */
   if (member.status === "invited") {
-    void db
+    // Inside the thread's workspace: on the bare handle this update matched no row under fail-closed RLS, so an
+    // invitee stayed "invited" for ever — the symptom this block was written to fix.
+    void withOrgRls(thread.orgId ?? DEFAULT_ORG, (tx) => tx
       .update(chatThreadMembers)
       // "accepted" — NOT a new word. The list query filters on
       // ["invited", "accepted"], so inventing "active" here silently removed
       // the thread from "Shared with you" the instant someone opened it.
       .set({ status: "accepted", acceptedAt: new Date() })
-      .where(and(eq(chatThreadMembers.threadId, threadId), eq(chatThreadMembers.email, email)))
+      .where(and(eq(chatThreadMembers.threadId, threadId), eq(chatThreadMembers.email, email))))
       .catch(() => undefined);
     return { thread, role: member.role, member: { ...member, status: "accepted" } };
   }

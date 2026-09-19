@@ -15,6 +15,7 @@ import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { opsFetch } from "./ops/lib";
+import { PdfView } from "./pdf-view";
 
 /** Map a filename's extension to a shiki highlighting language. Unknown types
  *  fall back to "text" (a no-op grammar), so highlighting never throws. */
@@ -44,7 +45,7 @@ function langForFilename(filename: string): BundledLanguage {
   return map[ext] ?? ("text" as BundledLanguage);
 }
 
-type Kind = "frame" | "md" | "csv" | "xlsx" | "docx" | "pptx" | "code";
+type Kind = "frame" | "md" | "csv" | "xlsx" | "docx" | "pptx" | "pdf" | "code";
 
 const KIND_LABEL: Record<Kind, string> = {
   frame: "HTML",
@@ -53,6 +54,7 @@ const KIND_LABEL: Record<Kind, string> = {
   xlsx: "Spreadsheet",
   docx: "Document",
   pptx: "Presentation",
+  pdf: "PDF",
   code: "File",
 };
 
@@ -94,6 +96,8 @@ export function kindOf(filename: string): Kind {
   if (["xlsx", "xls"].includes(ext)) return "xlsx";
   if (ext === "docx") return "docx";
   if (["pptx", "ppt"].includes(ext)) return "pptx";
+  // Without this a .pdf fell through to "code" and its bytes were shown as text.
+  if (ext === "pdf") return "pdf";
   return "code";
 }
 
@@ -188,6 +192,9 @@ export function readableArtifactName(filename: string): string {
 /** Extensions we render in-app — clicking such a link should preview, not
  *  download (the browser can't display these, so a bare link just downloads). */
 const PREVIEWABLE_EXTS = new Set([
+  // Drawn by pdf.js (kindOf → "pdf"). The ONE type that is also previewable on
+  // another host — see artifactFromHref.
+  "pdf",
   "xlsx",
   "xls",
   "docx",
@@ -225,9 +232,39 @@ const PREVIEWABLE_EXTS = new Set([
 export function artifactFromHref(href: string): { url: string; filename: string } | null {
   try {
     const u = new URL(href, window.location.origin);
+    // The extension comes from the PATH alone — a query or hash never counts
+    // ("report.pdf?download=1#page=3" is a PDF; "view?file=report.pdf" is not).
     const filename = decodeURIComponent(u.pathname.split("/").pop() ?? "");
     const ext = (filename.split(".").pop() ?? "").toLowerCase();
-    return PREVIEWABLE_EXTS.has(ext) ? { url: href, filename } : null;
+    if (!PREVIEWABLE_EXTS.has(ext)) return null;
+    // Our own files (this site, or the private blob store) preview as before.
+    // A link to ANOTHER site is previewable only when it is a PDF over https:
+    // that is the one thing the server will fetch from the public web
+    // (/api/ops/pdf-fetch). An outside .html or .xlsx stays an ordinary link —
+    // opening the viewer for it could only ever show an error.
+    if (isExternalHost(u) && !(ext === "pdf" && u.protocol === "https:")) return null;
+    return { url: href, filename };
+  } catch {
+    return null;
+  }
+}
+
+/** The private blob store — same rule as /api/artifact-proxy. */
+function isBlobHost(hostname: string): boolean {
+  return hostname === "vercel-storage.com" || hostname.endsWith(".vercel-storage.com");
+}
+
+/** Is this url on a host that is neither this site nor our blob store? */
+function isExternalHost(u: URL): boolean {
+  return u.origin !== window.location.origin && !isBlobHost(u.hostname.toLowerCase());
+}
+
+/** The absolute https url of a PDF on another site, or null for one of ours. */
+function externalPdfUrl(url?: string): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url, window.location.origin);
+    return isExternalHost(u) && u.protocol === "https:" ? u.toString() : null;
   } catch {
     return null;
   }
@@ -272,6 +309,9 @@ export function ArtifactPanel({
           href={download.href}
           target="_blank"
           rel="noreferrer"
+          // Tells the chat's link interceptor to let this click through — its
+          // href is itself a previewable file, so it would reopen this panel.
+          data-open-original
           className="flex shrink-0 items-center gap-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           title="Download"
           aria-label="Download"
@@ -403,6 +443,7 @@ export function ArtifactBody({
       </div>
     );
   }
+  if (kind === "pdf") return <PdfArtifactView url={url} filename={filename} />;
   if (kind === "xlsx") return <XlsxView url={url} />;
   if (kind === "docx") return <DocxView url={url} />;
   if (kind === "pptx") {
@@ -486,6 +527,20 @@ function TextFileView({
       <CodeBlock code={state.text} language={langForFilename(filename)} showLineNumbers />
     </div>
   );
+}
+
+/**
+ * A PDF, drawn by pdf.js from BYTES — never framed (see pdf-view.tsx for why).
+ * One of ours reads through the freshly signed same-origin proxy link, exactly
+ * like the spreadsheet and document renderers; one on another site reads through
+ * the server's guarded public fetch, and skips the signing round-trip entirely
+ * (there is nothing of ours to sign).
+ */
+function PdfArtifactView({ url, filename }: { readonly url?: string; readonly filename: string }) {
+  const external = externalPdfUrl(url);
+  const live = useLiveArtifactUrl(external ? undefined : url);
+  if (external) return <PdfView externalUrl={external} originalHref={external} filename={filename} />;
+  return <PdfView storedSrc={live.src} originalHref={live.href} filename={filename} ready={live.ready} />;
 }
 
 function XlsxView({ url }: { readonly url?: string }) {

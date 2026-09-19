@@ -41,6 +41,10 @@ export interface TokenCounts {
 export const INFERENCE_PRICES: Readonly<Record<string, ModelPrice>> = {
   // Cloudflare Workers AI — https://developers.cloudflare.com/workers-ai/platform/pricing/ (2026-09-09)
   "@cf/zai-org/glm-5.2": { inputPerM: 1.4, cachedInputPerM: 0.26, outputPerM: 4.4 },
+  // From the account's Workers AI model catalogue (GET /accounts/<id>/ai/models/search), 2026-09-19.
+  "@cf/zai-org/glm-5.3": { inputPerM: 1.4, cachedInputPerM: 0.26, outputPerM: 4.4 },
+  "@cf/zai-org/glm-5.3-flash": { inputPerM: 0.15, cachedInputPerM: 0.03, outputPerM: 0.5 },
+  "@cf/moonshotai/kimi-k2.6": { inputPerM: 0.95, cachedInputPerM: 0.16, outputPerM: 4 },
 };
 
 /** The price row for a model id, or null when the model is not priced here. */

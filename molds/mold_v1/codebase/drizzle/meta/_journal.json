@@ -113,6 +113,13 @@
       "when": 1789407055246,
       "tag": "0015_chat_turn_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789826801751,
+      "tag": "0016_agent_session_scopes",
+      "breakpoints": true
     }
   ]
 }

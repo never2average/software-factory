@@ -18,6 +18,7 @@
     "test:syncs": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-syncs.mjs",
     "test:alerts": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-alerts.mjs",
     "test:schedules": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-schedules.mjs",
+    "test:pdf-fetch": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-pdf-fetch.mjs",
     "test:cron-match": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-cron-match.mjs",
     "test:workbook-spec": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-workbook-spec.mjs",
     "test:render": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-render.mjs",
@@ -59,7 +60,9 @@
     "db:push": "drizzle-kit push",
     "build:workflow-library": "node scripts/build-workflow-library.mjs",
     "build:skill-library": "node scripts/build-skill-library.mjs",
-    "prebuild": "npm run build:generated",
+    "prebuild": "npm run build:generated && npm run build:pdfjs-assets",
+    "predev": "npm run build:pdfjs-assets",
+    "build:pdfjs-assets": "node scripts/copy-pdfjs-assets.mjs",
     "build:subagent-meta": "node scripts/gen-subagent-meta.mjs",
     "build:generated": "npm run build:skill-library && npm run build:workflow-library && npm run build:subagent-meta && npm run build:deployment-profile",
     "check:generated": "npm run build:generated && git diff HEAD --exit-code -- setup/skills agent/lib/workflow-library.generated.ts app/_components/subagent-meta.generated.ts agent/lib/subagent-registry.generated.ts lib/deployment-profile.generated.ts agent/lib/deployment-profile.generated.ts",
@@ -81,7 +84,8 @@
     "check:subagents": "python3 scripts/check-subagents.py",
     "fde:seed-subagent-rows": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/fde/seed-subagent-rows.mjs",
     "build:deployment-profile": "node scripts/gen-deployment-profile.mjs",
-    "test:deployment-profile": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-profile.mjs"
+    "test:deployment-profile": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-profile.mjs",
+    "test:session-scope": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-session-scope.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",
@@ -115,6 +119,7 @@
     "motion": "12.40.0",
     "nanoid": "5.1.11",
     "next": "16.2.6",
+    "pdfjs-dist": "^6.3.289",
     "playwright-core": "^1.62.0",
     "postgres": "^3.4.9",
     "quickjs-emscripten": "^0.32.0",
