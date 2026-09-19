@@ -1415,7 +1415,7 @@ GUIDE = {
              "Then give ONLY the address at that domain, e.g. signin@yourdomain.com — the display name is this app's own "
              "brand and is filled in for you",
     "why": "Resend rejects a sender whose domain it has not verified, so every login code would bounce",
-    "shape": (r"^(?:[^<>@\s]+\s*<)?[^<>@\s]+@[^<>@\s]+\.[A-Za-z]{2,}>?$", "an email address, optionally as Name <address>"),
+    "shape": (r"^(?:[^<>@]*[^<>@\s]\s*<)?[^<>@\s]+@[^<>@\s]+\.[A-Za-z]{2,}>?$", "an email address, optionally as Name <address>"),   # the display name may contain spaces: brand_sender writes "OnFinance AI <…>"
   },
   "GOOGLE_CLIENT_ID": {
     "what": "the Google client id for the 'Continue with Google' button (an identifier, public by construction — it ships in the browser bundle)",
