@@ -123,8 +123,23 @@ async function pkCols(sql, t) {
   return r.map(x => x.attname);
 }
 async function apply(url, state) {
-  const sql = pg(url); const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) pk[t] = await pkCols(sql, t); const s = state.surface; const mp = state.workspace; const ws = mp.org; const me = mp.fde_self.email; const done = {};
-  const up = async (label, fn) => { try { done[label] = await fn(); } catch (e) { done[label] = "ERR " + e.message; } };
+  const root = pg(url); let sql = root; const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) pk[t] = await pkCols(sql, t); const s = state.surface; const mp = state.workspace; const ws = mp.org; const me = mp.fde_self.email; const done = {};
+  // Org-scoped tables are written INSIDE a transaction that names the workspace (set_config('app.org_id', …, true)),
+  // exactly as the app's own withOrgDb does. This goes through app_rw on purpose, and under fail_closed RLS a
+  // write that names no workspace is refused: on a fresh database every scoped insert failed with "new row
+  // violates row-level security policy" (found on onfinance_hfc, 2026-09-19; the replica never hit it because
+  // its rows arrived by snapshot restore through the admin role).
+  const SCOPED = new Set(["people_roster", "agent_profiles", "agent_configs", "workflow_definitions", "workflows"]);
+  const up = async (label, fn) => {
+    try {
+      if (!SCOPED.has(label)) { done[label] = await fn(); return; }
+      await root.begin(async (tx) => {
+        await tx`select set_config('app.org_id', ${ws.org_id}, true)`;
+        sql = tx;
+        try { done[label] = await fn(); } finally { sql = root; }
+      });
+    } catch (e) { sql = root; done[label] = "ERR " + e.message; }
+  };
   try {
     await up("orgs", () => sql`insert into orgs (org_id, name, branding, blob_prefix, status, created_by) values (${ws.org_id}, ${ws.name}, ${ws.display_name || ws.logo_url ? sql.json(pick({ displayName: ws.display_name, logoUrl: ws.logo_url })) : null}, ${ws.blob_prefix ?? "orgs/" + ws.org_id}, 'active', ${me})
       on conflict (${sql(pk.orgs)}) do update set name = excluded.name, branding = excluded.branding`.then(() => 1));
@@ -142,7 +157,7 @@ async function apply(url, state) {
       const [dup] = await sql`select 1 as x from workflows where org_id = ${ws.org_id} and name = ${w.name} limit 1`;
       if (dup) continue;
       await sql`insert into workflows (org_id, name, description, trigger, customer_id, steps, instructions, instructions_enabled, enabled, created_by) values (${ws.org_id}, ${w.name}, ${w.description}, ${w.trigger ?? "manual"}, ${w.customer_id ?? null}, ${sql.json(w.steps ?? [])}, ${w.instructions ?? null}, ${!!w.instructions_enabled}, ${w.enabled !== false}, ${me})`; n++; } return n; });
-  } finally { await sql.end(); }
+  } finally { await root.end(); }
   return done;
 }
 

@@ -1,0 +1,8 @@
+{
+  "org_id": "onfinance-ai",
+  "name": "OnFinance AI",
+  "google_hosted_domain": null,
+  "owner": "priyesh@onfinance.in",
+  "members": [],
+  "note": "The application's own workspace (state/application/onfinance_hfc/application.json). Seeded here only for the workflow library and the per-subagent rows, which clone.py configure does not install."
+}
