@@ -212,8 +212,8 @@
     },
     "responsiveness": {
       "status": "skipped",
-      "run_at": "2026-09-19T15:06:49+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-19T150649Z.md"
+      "run_at": "2026-09-19T15:36:12+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-19T153612Z.md"
     }
   },
   "customer_id": "internal",
