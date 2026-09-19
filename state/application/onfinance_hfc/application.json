@@ -83,7 +83,7 @@
         {
           "kind": "custom",
           "dataroom_path": "Customers/{customer_id}/filings/lodr/**",
-          "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) — the analysts' Quarterly Report — plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
+          "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) \u2014 the analysts' Quarterly Report \u2014 plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
           "sync": "manual_entry",
           "required": true,
           "seeded_from": "none"
@@ -176,7 +176,7 @@
       "product_name": "OnFinance AI",
       "brand_color": "#2D2D2D",
       "tagline": "Research workspace for listed and debt-listed Indian housing finance companies.",
-      "description": "OnFinance AI — Research workspace for listed and debt-listed Indian housing finance companies.",
+      "description": "OnFinance AI \u2014 Research workspace for listed and debt-listed Indian housing finance companies.",
       "radius": "0.625rem",
       "neutral_chroma": 0.006,
       "icon_bg": "#2D2D2D",
@@ -187,26 +187,29 @@
   },
   "testing": {
     "load": {
-      "status": "pending",
-      "run_at": "2026-09-19T10:10:45+00:00"
+      "status": "pass",
+      "run_at": "2026-09-19T10:26:29+00:00",
+      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-09-19T102629Z.md"
     },
     "context": {
-      "status": "fail",
-      "run_at": "2026-09-19T10:10:45+00:00",
-      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-19T101045Z.md"
+      "status": "skipped",
+      "run_at": "2026-09-19T10:26:09+00:00",
+      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-19T102609Z.md"
     },
     "functional": {
       "status": "skipped",
-      "run_at": "2026-09-19T10:08:49+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-19T100849Z.md"
+      "run_at": "2026-09-19T10:24:17+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-19T102417Z.md"
     },
     "accessibility": {
-      "status": "pending",
-      "run_at": "2026-09-19T10:10:45+00:00"
+      "status": "skipped",
+      "run_at": "2026-09-19T10:28:22+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-19T102822Z.md"
     },
     "responsiveness": {
-      "status": "pending",
-      "run_at": "2026-09-19T10:10:45+00:00"
+      "status": "skipped",
+      "run_at": "2026-09-19T10:28:37+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-19T102837Z.md"
     }
   },
   "customer_id": "internal",
