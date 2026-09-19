@@ -22,6 +22,17 @@ Section slugs: `corporate-information`, `directors-report`, `management-discussi
 `ind-as-109-notes`, `loans-and-borrowings-notes`, `transfer-of-loan-exposures`, `rbi-hfc-directions-disclosures`,
 `related-party-transactions`, `independent-auditors-report`.
 
+## Row fields in `annual-report-data.jsonl`
+
+One JSON object per line item, checked by `validate_ar_data.py` against `/workspace/schemas/annual-report-data-row.schema.json`.
+
+- Required: `customer_id`, `fy`, `section`, `label`, `normalised_label`, `value`, `unit`, `basis`, `printed_page`,
+  `pdf_page`.
+- Optional: `report_fy`, `statement`, `dimension`, `original_value`, `original_unit`, `note_ref`, `restated`, `note`,
+  `stitched_pdf_pages`, `source_file`.
+- `fy` is the year the figure belongs to; `report_fy` is the report it was read from (a comparative column in the
+  FY26 report is `fy: FY25`, `report_fy: FY26`).
+
 ## Procedure
 
 1. **Workspace sanity** (once per session, or when a script complains about its references):

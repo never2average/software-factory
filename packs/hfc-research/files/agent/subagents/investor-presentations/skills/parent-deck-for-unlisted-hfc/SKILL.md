@@ -11,7 +11,8 @@ figure comes from the **parent's** document.
 
 ## Recognise the situation
 
-- `get_customer` says the company is unlisted / debt-listed, or names a parent.
+- `get_customer` says the company is unlisted / debt-listed, or names a parent. Examples: IIFL Home Finance
+  inside IIFL Finance's deck, Tata Capital Housing Finance inside Tata Capital's.
 - The company has no deck of its own on its investor page (some debt-listed HFCs do publish one: if so, that
   is its own deck and this skill does not apply).
 - The data room holds, or you find, a file named `…_parent-{parent-slug}.pdf`.

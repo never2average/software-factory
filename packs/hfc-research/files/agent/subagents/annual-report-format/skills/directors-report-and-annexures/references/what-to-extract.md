@@ -36,6 +36,17 @@ Headings vary; match by meaning. If a report uses a different name, use the repo
 | Conservation of energy, technology absorption, foreign exchange | Rule 8(3) particulars | For an HFC usually a short statement; extract foreign exchange earnings and outgo (relevant for ECB) |
 | Dividend distribution policy, nomination and remuneration policy | Policies | Presence and link only, unless asked |
 
+## Sections with no skill of their own
+
+These three sit beside the Board's Report and are extracted with the same quote-and-summarise method. Each goes to its
+own file (`corporate-information.md`, `corporate-governance-report.md`, `brsr.md`).
+
+| Section | Extract |
+|---|---|
+| Corporate information | Board, KMP, statutory auditors, debenture trustees, registered office, listing (equity or debt), credit ratings |
+| Corporate Governance Report | Board and committee composition and attendance, remuneration, shareholder information |
+| BRSR | Presence and the headline indicators only, unless asked for more |
+
 ## Quoting and summarising
 
 - Quote: numbers, dates, names, regulator actions, commitments ("the Company will..."), auditor's or secretarial

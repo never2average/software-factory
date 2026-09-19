@@ -20,6 +20,9 @@ deck first, then read the sections you need. Never read a deck top to bottom hun
 
 ## Procedure
 
+Parse in the sandbox: `dataroom_fetch_to_sandbox` brings the file to `/workspace/in/`, and the scripts read it
+with `pdfplumber` (a PDF) or `python-pptx` (a .pptx). Keep the slide number with every figure.
+
 1. `python3 /workspace/scripts/detect_content_type.py /workspace/in/deck.pdf`
 2. `python3 /workspace/scripts/slide_index.py /workspace/in/deck.pdf > /workspace/out/slide-index.json`
    Each slide gets a title, the unit it names, the periods on it, a section guess, `in_appendix`, and

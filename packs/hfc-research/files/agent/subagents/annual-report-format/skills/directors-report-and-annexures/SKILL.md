@@ -1,5 +1,5 @@
 ---
-description: Use when asked to extract the Board's / Directors' Report or any of its annexures - financial summary, dividend, transfer to statutory reserve under s.29C of the NHB Act, capital or debt raised, changes in directors and KMP, subsidiaries, Form AOC-2, secretarial audit report (MR-3), CSR report, particulars of employees, conservation of energy.
+description: Use when asked to extract the Board's / Directors' Report or any of its annexures - financial summary, dividend, transfer to statutory reserve under s.29C of the NHB Act, capital or debt raised, changes in directors and KMP, subsidiaries, Form AOC-2, secretarial audit report (MR-3), CSR report, particulars of employees, conservation of energy - or when extracting the corporate information page, the Corporate Governance Report or the BRSR.
 ---
 
 # Board's / Directors' Report and its annexures
@@ -27,6 +27,9 @@ PY
 Then find the sub-headings. The usual ones, with what the analyst needs from each, are in
 [references/what-to-extract.md](references/what-to-extract.md). The annexure list, usually a paragraph or table near
 the end of the report proper, tells you which annexure letter is which.
+
+The same reference lists what to extract from the three sections that have no skill of their own: corporate
+information, the Corporate Governance Report and the BRSR.
 
 ## Procedure
 

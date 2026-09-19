@@ -23,7 +23,15 @@ their presence and their unit are not. Locate first, then extract. Never read "t
 | Security cover certificate, deviation statement, RPT disclosure | Appended to some filings; separate filings for others |
 
 Units differ per part: it is common for one basis to be in Rs lakh and an annexure in Rs crore. The unit is read per
-section, from that section's header, never carried across.
+section, from that section's header, never carried across. Everything is reported in Rs crore:
+
+| Filing unit | Conversion to Rs crore |
+|---|---|
+| lakhs | ÷ 100 |
+| millions | ÷ 10 |
+| billions | × 100 |
+
+`extract_results_lines.py` applies the conversion; `validate_results_extract.py` rechecks it.
 
 ## Procedure
 

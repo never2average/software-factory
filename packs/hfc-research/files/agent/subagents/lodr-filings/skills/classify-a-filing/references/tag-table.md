@@ -21,6 +21,17 @@ them. If a filing's own numbering differs, SEBI has amended it: record what the 
 | `reg34_annual_report` | 34, 53 | IV / V | Annual report (reading it belongs to `annual-report-format`) | "Annual Report for FY ..." | yearly |
 | `other` | any other | | Anything else: say what it is (newspaper publication, voting results, investor complaints, trading window ...) | | |
 
+## What the main tags carry
+
+- `reg33_results`: quarterly and annual financial results of an equity-listed entity, the limited review or audit
+  report, and the notes. This is the analysts' "Quarterly Report (QR)".
+- `reg52_results`: financial results and the Reg 52(4) line items (debt-equity, net worth, PAT, asset cover and
+  the like) for a debt-listed entity. This is the QR for an unlisted HFC.
+- `reg30_event`: rating actions, fund raises, KMP and auditor changes, acquisitions, regulatory orders, the
+  investor-meet schedule, and the presentation and transcript intimations.
+- `reg31_shareholding`: promoter, public, encumbered and pledged shares, quarterly.
+- `reg34_annual_report`: file and log it here; hand the reading to `annual-report-format`.
+
 ## When the letter cites several regulations
 
 | Cited together | Tag | Log under `also_covers` |

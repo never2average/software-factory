@@ -11,7 +11,7 @@ The analysts' rule, from `schemas/kpi-spec.md`:
 | Listed | Investor Presentation (IP) for operational metrics: branches, employees, disbursements. Quarterly Report (QR) for financial ratios, asset quality and capital adequacy. |
 | Listed, values differ | Use the QR value if the two are within 5%. |
 | Listed, values differ by more than 5% | Open point in the rulebook. Until the analysts decide: report the QR value, show the IP value beside it in the footnote, status `needs_review`. |
-| Unlisted (debt-listed HFC, subsidiary) | 1st the company's SEBI LODR filing; 2nd the PARENT company's investor presentation, cited as `parent IP` with the parent document named. |
+| Unlisted (debt-listed HFC, subsidiary) | 1st the company's SEBI LODR filing; 2nd the PARENT company's investor presentation (for example IIFL Home Finance from IIFL Finance, or Tata Capital Housing Finance from Tata Capital), cited as `parent IP` with the parent document named. |
 
 You never apply the 5% rule in your head. The script does it.
 

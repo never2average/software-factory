@@ -35,6 +35,17 @@ reported to the analyst. It is never bypassed, and a row is never edited just to
 9. Reply (the instructions' "Reply" section): brief, guidance table with changes, operational metrics with
    slide numbers, anything not found. Approximate values are marked "about"; parent-sourced values say so.
 
+## Row fields
+
+`ip-metrics.jsonl` (`/workspace/schemas/ip-metric-row.schema.json`), always: `customer_id`, `period`, `metric`,
+`value`, `unit`, `document`, `slide`, `approximate`, `from_parent`, `note`, `extracted_at`. Optional
+provenance: `status` (`reported`, `nil`, `not_disclosed`, `no_off_book`, `derived`), `period_basis`, `basis`,
+`source_label`, `source_value`, `source_unit`, `parent_document` (required when `from_parent` is true), and
+the `carried_*` fields. `guidance.jsonl` (`/workspace/schemas/guidance-row.schema.json`), always:
+`customer_id`, `period`, `topic`, `statement`, `speaker`, `page`, `change_vs_previous`, `extracted_at`.
+Optional: `subtopic`, `value_low`, `value_high`, `value_unit`, `direction`, `horizon`, `previous_period`,
+`previous_statement`, `document`, `from_parent`, `note`.
+
 ## What hfc-kpi-extraction needs from you
 
 One row per core metric per period, **even when the answer is "not there"**, so the KPI subagent can tell
