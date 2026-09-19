@@ -414,14 +414,20 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
   const [memberCount, setMemberCount] = useState<number | null>(null);
 
   useEffect(() => {
-    opsFetch<{ items: OrgSummary[] }>("/api/ops/orgs")
-      .then((d) => {
+    // The ACTIVE workspace — the one the sidebar switcher shows and every other screen is already scoped to.
+    // ONE rule, the server's: the choice stored in this browser if it is still a workspace you belong to, else
+    // `active` from /api/ops/me/workspaces (the most recently chosen membership, falling back to the oldest).
+    // Never list order: /api/ops/orgs and the memberships list are ordered differently, so "the first one"
+    // here was a different workspace from the first one in the sidebar — settings opened workspace B for
+    // someone working in A whenever nothing was stored in the browser yet.
+    Promise.all([
+      opsFetch<{ items: OrgSummary[] }>("/api/ops/orgs"),
+      opsFetch<{ active: string | null }>("/api/ops/me/workspaces").catch(() => ({ active: null })),
+    ])
+      .then(([d, me]) => {
         setOrgs(d.items);
-        // The ACTIVE workspace — the one the sidebar switcher shows and every other screen is already scoped
-        // to — not the first in the list. Settings used to pick items[0] and offer its own dropdown, so the page
-        // could be editing a different workspace from the one on screen everywhere else.
-        const active = activeOrg();
-        setOrgId((prev) => prev ?? d.items.find((o) => o.orgId === active)?.orgId ?? d.items[0]?.orgId ?? null);
+        const has = (id: string | null | undefined) => (id ? d.items.find((o) => o.orgId === id)?.orgId : undefined);
+        setOrgId((prev) => prev ?? has(activeOrg()) ?? has(me.active) ?? d.items[0]?.orgId ?? null);
       })
       .catch((e) => setError(errMessage(e)));
   }, []);

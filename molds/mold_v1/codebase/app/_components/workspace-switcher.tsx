@@ -47,7 +47,7 @@ export function WorkspaceSwitcher() {
 
   const load = useCallback(async () => {
     try {
-      const d = await opsFetch<{ memberships: Membership[]; invites: Invite[] }>(
+      const d = await opsFetch<{ memberships: Membership[]; invites: Invite[]; active?: string | null }>(
         "/api/ops/me/workspaces",
       );
       setMemberships(d.memberships);
@@ -64,7 +64,11 @@ export function WorkspaceSwitcher() {
         });
       // No stored choice yet: adopt the same one the server would default to,
       // so the label matches what the API is actually returning.
-      setCurrent((prev) => prev ?? activeOrg() ?? d.memberships[0]?.orgId ?? null);
+      // `active` is the server's own answer (most recently chosen membership); memberships[0] is merely the
+      // first row, and showing it labelled one workspace while the API served another. A stored choice that is
+      // no longer a membership (removed from that workspace, another account on this browser) is ignored.
+      const member = (id: string | null | undefined) => (id && d.memberships.some((m) => m.orgId === id) ? id : null);
+      setCurrent((prev) => member(prev) ?? member(activeOrg()) ?? member(d.active) ?? d.memberships[0]?.orgId ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load your workspaces.");
     }
