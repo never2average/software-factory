@@ -65,11 +65,24 @@
     "functions": {
       "api": "vercel.api.json",
       "eve": "vercel.eve.json"
+    },
+    "workflow_url": "https://onfinance-hfc-workflow.vercel.app",
+    "api_url": "https://onfinance-hfc-api.vercel.app",
+    "production_url": "https://onfinance-hfc.vercel.app",
+    "health": {
+      "workflow": "200",
+      "api": "200",
+      "web": "200"
     }
   },
   "google": {
     "project_number": "865110163807",
     "client_id": "865110163807-f5flo41el8f4oun30626p0gm20cgf9b4.apps.googleusercontent.com",
     "set_at": "2026-09-19T09:47:52+00:00"
-  }
+  },
+  "datastores": {
+    "neon_resource": "onfinance-hfc",
+    "blob_store": "onfinance-hfc"
+  },
+  "deployed_at": "2026-09-19T09:49:59+00:00"
 }

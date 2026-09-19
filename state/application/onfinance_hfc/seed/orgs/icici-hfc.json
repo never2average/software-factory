@@ -1,0 +1,49 @@
+{
+  "org_id": "icici-hfc",
+  "name": "ICICI HFC",
+  "google_hosted_domain": "icicihfc.com",
+  "note": "A second workspace on the onfinance_hfc deployment, created at runtime (the application schema describes one workspace). Analysts sign in with an emailed code; the app has no passwords and none are recorded. No reporting lines yet. Coverage: every housing finance company in briefs/onfinance_hfc.hfc-universe.csv, not yet split between analysts.",
+  "owner": "priyesh@onfinance.in",
+  "members": [
+    {
+      "email": "aakanksha.punyarthi@icicihfc.com",
+      "role": "member",
+      "name": "Aakanksha Punyarthi"
+    },
+    {
+      "email": "akshay.patil@icicihfc.com",
+      "role": "member",
+      "name": "Akshay Patil"
+    },
+    {
+      "email": "deepa.kakkad@icicihfc.com",
+      "role": "member",
+      "name": "Deepa Kakkad"
+    },
+    {
+      "email": "kapish.mehta@icicihfc.com",
+      "role": "member",
+      "name": "Kapish Mehta"
+    },
+    {
+      "email": "mahima.jaiswal@icicihfc.com",
+      "role": "member",
+      "name": "Mahima Jaiswal"
+    },
+    {
+      "email": "shweta.prabhu@icicihfc.com",
+      "role": "member",
+      "name": "Shweta Prabhu"
+    },
+    {
+      "email": "shyamsunder.tailor@icicihfc.com",
+      "role": "member",
+      "name": "Shyamsunder Tailor"
+    },
+    {
+      "email": "vinod.jain@icicihfc.com",
+      "role": "member",
+      "name": "Vinod Jain"
+    }
+  ]
+}
