@@ -112,6 +112,9 @@ export function domainView(area: DomainArea, domains: Domains = DEPLOYMENT_PROFI
       Object.fromEntries(
         Object.entries(spec.fields).flatMap(([k, f]) => (f.hidden && f.fixed !== undefined ? [[k, f.fixed] as [string, string | number]] : [])),
       ),
+    /** The deployment's OWN fields on the area (values live under `custom`); the ones a list shows as columns. */
+    customFields: spec.custom_fields ?? [],
+    listCustomFields: (spec.custom_fields ?? []).filter((f) => f.show_in_list),
     groupBy: "group_by" in spec ? (spec as Domains["implementations"]).group_by : null,
     groupLabel: "group_label" in spec ? (spec as Domains["implementations"]).group_label : null,
     /** A form field for any real field key, typed from the schema: the profile's create_fields / detail_fields. */

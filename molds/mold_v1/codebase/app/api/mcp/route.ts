@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
-import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
+import { DEPLOYMENT_PROFILE, PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import { handleMcpRequest, type McpDeps } from "@/lib/mcp-server";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 
@@ -26,6 +26,11 @@ const deps: McpDeps = {
   verifyAuth: (authorization) => verifyOpsAuth(authorization),
   // dm.md is traced into the function by next.config.ts (outputFileTracingIncludes).
   readSpec: () => readFile(join(process.cwd(), "dm.md"), "utf8"),
+  // The fields this deployment's profile adds to the two record areas: the write tools' `custom` input names them.
+  customFields: {
+    deployments: DEPLOYMENT_PROFILE.domains.deployments.custom_fields,
+    implementations: DEPLOYMENT_PROFILE.domains.implementations.custom_fields,
+  },
   webOrigin: process.env.WEB_ORIGIN?.trim() || null,
   internalOrigin: process.env.MCP_INTERNAL_ORIGIN?.trim() || null,
 };

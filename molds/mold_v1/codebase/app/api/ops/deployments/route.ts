@@ -5,7 +5,8 @@ import { customers, deployments } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
-import { pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { asCustomValues } from "@/agent/lib/custom-fields";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 
 const ENV_HIDDEN = DEPLOYMENT_PROFILE.domains.deployments.fields.environment?.hidden === true;
@@ -28,6 +29,8 @@ const createSchema = z.object({
   displayName: z.string().trim().optional().nullable(),
   // Any other single-value column, for a deployment profile that puts it on the "New …" form (`domains`).
   ...profileFieldSchemas("deployments", ["deployOwnerEmail"]),
+  // The profile's OWN fields (`custom_fields`), by key. Checked below by the shared validator, not by zod.
+  custom: customBodySchema,
 });
 
 export async function POST(request: NextRequest) {
@@ -39,18 +42,23 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
+  // A create: the required custom fields must be there, an undeclared key is refused.
+  const { custom: customInput, ...data } = parsed.data;
+  const checked = customForWrite("deployments", customInput, null);
+  if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
   try {
     const [row] = await withOrgRls(ctx.orgId, (tx) =>
       tx
         .insert(deployments)
         .values({
-          ...parsed.data,
+          ...data,
+          ...(checked.custom ? { custom: checked.custom } : {}),
           // Stamp the tenant. Without it the row is written with a NULL org_id,
           // which the org_isolation policy matches for no workspace at all — the
           // create succeeds and the record is invisible to everyone.
           orgId: ctx.orgId,
-          deployOwnerEmail: parsed.data.deployOwnerEmail || null,
-          displayName: parsed.data.displayName || null,
+          deployOwnerEmail: data.deployOwnerEmail || null,
+          displayName: data.displayName || null,
         })
         .returning(),
     );
@@ -112,6 +120,8 @@ export async function GET(request: NextRequest) {
       lastDeployAt: d.lastDeployAt ?? null,
       // The columns this deployment's profile shows or edits beyond the defaults ({} for the default profile).
       fields: pickProfileFields("deployments", d),
+      // The values of the profile's own fields (`custom_fields`), by key.
+      custom: asCustomValues(d.custom),
     }));
     return NextResponse.json({ items });
   } catch (e) {

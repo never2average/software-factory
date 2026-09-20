@@ -134,8 +134,13 @@ for (const [area, name] of [["deployments", "deploymentSchema"], ["implementatio
   const block = schemaSrc.slice(schemaSrc.indexOf(`export const ${name} = z.object({`)).split("\n});")[0];
   const keys = [...block.matchAll(/^  ([A-Za-z0-9_]+): /gm)].map((m) => m[1]);
   assert.ok(keys.length > 40, `${name} parsed`);
-  for (const k of keys) assert.ok(DOMAIN_FIELDS[area][k], `${area}.${k} is a known field`);
+  // `custom` holds the profile's OWN fields (custom_fields): a container, not a field to relabel or hide.
+  assert.ok(keys.includes("custom"), `${name} carries custom`);
+  assert.equal(DOMAIN_FIELDS[area].custom, undefined, `${area}.custom is not offered as a built-in field`);
+  for (const k of keys.filter((x) => x !== "custom")) assert.ok(DOMAIN_FIELDS[area][k], `${area}.${k} is a known field`);
 }
+// The default deployment declares no fields of its own, on either area.
+assert.deepEqual([dep.customFields, imp.customFields, dep.listCustomFields], [[], [], []]);
 assert.deepEqual(DOMAIN_FIELDS.deployments.healthStatus.values, ["healthy", "degraded", "down", "unknown"]);
 assert.equal(DOMAIN_FIELDS.deployments.region.required, true);
 assert.equal(DOMAIN_FIELDS.deployments.notes.column, true, "a column the zod schema does not list is still a field");
@@ -227,10 +232,26 @@ assert.ok(researchBlock.includes('"Us" is Provider'));
 assert.ok(researchBlock.includes('`region`="ap-south-1"') && researchBlock.includes('`environment`="prod"'), "the model is told what to write in the hidden required fields");
 assert.ok(researchBlock.includes("securityReviewStatus") && researchBlock.includes("use only the fields named above"), "unused fields: a few names, then the rule (a list of 37 names is paid for on every turn)");
 assert.ok(!researchBlock.includes('"Failed" is failed'), "a display word that is the value is not repeated");
-// The budget: the two areas together cost the model at most 350 words a turn for this, the largest sensible
-// redefinition (the free-text agent.briefing keeps its own 400-word limit in the generator).
+// custom_fields: the model is told where they live, each key with its label, type, choices and whether it is required.
+assert.deepEqual(reports.customFields.map((f) => f.key), ["rating", "target_price", "data_completeness", "publish_date", "source_link", "thesis"]);
+assert.deepEqual(reports.listCustomFields.map((f) => f.key), ["rating", "target_price", "data_completeness"]);
+assert.deepEqual(portfolios.customFields.map((f) => [f.key, f.type]), [["benchmark", "text"], ["next_rebalance", "date"]]);
+assert.ok(researchBlock.includes("`deployments[].custom`") && researchBlock.includes("`implementation.custom`"), "where the custom values are written");
+assert.ok(researchBlock.includes('`rating`="Rating" (Buy|Add|Hold|Reduce|Sell; required)'), "a pick list names its choices, and that it is required");
+assert.ok(researchBlock.includes('`data_completeness`="Data completeness" (percent 0-100)'));
+assert.ok(researchBlock.includes('`publish_date`="Publish date" (yyyy-mm-dd)') && researchBlock.includes('`source_link`="Source filing" (http(s)-link)'));
+assert.ok(researchBlock.includes('`benchmark`="Benchmark" (text)'));
+// Custom fields alone redefine an area enough to be briefed, and nothing else about it is said.
+const onlyCustom = structuredClone(DEPLOYMENT_PROFILE);
+onlyCustom.domains.deployments.custom_fields = [{ key: "inspection_date", label: "Inspection date", type: "date" }];
+assert.ok(renderDeploymentBriefing(onlyCustom).includes('`inspection_date`="Inspection date" (yyyy-mm-dd)'));
+assert.equal(renderDomainBriefing("implementations", onlyCustom.domains).length, 0);
+// The budget: the two areas together cost the model at most 420 words a turn for this, the largest sensible
+// redefinition. It was 350 before custom_fields; the example's eight own fields (key, label, type, choices) and the
+// rule for writing them cost about 60 words, and the model cannot fill a field it was never told about
+// (the free-text agent.briefing keeps its own 400-word limit in the generator).
 const domainWords = ["implementations", "deployments"].flatMap((a) => renderDomainBriefing(a, example.domains)).join("\n").trim().split(/\s+/).length;
-assert.ok(domainWords <= 350, `the domains part of the per-turn block stays within 350 words (it is ${domainWords})`);
+assert.ok(domainWords <= 420, `the domains part of the per-turn block stays within 420 words (it is ${domainWords})`);
 // A small redefinition names every unused field.
 const small = structuredClone(DEPLOYMENT_PROFILE);
 small.domains.deployments.fields.buildSha = { hidden: true };
@@ -257,6 +278,32 @@ bad({ domains: { deployments: { kind_field: "releaseChannel", kinds: ["Initiatio
 bad({ domains: { deployments: { kinds: ["Initiation"] } } }, /kind_field must name the field/);
 bad({ domains: { deployments: { create_fields: ["activeIncidentRefs"] } } }, /"activeIncidentRefs" is not a single-value column/);
 bad({ domains: { implementations: { group_by: "implementationStage" } } }, /group_by: "implementationStage" must be a free-text column/);
+// custom_fields: every rule, as a sentence that names the entry.
+const cf = (field, area = "deployments") => ({ domains: { [area]: { custom_fields: Array.isArray(field) ? field : [field] } } });
+bad({ domains: { deployments: { custom_fields: { rating: {} } } } }, /custom_fields must be a list of fields/);
+bad(cf({ key: "targetPrice", label: "Target price", type: "number" }), /custom_fields\[0\]\.key must be snake_case/);
+bad(cf({ key: "2nd_rating", label: "x", type: "text" }), /key must be snake_case/);
+bad(cf({ key: "region", label: "Region 2", type: "text" }), /"region" is already a built-in field of the deployments table/);
+bad(cf({ key: "deployment_id", label: "Id", type: "text" }), /"deployment_id" is already a built-in field/);
+bad(cf({ key: "custom", label: "Custom", type: "text" }), /"custom" is already a built-in field/);
+bad(cf({ key: "rollout_id", label: "Id", type: "text" }, "implementations"), /already a built-in field of the implementation table/);
+bad(cf([{ key: "rating", label: "Rating", type: "text" }, { key: "rating", label: "Other", type: "text" }]), /custom_fields\[1\]\.key: "rating" is declared twice/);
+bad(cf([{ key: "rating", label: "Rating", type: "text" }, { key: "rating_2", label: "rating", type: "text" }]), /"rating" is also the label of "rating"/);
+bad(cf({ key: "rating", type: "text" }), /custom_fields\[0\]\.label must be a non-empty string/);
+bad(cf({ key: "rating", label: "Rating", type: "money" }), /"money" is not a field type\. Use one of text, long_text, number, percent, date, email, link, pick_list/);
+bad(cf({ key: "rating", label: "Rating", type: "pick_list" }), /a pick_list needs a non-empty list of choices/);
+bad(cf({ key: "rating", label: "Rating", type: "pick_list", options: ["Buy", "buy"] }), /lists the same choice twice/);
+bad(cf({ key: "rating", label: "Rating", type: "text", options: ["Buy"] }), /only a pick_list has options/);
+bad(cf({ key: "rating", label: "Rating", type: "text", required: "yes" }), /required must be true or false/);
+bad(cf({ key: "rating", label: "Rating", type: "text", show_in_list: 1 }), /show_in_list must be true or false/);
+bad(cf({ key: "rating", label: "Rating", type: "text", help: "" }), /help must be a non-empty string/);
+bad(cf({ key: "rating", label: "Rating", type: "text", colour: "red" }), /custom_fields\[0\]\.colour: unknown key \(a custom field takes key, label, type/);
+// …and a good one, on the other area, in a non-research vertical: the generator accepts it and keeps it as written.
+const site = generate(cf([{ key: "inspection_date", label: "Inspection date", type: "date", required: true }, { key: "permit_link", label: "Permit", type: "link", show_in_list: true }], "implementations"));
+assert.equal(site.status, 0, site.stderr);
+assert.deepEqual(JSON.parse(site.stdout).domains.implementations.custom_fields.map((f) => f.key), ["inspection_date", "permit_link"]);
+assert.deepEqual(JSON.parse(site.stdout).domains.deployments.custom_fields, []);
+
 bad({ domains: { deployments: { colour: "red" } } }, /domains\.deployments\.colour: unknown key/);
 bad({ domains: { releases: {} } }, /domains\.releases: unknown key/);
 

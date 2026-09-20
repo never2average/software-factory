@@ -25,6 +25,14 @@
       "kinds": ["Initiation", "Quarterly results update", "Annual report review", "Event / rating update", "Sector note"],
       "create_fields": ["runtime", "lastDeployAt", "approvedByEmail", "notes"],
       "detail_fields": ["runtime", "lastDeployAt", "approvedByEmail", "liveUrl", "notes"],
+      "custom_fields": [
+        { "key": "rating", "label": "Rating", "type": "pick_list", "options": ["Buy", "Add", "Hold", "Reduce", "Sell"], "required": true, "show_in_list": true },
+        { "key": "target_price", "label": "Target price", "type": "number", "help": "In the listing currency, per share.", "show_in_list": true },
+        { "key": "data_completeness", "label": "Data completeness", "type": "percent", "help": "Share of the KPI table filled from this period's filings.", "show_in_list": true },
+        { "key": "publish_date", "label": "Publish date", "type": "date" },
+        { "key": "source_link", "label": "Source filing", "type": "link" },
+        { "key": "thesis", "label": "Thesis in brief", "type": "long_text" }
+      ],
       "fields": {
         "deploymentId": { "placeholder": "Q2FY26-results" },
         "runtime": { "label": "Report type", "short_label": "Type" },
@@ -83,6 +91,10 @@
       "group_label": { "singular": "Portfolio", "plural": "Portfolios" },
       "create_fields": [],
       "detail_fields": ["rolloutId", "implementationProgressPct", "dataReadinessPct", "integrationReadinessPct", "dataQualityStatus", "evalAcceptanceStatus", "uatStatus", "currentMilestone", "currentMilestoneDueDate", "blocker", "blockerOwner", "targetGoLiveDate", "actualGoLiveDate"],
+      "custom_fields": [
+        { "key": "benchmark", "label": "Benchmark", "type": "text", "help": "The index this company's weight is measured against.", "show_in_list": true },
+        { "key": "next_rebalance", "label": "Next rebalance", "type": "date" }
+      ],
       "fields": {
         "rolloutId": { "label": "Portfolio" },
         "implementationOwnerEmail": { "label": "Analyst" },

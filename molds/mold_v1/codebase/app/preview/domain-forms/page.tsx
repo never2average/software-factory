@@ -41,6 +41,8 @@ function Forms() {
           endpoint="/api/ops/deployments"
           fields={deploymentCreateFields(dep)}
           fixed={dep.fixedValues()}
+          area="deployments"
+          customFields={dep.customFields}
           onCancel={() => {}}
           onCreated={(id) => setCreated((p) => [...p, `deployments:${id}`])}
         />
@@ -51,6 +53,8 @@ function Forms() {
           endpoint="/api/ops/implementations"
           fields={implementationCreateFields(imp)}
           fixed={imp.fixedValues()}
+          area="implementations"
+          customFields={imp.customFields}
           groupChoices={[{ value: "large-hfcs", label: "Large hfcs" }]}
           groupNoun={imp.groupLabel?.singular}
           onCancel={() => {}}

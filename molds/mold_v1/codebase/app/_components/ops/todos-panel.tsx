@@ -75,6 +75,9 @@ import {
   SidePanel,
 } from "./primitives";
 import { SURFACE, TYPE } from "./tokens";
+import { CustomFieldControl, customFieldError } from "./custom-fields";
+import { displayCustom, validateCustom } from "@/agent/lib/custom-fields";
+import type { CustomFieldSpec, DomainArea } from "@/lib/deployment-profile.generated";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { domainView, groupRows, groupSlug, groupTitle, withProfileFields, type DomainFormField, type DomainView } from "@/lib/profile-domains";
 
@@ -751,9 +754,11 @@ export function TodosPanel({
               label: `New ${DEP.noun}`,
               fixed: DEP.fixedValues(),
               fields: deploymentCreateFields(DEP),
+              area: "deployments",
+              customFields: DEP.customFields,
             }}
             sortOptions={DEPLOYMENT_SORTS}
-            textOf={(d) => `${d.label} ${d.id} ${DEP.display("releaseStatus", d.status)} ${DEP.display("healthStatus", d.health)} ${DEP.hidden("environment") ? "" : d.env} ${kindOf(DEP, d.fields) ?? ""}`}
+            textOf={(d) => `${d.label} ${d.id} ${DEP.display("releaseStatus", d.status)} ${DEP.display("healthStatus", d.health)} ${DEP.hidden("environment") ? "" : d.env} ${kindOf(DEP, d.fields) ?? ""} ${customText(DEP, d.custom)}`}
             sortOf={(d, s) =>
               s === "health" ? d.health : s === "status" ? d.status : s === "env" ? d.env : d.customer ?? ""
             }
@@ -789,6 +794,7 @@ export function TodosPanel({
                 { key: "version", label: DEP.label("deployedVersion", "Version", "short"), render: (d) => <span className="font-mono">{d.version}</span> },
                 { key: "health", label: DEP.label("healthStatus", "Health", "short"), render: (d) => <span className={cn("inline-flex items-center gap-1.5", DEP.display("healthStatus", d.health, "") ? null : "capitalize")}><span className={cn("size-1.5 rounded-full", healthDot(d.health))} />{DEP.display("healthStatus", d.health)}</span> },
                 { key: "status", label: DEP.label("releaseStatus", "Release", "short"), render: (d) => DEP.display("releaseStatus", d.status) },
+                ...customColumns<ApiRefDeployment>(DEP),
                 { key: "owner", label: DEP.label("deployOwnerEmail", "Owner", "short"), render: (d) => (d.owner ? d.owner.split("@")[0] : "—") },
               ],
               timeline: {
@@ -812,6 +818,9 @@ export function TodosPanel({
                   { key: "releaseStatus", label: DEP.label("releaseStatus", "Release status"), value: d.status },
                   { key: "deployOwnerEmail", label: DEP.label("deployOwnerEmail", "Owner"), value: d.owner ?? "" },
                 ], d.fields)}
+                area="deployments"
+                customFields={DEP.customFields}
+                custom={d.custom}
                 displayName={d.displayName}
                 onSave={(patch) => patchRef("/api/ops/deployments", d.recordId ?? d.id, { customerId: d.customer, ...patch, ...(d.recordId ? { entityId: d.id } : {}) }, api.refetch)}
                 staticFields={[
@@ -856,9 +865,11 @@ export function TodosPanel({
               label: `New ${IMP.noun}`,
               fixed: IMP.fixedValues(),
               fields: implementationCreateFields(IMP),
+              area: "implementations",
+              customFields: IMP.customFields,
             }}
             sortOptions={IMPLEMENTATION_SORTS}
-            textOf={(r) => `${r.label} ${IMP.display("implementationStage", r.stage)} ${IMP.display("implementationRiskLevel", r.risk)} ${groupTitle(groupValue(r.fields, IMP.groupBy) ?? "")}`}
+            textOf={(r) => `${r.label} ${IMP.display("implementationStage", r.stage)} ${IMP.display("implementationRiskLevel", r.risk)} ${groupTitle(groupValue(r.fields, IMP.groupBy) ?? "")} ${customText(IMP, r.custom)}`}
             sortOf={(r, s) =>
               s === "stage"
                 ? r.stage
@@ -897,6 +908,7 @@ export function TodosPanel({
                 ...IMP.spec.detail_fields
                   .filter((k) => TABLE_EXTRA_TYPES.includes(IMP.formField(k)?.kind ?? "") && k !== "implementationProgressPct")
                   .map((k) => ({ key: k, label: IMP.label(k, k, "short"), render: (r: ApiRefImplementation) => showField(IMP, k, r.fields?.[k]) })),
+                ...customColumns<ApiRefImplementation>(IMP),
                 { key: "golive", label: IMP.label("targetGoLiveDate", "Go-live", "short"), render: (r) => goLiveDue(r.goLiveDate)?.text ?? "—" },
                 { key: "owner", label: IMP.label("implementationOwnerEmail", "Owner", "short"), render: (r) => (r.owner ? r.owner.split("@")[0] : "—") },
               ],
@@ -921,6 +933,9 @@ export function TodosPanel({
                   { key: "implementationRiskLevel", label: IMP.label("implementationRiskLevel", "Risk"), value: r.risk },
                   { key: "implementationOwnerEmail", label: IMP.label("implementationOwnerEmail", "Owner"), value: r.owner ?? "" },
                 ], r.fields)}
+                area="implementations"
+                customFields={IMP.customFields}
+                custom={r.custom}
                 displayName={r.displayName}
                 onSave={(patch) => patchRef("/api/ops/implementations", r.id, { customerId: r.customer, ...patch }, api.refetch)}
                 staticFields={[{ label: ACCOUNT_LABEL, value: r.customer ?? "" }]}
@@ -962,6 +977,40 @@ function showField(view: DomainView, key: string, value: string | number | null 
   if (value == null || value === "") return "—";
   if (typeof value === "number") return /Pct$/.test(key) ? `${Math.round(value)}%` : String(value);
   return view.display(key, value);
+}
+
+/** The list's columns for the profile's OWN fields marked show_in_list; a link is a link, the rest read as text. */
+function customColumns<T extends { custom?: Record<string, string | number> }>(view: DomainView): { key: string; label: string; render: (row: T) => React.ReactNode }[] {
+  return view.listCustomFields.map((f) => ({
+    key: `custom.${f.key}`,
+    label: f.label,
+    render: (row: T) => {
+      const shown = displayCustom(f, row.custom?.[f.key]);
+      if (!shown) return "—";
+      return f.type === "link" ? (
+        <a href={shown} target="_blank" rel="noreferrer noopener" className="underline underline-offset-2" onClick={(e) => e.stopPropagation()}>
+          {hostOf(shown)}
+        </a>
+      ) : f.type === "number" || f.type === "percent" ? (
+        <span className="tabular-nums">{shown}</span>
+      ) : (
+        shown
+      );
+    },
+  }));
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** What the list's search matches of a row's custom values. */
+function customText(view: DomainView, custom: Record<string, string | number> | undefined): string {
+  return view.listCustomFields.map((f) => displayCustom(f, custom?.[f.key])).join(" ");
 }
 
 function implTitle(r: ApiRefImplementation): string {
@@ -1126,6 +1175,9 @@ function MineList<T extends { id: string; owner: string | null }>({
     readonly fields: readonly RefCreateField[];
     /** Submitted with every create: the values of fields this deployment hides (`fixed` in the profile). */
     readonly fixed?: Record<string, string | number>;
+    /** The profile's OWN fields (`custom_fields`), rendered after the built-in ones and submitted under `custom`. */
+    readonly area?: DomainArea;
+    readonly customFields?: readonly CustomFieldSpec[];
   };
   /** Deep-link view + delete endpoint for the panel's "…" menu. */
   readonly shareView: "deployments" | "implementations";
@@ -1245,6 +1297,8 @@ function MineList<T extends { id: string; owner: string | null }>({
               endpoint={endpoint}
               fields={createConfig.fields}
               fixed={createConfig.fixed}
+              area={createConfig.area}
+              customFields={createConfig.customFields}
               groupChoices={groupChoices}
               groupNoun={grouping?.label.singular}
               authorEmail={authorEmail}
@@ -1355,6 +1409,8 @@ export function RefCreate({
   endpoint,
   fields,
   fixed,
+  area,
+  customFields = [],
   groupChoices = [],
   groupNoun = "group",
   authorEmail,
@@ -1366,6 +1422,9 @@ export function RefCreate({
   readonly fields: readonly RefCreateField[];
   /** Values of the fields this deployment hides; submitted as they are. */
   readonly fixed?: Record<string, string | number>;
+  /** The profile's OWN fields: after the built-in ones, validated as the API will, submitted under `custom`. */
+  readonly area?: DomainArea;
+  readonly customFields?: readonly CustomFieldSpec[];
   readonly groupChoices?: readonly { value: string; label: string }[];
   readonly groupNoun?: string;
   readonly authorEmail?: string;
@@ -1378,6 +1437,8 @@ export function RefCreate({
     ) as Record<string, string>;
   const [values, setValues] = useState<Record<string, string>>(initial);
   const [newGroup, setNewGroup] = useState("");
+  const [custom, setCustom] = useState<Record<string, string>>({});
+  const [customErrors, setCustomErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const set = (k: string, v: string) => setValues((p) => ({ ...p, [k]: v }));
@@ -1388,6 +1449,16 @@ export function RefCreate({
       setErr(`${missing.label} is required.`);
       return;
     }
+    // The same check the API runs, field by field, so each sentence lands under its own field.
+    const typed = Object.fromEntries(customFields.map((f) => [f.key, custom[f.key] ?? ""]));
+    const checked = area && customFields.length ? validateCustom(area, typed, { mode: "create", fields: [...customFields] }) : null;
+    if (area && checked && !checked.ok) {
+      const found = Object.fromEntries(customFields.flatMap((f) => { const e = customFieldError(area, f, typed[f.key], "create"); return e ? [[f.key, e]] : []; }));
+      setCustomErrors(found);
+      setErr(Object.keys(found).length === 1 ? Object.values(found)[0] : "Some fields need another look. Each one says what is wrong.");
+      return;
+    }
+    setCustomErrors({});
     setBusy(true);
     setErr(null);
     try {
@@ -1397,6 +1468,7 @@ export function RefCreate({
         if (f.kind === "number" && values[f.key]?.trim()) body[f.key] = Number(values[f.key]);
       }
       for (const k of Object.keys(body)) if (body[k] === "") delete body[k];
+      if (checked?.ok && Object.keys(checked.values).length) body.custom = checked.values;
       const res = await opsFetch<{ item: { id: string } }>(endpoint, { method: "POST", body: JSON.stringify(body) });
       onCreated(res.item.id);
     } catch (e) {
@@ -1454,7 +1526,20 @@ export function RefCreate({
             )}
           </Field>
         ))}
-        {err ? <p className={cn("text-red-400", TYPE.meta)}>{err}</p> : null}
+        {customFields.map((f) => (
+          <CustomFieldControl
+            key={f.key}
+            field={f}
+            value={custom[f.key] ?? ""}
+            error={customErrors[f.key]}
+            disabled={busy}
+            onChange={(v) => {
+              setCustom((p) => ({ ...p, [f.key]: v }));
+              if (customErrors[f.key]) setCustomErrors(({ [f.key]: _fixed, ...rest }) => rest);
+            }}
+          />
+        ))}
+        {err ? <p role="alert" className={cn("text-red-400", TYPE.meta)}>{err}</p> : null}
         <div className="flex items-center gap-2 pt-1">
           <OpsButton intent="primary" size="sm" disabled={busy} onClick={submit}>
             Create {noun}
@@ -1533,6 +1618,9 @@ function RefDetail({
   displayName,
   subtitle,
   edits,
+  area,
+  customFields = [],
+  custom,
   onSave,
   staticFields,
   related,
@@ -1553,7 +1641,11 @@ function RefDetail({
   readonly displayName: string | null;
   readonly subtitle?: string;
   readonly edits: readonly RefEdit[];
-  readonly onSave: (patch: Record<string, string>) => void;
+  /** The profile's OWN fields, after the built-in ones. A change is saved as `{ custom: { key: value | null } }`. */
+  readonly area?: DomainArea;
+  readonly customFields?: readonly CustomFieldSpec[];
+  readonly custom?: Record<string, string | number>;
+  readonly onSave: (patch: Record<string, unknown>) => void;
   readonly staticFields: readonly { label: string; value: string }[];
   readonly related: readonly ApiTodo[];
   readonly onAddSubtask: (title: string) => void;
@@ -1564,6 +1656,15 @@ function RefDetail({
   const ordered = [...related].sort(
     (a, b) => Date.parse(a.dueAt ?? a.createdAt) - Date.parse(b.dueAt ?? b.createdAt),
   );
+  const [customErrors, setCustomErrors] = useState<Record<string, string>>({});
+  // Saved on blur / on pick like the fields above it; a value the API would refuse is answered here, under the field.
+  const commitCustom = (f: CustomFieldSpec, typed: string) => {
+    const stored = custom?.[f.key];
+    if (typed === (stored == null ? "" : String(stored))) return;
+    const error = area ? customFieldError(area, f, typed, "update") : null;
+    setCustomErrors(({ [f.key]: _old, ...rest }) => (error ? { ...rest, [f.key]: error } : rest));
+    if (!error) onSave({ custom: { [f.key]: typed === "" ? null : typed } });
+  };
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <PanelHeader eyebrow={eyebrow ?? entity} slug={slug}>
@@ -1615,6 +1716,16 @@ function RefDetail({
                   />
                 )}
               </Field>
+            ))}
+            {customFields.map((f) => (
+              <CustomFieldControl
+                key={f.key}
+                field={f}
+                value={custom?.[f.key] == null ? "" : String(custom[f.key])}
+                error={customErrors[f.key]}
+                disabled={busy}
+                onCommit={(v) => commitCustom(f, v)}
+              />
             ))}
           </div>
         </PanelSection>

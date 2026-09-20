@@ -53,7 +53,7 @@
     "seed": null
   },
   "domains": {
-    "$comment": "The two record areas a deployment may REDEFINE rather than hide: what each is called, what its fields and enum values are shown as, which fields are not used (hidden; a hidden required field carries a fixed value the forms submit). Field keys are the real ones (agent/lib/customer-schema.ts, agent/lib/db/schema.ts) and option keys are real enum values; both are checked at build. These defaults are today's labels.",
+    "$comment": "The two record areas a deployment may REDEFINE rather than hide: what each is called, what its fields and enum values are shown as, which fields are not used (hidden; a hidden required field carries a fixed value the forms submit). Field keys are the real ones (agent/lib/customer-schema.ts, agent/lib/db/schema.ts) and option keys are real enum values; both are checked at build. custom_fields are the deployment's OWN fields on an area (key, label, type, required, options, help, show_in_list), stored by key in the table's `custom` column; the default declares none. These defaults are today's labels.",
     "deployments": {
       "label": {"singular": "Deployment", "plural": "Deployments"},
       "description": "Deployments, filtered by owner.",
@@ -62,6 +62,7 @@
       "kinds": [],
       "create_fields": [],
       "detail_fields": [],
+      "custom_fields": [],
       "fields": {
         "deploymentId": {"placeholder": "DEP-…"},
         "environment": {"label": "Environment"},
@@ -80,6 +81,7 @@
       "kinds": [],
       "create_fields": [],
       "detail_fields": [],
+      "custom_fields": [],
       "group_by": null,
       "group_label": {"singular": "Rollout", "plural": "Rollouts"},
       "fields": {

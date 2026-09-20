@@ -37,6 +37,14 @@ export const TICKET_CATEGORY_ROUTING: Record<TicketCategory, string> = {
 
 const percentSchema = z.number().min(0).max(100);
 const urlOrEmptySchema = z.string().url().or(z.literal(""));
+/**
+ * The deployment profile's own fields on a deployment / implementation record, by field key (the `custom` jsonb
+ * column). Only the SHAPE is checked here; which keys exist and what each accepts is the profile's, and
+ * system-of-record.ts runs agent/lib/custom-fields.ts on every write. null clears a key on an update.
+ */
+const customValuesSchema = z
+  .record(z.string(), z.union([z.string(), z.number(), z.null()]))
+  .describe("This deployment's own fields on the record, by field key. Only the keys its profile declares are accepted; send just the ones you are changing, null to clear one.");
 
 export const platformSchema = z.object({
   tenantId: z.string().min(1).optional(),
@@ -140,6 +148,7 @@ export const deploymentSchema = z.object({
   runbookUrl: z.string().url().optional(),
   lastTelemetryAt: z.string().optional(),
   notes: z.string().optional(),
+  custom: customValuesSchema.optional(),
 });
 
 export const solutionSchema = z.object({
@@ -298,6 +307,7 @@ export const implementationSchema = z.object({
   openBlockerCount: z.number().int().nonnegative().optional(),
   implementationNextStep: z.string().optional(),
   implementationLastUpdatedAt: z.string().optional(),
+  custom: customValuesSchema.optional(),
 });
 
 export const ticketSchema = z.object({

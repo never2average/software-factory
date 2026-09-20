@@ -102,7 +102,11 @@ function dbColumns(name) {
   return out;
 }
 const AREAS = { deployments: ["deploymentSchema", "deployments"], implementations: ["implementationSchema", "implementation"] };
-const SYSTEM_KEYS = ["orgId", "customerId", "displayName"];
+// `custom` is the jsonb column that holds the profile's OWN fields (custom_fields below): not a field to relabel.
+const SYSTEM_KEYS = ["orgId", "customerId", "displayName", "custom"];
+const CUSTOM_FIELD_KEYS = ["key", "label", "type", "required", "options", "help", "show_in_list"];
+const CUSTOM_FIELD_TYPES = ["text", "long_text", "number", "percent", "date", "email", "link", "pick_list"];
+const snake = (k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 const FIELD_SPEC_KEYS = ["label", "short_label", "help", "placeholder", "hidden", "fixed", "options"];
 const domainFields = {};
 for (const [area, [zodName, table]] of Object.entries(AREAS)) {
@@ -159,6 +163,30 @@ for (const area of Object.keys(AREAS)) {
     if (d.fields[d.kind_field]?.hidden) fail(`${at}.kind_field: "${d.kind_field}" is hidden`);
     if (!d.kinds.length) fail(`${at}.kinds must list the kinds when kind_field is set`);
   } else if (d.kinds.length) fail(`${at}.kind_field must name the field that carries the kinds`);
+  // custom_fields: the deployment's OWN fields on the area, stored by key in the table's `custom` column and
+  // validated on every write by agent/lib/custom-fields.ts. No built-in column is involved, so none may be shadowed.
+  if (!Array.isArray(d.custom_fields)) fail(`${at}.custom_fields must be a list of fields (an empty list when the area has none)`);
+  const builtIn = new Set([...Object.keys(known), ...SYSTEM_KEYS].flatMap((k) => [k, snake(k), k.toLowerCase()]));
+  const seenKeys = new Set(); const seenLabels = new Map();
+  d.custom_fields.forEach((f, i) => {
+    const here = `${at}.custom_fields[${i}]`;
+    if (!isObj(f)) fail(`${here} must be an object with a key, a label and a type`);
+    for (const k of Object.keys(f)) if (!CUSTOM_FIELD_KEYS.includes(k)) fail(`${here}.${k}: unknown key (a custom field takes ${CUSTOM_FIELD_KEYS.join(", ")})`);
+    if (typeof f.key !== "string" || !/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(f.key) || f.key.length > 40) fail(`${here}.key must be snake_case: lowercase letters, digits and single underscores, starting with a letter, at most 40 characters (for example "target_price")`);
+    if (builtIn.has(f.key)) fail(`${here}.key: "${f.key}" is already a built-in field of the ${AREAS[area][1]} table. Relabel that one under ${at}.fields, or pick another key`);
+    if (seenKeys.has(f.key)) fail(`${here}.key: "${f.key}" is declared twice in ${at}.custom_fields; a key names one field`);
+    seenKeys.add(f.key);
+    if (typeof f.label !== "string" || !f.label.trim()) fail(`${here}.label must be a non-empty string (what a person reads for "${f.key}")`);
+    if (seenLabels.has(f.label.trim().toLowerCase())) fail(`${here}.label: "${f.label}" is also the label of "${seenLabels.get(f.label.trim().toLowerCase())}"; two fields with one label cannot be told apart`);
+    seenLabels.set(f.label.trim().toLowerCase(), f.key);
+    if (!CUSTOM_FIELD_TYPES.includes(f.type)) fail(`${here}.type: ${JSON.stringify(f.type)} is not a field type. Use one of ${CUSTOM_FIELD_TYPES.join(", ")}`);
+    for (const k of ["required", "show_in_list"]) if (k in f && typeof f[k] !== "boolean") fail(`${here}.${k} must be true or false`);
+    if ("help" in f && (typeof f.help !== "string" || !f.help.trim())) fail(`${here}.help must be a non-empty string`);
+    if (f.type === "pick_list") {
+      if (!Array.isArray(f.options) || !f.options.length || f.options.some((o) => typeof o !== "string" || !o.trim())) fail(`${here}.options: a pick_list needs a non-empty list of choices, each a non-empty string`);
+      if (new Set(f.options.map((o) => o.trim().toLowerCase())).size !== f.options.length) fail(`${here}.options lists the same choice twice`);
+    } else if ("options" in f) fail(`${here}.options: only a pick_list has options ("${f.key}" is ${f.type})`);
+  });
   if (area === "implementations") {
     if (d.group_by !== null && (!known[d.group_by]?.column || known[d.group_by].type !== "text")) fail(`${at}.group_by: "${d.group_by}" must be a free-text column of the implementation table`);
     if (d.group_by !== null && d.fields[d.group_by]?.hidden) fail(`${at}.group_by: "${d.group_by}" is hidden`);
@@ -235,6 +263,22 @@ export interface DomainSpec {
   create_fields: string[];
   detail_fields: string[];
   fields: Record<string, DomainFieldSpec>;
+  /** The deployment's OWN fields on the area. Values live by key in the table's \`custom\` jsonb column. */
+  custom_fields: CustomFieldSpec[];
+}
+export type CustomFieldType = "text" | "long_text" | "number" | "percent" | "date" | "email" | "link" | "pick_list";
+export interface CustomFieldSpec {
+  /** snake_case, unique in the area, never a built-in column's name. The key the value is stored and sent under. */
+  key: string;
+  label: string;
+  type: CustomFieldType;
+  /** Enforced when a record is created, and against clearing afterwards. */
+  required?: boolean;
+  /** The choices of a pick_list (required for one, refused for any other type). */
+  options?: string[];
+  help?: string;
+  /** Also a column / a chip on the area's list, not only on the form and the detail card. */
+  show_in_list?: boolean;
 }
 export type DomainArea = "deployments" | "implementations";
 /** What a form needs to know about a field: read from agent/lib/customer-schema.ts and agent/lib/db/schema.ts. */

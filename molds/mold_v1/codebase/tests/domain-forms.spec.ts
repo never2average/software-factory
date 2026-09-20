@@ -62,7 +62,8 @@ test("equity-research example: relabelled fields, hidden ones gone, real values 
   const dep = page.getByTestId("form-deployments");
   await expect(dep.getByRole("heading", { name: "New coverage report" })).toBeVisible();
   const shown = await labels(page, "form-deployments");
-  expect(shown.slice(1)).toEqual(["Report id", "Period / basis", "Status", "Data quality", "Analyst", "Report type", "Results date", "Reviewer", "What changed / needs review"]);
+  // The built-in fields first, then the profile's OWN fields (custom_fields); a required one carries its marker.
+  expect(shown.slice(1)).toEqual(["Report id", "Period / basis", "Status", "Data quality", "Analyst", "Report type", "Results date", "Reviewer", "What changed / needs review", "Rating *", "Target price", "Data completeness", "Publish date", "Source filing", "Thesis in brief"]);
   for (const hidden of ["Region", "Environment"]) expect(shown).not.toContain(hidden);
   await expect(dep.locator("label", { hasText: /^Status/ }).locator("option")).toHaveText(["Published", "In progress", "Awaiting review", "Restated", "Failed"]);
   await expect(dep.locator("label", { hasText: "Data quality" }).locator("option")).toHaveText(["Complete", "Partial (values carried forward)", "Missing", "Unknown"]);
@@ -73,6 +74,29 @@ test("equity-research example: relabelled fields, hidden ones gone, real values 
   await dep.locator("label", { hasText: /^Status/ }).locator("select").selectOption({ label: "Awaiting review" });
   await dep.locator("label", { hasText: "Data quality" }).locator("select").selectOption({ label: "Partial (values carried forward)" });
   await dep.locator("label", { hasText: "Report type" }).locator("select").selectOption({ label: "Quarterly results update" });
+  // Custom fields: the right control per type, labelled; a bad value is answered under its field before any request.
+  const custom = (key: string) => dep.locator(`[data-custom-field="${key}"]`);
+  await expect(dep.getByLabel(/^Rating/)).toHaveJSProperty("tagName", "SELECT");
+  await expect(dep.getByLabel(/^Rating/)).toHaveAttribute("aria-required", "true");
+  await expect(custom("rating").locator("option")).toHaveText(["Choose…", "Buy", "Add", "Hold", "Reduce", "Sell"]);
+  await expect(dep.getByLabel("Target price")).toHaveAttribute("type", "number");
+  await expect(dep.getByLabel("Publish date")).toHaveAttribute("type", "date");
+  await expect(dep.getByLabel("Source filing")).toHaveAttribute("type", "url");
+  await expect(dep.getByLabel("Thesis in brief")).toHaveJSProperty("tagName", "TEXTAREA");
+  await expect(custom("target_price")).toContainText("In the listing currency, per share.");
+  await dep.getByLabel("Data completeness").fill("140");
+  await dep.getByLabel("Source filing").fill("ftp://example.com/q2.pdf");
+  await dep.getByRole("button", { name: "Create coverage report" }).click();
+  await expect(custom("rating").getByRole("alert")).toHaveText('"Rating" (rating) is required.');
+  await expect(custom("data_completeness").getByRole("alert")).toHaveText('"Data completeness" (data_completeness) is a percentage: it must be from 0 to 100.');
+  await expect(custom("source_link").getByRole("alert")).toContainText("must be a web link that starts with https:// or http://");
+  await expect(dep.getByLabel("Data completeness")).toHaveAttribute("aria-invalid", "true");
+  expect(seen.posts).toEqual([]);
+  await dep.getByLabel(/^Rating/).selectOption("Add");
+  await dep.getByLabel("Target price").fill("1250.5");
+  await dep.getByLabel("Data completeness").fill("85");
+  await dep.getByLabel("Publish date").fill("2026-07-31");
+  await dep.getByLabel("Source filing").fill("https://example.com/q2.pdf");
   await dep.getByRole("button", { name: "Create coverage report" }).click();
   await expect(page.getByTestId("created")).toHaveText("deployments:Q2FY26-results");
   expect(seen.posts[0]).toEqual({
@@ -85,19 +109,22 @@ test("equity-research example: relabelled fields, hidden ones gone, real values 
     runtime: "Quarterly results update",
     region: "ap-south-1",
     environment: "prod",
+    // Normalised by the shared validator: numbers are numbers, blank optional fields are not sent.
+    custom: { rating: "Add", target_price: 1250.5, data_completeness: 85, publish_date: "2026-07-31", source_link: "https://example.com/q2.pdf" },
   });
 
   // Portfolios: "New" picks an existing portfolio or names one; the name is stored as its slug in rolloutId.
   const imp = page.getByTestId("form-implementations");
   await expect(imp.getByRole("heading", { name: "New portfolio entry" })).toBeVisible();
-  expect((await labels(page, "form-implementations")).slice(1)).toEqual(["Portfolio", "Build-out stage", "Risk", "Analyst"]);
+  expect((await labels(page, "form-implementations")).slice(1)).toEqual(["Portfolio", "Build-out stage", "Risk", "Analyst", "Benchmark", "Next rebalance"]);
   await expect(imp.locator("label", { hasText: "Build-out stage" }).locator("option").first()).toHaveText("Not started");
   await expect(imp.locator("label", { hasText: "Risk" }).locator("option")).toHaveText(["Green", "Yellow", "Red"]);
   await imp.locator("label").first().locator("select").selectOption("aavas");
   await imp.locator("label", { hasText: "Portfolio" }).locator("select").selectOption({ label: "New portfolio…" });
   await imp.getByPlaceholder("Name the portfolio").fill("Affordable housing");
   await imp.locator("label", { hasText: "Build-out stage" }).locator("select").selectOption({ label: "Filings ingested" });
+  await imp.getByLabel("Benchmark").fill("Nifty Financial Services");
   await imp.getByRole("button", { name: "Create portfolio entry" }).click();
   await expect(page.getByTestId("created")).toContainText("implementations:aavas");
-  expect(seen.posts[1]).toEqual({ area: "implementations", customerId: "aavas", rolloutId: "affordable-housing", implementationStage: "Configuration", implementationRiskLevel: "Green" });
+  expect(seen.posts[1]).toEqual({ area: "implementations", customerId: "aavas", rolloutId: "affordable-housing", implementationStage: "Configuration", implementationRiskLevel: "Green", custom: { benchmark: "Nifty Financial Services" } });
 });

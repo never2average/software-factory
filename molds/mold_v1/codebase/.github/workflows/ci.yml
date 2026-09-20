@@ -129,6 +129,19 @@ jobs:
       - name: Vocabulary comes from the deployment profile
         run: npm run check:vocabulary
 
+      # The profile generator's rules (including custom_fields) and the per-turn briefing. It existed and was not
+      # wired in; the custom-field checks below lean on it, so both run.
+      - name: Deployment profile (generator rules, briefing)
+        if: always()
+        run: npm run test:deployment-profile
+
+      # A profile's OWN fields on the two record areas: the one validator every write path shares, the agent's
+      # write path, the MCP tool inputs, the migration, and a ratchet that a new writer of the two tables
+      # cannot skip the validator.
+      - name: Profile custom fields (validator, write paths, migration)
+        if: always()
+        run: npm run test:custom-fields
+
       # Each deployment publishes its own agent package (docs/AGENT_CLI.md). This builds real ones and proves the
       # safety gate keeps secrets, operator rulebooks and other deployments' addresses out of a public package.
       - name: Per-deployment agent package builds, and its safety gate holds

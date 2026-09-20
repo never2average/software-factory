@@ -5,7 +5,8 @@ import { customers, implementation, solutions } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
-import { pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { asCustomValues } from "@/agent/lib/custom-fields";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 
 /**
@@ -30,6 +31,8 @@ const createSchema = z.object({
   displayName: z.string().trim().optional().nullable(),
   // Any other single-value column, for a deployment profile that puts it on the "New …" form (`domains`).
   ...profileFieldSchemas("implementations", ["implementationOwnerEmail"]),
+  // The profile's OWN fields (`custom_fields`), by key. Checked below by the shared validator, not by zod.
+  custom: customBodySchema,
 });
 
 export async function POST(request: NextRequest) {
@@ -41,14 +44,23 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
+  const { custom: customInput, ...data } = parsed.data;
   try {
+    // This route is an UPSERT, so whether the custom fields are a create (required ones enforced) or a partial
+    // change merged onto the stored ones depends on the row being there. Read inside the caller's scope.
+    const [existing] = await withOrgRls(ctx.orgId, (tx) =>
+      tx.select({ custom: implementation.custom }).from(implementation).where(eq(implementation.customerId, data.customerId)),
+    );
+    const checked = customForWrite("implementations", customInput, existing ?? null);
+    if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
+    const written = { ...data, ...(checked.custom ? { custom: checked.custom } : {}) };
     const values = {
-      ...parsed.data,
+      ...written,
       // Stamp the tenant — a NULL org_id matches no workspace under the
       // org_isolation policy, so the row would be written yet invisible.
       orgId: ctx.orgId,
-      implementationOwnerEmail: parsed.data.implementationOwnerEmail || null,
-      displayName: parsed.data.displayName || null,
+      implementationOwnerEmail: data.implementationOwnerEmail || null,
+      displayName: data.displayName || null,
       // NOT NULL with no DB default — empty means "no blocker owner yet".
       blockerOwner: "",
     };
@@ -65,7 +77,7 @@ export async function POST(request: NextRequest) {
           // Never blank a field the caller didn't mention; blockerOwner in
           // particular is ours, not theirs, and would wipe a real owner.
           set: Object.fromEntries(
-            Object.entries(parsed.data).filter(([k, v]) => k !== "customerId" && v !== undefined),
+            Object.entries(written).filter(([k, v]) => k !== "customerId" && v !== undefined),
           ),
         })
         .returning(),
@@ -145,6 +157,8 @@ export async function GET(request: NextRequest) {
       goLiveDate: r.actualGoLiveDate ?? r.targetGoLiveDate ?? null,
       // The columns this deployment's profile shows or edits beyond the defaults ({} for the default profile).
       fields: pickProfileFields("implementations", r),
+      // The values of the profile's own fields (`custom_fields`), by key.
+      custom: asCustomValues(r.custom),
       // V1 go-live readiness gates — powers the collaborative readiness board.
       readiness: {
         data: r.dataReadinessPct ?? null,

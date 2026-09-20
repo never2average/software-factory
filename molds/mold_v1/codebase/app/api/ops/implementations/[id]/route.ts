@@ -5,7 +5,7 @@ import { implementation } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordFieldChanges } from "@/lib/ops-activity";
 import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
-import { profileFieldLabel, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { customBodySchema, customFieldChanges, customForWrite, profileFieldLabel, profileFieldSchemas } from "@/lib/ops-domain-fields";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +31,8 @@ const patchSchema = z.strictObject({
   blockerOwner: z.enum(["Provider", "Customer", "Third-Party Vendor", "None"]).optional(),
   // Any other single-value column, for a deployment profile that puts it on the detail card (`domains`).
   ...profileFieldSchemas("implementations", ["implementationOwnerEmail", "implementationStage", "implementationRiskLevel"]),
+  // The profile's OWN fields (`custom_fields`): a PARTIAL change, merged onto what is stored; null clears a key.
+  custom: customBodySchema,
 });
 
 const stringOrNull = (v: unknown): string | null => (v == null ? null : String(v));
@@ -53,7 +55,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: zodMessage(parsed.error) }, { status: 400 });
-  const { customerId, actor = "web", ...set } = parsed.data as { customerId: string; actor?: string } & Record<string, unknown>;
+  const { customerId, actor = "web", custom: customInput, ...set } = parsed.data as { customerId: string; actor?: string; custom?: unknown } & Record<string, unknown>;
+  if (customInput != null) set.custom = customInput;
   if (Object.keys(set).length === 0) return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   if (!(await customerInOrg(octx.orgId, customerId))) {
     return NextResponse.json({ error: "Not your workspace's customer." }, { status: 403 });
@@ -62,6 +65,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const [before] = await withOrgRls(octx.orgId, (tx) =>
       tx.select().from(implementation).where(eq(implementation.customerId, customerId)),
     );
+    if (before && "custom" in set) {
+      const checked = customForWrite("implementations", set.custom, before);
+      if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
+      set.custom = checked.custom;
+    }
     const [item] = await withOrgRls(octx.orgId, (tx) =>
       tx
         .update(implementation)
@@ -79,8 +87,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           { label: profileFieldLabel("implementations", "implementationStage", "Stage"), before: before.implementationStage, after: item.implementationStage },
           { label: profileFieldLabel("implementations", "implementationRiskLevel", "Risk"), before: before.implementationRiskLevel, after: item.implementationRiskLevel },
           ...Object.keys(set)
-            .filter((k) => !["implementationOwnerEmail", "implementationStage", "implementationRiskLevel", "displayName"].includes(k))
+            .filter((k) => !["implementationOwnerEmail", "implementationStage", "implementationRiskLevel", "displayName", "custom"].includes(k))
             .map((k) => ({ label: profileFieldLabel("implementations", k, k), before: stringOrNull((before as Record<string, unknown>)[k]), after: stringOrNull((item as Record<string, unknown>)[k]) })),
+          ...("custom" in set ? customFieldChanges("implementations", before.custom, item.custom) : []),
         ],
       );
     }

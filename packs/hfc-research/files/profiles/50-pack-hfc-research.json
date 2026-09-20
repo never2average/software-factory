@@ -282,7 +282,55 @@
         "lastTelemetryAt": {
           "hidden": true
         }
-      }
+      },
+      "custom_fields": [
+        {
+          "key": "rating",
+          "label": "Rating",
+          "type": "pick_list",
+          "options": [
+            "Buy",
+            "Add",
+            "Hold",
+            "Reduce",
+            "Sell",
+            "Not rated"
+          ],
+          "show_in_list": true
+        },
+        {
+          "key": "target_price",
+          "label": "Target price (₹)",
+          "type": "number",
+          "help": "Per share. Leave blank for a debt-listed company.",
+          "show_in_list": true
+        },
+        {
+          "key": "kpi_completeness",
+          "label": "KPI table completeness",
+          "type": "percent",
+          "help": "Share of the standard quarterly KPI table filled and cited for this period.",
+          "show_in_list": true
+        },
+        {
+          "key": "aum_cr",
+          "label": "AUM (₹ crore)",
+          "type": "number",
+          "help": "As reported for the period, after unit conversion."
+        },
+        {
+          "key": "gnpa_pct",
+          "label": "Gross NPA",
+          "type": "percent",
+          "help": "Gross stage 3 as a share of the loan book, as reported."
+        },
+        {
+          "key": "source_filing",
+          "label": "Source filing",
+          "type": "link",
+          "help": "The exchange filing or presentation the report rests on."
+        }
+      ]
     },
     "implementations": {
       "label": {
@@ -456,7 +504,26 @@
         "providerLaunchApproverEmail": {
           "hidden": true
         }
-      }
+      },
+      "custom_fields": [
+        {
+          "key": "coverage_priority",
+          "label": "Priority",
+          "type": "pick_list",
+          "options": [
+            "Core",
+            "Watch",
+            "Passive"
+          ],
+          "show_in_list": true
+        },
+        {
+          "key": "next_review",
+          "label": "Next review",
+          "type": "date",
+          "show_in_list": true
+        }
+      ]
     }
   }
 }

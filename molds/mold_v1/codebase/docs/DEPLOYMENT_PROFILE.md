@@ -112,6 +112,7 @@ submits `releaseStatus: "deployed"`, whatever the person read. (Hiding an area i
 | `domains.<area>.fields.<fieldKey>` | One entry per field you want to say something about; see below. `<fieldKey>` is a real field: a key of `deploymentSchema` / `implementationSchema` (`agent/lib/customer-schema.ts`) or a column of the table (`agent/lib/db/schema.ts`). | today's labels for the fields the UI shows |
 | `domains.<area>.kind_field` + `.kinds` | A free-text column that carries one of `kinds` (a report type, a release type). Shown as a select of exactly those strings; the string itself is what is stored. An enum column cannot be used: its values are fixed by the schema. | `null` / `[]` |
 | `domains.<area>.create_fields` / `.detail_fields` | Extra real columns on the "New …" form / the detail card, after the built-in ones. Typed from the schema: an enum is a select, a percentage or number a number input, anything else text. List-valued columns cannot be put on a form. | `[]` / `[]` |
+| `domains.<area>.custom_fields` | The deployment's OWN fields on the area: fields the base never had. See [Custom fields](#custom-fields). | `[]` |
 | `domains.implementations.group_by` | A free-text column whose value groups the rows (in practice `rolloutId`). The tab is then titled with `group_label.plural`, the list gets a header per group (name, owner, how many, average progress), "New" picks an existing group or names a new one (stored as a slug: "Affordable housing" is `affordable-housing`), and the row's id becomes the customer id because many rows now share a `rolloutId`. | `null` |
 | `domains.implementations.group_label.singular` / `.plural` | What a group is called. | `"Rollout"` / `"Rollouts"` |
 
@@ -131,6 +132,110 @@ column, "Status" as a sort). Each of those spots keeps its own word until a prof
 from then on all of them show the profile's (`short_label` in the narrow ones). The same holds for enum values: a
 table cell still shows the raw `deployed` until `options` differs from the default. So `profiles/00-default.json`
 alone changes nothing a person sees.
+
+### Custom fields
+
+Relabelling a built-in column only goes so far: a coverage report has a rating and a target price, a site visit
+has an inspection date and a permit, and no column of the base means either. `domains.<area>.custom_fields`
+declares such fields. They are shown and edited like any other field, but they are **not columns**: every value
+lives, by the field's `key`, in one `custom` jsonb column on the area's table (`deployments.custom`,
+`implementation.custom`; migration `drizzle/0017_record_custom_fields.sql`). A profile therefore never needs a
+migration, and two deployments of the same code can declare entirely different fields.
+
+```json
+"custom_fields": [
+  { "key": "rating", "label": "Rating", "type": "pick_list", "options": ["Buy", "Hold", "Sell"], "required": true, "show_in_list": true },
+  { "key": "target_price", "label": "Target price", "type": "number", "help": "Per share, in the listing currency." }
+]
+```
+
+| Key | Meaning |
+|---|---|
+| `key` | What the value is stored and sent under. snake_case (lowercase letters, digits, single underscores; starts with a letter; at most 40 characters), unique in the area, and never the name of a built-in field in either spelling (`region`, `deployment_id` and `deploymentId` are all refused: relabel the built-in one under `fields` instead). **Do not rename a key once records carry it**: the values stay under the old key. |
+| `label` | What people read. Unique in the area. |
+| `type` | One of the types below. |
+| `required` | `true`: a record cannot be CREATED without it, and it cannot be cleared afterwards. A record that predates the field can still be edited. |
+| `options` | The choices of a `pick_list`: a non-empty list of distinct strings. Required for a `pick_list`, refused for any other type. The string is what is stored. |
+| `help` | A line under the input. |
+| `show_in_list` | `true`: also a column of the area's table view, and matched by its search. |
+
+| `type` | Accepts | Stored as | Input |
+|---|---|---|---|
+| `text` | one line, up to 500 characters | string, trimmed | text |
+| `long_text` | up to 20,000 characters | string | textarea |
+| `number` | a finite number; `"1,250.50"` is read as 1250.5 | number | number |
+| `percent` | a number from 0 to 100; `"85%"` is read as 85 | number | number, 0 to 100 |
+| `date` | a real calendar date, `yyyy-mm-dd` | string | date picker |
+| `email` | an email address | string | email |
+| `link` | an `http://` or `https://` address, nothing else | string (normalised URL) | url |
+| `pick_list` | one of `options`, matched without regard to case | the option as the profile spells it | select |
+
+**One validator, every write path.** `agent/lib/custom-fields.ts` (`validateCustom`) takes the area, a `custom`
+object and whether this is a create or an update, and returns the values to store or plain sentences
+(`"Data completeness" (data_completeness) is a percentage: it must be from 0 to 100.`). It is what runs in:
+
+- the Ops API: `POST /api/ops/deployments`, `PATCH /api/ops/deployments/:id`, `POST /api/ops/implementations`
+  (an upsert: a create or an update depending on whether the row exists), `PATCH /api/ops/implementations/:id`.
+  The body gains `custom: { "<key>": <value> }`; a refusal is a 400 with the sentences;
+- the agent: `upsert_customer` carries `deployments[].custom` / `implementation.custom`
+  (`applyCustomFields` in `agent/lib/system-of-record.ts`), and a refusal is the tool's error, written nothing;
+- the MCP tools `deployment_upsert` / `implementation_upsert` (`setup/fde-tools.mjs`), which go through the Ops
+  API. The hosted endpoint (`/api/mcp`) names this deployment's fields in the `custom` input's description; the
+  stdio package does not read the profile, so it describes `custom` generically, and the API's refusal of an
+  unknown key lists the real ones with their types;
+- the forms, before the request, so a person reads the same sentence under the field.
+
+The rules are the same everywhere: an undeclared key is **refused**, never dropped silently; an update is a
+**partial change** merged onto what is stored (send only the keys you are changing; `null` or `""` clears one);
+a stored key the profile no longer declares is carried through untouched, because narrowing a profile must not
+delete what people entered. Reads return the values: `custom` on every item of `GET /api/ops/deployments` and
+`GET /api/ops/implementations` (so `deployment_list` / `implementation_list`), and on the records
+`get_customer` returns (left out when empty, so the default deployment's records read exactly as before).
+
+**In the UI** the custom fields come after the built-in ones on the "New …" form and on the detail card, each
+with the input for its type, a `*` on a required one, its help, and its error tied to the input
+(`aria-describedby`, `role="alert"`). The detail card saves on blur or on pick, like its neighbours. A changed
+value is a line in the record's activity feed under the field's label.
+
+**The model** is told, in the per-turn block, where the values live and what each field accepts:
+`` Own fields, by key in `deployments[].custom` (send only changed keys; null clears; other keys are refused):
+`rating`="Rating" (Buy|Hold|Sell; required), `target_price`="Target price" (number) ``.
+
+**The default profile declares none** (`"custom_fields": []` on both areas), so the default deployment shows,
+stores and tells the model nothing new.
+
+Not covered: the data-room workbook sheets (`Master.xlsx`) and the account report do not show custom fields, and
+they cannot be sorted or filtered on in the list.
+
+#### A non-research example: site visits
+
+A field-service deployment that uses implementations as "Site visits":
+
+```json
+{
+  "domains": {
+    "implementations": {
+      "label": { "singular": "Site visit", "plural": "Site visits" },
+      "description": "One row per site: where the install stands and what the last inspection found.",
+      "custom_fields": [
+        { "key": "inspection_date", "label": "Inspection date", "type": "date", "required": true, "show_in_list": true },
+        { "key": "inspector_email", "label": "Inspector", "type": "email" },
+        { "key": "permit_link", "label": "Permit", "type": "link", "help": "The council's page for this permit." },
+        { "key": "snag_clearance", "label": "Snags cleared", "type": "percent", "show_in_list": true },
+        { "key": "access", "label": "Site access", "type": "pick_list", "options": ["Open", "Escorted", "Out of hours only"] },
+        { "key": "findings", "label": "Findings", "type": "long_text" }
+      ]
+    }
+  }
+}
+```
+
+`POST /api/ops/implementations` with `{"customerId": "harbour-st", "custom": {"inspection_date": "2026-10-02", "snag_clearance": "80%"}}`
+stores `{"inspection_date": "2026-10-02", "snag_clearance": 80}`; a later
+`PATCH … {"customerId": "harbour-st", "custom": {"access": "escorted"}}` stores
+`{"inspection_date": "2026-10-02", "snag_clearance": 80, "access": "Escorted"}`; and
+`{"custom": {"inspection_date": null}}` is refused: *"Inspection date" (inspection_date) is required, so it
+cannot be cleared.*
 
 ### `agent`
 
@@ -229,7 +334,9 @@ The block states vocabulary as a *reading rule*, because the identifiers do not 
   display words with their values (`"Published" is deployed`), leaving out words that only differ from the value
   in case; and the unused fields, with the fixed values to write in the required ones. Up to eight unused fields
   are named; beyond that the block names four and states the rule ("use only the fields named above"), because
-  a list of 37 field names would be paid for on every turn. An area left at its defaults adds nothing;
+  a list of 37 field names would be paid for on every turn. Its own fields (`custom_fields`): where they are
+  written (`deployments[].custom` / `implementation.custom`), and each key with its label, type, choices and
+  whether it is required. An area left at its defaults adds nothing;
 - then `agent.briefing`, verbatim.
 
 For the default profile the function returns **`null`** and nothing is appended: the
@@ -403,6 +510,14 @@ anything that joins or de-duplicates on them. `notes` is wanted for prose. `runt
 whose meaning is already "what kind of thing this is" (a category that repeats across rows by design), nothing in
 the code keys on it, and the research desk has no other use for it. It is therefore relabelled, not hidden.
 
+**Fields the base never had.** The example also declares `custom_fields` (see [Custom fields](#custom-fields)).
+A coverage report gets `rating` (a required pick list: Buy / Add / Hold / Reduce / Sell), `target_price` (number),
+`data_completeness` (percent), `publish_date` (date), `source_link` (link) and `thesis` (long text); the first
+three are columns of the list. A portfolio entry gets `benchmark` (text, a column) and `next_rebalance` (date).
+None of them is a column of the base, and none needed a migration beyond the one `custom` column. The report's
+*period* stays on `deployedVersion` ("Period / basis"): it is required, every report has one, and the built-in
+column already sorts and composes the row's title.
+
 **One company, one portfolio.** `implementation.customer_id` is the table's primary key, so a company has one
 row and is in one portfolio at a time; "New portfolio entry" for a company that already has a row moves it.
 A company in two portfolios needs a composite key, which is a change to the data model, not to a profile.
@@ -415,6 +530,7 @@ company. The list keys such rows on customer + id and sends the real id to the A
 ```bash
 npm run build:deployment-profile   # merge + validate + write both generated files
 npm run test:deployment-profile    # merge rules, domains (defaults exact, example validates, bad profiles fail), the briefing; offline
+npm run test:custom-fields         # the custom-field validator, the agent's write path, the MCP inputs, the migration; offline
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
 npm run check:generated            # fails if a generated file is stale
 npm run typecheck

@@ -71,4 +71,7 @@ specialist's result. The "This deployment" block explains how their fields and s
       required source was `not_found`
     - what changed and what needs review
   - Set "Published" only when a person says it is reviewed.
+  - Its own fields (listed in the "This deployment" block): fill KPI table completeness, AUM, gross NPA and
+    the source filing from the validated KPI table and its citations, never from memory. Rating and target
+    price are an analyst's judgement: record them only when an analyst states them, and never propose one.
 - Never invent a portfolio. Put a company in the portfolio an analyst names. If nobody has named one, ask once.

@@ -87,6 +87,7 @@
     "fde:seed-subagent-rows": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/fde/seed-subagent-rows.mjs",
     "build:deployment-profile": "node scripts/gen-deployment-profile.mjs",
     "test:deployment-profile": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-profile.mjs",
+    "test:custom-fields": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-custom-fields.mjs",
     "test:session-scope": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-session-scope.mjs",
     "test:email-html": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-email-html.mjs",
     "test:tool-call-ids": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-unique-tool-call-ids.mjs",

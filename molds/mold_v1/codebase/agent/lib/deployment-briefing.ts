@@ -9,7 +9,7 @@
  *
  * Returns null when the profile is the default one: the default deployment's prompt is unchanged.
  */
-import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, type DeploymentProfile, type DomainArea } from "./deployment-profile.generated.ts";
+import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, type CustomFieldSpec, type DeploymentProfile, type DomainArea } from "./deployment-profile.generated.ts";
 
 const DEFAULT_ACCOUNT = "customer";
 const DEFAULT_MEMBER = "FDE";
@@ -54,6 +54,13 @@ export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfil
     if (f.hidden || !f.options || same(f.options, def.fields[k]?.options)) continue;
     const changed = Object.entries(f.options).filter(([value, label]) => plain(value) !== plain(label));
     if (changed.length) lines.push(`  - \`${k}\`: ${changed.map(([value, label]) => `"${label}" is ${value}`).join(", ")}.`);
+  }
+  // The deployment's OWN fields: not columns, so the model has to be told where they go and what each accepts.
+  if (spec.custom_fields.length) {
+    const at = area === "deployments" ? "deployments[].custom" : "implementation.custom";
+    // Terse on purpose (this is paid for on every turn): `key`="Label" (type or choices; required).
+    const brief = (f: CustomFieldSpec) => `\`${f.key}\`="${f.label}" (${f.type === "pick_list" ? (f.options ?? []).join("|") : f.type === "date" ? "yyyy-mm-dd" : f.type === "percent" ? "percent 0-100" : f.type === "link" ? "http(s)-link" : f.type}${f.required ? "; required" : ""})`;
+    lines.push(`  - Own fields, by key in \`${at}\` (send only changed keys; null clears; other keys are refused): ${spec.custom_fields.map(brief).join(", ")}.`);
   }
   const hidden = fields.filter(([, f]) => f.hidden);
   if (hidden.length) {

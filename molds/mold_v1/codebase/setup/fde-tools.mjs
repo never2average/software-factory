@@ -18,6 +18,9 @@
  *   opsUrl / webOrigin        THIS deployment's address. Never a default: a host
  *                             that does not know its address must not guess one.
  *   readSpec()                the text of dm.md
+ *   customFields              optional { deployments: [...], implementations: [...] }: the fields this
+ *                             deployment's profile declares on the two record areas (custom_fields). The
+ *                             hosted endpoint knows them; the package does not and describes `custom` generically
  *   blobStore()               optional direct blob store (package, inside the repo)
  *   parseClaudeTranscript /   optional transcript redactor; the session tools are
  *   sessionToSyncItem         withheld without it rather than advertised and failing
@@ -30,6 +33,25 @@ import { createHash } from "node:crypto";
 
 export function createTools(ctx) {
   const api = ctx.api;
+  /**
+   * The `custom` input of the two record-area write tools: this deployment's OWN fields, by key. The Ops API
+   * validates it (agent/lib/custom-fields.ts) and answers an unknown key with the list of real ones, so a host
+   * that cannot name the fields up front still leads the caller to them in one round trip.
+   */
+  const customInput = (area, listTool) => {
+    const fields = ctx.customFields?.[area];
+    const named = (f) => `${f.key} ("${f.label}", ${f.type === "pick_list" ? `one of ${(f.options ?? []).join(" | ")}` : f.type === "date" ? "date yyyy-mm-dd" : f.type === "percent" ? "percent 0-100" : f.type === "link" ? "http(s) link" : f.type.replace("_", " ")}${f.required ? ", required on create" : ""})`;
+    const which = !fields
+      ? `Which keys exist is decided by this deployment's profile: ${listTool} shows the ones in use under \`custom\`, and an unknown key is refused with the list of valid ones and their types.`
+      : fields.length
+        ? `The fields here: ${fields.map(named).join("; ")}.`
+        : "This deployment declares none, so leave it out.";
+    return {
+      type: "object",
+      additionalProperties: { type: ["string", "number", "null"] },
+      description: `This deployment's own fields on the record, by field key. Send only the keys you are changing: the rest are kept, and null clears one. ${which}`,
+    };
+  };
   /** A direct blob store, or null when this host reaches the data room through the Ops API. */
   const blob = () => ctx.blobStore?.() ?? null;
   const hasBlob = () => Boolean(blob());
@@ -598,6 +620,7 @@ const TOOLS = [
         implementationProgressPct: { type: "number" },
         implementationOwnerEmail: { type: "string" },
         displayName: { type: "string" },
+        custom: customInput("implementations", "implementation_list"),
       },
       required: ["customerId"],
     },
@@ -618,6 +641,7 @@ const TOOLS = [
         healthStatus: { type: "string" },
         deployOwnerEmail: { type: "string" },
         displayName: { type: "string" },
+        custom: customInput("deployments", "deployment_list"),
       },
       required: ["customerId"],
     },
@@ -657,7 +681,7 @@ const TOOLS = [
   },
   {
     name: "implementation_list",
-    description: "Every customer rollout with its stage, risk, progress and owner. The read path for implementation_upsert — use it to confirm a write landed, and to see a customer's rollout state before changing it. The customer id comes back as `customer`.",
+    description: "Every customer rollout with its stage, risk, progress and owner, plus `custom`: the values of this deployment's own fields, by key. The read path for implementation_upsert — use it to confirm a write landed, and to see a customer's rollout state before changing it. The customer id comes back as `customer`.",
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
       const { items = [] } = await api("GET", "/api/ops/implementations");
@@ -669,7 +693,7 @@ const TOOLS = [
   },
   {
     name: "deployment_list",
-    description: "Every deployment record with its environment, version, release and health status. The read path for deployment_upsert.",
+    description: "Every deployment record with its environment, version, release and health status, plus `custom`: the values of this deployment's own fields, by key. The read path for deployment_upsert.",
     inputSchema: { type: "object", properties: {} },
     handler: async () => json((await api("GET", "/api/ops/deployments")).items),
   },

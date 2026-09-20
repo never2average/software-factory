@@ -208,6 +208,8 @@ export interface ApiRefDeployment {
   lastDeployAt: string | null;
   /** Columns the deployment profile shows beyond the defaults (`domains.deployments`); {} for the default profile. */
   fields?: Record<string, string | number | null>;
+  /** The values of the profile's OWN fields (`custom_fields`), by key. */
+  custom?: Record<string, string | number>;
   /** Set by the list when two customers share a deployment id: `id` is then customer + id, this is the real one. */
   recordId?: string;
 }
@@ -228,6 +230,8 @@ export interface ApiRefImplementation {
   goLiveDate: string | null;
   /** Columns the deployment profile shows beyond the defaults (`domains.implementations`); {} for the default profile. */
   fields?: Record<string, string | number | null>;
+  /** The values of the profile's OWN fields (`custom_fields`), by key. */
+  custom?: Record<string, string | number>;
 }
 
 /** One FDE roster row — the org graph the TODO scope filters resolve against. */

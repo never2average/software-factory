@@ -51,6 +51,8 @@ import {
 } from "./db/schema.ts";
 import { getDataroomStore } from "./dataroom-store.ts";
 import { orgForCustomer } from "./org-context.ts";
+import { asCustomValues, customFieldsOf, validateCustom } from "./custom-fields.ts";
+import type { CustomFieldSpec } from "./deployment-profile.generated.ts";
 
 export type FollowUp = Ticket;
 
@@ -103,6 +105,9 @@ function stripNulls(row: Record<string, unknown>): Record<string, unknown> {
 /** Nested-domain row -> plain entity candidate (drop the FK, strip NULLs). */
 function rowToEntity(row: Record<string, unknown>): Record<string, unknown> {
   const { customerId: _customerId, ...rest } = row;
+  // `custom` is NOT NULL DEFAULT '{}': a record with no profile-declared values reads exactly as it did before
+  // the column existed.
+  if (rest.custom && typeof rest.custom === "object" && Object.keys(rest.custom).length === 0) delete rest.custom;
   return stripNulls(rest);
 }
 
@@ -144,10 +149,11 @@ export function customerToDbRows(customer: Customer): {
   return {
     customer: fullRow(customersTable, { customerId: id, customerName: name, ...scalar }),
     platform: platform ? fullRow(platformTable, { customerId: id, ...platform }) : null,
-    deployments: (deployments ?? []).map((d) => fullRow(deploymentsTable, { customerId: id, ...d })),
+    // `custom` is NOT NULL, so an absent one is {} rather than fullRow's null.
+    deployments: (deployments ?? []).map((d) => fullRow(deploymentsTable, { customerId: id, ...d, custom: asCustomValues(d.custom) })),
     solutions: (solutions ?? []).map((s) => fullRow(solutionsTable, { customerId: id, ...s })),
     implementation: implementation
-      ? fullRow(implementationTable, { customerId: id, ...implementation })
+      ? fullRow(implementationTable, { customerId: id, ...implementation, custom: asCustomValues(implementation.custom) })
       : null,
     tickets: (tickets ?? []).map((t) => fullRow(ticketsTable, { customerId: id, ...t })),
     interactions: (interactions ?? []).map((i) =>
@@ -241,7 +247,13 @@ export async function writeCustomerToPostgres(
 ): Promise<void> {
   const valid = customerSchema.parse(customer);
   const rows = customerToDbRows(valid);
-  if (orgId) (rows.customer as Record<string, unknown>).orgId = orgId;
+  // The workspace goes on EVERY row, not only the customer's. The nested tables carry their own NOT NULL org_id
+  // under the same org_isolation policy, so an unstamped deployment / implementation row is refused by the
+  // database (42501) and the whole upsert rolls back: upsert_customer could write a customer, never its records.
+  if (orgId) {
+    const nested = [rows.customer, rows.platform, rows.implementation, ...rows.deployments, ...rows.solutions, ...rows.tickets, ...rows.interactions];
+    for (const row of nested) if (row && "orgId" in row) (row as Record<string, unknown>).orgId = orgId;
+  }
   await db.transaction(async (tx) => {
     /**
      * The scope is set INSIDE the existing transaction, not by wrapping it.
@@ -400,14 +412,53 @@ export async function getCustomer(id: string, orgId?: string | null): Promise<Cu
   return customers.find((c) => c.id === id) ?? null;
 }
 
+/**
+ * The profile's custom fields on the records a patch carries (agent/lib/custom-fields.ts), before anything is
+ * written. A patch REPLACES `deployments[]` and `implementation` wholesale, but `custom` follows the rule every
+ * write path shares: a record that already exists keeps the custom values the patch does not mention, a new one
+ * must carry the required ones, an undeclared key is refused. Throws the plain sentences; the model reads them.
+ */
+export function applyCustomFields(
+  patch: CustomerPatch,
+  existing: Customer | null,
+  /** The areas' declared fields; this build's profile unless a test passes another's. */
+  declared: Record<"deployments" | "implementations", CustomFieldSpec[]> = { deployments: customFieldsOf("deployments"), implementations: customFieldsOf("implementations") },
+): CustomerPatch {
+  const errors: string[] = [];
+  const check = (area: "deployments" | "implementations", what: string, custom: unknown, prev: { custom?: unknown } | undefined) => {
+    // Nothing declared and nothing sent: the record is written exactly as it was before custom fields existed.
+    if (custom === undefined && !prev?.custom && declared[area].length === 0) return undefined;
+    const result = validateCustom(area, custom, prev ? { mode: "update", existing: prev.custom, fields: declared[area] } : { mode: "create", fields: declared[area] });
+    // No values and none stored before: leave `custom` off, so a record nobody gave an own value to reads back as
+    // it was written whether or not the profile declares fields (an explicit clear of stored values still writes {}).
+    if (result.ok) return Object.keys(result.values).length === 0 && !prev?.custom ? undefined : result.values;
+    errors.push(...result.errors.map((e) => `${what}: ${e}`));
+    return undefined;
+  };
+  const out = { ...patch };
+  if (patch.deployments) {
+    out.deployments = patch.deployments.map((d) => {
+      const custom = check("deployments", d.deploymentId, d.custom, existing?.deployments?.find((p) => p.deploymentId === d.deploymentId));
+      return custom === undefined ? d : { ...d, custom };
+    });
+  }
+  if (patch.implementation) {
+    const custom = check("implementations", patch.implementation.rolloutId ?? patch.id, patch.implementation.custom, existing?.implementation);
+    if (custom !== undefined) out.implementation = { ...patch.implementation, custom };
+  }
+  if (errors.length) throw new Error(`Custom fields were not accepted, so nothing was written. ${errors.join(" ")}`);
+  return out;
+}
+
 export async function upsertCustomer(
   patch: CustomerPatch,
   orgId?: string | null,
 ): Promise<Customer> {
-  const validPatch = customerPatchSchema.parse(patch);
+  const parsedPatch = customerPatchSchema.parse(patch);
   const db = getDb();
   if (db) {
-    const existing = await dbGetCustomer(db, validPatch.id);
+    const existing = await dbGetCustomer(db, parsedPatch.id);
+    const validPatch = applyCustomFields(parsedPatch, existing);
     const merged = existing
       ? customerSchema.parse({ ...existing, ...validPatch })
       : customerSchema.parse({ name: validPatch.id, ...validPatch });
@@ -415,7 +466,8 @@ export async function upsertCustomer(
     return merged;
   }
   const store = await readStore();
-  const idx = store.customers.findIndex((c) => c.id === validPatch.id);
+  const idx = store.customers.findIndex((c) => c.id === parsedPatch.id);
+  const validPatch = applyCustomFields(parsedPatch, idx === -1 ? null : store.customers[idx]);
   if (idx === -1) {
     const created = customerSchema.parse({ name: validPatch.id, ...validPatch });
     store.customers.push(created);

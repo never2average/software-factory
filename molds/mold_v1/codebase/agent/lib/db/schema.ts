@@ -202,6 +202,9 @@ export const deployments = pgTable(
     runbookUrl: text("runbook_url"),
     lastTelemetryAt: text("last_telemetry_at"),
     notes: text("notes"),
+    // The deployment profile's own fields (`domains.deployments.custom_fields`), keyed by field key. One column
+    // whatever the profile declares; agent/lib/custom-fields.ts validates every write.
+    custom: jsonb("custom").$type<Record<string, string | number>>().notNull().default({}),
   },
   (t) => [
     primaryKey({ columns: [t.customerId, t.deploymentId] }),
@@ -364,6 +367,8 @@ export const implementation = pgTable("implementation", {
   openBlockerCount: integer("open_blocker_count"),
   implementationNextStep: text("implementation_next_step"),
   implementationLastUpdatedAt: text("implementation_last_updated_at"),
+  // The deployment profile's own fields (`domains.implementations.custom_fields`); see deployments.custom.
+  custom: jsonb("custom").$type<Record<string, string | number>>().notNull().default({}),
 });
 
 /* -------------------------------------------------------------------------- */
