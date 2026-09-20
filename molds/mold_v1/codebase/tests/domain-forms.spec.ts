@@ -1,4 +1,11 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE } from "../lib/deployment-profile.generated";
+
+// The account word on these forms is the BUILD's vocabulary, not part of the `domains` section under test: a
+// deployment whose profile says "company" shows "Company" here even on the default-domains page. The spec
+// hardcoded "Customer" and failed on the first packed deployment it ran against (2026-09-20).
+const word = DEPLOYMENT_PROFILE.vocabulary.account.singular;
+const ACCOUNT = word.charAt(0).toUpperCase() + word.slice(1);
 
 /**
  * The "New …" forms of the two record areas a deployment profile may redefine (`domains` in
@@ -23,16 +30,24 @@ async function mockApi(page: Page): Promise<{ posts: Record<string, unknown>[] }
 }
 const labels = async (page: Page, form: string) => page.getByTestId(form).locator("label > span:first-child").allInnerTexts();
 
+// "Today's forms" can only be graded on a build whose profile IS the default: the preview page takes its field
+// list from DEFAULT_DOMAINS, but option labels and the account word follow the build's own profile, so on a
+// deployment that redefines the areas (a subagent pack's profile) this test would assert the default
+// deployment's words against another deployment's build. The base app's CI runs it; a redefined build skips it
+// with the reason, and is graded by the example test below and by its own profile's build-time validation.
+const DEFAULT_BUILD = JSON.stringify(DEPLOYMENT_PROFILE.domains) === JSON.stringify(DEFAULT_DOMAINS);
+
 test("default profile: the forms are today's, and nothing fixed is submitted", async ({ page }) => {
+  test.skip(!DEFAULT_BUILD, "this build's profile redefines the two areas; the default forms are graded on a default build");
   const seen = await mockApi(page);
   await page.goto("/preview/domain-forms");
   const dep = page.getByTestId("form-deployments");
   await expect(dep.getByRole("heading", { name: "New deployment" })).toBeVisible();
-  expect(await labels(page, "form-deployments")).toEqual(["Customer", "Deployment id", "Environment", "Region", "Version", "Release status", "Health", "Owner"]);
-  expect(await labels(page, "form-implementations")).toEqual(["Customer", "Stage", "Risk", "Owner"]);
+  expect(await labels(page, "form-deployments")).toEqual([ACCOUNT, "Deployment id", "Environment", "Region", "Version", "Release status", "Health", "Owner"]);
+  expect(await labels(page, "form-implementations")).toEqual([ACCOUNT, "Stage", "Risk", "Owner"]);
   await expect(dep.locator("label", { hasText: "Release status" }).locator("option")).toHaveText(["Deployed", "In progress", "Pending approval", "Rolled back", "Failed"]);
 
-  await dep.locator("label", { hasText: "Customer" }).locator("select").selectOption("hdfc");
+  await dep.locator("label", { hasText: ACCOUNT }).locator("select").selectOption("hdfc");
   await dep.getByPlaceholder("DEP-…").fill("DEP-1");
   await dep.getByPlaceholder("ap-south-1").fill("eu-west-1");
   await dep.getByPlaceholder("1.0.0").fill("2.3.1");
