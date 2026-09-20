@@ -91,5 +91,6 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/",
     "token_ref": "NPM_TOKEN"
-  }
+  },
+  "handoff_url": "https://claude.ai/artifact/T4W4eFRPELrCFFrpktBBD1"
 }

@@ -1,0 +1,657 @@
+<title>OnFinance AI Handoff</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..112,500..700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{--ground:#F5F7F8;--panel:#FFFFFF;--ink:#1D2328;--muted:#5B6873;--line:#D9DFE4;--accent:#0B6E69;--ok:#1E7A46;--ask:#A8590A;--bad:#B3261E;--wait:#6B7782;--okbg:#E3F3EA;--askbg:#FBEBD9;--badbg:#FADFDD;--waitbg:#E9EDF0}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ground:#12161A;--panel:#1A2026;--ink:#E7EBEE;--muted:#9AA7B2;--line:#2C353D;--accent:#4FC4BC;--ok:#6FD49A;--ask:#F0A95B;--bad:#F2847C;--wait:#9AA7B2;--okbg:#173626;--askbg:#3B2A14;--badbg:#421E1B;--waitbg:#232B32}}
+:root[data-theme="dark"]{--ground:#12161A;--panel:#1A2026;--ink:#E7EBEE;--muted:#9AA7B2;--line:#2C353D;--accent:#4FC4BC;--ok:#6FD49A;--ask:#F0A95B;--bad:#F2847C;--wait:#9AA7B2;--okbg:#173626;--askbg:#3B2A14;--badbg:#421E1B;--waitbg:#232B32}
+body{background:var(--ground);color:var(--ink);font:15px/1.55 "IBM Plex Sans",system-ui,sans-serif;padding-inline:clamp(16px,4vw,40px);padding-block:28px 56px}
+.wrap{max-width:980px;margin-inline:auto;display:flex;flex-direction:column;gap:28px}
+h1,h2,h3,h4{font-family:"Archivo","IBM Plex Sans",sans-serif;font-stretch:108%;text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:clamp(26px,5vw,38px);font-weight:700} h2{font-size:20px;font-weight:650;padding-bottom:8px;border-bottom:1px solid var(--line)} h3{font-size:15px;font-weight:650;margin-top:6px} h4{font-size:14px;font-weight:650}
+p{margin:0;max-width:68ch} .muted{color:var(--muted);font-weight:400} .mono,code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:13px}
+a{color:var(--accent)} a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+header{display:flex;flex-direction:column;gap:8px} .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:13px}
+section{display:flex;flex-direction:column;gap:14px}
+.rail{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:6px}
+.st{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--wait);padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.st-n{font-weight:600;font-size:13px} .st-s{font-size:12px;color:var(--muted)}
+.st.ok{border-top-color:var(--ok)} .st.go{border-top-color:var(--accent)} .st.ask{border-top-color:var(--ask)} .st.bad{border-top-color:var(--bad)} .st.na{border-top-style:dashed}
+.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:999px;background:var(--waitbg);color:var(--wait);font-weight:500}
+.pill.ok{background:var(--okbg);color:var(--ok)} .pill.ask,.pill.go{background:var(--askbg);color:var(--ask)} .pill.bad{background:var(--badbg);color:var(--bad)}
+ul.plain{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px} ul.plain li{background:var(--panel);border:1px solid var(--line);padding:10px 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0} .card code{overflow-wrap:anywhere}
+.scroll{overflow-x:auto} table{border-collapse:collapse;width:100%;background:var(--panel);border:1px solid var(--line)} th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top} th{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:500} .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.areas{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px} .area{background:var(--panel);border:1px solid var(--line);padding:14px 16px;display:flex;flex-direction:column;gap:8px} ul.fields{margin:0;padding-left:18px} .tests{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px 18px}
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line)} .fig{background:var(--panel);padding:12px 14px} .fig b{display:block;font:650 20px/1.2 "Archivo",sans-serif;font-variant-numeric:tabular-nums} .fig span{font-size:12px;color:var(--muted)}
+ol.rules{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:72ch}
+details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} summary{cursor:pointer;font-weight:600} pre{overflow-x:auto;margin:10px 0 0;font:12px/1.5 "IBM Plex Mono",monospace}
+</style>
+<div class="wrap">
+<header><span class="eyebrow">Handoff · for the next person or agent</span><h1>OnFinance AI</h1><p>Research workspace for listed and debt-listed Indian housing finance companies.</p>
+<div class="meta"><span>Status <b>stamped</b></span><span><a href="https://onfinance-hfc.vercel.app">https://onfinance-hfc.vercel.app</a></span><span>built from mold_v1 @ <span class="mono">6634664</span></span><span>as of 2026-09-20T15:36Z</span></div></header>
+
+<section><h2>Where it stands</h2><ul class="rail"><li class="st ok"><span class="st-n">brief</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">state</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">packs</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">brand</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">keys</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">deploy</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">workspaces</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">tests</span><span class="st-s">Done</span></li><li class="st ask"><span class="st-n">package</span><span class="st-s">Needs the operator</span></li><li class="st na"><span class="st-n">address</span><span class="st-s">Not needed</span></li></ul><h3>What it is waiting on</h3><ul class="plain"><li><b>package</b> <span class="pill ask">Needs the operator</span><br>@onfinance/hfc-research builds, but this machine is not signed in to npm. The operator runs `npm login` here once (it prints a link to open)</li></ul></section>
+
+<section><h2>What is inside</h2><p>Web search is <b>on</b>, browser use is <b>off</b>. The main agent runs on <span class='mono'>@cf/moonshotai/kimi-k2.6</span> (it reads images); specialists run on <span class='mono'>@cf/zai-org/glm-5.3</span>.</p><h3>Specialists <span class="muted">from the pack “hfc-research”</span></h3><div class="scroll"><table><thead><tr><th>Specialist</th><th>What it does</th><th class="num">Skills</th></tr></thead><tbody><tr><td><b>HFC KPI Extraction</b></td><td>Builds the standard quarterly KPI table for a housing finance company from its LODR results and investor presentation, cited to the filing and page.</td><td class="num">11</td></tr><tr><td><b>LODR Filings</b></td><td>Finds, files and reads a company&#x27;s SEBI LODR disclosures by regulation and keeps its dated filing log.</td><td class="num">12</td></tr><tr><td><b>Investor Presentations</b></td><td>Reads investor decks and concall transcripts: operational metrics by slide, guidance and how it changed, the company&#x27;s own definitions.</td><td class="num">12</td></tr><tr><td><b>Annual Report Format</b></td><td>Maps an HFC annual report and extracts its sections into a consistent structure.</td><td class="num">14</td></tr></tbody></table></div><h3>Its own records</h3><div class="areas"><div class="area"><h4>Coverage reports</h4><p>One row per company per report: what was published, for which period, and how complete its data is.</p><p class='muted'>Types: Initiation · Quarterly results update · Annual report review · Event / rating update · Sector note</p><ul class="fields"><li><b>Rating</b> <span class="muted">pick list: Buy · Add · Hold · Reduce · Sell · Not rated</span></li><li><b>Target price (₹)</b> <span class="muted">number</span></li><li><b>KPI table completeness</b> <span class="muted">percent</span></li><li><b>AUM (₹ crore)</b> <span class="muted">number</span></li><li><b>Gross NPA</b> <span class="muted">percent</span></li><li><b>Source filing</b> <span class="muted">link</span></li></ul></div><div class="area"><h4>Portfolios</h4><p>Named sets of companies a desk covers, with each company&#x27;s coverage build-out.</p><ul class="fields"><li><b>Priority</b> <span class="muted">pick list: Core · Watch · Passive</span></li><li><b>Next review</b> <span class="muted">date</span></li></ul></div></div>
+<h3>Workspaces</h3><div class="scroll"><table><thead><tr><th>Workspace</th><th class="num">People</th><th class="num">Accounts</th></tr></thead><tbody><tr><td><b>ICICI HFC</b></td><td class="num">9</td><td class="num">91</td></tr><tr><td><b>OnFinance AI</b></td><td class="num">2</td><td class="num">0</td></tr></tbody></table></div><p class="muted">People are listed by count only; names and addresses stay in the workspace.</p></section>
+
+<section><h2>How to get in</h2><div class="grid">
+<div class="card"><h4>A person</h4><p>https://onfinance-hfc.vercel.app — sign in with a six-digit code emailed to you, or Continue with Google where the workspace uses it. Access is by workspace membership: the owner invites people from Workspace → People.</p></div>
+<div class="card"><h4>An agent, hosted</h4><p>Any MCP-capable assistant connects to <code>https://onfinance-hfc.vercel.app/api/mcp</code> with the person's own access token as a Bearer header. The token comes from the same emailed code and lasts 7 days; it proves an email address, and access still follows workspace membership.</p></div>
+<div class="card"><h4>An agent, by package</h4><p><code>@onfinance/hfc-research</code> — built and checked, <b>not published yet</b> (waits on the operator's npm sign-in). <code>npx @onfinance/hfc-research login --email you@company.com</code>, then <code>… mcp</code>.</p></div>
+<div class="card"><h4>Address</h4><p>Lives at its Vercel address. No own domain is named yet; choose one before the package is first published, because the address is baked into it.</p></div></div></section>
+
+<section><h2>What was measured</h2><ul class="tests"><li><span class="pill ok">pass</span> accessibility</li><li><span class="pill wait">skipped</span> context</li><li><span class="pill ok">pass</span> functional</li><li><span class="pill ok">pass</span> load</li><li><span class="pill ok">pass</span> responsiveness</li></ul>
+<div class="figs"><div class="fig"><b>21h 45m</b><span>first message to first live deploy</span></div><div class="fig"><b>12</b><span>deploys</span></div><div class="fig"><b>5.2h + 1.7h</b><span>agent model time + tool time</span></div><div class="fig"><b>44</b><span>operator messages</span></div><div class="fig"><b>21</b><span>pull requests merged upstream</span></div><div class="fig"><b>77</b><span>test-lane reports</span></div></div>
+<p>Agent cost: <b>$274 measured + about $153 estimated since the last cost record</b>, at API list prices (on a subscription this is value used, not an invoice). It covers the whole first build, including factory features the next application reuses. Hosting, database, model-provider, email and search bills are not readable from the factory; the full report says where each is seen: <code>reports/mint/onfinance_hfc.md</code>.</p></section>
+
+<section><h2>Open work</h2><div class="scroll"><table><thead><tr><th>Task</th><th class="num">Priority</th><th>What</th></tr></thead><tbody><tr><td class="mono">mold_v1-081</td><td class="num">P2</td><td>intake.py re-run on a deployed app drops datastores.postgres.rls_verified and infrastructure deploy fields; it must carry forward everything a deploy or verify wrote</td></tr><tr><td class="mono">mold_v1-083</td><td class="num">P2</td><td>responsiveness lane: INP on the shared VM swings 32-376 ms on an unchanged page; measure with more samples and a median (or a CPU-idle precondition), and report the machine&#x27;s load beside every sample, so a slow VM cannot revert an application</td></tr><tr><td class="mono">mold_v1-089</td><td class="num">P2</td><td>Upstream follow-ups to custom fields: report type off the runtime column; a company in more than one portfolio (composite key); an MCP tool that UPDATES an existing deployment record (deployment_upsert is insert-only); custom fields in Master.xlsx / account report / cards; backfill scripts bypass the validator; drizzle journal misses implementation.provider_launch_approver_email</td></tr><tr><td class="mono">mold_v1-091</td><td class="num">P2</td><td>mint.py: prove the full line on a SECOND real app (new -&gt; reuse-keys -&gt; run -&gt; finished) with the operator&#x27;s go-ahead, since a deploy creates real Vercel projects and a database; then fold the intake questions into mint so a chat alone can start one</td></tr><tr><td class="mono">mold_v1-072</td><td class="num">P3</td><td>VM spike (go/no-go): eve API runs off Vercel upstream in fde-agent, rootless sandbox with python3, no docker socket mount</td></tr><tr><td class="mono">mold_v1-073</td><td class="num">P3</td><td>VM: filesystem or S3 storage driver behind the seven @vercel/blob importers</td></tr><tr><td class="mono">mold_v1-074</td><td class="num">P3</td><td>VM: workflow resume accepts a minted RESUME_TOKEN instead of the Vercel OIDC token</td></tr><tr><td class="mono">mold_v1-075</td><td class="num">P3</td><td>VM: infrastructure target vm_remote (host, ssh_user, ssh_port, ssh_key_ref, domain, production_url, health) with factory.py and provision.py rules</td></tr><tr><td class="mono">mold_v1-076</td><td class="num">P3</td><td>VM: provision.py --deploy-remote over SSH: rsync build, env file from hidden prompt, three systemd units, four cron timers, Caddy TLS, Postgres 17</td></tr><tr><td class="mono">mold_v1-077</td><td class="num">P3</td><td>VM: firewall (ufw 22/80/443, conntrack ctorigdstport rule, fail2ban)</td></tr><tr><td class="mono">mold_v1-078</td><td class="num">P3</td><td>VM: lanes grade vm_remote.production_url; runbook, VM cost line, product gates</td></tr></tbody></table></div><p class="muted">From <code>state/tasks/mold_v1.jsonl</code>; <code>python3 .claude/scripts/factory.py next mold_v1</code> gives the current one.</p></section>
+
+<section><h2>Rules of the road</h2><ol class="rules">
+<li>Start from <code>python3 .claude/scripts/mint.py onfinance_hfc</code>. It shows every station and the one next step; <code>run</code> does whatever needs nobody. Do not drive the station scripts by hand.</li>
+<li>The mold is a general-purpose snapshot. This product's own code is its pack (packs/hfc-research/). A change to base behaviour is a pull request upstream, never a fork.</li>
+<li>Credentials are named, never shown: not in the repository, not in a chat, not on this page. A pasted sign-in code becomes a private session outside the repository.</li>
+<li>The operator is not an engineer. Ask for one thing at a time, in plain words, with numbered clicks from a web address, and say what is hidden and what expires.</li>
+<li>Never publish a package, send a sign-in code to a real person, or create paid resources for a new application without the operator saying so.</li>
+<li>Report what was measured. Read a test report before describing its result; a failed lane marks the application <i>reverted</i> until the cause is fixed and the ordered run passes.</li></ol>
+<p class="muted">In the repository: state <code>state/application/onfinance_hfc/</code> · brief <code>briefs/onfinance_hfc.md</code> · instructions for agents <code>AGENTS.md</code> · the line <code>.claude/skills/mint/SKILL.md</code>.</p></section>
+
+<details><summary>The same facts as data, for an agent</summary><pre>{
+ &quot;app_id&quot;: &quot;onfinance_hfc&quot;,
+ &quot;generated_at&quot;: &quot;2026-09-20T15:36Z&quot;,
+ &quot;product&quot;: {
+  &quot;name&quot;: &quot;OnFinance AI&quot;,
+  &quot;tagline&quot;: &quot;Research workspace for listed and debt-listed Indian housing finance companies.&quot;,
+  &quot;color&quot;: &quot;#2D2D2D&quot;
+ },
+ &quot;status&quot;: &quot;stamped&quot;,
+ &quot;url&quot;: &quot;https://onfinance-hfc.vercel.app&quot;,
+ &quot;mold&quot;: {
+  &quot;id&quot;: &quot;mold_v1&quot;,
+  &quot;commit&quot;: &quot;6634664&quot;
+ },
+ &quot;capabilities&quot;: {
+  &quot;web_search&quot;: &quot;true&quot;,
+  &quot;browser&quot;: &quot;false&quot;
+ },
+ &quot;models&quot;: {
+  &quot;orchestrator&quot;: &quot;@cf/moonshotai/kimi-k2.6&quot;,
+  &quot;specialist&quot;: &quot;@cf/zai-org/glm-5.3&quot;
+ },
+ &quot;stations&quot;: [
+  {
+   &quot;station&quot;: &quot;brief&quot;,
+   &quot;status&quot;: &quot;done&quot;,
+   &quot;note&quot;: &quot;briefs/onfinance_hfc.md&quot;
+  },
+  {
+   &quot;station&quot;: &quot;state&quot;,
+   &quot;status&quot;: &quot;done&quot;,
+   &quot;note&quot;: &quot;four state files, valid&quot;
+  },
+  {
+   &quot;station&quot;: &quot;packs&quot;,
+   &quot;status&quot;: &quot;done&quot;,
+   &quot;note&quot;: &quot;hfc-research&quot;
+  },
+  {
+   &quot;station&quot;: &quot;brand&quot;,
+   &quot;status&quot;: &quot;done&quot;,
+   &quot;note&quot;: &quot;OnFinance AI, #2D2D2D&quot;
+  },
+  {
+   &quot;station&quot;: &quot;keys&quot;,
+   &quot;status&quot;: &quot;done&quot;,
+   &quot;note&quot;: &quot;secrets present: 18/18&quot;
+  },
+  {
+   &quot;station&quot;: &quot;deploy&quot;,
+   &quot;status&quot;: &quot;done&quot;,
+   &quot;note&quot;: &quot;https://onfinance-hfc.vercel.app (deployed 2026-09-20T14:49)&quot;
+  },
+  {
+   &quot;station&quot;: &quot;workspaces&quot;,
+   &quot;status&quot;: &quot;done&quot;,
+   &quot;note&quot;: &quot;2 workspace(s) as written&quot;
+  },
+  {
+   &quot;station&quot;: &quot;tests&quot;,
+   &quot;status&quot;: &quot;done&quot;,
+   &quot;note&quot;: &quot;five lanes, none failed, signed-in checks measured&quot;
+  },
+  {
+   &quot;station&quot;: &quot;package&quot;,
+   &quot;status&quot;: &quot;needs you&quot;,
+   &quot;note&quot;: &quot;@onfinance/hfc-research builds, but this machine is not signed in to npm. The operator runs `npm login` here once (it prints a link to open)&quot;
+  },
+  {
+   &quot;station&quot;: &quot;address&quot;,
+   &quot;status&quot;: &quot;not needed&quot;,
+   &quot;note&quot;: &quot;it lives at https://onfinance-hfc.vercel.app (name one with domain.py onfinance_hfc attach &lt;domain&gt;)&quot;
+  }
+ ],
+ &quot;packs&quot;: [
+  {
+   &quot;pack_id&quot;: &quot;hfc-research&quot;,
+   &quot;name&quot;: &quot;Housing finance research&quot;,
+   &quot;description&quot;: &quot;Financial analysis of Indian housing finance companies (equity-listed and debt-listed) from SEBI LODR filings and investor presentations: four specialist subagents as full workspaces, the analysts&#x27; KPI rulebook, and the shared finlib parsing helpers.&quot;,
+   &quot;specialists&quot;: [
+    {
+     &quot;key&quot;: &quot;hfc-kpi-extraction&quot;,
+     &quot;name&quot;: &quot;HFC KPI Extraction&quot;,
+     &quot;summary&quot;: &quot;Builds the standard quarterly KPI table for a housing finance company from its LODR results and investor presentation, cited to the filing and page.&quot;,
+     &quot;skills&quot;: 11
+    },
+    {
+     &quot;key&quot;: &quot;lodr-filings&quot;,
+     &quot;name&quot;: &quot;LODR Filings&quot;,
+     &quot;summary&quot;: &quot;Finds, files and reads a company&#x27;s SEBI LODR disclosures by regulation and keeps its dated filing log.&quot;,
+     &quot;skills&quot;: 12
+    },
+    {
+     &quot;key&quot;: &quot;investor-presentations&quot;,
+     &quot;name&quot;: &quot;Investor Presentations&quot;,
+     &quot;summary&quot;: &quot;Reads investor decks and concall transcripts: operational metrics by slide, guidance and how it changed, the company&#x27;s own definitions.&quot;,
+     &quot;skills&quot;: 12
+    },
+    {
+     &quot;key&quot;: &quot;annual-report-format&quot;,
+     &quot;name&quot;: &quot;Annual Report Format&quot;,
+     &quot;summary&quot;: &quot;Maps an HFC annual report and extracts its sections into a consistent structure.&quot;,
+     &quot;skills&quot;: 14
+    }
+   ],
+   &quot;record_areas&quot;: [
+    {
+     &quot;area&quot;: &quot;deployments&quot;,
+     &quot;shown_as&quot;: &quot;Coverage reports&quot;,
+     &quot;description&quot;: &quot;One row per company per report: what was published, for which period, and how complete its data is.&quot;,
+     &quot;kinds&quot;: [
+      &quot;Initiation&quot;,
+      &quot;Quarterly results update&quot;,
+      &quot;Annual report review&quot;,
+      &quot;Event / rating update&quot;,
+      &quot;Sector note&quot;
+     ],
+     &quot;own_fields&quot;: [
+      {
+       &quot;label&quot;: &quot;Rating&quot;,
+       &quot;type&quot;: &quot;pick_list&quot;,
+       &quot;options&quot;: [
+        &quot;Buy&quot;,
+        &quot;Add&quot;,
+        &quot;Hold&quot;,
+        &quot;Reduce&quot;,
+        &quot;Sell&quot;,
+        &quot;Not rated&quot;
+       ]
+      },
+      {
+       &quot;label&quot;: &quot;Target price (\u20b9)&quot;,
+       &quot;type&quot;: &quot;number&quot;,
+       &quot;options&quot;: null
+      },
+      {
+       &quot;label&quot;: &quot;KPI table completeness&quot;,
+       &quot;type&quot;: &quot;percent&quot;,
+       &quot;options&quot;: null
+      },
+      {
+       &quot;label&quot;: &quot;AUM (\u20b9 crore)&quot;,
+       &quot;type&quot;: &quot;number&quot;,
+       &quot;options&quot;: null
+      },
+      {
+       &quot;label&quot;: &quot;Gross NPA&quot;,
+       &quot;type&quot;: &quot;percent&quot;,
+       &quot;options&quot;: null
+      },
+      {
+       &quot;label&quot;: &quot;Source filing&quot;,
+       &quot;type&quot;: &quot;link&quot;,
+       &quot;options&quot;: null
+      }
+     ]
+    },
+    {
+     &quot;area&quot;: &quot;implementations&quot;,
+     &quot;shown_as&quot;: &quot;Portfolios&quot;,
+     &quot;description&quot;: &quot;Named sets of companies a desk covers, with each company&#x27;s coverage build-out.&quot;,
+     &quot;kinds&quot;: [],
+     &quot;own_fields&quot;: [
+      {
+       &quot;label&quot;: &quot;Priority&quot;,
+       &quot;type&quot;: &quot;pick_list&quot;,
+       &quot;options&quot;: [
+        &quot;Core&quot;,
+        &quot;Watch&quot;,
+        &quot;Passive&quot;
+       ]
+      },
+      {
+       &quot;label&quot;: &quot;Next review&quot;,
+       &quot;type&quot;: &quot;date&quot;,
+       &quot;options&quot;: null
+      }
+     ]
+    }
+   ],
+   &quot;vocabulary&quot;: {
+    &quot;account&quot;: {
+     &quot;singular&quot;: &quot;company&quot;,
+     &quot;plural&quot;: &quot;companies&quot;
+    },
+    &quot;member&quot;: {
+     &quot;singular&quot;: &quot;analyst&quot;,
+     &quot;plural&quot;: &quot;analysts&quot;
+    },
+    &quot;owner&quot;: &quot;Covering analyst&quot;,
+    &quot;account_context&quot;: &quot;Company context&quot;
+   }
+  }
+ ],
+ &quot;workspaces&quot;: [
+  {
+   &quot;name&quot;: &quot;ICICI HFC&quot;,
+   &quot;people&quot;: 9,
+   &quot;accounts&quot;: 91
+  },
+  {
+   &quot;name&quot;: &quot;OnFinance AI&quot;,
+   &quot;people&quot;: 2,
+   &quot;accounts&quot;: 0
+  }
+ ],
+ &quot;testing&quot;: {
+  &quot;load&quot;: &quot;pass&quot;,
+  &quot;context&quot;: &quot;skipped&quot;,
+  &quot;functional&quot;: &quot;pass&quot;,
+  &quot;accessibility&quot;: &quot;pass&quot;,
+  &quot;responsiveness&quot;: &quot;pass&quot;
+ },
+ &quot;took&quot;: {
+  &quot;first_message&quot;: &quot;2026-09-18T12:04:27.586000+00:00&quot;,
+  &quot;first_deploy&quot;: &quot;2026-09-19T09:49:59+00:00&quot;,
+  &quot;deploys&quot;: 12,
+  &quot;model_hours&quot;: 5.2,
+  &quot;tool_hours&quot;: 1.7,
+  &quot;operator_messages&quot;: 44,
+  &quot;agent_cost_usd_measured&quot;: 274.39,
+  &quot;agent_cost_usd_estimated_since&quot;: 153,
+  &quot;upstream_prs&quot;: 21,
+  &quot;lane_reports&quot;: 77
+ },
+ &quot;access&quot;: {
+  &quot;people&quot;: &quot;https://onfinance-hfc.vercel.app \u2014 sign in with a six-digit code emailed to you, or Continue with Google where the workspace uses it. Access is by workspace membership: the owner invites people from Workspace \u2192 People.&quot;,
+  &quot;agents_hosted&quot;: &quot;https://onfinance-hfc.vercel.app/api/mcp&quot;,
+  &quot;agents_package&quot;: &quot;@onfinance/hfc-research&quot;,
+  &quot;package_published&quot;: false,
+  &quot;custom_domain&quot;: null
+ },
+ &quot;open_tasks&quot;: [
+  {
+   &quot;id&quot;: &quot;mold_v1-081&quot;,
+   &quot;priority&quot;: 2,
+   &quot;title&quot;: &quot;intake.py re-run on a deployed app drops datastores.postgres.rls_verified and infrastructure deploy fields; it must carry forward everything a deploy or verify wrote&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-083&quot;,
+   &quot;priority&quot;: 2,
+   &quot;title&quot;: &quot;responsiveness lane: INP on the shared VM swings 32-376 ms on an unchanged page; measure with more samples and a median (or a CPU-idle precondition), and report the machine&#x27;s load beside every sample, so a slow VM cannot revert an application&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-089&quot;,
+   &quot;priority&quot;: 2,
+   &quot;title&quot;: &quot;Upstream follow-ups to custom fields: report type off the runtime column; a company in more than one portfolio (composite key); an MCP tool that UPDATES an existing deployment record (deployment_upsert is insert-only); custom fields in Master.xlsx / account report / cards; backfill scripts bypass the validator; drizzle journal misses implementation.provider_launch_approver_email&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-091&quot;,
+   &quot;priority&quot;: 2,
+   &quot;title&quot;: &quot;mint.py: prove the full line on a SECOND real app (new -&gt; reuse-keys -&gt; run -&gt; finished) with the operator&#x27;s go-ahead, since a deploy creates real Vercel projects and a database; then fold the intake questions into mint so a chat alone can start one&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-072&quot;,
+   &quot;priority&quot;: 3,
+   &quot;title&quot;: &quot;VM spike (go/no-go): eve API runs off Vercel upstream in fde-agent, rootless sandbox with python3, no docker socket mount&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-073&quot;,
+   &quot;priority&quot;: 3,
+   &quot;title&quot;: &quot;VM: filesystem or S3 storage driver behind the seven @vercel/blob importers&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-074&quot;,
+   &quot;priority&quot;: 3,
+   &quot;title&quot;: &quot;VM: workflow resume accepts a minted RESUME_TOKEN instead of the Vercel OIDC token&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-075&quot;,
+   &quot;priority&quot;: 3,
+   &quot;title&quot;: &quot;VM: infrastructure target vm_remote (host, ssh_user, ssh_port, ssh_key_ref, domain, production_url, health) with factory.py and provision.py rules&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-076&quot;,
+   &quot;priority&quot;: 3,
+   &quot;title&quot;: &quot;VM: provision.py --deploy-remote over SSH: rsync build, env file from hidden prompt, three systemd units, four cron timers, Caddy TLS, Postgres 17&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-077&quot;,
+   &quot;priority&quot;: 3,
+   &quot;title&quot;: &quot;VM: firewall (ufw 22/80/443, conntrack ctorigdstport rule, fail2ban)&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-078&quot;,
+   &quot;priority&quot;: 3,
+   &quot;title&quot;: &quot;VM: lanes grade vm_remote.production_url; runbook, VM cost line, product gates&quot;
+  }
+ ],
+ &quot;repo&quot;: {
+  &quot;state&quot;: &quot;state/application/onfinance_hfc/&quot;,
+  &quot;packs&quot;: [
+   &quot;packs/hfc-research/&quot;
+  ],
+  &quot;brief&quot;: &quot;briefs/onfinance_hfc.md&quot;,
+  &quot;report&quot;: &quot;reports/mint/onfinance_hfc.md&quot;
+ }
+}</pre></details>
+</div>
+<script type="application/json" id="handoff-data">{
+ "app_id": "onfinance_hfc",
+ "generated_at": "2026-09-20T15:36Z",
+ "product": {
+  "name": "OnFinance AI",
+  "tagline": "Research workspace for listed and debt-listed Indian housing finance companies.",
+  "color": "#2D2D2D"
+ },
+ "status": "stamped",
+ "url": "https://onfinance-hfc.vercel.app",
+ "mold": {
+  "id": "mold_v1",
+  "commit": "6634664"
+ },
+ "capabilities": {
+  "web_search": "true",
+  "browser": "false"
+ },
+ "models": {
+  "orchestrator": "@cf/moonshotai/kimi-k2.6",
+  "specialist": "@cf/zai-org/glm-5.3"
+ },
+ "stations": [
+  {
+   "station": "brief",
+   "status": "done",
+   "note": "briefs/onfinance_hfc.md"
+  },
+  {
+   "station": "state",
+   "status": "done",
+   "note": "four state files, valid"
+  },
+  {
+   "station": "packs",
+   "status": "done",
+   "note": "hfc-research"
+  },
+  {
+   "station": "brand",
+   "status": "done",
+   "note": "OnFinance AI, #2D2D2D"
+  },
+  {
+   "station": "keys",
+   "status": "done",
+   "note": "secrets present: 18/18"
+  },
+  {
+   "station": "deploy",
+   "status": "done",
+   "note": "https://onfinance-hfc.vercel.app (deployed 2026-09-20T14:49)"
+  },
+  {
+   "station": "workspaces",
+   "status": "done",
+   "note": "2 workspace(s) as written"
+  },
+  {
+   "station": "tests",
+   "status": "done",
+   "note": "five lanes, none failed, signed-in checks measured"
+  },
+  {
+   "station": "package",
+   "status": "needs you",
+   "note": "@onfinance/hfc-research builds, but this machine is not signed in to npm. The operator runs `npm login` here once (it prints a link to open)"
+  },
+  {
+   "station": "address",
+   "status": "not needed",
+   "note": "it lives at https://onfinance-hfc.vercel.app (name one with domain.py onfinance_hfc attach <domain>)"
+  }
+ ],
+ "packs": [
+  {
+   "pack_id": "hfc-research",
+   "name": "Housing finance research",
+   "description": "Financial analysis of Indian housing finance companies (equity-listed and debt-listed) from SEBI LODR filings and investor presentations: four specialist subagents as full workspaces, the analysts' KPI rulebook, and the shared finlib parsing helpers.",
+   "specialists": [
+    {
+     "key": "hfc-kpi-extraction",
+     "name": "HFC KPI Extraction",
+     "summary": "Builds the standard quarterly KPI table for a housing finance company from its LODR results and investor presentation, cited to the filing and page.",
+     "skills": 11
+    },
+    {
+     "key": "lodr-filings",
+     "name": "LODR Filings",
+     "summary": "Finds, files and reads a company's SEBI LODR disclosures by regulation and keeps its dated filing log.",
+     "skills": 12
+    },
+    {
+     "key": "investor-presentations",
+     "name": "Investor Presentations",
+     "summary": "Reads investor decks and concall transcripts: operational metrics by slide, guidance and how it changed, the company's own definitions.",
+     "skills": 12
+    },
+    {
+     "key": "annual-report-format",
+     "name": "Annual Report Format",
+     "summary": "Maps an HFC annual report and extracts its sections into a consistent structure.",
+     "skills": 14
+    }
+   ],
+   "record_areas": [
+    {
+     "area": "deployments",
+     "shown_as": "Coverage reports",
+     "description": "One row per company per report: what was published, for which period, and how complete its data is.",
+     "kinds": [
+      "Initiation",
+      "Quarterly results update",
+      "Annual report review",
+      "Event / rating update",
+      "Sector note"
+     ],
+     "own_fields": [
+      {
+       "label": "Rating",
+       "type": "pick_list",
+       "options": [
+        "Buy",
+        "Add",
+        "Hold",
+        "Reduce",
+        "Sell",
+        "Not rated"
+       ]
+      },
+      {
+       "label": "Target price (\u20b9)",
+       "type": "number",
+       "options": null
+      },
+      {
+       "label": "KPI table completeness",
+       "type": "percent",
+       "options": null
+      },
+      {
+       "label": "AUM (\u20b9 crore)",
+       "type": "number",
+       "options": null
+      },
+      {
+       "label": "Gross NPA",
+       "type": "percent",
+       "options": null
+      },
+      {
+       "label": "Source filing",
+       "type": "link",
+       "options": null
+      }
+     ]
+    },
+    {
+     "area": "implementations",
+     "shown_as": "Portfolios",
+     "description": "Named sets of companies a desk covers, with each company's coverage build-out.",
+     "kinds": [],
+     "own_fields": [
+      {
+       "label": "Priority",
+       "type": "pick_list",
+       "options": [
+        "Core",
+        "Watch",
+        "Passive"
+       ]
+      },
+      {
+       "label": "Next review",
+       "type": "date",
+       "options": null
+      }
+     ]
+    }
+   ],
+   "vocabulary": {
+    "account": {
+     "singular": "company",
+     "plural": "companies"
+    },
+    "member": {
+     "singular": "analyst",
+     "plural": "analysts"
+    },
+    "owner": "Covering analyst",
+    "account_context": "Company context"
+   }
+  }
+ ],
+ "workspaces": [
+  {
+   "name": "ICICI HFC",
+   "people": 9,
+   "accounts": 91
+  },
+  {
+   "name": "OnFinance AI",
+   "people": 2,
+   "accounts": 0
+  }
+ ],
+ "testing": {
+  "load": "pass",
+  "context": "skipped",
+  "functional": "pass",
+  "accessibility": "pass",
+  "responsiveness": "pass"
+ },
+ "took": {
+  "first_message": "2026-09-18T12:04:27.586000+00:00",
+  "first_deploy": "2026-09-19T09:49:59+00:00",
+  "deploys": 12,
+  "model_hours": 5.2,
+  "tool_hours": 1.7,
+  "operator_messages": 44,
+  "agent_cost_usd_measured": 274.39,
+  "agent_cost_usd_estimated_since": 153,
+  "upstream_prs": 21,
+  "lane_reports": 77
+ },
+ "access": {
+  "people": "https://onfinance-hfc.vercel.app \u2014 sign in with a six-digit code emailed to you, or Continue with Google where the workspace uses it. Access is by workspace membership: the owner invites people from Workspace \u2192 People.",
+  "agents_hosted": "https://onfinance-hfc.vercel.app/api/mcp",
+  "agents_package": "@onfinance/hfc-research",
+  "package_published": false,
+  "custom_domain": null
+ },
+ "open_tasks": [
+  {
+   "id": "mold_v1-081",
+   "priority": 2,
+   "title": "intake.py re-run on a deployed app drops datastores.postgres.rls_verified and infrastructure deploy fields; it must carry forward everything a deploy or verify wrote"
+  },
+  {
+   "id": "mold_v1-083",
+   "priority": 2,
+   "title": "responsiveness lane: INP on the shared VM swings 32-376 ms on an unchanged page; measure with more samples and a median (or a CPU-idle precondition), and report the machine's load beside every sample, so a slow VM cannot revert an application"
+  },
+  {
+   "id": "mold_v1-089",
+   "priority": 2,
+   "title": "Upstream follow-ups to custom fields: report type off the runtime column; a company in more than one portfolio (composite key); an MCP tool that UPDATES an existing deployment record (deployment_upsert is insert-only); custom fields in Master.xlsx / account report / cards; backfill scripts bypass the validator; drizzle journal misses implementation.provider_launch_approver_email"
+  },
+  {
+   "id": "mold_v1-091",
+   "priority": 2,
+   "title": "mint.py: prove the full line on a SECOND real app (new -> reuse-keys -> run -> finished) with the operator's go-ahead, since a deploy creates real Vercel projects and a database; then fold the intake questions into mint so a chat alone can start one"
+  },
+  {
+   "id": "mold_v1-072",
+   "priority": 3,
+   "title": "VM spike (go/no-go): eve API runs off Vercel upstream in fde-agent, rootless sandbox with python3, no docker socket mount"
+  },
+  {
+   "id": "mold_v1-073",
+   "priority": 3,
+   "title": "VM: filesystem or S3 storage driver behind the seven @vercel/blob importers"
+  },
+  {
+   "id": "mold_v1-074",
+   "priority": 3,
+   "title": "VM: workflow resume accepts a minted RESUME_TOKEN instead of the Vercel OIDC token"
+  },
+  {
+   "id": "mold_v1-075",
+   "priority": 3,
+   "title": "VM: infrastructure target vm_remote (host, ssh_user, ssh_port, ssh_key_ref, domain, production_url, health) with factory.py and provision.py rules"
+  },
+  {
+   "id": "mold_v1-076",
+   "priority": 3,
+   "title": "VM: provision.py --deploy-remote over SSH: rsync build, env file from hidden prompt, three systemd units, four cron timers, Caddy TLS, Postgres 17"
+  },
+  {
+   "id": "mold_v1-077",
+   "priority": 3,
+   "title": "VM: firewall (ufw 22/80/443, conntrack ctorigdstport rule, fail2ban)"
+  },
+  {
+   "id": "mold_v1-078",
+   "priority": 3,
+   "title": "VM: lanes grade vm_remote.production_url; runbook, VM cost line, product gates"
+  }
+ ],
+ "repo": {
+  "state": "state/application/onfinance_hfc/",
+  "packs": [
+   "packs/hfc-research/"
+  ],
+  "brief": "briefs/onfinance_hfc.md",
+  "report": "reports/mint/onfinance_hfc.md"
+ }
+}</script>

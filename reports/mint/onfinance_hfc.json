@@ -1,6 +1,6 @@
 {
   "app_id": "onfinance_hfc",
-  "generated_at": "2026-09-20T15:26:34.311768+00:00",
+  "generated_at": "2026-09-20T15:36:28.369828+00:00",
   "status": "stamped",
   "url": "https://onfinance-hfc.vercel.app",
   "packs": [
@@ -10,14 +10,14 @@
     {
       "session": "9129ce07",
       "first": "2026-09-18T12:04:27.586000+00:00",
-      "last": "2026-09-20T15:26:32.279000+00:00",
-      "active_s": 21394.003,
-      "operator_messages": 43,
-      "assistant_messages": 1413,
-      "tool_calls": 680,
+      "last": "2026-09-20T15:36:26.492000+00:00",
+      "active_s": 21552.077,
+      "operator_messages": 44,
+      "assistant_messages": 1424,
+      "tool_calls": 686,
       "subagents": 25,
       "cost_usd": 274.3930005,
-      "cost_uncounted_est_usd": 150.37131203080637,
+      "cost_uncounted_est_usd": 153.04391885300714,
       "model_s": 18772.14,
       "tool_s": 6143.651,
       "lines_added": 12229,
@@ -38,7 +38,7 @@
           "input_tokens": 354549552
         }
       },
-      "cost_as_of": "The cost and working-time counters are as of the session's last cost record; 530 of its 1413 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part."
+      "cost_as_of": "The cost and working-time counters are as of the session's last cost record; 541 of its 1424 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part."
     }
   ],
   "calendar": {
