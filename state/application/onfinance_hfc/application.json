@@ -3,7 +3,7 @@
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
   "mold_commit": "95777a6a66f7fe3cf12002539087f4f0676602f9",
-  "status": "reverted",
+  "status": "stamped",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
   "model": {
@@ -192,37 +192,32 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-09-20T13:50:29+00:00",
-      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-09-20T135029Z.md"
+      "run_at": "2026-09-20T15:00:24+00:00",
+      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-09-20T150024Z.md"
     },
     "context": {
       "status": "skipped",
-      "run_at": "2026-09-20T13:50:03+00:00",
-      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-20T135003Z.md"
+      "run_at": "2026-09-20T14:59:57+00:00",
+      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-20T145957Z.md"
     },
     "functional": {
       "status": "pass",
-      "run_at": "2026-09-20T13:47:29+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-20T134729Z.md"
+      "run_at": "2026-09-20T14:57:34+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-20T145734Z.md"
     },
     "accessibility": {
-      "status": "skipped",
-      "run_at": "2026-09-20T13:52:30+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-20T135230Z.md"
+      "status": "pass",
+      "run_at": "2026-09-20T15:02:18+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-20T150218Z.md"
     },
     "responsiveness": {
-      "status": "fail",
-      "run_at": "2026-09-20T13:52:46+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-20T135246Z.md"
+      "status": "pass",
+      "run_at": "2026-09-20T15:02:56+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-20T150256Z.md"
     }
   },
   "customer_id": "internal",
   "packs": [
     "hfc-research"
-  ],
-  "revert": {
-    "lane": "responsiveness",
-    "at": "2026-09-20T13:52:46+00:00",
-    "reason": "responsiveness lane failed on 1 check(s): layout.matrix.authenticated; report molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-20T135246Z.md; task mold_v1-090."
-  }
+  ]
 }

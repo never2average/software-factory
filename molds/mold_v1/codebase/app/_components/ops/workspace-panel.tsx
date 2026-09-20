@@ -506,8 +506,13 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
             )}
           </div>
         </div>
-        <SetupAction orgId={orgId} />
-        <InviteAgentsAction orgId={orgId} />
+        {/* On a narrow screen the actions always take their own row. Left to wrap on their own, they sat beside
+            the name until the setup action arrived a moment later, then dropped a line and pushed the whole
+            page down (a measured layout shift of 0.19 at 320px). */}
+        <div className="flex w-full shrink-0 items-center justify-end gap-3 sm:w-auto">
+          <SetupAction orgId={orgId} />
+          <InviteAgentsAction orgId={orgId} />
+        </div>
       </div>
 
       {/* Tabs */}
