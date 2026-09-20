@@ -2001,6 +2001,9 @@ def main(a):
     # A deploy that reached three healthy endpoints supersedes the revert a failed one recorded; leaving
     # that block beside status "stamped" is the self-contradictory state a critic caught once already.
     app.pop("revert", None)
+    # What is now in front of traffic: mint.py compares this with the mold's snapshot to know a redeploy is due.
+    shipped = next(((m.get("source") or {}).get("commit") for m in load(os.path.join(ROOT, "state", "factory.json")).get("molds", []) if m.get("mold_id") == app.get("mold_id")), None)
+    if shipped: app["mold_commit"] = shipped
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
 if __name__ == "__main__": main(sys.argv[1:])

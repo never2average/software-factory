@@ -129,7 +129,7 @@ def publish(app_id, version=None, dry=False):
         if r.returncode: sys.exit("npm publish did not succeed; nothing was recorded")
         if dry: print("dry run: nothing was published or recorded"); return 0
         cli["published"] = dict(version=b["version"], at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                sha256=b["sha256"], mold_commit=mold_commit(app))
+                                sha256=b["sha256"], mold_commit=mold_commit(app), origin=origin_of(infra))
         json.dump(infra, open(infra_p, "w"), indent=2); open(infra_p, "a").write("\n")
         print(f"published {cli['package']}@{b['version']} as {who}; recorded in state/application/{app_id}/infrastructure.json")
         return 0

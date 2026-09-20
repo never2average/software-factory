@@ -14,7 +14,7 @@
         "vercel",
         "vm"
       ],
-      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app — which this factory never deploys — with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here."
+      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app \u2014 which this factory never deploys \u2014 with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here."
     },
     "vercel": {
       "type": "object",
@@ -73,7 +73,7 @@
           "additionalProperties": false
         }
       },
-      "description": "Only what provision.py and intake.py write, and nothing else (additionalProperties is false, like `vm`): every key here is either read as THIS app's URL by lanes.py / the lanes' target-up gates (production_url, workflow_url, api_url) or consumed by provision.py (team, project, functions, custom_domain, crons, health). An open object let a misspelt or stranger's key validate silently (mold_v1-057); a new key must be added here WITH a description, not by reopening the object. A target=vm app must not carry this object at all — validate refuses it, see `target`.",
+      "description": "Only what provision.py and intake.py write, and nothing else (additionalProperties is false, like `vm`): every key here is either read as THIS app's URL by lanes.py / the lanes' target-up gates (production_url, workflow_url, api_url) or consumed by provision.py (team, project, functions, custom_domain, crons, health). An open object let a misspelt or stranger's key validate silently (mold_v1-057); a new key must be added here WITH a description, not by reopening the object. A target=vm app must not carry this object at all \u2014 validate refuses it, see `target`.",
       "additionalProperties": false
     },
     "vm": {
@@ -112,7 +112,7 @@
           "type": "string"
         }
       },
-      "description": "Only what the lane provisions, and nothing else (additionalProperties is false): the vm lane never starts a web process (infra/vm/README.md; provision.py VM_NO_PROCESS), so a URL under ANY key here would name a server this factory did not deploy. production_url was removed and is also refused by name in factory.py validate (mold_v1-053); an open object let any other spelling validate silently, so the object is now closed. A target=vercel app must not carry this object at all — validate refuses it, see `target`.",
+      "description": "Only what the lane provisions, and nothing else (additionalProperties is false): the vm lane never starts a web process (infra/vm/README.md; provision.py VM_NO_PROCESS), so a URL under ANY key here would name a server this factory did not deploy. production_url was removed and is also refused by name in factory.py validate (mold_v1-053); an open object let any other spelling validate silently, so the object is now closed. A target=vercel app must not carry this object at all \u2014 validate refuses it, see `target`.",
       "additionalProperties": false
     },
     "inference": {
@@ -270,7 +270,7 @@
       "type": "string",
       "format": "date-time",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
-      "description": "The INSTANT the build now serving traffic was deployed, as an RFC 3339 date-time WITH offset — what provision.py's NOW yields: datetime.datetime.now(datetime.timezone.utc).isoformat(timespec=\"seconds\"), e.g. 2026-09-09T14:03:27+00:00. Written by provision.py --deploy at the moment the deploy finishes, never by hand. This used to be a bare date, so factory.py could only order rls_verified.at against it in whole days and a redeploy hours after the measurement still read fresh; validate now compares the two instants exactly and rejects any rls_verified.at earlier than this. The pattern is enforced (format alone is documentation to this factory's validator): a bare date, a naive time without offset, or any other spelling is a schema error. To migrate an old bare date by hand, use midnight UTC of that day (YYYY-MM-DDT00:00:00+00:00) and say so in `note`: it is the earliest instant the deploy could have happened, so it is the honest conversion, but it also means a proof measured later that same day cannot be told apart from one taken before the deploy — the next --deploy writes the exact instant and ends that ambiguity."
+      "description": "The INSTANT the build now serving traffic was deployed, as an RFC 3339 date-time WITH offset \u2014 what provision.py's NOW yields: datetime.datetime.now(datetime.timezone.utc).isoformat(timespec=\"seconds\"), e.g. 2026-09-09T14:03:27+00:00. Written by provision.py --deploy at the moment the deploy finishes, never by hand. This used to be a bare date, so factory.py could only order rls_verified.at against it in whole days and a redeploy hours after the measurement still read fresh; validate now compares the two instants exactly and rejects any rls_verified.at earlier than this. The pattern is enforced (format alone is documentation to this factory's validator): a bare date, a naive time without offset, or any other spelling is a schema error. To migrate an old bare date by hand, use midnight UTC of that day (YYYY-MM-DDT00:00:00+00:00) and say so in `note`: it is the earliest instant the deploy could have happened, so it is the honest conversion, but it also means a proof measured later that same day cannot be told apart from one taken before the deploy \u2014 the next --deploy writes the exact instant and ends that ambiguity."
     },
     "configured_at": {
       "type": "string",
@@ -345,6 +345,10 @@
             },
             "mold_commit": {
               "type": "string"
+            },
+            "origin": {
+              "type": "string",
+              "description": "the address baked into the published version; a different production_url means a new version is due"
             }
           }
         }
