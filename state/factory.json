@@ -113,6 +113,8 @@
     "postgres_scope": "fresh",
     "workspace_name": "OnFinance",
     "fde_email": "operator@example.com",
-    "secret_source_project": "fde-agent"
+    "secret_source_project": "fde-agent",
+    "agent_cli_scope": "@onfinance",
+    "notify_domain": "example.com"
   }
 }

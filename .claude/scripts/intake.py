@@ -21,6 +21,8 @@ EMAIL = r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"
 def parse_brief(text):
     """Deterministic hints from the brief. Interpretation beyond this is the intake subagent's job."""
     t = text.lower(); h = {}
+    m = re.search(r"^\s*product name:\s*\"?([^\n\".]+?)\"?\s*(?:\.|$)", text, re.I | re.M)
+    if m: h["product_name"] = m.group(1).strip()
     vm = bool(re.search(r"\b(vm|droplet|self.?host|on.prem|single machine)\b", t))
     # "vercel" anywhere used to pick the deploy target, so "inference through the Vercel AI Gateway" moved
     # an app that asked for the vm onto Vercel (and paired it with a self_hosted database provision.py
@@ -37,8 +39,8 @@ def parse_brief(text):
     elif vercel: h["deploy_target"] = "vercel"
     if re.search(r"\bai[\s-]+gateway\b|\bvercel(?:['\u2019]s)?[\s-]+gateway\b", t): h["inference_provider"] = "vercel_ai_gateway"
     elif re.search(r"\bworkers\s+ai\b|\bcloudflare\b", t): h["inference_provider"] = "cloudflare_workers_ai"
-    if re.search(r"\bno (web )?search\b|without (web )?search|disable (web )?search", t): h["web_search"] = False
-    if re.search(r"\bno browser\b|without (a )?browser|disable (the )?browser|no outbound", t): h["browser"] = False
+    if re.search(r"\bno (web )?search\b|without (web )?search|disable (web )?search|\b(web )?search(ing)?:? (is )?off\b", t): h["web_search"] = False
+    if re.search(r"\bno browser\b|without (a )?browser|disable (the )?browser|no outbound|\bbrowser( use)?:? (is )?off\b", t): h["browser"] = False
     if re.search(r"single.?tenant|single workspace|one workspace", t): h["multi_tenant"] = False
     if re.search(r"\bneon\b", t): h["postgres_provider"] = "neon"
     elif re.search(r"\bsupabase\b|\bmanaged postgres\b", t): h["postgres_provider"] = "supabase"
@@ -52,7 +54,8 @@ def parse_brief(text):
     if m: h["custom_domain"] = m.group(1)
     m = re.search(r"\bmold[_ ]?v?([123])\b", t)
     if m: h["mold_id"] = f"mold_v{m.group(1)}"
-    m = re.search(r"\b(?:workspace|org(?:anisation|anization)?):\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I)
+    # Only a line that STARTS with the label: "Multi-organization: no, one workspace" once named a workspace "no, one workspace".
+    m = re.search(r"^\s*(?:workspace|org(?:anisation|anization)?)(?: name)?:\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I | re.M)
     if m: h["workspace_name"] = m.group(1).strip()
     m = re.search(r"\b(?:fde|owner|operator):\s*(" + EMAIL + ")", t)
     if m: h["fde_email"] = m.group(1)
@@ -221,9 +224,23 @@ def pick_product(mold_id, hints, existing=None):
         hit = next((p for p in prods if p["product_id"] == want), None)
         if hit: return hit
         if hints.get("product_id"): sys.exit(f"no product {want!r} on {mold_id}; have: " + ", ".join(p["product_id"] for p in prods))
+    if hints.get("product_name"):
+        # A brief that names its own product ("Product name: Rooftop Desk") IS a new product: nobody minting an
+        # application should have to know the factory's product ids, or borrow another brand's. It takes the mold's
+        # base product's gates (the first product, which carries no pack and no brand of its own).
+        pid = re.sub(r"[^a-z0-9]+", "_", hints["product_name"].lower()).strip("_")
+        hit = next((p for p in prods if p["product_id"] == pid), None)
+        if hit: return hit
+        base = prods[0]; P = load(os.path.join(ST, "products.json"))
+        new = {"product_id": pid, "mold_id": mold_id, "name": hints["product_name"], "tagline": hints.get("tagline", ""), "stage": "defined",
+               "target_model": base.get("target_model"), "gates": base.get("gates"), "app_ids": [],
+               "deploy_targets": [hints.get("target", "vercel")], "vercel_project": pid.replace("_", "-"), "packs": hints.get("packs") or []}
+        P["products"].append({k: v for k, v in new.items() if v not in (None, "")}); save(os.path.join(ST, "products.json"), P)
+        print(f"new product {pid!r} ({hints['product_name']}) on {mold_id}, with the gates of {base['product_id']}")
+        return P["products"][-1]
     if len(prods) > 1:
-        sys.exit(f"{mold_id} carries {len(prods)} products (" + ", ".join(p["product_id"] for p in prods) +
-                 "); say which one in the brief, e.g. `product: " + prods[0]["product_id"] + "`")
+        # No product named and no product name given: the mold as it comes, under its base product.
+        return prods[0]
     return prods[0]
 
 def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):

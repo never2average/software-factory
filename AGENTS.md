@@ -4,7 +4,9 @@ This repository is a software factory, not an application. Read `state/factory.j
 
 Work is tasked: run `python3 .claude/scripts/factory.py next <mold_id>` to get the current task, and use the `task` skill to move it. Products and their stage gates are in `state/products.json`.
 
-To stamp from a description: `intake` subagent (asks the user only unresolved questions, writes state) then `provisioner` subagent (checks secrets by name, deploys). Secret values never enter the repo or the chat.
+To make an application, or to find out where one stands: the `mint` skill (`python3 .claude/scripts/mint.py <app_id>`; `new`, `run`, `list`). It orders every step below and stops only where the operator is needed.
+
+Under it, to stamp from a description: `intake` subagent (asks the user only unresolved questions, writes state) then `provisioner` subagent (checks secrets by name, deploys). Secret values never enter the repo or the chat.
 
 Rules:
 - Molds under `molds/<mold_id>/codebase` are general-purpose snapshots. Do not edit them in place, and do not fork one to stamp an application. Refresh from source per the mold's `MOLD.md`.
