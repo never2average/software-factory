@@ -124,6 +124,11 @@ jobs:
         if: always()
         run: npm run check:tenancy
 
+      # Words a person reads for "who works here" come from the deployment profile; a hardcoded "FDE" in UI text
+      # shows the default deployment's word on every other deployment.
+      - name: Vocabulary comes from the deployment profile
+        run: npm run check:vocabulary
+
       # The task-workflow service is a SEPARATE deployment with its own tests,
       # and none of them ran here — so the engine that owns the Tasks tab was
       # the one part of the system CI never exercised. Its deps are vendored in

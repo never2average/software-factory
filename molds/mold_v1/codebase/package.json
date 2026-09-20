@@ -90,7 +90,8 @@
     "test:session-scope": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-session-scope.mjs",
     "test:email-html": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-email-html.mjs",
     "test:tool-call-ids": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-unique-tool-call-ids.mjs",
-    "test:insights-subagents": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-insights-subagents.mjs"
+    "test:insights-subagents": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-insights-subagents.mjs",
+    "check:vocabulary": "node scripts/check-vocabulary.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

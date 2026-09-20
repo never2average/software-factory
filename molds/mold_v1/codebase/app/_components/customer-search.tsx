@@ -122,7 +122,7 @@ export function CustomerSearchDialog({
             const activity =
               [
                 s?.lastTouchDate ? `Last touched ${s.lastTouchDate}` : null,
-                s?.fdeOwner ? `FDE ${s.fdeOwner}` : null,
+                s?.fdeOwner ? `${DEPLOYMENT_PROFILE.vocabulary.owner} ${s.fdeOwner}` : null,
               ]
                 .filter(Boolean)
                 .join(" · ") || null;

@@ -7,6 +7,7 @@
 
 import { SUBAGENT_KEYS } from "./subagent-meta.generated.ts";
 
+import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 export interface SubagentRun {
   callId: string;
   name: string;
@@ -287,7 +288,10 @@ function applyToolResult(state: Insights, tool: string, out: Record<string, unkn
           sub: [c.lifecycleStage, c.status, c.tier].filter(Boolean).join(" · ") || undefined,
         }),
       };
-      addPerson(c.fdeOwner, "FDE owner", String(c.name ?? c.id));
+      // The owner's label is the deployment's word ("FDE owner" by default, "Covering analyst" on a research
+      // deployment): it is shown next to a person's name and email, where the old product's word read as a
+      // status the person had not earned yet.
+      addPerson(c.fdeOwner, DEPLOYMENT_PROFILE.vocabulary.owner, String(c.name ?? c.id));
       if (Array.isArray(c.tickets)) {
         for (const ticket of c.tickets as Array<Record<string, unknown>>) {
           if (typeof ticket.ticketId === "string") {

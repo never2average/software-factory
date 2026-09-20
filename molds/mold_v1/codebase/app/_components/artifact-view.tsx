@@ -62,7 +62,9 @@ const HEADER_ABBR: Record<string, string> = {
   id: "ID",
   url: "URL",
   api: "API",
-  fde: "FDE",
+  // A data column such as `fde_owner` keeps its name in the file; only the HEADER a person reads follows the
+  // deployment's word for its members ("FDE" by default, "Analyst" on a research deployment).
+  fde: DEPLOYMENT_PROFILE.vocabulary.member.singular.charAt(0).toUpperCase() + DEPLOYMENT_PROFILE.vocabulary.member.singular.slice(1),
   sla: "SLA",
   kpi: "KPI",
   poc: "POC",

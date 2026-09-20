@@ -75,6 +75,7 @@ import { RosterImportDialog } from "./roster-import";
 import { WorkflowBuilder } from "./workflow-builder";
 
 import { SUBAGENT_META } from "../subagent-meta.generated";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 type Role = "owner" | "admin" | "engineer" | "member";
 type WorkspaceTab =
   | "dataroom"
@@ -556,6 +557,15 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
 }
 
 /* -------------------------------- Agents --------------------------------- */
+
+// People tab wording from the deployment profile. The default profile reproduces today's sentence exactly.
+const VOCAB = DEPLOYMENT_PROFILE.vocabulary;
+const ACCOUNTS_LABEL =
+  VOCAB.account.plural === "customers" ? "Accounts" : VOCAB.account.plural.charAt(0).toUpperCase() + VOCAB.account.plural.slice(1);
+const NOT_AN_OWNER =
+  VOCAB.account.singular === "customer"
+    ? `Not the ${VOCAB.owner} on any account.`
+    : `Not the ${VOCAB.owner.toLowerCase()} of any ${VOCAB.account.singular}.`;
 
 /** The specialist subagents the orchestrator delegates to: curated copy for the built-in ones, then every other
  *  declared subagent (discovered from agent/subagents/ by scripts/gen-subagent-meta.mjs) with what it declares. */
@@ -2098,11 +2108,11 @@ function PersonContext({
         </PanelField>
       )}
 
-      <PanelField label={`Accounts${owned.length ? ` (${owned.length})` : ""}`}>
+      <PanelField label={`${ACCOUNTS_LABEL}${owned.length ? ` (${owned.length})` : ""}`}>
         {accounts === null ? (
           <span className="text-muted-foreground text-xs">Loading…</span>
         ) : owned.length === 0 ? (
-          <span className="text-muted-foreground text-xs">Not the FDE owner on any account.</span>
+          <span className="text-muted-foreground text-xs">{NOT_AN_OWNER}</span>
         ) : (
           <div className="flex flex-col gap-1">
             {owned.map((c) => (
