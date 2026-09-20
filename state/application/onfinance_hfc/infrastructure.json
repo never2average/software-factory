@@ -85,5 +85,11 @@
     "blob_store": "onfinance-hfc"
   },
   "deployed_at": "2026-09-20T10:28:43+00:00",
-  "configured_at": "2026-09-19T10:00:56+00:00"
+  "configured_at": "2026-09-19T10:00:56+00:00",
+  "agent_cli": {
+    "package": "@onfinance/hfc-research",
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "token_ref": "NPM_TOKEN"
+  }
 }

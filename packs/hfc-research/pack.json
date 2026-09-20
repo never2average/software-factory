@@ -49,5 +49,11 @@
       "orchestrator": "@cf/moonshotai/kimi-k2.6",
       "specialist": "@cf/zai-org/glm-5.3"
     }
+  },
+  "agent_kit": {
+    "skills": [
+      "research-workspace-setup"
+    ],
+    "note": "Public: ships in the app's npm package. Carries no operator material; the analysts' KPI rulebook stays in the subagent workspace behind sign-in."
   }
 }
