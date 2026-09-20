@@ -90,3 +90,11 @@ python3 .claude/scripts/agent_cli.py <app_id> publish    # only with the operato
 Publishing signs in with the token NAMED by `token_ref` if the environment has it, otherwise with the machine's own
 `npm login` (which prints a link the operator opens — the friendlier path). The value is never printed, written or
 put on a command line. A public package never carries credentials or operator material such as a rulebook.
+
+## The application's own web address
+
+`python3 .claude/scripts/domain.py <app_id> status | attach <domain> | verify | switch`. `attach` adds the domain to
+the Vercel project and prints the one DNS record its owner must create; nothing users see changes. `switch` runs only
+once the domain serves the app: it moves `production_url` and `WEB_ORIGIN` (emailed links, the MCP origin check) and
+lists what follows — a redeploy, the Google sign-in origin, and a new version of the app's agent package, which has
+the address baked in. A deploy keeps a switched domain as the front door. The `*.vercel.app` address keeps working.
