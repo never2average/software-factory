@@ -79,6 +79,11 @@ shows. `workspace_list` / `workspace_use` read and change that from the agent.
   update the header. A Google ID token lasts about an hour, so it is a poor fit
   for a config file — use the emailed code, or the npm package (which refreshes
   Google tokens itself).
+- **The npm package takes either.** `npx <package> login` is the Google sign-in;
+  `npx <package> login --email <address>` runs the two calls of step 1 for you,
+  asks for the code on the terminal and stores the session (never printed) where
+  its MCP server reads it. After 7 days its tools say the sign-in has expired and
+  the person runs it again.
 - **What the token is.** It proves an email address and nothing else. Workspace
   membership is read from the database on every request, so removing someone
   from a workspace cuts their agent off immediately, token or not. It cannot be

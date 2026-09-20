@@ -9,8 +9,11 @@
  * config would contain.
  *
  * So this dispatches to the same commands, and both invocation styles work:
- *   npx <package> login       (via this file)
- *   npx -p <package> login    (direct bin)
+ *   npx <package> login            (via this file)
+ *   npx -p <package> <direct bin>  (fde-login here; <name>-login in a package
+ *                                   built for a deployment, which has no bare
+ *                                   `login` bin: globally installed, that one
+ *                                   would shadow the system's)
  *
  * Every product word and the address come from deployment.generated.mjs: this
  * file is the same in every package built from this codebase.
@@ -44,6 +47,7 @@ function helpText(d = DEPLOYMENT) {
       "",
       "Usage:",
       `  npx ${pkg} ${c.login} --url <address>   Sign in with your work Google account`,
+      `  npx ${pkg} ${c.login} --url <address> --email <you>   Sign in with a code emailed to you`,
       `  npx ${pkg} ${c.mcp}      Run the MCP server (for your coding agent)`,
       `  npx ${pkg} ${c.installSkills}  Install the setup skills`,
       "",
@@ -63,8 +67,9 @@ function helpText(d = DEPLOYMENT) {
     `    ${d.connect.tokenCommands.request}`,
     `    ${d.connect.tokenCommands.verify}`,
     "",
-    "Or use this package (Google Workspace accounts). The address is built in:",
-    `  npx ${pkg} ${c.login}            Sign in with your work Google account`,
+    "Or use this package. The address is built in. Sign in either way:",
+    `  npx ${pkg} ${c.login}            Sign in with your work Google account (opens a browser)`,
+    `  npx ${pkg} ${c.login} --email <address>   Sign in with a six-digit code emailed to you`,
     `  npx ${pkg} ${c.mcp}              Run the MCP server (for your coding agent)`,
     `  npx ${pkg} ${c.installSkills}   Install the agent skills`,
     "",

@@ -7,8 +7,9 @@ Connectors, Workflows and Crons, driven from your editor.
 > at `<your deployment's address>/api/mcp` — nothing to install, works with any
 > invited email address, and cannot point at the wrong app. The invite email and
 > the "Invite your team" screen show the exact command. See `docs/MCP.md` in the
-> platform repo. This package is the alternative for Google Workspace accounts,
-> and the only route to the direct-blob data-room mode.
+> platform repo. This package signs you in either way — a work Google account, or
+> a code emailed to you (`fde-login --email <address>`) — and is the only route to
+> the direct-blob data-room mode.
 
 > **There is no default address.** This same package serves every application
 > built from this codebase, so it cannot know which one is yours. Set
@@ -28,8 +29,8 @@ Two binaries, zero runtime dependencies, Node 20+.
 
 | | |
 |---|---|
-| `fde-login` | One interactive Google sign-in. Stores a refresh token at `~/.config/fde-mcp/credentials.json` (mode 600). |
-| `fde-mcp` | The MCP server your coding agent talks to. Mints a fresh ID token per session, so every write carries *your* identity — not a shared key. |
+| `fde-login` | One interactive sign-in: Google, or `--email <address>` for a six-digit code sent to your inbox. Stores the login at `~/.config/fde-mcp/credentials.json` (mode 600). |
+| `fde-mcp` | The MCP server your coding agent talks to. Presents your own login on every call (a fresh Google ID token, or your email session), so every write carries *your* identity — not a shared key. |
 
 > `fde-mcp` writes to the **live** platform — the same blob store and Ops API the
 > web console uses. There is no sandbox, so be deliberate about what you write.
@@ -47,7 +48,19 @@ needs no `FDE_OPS_URL`. Opens your browser for Google consent, catches the code 
 exchanges it with PKCE. Use your **work** Google account — personal Gmail
 addresses aren't admitted.
 
-While it waits, press **`c`** to copy the sign-in URL to your clipboard. That
+**No Google account?** Sign in with a code sent to your inbox instead:
+
+```bash
+npx -p @delivery-agents/cli fde-login --url https://your-deployment.example.com --email you@company.com
+```
+
+It emails you a six-digit code and asks for it on the terminal. The session it
+stores lasts 7 days and cannot be refreshed: when it runs out, the tools say so
+and you run the same command again. Already have a code? Add `--code <digits>`
+and no new one is sent (a new code cancels the one before it). When stdin is not
+a terminal, the code is read from stdin. The session token is never printed.
+
+With Google, while it waits, press **`c`** to copy the sign-in URL to your clipboard. That
 is the path that matters over SSH, on a headless box, or when your default
 browser is not the one you are signed into — the URL is ~400 characters and
 selecting it out of a terminal by hand is where it gets mangled.
@@ -135,6 +148,9 @@ block, or run `fde-login --url <address>` once.
 
 **`401` / "not signed in"** — the refresh token expired or was revoked. Re-run
 `npx -p @delivery-agents/cli fde-login`.
+
+**"Your email sign-in has expired"** — an emailed-code session lasts 7 days.
+Re-run `fde-login --email <address>`.
 
 **Data Room tools missing** — `BLOB_READ_WRITE_TOKEN` isn't set in the MCP
 server's `env` block.

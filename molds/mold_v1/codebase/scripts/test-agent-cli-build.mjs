@@ -4,15 +4,16 @@
  * Builds real packages into temp directories - under the default profile and under a probe
  * profile (docs/examples/profile-equity-research.json, read through PROFILES_DIR so no
  * generated file is touched) - and checks what a publisher relies on: the package.json, the
- * bins, which address wins, dm.md, which skills ship, the safety gate, and that npm packs
- * exactly what the gate checked. The only thing written inside the repo is a temporary
+ * bins, which address wins, sign-in by emailed code (against a local stub of the two routes),
+ * dm.md, which skills ship, the safety gate, and that npm packs exactly what the gate checked. The only thing written inside the repo is a temporary
  * agent-kit/ directory, removed in `finally`.
  *
  *   npm run test:agent-cli
  */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +48,17 @@ function run(file, args = [], env = {}) {
   // FDE_* cleared: a developer's own shell must not decide which address this resolves to.
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(FDE_|WEB_ORIGIN$|BLOB_READ_WRITE_TOKEN$)/.test(k)));
   return spawnSync(process.execPath, [file, ...args], { encoding: "utf8", input: "", env: { ...clean, HOME, USERPROFILE: HOME, ...env } });
+}
+/** `run`, without blocking this process: the stub server below answers from this event loop. */
+function runAsync(file, args = [], { env = {}, input = "" } = {}) {
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(FDE_|WEB_ORIGIN$|BLOB_READ_WRITE_TOKEN$)/.test(k)));
+  return new Promise((done, fail) => {
+    const child = spawn(process.execPath, [file, ...args], { env: { ...clean, HOME, USERPROFILE: HOME, ...env } });
+    let stdout = ""; let stderr = "";
+    child.stdout.on("data", (b) => (stdout += b)); child.stderr.on("data", (b) => (stderr += b));
+    child.on("error", fail); child.on("close", (status) => done({ status, stdout, stderr }));
+    child.stdin.end(input);
+  });
 }
 const writeSkill = (dir, name, body = "") => {
   mkdirSync(dir, { recursive: true });
@@ -85,7 +97,8 @@ try {
     assert.ok(pkg.description.includes(baseProfile.product.tagline));
     assert.ok(pkg.engines.node);
     assert.ok(!("repository" in pkg) && !("homepage" in pkg) && !("scripts" in pkg) && !("dependencies" in pkg));
-    assert.deepEqual(Object.keys(pkg.bin).sort(), ["fde-install-skill", "fde-login", "fde-mcp", "install-skills", "login", "mcp", "research-kit"]);
+    // Every bin carries the package's name: a bare `login` would shadow the system's on a global install.
+    assert.deepEqual(pkg.bin, { "research-kit": "./fde-cli.mjs", "research-kit-login": "./fde-login.mjs", "research-kit-mcp": "./fde-mcp.mjs", "research-kit-install-skills": "./fde-install-skill.mjs" });
     assert.deepEqual(pkg.files.slice().sort(), ["README.md", "deployment.generated.mjs", "dm.md", "fde-cli.mjs", "fde-install-skill.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-tools.mjs", "skills"]);
   });
   await check("--access restricted and --repository/--homepage are written when given", () => {
@@ -109,7 +122,15 @@ try {
     assert.equal(r.status, 0);
     assert.ok(r.stderr.includes(`claude mcp add --transport http delivered ${ORIGIN}/api/mcp --header "Authorization: Bearer <token>"`));
     assert.ok(r.stderr.includes(`npx ${NAME} login`));
+    assert.ok(r.stderr.includes(`npx ${NAME} login --email <address>`) && !/Google Workspace accounts\)/.test(r.stderr), "help shows both ways to sign in");
     assert.ok(!r.stderr.includes("@delivery-agents/cli"));
+  });
+  await check("login, mcp, install-skills and their older names all go through the dispatcher", () => {
+    for (const cmd of ["login", "mcp", "install-skills", "fde-login", "fde-mcp", "fde-install-skill"]) {
+      const r = run(join(D, "fde-cli.mjs"), [cmd, "--help"]);
+      assert.equal(r.status, 0, `${cmd}: ${r.stderr}`); assert.ok(r.stderr.includes(ORIGIN), cmd);
+    }
+    assert.match(run(join(D, "fde-login.mjs"), ["--help"]).stderr, /--email <address>/);
   });
   const { mcpConnect } = await import(join(ROOT, "lib/mcp-connect.ts"));
   await check("the baked connect strings equal mcpConnect()'s", async () => {
@@ -146,6 +167,108 @@ try {
     assert.ok(res.result.instructions.startsWith(`${baseProfile.product.name} control plane`));
     assert.ok(res.result.instructions.includes(ORIGIN));
   });
+  console.log("sign-in by emailed code");
+  // Assembled at run time, shaped like the app's session token (three base64url parts).
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const SESSION = [b64({ alg: "ES256" }), b64({ email: "person@probe-deployment.dev", kind: "email-session" }), "c2lnbmF0dXJl"].join(".");
+  const REFUSED = "That code is wrong or has expired. Request a new one.";
+  const calls = [];
+  // Plays POST /api/auth/email/request and /verify as the app does, and records what the Ops API is sent.
+  const stub = createServer((req, res) => {
+    let body = "";
+    req.on("data", (b) => (body += b));
+    req.on("end", () => {
+      const json = body ? JSON.parse(body) : null;
+      calls.push({ path: req.url, body: json, authorization: req.headers.authorization ?? null });
+      const reply = (status, out) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(out)); };
+      if (req.url === "/api/auth/email/request") {
+        if (json.email.startsWith("unconfigured@")) return reply(503, { error: "Email sign-in is not configured on this deployment." });
+        if (json.email.startsWith("eager@")) return reply(429, { error: "Too many codes requested for that address. Try again in an hour." });
+        return reply(200, { ok: true, message: "If that address has an invite or an existing workspace, a sign-in code is on its way." });
+      }
+      if (req.url === "/api/auth/email/verify") return json.code === "123456" ? reply(200, { token: SESSION, email: json.email, expiresIn: 604800 }) : reply(401, { error: REFUSED });
+      if (req.url === "/api/ops/orgs") return reply(200, { items: [] });
+      reply(404, { error: "not found" });
+    });
+  });
+  await new Promise((r) => stub.listen(0, "127.0.0.1", r));
+  const STUB = `http://127.0.0.1:${stub.address().port}`;
+  const CRED = join(HOME, ".config/fde-mcp", new URL(ORIGIN).host, "credentials.json");
+  const LOGIN = join(D, "fde-login.mjs");
+  try {
+    await check("happy path: asks for a code, reads it from stdin, stores an email session (mode 600), never prints the token", async () => {
+      const r = await runAsync(LOGIN, ["--email", "Person@Probe-Deployment.dev", "--url", STUB], { input: "123 456\n" });
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(calls.map((c) => [c.path, c.body]), [["/api/auth/email/request", { email: "person@probe-deployment.dev" }], ["/api/auth/email/verify", { email: "person@probe-deployment.dev", code: "123456" }]]);
+      const stored = JSON.parse(readFileSync(CRED, "utf8"));
+      assert.deepEqual(Object.keys(stored).sort(), ["email", "expires_at", "kind", "ops_url", "session_token"]);
+      assert.equal(stored.kind, "email-session"); assert.equal(stored.session_token, SESSION); assert.equal(stored.email, "person@probe-deployment.dev"); assert.equal(stored.ops_url, STUB);
+      assert.ok(Math.abs(stored.expires_at - (Date.now() / 1000 + 604800)) < 120, "expires_at is now + expiresIn, in seconds");
+      assert.equal(statSync(CRED).mode & 0o777, 0o600);
+      assert.ok(!(r.stdout + r.stderr).includes(SESSION) && !(r.stdout + r.stderr).includes(SESSION.split(".")[2]), "the token is never printed");
+      assert.match(r.stderr, /a sign-in code is on its way/); assert.match(r.stderr, /Signed in as person@probe-deployment\.dev until \d{4}-\d\d-\d\d/);
+    });
+    await check("--code verifies the code in hand without requesting a new one, through the dispatcher, and tightens a loose file", async () => {
+      calls.length = 0; chmodSync(CRED, 0o644);
+      const r = await runAsync(join(D, "fde-cli.mjs"), ["login", "--email", "person@probe-deployment.dev", "--code", "123456", "--url", STUB]);
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(calls.map((c) => c.path), ["/api/auth/email/verify"]);
+      assert.equal(statSync(CRED).mode & 0o777, 0o600); assert.ok(!(r.stdout + r.stderr).includes(SESSION));
+    });
+    await check("a wrong code shows the server's sentence, exits non-zero and stores nothing", async () => {
+      rmSync(CRED);
+      const r = await runAsync(LOGIN, ["--email", "person@probe-deployment.dev", "--url", STUB], { input: "000000\n" });
+      assert.equal(r.status, 1); assert.ok(r.stderr.includes(REFUSED), r.stderr); assert.ok(!existsSync(CRED));
+      assert.ok(!/at .*fde-login\.mjs|Error:/.test(r.stderr), "a sentence, not a stack trace");
+    });
+    await check("429 and 503 are shown as the server's sentences; something that is not a code is refused before any verify", async () => {
+      const busy = await runAsync(LOGIN, ["--email", "eager@probe-deployment.dev", "--url", STUB], { input: "123456\n" });
+      assert.equal(busy.status, 1); assert.match(busy.stderr, /Too many codes requested for that address\. Try again in an hour\./);
+      const off = await runAsync(LOGIN, ["--email", "unconfigured@probe-deployment.dev", "--url", STUB], { input: "123456\n" });
+      assert.equal(off.status, 1); assert.match(off.stderr, /Email sign-in is not configured on this deployment\./);
+      calls.length = 0;
+      const none = await runAsync(LOGIN, ["--email", "person@probe-deployment.dev", "--url", STUB], { input: "" });
+      assert.equal(none.status, 1); assert.match(none.stderr, /not a six-digit code.*--code <digits>/); assert.deepEqual(calls.map((c) => c.path), ["/api/auth/email/request"]);
+      const bad = await runAsync(LOGIN, ["--email", "not-an-address", "--url", STUB]);
+      assert.equal(bad.status, 1); assert.match(bad.stderr, /--email needs an email address/);
+      const down = await runAsync(LOGIN, ["--email", "person@probe-deployment.dev", "--url", "http://127.0.0.1:9"], { input: "123456\n" });
+      assert.equal(down.status, 1); assert.match(down.stderr, /Could not reach http:\/\/127\.0\.0\.1:9\./);
+    });
+    const { emailSessionBearer, parseCode } = await import(LOGIN);
+    await check("bearer selection: an unexpired email session is the bearer, an expired one is refused, a Google login is left alone", () => {
+      const now = Date.now(); const soon = Math.floor(now / 1000);
+      const live = emailSessionBearer({ kind: "email-session", session_token: SESSION, email: "a@b.dev", expires_at: soon + 3600 }, { now });
+      assert.deepEqual(live, { bearer: SESSION, email: "a@b.dev", expired: false });
+      for (const creds of [{ kind: "email-session", session_token: SESSION, email: "a@b.dev", expires_at: soon - 1 }, { kind: "email-session", session_token: SESSION, email: "a@b.dev", expires_at: soon + 30 }, { kind: "email-session", email: "a@b.dev", expires_at: soon + 3600 }]) {
+        const dead = emailSessionBearer(creds, { now });
+        assert.equal(dead.expired, true); assert.equal(dead.bearer, null);
+        assert.equal(dead.message, `Your email sign-in has expired. Run \`npx ${NAME} login --email a@b.dev\` in a terminal to sign in again.`);
+      }
+      assert.equal(emailSessionBearer({ refresh_token: "r", id_token: "i", email: "a@b.dev" }, { now }), null);
+      assert.equal(emailSessionBearer(null), null);
+      assert.equal(parseCode(" 123-456\n"), "123456"); assert.equal(parseCode("12345"), null); assert.equal(parseCode("1234567"), null);
+    });
+    const statusCall = [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "fde_status", arguments: {} } }].map((m) => JSON.stringify(m)).join("\n") + "\n";
+    const writeCreds = (expiresAt) => { mkdirSync(dirname(CRED), { recursive: true }); writeFileSync(CRED, JSON.stringify({ kind: "email-session", session_token: SESSION, email: "person@probe-deployment.dev", expires_at: expiresAt, ops_url: STUB }), { mode: 0o600 }); };
+    await check("the MCP server sends an unexpired email session as its bearer", async () => {
+      calls.length = 0; writeCreds(Math.floor(Date.now() / 1000) + 3600);
+      const r = await runAsync(join(D, "fde-mcp.mjs"), [], { input: statusCall });
+      const text = JSON.parse(r.stdout.trim().split("\n")[0]).result.content[0].text;
+      assert.equal(JSON.parse(text).identity.email, "person@probe-deployment.dev");
+      assert.ok(calls.length && calls.every((c) => c.authorization === `Bearer ${SESSION}`), JSON.stringify(calls.map((c) => c.path)));
+      assert.ok(!r.stderr.includes(SESSION));
+    });
+    await check("and refuses an expired one with one sentence, sending nothing", async () => {
+      calls.length = 0; writeCreds(Math.floor(Date.now() / 1000) - 10);
+      const r = await runAsync(join(D, "fde-mcp.mjs"), [], { input: statusCall });
+      assert.match(r.stdout, /Your email sign-in has expired\. Run `npx @probe-scope\/research-kit login --email person@probe-deployment\.dev`/);
+      assert.deepEqual(calls, []); assert.ok(!r.stdout.includes(SESSION));
+    });
+  } finally {
+    stub.close(); stub.closeAllConnections?.();
+    rmSync(join(HOME, ".config"), { recursive: true, force: true });
+  }
+
   await check("dm.md equals setup/dm.md (and the repo's) byte for byte", () => {
     assert.ok(readFileSync(join(D, "dm.md")).equals(readFileSync(join(ROOT, "setup/dm.md"))));
     assert.ok(readFileSync(join(D, "dm.md")).equals(readFileSync(join(ROOT, "dm.md"))));

@@ -186,10 +186,13 @@ function walk(dir) {
 }
 
 const license = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).license ?? "UNLICENSED";
+// Every bin carries the package's own name. A bare `login` shadows the system's on a global
+// install, and `fde-*` would collide between two deployments' packages. `npx <package> login`
+// (and the older fde-login / fde-mcp / fde-install-skill) still work: fde-cli.mjs dispatches them.
+const own = unscopedName(name);
 const bin = Object.fromEntries([
-  [unscopedName(name), "./fde-cli.mjs"],
-  ["login", "./fde-login.mjs"], ["mcp", "./fde-mcp.mjs"], ["install-skills", "./fde-install-skill.mjs"],
-  ["fde-login", "./fde-login.mjs"], ["fde-mcp", "./fde-mcp.mjs"], ["fde-install-skill", "./fde-install-skill.mjs"],
+  [own, "./fde-cli.mjs"],
+  [`${own}-login`, "./fde-login.mjs"], [`${own}-mcp`, "./fde-mcp.mjs"], [`${own}-install-skills`, "./fde-install-skill.mjs"],
 ]);
 const pkg = {
   name, version,
@@ -232,10 +235,18 @@ ${connect.tokenCommands.verify}
 
 ${connect.tokenNote}
 
-## Or: this package (Google Workspace accounts)
+## Or: this package
+
+Sign in once, either way:
 
 \`\`\`bash
-npx ${name} login            # sign in once with your work Google account (opens a browser)
+npx ${name} login                    # with your work Google account (opens a browser)
+npx ${name} login --email <address>  # with a six-digit code emailed to you; type it when asked
+\`\`\`
+
+An emailed-code sign-in lasts about a week, then you run it again. Then:
+
+\`\`\`bash
 npx ${name} mcp              # the MCP server your coding agent runs
 npx ${name} install-skills   # install the agent skills shipped in this package
 npx ${name}                  # help
@@ -253,7 +264,9 @@ Any other client, as JSON:
 { "command": "npx", "args": ["-y", "${name}", "mcp"] }
 \`\`\`
 
-\`fde-login\`, \`fde-mcp\` and \`fde-install-skill\` are the same commands under their older names.
+\`npx ${name} fde-login\`, \`fde-mcp\` and \`fde-install-skill\` are the same commands under their older
+names. Installed globally, the commands are \`${own}\`, \`${own}-login\`, \`${own}-mcp\` and
+\`${own}-install-skills\`: each carries the package's name, so none shadows a system command.
 
 Which address is used, first match wins: \`--url <address>\` or \`FDE_OPS_URL\`, then the address saved
 at sign-in, then the built-in ${origin}.
@@ -267,10 +280,10 @@ name, and the one every tool path uses.
 
 ## Security
 
-- Everything the agent does is done as YOU: the sign-in is your own Google work account, checked
-  by ${productName} on every call. Leaving a workspace ends access to it.
+- Everything the agent does is done as YOU: the sign-in is your own Google work account or your
+  own email address, checked by ${productName} on every call. Leaving a workspace ends access to it.
 - The sign-in is stored only on your machine (\`~/.config/fde-mcp/${new URL(origin).host}/credentials.json\`,
-  readable by you alone). This package sends it to Google (to refresh it) and to ${origin}, nowhere else.
+  readable by you alone). This package sends it to Google (to refresh a Google sign-in) and to ${origin}, nowhere else.
 - The Google client id and secret inside \`fde-login.mjs\` are for an installed-app client. Google does
   not treat such a secret as confidential; it grants nothing without your interactive sign-in.
 - The tools write to the LIVE workspace. Writes to the data room and invitations preview first and

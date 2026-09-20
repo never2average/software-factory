@@ -24,7 +24,7 @@ It never publishes.
 | | The hosted endpoint (`<address>/api/mcp`, [`MCP.md`](MCP.md)) | The package |
 |---|---|---|
 | Install | nothing | `npx <package>` |
-| Sign-in | any invited email address (an emailed code) | a Google Workspace account (browser sign-in) |
+| Sign-in | any invited email address (an emailed code) | `login`: a Google Workspace account (browser sign-in); `login --email <address>`: an emailed code |
 | Address | it IS the deployment | baked in at build time |
 | Tools | `setup/fde-tools.mjs` | the same file, copied |
 | Skills | none | `npx <package> install-skills` |
@@ -32,8 +32,9 @@ It never publishes.
 Both serve the same tools from one definition. The package's help and README **lead with
 the hosted one-liner**, and that string is produced by `lib/mcp-connect.ts` at build time,
 the same function the onboarding screen and the invite email use, so the three cannot
-disagree. The package exists for the skills, for Google Workspace sign-in, and because a
-versioned, immutable package is a trust anchor a URL is not.
+disagree. The package exists for the skills, for a sign-in that is kept for you (Google,
+refreshed; or an emailed code, good for 7 days), and because a versioned, immutable package
+is a trust anchor a URL is not.
 
 ## Inputs
 
@@ -75,10 +76,22 @@ built package replaces that one file and nothing else. `fde-tools.mjs` takes eve
 from its host (`ctx`), so it has no product words to replace and is shared with the app.
 
 **Commands.** `npx <package>` prints help (the product's name, the hosted one-liner, then
-the commands) and exits 0. The bins are the package's own name plus `login`, `mcp` and
-`install-skills`, with `fde-login`, `fde-mcp` and `fde-install-skill` kept as aliases. Note
-for anyone installing globally: a bin called `login` shadows the system's on some PATHs;
-`npx <package> login` never does.
+the commands) and exits 0. `npx <package> login | mcp | install-skills` go through that
+dispatcher (`fde-cli.mjs`), which also still takes the older `fde-login`, `fde-mcp` and
+`fde-install-skill`. The bins all carry the package's own unscoped name: `<name>` (the
+dispatcher), `<name>-login`, `<name>-mcp` and `<name>-install-skills`. There is no bare
+`login` bin (installed globally it shadowed the system's) and no `fde-*` bin (two
+deployments' packages would collide on them).
+
+**Sign-in.** `login` is the Google installed-app flow. `login --email <address>` is for the
+many people with no Google account: it calls `POST /api/auth/email/request` on the
+package's address, asks for the six-digit code on the terminal (`--code <digits>` verifies a
+code already in hand and sends no new one; with stdin not a terminal the code is read from
+stdin), calls `POST /api/auth/email/verify`, and stores
+`{ kind: "email-session", session_token, email, expires_at, ops_url }` in the same
+credentials file (mode 600). The MCP server sends that token as its bearer until
+`expires_at` (epoch seconds); after that it answers with one sentence telling the person to
+sign in again, since these sessions have no refresh. The token is never printed.
 
 **Which address, first match wins:** `--url <address>` or `FDE_OPS_URL`; the address saved
 at sign-in; the built-in one. A built package keeps its sign-in in its own folder
@@ -161,7 +174,8 @@ npm run test:agent-cli
 
 Builds real packages into temp directories under the default profile and a probe profile
 (`docs/examples/profile-equity-research.json`) with a temporary `agent-kit/` skill, and
-checks the `package.json`, every bin's `--help`, which address wins, `dm.md`, which skills
+checks the `package.json`, every bin's `--help`, which address wins, sign-in by emailed code
+(against a local stub of the two routes; no mail is sent), `dm.md`, which skills
 ship, each safety-gate rule, that npm packs exactly the manifest, and that the generic
 package in `setup/` is unchanged apart from its new generated module. It leaves the
 working tree as it found it, and needs a base checkout (no `agent-kit/` present).

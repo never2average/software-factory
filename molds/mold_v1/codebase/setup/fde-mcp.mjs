@@ -75,9 +75,10 @@ const parseClaudeTranscript = sessionsLib?.parseClaudeTranscript ?? null;
 const sessionToSyncItem = sessionsLib?.sessionToSyncItem ?? null;
 /** True when the data-room half of the toolset is available. */
 const DATAROOM_AVAILABLE = Boolean(createDataroomStore);
-const { CRED_PATH, resolveDeploymentAddress } = await import("./fde-login.mjs").catch(() => ({
+const { CRED_PATH, resolveDeploymentAddress, emailSessionBearer } = await import("./fde-login.mjs").catch(() => ({
   CRED_PATH: null,
   resolveDeploymentAddress: null,
+  emailSessionBearer: null,
 }));
 import { readFile as readPkgFile } from "node:fs/promises";
 
@@ -118,10 +119,13 @@ const NO_OPS_URL =
   `in this MCP server's env, or sign in with \`${CMD.login} --url <address>\` to save it. ` +
   "Simpler still: skip this package and connect to <address>/api/mcp directly.";
 const ACTOR = process.env.FDE_ACTOR ?? "local-agent";
-const SIGN_IN_HINT = `Ask the user to run \`npx -p ${DEPLOYMENT.packageName} ${CMD.login}\` in a terminal (an interactive browser sign-in you cannot do yourself).`;
-// How the Ops API knows who you are: your per-user Google identity from
-// `fde-login` (see fde-login.mjs). There is no service-key fallback — run the
-// login first. The Data Room tools use the blob token instead and need no login.
+const SIGN_IN_HINT =
+  `Ask the user to run \`npx ${DEPLOYMENT.packageName} ${CMD.login}\` in a terminal (an interactive browser sign-in you cannot do yourself), ` +
+  `or \`npx ${DEPLOYMENT.packageName} ${CMD.login} --email <their address>\` if they sign in with an emailed code rather than Google.`;
+// How the Ops API knows who you are: your per-user identity from `fde-login`
+// (see fde-login.mjs) — a Google login, or an emailed-code session. There is no
+// service-key fallback — run the login first. The Data Room tools use the blob
+// token instead and need no login.
 const OAUTH_CLIENT_ID =
   process.env.FDE_OAUTH_CLIENT_ID ??
   "865110163807-dsiua8j7v253dqngcccechjbc4a14scp.apps.googleusercontent.com";
@@ -173,8 +177,23 @@ async function userIdToken() {
   return cachedIdToken;
 }
 
-/** The bearer for an Ops API call: your Google identity. Null if not logged in. */
+/**
+ * The stored emailed-code session (`fde-login --email`), or null when the login
+ * is a Google one. Read per call, not cached: signing in again must take effect
+ * without restarting the server. `expired` carries the sentence to show — there
+ * is no refresh for these, the person signs in again.
+ */
+async function emailSession() {
+  if (!emailSessionBearer || !CRED_PATH) return null;
+  const creds = await readFile(CRED_PATH, "utf8").then(JSON.parse).catch(() => null);
+  return emailSessionBearer(creds);
+}
+
+/** The bearer for an Ops API call: your email session, else your Google identity. Null if not logged in. */
 async function opsBearer() {
+  const session = await emailSession();
+  if (session?.expired) throw new Error(session.message);
+  if (session) return session.bearer;
   return await userIdToken();
 }
 const hasBlob = Boolean(process.env.BLOB_READ_WRITE_TOKEN) && DATAROOM_AVAILABLE;
@@ -244,8 +263,11 @@ async function api(method, path, body) {
 }
 
 
-/** Claims from the current ID token, as the shared tools want them. */
+/** Who is signed in, as the shared tools want it: the email session, else claims from the current ID token. */
 async function identity() {
+  const session = await emailSession();
+  if (session?.expired) throw new Error(session.message);
+  if (session) return { email: session.email, domain: null };
   const token = await userIdToken();
   if (!token) return null;
   try {

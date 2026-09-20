@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 /**
- * fde-login — sign the setup MCP in as YOU, with Google, once.
+ * fde-login — sign the setup MCP in as YOU, once. Two ways in:
  *
- *   node setup/fde-login.mjs
+ *   node setup/fde-login.mjs                           with Google (a work account)
+ *   node setup/fde-login.mjs --email you@company.com   with a six-digit code sent to your inbox
+ *
+ * GOOGLE (the default, unchanged):
  *
  * Runs the OAuth 2.0 installed-app loopback flow (the same shape as `gcloud auth
  * login` / `gh auth login`): opens your browser for consent, catches the code on
@@ -23,6 +26,16 @@
  * (scripts/build-agent-cli.mjs, docs/AGENT_CLI.md) bakes in that deployment's,
  * so `npx <package> login` needs no configuration.
  *
+ * EMAILED CODE (`--email <address>`), for people Google cannot vouch for: asks the
+ * deployment to email a code (POST /api/auth/email/request), reads the code from
+ * the terminal, trades it for a session token (POST /api/auth/email/verify) and
+ * stores that token with its expiry in the same credentials file. `fde-mcp.mjs`
+ * presents it as the bearer until it expires; there is no refresh, so after that
+ * you sign in again. The token is never printed.
+ *   --code <digits>   you already have a code: verify it, send no new one (a new
+ *                     code cancels the one before it). With stdin not a terminal
+ *                     the code is read from stdin instead of prompted for.
+ *
  * Config (env, both optional — sensible defaults are baked in):
  *   FDE_OAUTH_CLIENT_ID       override the shared CLI client
  *   FDE_OAUTH_CLIENT_SECRET   override the baked-in desktop-client secret
@@ -35,9 +48,10 @@
  * in the repo, available to anyone with repo access — no per-dev setup.
  */
 import { createServer } from "node:http";
+import { createInterface } from "node:readline";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -178,7 +192,157 @@ function openBrowser(url) {
   spawn(cmd, [url], { stdio: "ignore", detached: true, shell: process.platform === "win32" }).unref();
 }
 
+// ------------------------------------------------------------ sign-in by emailed code
+
+/** What marks a stored credential as an emailed-code session (vs. a Google login). */
+export const EMAIL_SESSION_KIND = "email-session";
+
+/** The value after `flag` in argv, or null. A following flag is not a value. */
+function flagValue(argv, flag) {
+  const i = argv.indexOf(flag);
+  if (i === -1) return null;
+  const v = argv[i + 1];
+  return v === undefined || v.startsWith("--") ? "" : v.trim();
+}
+
+/**
+ * POST JSON to one of the deployment's sign-in routes. Resolves the parsed body;
+ * rejects with a sentence a person can read: the server's own (`error`) when it
+ * sent one, else one for the status. Never includes the response body otherwise,
+ * so a token can't end up in an error message.
+ */
+async function postAuth(origin, path, body, fetchImpl = fetch) {
+  let res;
+  try {
+    res = await fetchImpl(`${origin}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    throw new Error(`Could not reach ${origin}. Check the address and your connection. (${e?.cause?.code ?? e?.name ?? "network error"})`);
+  }
+  const parsed = await res.json().catch(() => null);
+  if (res.ok && parsed && typeof parsed === "object") return parsed;
+  if (typeof parsed?.error === "string" && parsed.error.trim()) throw new Error(parsed.error.trim());
+  if (res.status === 429) throw new Error("Too many attempts. Wait a while, then try again.");
+  if (res.status === 503) throw new Error("Email sign-in is not set up on this deployment.");
+  if (res.status === 404) throw new Error(`${origin} has no email sign-in. Check the address.`);
+  throw new Error(`${origin} could not do that right now (HTTP ${res.status}).`);
+}
+
+/** Ask the deployment to email a code. Resolves the sentence it answers with. */
+export async function requestEmailCode({ origin, email, fetchImpl }) {
+  const out = await postAuth(origin, "/api/auth/email/request", { email }, fetchImpl);
+  return typeof out.message === "string" ? out.message : "If that address can sign in, a code is on its way.";
+}
+
+/**
+ * Trade the code for a session, shaped as it is stored:
+ *   { kind: "email-session", session_token, email, expires_at (epoch seconds), ops_url }
+ * `expires_at` is the server's `expiresIn`, else the token's own `exp` claim.
+ */
+export async function verifyEmailCode({ origin, email, code, fetchImpl, now = Date.now() }) {
+  const out = await postAuth(origin, "/api/auth/email/verify", { email, code }, fetchImpl);
+  if (typeof out.token !== "string" || !out.token) throw new Error("The deployment accepted the code but sent no session. Try again.");
+  let expiresAt = Number.isFinite(out.expiresIn) && out.expiresIn > 0 ? Math.floor(now / 1000) + Math.floor(out.expiresIn) : 0;
+  if (!expiresAt) {
+    try {
+      expiresAt = Number(JSON.parse(Buffer.from(out.token.split(".")[1], "base64url").toString()).exp) || 0;
+    } catch {
+      /* not a token we can read */
+    }
+  }
+  if (!expiresAt) throw new Error("The deployment sent a session without an expiry. Try again.");
+  return {
+    kind: EMAIL_SESSION_KIND,
+    session_token: out.token,
+    email: typeof out.email === "string" ? out.email : email,
+    expires_at: expiresAt,
+    ops_url: origin,
+  };
+}
+
+/**
+ * How `fde-mcp` reads a stored credential. Null when it is not an email session
+ * (a Google login: the caller refreshes that as before). Otherwise the bearer,
+ * or `expired` with the sentence to show — these sessions cannot be refreshed.
+ */
+export function emailSessionBearer(creds, { now = Date.now() } = {}) {
+  if (creds?.kind !== EMAIL_SESSION_KIND) return null;
+  const email = typeof creds.email === "string" ? creds.email : "unknown";
+  if (typeof creds.session_token === "string" && creds.session_token && Number(creds.expires_at) - now / 1000 > 60) {
+    return { bearer: creds.session_token, email, expired: false };
+  }
+  return {
+    bearer: null,
+    email,
+    expired: true,
+    message: `Your email sign-in has expired. Run \`npx ${DEPLOYMENT.packageName} ${DEPLOYMENT.commands.login} --email ${email}\` in a terminal to sign in again.`,
+  };
+}
+
+/** Six digits out of whatever was typed or piped ("123 456", a trailing newline). Null otherwise. */
+export function parseCode(raw) {
+  const digits = String(raw ?? "").replace(/[\s-]/g, "");
+  return /^\d{6}$/.test(digits) ? digits : null;
+}
+
+/** The code from a person (a prompt on the terminal) or from a pipe (all of stdin). */
+async function readCodeFromStdin(stdin = process.stdin) {
+  if (stdin.isTTY) {
+    const rl = createInterface({ input: stdin, output: process.stderr });
+    try {
+      return await new Promise((resolve) => rl.question("Six-digit code: ", resolve));
+    } finally {
+      rl.close();
+    }
+  }
+  let text = "";
+  for await (const chunk of stdin) text += chunk;
+  return text;
+}
+
+/**
+ * The whole emailed-code sign-in. Throws plain sentences; writes the credential
+ * (mode 600) and resolves what was stored. `--code` verifies without requesting:
+ * each new code cancels the last, so asking again would void the one in hand.
+ */
+export async function emailLogin({ argv = process.argv, env = process.env, stdin = process.stdin, fetchImpl, credDir = CRED_DIR, log = (line) => console.error(line) } = {}) {
+  const email = flagValue(argv, "--email")?.toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("--email needs an email address. Example: --email you@company.com");
+  const { origin } = resolveDeploymentAddress({ argv, env });
+  if (!origin) throw new Error("Signing in by email needs your deployment's address. Add --url <address> (the one you open in a browser).");
+
+  const given = flagValue(argv, "--code");
+  let code;
+  if (given !== null) {
+    code = parseCode(given);
+    if (!code) throw new Error("--code needs the six digits from the email.");
+  } else {
+    log(await requestEmailCode({ origin, email, fetchImpl }));
+    code = parseCode(await readCodeFromStdin(stdin));
+    if (!code) throw new Error("That is not a six-digit code. When you have it, run this again with --code <digits> (no new code is sent).");
+  }
+
+  const creds = await verifyEmailCode({ origin, email, code, fetchImpl });
+  const path = join(credDir, "credentials.json");
+  await mkdir(credDir, { recursive: true, mode: 0o700 });
+  await writeFile(path, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  // writeFile's mode only applies to a NEW file; a Google login may already be there.
+  await chmod(path, 0o600);
+  const until = new Date(creds.expires_at * 1000).toISOString().slice(0, 10);
+  log(`\nSigned in as ${creds.email} until ${until}. Credentials stored at ${path}.`);
+  log(`The MCP will now act as you on ${origin}.\n`);
+  return creds;
+}
+
 async function main() {
+  if (process.argv.includes("--email")) {
+    await emailLogin();
+    return;
+  }
   const verifier = b64url(randomBytes(32));
   const challenge = b64url(createHash("sha256").update(verifier).digest());
   const state = b64url(randomBytes(16));
@@ -322,14 +486,19 @@ if (isEntrypoint && (process.argv.includes("--help") || process.argv.includes("-
   const d = DEPLOYMENT;
   console.error(
     [
-      `${d.commands.login} - sign in to ${d.origin ? `${d.name} at ${d.origin}` : "your deployment"} with your work Google account.`,
+      `${d.commands.login} - sign in to ${d.origin ? `${d.name} at ${d.origin}` : "your deployment"}: with your work Google account, or with a code emailed to you.`,
       "",
       d.origin
-        ? `  npx ${d.packageName} ${d.commands.login}                  the address is built in`
-        : `  npx ${d.packageName} ${d.commands.login} --url <address>  your deployment's address (or FDE_OPS_URL)`,
+        ? `  npx ${d.packageName} ${d.commands.login}                  Google; the address is built in`
+        : `  npx ${d.packageName} ${d.commands.login} --url <address>  Google; your deployment's address (or FDE_OPS_URL)`,
+      `  npx ${d.packageName} ${d.commands.login} --email <address>${d.origin ? "" : " --url <address>"}  a six-digit code is emailed to you; type it here`,
       ...(d.origin ? [`  npx ${d.packageName} ${d.commands.login} --url <address>  another address (or FDE_OPS_URL)`] : []),
       "",
-      `Opens your browser, then stores a refresh token at ${CRED_PATH} (mode 600).`,
+      "  --code <digits>  with --email: verify a code you already have (no new one is sent).",
+      "                   When stdin is not a terminal the code is read from stdin.",
+      "",
+      `Google opens your browser, then stores a refresh token at ${CRED_PATH} (mode 600).`,
+      "An emailed code stores a session there instead; it lasts about a week, then you sign in again.",
       "Nothing is sent anywhere except Google and the deployment you sign in to.",
     ].join("\n"),
   );
