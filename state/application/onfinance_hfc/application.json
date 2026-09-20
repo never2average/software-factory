@@ -3,7 +3,7 @@
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
   "mold_commit": "95777a6a66f7fe3cf12002539087f4f0676602f9",
-  "status": "reverted",
+  "status": "stamped",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
   "model": {
@@ -87,7 +87,7 @@
         {
           "kind": "custom",
           "dataroom_path": "Customers/{customer_id}/filings/lodr/**",
-          "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) \u2014 the analysts' Quarterly Report \u2014 plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
+          "description": "SEBI LODR filings per covered company: quarterly results under Reg 33 (equity-listed) and Reg 52 (debt-listed) — the analysts' Quarterly Report — plus material events, shareholding, related-party, security cover and the annual report. Fetched and logged by the lodr-filings subagent.",
           "sync": "manual_entry",
           "required": true,
           "seeded_from": "none"
@@ -180,7 +180,7 @@
       "product_name": "OnFinance AI",
       "brand_color": "#2D2D2D",
       "tagline": "Research workspace for listed and debt-listed Indian housing finance companies.",
-      "description": "OnFinance AI \u2014 Research workspace for listed and debt-listed Indian housing finance companies.",
+      "description": "OnFinance AI — Research workspace for listed and debt-listed Indian housing finance companies.",
       "radius": "0.625rem",
       "neutral_chroma": 0.006,
       "icon_bg": "#2D2D2D",
@@ -211,18 +211,13 @@
       "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-20T081227Z.md"
     },
     "responsiveness": {
-      "status": "fail",
-      "run_at": "2026-09-20T08:12:42+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-20T081242Z.md"
+      "status": "skipped",
+      "run_at": "2026-09-20T08:14:36+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-20T081436Z.md"
     }
   },
   "customer_id": "internal",
   "packs": [
     "hfc-research"
-  ],
-  "revert": {
-    "lane": "responsiveness",
-    "at": "2026-09-20T08:12:42+00:00",
-    "reason": "responsiveness lane failed on 1 check(s): interaction.latency; report molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-20T081242Z.md; task mold_v1-082."
-  }
+  ]
 }
