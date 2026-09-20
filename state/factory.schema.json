@@ -170,6 +170,15 @@
         },
         "vm": {
           "type": "object"
+        },
+        "agent_cli_scope": {
+          "type": "string",
+          "pattern": "^@[a-z0-9][a-z0-9._-]*$",
+          "description": "the operator's npm organisation; a new application's own agent package is <scope>/<project>"
+        },
+        "notify_domain": {
+          "type": "string",
+          "description": "the domain the operator has verified for sending email; a new application's sender is <Product> <project@domain>"
         }
       }
     }
