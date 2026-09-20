@@ -1125,6 +1125,11 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     subprocess.run("rm -rf .vercel/output .vercel/static-build .vercel/.env.production.local", shell=True, cwd=mold_dir)
     url = run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy")
     disconnect_git(proj, mold_dir)
+    # An app with its own domain (domain.py attach/switch) keeps it as its front door: `vercel deploy` always
+    # answers with the project's *.vercel.app address, and recording that would send WEB_ORIGIN, emailed links
+    # and the app's agent package back to the old address on every deploy.
+    dom = infra["vercel"].get("custom_domain")
+    if dom and (infra["vercel"].get("production_url") or "") == f"https://{dom}": url = f"https://{dom}"
     infra["vercel"]["production_url"] = url; print(f"  {url}")
     if url != web_origin:
         for p_ in (proj, f"{proj}-api"): _set_env("WEB_ORIGIN", url, mold_dir, project=p_)
