@@ -15,6 +15,7 @@
     "fde-login.mjs",
     "fde-mcp.mjs",
     "fde-tools.mjs",
+    "deployment.generated.mjs",
     "dm.md",
     "README.md",
     "fde-install-skill.mjs",

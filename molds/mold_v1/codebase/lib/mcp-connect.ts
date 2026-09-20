@@ -42,7 +42,19 @@ export interface McpConnect {
   packageAlternative: { login: string; claudeCommand: string; note: string };
 }
 
-export function mcpConnect(input: { origin: string; productName: string; email?: string }): McpConnect {
+/** The shared package, which has no address of its own. A deployment's OWN package (docs/AGENT_CLI.md) does. */
+export const GENERIC_AGENT_PACKAGE = "@delivery-agents/cli";
+
+export function mcpConnect(input: {
+  origin: string;
+  productName: string;
+  email?: string;
+  /**
+   * This deployment's own published package (built by scripts/build-agent-cli.mjs with the
+   * address baked in). Without it the alternative is the generic package plus FDE_OPS_URL.
+   */
+  agentPackage?: string;
+}): McpConnect {
   const origin = input.origin.replace(/\/+$/, "");
   const slug = productSlug(input.productName);
   const endpoint = `${origin}/api/mcp`;
@@ -101,10 +113,16 @@ export function mcpConnect(input: { origin: string; productName: string; email?:
         note: "Codex uses TOML, not JSON.",
       },
     ],
-    packageAlternative: {
-      login: `npx @delivery-agents/cli fde-login --url ${origin}`,
-      claudeCommand: `claude mcp add ${slug} --env FDE_OPS_URL=${origin} -- npx -y -p @delivery-agents/cli fde-mcp`,
-      note: `Alternative for Google Workspace accounts: the npm package. It has no built-in address, so FDE_OPS_URL=${origin} is required.`,
-    },
+    packageAlternative: input.agentPackage
+      ? {
+          login: `npx ${input.agentPackage} login`,
+          claudeCommand: `claude mcp add ${slug} -- npx -y ${input.agentPackage} mcp`,
+          note: `Alternative for Google Workspace accounts: the npm package ${input.agentPackage}. ${origin} is built into it, so it needs no configuration.`,
+        }
+      : {
+          login: `npx ${GENERIC_AGENT_PACKAGE} fde-login --url ${origin}`,
+          claudeCommand: `claude mcp add ${slug} --env FDE_OPS_URL=${origin} -- npx -y -p ${GENERIC_AGENT_PACKAGE} fde-mcp`,
+          note: `Alternative for Google Workspace accounts: the npm package. It has no built-in address, so FDE_OPS_URL=${origin} is required.`,
+        },
   };
 }

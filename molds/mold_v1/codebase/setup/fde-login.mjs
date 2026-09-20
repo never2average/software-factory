@@ -8,26 +8,30 @@
  * login` / `gh auth login`): opens your browser for consent, catches the code on
  * 127.0.0.1, exchanges it with PKCE, and stores the refresh token at
  * ~/.config/fde-mcp/credentials.json (mode 600). After that, `fde-mcp.mjs` mints
- * a fresh @onfinance.in ID token for each session and presents THAT to the Ops
+ * a fresh Google ID token for each session and presents THAT to the Ops
  * API — so connectors/workflows/crons carry your real identity, not a shared key.
  *
  *   node setup/fde-login.mjs --url https://app.example.com
  *
  * `--url` (or FDE_OPS_URL) is YOUR deployment's address. It is saved beside the
  * credentials so `fde-mcp` knows which deployment to talk to without any env.
- * There is no built-in address: every application stamped from this codebase
- * ships this same package, so a default would point everyone but one product at
- * somebody else's app.
+ *
+ * WHICH ADDRESS, in order: `--url` / FDE_OPS_URL, then the address saved at
+ * sign-in, then the one BAKED INTO this package (deployment.generated.mjs). The
+ * generic package bakes in none: a default there would point everyone but one
+ * product at somebody else's app. A package built FOR a deployment
+ * (scripts/build-agent-cli.mjs, docs/AGENT_CLI.md) bakes in that deployment's,
+ * so `npx <package> login` needs no configuration.
  *
  * Config (env, both optional — sensible defaults are baked in):
- *   FDE_OAUTH_CLIENT_ID       override the shared onfinance.in CLI client
+ *   FDE_OAUTH_CLIENT_ID       override the shared CLI client
  *   FDE_OAUTH_CLIENT_SECRET   override the baked-in desktop-client secret
  *
  * The client ID and secret below are for a Google *desktop (installed-app)*
  * OAuth client. Google's own docs say such a secret "is not treated as a secret"
  * — an installed app can't keep one, so it's meant to ship in the source. It
  * grants nothing on its own: every token still requires an interactive
- * @onfinance.in sign-in, and the Ops API re-verifies each one. So it lives here,
+ * work-account sign-in, and the Ops API re-verifies each one. So it lives here,
  * in the repo, available to anyone with repo access — no per-dev setup.
  */
 import { createServer } from "node:http";
@@ -38,6 +42,7 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { DEPLOYMENT } from "./deployment.generated.mjs";
 
 const CLIENT_ID =
   process.env.FDE_OAUTH_CLIENT_ID ??
@@ -47,19 +52,56 @@ const SCOPE = "openid email profile";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
-export const CRED_DIR = join(homedir(), ".config", "fde-mcp");
+/**
+ * Where the login is kept. A package built for ONE deployment keeps its own
+ * (a folder named after that deployment's host), so signing in to a second
+ * product never repoints the first: the saved address outranks the baked-in
+ * one, and a shared file would let the last login win for every package.
+ */
+const BAKED_HOST = DEPLOYMENT.origin ? new URL(DEPLOYMENT.origin).host.replace(/[^a-z0-9.-]/gi, "_") : null;
+export const CRED_DIR = BAKED_HOST
+  ? join(homedir(), ".config", "fde-mcp", BAKED_HOST)
+  : join(homedir(), ".config", "fde-mcp");
 export const CRED_PATH = join(CRED_DIR, "credentials.json");
 
-/** The deployment this login is for: `--url <address>`, else FDE_OPS_URL, else null. Origin only. */
-function deploymentAddress() {
-  const i = process.argv.indexOf("--url");
-  const raw = (i > -1 ? process.argv[i + 1] : process.env.FDE_OPS_URL)?.trim();
-  if (!raw) return null;
+/** "app.example.com/x" -> "https://app.example.com". Null when it is not an address. */
+export function toOrigin(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
   try {
-    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
-    return u.origin;
+    return new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`).origin;
   } catch {
-    console.error(`"${raw}" is not an address. Example: --url https://app.example.com`);
+    return null;
+  }
+}
+
+/**
+ * Which deployment, and how we know. ONE rule for login and the MCP server:
+ *   1. explicit: `--url <address>`, else FDE_OPS_URL
+ *   2. the address saved at sign-in
+ *   3. the address baked into this package (none in the generic package)
+ * Returns { origin, source } with origin null when nothing says.
+ */
+export function resolveDeploymentAddress({ argv = process.argv, env = process.env, saved = null } = {}) {
+  const i = argv.indexOf("--url");
+  const explicit = (i > -1 ? argv[i + 1] : env.FDE_OPS_URL)?.trim();
+  if (explicit) {
+    const origin = toOrigin(explicit);
+    if (!origin) throw new Error(`"${explicit}" is not an address. Example: --url https://app.example.com`);
+    return { origin, source: i > -1 ? "--url" : "FDE_OPS_URL" };
+  }
+  const savedOrigin = toOrigin(saved?.ops_url);
+  if (savedOrigin) return { origin: savedOrigin, source: "saved login" };
+  if (DEPLOYMENT.origin) return { origin: DEPLOYMENT.origin, source: "built into this package" };
+  return { origin: null, source: "none" };
+}
+
+/** The deployment this login is for. A NEW login is not steered by an old one: explicit, else baked in, else null. */
+function deploymentAddress() {
+  try {
+    return resolveDeploymentAddress().origin;
+  } catch (e) {
+    console.error(e.message);
     process.exit(1);
   }
 }
@@ -251,7 +293,7 @@ async function main() {
   } else {
     console.error(
       "No deployment address was saved. Set FDE_OPS_URL=<your deployment's address> in the MCP server's env,\n" +
-        "or re-run with: fde-login --url <your deployment's address>\n",
+        `or re-run with: ${DEPLOYMENT.commands.login} --url <your deployment's address>\n`,
     );
   }
 }
@@ -262,7 +304,7 @@ async function main() {
  * browser login every time the MCP server started.
  *
  * Compare REAL paths, not URLs: npm installs bins as symlinks
- * (node_modules/.bin/fde-login -> ../@delivery-agents/cli/fde-login.mjs), and on
+ * (node_modules/.bin/fde-login -> ../<package>/fde-login.mjs), and on
  * macOS /tmp is itself a symlink — so a naive `import.meta.url === argv[1]`
  * check never matched and the command silently did nothing. Fail OPEN: if we
  * can't tell, run the login (an extra prompt beats a no-op).
@@ -275,6 +317,24 @@ const isEntrypoint = (() => {
     return true;
   }
 })();
+
+if (isEntrypoint && (process.argv.includes("--help") || process.argv.includes("-h"))) {
+  const d = DEPLOYMENT;
+  console.error(
+    [
+      `${d.commands.login} - sign in to ${d.origin ? `${d.name} at ${d.origin}` : "your deployment"} with your work Google account.`,
+      "",
+      d.origin
+        ? `  npx ${d.packageName} ${d.commands.login}                  the address is built in`
+        : `  npx ${d.packageName} ${d.commands.login} --url <address>  your deployment's address (or FDE_OPS_URL)`,
+      ...(d.origin ? [`  npx ${d.packageName} ${d.commands.login} --url <address>  another address (or FDE_OPS_URL)`] : []),
+      "",
+      `Opens your browser, then stores a refresh token at ${CRED_PATH} (mode 600).`,
+      "Nothing is sent anywhere except Google and the deployment you sign in to.",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
 
 if (isEntrypoint) {
   main().catch((e) => {

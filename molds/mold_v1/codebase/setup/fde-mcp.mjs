@@ -19,9 +19,10 @@
  *
  * Config (env):
  *   BLOB_READ_WRITE_TOKEN   required for the Data Room tools (private blob store)
- *   FDE_OPS_URL             REQUIRED: your deployment's address, e.g. https://app.example.com.
- *                          Falls back to the address saved by `fde-login --url`.
- *                          There is deliberately no built-in default — see below.
+ *   FDE_OPS_URL             your deployment's address, e.g. https://app.example.com.
+ *                          Falls back to the address saved by `fde-login --url`, then
+ *                          to the one baked into this package (deployment.generated.mjs).
+ *                          The generic package bakes in none — see below.
  *   WEB_ORIGIN              address used in links handed back to people; defaults
  *                          to FDE_OPS_URL
  *   FDE_ACTOR              audit label written on every create/update/delete;
@@ -35,6 +36,29 @@
 import { createInterface } from "node:readline";
 import { availableTools, createTools, handleRpc, serverInstructions } from "./fde-tools.mjs";
 import { readFile, writeFile } from "node:fs/promises";
+import { DEPLOYMENT } from "./deployment.generated.mjs";
+
+const CMD = DEPLOYMENT.commands;
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  const d = DEPLOYMENT;
+  console.error(
+    [
+      `${CMD.mcp} - the ${d.origin ? d.name : "workspace"} MCP server for your coding agent (stdio).`,
+      d.origin
+        ? `Talks to ${d.name} at ${d.origin}. FDE_OPS_URL=<address> or a saved login overrides that.`
+        : "Needs your deployment's address: FDE_OPS_URL=<address>, or the one saved by the login command.",
+      "",
+      "MCP config (Claude Code / Cursor / Codex):",
+      d.origin
+        ? `  { "command": "npx", "args": ["-y", "${d.packageName}", "${CMD.mcp}"] }`
+        : `  { "command": "npx", "args": ["-y", "-p", "${d.packageName}", "${CMD.mcp}"], "env": { "FDE_OPS_URL": "<address>" } }`,
+      "",
+      `Sign in first: npx ${d.packageName} ${CMD.login}`,
+      ...(d.mcpEndpoint ? ["", `No package needed at all: ${d.mcpEndpoint} is the same server, hosted.`] : []),
+    ].join("\n"),
+  );
+  process.exit(0);
+}
 
 /**
  * The Data Room tools live in the platform repo (TypeScript, loaded via
@@ -51,32 +75,50 @@ const parseClaudeTranscript = sessionsLib?.parseClaudeTranscript ?? null;
 const sessionToSyncItem = sessionsLib?.sessionToSyncItem ?? null;
 /** True when the data-room half of the toolset is available. */
 const DATAROOM_AVAILABLE = Boolean(createDataroomStore);
-const { CRED_PATH } = await import("./fde-login.mjs").catch(() => ({ CRED_PATH: null }));
+const { CRED_PATH, resolveDeploymentAddress } = await import("./fde-login.mjs").catch(() => ({
+  CRED_PATH: null,
+  resolveDeploymentAddress: null,
+}));
 import { readFile as readPkgFile } from "node:fs/promises";
 
 /**
- * WHICH DEPLOYMENT. No default, on purpose.
+ * WHICH DEPLOYMENT. The generic package has no default, on purpose.
  *
  * This used to fall back to one particular product's production address. Every
- * application stamped from this codebase ships the same package, so on any
+ * application stamped from this codebase shipped the same package, so on any
  * other deployment a coding agent that followed the on-screen instructions
  * connected — silently, successfully — to somebody else's app. A missing
- * address must be an error a person can read, never a guess.
+ * address must be an error a person can read, never a guess. A package built
+ * FOR one deployment (scripts/build-agent-cli.mjs) bakes in that deployment's
+ * own address, which is not a guess.
  *
- * Order: FDE_OPS_URL, then the address saved at sign-in (`fde-login --url`).
+ * Order: FDE_OPS_URL, then the address saved at sign-in (`fde-login --url`),
+ * then the baked-in one (resolveDeploymentAddress in fde-login.mjs).
  * The hosted endpoint (<your address>/api/mcp) needs none of this: it IS the
  * deployment, which is why the app's own instructions lead with it.
  */
 const savedLogin = CRED_PATH
   ? await readFile(CRED_PATH, "utf8").then(JSON.parse).catch(() => null)
   : null;
-const OPS_URL = (process.env.FDE_OPS_URL?.trim() || savedLogin?.ops_url || "").replace(/\/$/, "");
+const ADDRESS = resolveDeploymentAddress
+  ? (() => {
+      try {
+        // No argv: `--url` belongs to the login command; the server takes its explicit address from the env.
+        return resolveDeploymentAddress({ argv: [], saved: savedLogin });
+      } catch (e) {
+        process.stderr.write(`[fde-mcp] ${e.message}\n`);
+        return { origin: null, source: "none" };
+      }
+    })()
+  : { origin: (process.env.FDE_OPS_URL?.trim() || savedLogin?.ops_url || DEPLOYMENT.origin || "").replace(/\/$/, "") || null, source: "env" };
+const OPS_URL = ADDRESS.origin ?? "";
 const NO_OPS_URL =
   "FDE_OPS_URL is not set, so this server does not know which deployment to talk to. " +
   "Set FDE_OPS_URL to your deployment's address (the one you open in a browser, e.g. https://app.example.com) " +
-  "in this MCP server's env, or sign in with `fde-login --url <address>` to save it. " +
+  `in this MCP server's env, or sign in with \`${CMD.login} --url <address>\` to save it. ` +
   "Simpler still: skip this package and connect to <address>/api/mcp directly.";
 const ACTOR = process.env.FDE_ACTOR ?? "local-agent";
+const SIGN_IN_HINT = `Ask the user to run \`npx -p ${DEPLOYMENT.packageName} ${CMD.login}\` in a terminal (an interactive browser sign-in you cannot do yourself).`;
 // How the Ops API knows who you are: your per-user Google identity from
 // `fde-login` (see fde-login.mjs). There is no service-key fallback — run the
 // login first. The Data Room tools use the blob token instead and need no login.
@@ -88,7 +130,7 @@ const OAUTH_CLIENT_SECRET =
   process.env.FDE_OAUTH_CLIENT_SECRET ?? "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";
 
 /**
- * A live @onfinance.in ID token from the stored login, or null. Cached in memory
+ * A live Google ID token from the stored login, or null. Cached in memory
  * and refreshed a minute before it expires, so most calls pay nothing.
  */
 let cachedIdToken = null;
@@ -177,8 +219,7 @@ async function api(method, path, body) {
   const bearer = await opsBearer();
   if (!bearer) {
     throw new Error(
-      "Not signed in. Ask the user to run `npx -p @delivery-agents/cli fde-login` in a terminal" +
-        " (an interactive browser sign-in you cannot do yourself), then retry.",
+      `Not signed in. ${SIGN_IN_HINT} Then retry.`,
     );
   }
   const res = await fetch(`${OPS_URL}${path}`, {
@@ -215,7 +256,6 @@ async function identity() {
   }
 }
 
-const SIGN_IN_HINT = "Ask the user to run `npx -p @delivery-agents/cli fde-login` in a terminal (an interactive browser sign-in you cannot do yourself).";
 
 /**
  * The tools themselves live in fde-tools.mjs, shared with the endpoint the app
@@ -252,7 +292,8 @@ const RPC = {
   tools: TOOLS,
   serverInfo: { name: "fde-control", version: "0.4.0" },
   instructions: serverInstructions({
-    productName: process.env.FDE_PRODUCT_NAME?.trim() || "Workspace",
+    // A package built for one deployment knows its product; the generic one serves any, so it names none.
+    productName: process.env.FDE_PRODUCT_NAME?.trim() || (DEPLOYMENT.origin ? DEPLOYMENT.name : "Workspace"),
     opsUrl: OPS_URL || "(FDE_OPS_URL not set)",
     signInHint: SIGN_IN_HINT,
   }),
@@ -265,7 +306,7 @@ async function handle(msg) {
 
 if (!OPS_URL) process.stderr.write(`[fde-mcp] ${NO_OPS_URL}\n`);
 process.stderr.write(
-  `[fde-mcp] ready — Data Room blob: ${backend}, Ops API: ${OPS_URL}, ${TOOLS.length} tools\n`,
+  `[fde-mcp] ready — Data Room blob: ${backend}, Ops API: ${OPS_URL} (${ADDRESS.source}), ${TOOLS.length} tools\n`,
 );
 const rl = createInterface({ input: process.stdin });
 for await (const line of rl) {

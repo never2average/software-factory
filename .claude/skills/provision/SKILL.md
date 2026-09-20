@@ -74,3 +74,19 @@ When the app carries `surface.branding`, `--deploy` first builds a branded copy 
 (`branding.py <app> prepare`) and deploys that: the mold snapshot is never edited. `branding.py <app> show` prints
 the resolved brand and palette; `check` verifies a prepared copy. `molds/<mold_id>/branding/rules.json` says which
 files carry the product name, tagline, icon and palette, and every rule must match or the deploy is refused.
+
+## The application's own agent package
+
+Every stamped application publishes its own variant of the mold's agent CLI: the package a coding agent installs
+to reach this app, with the address, brand, the pack's `agent-kit/` skills and the data-room description baked in.
+`infrastructure.json` `agent_cli` names it (`package`, `access`, `token_ref`).
+
+```
+python3 .claude/scripts/agent_cli.py <app_id> status     # what state names, what the registry has, who npm thinks we are
+python3 .claude/scripts/agent_cli.py <app_id> build      # build/<app_id>.agent-cli/, the mold's safety gate + the factory's file allowlist
+python3 .claude/scripts/agent_cli.py <app_id> publish    # only with the operator present; records agent_cli.published
+```
+
+Publishing signs in with the token NAMED by `token_ref` if the environment has it, otherwise with the machine's own
+`npm login` (which prints a link the operator opens — the friendlier path). The value is never printed, written or
+put on a command line. A public package never carries credentials or operator material such as a rulebook.

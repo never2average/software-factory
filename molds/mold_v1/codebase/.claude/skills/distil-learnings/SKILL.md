@@ -90,7 +90,7 @@ and the next reader finds whichever one they find.
 Terminal work does not have to end in the terminal:
 
 ```
-session_continue_url  { path: "Learnings/sessions/priyesh/2026-08-09.jsonl" }
+session_continue_url  { path: "Learnings/sessions/{user}/2026-08-09.jsonl" }
 ```
 
 That returns a link which opens a fresh chat already primed to read the recorded

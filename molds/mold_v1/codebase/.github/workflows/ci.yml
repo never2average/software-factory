@@ -129,6 +129,12 @@ jobs:
       - name: Vocabulary comes from the deployment profile
         run: npm run check:vocabulary
 
+      # Each deployment publishes its own agent package (docs/AGENT_CLI.md). This builds real ones and proves the
+      # safety gate keeps secrets, operator rulebooks and other deployments' addresses out of a public package.
+      - name: Per-deployment agent package builds, and its safety gate holds
+        if: always()
+        run: npm run test:agent-cli
+
       # The task-workflow service is a SEPARATE deployment with its own tests,
       # and none of them ran here — so the engine that owns the Tasks tab was
       # the one part of the system CI never exercised. Its deps are vendored in

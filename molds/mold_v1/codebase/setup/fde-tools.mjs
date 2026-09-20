@@ -4,7 +4,7 @@
  * A coding agent reaches a deployment two ways:
  *   - the hosted endpoint the app itself serves at `<its own address>/api/mcp`
  *     (app/api/mcp/route.ts), and
- *   - the stdio package (`fde-mcp.mjs`, published as @delivery-agents/cli).
+ *   - the stdio package (`fde-mcp.mjs`, published per deployment: docs/AGENT_CLI.md).
  * Both must offer the same tools with the same behaviour, so the tool names,
  * descriptions, schemas and handlers live HERE and nowhere else, and each host
  * supplies only what differs between them — a `ctx`:
@@ -1095,7 +1095,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Data-room path from session_upload / learning_list, e.g. Learnings/sessions/priyesh/2026-08-09.jsonl" },
+        path: { type: "string", description: "Data-room path from session_upload / learning_list, e.g. Learnings/sessions/{user}/2026-08-09.jsonl" },
         ask: { type: "string", description: "What to do with it. Defaults to picking up where the session left off." },
       },
       required: ["path"],

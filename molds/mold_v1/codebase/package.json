@@ -92,7 +92,9 @@
     "test:tool-call-ids": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-unique-tool-call-ids.mjs",
     "test:insights-subagents": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-insights-subagents.mjs",
     "test:mcp-endpoint": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-mcp-endpoint.mjs",
-    "check:vocabulary": "node scripts/check-vocabulary.mjs"
+    "check:vocabulary": "node scripts/check-vocabulary.mjs",
+    "build:agent-cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/build-agent-cli.mjs",
+    "test:agent-cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-agent-cli-build.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

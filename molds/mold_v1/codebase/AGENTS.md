@@ -51,6 +51,11 @@ lines, a short per-turn briefing for the model) is a **deployment profile**: JSO
 added under `profiles/`, never an edit to a component. See
 [`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md).
 
+Each deployment publishes **its own npm package for coding agents**, built from its build of
+this codebase by `npm run build:agent-cli` (address, product name, skills from
+`agent-kit/skills/`, data-room description; a safety gate keeps operator material and
+secrets out). The build never publishes. See [`docs/AGENT_CLI.md`](docs/AGENT_CLI.md).
+
 ## Configuration
 
 Every environment variable the platform reads is documented in

@@ -17,6 +17,13 @@ Connectors, Workflows and Crons, driven from your editor.
 > a message naming `FDE_OPS_URL`. (It used to default to one product's production
 > address, which silently connected everyone else to the wrong app.)
 
+> **A deployment can have its own package instead.** `npm run build:agent-cli` in the
+> platform repo builds one with that deployment's address, product name, skills and
+> data-room description baked in, so `npx <package> login` needs no configuration. See
+> `docs/AGENT_CLI.md`. This directory is its source: every product word and the default
+> address live in `deployment.generated.mjs` (here: the generic wording and no address;
+> rewrite it with `npm run build:agent-cli -- --write-default`, never by hand).
+
 Two binaries, zero runtime dependencies, Node 20+.
 
 | | |

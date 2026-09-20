@@ -28,6 +28,14 @@ Two fixes, both in this change:
    (or an address saved by `fde-login --url`) and fails with a message naming
    the variable.
 
+Since then: **each deployment builds its own package** with its own address, name, skills
+and data-room description baked in (`npm run build:agent-cli`,
+[`AGENT_CLI.md`](AGENT_CLI.md)). `mcpConnect({ agentPackage })` in `lib/mcp-connect.ts`
+then gives the package alternative as `npx <package> login`, with no address to type. A
+pack adds skills for coding agents under `agent-kit/skills/<name>/SKILL.md`; the hosted
+endpoint serves tools only, so the package is how those skills reach an agent. The generic
+`@delivery-agents/cli` still has no default address.
+
 ## Connect
 
 The exact strings for a deployment are built by `lib/mcp-connect.ts` from the

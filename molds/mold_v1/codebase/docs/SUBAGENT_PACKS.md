@@ -13,6 +13,7 @@ A pack is a directory tree that mirrors the codebase root and only **adds** file
 | `scripts/subagent-shared/<family>/**` | Python helper code several of the pack's subagents share, plus `targets.json` | if they share code |
 | `agent/lib/<pack>-tools.ts` | a new typed tool the pack needs (a **new** file, re-exported from the subagents' `tools/`) | rarely |
 | `profiles/NN-pack-<id>.json` | the pack's deployment profile: what people and the model READ in a deployment of this vertical (vocabulary, data-room labels and visibility, starter tree, hero lines, a short agent briefing). Merged over `profiles/00-default.json` by `npm run build:deployment-profile`; see [`DEPLOYMENT_PROFILE.md`](DEPLOYMENT_PROFILE.md) | if the vertical is not about FDEs and customers |
+| `agent-kit/skills/<name>/SKILL.md` (plus references beside it), optional `agent-kit/kit.json` | skills for a **coding agent outside the app**, shipped in the deployment's own npm package by `npm run build:agent-cli`. When a pack ships any, the base product's setup skills are left out unless `kit.json` lists them in `include_base_skills`. May also live inside a subagent: `agent/subagents/<key>/agent-kit/`. This is the ONLY pack content that reaches the public package: a subagent's `*-spec.md` rulebook and its `schemas/` never do, and the build fails if one would. See [`AGENT_CLI.md`](AGENT_CLI.md) | if coding agents should be taught the vertical |
 | `docs/<PACK>.md` | the pack's own documentation | optional |
 
 ## The one rule
