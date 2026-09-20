@@ -353,6 +353,11 @@
           }
         }
       }
+    },
+    "handoff_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "The application's published handoff page (an Artifact built by mint.py <app_id> handoff). A later session republishes to THIS url rather than creating a second page."
     }
   }
 }

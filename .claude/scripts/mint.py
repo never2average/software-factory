@@ -11,6 +11,8 @@
   mint.py <app_id> code <six digits> <email>   trade the code for a 7-day session kept in a private file, so the
                                    signed-in checks are measured and not skipped
   mint.py <app_id> report          what it took: time and money, each figure measured or plainly "not measured"
+  mint.py <app_id> handoff         reports/mint/<app_id>.handoff.html: one page for the next person or agent
+                                   (publish it as an Artifact; its link is kept in infrastructure.json handoff_url)
   mint.py list                     every application and its next step
   mint.py --self-test
 
@@ -308,6 +310,9 @@ def main(a):
     if len(a) == 1 or a[1] == "status": show(app); return 0
     if a[1] == "run": return run(app)
     if a[1] == "report": return py(os.path.join(S, "mint_report.py"), app, *a[2:]).returncode
+    if a[1] == "handoff":
+        py(os.path.join(S, "mint_report.py"), app, capture_output=True)   # the page quotes the report, so refresh it first
+        return py(os.path.join(S, "mint_handoff.py"), app).returncode
     if a[1] == "reuse-keys" and len(a) == 3: return reuse_keys(app, a[2])
     if a[1] == "code-request" and len(a) == 3: return code_request(app, a[2])
     if a[1] == "code" and len(a) == 4: return code(app, a[2], a[3])

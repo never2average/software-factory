@@ -11,6 +11,7 @@ python3 .claude/scripts/mint.py new <app_id> --brief briefs/<app_id>.md    # sta
 python3 .claude/scripts/mint.py <app_id>                                    # every station + THE ONE next thing
 python3 .claude/scripts/mint.py <app_id> run                                # do everything that needs nobody; stop where it needs the operator
 python3 .claude/scripts/mint.py <app_id> report                             # what it took: time and money
+python3 .claude/scripts/mint.py <app_id> handoff                            # one page for the next person or agent
 python3 .claude/scripts/mint.py list                                        # every application and its next step
 ```
 
@@ -57,3 +58,13 @@ time, operator messages, deploys, test runs, upstream pull requests, and money. 
 (the sessions' own cost counters, git, lane reports, the live app's run table) or says **not measured** and where to
 look; the one estimate it carries is labelled. Run it when an app is finished and whenever the operator asks about cost.
 The first app's figure includes building the factory; a later app's report is the marginal cost.
+
+## Handing it on
+
+`mint.py <app_id> handoff` writes `reports/mint/<app_id>.handoff.html` from state: where the app stands, what is inside
+it, how people and agents get in, what was measured, open work, and the rules of the road, plus the same facts as JSON
+for an agent (`<script id="handoff-data">`). It refuses to write a page that carries an email address or anything
+shaped like a credential. Publish it with the Artifact tool: if `infrastructure.json` has `handoff_url`, read that
+artifact and republish to the same `url`; otherwise publish new and record the link there. Regenerate and republish
+whenever a station changes state, and tell the operator the page is private until they share it from its Share menu.
+Another agent picking the work up reads the page (Artifact `read`), then starts from `mint.py <app_id>`.
