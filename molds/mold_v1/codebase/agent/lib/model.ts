@@ -25,6 +25,8 @@
  *   CLOUDFLARE_CONTEXT_WINDOW default 262144   (GLM 5.2 on Workers AI)
  */
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { wrapLanguageModel } from "ai";
+import { uniqueToolCallIds } from "./unique-tool-call-ids.ts";
 import type { LanguageModel } from "ai";
 
 export type AgentRole = "orchestrator" | "specialist";
@@ -146,5 +148,7 @@ export function agentModel(role: AgentRole): LanguageModel {
   const id = agentModelId(role);
   // A gateway id is a plain string the AI SDK resolves itself; Workers AI needs
   // the OpenAI-compatible provider wrapped around it.
-  return providerChoice === "cloudflare" ? cloudflare(id) : id;
+  // Workers AI models are wrapped so their tool-call ids are unique (Kimi counts: functions.x:0, :1, … and
+  // restarts after a compaction or a new session) — see unique-tool-call-ids.ts.
+  return providerChoice === "cloudflare" ? wrapLanguageModel({ model: cloudflare(id), middleware: uniqueToolCallIds }) : id;
 }

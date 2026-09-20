@@ -5,7 +5,7 @@
 // Events are typed loosely on purpose — this is display logic that degrades
 // gracefully if a shape shifts, rather than coupling the UI to internal types.
 
-import { SUBAGENT_KEYS } from "./subagent-meta.generated";
+import { SUBAGENT_KEYS } from "./subagent-meta.generated.ts";
 
 export interface SubagentRun {
   callId: string;
@@ -405,6 +405,21 @@ export function deriveInsights(messages: readonly { parts?: readonly unknown[] }
       const subagentName = subagentNameOf(part.toolName);
       if (subagentName) {
         const id = part.toolCallId ?? `${part.toolName}-${auto++}`;
+        /**
+         * A REPEATED id is a different run, not an update of the earlier one. Each delegation is one part, seen
+         * once per pass, so meeting an id a second time means the model reused it — counter-style ids
+         * (Kimi: functions.x:0, :1, …) restart after a compaction or in a new session. The filter below used
+         * to treat that as "the same run, newer state" and DROPPED the earlier subagent from the list. New
+         * conversations get unique ids at the model boundary (agent/lib/unique-tool-call-ids.ts); transcripts
+         * recorded before that still carry the repeats, so the EARLIER run is re-keyed and kept. The newest
+         * keeps the raw id, which is the one live events and "focus this subagent" will name.
+         */
+        const clash = state.subagents.find((s) => s.callId === id);
+        if (clash) {
+          let n = 1;
+          while (state.subagents.some((s) => s.callId === `${id}~${n}`)) n++;
+          state = { ...state, subagents: state.subagents.map((s) => (s === clash ? { ...s, callId: `${id}~${n}` } : s)) };
+        }
         const brief = (part.input as { message?: string } | undefined)?.message;
         const output =
           typeof part.output === "string"
