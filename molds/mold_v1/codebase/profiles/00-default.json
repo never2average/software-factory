@@ -52,6 +52,46 @@
     },
     "seed": null
   },
+  "domains": {
+    "$comment": "The two record areas a deployment may REDEFINE rather than hide: what each is called, what its fields and enum values are shown as, which fields are not used (hidden; a hidden required field carries a fixed value the forms submit). Field keys are the real ones (agent/lib/customer-schema.ts, agent/lib/db/schema.ts) and option keys are real enum values; both are checked at build. These defaults are today's labels.",
+    "deployments": {
+      "label": {"singular": "Deployment", "plural": "Deployments"},
+      "description": "Deployments, filtered by owner.",
+      "id_label": "Deployment id",
+      "kind_field": null,
+      "kinds": [],
+      "create_fields": [],
+      "detail_fields": [],
+      "fields": {
+        "deploymentId": {"placeholder": "DEP-…"},
+        "environment": {"label": "Environment"},
+        "region": {"label": "Region", "placeholder": "ap-south-1"},
+        "deployedVersion": {"label": "Version", "placeholder": "1.0.0"},
+        "releaseStatus": {"label": "Release status", "options": {"deployed": "Deployed", "in-progress": "In progress", "pending-approval": "Pending approval", "rolled-back": "Rolled back", "failed": "Failed"}},
+        "healthStatus": {"label": "Health", "options": {"healthy": "Healthy", "degraded": "Degraded", "down": "Down"}},
+        "deployOwnerEmail": {"label": "Owner", "placeholder": "name@company.com"}
+      }
+    },
+    "implementations": {
+      "label": {"singular": "Implementation", "plural": "Implementations"},
+      "description": "Rollouts, filtered by owner.",
+      "id_label": "Rollout id",
+      "kind_field": null,
+      "kinds": [],
+      "create_fields": [],
+      "detail_fields": [],
+      "group_by": null,
+      "group_label": {"singular": "Rollout", "plural": "Rollouts"},
+      "fields": {
+        "implementationStage": {"label": "Stage", "options": {"Kickoff": "Kickoff", "Discovery": "Discovery", "Configuration": "Configuration", "Integration": "Integration", "UAT": "UAT", "Pilot": "Pilot", "Go-Live": "Go-Live", "Stabilization": "Stabilization", "Steady State": "Steady State", "On Hold": "On Hold"}},
+        "implementationRiskLevel": {"label": "Risk"},
+        "implementationProgressPct": {"label": "Progress"},
+        "implementationOwnerEmail": {"label": "Owner", "placeholder": "name@company.com"},
+        "launchScopeSolutionIds": {"label": "Solution"},
+        "targetGoLiveDate": {"label": "Go-live"}
+      }
+    }
+  },
   "agent": {
     "briefing": null
   }

@@ -5,6 +5,14 @@ import { customers, implementation, solutions } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
+import { pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+
+/**
+ * A profile may GROUP rows by rolloutId (a portfolio, a programme): many rows then share one rolloutId, so it
+ * stops identifying a row and the row's id is the customer id, the table's primary key. Ungrouped: as before.
+ */
+const GROUPED_BY_ROLLOUT = DEPLOYMENT_PROFILE.domains.implementations.group_by === "rolloutId";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +28,8 @@ const createSchema = z.object({
   implementationProgressPct: z.number().min(0).max(100).default(0),
   implementationOwnerEmail: z.string().trim().optional().nullable(),
   displayName: z.string().trim().optional().nullable(),
+  // Any other single-value column, for a deployment profile that puts it on the "New …" form (`domains`).
+  ...profileFieldSchemas("implementations", ["implementationOwnerEmail"]),
 });
 
 export async function POST(request: NextRequest) {
@@ -60,7 +70,7 @@ export async function POST(request: NextRequest) {
         })
         .returning(),
     );
-    return NextResponse.json({ item: { id: row.rolloutId ?? row.customerId } }, { status: 201 });
+    return NextResponse.json({ item: { id: GROUPED_BY_ROLLOUT ? row.customerId : row.rolloutId ?? row.customerId } }, { status: 201 });
   } catch (e) {
     const msg = String(e);
     // A raw driver dump reached the caller here: the whole 52-column INSERT,
@@ -117,7 +127,7 @@ export async function GET(request: NextRequest) {
       return `${names[0]} +${names.length - 1} more`;
     };
     const items = rows.map((r) => ({
-      id: r.rolloutId ?? r.customerId,
+      id: GROUPED_BY_ROLLOUT ? r.customerId : r.rolloutId ?? r.customerId,
       label:
         r.displayName?.trim() ||
         [r.customerId, r.implementationStage].filter(Boolean).join(" · ") ||
@@ -133,6 +143,8 @@ export async function GET(request: NextRequest) {
       customerLabel: customerName(r.customerId),
       solutionName: solutionName(r),
       goLiveDate: r.actualGoLiveDate ?? r.targetGoLiveDate ?? null,
+      // The columns this deployment's profile shows or edits beyond the defaults ({} for the default profile).
+      fields: pickProfileFields("implementations", r),
       // V1 go-live readiness gates — powers the collaborative readiness board.
       readiness: {
         data: r.dataReadinessPct ?? null,

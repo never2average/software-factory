@@ -11,6 +11,10 @@ sandbox, so be deliberate about what you write.
 
 ---
 
+> **Shortcut:** every deployment serves its own MCP endpoint at
+> `<its address>/api/mcp` (see `docs/MCP.md`) — no checkout, no package, no blob
+> token. This walkthrough is for working inside the platform repo.
+
 ## 0. Before you start
 
 You need:
@@ -22,7 +26,7 @@ You need:
 Confirm the platform is healthy first:
 
 ```bash
-curl -s https://fde-agent.vercel.app/api/ops/health | python3 -m json.tool
+curl -s "$FDE_OPS_URL/api/ops/health" | python3 -m json.tool
 ```
 
 Want `"ok": true` with `db`, `blob`, and `inference` all green. This does a real
@@ -88,6 +92,7 @@ Add this to your Claude Code MCP config (`~/.claude/mcp.json`, or a project
       "args": ["--experimental-strip-types", "setup/fde-mcp.mjs"],
       "cwd": "/absolute/path/to/fde-agent",
       "env": {
+        "FDE_OPS_URL": "https://your-deployment.example.com",
         "BLOB_READ_WRITE_TOKEN": "blob_rw_..."
       }
     }
@@ -100,7 +105,10 @@ Add this to your Claude Code MCP config (`~/.claude/mcp.json`, or a project
 stored refresh token and refreshes the ID token per session using the baked-in
 desktop-client credentials, so there's nothing more to configure.
 
-Optional env: `FDE_OPS_URL` (default `https://fde-agent.vercel.app`).
+**Required env: `FDE_OPS_URL`** — your deployment's address. There is no default:
+this codebase is stamped into many applications, and a built-in address sent
+everyone but one product to somebody else's app. `node setup/fde-login.mjs --url
+<address>` saves it instead, if you prefer.
 
 Restart your agent. First check `connector_list` works — if it says you're not
 signed in, run `node setup/fde-login.mjs` and retry. You get **19 tools** in four
@@ -190,7 +198,8 @@ first.
 
 | File | Purpose |
 | --- | --- |
-| `fde-mcp.mjs` | the MCP server: Data Room + Connectors + Workflows + Crons |
+| `fde-mcp.mjs` | the stdio MCP server (the host: sign-in, which deployment, blob store) |
+| `fde-tools.mjs` | the tools themselves — shared with the hosted endpoint at `/api/mcp` |
 | `fde-login.mjs` | one-time Google sign-in (`node setup/fde-login.mjs`) — stores your refresh token for per-user Ops API identity |
 | `test-coding-sessions.mjs` | tests for the redactor + transcript parser (`node --experimental-strip-types setup/test-coding-sessions.mjs`) |
 

@@ -13,6 +13,8 @@ import { agentBaseUrl } from "./lib/agent-url.ts";
 const EVE_API = agentBaseUrl();
 
 const nextConfig: NextConfig = {
+  // /api/mcp serves dm.md (the data-room contract) through its dataroom_structure tool.
+  outputFileTracingIncludes: { "/api/mcp": ["./dm.md"] },
   async rewrites() {
     /**
      * `fallback`, NOT a bare array.

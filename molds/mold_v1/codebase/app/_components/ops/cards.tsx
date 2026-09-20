@@ -225,6 +225,10 @@ export type DeployCardData = {
   owner?: string | null;
   uptime?: number | null;
   errorRate?: number | null;
+  /** What a person reads for `health` when the deployment profile relabels it; absent: the value, capitalised. */
+  healthLabel?: string;
+  /** The profile's kind of record (a report type…), when it has one. */
+  kind?: string | null;
 };
 
 export function DeployCard({
@@ -244,13 +248,14 @@ export function DeployCard({
         items={[
           {
             node: (
-              <span className="inline-flex items-center gap-1.5 capitalize">
+              <span className={cn("inline-flex items-center gap-1.5", deploy.healthLabel ? null : "capitalize")}>
                 <span className={cn("size-2 rounded-full", healthColor(deploy.health))} />
-                {deploy.health}
+                {deploy.healthLabel ?? deploy.health}
               </span>
             ),
           },
-          { icon: ServerIcon, node: deploy.env },
+          ...(deploy.kind ? [{ node: deploy.kind } as MetaItem] : []),
+          ...(deploy.env ? [{ icon: ServerIcon, node: deploy.env } as MetaItem] : []),
           { node: <span className="font-mono">{deploy.version}</span> },
           ...(deploy.uptime != null
             ? [{ icon: GaugeIcon, node: <span className="tabular-nums text-foreground/80">{deploy.uptime.toFixed(1)}%</span> } as MetaItem]

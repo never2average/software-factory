@@ -1,7 +1,7 @@
 {
   "name": "@delivery-agents/cli",
-  "version": "0.11.2",
-  "description": "Sign in to Delivered and connect your coding agent to the workspace over MCP.",
+  "version": "0.12.0",
+  "description": "Sign in and connect your coding agent to your workspace over MCP.",
   "type": "module",
   "license": "UNLICENSED",
   "bin": {
@@ -14,6 +14,7 @@
     "fde-cli.mjs",
     "fde-login.mjs",
     "fde-mcp.mjs",
+    "fde-tools.mjs",
     "dm.md",
     "README.md",
     "fde-install-skill.mjs",

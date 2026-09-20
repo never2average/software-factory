@@ -73,9 +73,13 @@ Present a single request covering the whole run. It must state:
 - **What you need from them** — the specific credential(s), by name, and where
   they should put them. Never ask them to paste a secret into the chat.
 
-If the session is not authenticated, this list starts with
-`npx @delivery-agents/cli fde-login` and stops there: nothing else can proceed,
-so asking for the rest is noise.
+If the session is not authenticated, this list starts with the sign-in step
+that `fde_status` reports and stops there: nothing else can proceed, so asking
+for the rest is noise. Connected to the workspace's own address (`…/api/mcp`),
+that is a fresh access token (the emailed-code sign-in in the invite, step 2) in
+the MCP config's `Authorization` header; through the npm package it is
+`npx @delivery-agents/cli fde-login`. Never guess an address: the package needs
+`FDE_OPS_URL` set to the workspace's own address and has no default.
 
 Once they approve, run to the end without checking back.
 
@@ -126,7 +130,7 @@ prevent. The operator can see the same list at `/onboard?step=checks`.
 
 | Symptom | Meaning | Do |
 |---|---|---|
-| 401 on any call | session expired | Re-run `npx @delivery-agents/cli fde-login` |
+| 401 on any call | token expired (7 days for an emailed-code token) | Ask the person for a fresh token (invite step 2) and update the `Authorization` header; with the npm package, re-run `npx @delivery-agents/cli fde-login` |
 | Permission denied on a write | acting against a workspace they are not a member of | Report which workspace you targeted; do not retry |
 | A tool times out | the write may have landed | Read current state BEFORE retrying |
 | Empty list from a read | usually a legitimately empty workspace | Not an error — continue |

@@ -7,7 +7,8 @@ code or editing a component**.
 
 A profile changes what a person or the model **reads**: the product's name, what a
 "customer" and an "FDE" are called, which data-room domains are shown and under what
-label, the files a new workspace starts with, the chat's opening lines, and a short
+label, what the two delivery record areas (deployments, implementations) mean and how their
+fields read, the files a new workspace starts with, the chat's opening lines, and a short
 briefing the model receives on every turn. It changes nothing a program keys on.
 
 ```
@@ -93,6 +94,44 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
 `<Domain>` is one of `Customers`, `Platform`, `Deployments`, `Solutions`,
 `Implementation`, `Tickets`, `People`.
 
+### `domains`
+
+The two software-delivery record areas, **deployments** and **implementations**, can be *redefined* instead of
+hidden: given another name, other field labels, other words for their enum values, and a list of fields that are
+not used. The rows, columns, API routes, tool names and enum **values** stay exactly as they are; a form still
+submits `releaseStatus: "deployed"`, whatever the person read. (Hiding an area is still
+`dataroom.domains.<Domain>.visible: false`; a redefined area is normally made visible and given the same label there.)
+
+`<area>` is `deployments` or `implementations`.
+
+| Key | Meaning | Default |
+|---|---|---|
+| `domains.<area>.label.singular` / `.plural` | What one record and the area are called: the TODOs tab, "New …", "Loading …", "Delete …", the Control Panel's panel and its "owns 3 …" sentence, a task's container type, the sheet's tab in the data room. | `"Deployment"` / `"Deployments"`; `"Implementation"` / `"Implementations"` |
+| `domains.<area>.description` | One sentence: what a record IS here. The tab's blurb, and what the model is told the area means. | `"Deployments, filtered by owner."` / `"Rollouts, filtered by owner."` |
+| `domains.<area>.id_label` | The label of the record's id (`deploymentId`, `rolloutId`). | `"Deployment id"` / `"Rollout id"` |
+| `domains.<area>.fields.<fieldKey>` | One entry per field you want to say something about; see below. `<fieldKey>` is a real field: a key of `deploymentSchema` / `implementationSchema` (`agent/lib/customer-schema.ts`) or a column of the table (`agent/lib/db/schema.ts`). | today's labels for the fields the UI shows |
+| `domains.<area>.kind_field` + `.kinds` | A free-text column that carries one of `kinds` (a report type, a release type). Shown as a select of exactly those strings; the string itself is what is stored. An enum column cannot be used: its values are fixed by the schema. | `null` / `[]` |
+| `domains.<area>.create_fields` / `.detail_fields` | Extra real columns on the "New …" form / the detail card, after the built-in ones. Typed from the schema: an enum is a select, a percentage or number a number input, anything else text. List-valued columns cannot be put on a form. | `[]` / `[]` |
+| `domains.implementations.group_by` | A free-text column whose value groups the rows (in practice `rolloutId`). The tab is then titled with `group_label.plural`, the list gets a header per group (name, owner, how many, average progress), "New" picks an existing group or names a new one (stored as a slug: "Affordable housing" is `affordable-housing`), and the row's id becomes the customer id because many rows now share a `rolloutId`. | `null` |
+| `domains.implementations.group_label.singular` / `.plural` | What a group is called. | `"Rollout"` / `"Rollouts"` |
+
+A field entry takes:
+
+| Key | Meaning |
+|---|---|
+| `label` | What people read for the field, everywhere. |
+| `short_label` | For a table column, a sort option or a chip, where `label` is too long. Falls back to `label`. |
+| `placeholder`, `help` | The input's placeholder; a line of help under it. |
+| `options` | `{ "<enum value>": "<display label>" }`. The selects, the board's columns and every badge show the label; the value is what is submitted and stored. Two values cannot share a label (the label must map back to one value). A value you leave out keeps its default label, or shows as itself. |
+| `hidden` | `true`: not used in this deployment. No form field, no column, no detail row, and the model is told not to ask about it. |
+| `fixed` | Only on a hidden field: the value the forms submit for it. **Required when the hidden field is required** (`region`, `environment`, `deployedVersion`, `releaseStatus`, `healthStatus`, `deploymentId`; `implementationStage`, `implementationProgressPct`, `implementationRiskLevel`, `blockerOwner`), and it must be a valid value: one of the enum's values, a number, or a non-empty string. |
+
+**Defaults are exact.** The old UI used several words for one field ("Release status" on the form, "Release" as a
+column, "Status" as a sort). Each of those spots keeps its own word until a profile changes the field's `label`;
+from then on all of them show the profile's (`short_label` in the narrow ones). The same holds for enum values: a
+table cell still shows the raw `deployed` until `options` differs from the default. So `profiles/00-default.json`
+alone changes nothing a person sees.
+
 ### `agent`
 
 | Key | Meaning | Default |
@@ -116,7 +155,14 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
    that is not one of the seven domains fails the build. A new domain is a change to the
    data model (`dm.md`, the path templates, the workbook), not to a profile.
 6. **`Customers` cannot be hidden.** Every record hangs off it. Relabel it instead.
-7. The build also rejects: an empty `chat.hero_lines`, an empty vocabulary word, a
+7. **`domains` is checked against the source.** The generator reads the field keys and enum values out of
+   `agent/lib/customer-schema.ts` and `agent/lib/db/schema.ts`, so these fail the build with the path and the
+   reason: an unknown field key (`domains.deployments.fields.releaseStatuss: unknown field key`), an `options` key
+   that is not a value of that enum, `options` on a field that is not an enum, two values sharing one display
+   label, `hidden` on a required field without `fixed`, a `fixed` value the field would not accept, `fixed` on a
+   field that is not hidden, a `kind_field` / `group_by` that is not a free-text column, a hidden or list-valued
+   key in `create_fields` / `detail_fields`, and any key a field entry does not take.
+8. The build also rejects: an empty `chat.hero_lines`, an empty vocabulary word, a
    malformed `dataroom.seed` entry, and an `agent.briefing` over 400 words.
 
 A bad profile **fails the build, never the page**: the generator exits non-zero with
@@ -150,7 +196,10 @@ upstream update:
   (`lib/auth-session.ts`; pinned by `scripts/check-gates.mjs`). Renaming the product does
   not re-issue anybody's session.
 - **Package and CLI names**: `@delivery-agents/cli`, `fde-login`, `fde-mcp`,
-  `claude mcp add fde`, invite tokens' `dlv_inv_` prefix, the `delivered-setup` skill.
+  invite tokens' `dlv_inv_` prefix, the `delivered-setup` skill. (The name a coding agent
+  files the server under is NOT fixed any more: the instructions people see say
+  `claude mcp add --transport http <slug of product.name> <this deployment>/api/mcp`, built
+  by `lib/mcp-connect.ts` — see `docs/MCP.md`.)
 - **Icon and colours**: `app/icon.svg` and `app/globals.css` are a branding step's
   concern, not the profile's.
 - **The static system prompt** (`agent/instructions.md`, `agent/instructions/*`). It is
@@ -173,6 +222,14 @@ The block states vocabulary as a *reading rule*, because the identifiers do not 
   under them unless a person explicitly asks;
 - relabelled domains: what people see each folder called, and that paths keep the real
   name;
+- a redefined area (`domains`): what the area MEANS here and what to call it; that reads still go through
+  `get_customer` (`deployments[]` / `implementation`) and writes through `upsert_customer`, under the same
+  `Deployments/` / `Implementation/` folders and the same TODO `containerType`; what a group is; which field
+  carries the kinds and what they are; the relabelled fields (`` `deployedVersion`="Period / basis" ``); the enum
+  display words with their values (`"Published" is deployed`), leaving out words that only differ from the value
+  in case; and the unused fields, with the fixed values to write in the required ones. Up to eight unused fields
+  are named; beyond that the block names four and states the rule ("use only the fields named above"), because
+  a list of 37 field names would be paid for on every turn. An area left at its defaults adds nothing;
 - then `agent.briefing`, verbatim.
 
 For the default profile the function returns **`null`** and nothing is appended: the
@@ -288,11 +345,77 @@ What it does not change: the folder is still `Customers/`, the id is still `cust
 the tool is still `list_customers`, and the product is still called "Delivered" until a
 `90-brand.json` says otherwise.
 
+## Worked example: redefining the two delivery areas (equity research)
+
+The example above *hides* the delivery domains. A research desk can instead **reuse** them, because the shape
+fits: a named set of covered companies with a build-out per company is an implementation, and a report published
+for a company for a period is a deployment. The ready file is
+[`docs/examples/profile-equity-research.json`](examples/profile-equity-research.json) (it is an example: the base
+app ships only `profiles/00-default.json`; a pack copies it to `profiles/NN-pack-<id>.json`).
+
+**Implementations become "Portfolios".** The table stays `implementation`, one row per company. A portfolio is the
+set of rows sharing a `rolloutId` slug (`affordable-housing`, `large-hfcs`): `group_by: "rolloutId"`,
+`group_label: Portfolio / Portfolios`, and a row is a "Portfolio entry".
+
+| Field | Shown as | Values shown as |
+|---|---|---|
+| `rolloutId` | Portfolio | the slug, title-cased |
+| `implementationOwnerEmail` | Analyst | |
+| `implementationStage` | Build-out stage | Kickoff="Not started", Discovery="Sources identified", Configuration="Filings ingested", Integration="Presentations ingested", UAT="KPI table built", Pilot="Under review", Go-Live="Published", Stabilization="First update done", Steady State="Steady coverage", On Hold="On hold" |
+| `implementationProgressPct` | Progress % | |
+| `implementationRiskLevel` | Risk | Green / Yellow / Red (the schema's values; the default form's low/medium/high/critical list is replaced) |
+| `dataReadinessPct` | Filings completeness | |
+| `integrationReadinessPct` | Presentations & concalls completeness | |
+| `dataQualityStatus` | Validation | |
+| `evalAcceptanceStatus` | Reviewer sign-off | |
+| `uatStatus` | Analyst check | |
+| `currentMilestone`, `currentMilestoneDueDate` | Current milestone, Milestone due | |
+| `blocker`, `blockerOwner` | Blocker, Blocker owner | Provider="Us", Customer="Company", Third-Party Vendor="Exchange / third party" |
+| `targetGoLiveDate`, `actualGoLiveDate` | Coverage initiation (target), (actual) | |
+
+Hidden: security and privacy review, billing readiness and start, entitlements, runbook, support hand-off,
+launch window, connector provisioning, integration tests, training, launch decision, governance and the two
+approvers, and the launch-scope solutions (the Solutions domain is hidden).
+
+**Deployments become "Coverage reports".** One row per company per report.
+
+| Field | Shown as | Values shown as |
+|---|---|---|
+| `deploymentId` | Report id (`Q2FY26-results`) | |
+| `runtime` | Report type | `kind_field`: Initiation, Quarterly results update, Annual report review, Event / rating update, Sector note |
+| `deployedVersion` | Period / basis ("Q2 FY26 · standalone · unaudited") | |
+| `releaseStatus` | Status | deployed="Published", in-progress="In progress", pending-approval="Awaiting review", rolled-back="Restated", failed="Failed" |
+| `healthStatus` | Data quality | healthy="Complete", degraded="Partial (values carried forward)", down="Missing", unknown="Unknown" |
+| `lastDeployAt` | Results date | |
+| `approvedByEmail` | Reviewer | |
+| `deployOwnerEmail` | Analyst | |
+| `notes` | What changed / needs review | |
+| `liveUrl` | Published report link | |
+
+Hidden, with the value the forms submit: `region` = `"ap-south-1"`, `environment` = `"prod"` (both are required
+enums). Hidden: cloud provider, deployment strategy, build sha, model routing, the uptime / error / latency /
+token / cost / capacity metrics, the rollback fields, incidents, dashboard and runbook links.
+
+**Why `runtime` carries the report type.** No migration was wanted, so the type needs an existing free-text
+column. `releaseChannel` is the nearest in meaning but is an enum, so it cannot hold new values. `releaseId` and
+`configVersion` are identifiers/versions: one value repeated across forty rows reads as "the same release" to
+anything that joins or de-duplicates on them. `notes` is wanted for prose. `runtime` is the one free-text column
+whose meaning is already "what kind of thing this is" (a category that repeats across rows by design), nothing in
+the code keys on it, and the research desk has no other use for it. It is therefore relabelled, not hidden.
+
+**One company, one portfolio.** `implementation.customer_id` is the table's primary key, so a company has one
+row and is in one portfolio at a time; "New portfolio entry" for a company that already has a row moves it.
+A company in two portfolios needs a composite key, which is a change to the data model, not to a profile.
+
+**Two companies, one report id.** A deployment's key is (customer, id), so `Q2FY26-results` can exist for every
+company. The list keys such rows on customer + id and sends the real id to the API.
+
 ## Checks
 
 ```bash
 npm run build:deployment-profile   # merge + validate + write both generated files
-npm run test:deployment-profile    # merge rules and the briefing, offline
+npm run test:deployment-profile    # merge rules, domains (defaults exact, example validates, bad profiles fail), the briefing; offline
+npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
 npm run check:generated            # fails if a generated file is stale
 npm run typecheck
 ```

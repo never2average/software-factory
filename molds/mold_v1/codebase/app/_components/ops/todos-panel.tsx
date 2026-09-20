@@ -75,6 +75,18 @@ import {
   SidePanel,
 } from "./primitives";
 import { SURFACE, TYPE } from "./tokens";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { domainView, groupRows, groupSlug, groupTitle, withProfileFields, type DomainFormField, type DomainView } from "@/lib/profile-domains";
+
+/**
+ * The two record areas as THIS deployment names them (docs/DEPLOYMENT_PROFILE.md, `domains`). Every label below
+ * passes its old literal through: the default profile gives it straight back, a redefined area replaces it.
+ */
+const DEP = domainView("deployments");
+const IMP = domainView("implementations");
+const ACCOUNT = DEPLOYMENT_PROFILE.vocabulary.account;
+const ACCOUNT_LABEL = ACCOUNT.singular.charAt(0).toUpperCase() + ACCOUNT.singular.slice(1);
+const ACCOUNTS_LOWER = ACCOUNT.plural;
 
 const PRIORITY_DOT: Record<string, string> = {
   high: "bg-red-500",
@@ -104,16 +116,16 @@ const TASK_SORTS = [
 ] as const;
 
 const DEPLOYMENT_SORTS = [
-  { value: "customer", label: "Customer" },
-  { value: "health", label: "Health" },
-  { value: "status", label: "Status" },
-  { value: "env", label: "Environment" },
+  { value: "customer", label: ACCOUNT_LABEL },
+  { value: "health", label: DEP.label("healthStatus", "Health", "short") },
+  { value: "status", label: DEP.label("releaseStatus", "Status", "short") },
+  ...(DEP.hidden("environment") ? [] : [{ value: "env", label: DEP.label("environment", "Environment") }]),
 ] as const;
 const IMPLEMENTATION_SORTS = [
-  { value: "customer", label: "Customer" },
-  { value: "stage", label: "Stage" },
-  { value: "risk", label: "Risk" },
-  { value: "progress", label: "Progress" },
+  { value: "customer", label: ACCOUNT_LABEL },
+  { value: "stage", label: IMP.label("implementationStage", "Stage", "short") },
+  { value: "risk", label: IMP.label("implementationRiskLevel", "Risk", "short") },
+  { value: "progress", label: IMP.label("implementationProgressPct", "Progress", "short") },
 ] as const;
 
 /**
@@ -339,6 +351,9 @@ const REF_ENDPOINT: Record<RefKind, string> = {
 };
 
 /** Pick one object of `kind` from its live list; returns { id, label }. */
+/** What a person reads for a reference kind; the kind itself stays the identifier. Default profile: the kind. */
+const REF_NOUN: Partial<Record<RefKind, string>> = { customer: ACCOUNT.singular, deployment: DEP.noun, implementation: IMP.noun };
+
 function ReferenceSelect({
   kind,
   value,
@@ -363,7 +378,7 @@ function ReferenceSelect({
         onChange({ id, label: it?.label ?? id });
       }}
     >
-      <option value="">{items === null ? "Loading…" : `Choose a ${kind}…`}</option>
+      <option value="">{items === null ? "Loading…" : `Choose a ${REF_NOUN[kind] ?? kind}…`}</option>
       {opts.map((o) => (
         <option key={o.id} value={o.id}>
           {o.label}
@@ -403,8 +418,8 @@ type TodoView = "sprints" | "tasks" | "deployments" | "implementations";
 const NAV: { key: TodoView; label: string; icon: LucideIcon; blurb: string }[] = [
   { key: "sprints", label: "Sprints", icon: LayersIcon, blurb: "Time-boxed cycles that group tasks." },
   { key: "tasks", label: "Tasks", icon: ListTodoIcon, blurb: "The team's internal checklist." },
-  { key: "deployments", label: "Deployments", icon: RocketIcon, blurb: "Deployments, filtered by owner." },
-  { key: "implementations", label: "Implementations", icon: PackageIcon, blurb: "Rollouts, filtered by owner." },
+  { key: "deployments", label: DEP.title, icon: RocketIcon, blurb: DEP.description },
+  { key: "implementations", label: IMP.title, icon: PackageIcon, blurb: IMP.description },
 ];
 
 export function TodosPanel({
@@ -728,53 +743,34 @@ export function TodosPanel({
           <MineList<ApiRefDeployment>
             endpoint="/api/ops/deployments"
             authorEmail={authorEmail}
-            noun="deployment"
+            noun={DEP.noun}
+            nounPlural={DEP.nouns}
+            mapItems={uniqueDeploymentIds}
             onClose={onClose}
             createConfig={{
-              label: "New deployment",
-              fields: [
-                { key: "customerId", label: "Customer", kind: "customer", required: true },
-                { key: "deploymentId", label: "Deployment id", kind: "text", placeholder: "DEP-…", required: true },
-                {
-                  key: "environment",
-                  label: "Environment",
-                  kind: "select",
-                  options: [
-                    { value: "production", label: "Production" },
-                    { value: "staging", label: "Staging" },
-                    { value: "development", label: "Development" },
-                  ],
-                },
-                { key: "region", label: "Region", kind: "text", placeholder: "ap-south-1", required: true },
-                { key: "deployedVersion", label: "Version", kind: "text", placeholder: "1.0.0", required: true },
-                {
-                  key: "releaseStatus",
-                  label: "Release status",
-                  kind: "select",
-                  options: DEPLOY_COLUMNS.map((c) => ({ value: c.key, label: c.label })),
-                },
-                {
-                  key: "healthStatus",
-                  label: "Health",
-                  kind: "select",
-                  options: [
-                    { value: "healthy", label: "Healthy" },
-                    { value: "degraded", label: "Degraded" },
-                    { value: "down", label: "Down" },
-                  ],
-                },
-                { key: "deployOwnerEmail", label: "Owner", kind: "text", placeholder: "name@company.com" },
-              ],
+              label: `New ${DEP.noun}`,
+              fixed: DEP.fixedValues(),
+              fields: deploymentCreateFields(DEP),
             }}
             sortOptions={DEPLOYMENT_SORTS}
-            textOf={(d) => `${d.label} ${d.status} ${d.health} ${d.env}`}
+            textOf={(d) => `${d.label} ${d.id} ${DEP.display("releaseStatus", d.status)} ${DEP.display("healthStatus", d.health)} ${DEP.hidden("environment") ? "" : d.env} ${kindOf(DEP, d.fields) ?? ""}`}
             sortOf={(d, s) =>
               s === "health" ? d.health : s === "status" ? d.status : s === "env" ? d.env : d.customer ?? ""
             }
             buildViews={({ selectedId, onSelect, refetch }) => ({
               renderCard: (d) => (
                 <DeployCard
-                  deploy={{ customer: d.customerLabel ?? d.customer ?? d.id, env: d.env, version: d.version, health: d.health, status: d.status, owner: d.owner, uptime: d.uptime }}
+                  deploy={{
+                    customer: d.customerLabel ?? d.customer ?? d.id,
+                    env: DEP.hidden("environment") ? "" : d.env,
+                    version: d.version,
+                    health: d.health,
+                    healthLabel: DEP.display("healthStatus", d.health, "") || undefined,
+                    kind: kindOf(DEP, d.fields),
+                    status: d.status,
+                    owner: d.owner,
+                    uptime: DEP.hidden("uptime30dPct") ? null : d.uptime,
+                  }}
                   selected={selectedId === d.id}
                   onClick={() => onSelect(d.id)}
                 />
@@ -782,15 +778,18 @@ export function TodosPanel({
               kanban: {
                 columns: DEPLOY_COLUMNS,
                 columnOf: (d) => d.status,
-                onMove: (d, status) => void patchRef("/api/ops/deployments", d.id, { customerId: d.customer, releaseStatus: status }, refetch),
+                onMove: (d, status) => void patchRef("/api/ops/deployments", d.recordId ?? d.id, { customerId: d.customer, releaseStatus: status, ...(d.recordId ? { entityId: d.id } : {}) }, refetch),
               },
               table: [
-                { key: "customer", label: "Customer", render: (d) => <span className="font-medium">{d.customerLabel ?? d.customer ?? d.id}</span> },
-                { key: "env", label: "Env", render: (d) => d.env },
-                { key: "version", label: "Version", render: (d) => <span className="font-mono">{d.version}</span> },
-                { key: "health", label: "Health", render: (d) => <span className="inline-flex items-center gap-1.5 capitalize"><span className={cn("size-1.5 rounded-full", healthDot(d.health))} />{d.health}</span> },
-                { key: "status", label: "Release", render: (d) => d.status },
-                { key: "owner", label: "Owner", render: (d) => (d.owner ? d.owner.split("@")[0] : "—") },
+                { key: "customer", label: ACCOUNT_LABEL, render: (d) => <span className="font-medium">{d.customerLabel ?? d.customer ?? d.id}</span> },
+                // A redefined area names its records by id (a report id), so the id earns a column.
+                ...(DEP.redefined ? [{ key: "id", label: DEP.idLabel, render: (d: ApiRefDeployment) => <span className="font-mono">{d.recordId ?? d.id}</span> }] : []),
+                ...(DEP.spec.kind_field ? [{ key: "kind", label: DEP.label(DEP.spec.kind_field, DEP.spec.kind_field, "short"), render: (d: ApiRefDeployment) => kindOf(DEP, d.fields) ?? "—" }] : []),
+                ...(DEP.hidden("environment") ? [] : [{ key: "env", label: DEP.label("environment", "Env", "short"), render: (d: ApiRefDeployment) => d.env }]),
+                { key: "version", label: DEP.label("deployedVersion", "Version", "short"), render: (d) => <span className="font-mono">{d.version}</span> },
+                { key: "health", label: DEP.label("healthStatus", "Health", "short"), render: (d) => <span className={cn("inline-flex items-center gap-1.5", DEP.display("healthStatus", d.health, "") ? null : "capitalize")}><span className={cn("size-1.5 rounded-full", healthDot(d.health))} />{DEP.display("healthStatus", d.health)}</span> },
+                { key: "status", label: DEP.label("releaseStatus", "Release", "short"), render: (d) => DEP.display("releaseStatus", d.status) },
+                { key: "owner", label: DEP.label("deployOwnerEmail", "Owner", "short"), render: (d) => (d.owner ? d.owner.split("@")[0] : "—") },
               ],
               timeline: {
                 rangeOf: (d) => ({ start: d.lastDeployAt, end: d.lastDeployAt }),
@@ -801,23 +800,25 @@ export function TodosPanel({
             renderDetail={(d, api) => (
               <RefDetail
                 entity="deployment"
+                eyebrow={DEP.noun}
                 entityId={d.id}
                 slug={api.slug}
                 authorEmail={authorEmail}
                 title={d.label}
-                subtitle={`${d.env} · ${d.version}`}
+                subtitle={[DEP.hidden("environment") ? null : d.env, d.version].filter(Boolean).join(" · ")}
                 busy={busyId === "new"}
-                edits={[
-                  { key: "healthStatus", label: "Health", value: d.health },
-                  { key: "releaseStatus", label: "Release status", value: d.status },
-                  { key: "deployOwnerEmail", label: "Owner", value: d.owner ?? "" },
-                ]}
+                edits={detailEdits(DEP, [
+                  { key: "healthStatus", label: DEP.label("healthStatus", "Health"), value: d.health },
+                  { key: "releaseStatus", label: DEP.label("releaseStatus", "Release status"), value: d.status },
+                  { key: "deployOwnerEmail", label: DEP.label("deployOwnerEmail", "Owner"), value: d.owner ?? "" },
+                ], d.fields)}
                 displayName={d.displayName}
-                onSave={(patch) => patchRef("/api/ops/deployments", d.id, { customerId: d.customer, ...patch }, api.refetch)}
+                onSave={(patch) => patchRef("/api/ops/deployments", d.recordId ?? d.id, { customerId: d.customer, ...patch, ...(d.recordId ? { entityId: d.id } : {}) }, api.refetch)}
                 staticFields={[
-                  { label: "Customer", value: d.customer ?? "" },
-                  { label: "Environment", value: d.env },
-                  { label: "Version", value: d.version },
+                  { label: ACCOUNT_LABEL, value: d.customer ?? "" },
+                  ...(DEP.redefined ? [{ label: DEP.idLabel, value: d.recordId ?? d.id }] : []),
+                  ...(DEP.hidden("environment") ? [] : [{ label: DEP.label("environment", "Environment"), value: d.env }]),
+                  { label: DEP.label("deployedVersion", "Version"), value: d.version },
                 ]}
                 related={todos.filter((td) => td.containerType === "deployment" && td.containerId === d.id)}
                 onAddSubtask={(title) =>
@@ -828,7 +829,7 @@ export function TodosPanel({
               />
             )}
             shareView="deployments"
-            deleteUrl={(d) => `/api/ops/deployments/${encodeURIComponent(d.id)}?customerId=${encodeURIComponent(d.customer ?? "")}`}
+            deleteUrl={(d) => `/api/ops/deployments/${encodeURIComponent(d.recordId ?? d.id)}?customerId=${encodeURIComponent(d.customer ?? "")}`}
             exportType="deployment"
             exportCustomerId={(d) => d.customer}
           />
@@ -836,34 +837,28 @@ export function TodosPanel({
           <MineList<ApiRefImplementation>
             endpoint="/api/ops/implementations"
             authorEmail={authorEmail}
-            noun="implementation"
+            noun={IMP.noun}
+            nounPlural={IMP.nouns}
             onClose={onClose}
+            grouping={
+              IMP.groupBy && IMP.groupLabel
+                ? {
+                    field: IMP.groupBy,
+                    label: IMP.groupLabel,
+                    members: ACCOUNTS_LOWER,
+                    groupOf: (r) => groupValue(r.fields, IMP.groupBy),
+                    ownerOf: (r) => r.owner,
+                    progressOf: (r) => r.progress,
+                  }
+                : undefined
+            }
             createConfig={{
-              label: "New implementation",
-              fields: [
-                { key: "customerId", label: "Customer", kind: "customer", required: true },
-                {
-                  key: "implementationStage",
-                  label: "Stage",
-                  kind: "select",
-                  options: IMPL_STAGES.map((s) => ({ value: s, label: s })),
-                },
-                {
-                  key: "implementationRiskLevel",
-                  label: "Risk",
-                  kind: "select",
-                  options: [
-                    { value: "low", label: "Low" },
-                    { value: "medium", label: "Medium" },
-                    { value: "high", label: "High" },
-                    { value: "critical", label: "Critical" },
-                  ],
-                },
-                { key: "implementationOwnerEmail", label: "Owner", kind: "text", placeholder: "name@company.com" },
-              ],
+              label: `New ${IMP.noun}`,
+              fixed: IMP.fixedValues(),
+              fields: implementationCreateFields(IMP),
             }}
             sortOptions={IMPLEMENTATION_SORTS}
-            textOf={(r) => `${r.label} ${r.stage} ${r.risk}`}
+            textOf={(r) => `${r.label} ${IMP.display("implementationStage", r.stage)} ${IMP.display("implementationRiskLevel", r.risk)} ${groupTitle(groupValue(r.fields, IMP.groupBy) ?? "")}`}
             sortOf={(r, s) =>
               s === "stage"
                 ? r.stage
@@ -876,7 +871,14 @@ export function TodosPanel({
             buildViews={({ selectedId, onSelect, refetch }) => ({
               renderCard: (r) => (
                 <ImplCard
-                  impl={{ title: r.solutionName ?? r.customerLabel ?? r.customer ?? r.id, customer: r.customerLabel ?? r.customer ?? "—", risk: r.risk, owner: r.owner, due: goLiveDue(r.goLiveDate), burndown: burndownFor(r.id) }}
+                  impl={{
+                    title: implTitle(r),
+                    customer: IMP.groupBy ? groupTitle(groupValue(r.fields, IMP.groupBy) ?? "") || "—" : r.customerLabel ?? r.customer ?? "—",
+                    risk: r.risk,
+                    owner: r.owner,
+                    due: goLiveDue(r.goLiveDate),
+                    burndown: burndownFor(r.id),
+                  }}
                   selected={selectedId === r.id}
                   onClick={() => onSelect(r.id)}
                 />
@@ -887,36 +889,41 @@ export function TodosPanel({
                 onMove: (r, stage) => void patchRef("/api/ops/implementations", r.id, { customerId: r.customer, implementationStage: stage }, refetch),
               },
               table: [
-                { key: "solution", label: "Solution", render: (r) => <span className="font-medium">{r.solutionName ?? r.customerLabel ?? r.customer ?? r.id}</span> },
-                { key: "customer", label: "Customer", render: (r) => r.customerLabel ?? r.customer ?? "—" },
-                { key: "stage", label: "Stage", render: (r) => r.stage },
-                { key: "risk", label: "Risk", render: (r) => <span className="capitalize">{r.risk}</span> },
-                { key: "golive", label: "Go-live", render: (r) => goLiveDue(r.goLiveDate)?.text ?? "—" },
-                { key: "owner", label: "Owner", render: (r) => (r.owner ? r.owner.split("@")[0] : "—") },
+                ...(IMP.hidden("launchScopeSolutionIds") ? [] : [{ key: "solution", label: IMP.label("launchScopeSolutionIds", "Solution", "short"), render: (r: ApiRefImplementation) => <span className="font-medium">{implTitle(r)}</span> }]),
+                { key: "customer", label: ACCOUNT_LABEL, render: (r) => <span className={IMP.hidden("launchScopeSolutionIds") ? "font-medium" : undefined}>{r.customerLabel ?? r.customer ?? "—"}</span> },
+                { key: "stage", label: IMP.label("implementationStage", "Stage", "short"), render: (r) => IMP.display("implementationStage", r.stage) },
+                ...(IMP.redefined ? [{ key: "progress", label: IMP.label("implementationProgressPct", "Progress", "short"), render: (r: ApiRefImplementation) => (r.progress != null ? `${Math.round(r.progress)}%` : "—") }] : []),
+                { key: "risk", label: IMP.label("implementationRiskLevel", "Risk", "short"), render: (r) => <span className="capitalize">{IMP.display("implementationRiskLevel", r.risk)}</span> },
+                ...IMP.spec.detail_fields
+                  .filter((k) => TABLE_EXTRA_TYPES.includes(IMP.formField(k)?.kind ?? "") && k !== "implementationProgressPct")
+                  .map((k) => ({ key: k, label: IMP.label(k, k, "short"), render: (r: ApiRefImplementation) => showField(IMP, k, r.fields?.[k]) })),
+                { key: "golive", label: IMP.label("targetGoLiveDate", "Go-live", "short"), render: (r) => goLiveDue(r.goLiveDate)?.text ?? "—" },
+                { key: "owner", label: IMP.label("implementationOwnerEmail", "Owner", "short"), render: (r) => (r.owner ? r.owner.split("@")[0] : "—") },
               ],
               timeline: {
                 rangeOf: (r) => ({ start: null, end: r.goLiveDate }),
-                labelOf: (r) => r.solutionName ?? r.customerLabel ?? r.customer ?? r.id,
-                toneOf: (r) => (r.risk === "high" || r.risk === "critical" ? "bg-red-500/70" : r.risk === "medium" ? "bg-amber-500/70" : "bg-emerald-500/70"),
+                labelOf: (r) => implTitle(r),
+                toneOf: (r) => riskTone(r.risk),
               },
             })}
             renderDetail={(r, api) => (
               <RefDetail
                 entity="implementation"
+                eyebrow={IMP.noun}
                 entityId={r.id}
                 slug={api.slug}
                 authorEmail={authorEmail}
                 title={r.label}
                 subtitle={r.progress != null ? `${Math.round(r.progress)}% complete` : undefined}
                 busy={busyId === "new"}
-                edits={[
-                  { key: "implementationStage", label: "Stage", value: r.stage },
-                  { key: "implementationRiskLevel", label: "Risk", value: r.risk },
-                  { key: "implementationOwnerEmail", label: "Owner", value: r.owner ?? "" },
-                ]}
+                edits={detailEdits(IMP, [
+                  { key: "implementationStage", label: IMP.label("implementationStage", "Stage"), value: r.stage },
+                  { key: "implementationRiskLevel", label: IMP.label("implementationRiskLevel", "Risk"), value: r.risk },
+                  { key: "implementationOwnerEmail", label: IMP.label("implementationOwnerEmail", "Owner"), value: r.owner ?? "" },
+                ], r.fields)}
                 displayName={r.displayName}
                 onSave={(patch) => patchRef("/api/ops/implementations", r.id, { customerId: r.customer, ...patch }, api.refetch)}
-                staticFields={[{ label: "Customer", value: r.customer ?? "" }]}
+                staticFields={[{ label: ACCOUNT_LABEL, value: r.customer ?? "" }]}
                 related={todos.filter((td) => td.containerType === "implementation" && td.containerId === r.id)}
                 onAddSubtask={(title) =>
                   addTodoTo({ title, containerType: "implementation", containerId: r.id, containerLabel: r.label })
@@ -936,6 +943,124 @@ export function TodosPanel({
   );
 }
 
+/* ------------------- the deployment profile's two areas ------------------- */
+
+const TABLE_EXTRA_TYPES: readonly string[] = ["select", "number"];
+
+function groupValue(fields: Record<string, string | number | null> | undefined, key: string | null): string | null {
+  const v = key ? fields?.[key] : null;
+  return typeof v === "string" && v.trim() ? v : null;
+}
+
+/** The profile's kind of record (a report type…), read from the free-text field that carries it. */
+function kindOf(view: DomainView, fields: Record<string, string | number | null> | undefined): string | null {
+  return groupValue(fields, view.spec.kind_field);
+}
+
+/** A profile field's stored value, as a person reads it: enum display label, "62%" for a percentage. */
+function showField(view: DomainView, key: string, value: string | number | null | undefined): string {
+  if (value == null || value === "") return "—";
+  if (typeof value === "number") return /Pct$/.test(key) ? `${Math.round(value)}%` : String(value);
+  return view.display(key, value);
+}
+
+function implTitle(r: ApiRefImplementation): string {
+  const account = r.customerLabel ?? r.customer ?? r.id;
+  return IMP.hidden("launchScopeSolutionIds") ? account : r.solutionName ?? account;
+}
+
+/** Risk is Green/Yellow/Red in the schema; the old form wrote low/medium/high/critical. Both colour correctly. */
+function riskTone(risk: string): string {
+  const r = risk.toLowerCase();
+  return r === "high" || r === "critical" || r === "red" ? "bg-red-500/70" : r === "medium" || r === "yellow" ? "bg-amber-500/70" : "bg-emerald-500/70";
+}
+
+/**
+ * A deployment id is unique per customer, not per workspace: two companies can each have "Q2FY26-results". The
+ * list, the selection and the activity feed key on `id`, so a repeated id becomes customer + id and the real one
+ * is kept in `recordId` for the API. Ids that are already unique are untouched.
+ */
+function uniqueDeploymentIds(items: ApiRefDeployment[]): ApiRefDeployment[] {
+  const seen = new Map<string, number>();
+  for (const d of items) seen.set(d.id, (seen.get(d.id) ?? 0) + 1);
+  return items.map((d) => ((seen.get(d.id) ?? 0) > 1 ? { ...d, recordId: d.id, id: `${d.customer ?? ""}::${d.id}` } : d));
+}
+
+export function deploymentCreateFields(view: DomainView): RefCreateField[] {
+  return withProfileFields<RefCreateField>(
+    view,
+    [
+      { key: "customerId", label: ACCOUNT_LABEL, kind: "customer", required: true },
+      { key: "deploymentId", label: view.idLabel, kind: "text", placeholder: view.placeholder("deploymentId", "DEP-…"), required: true },
+      {
+        key: "environment",
+        label: view.label("environment", "Environment"),
+        kind: "select",
+        options: view.options("environment", [
+          { value: "production", label: "Production" },
+          { value: "staging", label: "Staging" },
+          { value: "development", label: "Development" },
+        ]),
+      },
+      { key: "region", label: view.label("region", "Region"), kind: "text", placeholder: view.placeholder("region", "ap-south-1"), required: true },
+      { key: "deployedVersion", label: view.label("deployedVersion", "Version"), kind: "text", placeholder: view.placeholder("deployedVersion", "1.0.0"), required: true },
+      { key: "releaseStatus", label: view.label("releaseStatus", "Release status"), kind: "select", options: view.options("releaseStatus", DEPLOY_COLUMNS.map((c) => ({ value: c.key, label: c.label }))) },
+      {
+        key: "healthStatus",
+        label: view.label("healthStatus", "Health"),
+        kind: "select",
+        options: view.options("healthStatus", [
+          { value: "healthy", label: "Healthy" },
+          { value: "degraded", label: "Degraded" },
+          { value: "down", label: "Down" },
+        ]),
+      },
+      { key: "deployOwnerEmail", label: view.label("deployOwnerEmail", "Owner"), kind: "text", placeholder: view.placeholder("deployOwnerEmail", "name@company.com") },
+    ],
+    view.spec.create_fields,
+  ).map((f) => ({ ...f, help: view.help(f.key) }) as RefCreateField);
+}
+
+export function implementationCreateFields(view: DomainView): RefCreateField[] {
+  const group = view.groupBy ? view.formField(view.groupBy) : null;
+  return withProfileFields<RefCreateField>(
+    view,
+    [
+      { key: "customerId", label: ACCOUNT_LABEL, kind: "customer", required: true },
+      ...(group ? [group as RefCreateField] : []),
+      { key: "implementationStage", label: view.label("implementationStage", "Stage"), kind: "select", options: view.options("implementationStage", IMPL_STAGES.map((st) => ({ value: st, label: st }))) },
+      {
+        key: "implementationRiskLevel",
+        label: view.label("implementationRiskLevel", "Risk"),
+        kind: "select",
+        options: view.options("implementationRiskLevel", [
+          { value: "low", label: "Low" },
+          { value: "medium", label: "Medium" },
+          { value: "high", label: "High" },
+          { value: "critical", label: "Critical" },
+        ]),
+      },
+      { key: "implementationOwnerEmail", label: view.label("implementationOwnerEmail", "Owner"), kind: "text", placeholder: view.placeholder("implementationOwnerEmail", "name@company.com") },
+    ],
+    view.spec.create_fields,
+  ).map((f) => ({ ...f, help: view.help(f.key) }) as RefCreateField);
+}
+
+/** The detail card's editable fields: the built-in three (a relabelled enum becomes a select), then the profile's. */
+function detailEdits(view: DomainView, builtIn: readonly RefEdit[], fields: Record<string, string | number | null> | undefined): RefEdit[] {
+  const kept: RefEdit[] = builtIn
+    .filter((e) => !view.hidden(e.key))
+    .map((e) => (view.optionsRedefined(e.key) ? { ...e, kind: "select" as const, options: view.options(e.key) } : e));
+  const have = new Set(kept.map((e) => e.key));
+  const extra = view.spec.detail_fields.filter((k) => !have.has(k)).flatMap((k): RefEdit[] => {
+    const f: DomainFormField | null = view.formField(k);
+    if (!f) return [];
+    const raw = fields?.[k];
+    return [{ key: k, label: f.label, value: raw == null ? "" : String(raw), kind: f.kind, options: f.kind === "select" ? f.options : undefined, help: f.help, clearable: !("required" in f && f.required) }];
+  });
+  return [...kept, ...extra];
+}
+
 /* --------------------------- "My …" reference views ----------------------- */
 
 /**
@@ -947,6 +1072,9 @@ function MineList<T extends { id: string; owner: string | null }>({
   endpoint,
   authorEmail,
   noun,
+  nounPlural,
+  mapItems,
+  grouping,
   textOf,
   sortOf,
   sortOptions,
@@ -962,6 +1090,20 @@ function MineList<T extends { id: string; owner: string | null }>({
   readonly endpoint: string;
   readonly authorEmail?: string;
   readonly noun: string;
+  /** "coverage reports": the plural a person reads. Defaults to `${noun}s`. */
+  readonly nounPlural?: string;
+  /** Normalise the fetched rows before anything keys on them (e.g. make repeated ids unique). */
+  readonly mapItems?: (items: T[]) => T[];
+  /** The profile's group_by: rows gathered under a header per group, and "New" picks or names a group. */
+  readonly grouping?: {
+    readonly field: string;
+    readonly label: { singular: string; plural: string };
+    /** What the rows of a group are, in the plural ("companies"). */
+    readonly members: string;
+    readonly groupOf: (t: T) => string | null;
+    readonly ownerOf: (t: T) => string | null;
+    readonly progressOf: (t: T) => number | null;
+  };
   readonly textOf: (t: T) => string;
   /** Comparable key for sort option `s` (string sorts A→Z; use a negative number to sort desc). */
   readonly sortOf: (t: T, s: string) => string | number;
@@ -979,7 +1121,12 @@ function MineList<T extends { id: string; owner: string | null }>({
     refetch: () => void;
   }) => Omit<WorkspaceViewConfig<T>, "items" | "selectedId" | "onSelect">;
   /** Enables the "New …" button + create panel. Omit for a read-only list. */
-  readonly createConfig?: { readonly label: string; readonly fields: readonly RefCreateField[] };
+  readonly createConfig?: {
+    readonly label: string;
+    readonly fields: readonly RefCreateField[];
+    /** Submitted with every create: the values of fields this deployment hides (`fixed` in the profile). */
+    readonly fixed?: Record<string, string | number>;
+  };
   /** Deep-link view + delete endpoint for the panel's "…" menu. */
   readonly shareView: "deployments" | "implementations";
   readonly deleteUrl: (item: T) => string;
@@ -987,7 +1134,10 @@ function MineList<T extends { id: string; owner: string | null }>({
   readonly exportType: "deployment" | "implementation";
   readonly exportCustomerId: (item: T) => string | null;
 }) {
-  const { items, error, loading, refetch } = useOpsList<T>(endpoint);
+  const { items: fetched, error, loading, refetch } = useOpsList<T>(endpoint);
+  const items = useMemo(() => (fetched && mapItems ? mapItems(fetched) : fetched), [fetched, mapItems]);
+  const nouns = nounPlural ?? `${noun}s`;
+  const [groupKey, setGroupKey] = useState<string | null>(null);
   // Numeric slugs (DP-001 / IM-001), by stable id order.
   const seqPrefix = exportType === "deployment" ? "DP" : "IM";
   const seqMap = useMemo(() => buildSeqMap(items ?? [], (i) => i.id, (i) => i.id), [items]);
@@ -1000,6 +1150,7 @@ function MineList<T extends { id: string; owner: string | null }>({
   const query = q.trim().toLowerCase();
   const filtered = (items ?? [])
     .filter((t) => inScope(t.owner) && (!query || textOf(t).toLowerCase().includes(query)))
+    .filter((t) => !grouping || groupKey === null || (grouping.groupOf(t)?.trim() ?? "") === groupKey)
     .sort((a, b) => {
       const av = sortOf(a, sort);
       const bv = sortOf(b, sort);
@@ -1007,6 +1158,18 @@ function MineList<T extends { id: string; owner: string | null }>({
       return String(av).localeCompare(String(bv));
     });
   const selected = items?.find((t) => t.id === selId) ?? null;
+  // Group headers are counted over everything in scope, not over the group currently picked.
+  const groups = grouping
+    ? groupRows(
+        (items ?? []).filter((t) => inScope(t.owner) && (!query || textOf(t).toLowerCase().includes(query))),
+        grouping.groupOf,
+        grouping.ownerOf,
+        grouping.progressOf,
+      )
+    : [];
+  const groupChoices = grouping
+    ? [...new Set((items ?? []).map((t) => grouping.groupOf(t)?.trim() ?? "").filter(Boolean))].sort().map((g) => ({ value: g, label: groupTitle(g) }))
+    : [];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1033,14 +1196,41 @@ function MineList<T extends { id: string; owner: string | null }>({
 
       {error ? <p className={cn("px-4 pt-3 text-red-400", TYPE.meta)}>{error}</p> : null}
 
+      {grouping && groups.length > 0 && (view !== "table" || groupKey !== null) ? (
+        <div className="flex shrink-0 gap-2 overflow-x-auto border-border/60 border-b px-4 py-2" data-testid="group-strip">
+          <button
+            type="button"
+            onClick={() => setGroupKey(null)}
+            className={cn("shrink-0 rounded-md border px-2.5 py-1", TYPE.meta, groupKey === null ? "border-foreground/40 bg-background font-medium" : "border-border/60 text-muted-foreground hover:text-foreground")}
+          >
+            All {grouping.label.plural.toLowerCase()}
+          </button>
+          {groups.map((g) => (
+            <GroupHeader key={g.key || "—"} compact active={groupKey === g.key} group={g} label={grouping.label} members={grouping.members} onPick={() => setGroupKey(groupKey === g.key ? null : g.key)} />
+          ))}
+        </div>
+      ) : null}
+
       <div className="flex min-h-0 min-w-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {loading && !items ? (
-            <p className={cn("py-10 text-center text-muted-foreground", TYPE.meta)}>Loading {noun}s…</p>
+            <p className={cn("py-10 text-center text-muted-foreground", TYPE.meta)}>Loading {nouns}…</p>
           ) : filtered.length === 0 ? (
             <p className={cn("py-16 text-center text-muted-foreground/60 italic", TYPE.meta)}>
-              {(items?.length ?? 0) === 0 ? `No ${noun}s.` : `No ${noun}s in this scope.`}
+              {(items?.length ?? 0) === 0 ? `No ${nouns}.` : `No ${nouns} in this scope.`}
             </p>
+          ) : grouping && view === "table" && groupKey === null ? (
+            <div className="min-h-0 flex-1 overflow-auto" data-testid="grouped-list">
+              {groups.map((g) => (
+                <section key={g.key || "—"} data-testid="group-section">
+                  <GroupHeader group={g} label={grouping.label} members={grouping.members} onPick={() => setGroupKey(g.key)} />
+                  <WorkspaceViews
+                    view="table"
+                    config={{ items: filtered.filter((t) => (grouping.groupOf(t)?.trim() ?? "") === g.key), selectedId: selId, onSelect: setSelId, ...buildViews({ selectedId: selId, onSelect: setSelId, refetch }) }}
+                  />
+                </section>
+              ))}
+            </div>
           ) : (
             <WorkspaceViews
               view={view}
@@ -1054,6 +1244,9 @@ function MineList<T extends { id: string; owner: string | null }>({
               noun={noun}
               endpoint={endpoint}
               fields={createConfig.fields}
+              fixed={createConfig.fixed}
+              groupChoices={groupChoices}
+              groupNoun={grouping?.label.singular}
               authorEmail={authorEmail}
               onCancel={() => setCreating(false)}
               onCreated={(id) => {
@@ -1098,23 +1291,72 @@ function MineList<T extends { id: string; owner: string | null }>({
 
 /* ----------------------------- create panels ------------------------------ */
 
-type RefCreateField =
-  | { readonly key: string; readonly label: string; readonly kind: "text"; readonly placeholder?: string; readonly required?: boolean }
-  | { readonly key: string; readonly label: string; readonly kind: "customer"; readonly required?: boolean }
+export type RefCreateField =
+  | { readonly key: string; readonly label: string; readonly kind: "text" | "number"; readonly placeholder?: string; readonly required?: boolean; readonly help?: string }
+  | { readonly key: string; readonly label: string; readonly kind: "customer"; readonly required?: boolean; readonly help?: string }
+  /** The profile's group_by field: pick an existing group or name a new one (stored as its slug). */
+  | { readonly key: string; readonly label: string; readonly kind: "group"; readonly help?: string }
   | {
       readonly key: string;
       readonly label: string;
       readonly kind: "select";
       readonly options: readonly { value: string; label: string }[];
+      readonly help?: string;
     };
+
+/** Not a slug groupSlug() can produce, so it never collides with a real group. */
+const NEW_GROUP = "__new__";
+
+/** One group's header: its name, who owns it, how many rows, how far along they are on average. */
+function GroupHeader<T>({
+  group,
+  label,
+  members,
+  onPick,
+  compact,
+  active,
+}: {
+  readonly group: { key: string; title: string; owner: string | null; rows: T[]; averageProgress: number | null };
+  readonly label: { singular: string; plural: string };
+  readonly members: string;
+  readonly onPick: () => void;
+  readonly compact?: boolean;
+  readonly active?: boolean;
+}) {
+  const title = group.title || `No ${label.singular.toLowerCase()}`;
+  const facts = [
+    group.owner ? group.owner.split("@")[0] : null,
+    `${group.rows.length} ${group.rows.length === 1 ? ACCOUNT.singular : members}`,
+    group.averageProgress != null ? `${group.averageProgress}% average` : null,
+  ].filter(Boolean);
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      data-testid="group-header"
+      className={cn(
+        "flex items-baseline gap-2 text-left",
+        compact
+          ? cn("shrink-0 rounded-md border px-2.5 py-1", active ? "border-foreground/40 bg-background" : "border-border/60 hover:bg-background/60")
+          : "w-full border-border/60 border-b bg-muted/20 px-6 pt-4 pb-2",
+      )}
+    >
+      <span className={cn("font-medium text-foreground", compact ? TYPE.meta : TYPE.body)}>{title}</span>
+      <span className={cn("text-muted-foreground", TYPE.micro)}>{facts.join(" · ")}</span>
+    </button>
+  );
+}
 
 /** The create panel shared by Deployments & Implementations — a small typed form
  *  that POSTs to the list endpoint, then opens the new record's detail. Mirrors
  *  New task / New cycle: create, then refine in the detail. */
-function RefCreate({
+export function RefCreate({
   noun,
   endpoint,
   fields,
+  fixed,
+  groupChoices = [],
+  groupNoun = "group",
   authorEmail,
   onCreated,
   onCancel,
@@ -1122,17 +1364,24 @@ function RefCreate({
   readonly noun: string;
   readonly endpoint: string;
   readonly fields: readonly RefCreateField[];
+  /** Values of the fields this deployment hides; submitted as they are. */
+  readonly fixed?: Record<string, string | number>;
+  readonly groupChoices?: readonly { value: string; label: string }[];
+  readonly groupNoun?: string;
   readonly authorEmail?: string;
   readonly onCreated: (id: string) => void;
   readonly onCancel: () => void;
 }) {
   const initial = () =>
-    Object.fromEntries(fields.map((f) => [f.key, f.kind === "select" ? f.options[0]?.value ?? "" : ""])) as Record<string, string>;
+    Object.fromEntries(
+      fields.map((f) => [f.key, f.kind === "select" ? f.options[0]?.value ?? "" : f.kind === "group" ? groupChoices[0]?.value ?? NEW_GROUP : ""]),
+    ) as Record<string, string>;
   const [values, setValues] = useState<Record<string, string>>(initial);
+  const [newGroup, setNewGroup] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const set = (k: string, v: string) => setValues((p) => ({ ...p, [k]: v }));
-  const missing = fields.find((f) => f.kind !== "select" && f.required && !values[f.key]?.trim());
+  const missing = fields.find((f) => (f.kind === "text" || f.kind === "number" || f.kind === "customer") && f.required && !values[f.key]?.trim());
 
   const submit = async () => {
     if (missing) {
@@ -1142,7 +1391,11 @@ function RefCreate({
     setBusy(true);
     setErr(null);
     try {
-      const body: Record<string, unknown> = { ...values, actor: authorEmail };
+      const body: Record<string, unknown> = { ...fixed, ...values, actor: authorEmail };
+      for (const f of fields) {
+        if (f.kind === "group") body[f.key] = values[f.key] === NEW_GROUP ? groupSlug(newGroup) : values[f.key];
+        if (f.kind === "number" && values[f.key]?.trim()) body[f.key] = Number(values[f.key]);
+      }
       for (const k of Object.keys(body)) if (body[k] === "") delete body[k];
       const res = await opsFetch<{ item: { id: string } }>(endpoint, { method: "POST", body: JSON.stringify(body) });
       onCreated(res.item.id);
@@ -1160,8 +1413,22 @@ function RefCreate({
       </PanelHeader>
       <div className="flex flex-col gap-4 px-5 py-4">
         {fields.map((f) => (
-          <Field key={f.key} label={f.label}>
-            {f.kind === "customer" ? (
+          <Field key={f.key} label={f.label} hint={f.help}>
+            {f.kind === "group" ? (
+              <>
+                <OpsSelect value={values[f.key]} disabled={busy} onChange={(e) => set(f.key, e.target.value)}>
+                  {groupChoices.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                  <option value={NEW_GROUP}>New {groupNoun.toLowerCase()}…</option>
+                </OpsSelect>
+                {values[f.key] === NEW_GROUP ? (
+                  <OpsInput value={newGroup} disabled={busy} placeholder={`Name the ${groupNoun.toLowerCase()}`} onChange={(e) => setNewGroup(e.target.value)} />
+                ) : null}
+              </>
+            ) : f.kind === "customer" ? (
               <ReferenceSelect
                 kind="customer"
                 value={values[f.key] || null}
@@ -1180,6 +1447,7 @@ function RefCreate({
               <OpsInput
                 value={values[f.key]}
                 disabled={busy}
+                type={f.kind === "number" ? "number" : undefined}
                 placeholder={f.placeholder}
                 onChange={(e) => set(f.key, e.target.value)}
               />
@@ -1212,7 +1480,7 @@ const DEPLOY_COLUMNS: BoardColumn[] = [
   { key: "pending-approval", label: "Pending approval", tone: "bg-sky-500" },
   { key: "rolled-back", label: "Rolled back", tone: "bg-muted-foreground/40" },
   { key: "failed", label: "Failed", tone: "bg-red-500" },
-];
+].map((c) => ({ ...c, label: DEP.display("releaseStatus", c.key, c.label) }));
 
 // The full implementation pipeline (matches the customer-schema enum exactly),
 // so every stage is a column even when empty — you can drag a rollout into any.
@@ -1228,7 +1496,7 @@ const IMPL_STAGES = [
   "Steady State",
   "On Hold",
 ] as const;
-const IMPL_COLUMNS: BoardColumn[] = IMPL_STAGES.map((s) => ({ key: s, label: s }));
+const IMPL_COLUMNS: BoardColumn[] = IMPL_STAGES.map((s) => ({ key: s, label: IMP.display("implementationStage", s) }));
 
 const CYCLE_COLUMNS: BoardColumn[] = [
   { key: "planning", label: "Planning", tone: "bg-muted-foreground/40" },
@@ -1238,7 +1506,17 @@ const CYCLE_COLUMNS: BoardColumn[] = [
 
 /* ------------------------- reference details card ------------------------- */
 
-type RefEdit = { key: string; label: string; value: string };
+type RefEdit = {
+  key: string;
+  label: string;
+  value: string;
+  /** Absent: the free-text input the card always had. The profile's fields say what they are. */
+  kind?: "text" | "number" | "select" | "group";
+  options?: readonly { value: string; label: string }[];
+  help?: string;
+  /** May be saved empty (an optional column). The built-in three never are. */
+  clearable?: boolean;
+};
 
 /**
  * The editable details card behind a ticket/deployment/implementation row.
@@ -1247,6 +1525,7 @@ type RefEdit = { key: string; label: string; value: string };
  */
 function RefDetail({
   entity,
+  eyebrow,
   entityId,
   slug,
   authorEmail,
@@ -1263,6 +1542,8 @@ function RefDetail({
   busy,
 }: {
   readonly entity: "deployment" | "implementation";
+  /** What a person reads above the title; the entity type stays the identifier. */
+  readonly eyebrow?: string;
   readonly entityId: string;
   readonly slug: string;
   readonly authorEmail?: string;
@@ -1285,7 +1566,7 @@ function RefDetail({
   );
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <PanelHeader eyebrow={entity} slug={slug}>
+      <PanelHeader eyebrow={eyebrow ?? entity} slug={slug}>
         <input
           key={displayName ?? ""}
           defaultValue={displayName ?? ""}
@@ -1303,15 +1584,36 @@ function RefDetail({
         <PanelSection label="Properties">
           <div className="grid grid-cols-2 gap-x-3 gap-y-4">
             {edits.map((e) => (
-              <Field key={e.key} label={e.label}>
-                <OpsInput
-                  defaultValue={e.value}
-                  disabled={busy}
-                  onBlur={(ev) => {
-                    const v = ev.target.value.trim();
-                    if (v && v !== e.value) onSave({ [e.key]: v });
-                  }}
-                />
+              <Field key={e.key} label={e.label} hint={e.help}>
+                {e.kind === "select" && e.options ? (
+                  <OpsSelect
+                    key={e.value}
+                    defaultValue={e.value}
+                    disabled={busy}
+                    onChange={(ev) => {
+                      if (ev.target.value !== e.value) onSave({ [e.key]: ev.target.value });
+                    }}
+                  >
+                    {e.value === "" || !e.options.some((o) => o.value === e.value) ? <option value={e.value}>{e.value || "—"}</option> : null}
+                    {e.options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </OpsSelect>
+                ) : (
+                  <OpsInput
+                    key={e.value}
+                    defaultValue={e.kind === "group" ? groupTitle(e.value) : e.value}
+                    type={e.kind === "number" ? "number" : undefined}
+                    disabled={busy}
+                    onBlur={(ev) => {
+                      const typed = ev.target.value.trim();
+                      const v = e.kind === "group" ? groupSlug(typed) : typed;
+                      if ((v || e.clearable) && v !== e.value) onSave({ [e.key]: v });
+                    }}
+                  />
+                )}
               </Field>
             ))}
           </div>
@@ -1349,8 +1651,8 @@ function RefDetail({
 
 const CONTAINER_KINDS = [
   { value: "", label: "— none —" },
-  { value: "deployment", label: "Deployment" },
-  { value: "implementation", label: "Implementation" },
+  { value: "deployment", label: DEP.singular },
+  { value: "implementation", label: IMP.singular },
 ];
 const LINK_KINDS = [
   { value: "", label: "— none —" },

@@ -35,6 +35,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { authToken } from "@/app/_components/ops/lib";
+import { mcpConnect } from "@/lib/mcp-connect";
 import { toLogoDataUrl } from "@/app/_components/org-mark";
 
 type Screen = "name" | "fork" | "invite" | "checks" | "sent";
@@ -561,6 +562,9 @@ function InviteScreen({
     roleSentence: string;
     acceptUrl: string;
     loginCommand: string;
+    tokenNote?: string;
+    mcpEndpoint?: string;
+    packageAlternative?: { login: string; claudeCommand: string; note: string };
     mcpConfig: string;
     mcpSetup: { client: string; path: string; snippet: string; note?: string }[];
     agentPrompt: string;
@@ -572,6 +576,15 @@ function InviteScreen({
   const [editorOpen, setEditorOpen] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
   const [mcpClient, setMcpClient] = useState("Claude Code");
+  /**
+   * What to show before the server's preview arrives: the SAME strings, built
+   * from the address this page was loaded from. These fallbacks used to be
+   * literals naming one product's production address and a package with no
+   * address at all — correct on exactly one deployment of this codebase.
+   */
+  const [pageOrigin, setPageOrigin] = useState("");
+  useEffect(() => setPageOrigin(window.location.origin), []);
+  const connect = useMemo(() => mcpConnect({ origin: pageOrigin, productName: PRODUCT_NAME }), [pageOrigin]);
   const copyPrompt = useCallback(async (text: string) => {
     if (!text) return;
     try {
@@ -819,17 +832,15 @@ function InviteScreen({
           <ol className="space-y-3.5">
             <EmailStep n={1} title="Accept the invite and sign in">
               <span className="break-all font-mono text-xs text-muted-foreground">
-                {preview?.acceptUrl ?? "https://fde-agent.vercel.app/?invite=dlv_inv_******"}
+                {preview?.acceptUrl ?? `${pageOrigin}/?invite=dlv_inv_******`}
               </span>
             </EmailStep>
 
-            <EmailStep n={2} title="Set up the local CLI">
-              <pre className="overflow-x-auto rounded-md border border-border bg-muted/60 px-3 py-2 font-mono text-xs">
-                {preview?.loginCommand ?? "npx @delivery-agents/cli fde-login"}
+            <EmailStep n={2} title="Get your access token">
+              <pre className="overflow-x-auto rounded-md border border-border bg-muted/60 px-3 py-2 font-mono text-xs leading-relaxed">
+                {preview?.loginCommand ?? `${connect.tokenCommands.request}\n${connect.tokenCommands.verify}`}
               </pre>
-              <p className="mt-1 text-2xs text-muted-foreground">
-                Work Google account — personal Gmail isn&apos;t admitted.
-              </p>
+              <p className="mt-1 text-2xs text-muted-foreground">{preview?.tokenNote ?? connect.tokenNote}</p>
             </EmailStep>
 
             <EmailStep n={3} title="Wire your coding agent">
@@ -837,7 +848,7 @@ function InviteScreen({
                   keys on `servers`, Codex reads TOML — the old single JSON
                   block was unusable in half the clients we name. */}
               <div className="mb-2 flex flex-wrap gap-1">
-                {(preview?.mcpSetup ?? []).map((m) => {
+                {(preview?.mcpSetup ?? connect.clients).map((m) => {
                   const Icon = CLIENT_ICONS[m.client] ?? TerminalIcon;
                   return (
                     <button
@@ -857,15 +868,9 @@ function InviteScreen({
                 })}
               </div>
               {(() => {
-                const list = preview?.mcpSetup ?? [];
+                const list = preview?.mcpSetup ?? connect.clients;
                 const active = list.find((m) => m.client === mcpClient) ?? list[0];
-                if (!active) {
-                  return (
-                    <pre className="overflow-x-auto rounded-md border border-border bg-muted/60 px-3 py-2 font-mono text-xs">
-                      claude mcp add fde -- npx -y -p @delivery-agents/cli fde-mcp
-                    </pre>
-                  );
-                }
+                const alt = preview?.packageAlternative ?? connect.packageAlternative;
                 return (
                   <>
                     <pre className="overflow-x-auto rounded-md border border-border bg-muted/60 px-3 py-2 font-mono text-xs leading-relaxed">
@@ -875,8 +880,18 @@ function InviteScreen({
                         were concatenated into one run-on: "…writes the config
                         for you Restart the agent after." */}
                     <p className="mt-1 text-2xs text-muted-foreground">
-                      {active.path}. {active.note ? `${active.note} ` : ""}Restart the agent afterwards.
+                      {active.path}. {active.note ? `${active.note} ` : ""}Put the token from step 2 where it says{" "}
+                      <span className="font-mono">&lt;token&gt;</span>, then restart the agent. This connects to{" "}
+                      <span className="font-mono">{preview?.mcpEndpoint ?? connect.endpoint}</span> — this
+                      workspace&apos;s own address, nothing to install.
                     </p>
+                    <details className="mt-2 text-2xs text-muted-foreground">
+                      <summary className="cursor-pointer hover:text-foreground">Use the npm package instead</summary>
+                      <p className="mt-1">{alt.note}</p>
+                      <pre className="mt-1 overflow-x-auto rounded-md border border-border bg-muted/60 px-3 py-2 font-mono text-2xs leading-relaxed">
+                        {`${alt.login}\n${alt.claudeCommand}`}
+                      </pre>
+                    </details>
                   </>
                 );
               })()}
@@ -891,7 +906,7 @@ function InviteScreen({
                 {preview?.skillCommand ?? "npx @delivery-agents/cli install-skill"}
               </pre>
               <p className="mt-1 text-2xs text-muted-foreground">
-                Same package as step 2 — nothing new to trust. Installs into whichever
+                A published, versioned npm package. Installs into whichever
                 agent it finds: Claude Code, Cursor, VS Code or Codex. Add{" "}
                 <span className="font-mono">-g</span> for every project rather than just
                 this one. Their agent then knows the whole procedure, so there is nothing

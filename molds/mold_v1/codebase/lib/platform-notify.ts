@@ -2,6 +2,7 @@ import "server-only";
 import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 
 import { renderBrandedEmail } from "./email-html";
+import { mcpConnect } from "./mcp-connect";
 /**
  * DETERMINISTIC platform notifications — plain, coded HTTP sends through the
  * ORGANISATION's own channel, NOT the individual user's account and NOT the
@@ -110,8 +111,17 @@ export interface OrgInviteInput {
 export interface RenderedInvite {
   to?: string;
   subject: string;
-  /** Sign-in command — the FIRST thing the invitee runs locally. */
+  /**
+   * How the invitee gets the access token their coding agent presents — the two
+   * calls behind the emailed sign-in code, at THIS deployment's address.
+   */
   loginCommand: string;
+  /** One sentence on what that token is and how long it lasts. */
+  tokenNote: string;
+  /** This deployment's own MCP endpoint: `<origin>/api/mcp`. */
+  mcpEndpoint: string;
+  /** The npm package route, for Google Workspace accounts — address spelled out. */
+  packageAlternative: { login: string; claudeCommand: string; note: string };
   /** The MCP server block they paste into their coding agent's config. */
   mcpConfig: string;
   /** Per-client MCP setup — the config shape is NOT the same across clients. */
@@ -170,75 +180,32 @@ export function renderOrgInvite(input: OrgInviteInput): RenderedInvite {
   const subject = `Set up ${input.workspaceName} on ${PRODUCT_NAME}`;
 
   /**
-   * THESE ARE THE REAL COMMANDS.
+   * THESE ARE THE REAL COMMANDS — AND THEY NAME THIS DEPLOYMENT.
    *
-   * This template used to tell every invitee to run
-   *   npx delivered connect --workspace <id> --token <token>
-   * which does not exist and never has. The published package is
-   * @delivery-agents/cli, its binaries are `fde-login` and `fde-mcp`, and the
-   * token is only ever used by the accept link in a browser — the CLI does not
-   * take one. Anyone who followed the email hit "could not determine executable
-   * to run" on their first command.
+   * Two earlier versions of this template were wrong in instructive ways. The
+   * first told invitees to run a command that never existed. The second named
+   * the real npm package but NO address — and the package defaulted to one
+   * particular product's production URL, so on every other application stamped
+   * from this codebase the invitee's coding agent connected, successfully, to
+   * somebody else's app.
+   *
+   * So the app now serves its own MCP endpoint at `<its address>/api/mcp`
+   * (docs/MCP.md) and these strings are built from that address and the
+   * product's name (lib/mcp-connect.ts). Nothing to install, nothing to point.
+   * The token is the emailed-code session the web app itself uses, which works
+   * for every invitee — including the ones Google cannot vouch for.
    */
-  const loginCommand = "npx @delivery-agents/cli fde-login";
-  const mcpConfig = [
-    "{",
-    '  "mcpServers": {',
-    '    "fde": {',
-    '      "command": "npx",',
-    '      "args": ["-y", "-p", "@delivery-agents/cli", "fde-mcp"]',
-    "    }",
-    "  }",
-    "}",
-  ].join("\n");
+  const origin = (input.origin || process.env.WEB_ORIGIN?.trim() || "").replace(/\/+$/, "");
+  const connect = mcpConnect({ origin, productName: PRODUCT_NAME, email: input.to });
+  const loginCommand = `${connect.tokenCommands.request}\n${connect.tokenCommands.verify}`;
+  const mcpConfig = connect.clients.find((m) => m.client === "Cursor")?.snippet ?? "";
 
   /**
-   * MCP setup per client. These are NOT interchangeable.
-   *
-   * The old copy said "Cursor and Codex use the same shape" and handed everyone
-   * one JSON block. Codex reads TOML from ~/.codex/config.toml, and VS Code
-   * keys its file on `servers` rather than `mcpServers` — so two of the four
-   * clients we name were being given a config that cannot work. Claude Code
-   * also ships a command that writes the file for you, which beats hand-editing
-   * JSON and is what its own docs lead with.
+   * MCP setup per client. These are NOT interchangeable: Codex reads TOML from
+   * ~/.codex/config.toml, VS Code keys its file on `servers` rather than
+   * `mcpServers`, and Claude Code ships a command that writes the file for you.
    */
-  const mcpSetup = [
-    {
-      client: "Claude Code",
-      path: "Run this — it writes the config for you",
-      snippet: "claude mcp add fde -- npx -y -p @delivery-agents/cli fde-mcp",
-    },
-    {
-      client: "Cursor",
-      path: "~/.cursor/mcp.json (or .cursor/mcp.json for this project only)",
-      snippet: mcpConfig,
-    },
-    {
-      client: "VS Code",
-      path: ".vscode/mcp.json",
-      snippet: [
-        "{",
-        '  "servers": {',
-        '    "fde": {',
-        '      "command": "npx",',
-        '      "args": ["-y", "-p", "@delivery-agents/cli", "fde-mcp"]',
-        "    }",
-        "  }",
-        "}",
-      ].join("\n"),
-      note: "VS Code keys this on `servers`, not `mcpServers`.",
-    },
-    {
-      client: "Codex CLI",
-      path: "~/.codex/config.toml",
-      snippet: [
-        "[mcp_servers.fde]",
-        'command = "npx"',
-        'args = ["-y", "-p", "@delivery-agents/cli", "fde-mcp"]',
-      ].join("\n"),
-      note: "Codex uses TOML, not JSON.",
-    },
-  ];
+  const mcpSetup = connect.clients;
 
   /**
    * Step 4 is now an INSTALL plus a one-line trigger, not a pasted essay.
@@ -268,7 +235,7 @@ export function renderOrgInvite(input: OrgInviteInput): RenderedInvite {
   const agentPrompt = [
     `Set up my ${PRODUCT_NAME} workspace "${input.workspace}". I'm ${article} ${roleLabel}.`,
     "",
-    "Scout first: check which coding agent and MCP config I'm using, whether the fde server is wired, what's already connected, and which of my files or credentials you'd need. Don't change anything yet.",
+    `Scout first: check which coding agent and MCP config I'm using, whether the ${connect.slug} MCP server (${connect.endpoint}) is wired, what's already connected, and which of my files or credentials you'd need. Don't change anything yet.`,
     "",
     "Then ask me ONCE — a single list of exactly what you need permission to do and touch, scoped to this workspace. Don't drip-feed approvals.",
     "",
@@ -281,10 +248,11 @@ export function renderOrgInvite(input: OrgInviteInput): RenderedInvite {
     "1. Accept the invite and sign in",
     `   ${acceptUrl}`,
     "",
-    "2. Set up the local CLI (work Google account — personal Gmail isn't admitted)",
-    `   ${loginCommand}`,
+    "2. Get your access token (any email address that was invited)",
+    ...loginCommand.split("\n").map((l) => `   ${l}`),
+    `   ${connect.tokenNote}`,
     "",
-    "3. Wire your coding agent — pick your client, then restart it",
+    `3. Wire your coding agent to ${connect.endpoint} — pick your client, put your token where it says <token>, then restart it`,
     mcpSetup
       .map((m) =>
         [
@@ -295,11 +263,15 @@ export function renderOrgInvite(input: OrgInviteInput): RenderedInvite {
       )
       .join("\n\n"),
     "",
+    `   ${connect.packageAlternative.note}`,
+    `     ${connect.packageAlternative.login}`,
+    `     ${connect.packageAlternative.claudeCommand}`,
+    "",
     "4. Install the setup skill — your agent then knows the whole procedure",
     `   ${skillCommand}`,
     "   (Installs into whichever agent it finds: Claude Code, Cursor, VS Code, Codex.",
     "    Add -g to install it for every project instead of just this one.",
-    "    Same package as step 2 — nothing new to trust.)",
+    "    A published, versioned npm package — nothing is fetched from a bare URL.)",
     "",
     "5. Begin work — say this to your agent",
     // Indent every line, not just the first: a multi-line block that starts
@@ -316,6 +288,9 @@ export function renderOrgInvite(input: OrgInviteInput): RenderedInvite {
     to: input.to,
     subject,
     loginCommand,
+    tokenNote: connect.tokenNote,
+    mcpEndpoint: connect.endpoint,
+    packageAlternative: connect.packageAlternative,
     mcpConfig,
     agentPrompt,
     skillCommand,

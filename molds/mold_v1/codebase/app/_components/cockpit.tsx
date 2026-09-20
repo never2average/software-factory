@@ -58,6 +58,12 @@ import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { type ApiWorkflowVersion, authToken, opsFetch, type OpsSection, unkebab } from "./ops/lib";
 import { pickSubagentName } from "@/lib/subagent-names";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { domainView } from "@/lib/profile-domains";
+
+/** The two record areas as this deployment names them (`domains` in the deployment profile). */
+const DEP = domainView("deployments");
+const IMP = domainView("implementations");
+const countOf = (n: number, view: { noun: string; nouns: string }) => `${n} ${n === 1 ? view.noun : view.nouns}`;
 
 /** A deployment can hide a data-room domain; its ownership panels and counts go with it. */
 const domainVisible = (key: "Tickets" | "Deployments" | "Implementation") =>
@@ -1679,8 +1685,8 @@ function PersonModal({
     // Send the actual items inline so the agent never needs a tool round-trip.
     const workText = [
       ...tk.map((t) => `- Ticket ${t.id}: ${t.summary} (${t.status}, ${t.priority} priority)`),
-      ...dp.map((x) => `- Deployment ${x.id}: ${x.env} ${x.version}, health ${x.health}, ${x.status}`),
-      ...im.map((x) => `- Implementation ${x.id}: stage ${x.stage}, risk ${x.risk}${x.progress != null ? `, ${Math.round(x.progress)}% complete` : ""}`),
+      ...dp.map((x) => `- ${DEP.singular} ${x.id}: ${DEP.hidden("environment") ? "" : `${x.env} `}${x.version}, ${DEP.label("healthStatus", "health").toLowerCase()} ${DEP.display("healthStatus", x.health)}, ${DEP.display("releaseStatus", x.status)}`),
+      ...im.map((x) => `- ${IMP.singular} ${x.id}: ${IMP.label("implementationStage", "stage").toLowerCase()} ${IMP.display("implementationStage", x.stage)}, ${IMP.label("implementationRiskLevel", "risk").toLowerCase()} ${x.risk}${x.progress != null ? `, ${Math.round(x.progress)}% complete` : ""}`),
       ...td.map((t) => `- TODO: ${t.title}${t.done ? " (done)" : ""}${t.dueAt ? `, due ${new Date(t.dueAt).toLocaleDateString()}` : ""}`),
     ]
       .slice(0, 60)
@@ -1869,8 +1875,8 @@ function PersonModal({
                                 {listWithAnd(
                                   [
                                     SHOW_TICKETS ? `${fTickets.length} ticket${fTickets.length === 1 ? "" : "s"}` : null,
-                                    SHOW_DEPLOYMENTS ? `${fDeps.length} deployment${fDeps.length === 1 ? "" : "s"}` : null,
-                                    SHOW_IMPLEMENTATIONS ? `${fImpls.length} implementation${fImpls.length === 1 ? "" : "s"}` : null,
+                                    SHOW_DEPLOYMENTS ? countOf(fDeps.length, DEP) : null,
+                                    SHOW_IMPLEMENTATIONS ? countOf(fImpls.length, IMP) : null,
                                     `${fTodos.length} TODO${fTodos.length === 1 ? "" : "s"}`,
                                   ].filter((x): x is string => x !== null),
                                 )}{" "}
@@ -1913,16 +1919,16 @@ function PersonModal({
                     </OwnPanel>
                     ) : null}
                     {SHOW_DEPLOYMENTS ? (
-                    <OwnPanel icon={RocketIcon} title="Deployments" count={fDeps.length}>
+                    <OwnPanel icon={RocketIcon} title={DEP.title} count={fDeps.length}>
                       {fDeps.map((x) => (
                         <OwnRow
                           key={`${x.customer}-${x.id}`}
                           dot={healthDot(x.health)}
-                          primary={`${x.customerLabel ?? x.customer ?? x.id} · ${x.env}`}
+                          primary={`${x.customerLabel ?? x.customer ?? x.id} · ${DEP.hidden("environment") ? x.id : x.env}`}
                           chips={
                             <>
                               <Pill>{x.version}</Pill>
-                              <Pill>{x.status}</Pill>
+                              <Pill>{DEP.display("releaseStatus", x.status)}</Pill>
                             </>
                           }
                         />
@@ -1930,7 +1936,7 @@ function PersonModal({
                     </OwnPanel>
                     ) : null}
                     {SHOW_IMPLEMENTATIONS ? (
-                    <OwnPanel icon={PackageIcon} title="Implementations" count={fImpls.length}>
+                    <OwnPanel icon={PackageIcon} title={IMP.title} count={fImpls.length}>
                       {fImpls.map((x) => (
                         <OwnRow
                           key={x.customer ?? x.id}
@@ -1939,7 +1945,7 @@ function PersonModal({
                           chips={
                             <>
                               {x.progress != null ? <Pill>{Math.round(x.progress)}%</Pill> : null}
-                              <Pill>{x.stage}</Pill>
+                              <Pill>{IMP.display("implementationStage", x.stage)}</Pill>
                             </>
                           }
                         />

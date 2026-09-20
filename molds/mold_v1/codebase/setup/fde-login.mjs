@@ -11,6 +11,14 @@
  * a fresh @onfinance.in ID token for each session and presents THAT to the Ops
  * API — so connectors/workflows/crons carry your real identity, not a shared key.
  *
+ *   node setup/fde-login.mjs --url https://app.example.com
+ *
+ * `--url` (or FDE_OPS_URL) is YOUR deployment's address. It is saved beside the
+ * credentials so `fde-mcp` knows which deployment to talk to without any env.
+ * There is no built-in address: every application stamped from this codebase
+ * ships this same package, so a default would point everyone but one product at
+ * somebody else's app.
+ *
  * Config (env, both optional — sensible defaults are baked in):
  *   FDE_OAUTH_CLIENT_ID       override the shared onfinance.in CLI client
  *   FDE_OAUTH_CLIENT_SECRET   override the baked-in desktop-client secret
@@ -41,6 +49,20 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 export const CRED_DIR = join(homedir(), ".config", "fde-mcp");
 export const CRED_PATH = join(CRED_DIR, "credentials.json");
+
+/** The deployment this login is for: `--url <address>`, else FDE_OPS_URL, else null. Origin only. */
+function deploymentAddress() {
+  const i = process.argv.indexOf("--url");
+  const raw = (i > -1 ? process.argv[i + 1] : process.env.FDE_OPS_URL)?.trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return u.origin;
+  } catch {
+    console.error(`"${raw}" is not an address. Example: --url https://app.example.com`);
+    process.exit(1);
+  }
+}
 
 const b64url = (buf) => buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
@@ -205,21 +227,33 @@ async function main() {
     who = claims.email ?? "unknown";
     if (!claims.hd) {
       console.error(
-        `\nWarning: ${who} is a personal Google account. Delivered only admits WORK accounts (a Google Workspace domain).`,
+        `\nWarning: ${who} is a personal Google account. Google sign-in here only admits WORK accounts (a Google Workspace domain).`,
       );
     }
   } catch {
     /* ignore */
   }
 
+  const opsUrl = deploymentAddress();
   await mkdir(CRED_DIR, { recursive: true, mode: 0o700 });
   await writeFile(
     CRED_PATH,
-    JSON.stringify({ refresh_token: tokens.refresh_token, id_token: tokens.id_token, email: who }, null, 2),
+    JSON.stringify(
+      { refresh_token: tokens.refresh_token, id_token: tokens.id_token, email: who, ...(opsUrl ? { ops_url: opsUrl } : {}) },
+      null,
+      2,
+    ),
     { mode: 0o600 },
   );
   console.error(`\nSigned in as ${who}. Credentials stored at ${CRED_PATH}.`);
-  console.error("The MCP will now act as you on the Ops API.\n");
+  if (opsUrl) {
+    console.error(`The MCP will now act as you on ${opsUrl}.\n`);
+  } else {
+    console.error(
+      "No deployment address was saved. Set FDE_OPS_URL=<your deployment's address> in the MCP server's env,\n" +
+        "or re-run with: fde-login --url <your deployment's address>\n",
+    );
+  }
 }
 
 /**

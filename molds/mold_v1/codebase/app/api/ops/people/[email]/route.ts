@@ -12,6 +12,15 @@ import {
 } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
+import { DEPLOYMENT_PROFILE, DEFAULT_DOMAINS } from "@/lib/deployment-profile.generated";
+
+/** "deployment" stays "deployment" until the profile renames the area; then it is the area's singular, lower-cased. */
+function containerNoun(type: string): string {
+  const area = type === "deployment" ? "deployments" : type === "implementation" ? "implementations" : null;
+  if (!area) return type;
+  const label = DEPLOYMENT_PROFILE.domains[area].label.singular;
+  return label === DEFAULT_DOMAINS[area].label.singular ? type : label.toLowerCase();
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -201,7 +210,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ email: 
         done: t.done,
         priority: t.priority,
         dueAt: t.dueAt?.toISOString() ?? null,
-        container: t.containerType ? `${t.containerType} · ${t.containerLabel ?? t.containerId}` : null,
+        // The pill a person reads: the container's type as this deployment names it (default: the type itself).
+        container: t.containerType ? `${containerNoun(t.containerType)} · ${t.containerLabel ?? t.containerId}` : null,
         customer: todoCustomer(t),
       }));
 

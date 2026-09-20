@@ -114,6 +114,13 @@ export async function proxy(request: NextRequest) {
     );
     return passthrough;
   }
+  /**
+   * `/api/mcp` (this deployment's own MCP server, docs/MCP.md) is deliberately
+   * NOT in the gate below and needs no exemption either: it verifies the same
+   * bearer itself on every request, and each tool call it makes comes back
+   * through this proxy as an ordinary `/api/ops/*` request carrying the caller's
+   * token — so it is gated exactly as the web app is, one hop later.
+   */
   if (
     pathname.startsWith("/api/ops/") &&
     pathname !== "/api/ops/health" &&

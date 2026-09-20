@@ -5,6 +5,10 @@ import { customers, deployments } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
+import { pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+
+const ENV_HIDDEN = DEPLOYMENT_PROFILE.domains.deployments.fields.environment?.hidden === true;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +26,8 @@ const createSchema = z.object({
   healthStatus: z.string().min(1).default("healthy"),
   deployOwnerEmail: z.string().trim().optional().nullable(),
   displayName: z.string().trim().optional().nullable(),
+  // Any other single-value column, for a deployment profile that puts it on the "New …" form (`domains`).
+  ...profileFieldSchemas("deployments", ["deployOwnerEmail"]),
 });
 
 export async function POST(request: NextRequest) {
@@ -89,7 +95,8 @@ export async function GET(request: NextRequest) {
       id: d.deploymentId,
       label:
         d.displayName?.trim() ||
-        [d.customerId, d.environment, d.deployedVersion].filter(Boolean).join(" · ") ||
+        // A profile that does not use environments hides the field; its fixed value is not something to read.
+        [d.customerId, ENV_HIDDEN ? d.deploymentId : d.environment, d.deployedVersion].filter(Boolean).join(" · ") ||
         d.deploymentId,
       displayName: d.displayName ?? null,
       // Extras for the "My deployments" TODO view (pickers ignore these).
@@ -103,6 +110,8 @@ export async function GET(request: NextRequest) {
       uptime: d.uptime30dPct ?? null,
       errorRate: d.errorRate30dPct ?? null,
       lastDeployAt: d.lastDeployAt ?? null,
+      // The columns this deployment's profile shows or edits beyond the defaults ({} for the default profile).
+      fields: pickProfileFields("deployments", d),
     }));
     return NextResponse.json({ items });
   } catch (e) {

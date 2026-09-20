@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { domainView } from "@/lib/profile-domains";
 import customersData from "@/data/customers.json";
 import peopleData from "@/data/people.json";
 
@@ -638,6 +639,16 @@ export type DataroomTab =
 function domainDisplay(domain: string): { label: string; visible: boolean; description?: string } {
   const entry = DEPLOYMENT_PROFILE.dataroom.domains[domain];
   return { label: entry?.label || domain, visible: entry?.visible !== false, description: entry?.description };
+}
+
+/**
+ * A sheet's tab, as a person reads it. The sheet NAME inside the workbook never changes ("Deployments",
+ * "Implementation": the agent reads sheets by name); a deployment that renames the area sees its plural.
+ */
+const SHEET_AREA: Record<string, "deployments" | "implementations"> = { Deployments: "deployments", Implementation: "implementations" };
+function sheetTitle(name: string): string {
+  const area = SHEET_AREA[name];
+  return area ? domainView(area).name(name) : name;
 }
 
 const ALL_DATAROOM_SECTIONS: { key: DataroomTab; domain: string; icon: typeof Users }[] = [
@@ -2305,7 +2316,7 @@ export function Dataroom({
                           : "border-transparent text-muted-foreground hover:bg-muted",
                       )}
                     >
-                      {s.name}
+                      {sheetTitle(s.name)}
                     </button>
                   ))}
                 </div>

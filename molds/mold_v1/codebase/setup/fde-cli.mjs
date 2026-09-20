@@ -27,15 +27,19 @@ const COMMANDS = {
 if (!cmd || cmd === "--help" || cmd === "-h") {
   console.error(
     [
-      "Delivered CLI",
+      "Workspace CLI",
+      "",
+      "Your deployment also serves MCP directly at <its address>/api/mcp - no package needed.",
+      "This package has NO default address: set FDE_OPS_URL=<your deployment's address>,",
+      "or save it once with: fde-login --url <address>",
       "",
       "Usage:",
-      "  npx @delivery-agents/cli fde-login    Sign in with your work Google account",
+      "  npx @delivery-agents/cli fde-login --url <address>   Sign in with your work Google account",
       "  npx @delivery-agents/cli fde-mcp      Run the MCP server (for your coding agent)",
-      "  npx @delivery-agents/cli install-skill  Install the Delivered setup skills",
+      "  npx @delivery-agents/cli install-skill  Install the setup skills",
       "",
       "MCP config (Claude Code / Cursor / Codex):",
-      '  { "command": "npx", "args": ["-y", "-p", "@delivery-agents/cli", "fde-mcp"] }',
+      '  { "command": "npx", "args": ["-y", "-p", "@delivery-agents/cli", "fde-mcp"], "env": { "FDE_OPS_URL": "<address>" } }',
     ].join("\n"),
   );
   process.exit(cmd ? 0 : 1);

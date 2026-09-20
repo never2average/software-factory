@@ -55,7 +55,7 @@
     "test:cards": "playwright test",
     "test:task-workflow:stress": "playwright test --config=playwright.task-workflow.config.ts",
     "test:workflow-leases": "node scripts/test-workflow-leases.mjs",
-    "test:qm-hardening": "npm run test:prompt-context && npm run test:memory && npm run test:browser-security && npm run test:workflow-leases && npm run test:step-context && npm run test:email-signin && npm run check:gates && npm run test:chat-persistence && npm run test:chat-turn-state && npm run test:chat-send-gate && npm run test:chat-collapse && npm run test:chat-attachments && npm run test:chat-usage",
+    "test:qm-hardening": "npm run test:prompt-context && npm run test:memory && npm run test:browser-security && npm run test:workflow-leases && npm run test:step-context && npm run test:email-signin && npm run test:mcp-endpoint && npm run check:gates && npm run test:chat-persistence && npm run test:chat-turn-state && npm run test:chat-send-gate && npm run test:chat-collapse && npm run test:chat-attachments && npm run test:chat-usage",
     "test:browser": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/test-browser-use.mjs",
     "db:push": "drizzle-kit push",
     "build:workflow-library": "node scripts/build-workflow-library.mjs",
@@ -91,6 +91,7 @@
     "test:email-html": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-email-html.mjs",
     "test:tool-call-ids": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-unique-tool-call-ids.mjs",
     "test:insights-subagents": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-insights-subagents.mjs",
+    "test:mcp-endpoint": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-mcp-endpoint.mjs",
     "check:vocabulary": "node scripts/check-vocabulary.mjs"
   },
   "dependencies": {

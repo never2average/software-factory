@@ -206,6 +206,10 @@ export interface ApiRefDeployment {
   uptime: number | null;
   errorRate: number | null;
   lastDeployAt: string | null;
+  /** Columns the deployment profile shows beyond the defaults (`domains.deployments`); {} for the default profile. */
+  fields?: Record<string, string | number | null>;
+  /** Set by the list when two customers share a deployment id: `id` is then customer + id, this is the real one. */
+  recordId?: string;
 }
 export interface ApiRefImplementation {
   id: string;
@@ -222,6 +226,8 @@ export interface ApiRefImplementation {
   solutionName: string | null;
   /** actual, else target go-live date (ISO/date string) — the "due in N days". */
   goLiveDate: string | null;
+  /** Columns the deployment profile shows beyond the defaults (`domains.implementations`); {} for the default profile. */
+  fields?: Record<string, string | number | null>;
 }
 
 /** One FDE roster row — the org graph the TODO scope filters resolve against. */

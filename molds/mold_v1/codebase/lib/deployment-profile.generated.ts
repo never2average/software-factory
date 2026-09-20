@@ -31,9 +31,43 @@ export interface DeploymentProfile {
     /** null = the built-in starter tree; otherwise the files a new workspace is seeded with. */
     seed: { path: string; content: string }[] | null;
   };
+  /**
+   * The two record areas a deployment may REDEFINE: names, field labels, enum display labels, hidden fields (a
+   * hidden required field carries the fixed value the forms submit). Keys are real field keys and enum values.
+   */
+  domains: { deployments: DomainSpec; implementations: DomainSpec & { group_by: string | null; group_label: { singular: string; plural: string } } };
   /** Sent to the model on every turn, after the stable prompt. null = nothing extra. */
   agent: { briefing: string | null };
 }
+
+export interface DomainFieldSpec {
+  label?: string;
+  /** For a table column or a chip, where the full label is too long. */
+  short_label?: string;
+  help?: string;
+  placeholder?: string;
+  /** Not used in this deployment: no form field, no column, no detail row. */
+  hidden?: boolean;
+  /** What the forms submit for a hidden field. Required when the field is. */
+  fixed?: string | number;
+  /** enum VALUE -> what a person reads. The value is what is stored and submitted. */
+  options?: Record<string, string>;
+}
+export interface DomainSpec {
+  label: { singular: string; plural: string };
+  description: string;
+  id_label: string;
+  /** A free-text field that carries one of `kinds` (shown as a select). null = the area has no kinds. */
+  kind_field: string | null;
+  kinds: string[];
+  /** Extra fields on the "New …" form / the detail card, after the built-in ones. */
+  create_fields: string[];
+  detail_fields: string[];
+  fields: Record<string, DomainFieldSpec>;
+}
+export type DomainArea = "deployments" | "implementations";
+/** What a form needs to know about a field: read from agent/lib/customer-schema.ts and agent/lib/db/schema.ts. */
+export interface DomainFieldMeta { type: "enum" | "number" | "text" | "list"; values?: string[]; column: boolean; required: boolean }
 
 export const DEPLOYMENT_PROFILE: DeploymentProfile = {
   "product": {
@@ -127,10 +161,118 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
     },
     "seed": null
   },
+  "domains": {
+    "deployments": {
+      "label": {
+        "singular": "Deployment",
+        "plural": "Deployments"
+      },
+      "description": "Deployments, filtered by owner.",
+      "id_label": "Deployment id",
+      "kind_field": null,
+      "kinds": [],
+      "create_fields": [],
+      "detail_fields": [],
+      "fields": {
+        "deploymentId": {
+          "placeholder": "DEP-…"
+        },
+        "environment": {
+          "label": "Environment"
+        },
+        "region": {
+          "label": "Region",
+          "placeholder": "ap-south-1"
+        },
+        "deployedVersion": {
+          "label": "Version",
+          "placeholder": "1.0.0"
+        },
+        "releaseStatus": {
+          "label": "Release status",
+          "options": {
+            "deployed": "Deployed",
+            "in-progress": "In progress",
+            "pending-approval": "Pending approval",
+            "rolled-back": "Rolled back",
+            "failed": "Failed"
+          }
+        },
+        "healthStatus": {
+          "label": "Health",
+          "options": {
+            "healthy": "Healthy",
+            "degraded": "Degraded",
+            "down": "Down"
+          }
+        },
+        "deployOwnerEmail": {
+          "label": "Owner",
+          "placeholder": "name@company.com"
+        }
+      }
+    },
+    "implementations": {
+      "label": {
+        "singular": "Implementation",
+        "plural": "Implementations"
+      },
+      "description": "Rollouts, filtered by owner.",
+      "id_label": "Rollout id",
+      "kind_field": null,
+      "kinds": [],
+      "create_fields": [],
+      "detail_fields": [],
+      "group_by": null,
+      "group_label": {
+        "singular": "Rollout",
+        "plural": "Rollouts"
+      },
+      "fields": {
+        "implementationStage": {
+          "label": "Stage",
+          "options": {
+            "Kickoff": "Kickoff",
+            "Discovery": "Discovery",
+            "Configuration": "Configuration",
+            "Integration": "Integration",
+            "UAT": "UAT",
+            "Pilot": "Pilot",
+            "Go-Live": "Go-Live",
+            "Stabilization": "Stabilization",
+            "Steady State": "Steady State",
+            "On Hold": "On Hold"
+          }
+        },
+        "implementationRiskLevel": {
+          "label": "Risk"
+        },
+        "implementationProgressPct": {
+          "label": "Progress"
+        },
+        "implementationOwnerEmail": {
+          "label": "Owner",
+          "placeholder": "name@company.com"
+        },
+        "launchScopeSolutionIds": {
+          "label": "Solution"
+        },
+        "targetGoLiveDate": {
+          "label": "Go-live"
+        }
+      }
+    }
+  },
   "agent": {
     "briefing": null
   }
 };
+
+/** domains as profiles/00-default.json states them: "has this deployment redefined the area?" is a comparison with this. */
+export const DEFAULT_DOMAINS: DeploymentProfile["domains"] = {"deployments":{"label":{"singular":"Deployment","plural":"Deployments"},"description":"Deployments, filtered by owner.","id_label":"Deployment id","kind_field":null,"kinds":[],"create_fields":[],"detail_fields":[],"fields":{"deploymentId":{"placeholder":"DEP-…"},"environment":{"label":"Environment"},"region":{"label":"Region","placeholder":"ap-south-1"},"deployedVersion":{"label":"Version","placeholder":"1.0.0"},"releaseStatus":{"label":"Release status","options":{"deployed":"Deployed","in-progress":"In progress","pending-approval":"Pending approval","rolled-back":"Rolled back","failed":"Failed"}},"healthStatus":{"label":"Health","options":{"healthy":"Healthy","degraded":"Degraded","down":"Down"}},"deployOwnerEmail":{"label":"Owner","placeholder":"name@company.com"}}},"implementations":{"label":{"singular":"Implementation","plural":"Implementations"},"description":"Rollouts, filtered by owner.","id_label":"Rollout id","kind_field":null,"kinds":[],"create_fields":[],"detail_fields":[],"group_by":null,"group_label":{"singular":"Rollout","plural":"Rollouts"},"fields":{"implementationStage":{"label":"Stage","options":{"Kickoff":"Kickoff","Discovery":"Discovery","Configuration":"Configuration","Integration":"Integration","UAT":"UAT","Pilot":"Pilot","Go-Live":"Go-Live","Stabilization":"Stabilization","Steady State":"Steady State","On Hold":"On Hold"}},"implementationRiskLevel":{"label":"Risk"},"implementationProgressPct":{"label":"Progress"},"implementationOwnerEmail":{"label":"Owner","placeholder":"name@company.com"},"launchScopeSolutionIds":{"label":"Solution"},"targetGoLiveDate":{"label":"Go-live"}}}};
+
+/** Every field of the two areas, from the zod schemas and the drizzle tables. */
+export const DOMAIN_FIELDS: Record<DomainArea, Record<string, DomainFieldMeta>> = {"deployments":{"deploymentId":{"type":"text","column":true,"required":true},"environment":{"type":"enum","values":["prod","staging","uat","sandbox","dev"],"column":true,"required":true},"region":{"type":"enum","values":["us-east-1","us-west-2","eu-west-1","eu-central-1","ap-southeast-1","ap-south-1","ca-central-1","customer-vpc","on-prem"],"column":true,"required":true},"cloudProvider":{"type":"enum","values":["aws","gcp","azure","vercel","customer_cloud","on_prem"],"column":true,"required":false},"runtime":{"type":"text","column":true,"required":false},"deploymentStrategy":{"type":"enum","values":["rolling","blue_green","canary","preview","manual"],"column":true,"required":false},"deployedVersion":{"type":"text","column":true,"required":true},"releaseId":{"type":"text","column":true,"required":false},"releaseChannel":{"type":"enum","values":["stable","rc","beta","hotfix","preview"],"column":true,"required":false},"buildSha":{"type":"text","column":true,"required":false},"runtimeVersion":{"type":"text","column":true,"required":false},"configVersion":{"type":"text","column":true,"required":false},"approvedByEmail":{"type":"text","column":true,"required":false},"approvedAt":{"type":"text","column":true,"required":false},"modelRouteId":{"type":"text","column":true,"required":false},"modelRoutingMode":{"type":"enum","values":["primary_only","fallback","traffic_split","shadow","disabled"],"column":true,"required":false},"primaryModelRef":{"type":"text","column":true,"required":false},"primaryModelVersion":{"type":"text","column":true,"required":false},"fallbackModelRef":{"type":"text","column":true,"required":false},"fallbackModelVersion":{"type":"text","column":true,"required":false},"modelTrafficPrimaryPct":{"type":"number","column":true,"required":false},"lastDeployAt":{"type":"text","column":true,"required":false},"releaseStatus":{"type":"enum","values":["deployed","in-progress","pending-approval","rolled-back","failed"],"column":true,"required":true},"rollbackVersion":{"type":"text","column":true,"required":false},"rollbackStatus":{"type":"enum","values":["not_required","ready","in_progress","completed","failed","blocked"],"column":true,"required":false},"rollbackTestedAt":{"type":"text","column":true,"required":false},"healthStatus":{"type":"enum","values":["healthy","degraded","down","unknown"],"column":true,"required":true},"uptime30dPct":{"type":"number","column":true,"required":false},"errorRate30dPct":{"type":"number","column":true,"required":false},"latencyP95Ms":{"type":"number","column":true,"required":false},"latencySloMs":{"type":"number","column":true,"required":false},"requestCount30d":{"type":"number","column":true,"required":false},"llmRequestCount30d":{"type":"number","column":true,"required":false},"inputTokens30d":{"type":"number","column":true,"required":false},"outputTokens30d":{"type":"number","column":true,"required":false},"cacheHitRate30dPct":{"type":"number","column":true,"required":false},"guardrailBlockRate30dPct":{"type":"number","column":true,"required":false},"cost30dUsd":{"type":"number","column":true,"required":false},"costBudget30dUsd":{"type":"number","column":true,"required":false},"projectedCost30dUsd":{"type":"number","column":true,"required":false},"capacityLimitRpm":{"type":"number","column":true,"required":false},"peakRpm30d":{"type":"number","column":true,"required":false},"utilization30dPct":{"type":"number","column":true,"required":false},"liveUrl":{"type":"text","column":true,"required":false},"deployOwnerEmail":{"type":"text","column":true,"required":false},"lastIncidentRef":{"type":"text","column":true,"required":false},"activeIncidentRefs":{"type":"list","column":true,"required":false},"incidentCount30d":{"type":"number","column":true,"required":false},"dashboardUrl":{"type":"text","column":true,"required":false},"runbookUrl":{"type":"text","column":true,"required":false},"lastTelemetryAt":{"type":"text","column":true,"required":false},"notes":{"type":"text","column":true,"required":false}},"implementations":{"rolloutId":{"type":"text","column":true,"required":false},"launchScopeSolutionIds":{"type":"list","column":true,"required":false},"implementationStage":{"type":"enum","values":["Kickoff","Discovery","Configuration","Integration","UAT","Pilot","Go-Live","Stabilization","Steady State","On Hold"],"column":true,"required":true},"implementationOwnerEmail":{"type":"text","column":true,"required":false},"rolloutGovernanceStatus":{"type":"enum","values":["Draft","In Review","Approved","Changes Requested","Waived"],"column":true,"required":false},"customerLaunchApproverEmail":{"type":"text","column":true,"required":false},"providerLaunchApproverEmail":{"type":"text","column":true,"required":false},"launchDecision":{"type":"enum","values":["Pending","Go","No-Go","Deferred"],"column":true,"required":false},"launchDecisionDate":{"type":"text","column":true,"required":false},"implementationProgressPct":{"type":"number","column":true,"required":true},"implementationRiskLevel":{"type":"enum","values":["Green","Yellow","Red"],"column":true,"required":true},"dataReadinessPct":{"type":"number","column":true,"required":false},"integrationReadinessPct":{"type":"number","column":true,"required":false},"dataSourceInventoryStatus":{"type":"enum","values":["Not Started","In Progress","Complete","Blocked","Waived"],"column":true,"required":false},"dataAccessStatus":{"type":"enum","values":["Not Requested","Requested","Granted","Blocked","Revoked"],"column":true,"required":false},"dataQualityStatus":{"type":"enum","values":["Not Assessed","Issues Found","Passed","Failed","Waived"],"column":true,"required":false},"connectorProvisioningStatus":{"type":"enum","values":["Not Started","In Progress","Connected","Failing","Blocked","Waived"],"column":true,"required":false},"integrationTestStatus":{"type":"enum","values":["Not Started","In Progress","Passed","Failed","Waived"],"column":true,"required":false},"securityReviewStatus":{"type":"enum","values":["Not Started","In Review","Approved","Rejected","Waived"],"column":true,"required":false},"privacyReviewStatus":{"type":"enum","values":["Not Started","In Review","Approved","Rejected","Waived"],"column":true,"required":false},"evalAcceptanceStatus":{"type":"enum","values":["Not Started","In Review","Accepted","Rejected","Waived"],"column":true,"required":false},"acceptanceEvidenceLink":{"type":"text","column":true,"required":false},"uatStatus":{"type":"enum","values":["Not Started","In Progress","Passed","Failed","Waived"],"column":true,"required":false},"trainingStatus":{"type":"enum","values":["Not Started","Scheduled","In Progress","Complete"],"column":true,"required":false},"launchCriteria":{"type":"text","column":true,"required":false},"launchCriteriaStatus":{"type":"enum","values":["Not Defined","Defined","In Review","Met","Failed","Waived"],"column":true,"required":false},"goLiveConfidencePct":{"type":"number","column":true,"required":false},"targetGoLiveDate":{"type":"text","column":true,"required":false},"actualGoLiveDate":{"type":"text","column":true,"required":false},"launchWindowStartAt":{"type":"text","column":true,"required":false},"launchWindowEndAt":{"type":"text","column":true,"required":false},"runbookStatus":{"type":"enum","values":["Not Started","Draft","In Review","Approved","Not Required"],"column":true,"required":false},"runbookLink":{"type":"text","column":true,"required":false},"supportHandoffStatus":{"type":"enum","values":["Not Started","Scheduled","In Progress","Complete","Waived"],"column":true,"required":false},"supportOwnerEmail":{"type":"text","column":true,"required":false},"supportChannelRef":{"type":"text","column":true,"required":false},"billingReadinessStatus":{"type":"enum","values":["Not Started","In Review","Ready","Blocked","Waived"],"column":true,"required":false},"entitlementProvisioningStatus":{"type":"enum","values":["Not Started","Provisioned","Validated","Blocked","Waived"],"column":true,"required":false},"billingStartDate":{"type":"text","column":true,"required":false},"currentMilestone":{"type":"text","column":true,"required":false},"currentMilestoneDueDate":{"type":"text","column":true,"required":false},"blocker":{"type":"text","column":true,"required":false},"blockerOwner":{"type":"enum","values":["Provider","Customer","Third-Party Vendor","None"],"column":true,"required":true},"blockerSeverity":{"type":"enum","values":["None","Low","Medium","High","Critical"],"column":true,"required":false},"blockedSinceDate":{"type":"text","column":true,"required":false},"riskMitigationPlan":{"type":"text","column":true,"required":false},"criticalBlockerTicketIds":{"type":"list","column":true,"required":false},"openBlockerCount":{"type":"number","column":true,"required":false},"implementationNextStep":{"type":"text","column":true,"required":false},"implementationLastUpdatedAt":{"type":"text","column":true,"required":false}}};
 
 /** The product's display name. One place, so a rebrand is a profile, not a search-and-replace. */
 export const PRODUCT_NAME: string = DEPLOYMENT_PROFILE.product.name;
