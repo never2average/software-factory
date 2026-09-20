@@ -93,7 +93,7 @@ def main(a):
     body = b""
     try:
         r = urllib.request.urlopen(req, timeout=20)   # read-only GET; the body is parsed for a COUNT and never printed
-        code, body = r.status, r.read(65536)
+        code, body = r.status, r.read(8 << 20)   # a workspace logo travels here as a data: URI; 64 KB cut the JSON off and skipped every signed-in check
     except urllib.error.HTTPError as e:
         code = e.code
     except Exception as e:
