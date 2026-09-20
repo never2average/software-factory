@@ -10,6 +10,7 @@
   mint.py <app_id> code-request <email>        email that person a one-time sign-in code (only when they said so)
   mint.py <app_id> code <six digits> <email>   trade the code for a 7-day session kept in a private file, so the
                                    signed-in checks are measured and not skipped
+  mint.py <app_id> report          what it took: time and money, each figure measured or plainly "not measured"
   mint.py list                     every application and its next step
   mint.py --self-test
 
@@ -206,7 +207,11 @@ def run(app):
         rows = survey(app); nxt = next(((n, st) for n, st, _ in rows if st in (TODO, OPERATOR, FAILED)), None)
         if not nxt or nxt[1] != TODO: break
         print(f"\n=== {nxt[0]} ===", flush=True)
-        if not do(app, nxt[0]): print(f"\n{nxt[0]} did not finish; stopping here.\n"); break
+        t0 = time.time(); ok = do(app, nxt[0])
+        # One line per station actually run: what `mint.py <app> report` reads to say where the time went.
+        with open(os.path.join(adir(app), "mint-log.jsonl"), "a") as f:
+            f.write(json.dumps({"station": nxt[0], "start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t0)), "seconds": round(time.time() - t0), "ok": bool(ok)}) + "\n")
+        if not ok: print(f"\n{nxt[0]} did not finish; stopping here.\n"); break
     rows = show(app)
     return 0 if not any(st in (TODO, OPERATOR, FAILED) for _, st, _ in rows) else 1
 
@@ -302,6 +307,7 @@ def main(a):
     app = a[0]
     if len(a) == 1 or a[1] == "status": show(app); return 0
     if a[1] == "run": return run(app)
+    if a[1] == "report": return py(os.path.join(S, "mint_report.py"), app, *a[2:]).returncode
     if a[1] == "reuse-keys" and len(a) == 3: return reuse_keys(app, a[2])
     if a[1] == "code-request" and len(a) == 3: return code_request(app, a[2])
     if a[1] == "code" and len(a) == 4: return code(app, a[2], a[3])

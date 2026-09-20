@@ -10,6 +10,7 @@ One command orders the whole line and knows, by looking, where an application st
 python3 .claude/scripts/mint.py new <app_id> --brief briefs/<app_id>.md    # start
 python3 .claude/scripts/mint.py <app_id>                                    # every station + THE ONE next thing
 python3 .claude/scripts/mint.py <app_id> run                                # do everything that needs nobody; stop where it needs the operator
+python3 .claude/scripts/mint.py <app_id> report                             # what it took: time and money
 python3 .claude/scripts/mint.py list                                        # every application and its next step
 ```
 
@@ -48,3 +49,11 @@ web address, one paste per code block, what is hidden). What each station needs:
 Read the report or message it names before doing anything else, and before writing any commit message. A failed test
 lane marks the app `reverted` and files a task: fix the cause (upstream if it is base code), then `run` redeploys
 and re-tests. Report what was measured, not what was hoped.
+
+## What it took
+
+`mint.py <app_id> report` writes `reports/mint/<app_id>.md` (+ `.json`): calendar time to first deploy, agent working
+time, operator messages, deploys, test runs, upstream pull requests, and money. Every figure is measured from a record
+(the sessions' own cost counters, git, lane reports, the live app's run table) or says **not measured** and where to
+look; the one estimate it carries is labelled. Run it when an app is finished and whenever the operator asks about cost.
+The first app's figure includes building the factory; a later app's report is the marginal cost.
