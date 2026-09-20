@@ -53,6 +53,11 @@
       "why": "The system of record is the multiplayer context; a wrong write is a wrong shared truth."
     },
     {
+      "name": "test:custom-fields",
+      "run": "npm run test:custom-fields",
+      "why": "An application's own fields on its two record areas go through one validator on every write path; a path that skips it stores values nobody checked."
+    },
+    {
       "name": "test:browser-security",
       "run": "npm run test:browser-security",
       "why": "The optional browser capability must not become an exfiltration path."
