@@ -117,24 +117,57 @@ const RESYNC_BUDGET = 4;
 const detachesSeen = new Map<string, number>();
 const detachesReported = new Map<string, number>();
 const resyncEventFloor = new Map<string, number>();
+/**
+ * `${chatKey}:${turn ordinal}` → outer attach attempts already spent on that
+ * turn, and turns whose stall has already been filed.
+ *
+ * Module scope for the same reason the maps above are: a resync REMOUNTS this
+ * component, and both questions are about the TURN, not the mount. Without that
+ * the budget resets on every remount and a session whose stream simply will not
+ * open reopens it forever — each open costing the ownership gate two or three
+ * workspace-scoped queries.
+ */
+const attachFailures = new Map<string, number>();
+const stallsReported = new Map<string, number>();
+/** Outer attach attempts per turn, then the resync/replay watcher owns it. */
+const ATTACH_BUDGET = 4;
+/**
+ * How long an unfinished turn may be silent before it is COUNTED as stalled.
+ *
+ * Not a verdict and nothing on screen changes: one long tool call (a browser
+ * session, a subagent) can legitimately emit nothing for a while. It is a count,
+ * because the existing `stream-gave-up` site only fires when the store happens
+ * to be `ready`, so a death that leaves it `streaming`, `submitted` or `error`
+ * has always recorded NOTHING — the most likely reason the whole history of chat
+ * incidents is five rows against an operator reporting "many many problems".
+ */
+const STALL_MS = 90_000;
 const COMPACT_INSTRUCTION =
   "Summarize our entire conversation so far into a compact handoff brief: the goal, the key decisions and facts established, the current state, and what remains to do. Keep every constraint, preference, datum, and reference needed to continue. Reply with ONLY the summary — no preamble.";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  attachDecision,
   composerRoute,
   deadInputRequestIds,
   holdLabel,
   isRenderLoopError,
+  mergeAttachedEvents,
   renderLoopScene,
   resyncDecision,
   retryStormDetected,
   sendGate,
+  serverEventCount,
   shouldReportDetach,
   turnsStarted,
+  turnUnfinished,
   withRequestIds,
   withSessionEpochs,
+  type IndexedEvent,
+  type TurnEvent,
 } from "@/lib/chat-turn-state";
+import { eveSessionStream, readLiveTail, threadProxyStream } from "@/lib/chat-attach";
+import type { ChatTelemetryKind } from "@/lib/chat-telemetry";
 import { composeAttachmentMessage, wrapDirectives } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { AgentMessage, PendingApprovalCard } from "./agent-message";
@@ -482,7 +515,14 @@ export function AgentChat({
   /** The live session id, readable from callbacks the hook owns. */
   const sessionIdRef = useRef<string | null>(null);
   const report = useCallback(
-    (kind: string, extra: Record<string, unknown> = {}) => {
+    /**
+     * `ChatTelemetryKind`, not `string`. The route answers 202 on a parse
+     * failure, so a kind it does not list is accepted, dropped and looks exactly
+     * like a kind that never fired — which is how `resync` and `stop` were
+     * emitted from here for weeks and never once reached `automation_audit`.
+     * Typing the parameter makes that a typecheck failure instead of silence.
+     */
+    (kind: ChatTelemetryKind, extra: Record<string, unknown> = {}) => {
       try {
         void fetch("/api/ops/chat-telemetry", {
           method: "POST",
@@ -606,6 +646,54 @@ export function AgentChat({
   const liveSessionIdRef = useRef<string | null>(initialSession?.sessionId ?? null);
   if (agent.session?.sessionId) liveSessionIdRef.current = agent.session.sessionId;
 
+  /* ── THE LIVE TAIL ──────────────────────────────────────────────────────────
+   *
+   * Events read from the session's stream by a reader the STORE does not own,
+   * because the store only reads while it is sending (see `attachDecision`).
+   * Every entry carries the absolute stream index it arrived at; the merge
+   * deduplicates on that index, and the store always wins an index it holds.
+   *
+   * Declared here, above everything that reads the transcript, because from this
+   * point on `mergedEvents` and `view` are what the component reasons about —
+   * the gate, the telemetry, the context ring, the hoisted approvals, the
+   * rendered messages. Reading `agent.events` below this line would mean
+   * deciding a turn is dead while its reply is arriving two lines away.
+   */
+  const [attachedTail, setAttachedTail] = useState<readonly IndexedEvent[]>([]);
+  const mergedEvents = useMemo(
+    () => mergeAttachedEvents(agent.events as readonly TurnEvent[], attachedTail),
+    [agent.events, attachedTail],
+  ) as typeof agent.events;
+  /**
+   * The transcript as projected from the store's events AND the live tail.
+   *
+   * Folded ONTO `agent.data` rather than re-reduced from zero: that is what
+   * keeps `withSessionEpochs` correct (its epoch state is a non-enumerable
+   * property of the data object, so continuing from the store's output
+   * continues its epoch) and what keeps this O(new events) instead of
+   * O(transcript) on every frame of a streaming reply.
+   *
+   * The cache is keyed on identity: a new `agent.data` (the store advanced, or
+   * a send replaced the optimistic bubble) throws it away and re-folds the whole
+   * tail, which is correct because `reduce` is pure.
+   */
+  const projectionRef = useRef<{ base: unknown; applied: number; data: typeof agent.data } | null>(
+    null,
+  );
+  const view = useMemo(() => {
+    if (attachedTail.length === 0) return agent.data;
+    const cached = projectionRef.current;
+    const reusable =
+      cached !== null && cached.base === agent.data && cached.applied <= attachedTail.length;
+    let data = reusable ? cached.data : agent.data;
+    for (let i = reusable ? cached.applied : 0; i < attachedTail.length; i++) {
+      data = reducer.reduce(data, attachedTail[i].event as never) as typeof agent.data;
+    }
+    projectionRef.current = { base: agent.data, applied: attachedTail.length, data };
+    return data;
+  }, [agent.data, attachedTail, reducer]);
+  const viewMessages = view.messages;
+
   /**
    * The two failures that arrive with no error attached.
    *
@@ -624,31 +712,31 @@ export function AgentChat({
    * a healthy turn here ran 63 seconds across 443 events, so any timeout would
    * eventually declare working turns dead.
    */
-  const lastEventType = (agent.events[agent.events.length - 1] as { type?: string } | undefined)?.type;
-  const seenEvents = agent.events.length;
+  const lastEventType = (mergedEvents[mergedEvents.length - 1] as { type?: string } | undefined)?.type;
+  const seenEvents = mergedEvents.length;
   useEffect(() => {
-    if (agent.events.length === 0) return;
-    const storm = retryStormDetected(agent.events as { type?: string }[]);
+    if (mergedEvents.length === 0) return;
+    const storm = retryStormDetected(mergedEvents as { type?: string }[]);
     if (storm) {
       setStreamError(
         "This turn kept failing and has stopped retrying. Send it again — the agent won't recover this one.",
       );
       // A storm re-emits its prologue, so this effect re-ran on every one of
       // them and filed a record each time. One record per stormed turn.
-      const stormKey = `storm:${chatKey}:${turnsStarted(agent.events as { type?: string }[])}`;
+      const stormKey = `storm:${chatKey}:${turnsStarted(mergedEvents as { type?: string }[])}`;
       if ((detachesReported.get(stormKey) ?? 0) === 0) {
         detachesReported.set(stormKey, 1);
         report("stream-gave-up", {
           sessionId: sessionIdRef.current ?? undefined,
-          detail: `retry storm · ${agent.events.length} events · last ${lastEventType ?? "none"}`,
+          detail: `retry storm · ${mergedEvents.length} events · last ${lastEventType ?? "none"}`,
         });
       }
       return;
     }
     if (agent.status !== "ready") return;
     let unfinished = false;
-    for (let i = agent.events.length - 1; i >= 0; i--) {
-      const type = (agent.events[i] as { type?: string })?.type;
+    for (let i = mergedEvents.length - 1; i >= 0; i--) {
+      const type = (mergedEvents[i] as { type?: string })?.type;
       if (
         type === "turn.completed" ||
         type === "session.completed" ||
@@ -676,7 +764,7 @@ export function AgentChat({
     // telemetry counts incidents; the tail of a cycling turn is still reported,
     // once, when the resync budget runs out, so a stuck one is visible rather
     // than silent.
-    const key = `${chatKey}:${turnsStarted(agent.events as { type?: string }[])}`;
+    const key = `${chatKey}:${turnsStarted(mergedEvents as { type?: string }[])}`;
     const seen = (detachesSeen.get(key) ?? 0) + 1;
     detachesSeen.set(key, seen);
     const reported = detachesReported.get(key) ?? 0;
@@ -721,8 +809,8 @@ export function AgentChat({
   // size (uncached input + cache-read tokens). Falls back to a compaction event's
   // reported input tokens. 0 until the first model step reports usage.
   const contextUsage = useMemo(() => {
-    for (let i = agent.events.length - 1; i >= 0; i--) {
-      const e = agent.events[i] as {
+    for (let i = mergedEvents.length - 1; i >= 0; i--) {
+      const e = mergedEvents[i] as {
         type?: string;
         data?: {
           usage?: { inputTokens?: number; cacheReadTokens?: number; outputTokens?: number };
@@ -758,7 +846,7 @@ export function AgentChat({
       }
     }
     return { total: 0, cached: 0, fresh: 0, output: 0 };
-  }, [agent.events]);
+  }, [mergedEvents]);
 
   // Click-to-compact — IN-THREAD (no fork). eve has no manual-compaction
   // trigger, so we ask the agent to write a compaction checkpoint summary in the
@@ -771,6 +859,25 @@ export function AgentChat({
   // declared above it read the latest verdict through this ref.
   const holdRef = useRef(false);
   const [remoteTurn, setRemoteTurn] = useState(false);
+  /**
+   * A live reader is open on this transcript's stream — see the reattach block
+   * below. Declared up here because the resync/replay watcher, which is written
+   * above it, now stands DOWN while a reader is attached: a replay of a running
+   * turn returns mid-turn by design, so spending one while the turn is being
+   * read live would remount the chat and throw away the reader for nothing.
+   */
+  const [attachLive, setAttachLive] = useState(false);
+  /** Bumped when a reader gives up, to arm the next attempt within the budget. */
+  const [attachEpoch, setAttachEpoch] = useState(0);
+  /**
+   * The transcript IS streaming, whoever is reading it.
+   *
+   * `agent.status` only ever says `streaming` while the STORE is reading, so a
+   * turn recovered by the live reader would arrive with no caret and no "this is
+   * being written right now" — the reply would appear to jump, which reads as
+   * another glitch rather than as the fix.
+   */
+  const liveStreaming = agent.status === "streaming" || attachLive;
   const handleCompact = useCallback(() => {
     if (isBusy || holdRef.current) return;
     compactPendingRef.current = true;
@@ -788,19 +895,19 @@ export function AgentChat({
   // render a divider at the start of each compacted turn.
   const autoCompactedTurns = useMemo(() => {
     const turns = new Set<string>();
-    for (const e of agent.events) {
+    for (const e of mergedEvents) {
       const ev = e as { type?: string; data?: { turnId?: string } };
       if (ev.type === "compaction.completed" && ev.data?.turnId) turns.add(ev.data.turnId);
     }
     return turns;
-  }, [agent.events]);
+  }, [mergedEvents]);
 
   // Goal/Loop completion: the harness emits `result.completed` with the
   // structured `final_output` payload once the model records an outcome. Capture
   // the latest one onto the active goal run so the UI can show complete/blocked.
   useEffect(() => {
-    for (let i = agent.events.length - 1; i >= 0; i--) {
-      const e = agent.events[i] as { type?: string; data?: { result?: unknown } };
+    for (let i = mergedEvents.length - 1; i >= 0; i--) {
+      const e = mergedEvents[i] as { type?: string; data?: { result?: unknown } };
       if (e.type !== "result.completed") continue;
       const outcome = asGoalOutcome(e.data?.result);
       if (outcome) {
@@ -808,7 +915,7 @@ export function AgentChat({
       }
       break;
     }
-  }, [agent.events]);
+  }, [mergedEvents]);
 
   // Deliver input responses (approvals, question answers). The store's send()
   // throws "already processing a turn" whenever the parent stream is open —
@@ -864,8 +971,8 @@ export function AgentChat({
   // parked on user input, but the latest `session.waiting` EVENT carries the
   // live token. Prefer that, fall back to the cursor.
   const freshestToken = (): string | undefined => {
-    for (let i = agent.events.length - 1; i >= 0; i--) {
-      const e = agent.events[i] as { type?: string; data?: { continuationToken?: string } };
+    for (let i = mergedEvents.length - 1; i >= 0; i--) {
+      const e = mergedEvents[i] as { type?: string; data?: { continuationToken?: string } };
       if (e.type === "session.waiting" && typeof e.data?.continuationToken === "string" && e.data.continuationToken) {
         return e.data.continuationToken;
       }
@@ -875,7 +982,7 @@ export function AgentChat({
   // Recover the freshest resume token from the SERVER when none is in memory:
   // a turn that was streaming when the connection dropped (a window switch mid
   // generation) never parked locally, so no `session.waiting` event — and thus
-  // no token — is in `agent.events`. The turn keeps running server-side and
+  // no token — is in `mergedEvents`. The turn keeps running server-side and
   // parks there; replaying its stream surfaces the latest `session.waiting`
   // token so a send can still resume it. Bounded so it never hangs the send.
   const serverFreshestToken = async (sessionId: string): Promise<string | undefined> => {
@@ -939,7 +1046,13 @@ export function AgentChat({
     inputResponses?: readonly { requestId: string; optionId?: string; text?: string }[];
     outputSchema?: object;
   }): Promise<boolean> => {
-    const sessionId = agent.session?.sessionId;
+    // `liveSessionIdRef` as the fallback: after a detached turn the store's
+    // cursor has been reset (session id included) by `advanceSession`, so
+    // `agent.session.sessionId` is undefined for exactly the sessions this path
+    // exists to resume — including one the live tail has just carried to its
+    // park, whose fresh token `freshestToken()` now reads straight off the tail
+    // instead of paying `serverFreshestToken`'s whole replay for it.
+    const sessionId = agent.session?.sessionId ?? liveSessionIdRef.current;
     if (!sessionId) return false;
     // In-memory token first; if the turn dropped mid-stream there is none, so
     // recover it from the server before giving up.
@@ -979,9 +1092,9 @@ export function AgentChat({
    * projection and the memos below it do not churn.
    */
   const deadRequests = useMemo(
-    () => deadInputRequestIds(agent.events as { type?: string }[]),
+    () => deadInputRequestIds(mergedEvents as { type?: string }[]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agent.events.length],
+    [mergedEvents.length],
   );
   /**
    * Every input request this turn is waiting on, answered-by-us or not.
@@ -992,7 +1105,7 @@ export function AgentChat({
    */
   const openRequestIds = useMemo(() => {
     const ids: string[] = [];
-    for (const m of agent.data.messages) {
+    for (const m of viewMessages) {
       for (const p of (m as { parts?: readonly unknown[] }).parts ?? []) {
         const part = p as {
           state?: string;
@@ -1011,7 +1124,7 @@ export function AgentChat({
       }
     }
     return ids;
-  }, [agent.data.messages, dismissedRequestIds, expiredRequestIds, deadRequests]);
+  }, [viewMessages, dismissedRequestIds, expiredRequestIds, deadRequests]);
   const openRequestsRef = useRef<string[]>([]);
   openRequestsRef.current = openRequestIds;
 
@@ -1110,8 +1223,8 @@ export function AgentChat({
     // each answer consumes a token and the re-park mints a fresh one mid-stream,
     // while agent.session only updates at turn end (it can hold a spent token).
     let continuationToken: string | undefined;
-    for (let i = agent.events.length - 1; i >= 0; i--) {
-      const e = agent.events[i] as { type?: string; data?: { continuationToken?: string } };
+    for (let i = mergedEvents.length - 1; i >= 0; i--) {
+      const e = mergedEvents[i] as { type?: string; data?: { continuationToken?: string } };
       if (e.type === "session.waiting" && typeof e.data?.continuationToken === "string") {
         continuationToken = e.data.continuationToken;
         break;
@@ -1164,7 +1277,7 @@ export function AgentChat({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.error]);
-  const isEmpty = agent.data.messages.length === 0;
+  const isEmpty = viewMessages.length === 0;
 
   // Child sessions of delegated subagents, keyed by tool-call id. The message
   // parts carry the delegation itself but not the child's session id — only the
@@ -1172,20 +1285,20 @@ export function AgentChat({
   // log persistence stores), so RESTORED chats keep their child sessions too:
   // the child stream replays history on attach, meaning a reloaded run shows
   // its full step data instead of falling back to a summary blob.
-  const eventCount = agent.events.length;
+  const eventCount = mergedEvents.length;
   // Kept current as the transcript grows so `onError` — which cannot see `agent`
   // at all (it is declared inside the store's own config) — has something to say.
   useEffect(() => {
     sceneRef.current = renderLoopScene(
-      agent.data.messages as readonly { parts?: readonly unknown[] }[],
-      agent.events as { type?: string }[],
+      viewMessages as readonly { parts?: readonly unknown[] }[],
+      mergedEvents as { type?: string }[],
       typeof window === "undefined" ? undefined : { width: window.innerWidth, height: window.innerHeight },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventCount]);
   const childSessions = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const raw of agent.events) {
+    for (const raw of mergedEvents) {
       const e = raw as { type?: string; data?: Record<string, unknown> };
       if (e.type !== "subagent.called" || !e.data) continue;
       const callId = e.data.callId;
@@ -1205,7 +1318,7 @@ export function AgentChat({
   // subagent's rail, not mid-thread where the stale turn id misplaces it.
   const ownActionCallIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const raw of agent.events) {
+    for (const raw of mergedEvents) {
       const e = raw as { type?: string; data?: { actions?: Array<{ callId?: unknown }> } };
       if (e.type !== "actions.requested") continue;
       for (const a of e.data?.actions ?? []) {
@@ -1234,7 +1347,7 @@ export function AgentChat({
   // "Working…" strip: the turn is active but nothing on screen is visibly
   // progressing — no text tail streaming (the caret covers that), and the turn
   // is not parked waiting on the user (approval / question / authorization).
-  const lastMessage = agent.data.messages[agent.data.messages.length - 1];
+  const lastMessage = viewMessages[viewMessages.length - 1];
   const lastParts = (lastMessage?.parts ?? []) as Array<{
     type?: string;
     state?: string;
@@ -1253,7 +1366,7 @@ export function AgentChat({
     );
   });
   const streamingTextTail =
-    agent.status === "streaming" &&
+    liveStreaming &&
     lastMessage?.role === "assistant" &&
     lastParts[lastParts.length - 1]?.type === "text";
   const showWorking = isBusy && !awaitingUser && !streamingTextTail;
@@ -1264,7 +1377,7 @@ export function AgentChat({
   // messages. Collected here and rendered after the last message instead.
   const pendingInputParts = useMemo(() => {
     const out: Array<React.ComponentProps<typeof PendingApprovalCard>["part"]> = [];
-    for (const m of agent.data.messages) {
+    for (const m of viewMessages) {
       for (const p of m.parts ?? []) {
         const part = p as {
           type?: string;
@@ -1313,7 +1426,7 @@ export function AgentChat({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.data.messages, respondedRequestIds, expiredRequestIds, dismissedRequestIds, ownActionCallIds, hasSubagent]);
+  }, [viewMessages, respondedRequestIds, expiredRequestIds, dismissedRequestIds, ownActionCallIds, hasSubagent]);
 
   /**
    * THE SEND GATE — see lib/chat-turn-state `sendGate` for the why.
@@ -1340,7 +1453,7 @@ export function AgentChat({
     return out;
   }, [pendingInputParts, expiredRequestIds, deadRequests]);
   const startedTurns = useMemo(
-    () => turnsStarted(agent.events as { type?: string }[]),
+    () => turnsStarted(mergedEvents as { type?: string }[]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [eventCount],
   );
@@ -1354,7 +1467,7 @@ export function AgentChat({
     () =>
       sendGate({
         storeBusy: isBusy,
-        events: agent.events as { type?: string }[],
+        events: mergedEvents as { type?: string }[],
         pendingInputs: openInputRequests.length,
         abandoned: abandonedTurn !== null && abandonedTurn === startedTurns,
         remoteTurn,
@@ -1367,7 +1480,7 @@ export function AgentChat({
   // A delegation that has not reached a terminal state: "a specialist is running".
   const specialistRunning = useMemo(
     () =>
-      agent.data.messages.some((m) =>
+      viewMessages.some((m) =>
         (m.parts ?? []).some((p) => {
           const part = p as { type?: string; state?: string; toolName?: string };
           return (
@@ -1379,7 +1492,7 @@ export function AgentChat({
           );
         }),
       ),
-    [agent.data.messages],
+    [viewMessages],
   );
 
   // A subagent parked on an approval that we've pulled out of the main thread.
@@ -1395,7 +1508,7 @@ export function AgentChat({
     // "a subagent needs your approval" banner after the run finishes (a done
     // T-800 in the rail while the banner still nagged).
     let anyDelegationLive = false;
-    for (const m of agent.data.messages) {
+    for (const m of viewMessages) {
       for (const p of m.parts ?? []) {
         const part = p as { type?: string; state?: string; toolName?: string };
         if (part.type !== "dynamic-tool" || !part.toolName?.startsWith("eve:subagent:")) continue;
@@ -1408,7 +1521,7 @@ export function AgentChat({
     }
     if (!anyDelegationLive) return false;
 
-    for (const m of agent.data.messages) {
+    for (const m of viewMessages) {
       for (const p of m.parts ?? []) {
         const part = p as {
           type?: string;
@@ -1444,9 +1557,9 @@ export function AgentChat({
     }
     return false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.data.messages, respondedRequestIds, expiredRequestIds, deadRequests, ownActionCallIds, hasSubagent]);
+  }, [viewMessages, respondedRequestIds, expiredRequestIds, deadRequests, ownActionCallIds, hasSubagent]);
   const insights = useMemo(() => {
-    const base = deriveInsights(agent.data.messages);
+    const base = deriveInsights(viewMessages);
     return {
       ...base,
       subagents: base.subagents.map((s) => ({
@@ -1454,7 +1567,7 @@ export function AgentChat({
         childSessionId: s.childSessionId ?? childSessions[s.callId],
       })),
     };
-  }, [agent.data.messages, childSessions]);
+  }, [viewMessages, childSessions]);
 
   // Which customer(s) the chat is ACTUALLY about, inferred from its content —
   // only when nothing was manually selected (a manual pick always wins). The
@@ -1475,7 +1588,7 @@ export function AgentChat({
         if (id) found.add(id);
       }
     };
-    for (const m of agent.data.messages) {
+    for (const m of viewMessages) {
       for (const p of m.parts ?? []) {
         const part = p as { type?: string; text?: string; input?: unknown };
         if (part.type === "text" && part.text) scan(part.text);
@@ -1485,7 +1598,7 @@ export function AgentChat({
       }
     }
     return [...found];
-  }, [selectedCustomers, customers, agent.data.messages]);
+  }, [selectedCustomers, customers, viewMessages]);
 
   // Self-contained attachments (bulletproof: our own input + data-URL state).
   const [files, setFiles] = useState<AttachedFile[]>([]);
@@ -1564,7 +1677,7 @@ export function AgentChat({
       seen.add(url);
       list.push({ url, filename: art.filename, key: readableArtifactName(art.filename).toLowerCase() });
     };
-    for (const m of agent.data.messages) {
+    for (const m of viewMessages) {
       for (const p of m.parts ?? []) {
         const part = p as { type?: string; toolName?: string; text?: string; input?: unknown; output?: unknown };
         if (part.type === "dynamic-tool" && part.toolName === "publish_artifact") {
@@ -1581,7 +1694,7 @@ export function AgentChat({
       }
     }
     return list;
-  }, [agent.data.messages]);
+  }, [viewMessages]);
   const previewVersions = useMemo(() => {
     if (!previewArtifact) return [];
     const key = readableArtifactName(previewArtifact.filename).toLowerCase();
@@ -1678,27 +1791,38 @@ export function AgentChat({
   const persistRef = useRef(onPersist);
   persistRef.current = onPersist;
   const sessionId = agent.session?.sessionId;
-  const title = cleanTitle(firstUserText(agent.data.messages));
-  const preview = lastText(agent.data.messages);
-  const messageCount = agent.data.messages.length;
+  const title = cleanTitle(firstUserText(viewMessages));
+  const preview = lastText(viewMessages);
+  const messageCount = viewMessages.length;
   const customersKey = selectedCustomers.join(",");
   const status = agent.status;
   // Answered-input markers to fold into the persisted stream (see helper). The
   // count is a dep so persisting re-fires the moment a new input is answered,
   // even when neither status nor messageCount changes.
-  const responded = respondedInputEvents(agent.data.messages, answeredResponses);
+  const responded = respondedInputEvents(viewMessages, answeredResponses);
   const respondedCount = responded.length;
   const respondedRef = useRef(responded);
   respondedRef.current = responded;
   /** Client-only markers the server replay lacks — carried through a resync. */
   const clientMarkers = () => [
-    ...(agent.events as { type?: string }[]).filter((e) => e.type?.startsWith("client.")),
+    ...(mergedEvents as { type?: string }[]).filter((e) => e.type?.startsWith("client.")),
     ...respondedRef.current,
   ];
   useEffect(() => {
     if (sessionId && agent.session) {
       persistRef.current(
-        agent.session,
+        // The cursor the STORE holds does not know about the live tail: it only
+        // advances inside a `send()`. Persisting it beside a transcript the tail
+        // extended would file a `streamIndex` that understates the events in the
+        // same row, and the snapshot's seam check (lib/chat-snapshot.ts) would
+        // then find the stream disagreeing with the cache on the next open and
+        // throw the whole cached transcript away for a full replay.
+        attachedTail.length > 0
+          ? ({
+              ...agent.session,
+              streamIndex: serverEventCount(mergedEvents as readonly TurnEvent[]),
+            } as AgentSession)
+          : agent.session,
         {
           title: title ?? "New chat",
           preview,
@@ -1711,7 +1835,7 @@ export function AgentChat({
         // Fold in synthesized `client.input.responded` events so answered
         // questions/approvals stay answered across a reopen instead of reverting
         // to pending and hoisting to the tail.
-        [...agent.events, ...responded] as typeof agent.events,
+        [...mergedEvents, ...responded] as typeof mergedEvents,
         chatKey,
       );
     }
@@ -1842,7 +1966,7 @@ export function AgentChat({
     const isGoal = mode === "goal" || mode === "loop";
     const body = isGoal ? goalPreamble(raw, mode) : raw;
     // Context only on the very first turn; web-search opt-out every turn.
-    const text = withDirectives(body, agent.data.messages.length === 0);
+    const text = withDirectives(body, viewMessages.length === 0);
     const outputSchema = isGoal ? (GOAL_OUTCOME_SCHEMA as unknown as object) : undefined;
     const parts: Array<
       | { type: "text"; text: string }
@@ -1952,7 +2076,7 @@ export function AgentChat({
       return;
     }
     setStopping(true);
-    const wasTurn = turnsStarted(agent.events as { type?: string }[]);
+    const wasTurn = turnsStarted(mergedEvents as { type?: string }[]);
     void fetch(`/eve/v1/session/${encodeURIComponent(sid)}/cancel`, {
       method: "POST",
       headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -2066,7 +2190,7 @@ export function AgentChat({
   // A forked mount auto-sends its seed prompt as the first turn.
   const seededRef = useRef(false);
   useEffect(() => {
-    if (seededRef.current || !initialPrompt || agent.data.messages.length > 0) return;
+    if (seededRef.current || !initialPrompt || viewMessages.length > 0) return;
     seededRef.current = true;
     void sendMessage(initialPrompt, []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2183,7 +2307,9 @@ export function AgentChat({
    * same session. The held queue (module scope) flushes on the new mount.
    */
   useEffect(() => {
-    if (!detached || readOnly || relayThreadId || !onResync) return;
+    // SECOND LINE, not first: while a reader is on the live stream the rest of
+    // the reply is already arriving, and a replay would only interrupt it.
+    if (!detached || readOnly || relayThreadId || !onResync || attachLive) return;
     const sid = liveSessionIdRef.current;
     if (!sid) return;
     let cancelled = false;
@@ -2229,7 +2355,7 @@ export function AgentChat({
       const tail = await readTail();
       if (cancelled) return;
       const budgetKey = `${chatKey}:${startedTurns}`;
-      const known = (agent.events as { type?: string }[]).filter((e) => !e.type?.startsWith("client.")).length;
+      const known = serverEventCount(mergedEvents as readonly TurnEvent[]);
       if (!tail) silent += 1;
       /**
        * ONE DETACH, ONE RESYNC THAT HOLDS — see `resyncDecision` for the why.
@@ -2277,7 +2403,277 @@ export function AgentChat({
       document.removeEventListener("visibilitychange", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detached, abandonedTurn, readOnly, relayThreadId, remoteTurn]);
+  }, [detached, abandonedTurn, readOnly, relayThreadId, remoteTurn, attachLive]);
+
+  /**
+   * ═══ REATTACH TO THE LIVE STREAM ═══════════════════════════════════════════
+   *
+   * The watcher above POLLS a turn it cannot hear, and then recovers it with a
+   * full replay and a remount. This reads the turn instead.
+   *
+   * WHY THE POLL WAS NEVER ENOUGH. A replay deliberately returns as soon as a
+   * live turn goes quiet (chat-shell's `replaySession`), so replaying a RUNNING
+   * turn mounts it mid-turn and the fresh mount is detached again. That cycle is
+   * what filed three byte-identical "Chat stream ended mid-turn and stopped
+   * resuming · last event: message.appended" records on one session inside 63
+   * seconds on 2026-09-21. #34 stopped the cycling by demanding progress before
+   * another resync — and the fault underneath survived it untouched: on
+   * 2026-09-22T15:32:45 the same thing recorded exactly ONCE and the half-written
+   * answer simply never continued, while the server finished it perfectly well.
+   *
+   * WHAT THIS DOES. `ClientSession.stream({ startIndex, signal })` — which eve
+   * has always exposed and this app never called — opens the session's event
+   * stream at an absolute index. A reader is opened whenever the store is idle
+   * and the transcript's tail says a turn is running (`attachDecision`), the
+   * events land in `attachedTail`, and `mergedEvents` / `view` above project
+   * them beside the store's own. No replay, no remount, no flicker: the rest of
+   * the reply is simply written where the rest of the reply goes.
+   *
+   * WHEN IT LETS GO. The store starts a `send()` (never two readers over one
+   * session), a session boundary arrives, the session id changes under it, the
+   * turn is judged abandoned, or the component unmounts. Every one of those
+   * aborts the fetch through this controller rather than leaving it to leak.
+   *
+   * THE SEAM. `openStreamIterable` reconnects only on a socket DISCONNECT; the
+   * ~120s severance presents as a clean EOF and simply ends the iterable. So the
+   * reopen loop lives in lib/chat-attach.ts, around eve's stream, resuming at
+   * the advanced absolute index — which is the same thing eve's own send-path
+   * reader does, and the only reason live streaming ever survived 120 seconds.
+   *
+   * THE POLL STAYS, as the second line: a turn that ended while nothing was
+   * attached, a stream that refuses to open, a budget spent. `resyncDecision` is
+   * untouched; it is just no longer the first thing tried.
+   */
+  /** The session (or shared thread) this transcript is on, read by the reader. */
+  const attachTargetRef = useRef<string | null>(null);
+  /**
+   * A SHARED thread keeps reading through the membership-checked proxy.
+   *
+   * eve's own stream route domain-gates reads but does not check membership, so
+   * a revoked member pointed straight at the session id would keep receiving the
+   * conversation. `/api/ops/threads/:id/stream` checks first and answers 403,
+   * which is what makes revoke real — and the reader stops on a 403 rather than
+   * retrying it (see lib/chat-attach.ts).
+   */
+  const attachVia = sharedThreadId;
+  const attachId = attachVia ?? liveSessionIdRef.current;
+  attachTargetRef.current = attachId ?? null;
+  const attachKey = `${chatKey}:${startedTurns}`;
+  /**
+   * The absolute index the next reader resumes from, kept current every render.
+   *
+   * Never `agent.session.streamIndex`: the store RESETS that cursor whenever a
+   * stream ends without a session boundary, which is precisely the detached case
+   * this path exists for. `serverEventCount` derives it from the transcript
+   * instead, skipping the browser-only `client.*` markers that would otherwise
+   * push it past events we do not have.
+   */
+  const nextIndexRef = useRef(0);
+  nextIndexRef.current = serverEventCount(mergedEvents as readonly TurnEvent[]);
+  /**
+   * HAND THE RECOVERED TURN BACK TO THE STORE.
+   *
+   * Once the reader reaches the session boundary the tail has done its job, and
+   * leaving it in component state would eventually corrupt the transcript: the
+   * store's own event log knows nothing about it, so the next `send()` — which
+   * appends to that log — would shift the absolute cursor underneath the merge
+   * and the recovered reply would disappear as the new turn streamed in.
+   *
+   * `onReattach` is the mechanism the shell already built for exactly this
+   * ("remount THIS chat on its own cursor"), and here it costs NOTHING: no
+   * replay, no request, no deadline. It is handed the merged events, the session
+   * id that survived the cursor reset, and the fresh continuation token the tail
+   * just delivered — so the store comes back as the single authority with a
+   * cursor that can continue the SAME eve session instead of opening an empty
+   * new one whose `turn_0` writes over the first exchange.
+   *
+   * Built from the reader's own collected events rather than from state, because
+   * React has not necessarily committed the last `setAttachedTail` by the time
+   * the reader resolves.
+   */
+  const handBackRef = useRef<(collected: readonly IndexedEvent[], attachedTo: string) => void>(
+    () => {},
+  );
+  handBackRef.current = (collected, attachedTo) => {
+    const sid = liveSessionIdRef.current;
+    // Deliberately NOT gated on the effect still being mounted: the reader can
+    // resolve after React has already committed the terminal event and torn the
+    // effect down, and dropping the hand-off there would leave the tail stranded
+    // in state — the exact corruption it exists to prevent. What it IS gated on
+    // is identity: if the chat has moved to another session since this reader
+    // opened, these events belong to a conversation that is no longer on screen.
+    if (!sid || sid !== attachedTo) return;
+    // A shared thread's mount is owned by the shell (it re-reads through the
+    // membership-checked proxy), and a view-only member has no cursor to carry.
+    if (!onReattach || attachVia || readOnly || relayThreadId) return;
+    if (collected.length === 0) return;
+    const merged = mergeAttachedEvents(agent.events as readonly TurnEvent[], collected);
+    if (merged === agent.events) return;
+    onReattach(
+      {
+        sessionId: sid,
+        continuationToken: freshestToken(),
+        streamIndex: serverEventCount(merged),
+      } as AgentSession,
+      [...merged, ...clientMarkers()] as AgentEvents,
+    );
+  };
+  const attachVerdict = attachDecision({
+    sessionId: attachId,
+    storeBusy: isBusy,
+    events: mergedEvents as readonly TurnEvent[],
+    abandoned: abandonedTurn !== null && abandonedTurn === startedTurns,
+    failures: attachFailures.get(attachKey) ?? 0,
+    maxFailures: ATTACH_BUDGET,
+  });
+  const shouldAttach = attachVerdict.attach;
+  useEffect(() => {
+    if (!shouldAttach || !attachId) return;
+    const ctrl = new AbortController();
+    const captured = attachId;
+    const startIndex = nextIndexRef.current;
+    const started = Date.now();
+    let alive = true;
+    /** What this reader delivered, for the hand-off (see handBackRef). */
+    const collected: IndexedEvent[] = [];
+    setAttachLive(true);
+    report("attach-started", {
+      sessionId: liveSessionIdRef.current ?? undefined,
+      attempt: attachFailures.get(attachKey) ?? 0,
+      detail: `from index ${startIndex} · ${attachVia ? "shared proxy" : "eve stream"}`,
+    });
+    void readLiveTail({
+      open: attachVia
+        ? threadProxyStream({ threadId: attachVia, headers: getAuthHeaders })
+        : eveSessionStream({ sessionId: captured, headers: getAuthHeaders }),
+      startIndex,
+      signal: ctrl.signal,
+      onEvent: (entry) => {
+        // The transcript moved to another session while this reader was open (a
+        // resync remount that re-minted the id, a fork, a new session after a
+        // `session.completed`). Its events belong to a conversation that is no
+        // longer on screen, and applying them would write one thread's reply
+        // into another's.
+        if (
+          !attachDecision({
+            sessionId: attachTargetRef.current,
+            attachedTo: captured,
+            storeBusy: false,
+          }).attach
+        ) {
+          ctrl.abort();
+          return;
+        }
+        // Appended, never merged in place: the reader emits strictly increasing
+        // indices, so comparing with the last one is the whole dedupe this side
+        // needs. `mergeAttachedEvents` holds the authoritative rule.
+        if (collected.length > 0 && collected[collected.length - 1].index >= entry.index) return;
+        collected.push(entry);
+        setAttachedTail((prev) =>
+          prev.length > 0 && prev[prev.length - 1].index >= entry.index ? prev : [...prev, entry],
+        );
+      },
+    })
+      .then((result) => {
+        if (alive) setAttachLive(false);
+        if (result.outcome === "aborted") return;
+        if (result.outcome === "terminal") {
+          attachFailures.delete(attachKey);
+          // A turn delivered AROUND the store (directDeliver) has now been seen
+          // to settle, so the hold it placed can lift without a replay.
+          if (alive) setRemoteTurn(false);
+          report("attach-complete", {
+            sessionId: liveSessionIdRef.current ?? undefined,
+            elapsedMs: Date.now() - started,
+            attempt: result.segments,
+            detail: `${result.events} events · index ${startIndex}→${result.index}`,
+          });
+          handBackRef.current(collected, captured);
+          return;
+        }
+        // A revoked share can never come back; everything else gets the rest of
+        // its budget and then the resync/replay watcher.
+        if (!alive) return;
+        const spent =
+          result.outcome === "forbidden"
+            ? ATTACH_BUDGET
+            : (attachFailures.get(attachKey) ?? 0) + 1;
+        attachFailures.set(attachKey, spent);
+        report("attach-failed", {
+          sessionId: liveSessionIdRef.current ?? undefined,
+          elapsedMs: Date.now() - started,
+          attempt: spent,
+          detail: `${result.outcome} · ${result.events} events · ${result.detail ?? "no detail"}`,
+        });
+        setAttachEpoch((n) => n + 1);
+      })
+      .catch(() => {
+        // readLiveTail never rejects; this is belt-and-braces so a future throw
+        // cannot leave `attachLive` stuck true and the poll disarmed.
+        if (alive) setAttachLive(false);
+      });
+    return () => {
+      alive = false;
+      ctrl.abort();
+      setAttachLive(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldAttach, attachId, attachVia, attachKey, attachEpoch]);
+
+  /**
+   * A TAB COMING BACK is a fresh chance, not a spent budget.
+   *
+   * A backgrounded tab is exactly where this defect is most often met: the
+   * browser suspends or drops the socket, the reader burns its reopens against
+   * a connection that cannot work, and the turn is handed to the poll while
+   * nobody is looking. On return the conditions are completely different, so the
+   * failure count for this turn is forgiven once and a reader is re-armed —
+   * never while one is already attached, which would abort a healthy read to
+   * start the same read again.
+   */
+  const attachLiveRef = useRef(false);
+  attachLiveRef.current = attachLive;
+  const attachKeyRef = useRef(attachKey);
+  attachKeyRef.current = attachKey;
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || attachLiveRef.current) return;
+      attachFailures.delete(attachKeyRef.current);
+      setAttachEpoch((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
+  /**
+   * A turn that has gone QUIET, counted.
+   *
+   * `stream-gave-up` above only fires when `agent.status === "ready"`, so a turn
+   * that dies while the store still believes it is `streaming` (or `submitted`,
+   * or `error`) has always recorded nothing at all. This one is judged from the
+   * transcript alone: an unfinished turn with no new event for 90 seconds, filed
+   * once per turn whatever the store thinks. It changes nothing on screen — one
+   * long tool call can legitimately be silent — it exists so that next week has
+   * a number in it instead of silence.
+   */
+  useEffect(() => {
+    if (!turnUnfinished(mergedEvents as readonly TurnEvent[])) return;
+    const key = `${chatKey}:${startedTurns}`;
+    if ((stallsReported.get(key) ?? 0) > 0) return;
+    const timer = setTimeout(() => {
+      stallsReported.set(key, 1);
+      report("stall", {
+        sessionId: liveSessionIdRef.current ?? undefined,
+        elapsedMs: STALL_MS,
+        detail: `${agent.status} · ${attachLive ? "reader attached" : "no reader"} · ${
+          mergedEvents.length
+        } events · last ${lastEventType ?? "none"}`,
+      });
+    }, STALL_MS);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mergedEvents.length, startedTurns, chatKey, agent.status, attachLive, lastEventType]);
 
   const editQueued = (i: number, text: string) =>
     setQueued((prev) => prev.map((q, j) => (j === i ? { ...q, text } : q)));
@@ -2294,7 +2690,7 @@ export function AgentChat({
   // Regenerate: re-send the most recent user message (appends a fresh turn).
   const retryLast = () => {
     if (gate.hold) return;
-    const msgs = agent.data.messages;
+    const msgs = viewMessages;
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role !== "user") continue;
       const text = (msgs[i].parts ?? [])
@@ -2438,7 +2834,7 @@ export function AgentChat({
           // heals on the next event instead of wedging the whole transcript
           // behind the error card. status flips on turn end; the counts move as
           // events/messages arrive; sessionId changes on a thread switch.
-          resetKeys={[sessionId, agent.status, agent.events.length, agent.data.messages.length]}
+          resetKeys={[sessionId, agent.status, mergedEvents.length, viewMessages.length]}
         >
           <Conversation className="min-h-0 flex-1">
             <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-4 py-6 sm:px-6">
@@ -2474,7 +2870,7 @@ export function AgentChat({
                 <span className="truncate font-medium text-foreground">{forkedFrom.title}</span>
               </button>
             ) : null}
-            {agent.data.messages.map((message, index) => {
+            {viewMessages.map((message, index) => {
               // The compaction instruction is sent as a user turn under the hood —
               // hide it so only the divider + checkpoint summary read cleanly.
               if (
@@ -2490,7 +2886,7 @@ export function AgentChat({
               // before (its turnId is in `autoCompactedTurns`), the first time
               // that turn appears in the flow.
               const turnId = message.metadata?.turnId;
-              const prevTurnId = index > 0 ? agent.data.messages[index - 1]?.metadata?.turnId : undefined;
+              const prevTurnId = index > 0 ? viewMessages[index - 1]?.metadata?.turnId : undefined;
               const showAutoDivider = Boolean(turnId && turnId !== prevTurnId && autoCompactedTurns.has(turnId));
               return (
                 <Fragment key={message.id}>
@@ -2499,10 +2895,8 @@ export function AgentChat({
                     canRespond={!isBusy && !readOnly}
                     hoistPendingInput
                     isProxiedApproval={isProxiedChildApproval}
-                    isLast={index === agent.data.messages.length - 1}
-                    isStreaming={
-                      agent.status === "streaming" && index === agent.data.messages.length - 1
-                    }
+                    isLast={index === viewMessages.length - 1}
+                    isStreaming={liveStreaming && index === viewMessages.length - 1}
                     message={message}
                     onFocusSubagent={(toolCallId) => {
                       setCockpitOpen(true);
@@ -2513,7 +2907,7 @@ export function AgentChat({
                     onRetry={
                       !isBusy &&
                       message.role === "assistant" &&
-                      index === agent.data.messages.length - 1
+                      index === viewMessages.length - 1
                         ? retryLast
                         : undefined
                     }
@@ -2784,7 +3178,12 @@ export function AgentChat({
                   ? "Stopping the earlier reply…"
                   : specialistRunning
                     ? "Still working — a specialist is running. The rest of the reply will appear here when it finishes."
-                    : "Still working — the earlier reply is continuing on the server and will appear here when it finishes."}
+                    : attachLive
+                      ? // A reader IS on the live stream: the words have to match
+                        // what the screen is doing, or the one state where the
+                        // reply is visibly arriving still reads as a dead wait.
+                        "Still working — the rest of the earlier reply is arriving now."
+                      : "Still working — the earlier reply is continuing on the server and will appear here when it finishes."}
               </span>
               <button
                 type="button"
@@ -2799,7 +3198,7 @@ export function AgentChat({
           {queued.length > 0 ? (
             <div className="mb-2 flex flex-col gap-1">
               <p className="px-1 text-3xs text-muted-foreground" aria-live="polite">
-                {holdLabel(gate.reason, specialistRunning)}
+                {holdLabel(gate.reason, specialistRunning, attachLive)}
               </p>
               {queued.map((q, i) => (
                 <div

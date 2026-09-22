@@ -167,13 +167,29 @@ export function isSessionBoundary(event: TurnEvent | undefined): boolean {
   return type === "session.waiting" || type === "session.completed" || type === "session.failed";
 }
 
-/** What the queue header says. Honest about WHY the message has not gone. */
-export function holdLabel(reason: HoldReason | null, specialistRunning = false): string {
+/**
+ * What the queue header says. Honest about WHY the message has not gone.
+ *
+ * `attached` is the difference between "we are holding this behind something we
+ * cannot hear" and "the rest of it is coming in right now". The hold itself is
+ * unchanged — a message is still HELD while a turn is running, because eve has
+ * no server-side FIFO and anything delivered mid-turn renders above the bubble
+ * that asked for it — but a reader on the live stream is the one case where the
+ * wait has a visible end, and saying so is the difference between watching a
+ * dead screen and watching a reply.
+ */
+export function holdLabel(
+  reason: HoldReason | null,
+  specialistRunning = false,
+  attached = false,
+): string {
   switch (reason) {
     case "detached":
       return specialistRunning
         ? "Still working — a specialist is running. Queued messages send when it finishes."
-        : "Still working — the earlier reply is continuing on the server. Queued messages send when it finishes.";
+        : attached
+          ? "Still working — the rest of the earlier reply is arriving now. Queued messages send when it finishes."
+          : "Still working — the earlier reply is continuing on the server. Queued messages send when it finishes.";
     case "awaiting-input":
       return "Queued — sends after you answer the request above";
     default:
@@ -248,6 +264,197 @@ export function resyncDecision(input: {
     return { resync: true, reason: "blind" };
   }
   return { resync: false, reason: null };
+}
+
+/* ===========================================================================
+ * REATTACH: read the live stream instead of polling it
+ * ========================================================================= */
+
+/**
+ * SHOULD A LIVE READER BE ON THIS TRANSCRIPT RIGHT NOW?
+ *
+ * The defect this answers, in one line: the stream is severed on a hard ~120s
+ * boundary regardless of health, and the ONLY thing in this app that reopens at
+ * the advanced index is eve's send-path reader — which runs only while a
+ * `send()` is being consumed. `EveAgentStore`'s public surface is
+ * `snapshot / setCallbacks / subscribe / send / stop / reset`: there is no
+ * attach. So the moment a turn is detached (Stop, a segment the store's own
+ * budget did not recover, a reopened thread, a slept tab) NOTHING is reading the
+ * live stream, and the rest of a reply that the server finishes perfectly well
+ * never reaches the browser.
+ *
+ * What the app did instead was POLL: read the session tail, and on a boundary do
+ * a full bounded REPLAY and remount (`resyncDecision` below). A running turn's
+ * replay returns mid-turn by design, so every remount detached again — measured
+ * on 2026-09-21 as three byte-identical "Chat stream ended mid-turn and stopped
+ * resuming · last event: message.appended" records on ONE session inside 63
+ * seconds. PR #34 stopped the cycling by requiring progress before another
+ * resync, which removed the spin and left the fault: on 2026-09-22T15:32:45 the
+ * same session filed exactly ONE such record and the half-written answer simply
+ * never continued.
+ *
+ * eve exposes the missing piece and the app never used it: `ClientSession
+ * .stream({ startIndex, signal })`. This function decides when to use it.
+ *
+ * `events` is OPTIONAL. Omit it to ask only the identity questions — is there a
+ * session, is it still the one we attached to, is the store reading — which is
+ * what the reader itself asks on every incoming event, where re-deciding the
+ * turn's state from a half-applied tail would be both wrong and expensive.
+ */
+export type AttachVerdict =
+  /** Attach: a turn is running and nothing is listening to it. */
+  | "live-turn"
+  /** Nothing to attach to yet (no message has been sent). */
+  | "no-session"
+  /** The store owns the stream. NEVER two readers over one session. */
+  | "store-busy"
+  /** The transcript moved to another session under a reader that is still open. */
+  | "session-changed"
+  /** The turn reached a terminal. The reply is complete; stop reading. */
+  | "terminal"
+  /** The cancel route said `no_active_turn`: it will never emit a terminal. */
+  | "abandoned"
+  /** eve is replaying a turn that cannot run (see retryStormDetected). Dead, not slow. */
+  | "retry-storm"
+  /** The stream would not open often enough that the poll is the better bet. */
+  | "open-failed";
+
+export interface AttachInput {
+  /** The session (or shared-thread) the reader would open. */
+  readonly sessionId?: string | null;
+  /** The one a reader is ALREADY open on, when asking whether to keep going. */
+  readonly attachedTo?: string | null;
+  /** The eve store is reading a turn (`submitted` | `streaming`). */
+  readonly storeBusy: boolean;
+  /** The transcript's events — store events MERGED with whatever the tail brought. */
+  readonly events?: readonly TurnEvent[];
+  /** The server said this turn is not running (cancel answered `no_active_turn`). */
+  readonly abandoned?: boolean;
+  /** Consecutive failures to open or read a stream for this turn. */
+  readonly failures?: number;
+  readonly maxFailures?: number;
+}
+
+export function attachDecision(input: AttachInput): {
+  readonly attach: boolean;
+  readonly reason: AttachVerdict;
+} {
+  if (!input.sessionId) return { attach: false, reason: "no-session" };
+  // Checked before anything else about the turn: an event from the session we
+  // USED to be on must never land in the transcript of the one we are on now.
+  if (input.attachedTo && input.attachedTo !== input.sessionId) {
+    return { attach: false, reason: "session-changed" };
+  }
+  // Two readers over one session is the one thing that must never happen: the
+  // store's reader advances its own cursor, and a second reader consuming the
+  // same indices would double-apply every event it wins the race for.
+  if (input.storeBusy) return { attach: false, reason: "store-busy" };
+  if (input.abandoned) return { attach: false, reason: "abandoned" };
+  if (input.failures !== undefined && input.failures >= (input.maxFailures ?? 4)) {
+    return { attach: false, reason: "open-failed" };
+  }
+  // Identity-only question (see the note above): everything turn-shaped passes.
+  if (input.events === undefined) return { attach: true, reason: "live-turn" };
+  if (!turnUnfinished(input.events)) return { attach: false, reason: "terminal" };
+  // A stormed turn is DEAD and is already reported as such ("send it again").
+  // Holding a stream open on it costs an ownership-gated database read per
+  // reconnect and can never produce an event.
+  if (retryStormDetected(input.events)) return { attach: false, reason: "retry-storm" };
+  return { attach: true, reason: "live-turn" };
+}
+
+/**
+ * The next ABSOLUTE stream index this transcript needs.
+ *
+ * `EveAgentStore.snapshot.events` is the raw SERVER log (`#c` in
+ * eve-agent-store.js) seeded with `initialEvents` — but this app's
+ * `initialEvents` also carry browser-only `client.*` markers, appended at the
+ * end (lib/chat-snapshot.ts `mountFromSnapshot`, and the persist path in
+ * agent-chat). Those markers have no index on the server, so a positional
+ * `events.length` overshoots by exactly the number of questions the reader has
+ * answered — and the reattach would then open past events it does not have and
+ * project a transcript with a hole in it.
+ *
+ * Counting the non-client events is the same number `mountFromSnapshot` puts in
+ * `streamIndex`, which is the value eve itself takes as `startIndex`. Deriving
+ * it rather than reading `session.streamIndex` matters because the store RESETS
+ * that cursor (sessionId and all) whenever a stream ends without a session
+ * boundary — which is precisely the detached case this whole path is for.
+ */
+export function serverEventCount(events: readonly TurnEvent[]): number {
+  let n = 0;
+  for (const e of events) if (!e?.type?.startsWith("client.")) n += 1;
+  return n;
+}
+
+/** One event of the attached tail, with the absolute index it arrived at. */
+export interface IndexedEvent<T = TurnEvent> {
+  readonly index: number;
+  readonly event: T;
+}
+
+/**
+ * The store's events plus the attached tail, DEDUPLICATED BY ABSOLUTE INDEX.
+ *
+ * Three rules, each one a way the screen could otherwise lie:
+ *
+ *  - An index the store already holds is DROPPED, never applied. The store is
+ *    always the newer copy of an index it has (it is the one that can also
+ *    fold the client-side markers), and letting a replayed tail event overwrite
+ *    it is how the same reply gets written twice.
+ *  - The tail is applied in index order, and stops at the FIRST GAP. An event
+ *    whose predecessor is missing cannot be placed: eve's reducer updates "the
+ *    assistant message of turn N" in place, so applying 104 without 103 does not
+ *    leave a hole, it writes the wrong text. The gap closes itself on the next
+ *    reconnect, which reopens at the missing index.
+ *  - Nothing to add returns the SAME ARRAY REFERENCE, so every memo keyed on
+ *    the event list keeps its identity on an ordinary, unattached transcript.
+ *    (Same reason `deadInputRequestIds` shares one empty set.)
+ */
+export function mergeAttachedEvents<T extends TurnEvent>(
+  storeEvents: readonly T[],
+  tail: readonly IndexedEvent<T>[],
+  nextIndex: number = serverEventCount(storeEvents),
+): readonly T[] {
+  if (tail.length === 0) return storeEvents;
+  const byIndex = new Map<number, T>();
+  for (const entry of tail) {
+    if (!entry || entry.index < nextIndex) continue;
+    // First delivery wins: a reconnect that re-sends an index we already took
+    // must not replace it, or a streaming text part rewinds on screen.
+    if (!byIndex.has(entry.index)) byIndex.set(entry.index, entry.event);
+  }
+  const extra: T[] = [];
+  for (let i = nextIndex; byIndex.has(i); i++) extra.push(byIndex.get(i) as T);
+  return extra.length === 0 ? storeEvents : [...storeEvents, ...extra];
+}
+
+/**
+ * Project the attached tail ON TOP of the store's own projection.
+ *
+ * The store has no public ingest, so the transcript's reducer is run over the
+ * tail here — the same pattern `app/_components/cockpit.tsx` already uses to
+ * reduce a child session's events outside the store.
+ *
+ * Folding onto `base` rather than re-reducing the whole stream is not just an
+ * optimisation, it is what keeps `withSessionEpochs` correct: the epoch state
+ * lives on the data object as a NON-ENUMERABLE property (see below), so
+ * continuing from the store's own output continues its epoch, while a fresh
+ * fold over a merged list that starts mid-session would restart at epoch 0 and
+ * write a second session's `turn_0` over the first exchange.
+ *
+ * `reduce` is pure (cockpit shares one reducer instance for exactly this
+ * reason), so the result is identical to reducing the full sequence once —
+ * which is what scripts/test-chat-reattach.mjs asserts, event by event.
+ */
+export function projectAttached<TData, TEvent extends TurnEvent>(
+  reducer: EventReducer<TData, TEvent>,
+  base: TData,
+  tail: readonly TEvent[],
+): TData {
+  let data = base;
+  for (const event of tail) data = reducer.reduce(data, event);
+  return data;
 }
 
 /**

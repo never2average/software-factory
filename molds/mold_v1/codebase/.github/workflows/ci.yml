@@ -121,6 +121,18 @@ jobs:
         if: always()
         run: npm run test:chat-turn-state
 
+      # The reattach: a turn nobody is listening to is the defect the operator
+      # reported as "streaming has many many problems". This drives the real
+      # decision, the real merge (against eve's own reducer, at every point a
+      # transcript could be split) and the real reader over eve's own
+      # ClientSession.stream on a stream that severs mid-turn. It also parses
+      # every telemetry kind the chat emits through the route's own schema —
+      # the check that would have caught the #34 trap, and that caught two more
+      # kinds (`resync`, `stop`) that were being dropped silently.
+      - name: Chat reattach to a detached turn (behavioural)
+        if: always()
+        run: npm run test:chat-reattach
+
       # A parked approval survives a reload on purpose; one whose run has ENDED
       # must not, or it comes back as a live prompt and wedges the composer on a
       # chat that is already finished. Runs eve's own reducer over persisted

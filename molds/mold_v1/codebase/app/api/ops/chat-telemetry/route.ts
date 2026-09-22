@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getOpsDb } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { recordOpsAudit } from "@/lib/ops-audit";
+import { CHAT_TELEMETRY_KINDS, chatTelemetrySentence } from "@/lib/chat-telemetry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,9 +29,21 @@ export const dynamic = "force-dynamic";
  * opens its own workspace-scoped transaction (lib/ops-audit.ts).
  */
 
+/**
+ * The enum is DERIVED from lib/chat-telemetry's kind→sentence map, never listed
+ * again here.
+ *
+ * Because this route answers 202 on a parse failure, a kind that is emitted but
+ * missing from the enum is accepted, dropped, and indistinguishable from a kind
+ * that never fired. That already happened twice: `resync` and `stop` have been
+ * emitted by app/_components/agent-chat.tsx since they shipped and have never
+ * once reached `automation_audit`. Deriving the enum from the sentences makes a
+ * kind the route cannot describe a kind it cannot accept — and a kind it can
+ * describe is accepted without anyone remembering to come here.
+ */
 const schema = z.object({
   sessionId: z.string().max(200).optional(),
-  kind: z.enum(["stream-error", "stream-gave-up", "save-failed", "resume", "gate-denied", "render-loop"]),
+  kind: z.enum(CHAT_TELEMETRY_KINDS),
   detail: z.string().max(400).optional(),
   elapsedMs: z.number().int().nonnegative().max(86_400_000).optional(),
   attempt: z.number().int().nonnegative().max(10_000).optional(),
@@ -48,22 +61,7 @@ export async function POST(request: NextRequest) {
     const { sessionId, kind, detail, elapsedMs, attempt } = parsed.data;
     // A sentence, because that is what this table holds and what a human reads
     // at 2am. The numbers stay in it rather than in columns that do not exist.
-    const parts = [
-      kind === "stream-error"
-        ? "Chat stream errored"
-        : kind === "stream-gave-up"
-          ? "Chat stream ended mid-turn and stopped resuming"
-          : kind === "save-failed"
-            ? "Chat list failed to save"
-            : kind === "gate-denied"
-              ? "Session access denied"
-              // A React render loop that reached the eve store. Its own sentence, because
-              // falling through to "resumed" would file the one error nobody can see from
-              // the outside under the one word that means everything is fine.
-              : kind === "render-loop"
-                ? "Chat render loop (turn kept running)"
-                : "Chat stream resumed",
-    ];
+    const parts = [chatTelemetrySentence(kind)];
     if (typeof attempt === "number") parts.push(`attempt ${attempt}`);
     if (typeof elapsedMs === "number") parts.push(`after ${Math.round(elapsedMs / 1000)}s`);
     if (detail) parts.push(`— ${detail}`);
