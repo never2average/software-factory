@@ -1,6 +1,6 @@
 # What it took to mint `onfinance_hfc`
 
-Generated 2026-09-22T07:11Z · status **stamped** · https://onfinance-hfc.vercel.app · packs: hfc-research
+Generated 2026-09-22T20:44Z · status **stamped** · https://onfinance-hfc.vercel.app · packs: hfc-research
 
 Every figure is *measured* from a record written when the thing happened, unless the row says otherwise.
 
@@ -10,26 +10,26 @@ Every figure is *measured* from a record written when the thing happened, unless
 |---|---|
 | First message about this app | 2026-09-18T12:04Z |
 | First live deploy | 2026-09-19T09:49Z — **21h 45m** of calendar time after the first message |
-| Deploys so far | 12 (latest 2026-09-20T14:49Z) |
+| Deploys so far | 16 (latest 2026-09-22T20:29Z) |
 | Agent working: model time | 5h 12m |
 | Agent working: running commands, builds, deploys, tests | 1h 42m |
-| Session active time (idle gaps over 5 min removed) | 6h 28m |
-| Operator messages | 48 |
-| Agent messages / tool calls / subagents | 1592 / 778 / 27 |
-| Test-lane reports written | 82 (functional 19, context 16, load 15, accessibility 15, responsiveness 17) |
-| Commits touching the app, its brief and its packs | 28 |
-| Pull requests merged upstream in the same window | 24 (+19368 / −2487 lines) in never2average/fde-agent |
+| Session active time (idle gaps over 5 min removed) | 7h 05m |
+| Operator messages | 49 |
+| Agent messages / tool calls / subagents | 1736 / 861 / 32 |
+| Test-lane reports written | 92 (functional 21, context 18, load 17, accessibility 17, responsiveness 19) |
+| Commits touching the app, its brief and its packs | 32 |
+| Pull requests merged upstream in the same window | 29 (+24137 / −2803 lines) in never2average/fde-agent |
 
 ## Money
 
 | Item | Amount | How it is known |
 |---|---|---|
 | Agent (Claude) work | **$274.39** | measured: the sessions' own cost counters, at API list prices, subagents included. On a Claude subscription this is the *equivalent value used*, not an invoice. |
-| Agent work the counter has not seen yet | about $196 | **estimated**: the measured cost scaled by the tokens the main session used after its last cost record (subagents since then are not included). Replaced by a measured figure at the next cost record. Total so far: about **$470**. |
+| Agent work the counter has not seen yet | about $253 | **estimated**: the measured cost scaled by the tokens the main session used after its last cost record (subagents since then are not included). Replaced by a measured figure at the next cost record. Total so far: about **$528**. |
 | · claude-fable-5-1 | $264.57 | 354.5M tokens read, 1.57M written |
 | · claude-opus-5[1m] | $9.27 | 8.9M tokens read, 0.07M written |
 | · claude-haiku-4-5-20251001 | $0.56 | 0.2M tokens read, 0.01M written |
-| Inference the live app has spent | $0.00 | measured: the app's own run table, 2 run(s) across 2 workspace(s). Runs that recorded no cost count as $0. |
+| Inference the live app has spent | $0.00 | measured: the app's own run table, 3 run(s) across 2 workspace(s). Runs that recorded no cost count as $0. |
 | Hosting (Vercel: three projects, builds, functions) | not measured | vercel.com → the team → Usage. No per-project invoice is readable from this machine. |
 | Database and file store (Neon, Vercel Blob) | not measured | the Vercel team's Storage tab; both start on free allowances |
 | Model provider account (Cloudflare Workers AI) | not measured | dash.cloudflare.com → AI → Workers AI → usage; the row above is the app's own count of the same spend |
@@ -39,4 +39,4 @@ Every figure is *measured* from a record written when the thing happened, unless
 
 - The agent figure is for **everything done in those sessions**, not only this app's own files: it includes building factory features the next app reuses (packs, the mint line, the per-app package, the domain step) and the upstream pull requests. The next app's report is the marginal cost; this one is the cost of the first.
 - Calendar time includes every wait for the operator (keys, decisions, sign-in codes) and overnight gaps. Agent working time does not.
-- The cost and working-time counters are as of the session's last cost record; 709 of its 1592 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part.
+- The cost and working-time counters are as of the session's last cost record; 853 of its 1736 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part.

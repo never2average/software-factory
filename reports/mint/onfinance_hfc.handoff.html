@@ -30,7 +30,7 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
 </style>
 <div class="wrap">
 <header><span class="eyebrow">Handoff · for the next person or agent</span><h1>OnFinance AI</h1><p>Research workspace for listed and debt-listed Indian housing finance companies.</p>
-<div class="meta"><span>Status <b>stamped</b></span><span><a href="https://onfinance-hfc.vercel.app">https://onfinance-hfc.vercel.app</a></span><span>built from mold_v1 @ <span class="mono">56677b8</span></span><span>as of 2026-09-22T07:11Z</span></div></header>
+<div class="meta"><span>Status <b>stamped</b></span><span><a href="https://onfinance-hfc.vercel.app">https://onfinance-hfc.vercel.app</a></span><span>built from mold_v1 @ <span class="mono">57ebce9</span></span><span>as of 2026-09-22T20:44Z</span></div></header>
 
 <section><h2>Where it stands</h2><ul class="rail"><li class="st ok"><span class="st-n">brief</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">state</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">packs</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">brand</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">keys</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">deploy</span><span class="st-s">Done</span></li><li class="st ok"><span class="st-n">workspaces</span><span class="st-s">Done</span></li><li class="st ask"><span class="st-n">tests</span><span class="st-s">Needs the operator</span></li><li class="st ask"><span class="st-n">package</span><span class="st-s">Needs the operator</span></li><li class="st na"><span class="st-n">address</span><span class="st-s">Not needed</span></li></ul><h3>What it is waiting on</h3><ul class="plain"><li><b>tests</b> <span class="pill ask">Needs the operator</span><br>nothing failed, but the signed-in checks in functional, accessibility, responsiveness were skipped. They need a one-time code from someone who can sign in: mint.py onfinance_hfc code-request &lt;email&gt;, then mint.py onfinance_hfc code &lt;digits&gt; &lt;email&gt;</li><li><b>package</b> <span class="pill ask">Needs the operator</span><br>@onfinance/hfc-research builds, but this machine is not signed in to npm. The operator runs `npm login` here once (it prints a link to open)</li></ul></section>
 
@@ -44,12 +44,12 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
 <div class="card"><h4>Address</h4><p>Lives at its Vercel address. No own domain is named yet; choose one before the package is first published, because the address is baked into it.</p></div></div></section>
 
 <section><h2>What was measured</h2><ul class="tests"><li><span class="pill wait">skipped</span> accessibility</li><li><span class="pill wait">skipped</span> context</li><li><span class="pill wait">skipped</span> functional</li><li><span class="pill ok">pass</span> load</li><li><span class="pill wait">skipped</span> responsiveness</li></ul>
-<div class="figs"><div class="fig"><b>21h 45m</b><span>first message to first live deploy</span></div><div class="fig"><b>12</b><span>deploys</span></div><div class="fig"><b>5.2h + 1.7h</b><span>agent model time + tool time</span></div><div class="fig"><b>48</b><span>operator messages</span></div><div class="fig"><b>24</b><span>pull requests merged upstream</span></div><div class="fig"><b>82</b><span>test-lane reports</span></div></div>
-<p>Agent cost: <b>$274 measured + about $196 estimated since the last cost record</b>, at API list prices (on a subscription this is value used, not an invoice). It covers the whole first build, including factory features the next application reuses. Hosting, database, model-provider, email and search bills are not readable from the factory; the full report says where each is seen: <code>reports/mint/onfinance_hfc.md</code>.</p></section>
+<div class="figs"><div class="fig"><b>21h 45m</b><span>first message to first live deploy</span></div><div class="fig"><b>16</b><span>deploys</span></div><div class="fig"><b>5.2h + 1.7h</b><span>agent model time + tool time</span></div><div class="fig"><b>49</b><span>operator messages</span></div><div class="fig"><b>29</b><span>pull requests merged upstream</span></div><div class="fig"><b>92</b><span>test-lane reports</span></div></div>
+<p>Agent cost: <b>$274 measured + about $253 estimated since the last cost record</b>, at API list prices (on a subscription this is value used, not an invoice). It covers the whole first build, including factory features the next application reuses. Hosting, database, model-provider, email and search bills are not readable from the factory; the full report says where each is seen: <code>reports/mint/onfinance_hfc.md</code>.</p></section>
 
-<section><h2>Recently finished</h2><p class="muted">Newest first, each with the evidence that closed it — so nobody re-opens a question answered last week.</p><details><summary>Reopening a thread replays the whole eve event stream every time (12 segments, 60s budget, 300/1500ms quiet wi… <span class="muted">— mold_v1-094, 2026-09-22</span></summary><p>fde-agent #35 (mold 56677b8), deployed 2026-09-22: chat_transcript_snapshots (migration 0018, RLS enabled+forced, org_isolation, unique per org+session) + tail replay from the stored index; ops.replay.end now on the owned path too; chat_threads_org_owner_updated_idx for the sidebar poll. Measured on a reconstruction of the operator&#x27;s 37-message thread over a simulated 8Mbit link: first paint 1464ms -&gt; 98ms, 1043KB -&gt; 44KB, 1543 events -&gt; 1. 69 checks incl. snapshot+tail == full replay at every split point of 40 fuzzed transcripts; isolation proven on a throwaway Postgres and again live (55/55 tables protected)</p></details><details><summary>Chat dies mid-stream: React #185 (max update depth) escapes the Chat body ErrorBoundary, reaches the eve store… <span class="muted">— mold_v1-093, 2026-09-22</span></summary><p>Partly: the KILL is fixed, the loop&#x27;s source is not found. #34 stops a React #185 from ending a live turn (the eve store notifies synchronously inside its stream read, so the throw lands at the store&#x27;s setState call site and NO ErrorBoundary can ever see it) and dedupes the detach report to once per turn; #36 records the scene (transcript size, tail part, mounted renderer, viewport) because #185 minifies to a sentence that names nothing. The detach/resync cycling (3 records in 63s on one session) is fixed by requiring progress before a resync. Root cause of the loop itself: NOT reproduced offline, incl. a wide streaming KPI table through the real Conversation+Streamdown stack. Successor: mold_v1-095</p></details><details><summary>Chat: a finished thread resurfaces answered/dead permission prompts and the composer holds on them forever (pe… <span class="muted">— mold_v1-092, 2026-09-22</span></summary><p>fde-agent #34 (mold 56677b8), deployed 2026-09-22: deadInputRequestIds() in lib/chat-turn-state.ts decides from the event stream whether a request is still answerable; a dead one renders as a muted note and is excluded from pendingInputs, so the composer is free. Also fixed the sibling-batch bug where a dead id swallowed the answer to a live question. 23 behavioural checks (test:chat-stale-approvals) + 16 on the pure function; lanes 0 failed</p></details><details><summary>Lane fail: responsiveness on onfinance_hfc — 1 check(s): layout.matrix.authenticated <span class="muted">— mold_v1-090, 2026-09-20</span></summary><p>Two real causes, both fixed upstream and redeployed (mold 6634664): (1) workspace header actions wrapped when &#x27;Finish setup&#x27; arrived, CLS 0.1855 at 320px -&gt; 0.04 (fde-agent #32); (2) full-viewport backdrop blur on the dialog overlay, Search chats opened in ~175 ms -&gt; 64 ms (#33). Ordered signed-in run: functional 26/26, load pass, accessibility 3/3, responsiveness 6/6; context 4/5 (clone.regression n/a). The lane&#x27;s own desktop chat-click row still read 224/200 ms while a per-control probe reads 24-64 ms: that gap is the lane&#x27;s back-to-back clicks on a busy VM, tracked in mold_v1-083</p></details><details><summary>Per-app agent CLI package: factory builds build/&lt;app&gt;/ with the mold&#x27;s build-agent-cli, runs its safety gate, … <span class="muted">— mold_v1-088, 2026-09-20</span></summary><p>agent_cli.py status|build|publish (self-test 8 checks); onfinance_hfc builds @onfinance/hfc-research@0.1.0, 10 files, mold safety gate + factory allowlist pass, sha b4507d45…; upstream #27 fixed dm.md for redefined areas and removed a person&#x27;s name from example paths; NOT published: needs the operator&#x27;s npm sign-in</p></details><details><summary>Lane fail: functional on onfinance_hfc — 1 check(s): test:cards <span class="muted">— mold_v1-087, 2026-09-20</span></summary><p>Test defect, not an application defect: tests/domain-forms.spec.ts (fde-agent #24) asserted the default deployment&#x27;s words on a build whose pack redefines the two areas (&#x27;Company&#x27;, &#x27;Published&#x27; are correct there). Fixed upstream in fde-agent #25 (default-forms test skips with a reason on a redefined build; verified 2 passed on a default build, 1 passed + 1 skipped on the research build). Mold refreshed to ba07820.</p></details></section>
+<section><h2>Recently finished</h2><p class="muted">Newest first, each with the evidence that closed it — so nobody re-opens a question answered last week.</p><details><summary>Reattach (#37) defects proved by adversarial review: hand-off skipped whenever the reader restarted mid-turn (… <span class="muted">— mold_v1-098, 2026-09-22</span></summary><p>fde-agent #39, merged (NOT deployed — the app is awaiting a rollback and the access fix): all 6 reattach defects fixed, plus a 7th the review missed and I caused — #38 moved the reader to count+deficit but left mergeAttachedEvents on the bare count, so on a reopened (compacted) thread the live tail never reached the transcript at all while the screen showed it. 16 new assertions each proved to FAIL on the pre-fix code and pass after; test-chat-reattach 129, test-chat-turn-state 89. The Stop-wedge and the unpruned module maps are fixed too. chat-shell&#x27;s withFreshestToken must also stop resurrecting a dead session&#x27;s token — handed to the access-control engineer</p></details><details><summary>SECURITY (proved on the live DB 2026-09-22): permitted() in app/eve/v1/session/[...segments]/route.ts queries … <span class="muted">— mold_v1-097, 2026-09-22</span></summary><p>fde-agent #40 + #41, merged and deployed 2026-09-22 (mold refreshed): the eve session gate is scoped (withOrgRls) and sweeps every workspace before accepting &#x27;unknown&#x27; — scoping alone was NOT enough, an outside address resolves to an empty personal workspace where a scoped read sees nothing; revoked members filtered; the continuation token stripped at the shared-thread proxy (and #41 routes a participant&#x27;s approval answer through the relay so it is not silently dropped); a mirror row can no longer claim someone else&#x27;s session; snapshot writes restricted to the thread owner; audit ids hashed + route scoped and admin-only (it was returning 0 rows for everyone, broken not leaking); un-share and delete now cascade server-side; check:tenancy widened to app+lib and proven to fail on the pre-fix gate. Proved on a throwaway Postgres with the production fail-closed policy; live: unauthenticated refused 401 on session stream, snapshots and replay. NOT yet proven live for a signed-in stranger (needs two identities)</p></details><details><summary>Reopening a thread replays the whole eve event stream every time (12 segments, 60s budget, 300/1500ms quiet wi… <span class="muted">— mold_v1-094, 2026-09-22</span></summary><p>fde-agent #35 (mold 56677b8), deployed 2026-09-22: chat_transcript_snapshots (migration 0018, RLS enabled+forced, org_isolation, unique per org+session) + tail replay from the stored index; ops.replay.end now on the owned path too; chat_threads_org_owner_updated_idx for the sidebar poll. Measured on a reconstruction of the operator&#x27;s 37-message thread over a simulated 8Mbit link: first paint 1464ms -&gt; 98ms, 1043KB -&gt; 44KB, 1543 events -&gt; 1. 69 checks incl. snapshot+tail == full replay at every split point of 40 fuzzed transcripts; isolation proven on a throwaway Postgres and again live (55/55 tables protected)</p></details><details><summary>Chat dies mid-stream: React #185 (max update depth) escapes the Chat body ErrorBoundary, reaches the eve store… <span class="muted">— mold_v1-093, 2026-09-22</span></summary><p>Partly: the KILL is fixed, the loop&#x27;s source is not found. #34 stops a React #185 from ending a live turn (the eve store notifies synchronously inside its stream read, so the throw lands at the store&#x27;s setState call site and NO ErrorBoundary can ever see it) and dedupes the detach report to once per turn; #36 records the scene (transcript size, tail part, mounted renderer, viewport) because #185 minifies to a sentence that names nothing. The detach/resync cycling (3 records in 63s on one session) is fixed by requiring progress before a resync. Root cause of the loop itself: NOT reproduced offline, incl. a wide streaming KPI table through the real Conversation+Streamdown stack. Successor: mold_v1-095</p></details><details><summary>Chat: a finished thread resurfaces answered/dead permission prompts and the composer holds on them forever (pe… <span class="muted">— mold_v1-092, 2026-09-22</span></summary><p>fde-agent #34 (mold 56677b8), deployed 2026-09-22: deadInputRequestIds() in lib/chat-turn-state.ts decides from the event stream whether a request is still answerable; a dead one renders as a muted note and is excluded from pendingInputs, so the composer is free. Also fixed the sibling-batch bug where a dead id swallowed the answer to a live question. 23 behavioural checks (test:chat-stale-approvals) + 16 on the pure function; lanes 0 failed</p></details><details><summary>Lane fail: responsiveness on onfinance_hfc — 1 check(s): layout.matrix.authenticated <span class="muted">— mold_v1-090, 2026-09-20</span></summary><p>Two real causes, both fixed upstream and redeployed (mold 6634664): (1) workspace header actions wrapped when &#x27;Finish setup&#x27; arrived, CLS 0.1855 at 320px -&gt; 0.04 (fde-agent #32); (2) full-viewport backdrop blur on the dialog overlay, Search chats opened in ~175 ms -&gt; 64 ms (#33). Ordered signed-in run: functional 26/26, load pass, accessibility 3/3, responsiveness 6/6; context 4/5 (clone.regression n/a). The lane&#x27;s own desktop chat-click row still read 224/200 ms while a per-control probe reads 24-64 ms: that gap is the lane&#x27;s back-to-back clicks on a busy VM, tracked in mold_v1-083</p></details></section>
 
-<section><h2>Open work</h2><div class="scroll"><table><thead><tr><th>Task</th><th class="num">Priority</th><th>What</th></tr></thead><tbody><tr><td class="mono">mold_v1-081</td><td class="num">P2</td><td>intake.py re-run on a deployed app drops datastores.postgres.rls_verified and infrastructure deploy fields; it must carry forward everything a deploy or verify wrote</td></tr><tr><td class="mono">mold_v1-083</td><td class="num">P2</td><td>responsiveness lane: INP on the shared VM swings 32-376 ms on an unchanged page; measure with more samples and a median (or a CPU-idle precondition), and report the machine&#x27;s load beside every sample, so a slow VM cannot revert an application</td></tr><tr><td class="mono">mold_v1-089</td><td class="num">P2</td><td>Upstream follow-ups to custom fields: report type off the runtime column; a company in more than one portfolio (composite key); an MCP tool that UPDATES an existing deployment record (deployment_upsert is insert-only); custom fields in Master.xlsx / account report / cards; backfill scripts bypass the validator; drizzle journal misses implementation.provider_launch_approver_email</td></tr><tr><td class="mono">mold_v1-091</td><td class="num">P2</td><td>mint.py: prove the full line on a SECOND real app (new -&gt; reuse-keys -&gt; run -&gt; finished) with the operator&#x27;s go-ahead, since a deploy creates real Vercel projects and a database; then fold the intake questions into mint so a chat alone can start one</td></tr><tr><td class="mono">mold_v1-095</td><td class="num">P2</td><td>Find the render loop itself: React #185 was recorded once in production (2026-09-21 13:33) and is now survivable and instrumented, but its source is unknown. Next occurrence will carry a scene line (renderLoopScene) — read it from automation_audit kind render-loop, then reproduce and fix at source</td></tr><tr><td class="mono">mold_v1-072</td><td class="num">P3</td><td>VM spike (go/no-go): eve API runs off Vercel upstream in fde-agent, rootless sandbox with python3, no docker socket mount</td></tr><tr><td class="mono">mold_v1-073</td><td class="num">P3</td><td>VM: filesystem or S3 storage driver behind the seven @vercel/blob importers</td></tr><tr><td class="mono">mold_v1-074</td><td class="num">P3</td><td>VM: workflow resume accepts a minted RESUME_TOKEN instead of the Vercel OIDC token</td></tr><tr><td class="mono">mold_v1-075</td><td class="num">P3</td><td>VM: infrastructure target vm_remote (host, ssh_user, ssh_port, ssh_key_ref, domain, production_url, health) with factory.py and provision.py rules</td></tr><tr><td class="mono">mold_v1-076</td><td class="num">P3</td><td>VM: provision.py --deploy-remote over SSH: rsync build, env file from hidden prompt, three systemd units, four cron timers, Caddy TLS, Postgres 17</td></tr><tr><td class="mono">mold_v1-077</td><td class="num">P3</td><td>VM: firewall (ufw 22/80/443, conntrack ctorigdstport rule, fail2ban)</td></tr><tr><td class="mono">mold_v1-078</td><td class="num">P3</td><td>VM: lanes grade vm_remote.production_url; runbook, VM cost line, product gates</td></tr></tbody></table></div><p class="muted">From <code>state/tasks/mold_v1.jsonl</code>; <code>python3 .claude/scripts/factory.py next mold_v1</code> gives the current one.</p></section>
+<section><h2>Open work</h2><div class="scroll"><table><thead><tr><th>Task</th><th class="num">Priority</th><th>What</th></tr></thead><tbody><tr><td class="mono">mold_v1-081</td><td class="num">P2</td><td>intake.py re-run on a deployed app drops datastores.postgres.rls_verified and infrastructure deploy fields; it must carry forward everything a deploy or verify wrote</td></tr><tr><td class="mono">mold_v1-083</td><td class="num">P2</td><td>responsiveness lane: INP on the shared VM swings 32-376 ms on an unchanged page; measure with more samples and a median (or a CPU-idle precondition), and report the machine&#x27;s load beside every sample, so a slow VM cannot revert an application</td></tr><tr><td class="mono">mold_v1-089</td><td class="num">P2</td><td>Upstream follow-ups to custom fields: report type off the runtime column; a company in more than one portfolio (composite key); an MCP tool that UPDATES an existing deployment record (deployment_upsert is insert-only); custom fields in Master.xlsx / account report / cards; backfill scripts bypass the validator; drizzle journal misses implementation.provider_launch_approver_email</td></tr><tr><td class="mono">mold_v1-091</td><td class="num">P2</td><td>mint.py: prove the full line on a SECOND real app (new -&gt; reuse-keys -&gt; run -&gt; finished) with the operator&#x27;s go-ahead, since a deploy creates real Vercel projects and a database; then fold the intake questions into mint so a chat alone can start one</td></tr><tr><td class="mono">mold_v1-095</td><td class="num">P2</td><td>Find the render loop itself: React #185 was recorded once in production (2026-09-21 13:33) and is now survivable and instrumented, but its source is unknown. Next occurrence will carry a scene line (renderLoopScene) — read it from automation_audit kind render-loop, then reproduce and fix at source</td></tr><tr><td class="mono">mold_v1-096</td><td class="num">P2</td><td>Chat stream does not REATTACH after a severed segment: the store only reads a stream from send(), so a detached turn is polled (resyncDecision + full replay + remount, backoff to 15s, budget 4) instead of tailed. eve exposes ClientSession.stream({startIndex}) with its own reconnection and the app never uses it. Evidence: automation_audit &#x27;ended mid-turn and stopped resuming&#x27; 2026-09-21 x3 and 2026-09-22T15:32</td></tr><tr><td class="mono">mold_v1-099</td><td class="num">P2</td><td>lib/workspace-attention.ts counts attention items per workspace on the bare handle: under fail-closed RLS every count is 0, so the workspace switcher silently shows nothing to do. Genuinely cross-workspace — use the acrossOrgsRls shape. Found 2026-09-22, recorded as tenancy debt (web: 1) rather than waved through with a marker</td></tr><tr><td class="mono">mold_v1-072</td><td class="num">P3</td><td>VM spike (go/no-go): eve API runs off Vercel upstream in fde-agent, rootless sandbox with python3, no docker socket mount</td></tr><tr><td class="mono">mold_v1-073</td><td class="num">P3</td><td>VM: filesystem or S3 storage driver behind the seven @vercel/blob importers</td></tr><tr><td class="mono">mold_v1-074</td><td class="num">P3</td><td>VM: workflow resume accepts a minted RESUME_TOKEN instead of the Vercel OIDC token</td></tr><tr><td class="mono">mold_v1-075</td><td class="num">P3</td><td>VM: infrastructure target vm_remote (host, ssh_user, ssh_port, ssh_key_ref, domain, production_url, health) with factory.py and provision.py rules</td></tr><tr><td class="mono">mold_v1-076</td><td class="num">P3</td><td>VM: provision.py --deploy-remote over SSH: rsync build, env file from hidden prompt, three systemd units, four cron timers, Caddy TLS, Postgres 17</td></tr><tr><td class="mono">mold_v1-077</td><td class="num">P3</td><td>VM: firewall (ufw 22/80/443, conntrack ctorigdstport rule, fail2ban)</td></tr><tr><td class="mono">mold_v1-078</td><td class="num">P3</td><td>VM: lanes grade vm_remote.production_url; runbook, VM cost line, product gates</td></tr></tbody></table></div><p class="muted">From <code>state/tasks/mold_v1.jsonl</code>; <code>python3 .claude/scripts/factory.py next mold_v1</code> gives the current one.</p></section>
 
 <section><h2>Rules of the road</h2><ol class="rules">
 <li>Start from <code>python3 .claude/scripts/mint.py onfinance_hfc</code>. It shows every station and the one next step; <code>run</code> does whatever needs nobody. Do not drive the station scripts by hand.</li>
@@ -62,7 +62,7 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
 
 <details><summary>The same facts as data, for an agent</summary><pre>{
  &quot;app_id&quot;: &quot;onfinance_hfc&quot;,
- &quot;generated_at&quot;: &quot;2026-09-22T07:11Z&quot;,
+ &quot;generated_at&quot;: &quot;2026-09-22T20:44Z&quot;,
  &quot;product&quot;: {
   &quot;name&quot;: &quot;OnFinance AI&quot;,
   &quot;tagline&quot;: &quot;Research workspace for listed and debt-listed Indian housing finance companies.&quot;,
@@ -72,7 +72,7 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
  &quot;url&quot;: &quot;https://onfinance-hfc.vercel.app&quot;,
  &quot;mold&quot;: {
   &quot;id&quot;: &quot;mold_v1&quot;,
-  &quot;commit&quot;: &quot;56677b8&quot;
+  &quot;commit&quot;: &quot;57ebce9&quot;
  },
  &quot;capabilities&quot;: {
   &quot;web_search&quot;: &quot;true&quot;,
@@ -111,7 +111,7 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
   {
    &quot;station&quot;: &quot;deploy&quot;,
    &quot;status&quot;: &quot;done&quot;,
-   &quot;note&quot;: &quot;https://onfinance-hfc.vercel.app (deployed 2026-09-22T06:56)&quot;
+   &quot;note&quot;: &quot;https://onfinance-hfc.vercel.app (deployed 2026-09-22T20:29)&quot;
   },
   {
    &quot;station&quot;: &quot;workspaces&quot;,
@@ -276,14 +276,14 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
  &quot;took&quot;: {
   &quot;first_message&quot;: &quot;2026-09-18T12:04:27.586000+00:00&quot;,
   &quot;first_deploy&quot;: &quot;2026-09-19T09:49:59+00:00&quot;,
-  &quot;deploys&quot;: 12,
+  &quot;deploys&quot;: 16,
   &quot;model_hours&quot;: 5.2,
   &quot;tool_hours&quot;: 1.7,
-  &quot;operator_messages&quot;: 48,
+  &quot;operator_messages&quot;: 49,
   &quot;agent_cost_usd_measured&quot;: 274.39,
-  &quot;agent_cost_usd_estimated_since&quot;: 196,
-  &quot;upstream_prs&quot;: 24,
-  &quot;lane_reports&quot;: 82
+  &quot;agent_cost_usd_estimated_since&quot;: 253,
+  &quot;upstream_prs&quot;: 29,
+  &quot;lane_reports&quot;: 92
  },
  &quot;access&quot;: {
   &quot;people&quot;: &quot;https://onfinance-hfc.vercel.app \u2014 sign in with a six-digit code emailed to you, or Continue with Google where the workspace uses it. Access is by workspace membership: the owner invites people from Workspace \u2192 People.&quot;,
@@ -317,6 +317,16 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
    &quot;id&quot;: &quot;mold_v1-095&quot;,
    &quot;priority&quot;: 2,
    &quot;title&quot;: &quot;Find the render loop itself: React #185 was recorded once in production (2026-09-21 13:33) and is now survivable and instrumented, but its source is unknown. Next occurrence will carry a scene line (renderLoopScene) \u2014 read it from automation_audit kind render-loop, then reproduce and fix at source&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-096&quot;,
+   &quot;priority&quot;: 2,
+   &quot;title&quot;: &quot;Chat stream does not REATTACH after a severed segment: the store only reads a stream from send(), so a detached turn is polled (resyncDecision + full replay + remount, backoff to 15s, budget 4) instead of tailed. eve exposes ClientSession.stream({startIndex}) with its own reconnection and the app never uses it. Evidence: automation_audit &#x27;ended mid-turn and stopped resuming&#x27; 2026-09-21 x3 and 2026-09-22T15:32&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-099&quot;,
+   &quot;priority&quot;: 2,
+   &quot;title&quot;: &quot;lib/workspace-attention.ts counts attention items per workspace on the bare handle: under fail-closed RLS every count is 0, so the workspace switcher silently shows nothing to do. Genuinely cross-workspace \u2014 use the acrossOrgsRls shape. Found 2026-09-22, recorded as tenancy debt (web: 1) rather than waved through with a marker&quot;
   },
   {
    &quot;id&quot;: &quot;mold_v1-072&quot;,
@@ -356,6 +366,18 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
  ],
  &quot;recent&quot;: [
   {
+   &quot;id&quot;: &quot;mold_v1-098&quot;,
+   &quot;at&quot;: &quot;2026-09-22&quot;,
+   &quot;title&quot;: &quot;Reattach (#37) defects proved by adversarial review: hand-off skipped whenever the reader restarted mid-turn (tab switch or eve re-emitting turn.started) -&gt; stranded tail, next send opens a NEW session over the first exchange; a gap in the tail is permanent and wedges the composer; hand-off after session.failed reinstates a dead session and spent token; 200 reopens with no backoff on productive segments; a hung open stalls with the poll disarmed; 401 misclassified as forbidden; persist effect fires per delta (~460ms blocking on a 60KB answer)&quot;,
+   &quot;evidence&quot;: &quot;fde-agent #39, merged (NOT deployed \u2014 the app is awaiting a rollback and the access fix): all 6 reattach defects fixed, plus a 7th the review missed and I caused \u2014 #38 moved the reader to count+deficit but left mergeAttachedEvents on the bare count, so on a reopened (compacted) thread the live tail never reached the transcript at all while the screen showed it. 16 new assertions each proved to FAIL on the pre-fix code and pass after; test-chat-reattach 129, test-chat-turn-state 89. The Stop-wedge and the unpruned module maps are fixed too. chat-shell&#x27;s withFreshestToken must also stop resurrecting a dead session&#x27;s token \u2014 handed to the access-control engineer&quot;
+  },
+  {
+   &quot;id&quot;: &quot;mold_v1-097&quot;,
+   &quot;at&quot;: &quot;2026-09-22&quot;,
+   &quot;title&quot;: &quot;SECURITY (proved on the live DB 2026-09-22): permitted() in app/eve/v1/session/[...segments]/route.ts queries chat_sessions/chat_threads/chat_thread_members on the BARE getOpsDb handle. Under production fail-closed RLS every query returns 0 rows, so &#x27;unknown session -&gt; allow&#x27; fires for every session: any signed-in member can read or send into any session id. Also no ne(status,&#x27;revoked&#x27;) filter; viewers receive the live continuationToken; ownsMirrorRow is client-asserted so a colleague can claim another&#x27;s session and read/forge/delete their cached transcript; chat telemetry publishes session ids to a member-readable audit feed; check:tenancy never scans app/eve or lib&quot;,
+   &quot;evidence&quot;: &quot;fde-agent #40 + #41, merged and deployed 2026-09-22 (mold refreshed): the eve session gate is scoped (withOrgRls) and sweeps every workspace before accepting &#x27;unknown&#x27; \u2014 scoping alone was NOT enough, an outside address resolves to an empty personal workspace where a scoped read sees nothing; revoked members filtered; the continuation token stripped at the shared-thread proxy (and #41 routes a participant&#x27;s approval answer through the relay so it is not silently dropped); a mirror row can no longer claim someone else&#x27;s session; snapshot writes restricted to the thread owner; audit ids hashed + route scoped and admin-only (it was returning 0 rows for everyone, broken not leaking); un-share and delete now cascade server-side; check:tenancy widened to app+lib and proven to fail on the pre-fix gate. Proved on a throwaway Postgres with the production fail-closed policy; live: unauthenticated refused 401 on session stream, snapshots and replay. NOT yet proven live for a signed-in stranger (needs two identities)&quot;
+  },
+  {
    &quot;id&quot;: &quot;mold_v1-094&quot;,
    &quot;at&quot;: &quot;2026-09-22&quot;,
    &quot;title&quot;: &quot;Reopening a thread replays the whole eve event stream every time (12 segments, 60s budget, 300/1500ms quiet windows): cost grows with conversation length. Persist a projected snapshot + tail replay&quot;,
@@ -378,18 +400,6 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
    &quot;at&quot;: &quot;2026-09-20&quot;,
    &quot;title&quot;: &quot;Lane fail: responsiveness on onfinance_hfc \u2014 1 check(s): layout.matrix.authenticated&quot;,
    &quot;evidence&quot;: &quot;Two real causes, both fixed upstream and redeployed (mold 6634664): (1) workspace header actions wrapped when &#x27;Finish setup&#x27; arrived, CLS 0.1855 at 320px -&gt; 0.04 (fde-agent #32); (2) full-viewport backdrop blur on the dialog overlay, Search chats opened in ~175 ms -&gt; 64 ms (#33). Ordered signed-in run: functional 26/26, load pass, accessibility 3/3, responsiveness 6/6; context 4/5 (clone.regression n/a). The lane&#x27;s own desktop chat-click row still read 224/200 ms while a per-control probe reads 24-64 ms: that gap is the lane&#x27;s back-to-back clicks on a busy VM, tracked in mold_v1-083&quot;
-  },
-  {
-   &quot;id&quot;: &quot;mold_v1-088&quot;,
-   &quot;at&quot;: &quot;2026-09-20&quot;,
-   &quot;title&quot;: &quot;Per-app agent CLI package: factory builds build/&lt;app&gt;/ with the mold&#x27;s build-agent-cli, runs its safety gate, and publishes &lt;agent_cli.package&gt; with the token named by agent_cli.token_ref; onfinance_hfc -&gt; @onfinance/hfc-research (public)&quot;,
-   &quot;evidence&quot;: &quot;agent_cli.py status|build|publish (self-test 8 checks); onfinance_hfc builds @onfinance/hfc-research@0.1.0, 10 files, mold safety gate + factory allowlist pass, sha b4507d45\u2026; upstream #27 fixed dm.md for redefined areas and removed a person&#x27;s name from example paths; NOT published: needs the operator&#x27;s npm sign-in&quot;
-  },
-  {
-   &quot;id&quot;: &quot;mold_v1-087&quot;,
-   &quot;at&quot;: &quot;2026-09-20&quot;,
-   &quot;title&quot;: &quot;Lane fail: functional on onfinance_hfc \u2014 1 check(s): test:cards&quot;,
-   &quot;evidence&quot;: &quot;Test defect, not an application defect: tests/domain-forms.spec.ts (fde-agent #24) asserted the default deployment&#x27;s words on a build whose pack redefines the two areas (&#x27;Company&#x27;, &#x27;Published&#x27; are correct there). Fixed upstream in fde-agent #25 (default-forms test skips with a reason on a redefined build; verified 2 passed on a default build, 1 passed + 1 skipped on the research build). Mold refreshed to ba07820.&quot;
   }
  ],
  &quot;repo&quot;: {
@@ -404,7 +414,7 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
 </div>
 <script type="application/json" id="handoff-data">{
  "app_id": "onfinance_hfc",
- "generated_at": "2026-09-22T07:11Z",
+ "generated_at": "2026-09-22T20:44Z",
  "product": {
   "name": "OnFinance AI",
   "tagline": "Research workspace for listed and debt-listed Indian housing finance companies.",
@@ -414,7 +424,7 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
  "url": "https://onfinance-hfc.vercel.app",
  "mold": {
   "id": "mold_v1",
-  "commit": "56677b8"
+  "commit": "57ebce9"
  },
  "capabilities": {
   "web_search": "true",
@@ -453,7 +463,7 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
   {
    "station": "deploy",
    "status": "done",
-   "note": "https://onfinance-hfc.vercel.app (deployed 2026-09-22T06:56)"
+   "note": "https://onfinance-hfc.vercel.app (deployed 2026-09-22T20:29)"
   },
   {
    "station": "workspaces",
@@ -618,14 +628,14 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
  "took": {
   "first_message": "2026-09-18T12:04:27.586000+00:00",
   "first_deploy": "2026-09-19T09:49:59+00:00",
-  "deploys": 12,
+  "deploys": 16,
   "model_hours": 5.2,
   "tool_hours": 1.7,
-  "operator_messages": 48,
+  "operator_messages": 49,
   "agent_cost_usd_measured": 274.39,
-  "agent_cost_usd_estimated_since": 196,
-  "upstream_prs": 24,
-  "lane_reports": 82
+  "agent_cost_usd_estimated_since": 253,
+  "upstream_prs": 29,
+  "lane_reports": 92
  },
  "access": {
   "people": "https://onfinance-hfc.vercel.app \u2014 sign in with a six-digit code emailed to you, or Continue with Google where the workspace uses it. Access is by workspace membership: the owner invites people from Workspace \u2192 People.",
@@ -659,6 +669,16 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
    "id": "mold_v1-095",
    "priority": 2,
    "title": "Find the render loop itself: React #185 was recorded once in production (2026-09-21 13:33) and is now survivable and instrumented, but its source is unknown. Next occurrence will carry a scene line (renderLoopScene) \u2014 read it from automation_audit kind render-loop, then reproduce and fix at source"
+  },
+  {
+   "id": "mold_v1-096",
+   "priority": 2,
+   "title": "Chat stream does not REATTACH after a severed segment: the store only reads a stream from send(), so a detached turn is polled (resyncDecision + full replay + remount, backoff to 15s, budget 4) instead of tailed. eve exposes ClientSession.stream({startIndex}) with its own reconnection and the app never uses it. Evidence: automation_audit 'ended mid-turn and stopped resuming' 2026-09-21 x3 and 2026-09-22T15:32"
+  },
+  {
+   "id": "mold_v1-099",
+   "priority": 2,
+   "title": "lib/workspace-attention.ts counts attention items per workspace on the bare handle: under fail-closed RLS every count is 0, so the workspace switcher silently shows nothing to do. Genuinely cross-workspace \u2014 use the acrossOrgsRls shape. Found 2026-09-22, recorded as tenancy debt (web: 1) rather than waved through with a marker"
   },
   {
    "id": "mold_v1-072",
@@ -698,6 +718,18 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
  ],
  "recent": [
   {
+   "id": "mold_v1-098",
+   "at": "2026-09-22",
+   "title": "Reattach (#37) defects proved by adversarial review: hand-off skipped whenever the reader restarted mid-turn (tab switch or eve re-emitting turn.started) -> stranded tail, next send opens a NEW session over the first exchange; a gap in the tail is permanent and wedges the composer; hand-off after session.failed reinstates a dead session and spent token; 200 reopens with no backoff on productive segments; a hung open stalls with the poll disarmed; 401 misclassified as forbidden; persist effect fires per delta (~460ms blocking on a 60KB answer)",
+   "evidence": "fde-agent #39, merged (NOT deployed \u2014 the app is awaiting a rollback and the access fix): all 6 reattach defects fixed, plus a 7th the review missed and I caused \u2014 #38 moved the reader to count+deficit but left mergeAttachedEvents on the bare count, so on a reopened (compacted) thread the live tail never reached the transcript at all while the screen showed it. 16 new assertions each proved to FAIL on the pre-fix code and pass after; test-chat-reattach 129, test-chat-turn-state 89. The Stop-wedge and the unpruned module maps are fixed too. chat-shell's withFreshestToken must also stop resurrecting a dead session's token \u2014 handed to the access-control engineer"
+  },
+  {
+   "id": "mold_v1-097",
+   "at": "2026-09-22",
+   "title": "SECURITY (proved on the live DB 2026-09-22): permitted() in app/eve/v1/session/[...segments]/route.ts queries chat_sessions/chat_threads/chat_thread_members on the BARE getOpsDb handle. Under production fail-closed RLS every query returns 0 rows, so 'unknown session -> allow' fires for every session: any signed-in member can read or send into any session id. Also no ne(status,'revoked') filter; viewers receive the live continuationToken; ownsMirrorRow is client-asserted so a colleague can claim another's session and read/forge/delete their cached transcript; chat telemetry publishes session ids to a member-readable audit feed; check:tenancy never scans app/eve or lib",
+   "evidence": "fde-agent #40 + #41, merged and deployed 2026-09-22 (mold refreshed): the eve session gate is scoped (withOrgRls) and sweeps every workspace before accepting 'unknown' \u2014 scoping alone was NOT enough, an outside address resolves to an empty personal workspace where a scoped read sees nothing; revoked members filtered; the continuation token stripped at the shared-thread proxy (and #41 routes a participant's approval answer through the relay so it is not silently dropped); a mirror row can no longer claim someone else's session; snapshot writes restricted to the thread owner; audit ids hashed + route scoped and admin-only (it was returning 0 rows for everyone, broken not leaking); un-share and delete now cascade server-side; check:tenancy widened to app+lib and proven to fail on the pre-fix gate. Proved on a throwaway Postgres with the production fail-closed policy; live: unauthenticated refused 401 on session stream, snapshots and replay. NOT yet proven live for a signed-in stranger (needs two identities)"
+  },
+  {
    "id": "mold_v1-094",
    "at": "2026-09-22",
    "title": "Reopening a thread replays the whole eve event stream every time (12 segments, 60s budget, 300/1500ms quiet windows): cost grows with conversation length. Persist a projected snapshot + tail replay",
@@ -720,18 +752,6 @@ details{background:var(--panel);border:1px solid var(--line);padding:10px 14px} 
    "at": "2026-09-20",
    "title": "Lane fail: responsiveness on onfinance_hfc \u2014 1 check(s): layout.matrix.authenticated",
    "evidence": "Two real causes, both fixed upstream and redeployed (mold 6634664): (1) workspace header actions wrapped when 'Finish setup' arrived, CLS 0.1855 at 320px -> 0.04 (fde-agent #32); (2) full-viewport backdrop blur on the dialog overlay, Search chats opened in ~175 ms -> 64 ms (#33). Ordered signed-in run: functional 26/26, load pass, accessibility 3/3, responsiveness 6/6; context 4/5 (clone.regression n/a). The lane's own desktop chat-click row still read 224/200 ms while a per-control probe reads 24-64 ms: that gap is the lane's back-to-back clicks on a busy VM, tracked in mold_v1-083"
-  },
-  {
-   "id": "mold_v1-088",
-   "at": "2026-09-20",
-   "title": "Per-app agent CLI package: factory builds build/<app>/ with the mold's build-agent-cli, runs its safety gate, and publishes <agent_cli.package> with the token named by agent_cli.token_ref; onfinance_hfc -> @onfinance/hfc-research (public)",
-   "evidence": "agent_cli.py status|build|publish (self-test 8 checks); onfinance_hfc builds @onfinance/hfc-research@0.1.0, 10 files, mold safety gate + factory allowlist pass, sha b4507d45\u2026; upstream #27 fixed dm.md for redefined areas and removed a person's name from example paths; NOT published: needs the operator's npm sign-in"
-  },
-  {
-   "id": "mold_v1-087",
-   "at": "2026-09-20",
-   "title": "Lane fail: functional on onfinance_hfc \u2014 1 check(s): test:cards",
-   "evidence": "Test defect, not an application defect: tests/domain-forms.spec.ts (fde-agent #24) asserted the default deployment's words on a build whose pack redefines the two areas ('Company', 'Published' are correct there). Fixed upstream in fde-agent #25 (default-forms test skips with a reason on a redefined build; verified 2 passed on a default build, 1 passed + 1 skipped on the research build). Mold refreshed to ba07820."
   }
  ],
  "repo": {
