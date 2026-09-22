@@ -127,6 +127,13 @@
       "when": 1789900000000,
       "tag": "0017_record_custom_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790500000000,
+      "tag": "0018_chat_transcript_snapshots",
+      "breakpoints": true
     }
   ]
 }

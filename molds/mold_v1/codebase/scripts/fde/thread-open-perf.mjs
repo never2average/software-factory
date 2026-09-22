@@ -1,5 +1,5 @@
 // fde:thread-open-perf — measure what "opening a thread" actually costs in the
-// deployed Delivered app, phase by phase, from a laptop.
+// deployed app, phase by phase, from a laptop.
 //
 // Opening a chat is not one request. The browser lists threads through the Ops
 // API (JWKS-gated), then REPLAYS the eve session's ndjson stream — and for a
@@ -10,8 +10,10 @@
 // hides the culprit, so this measures each boundary separately:
 //
 //   /api/ops/threads                       the JWKS gate + a DB read
-//   /eve/v1/session/:id/stream (rewrite)   what the browser really fetches
+//   /eve/v1/session/:id/stream (rewrite)   the OLD open: the whole stream
 //   same session, DIRECT to fde-agent-api  delta = the Next rewrite hop
+//   /api/ops/chat-snapshots (cache)        the NEW open, phase 1: the transcript
+//   /api/ops/chat-replay (tail)            the NEW open, phase 2: what is new
 //   /api/ops/threads/:id/stream (shared)   delta = membership check + 2nd hop
 //
 //   npm run fde:thread-open-perf                    # unauthenticated baseline
@@ -19,10 +21,22 @@
 //   npm run fde:thread-open-perf -- --token-file ~/.fde-token --runs 3 --json
 //   npm run fde:thread-open-perf -- --owned <threadId> --shared <threadId>
 //
+// TWO TERMS, REPORTED SEPARATELY, because they have different fixes.
+//
+//   bytes/events  what the open re-downloads and re-reduces. Grows with the
+//                 conversation; the transcript cache is what removes it.
+//   quiet         what the open spends waiting for SILENCE to decide the
+//                 backlog has drained. Fixed per segment (1,500ms mid-replay,
+//                 300ms at a park) and nothing to do with size at all; the
+//                 server-side `ops.replay.end` marker is what removes it.
+//
+// A thread can be slow for either reason, and the totals alone cannot tell you
+// which — so a fix aimed at the wrong term reads as no improvement.
+//
 // The stream numbers only mean something if they describe the SAME read the
 // browser performs, so the loop below is a transcription of `replaySession` in
-// app/_components/chat-shell.tsx — including its quiet windows, which are
-// usually the dominant term. Keep the two in step.
+// app/_components/chat-shell.tsx — including its SEGMENTS and its quiet windows.
+// Keep the two in step.
 import { readFileSync } from "node:fs";
 import { glyph, flag, hasFlag } from "./lib/fde.mjs";
 
@@ -77,13 +91,20 @@ async function probe(url, { headers = {}, timeoutMs = 30_000 } = {}) {
 }
 
 /**
- * Replay an ndjson session stream exactly as the browser does, and report where
- * the time went and WHY the read stopped.
+ * Replay ONE segment of an ndjson session stream exactly as the browser does,
+ * and report where the time went and WHY the read stopped.
  *
  * The stop reason is the whole point: a `park-quiet` stop means the client's
  * heuristic ended the open (tune the window), an `eof` means the server closed
- * (server-side cost), and `HARD-TIMEOUT` means neither happened and the user
- * waited the full 15s.
+ * (server-side cost), a `marker` means the server SAID where replay ends — the
+ * only stop that costs nothing — and `HARD-TIMEOUT` means none of those
+ * happened and the user waited the full 15s.
+ *
+ * `quietMs` is the other number that matters. It is the part of `totalMs` spent
+ * waiting for silence rather than reading bytes: latency this client chose, not
+ * latency the server imposed. Reported separately because it is fixed per
+ * segment and has nothing to do with the size of the conversation, so the fix
+ * for it is a different fix.
  */
 async function streamProbe(url, headers) {
   const started = performance.now();
@@ -96,10 +117,13 @@ async function streamProbe(url, headers) {
     firstByteMs: null,
     lastByteMs: null,
     totalMs: 0,
+    quietMs: 0,
     bytes: 0,
     lines: 0,
     boundary: "none",
     continuationToken: false,
+    markerIndex: null,
+    drained: null,
     stop: "eof",
     error: null,
   };
@@ -120,7 +144,7 @@ async function streamProbe(url, headers) {
     let finished = false;
     for (;;) {
       if (finished) {
-        out.stop = "terminal";
+        out.stop = out.markerIndex == null ? "terminal" : "marker";
         break;
       }
       // Tagged so the loser of the race is identifiable — chat-shell only needs
@@ -130,6 +154,7 @@ async function streamProbe(url, headers) {
         .then((r) => ({ kind: "read", ...r }))
         .catch(() => ({ kind: "read", done: true, value: undefined }));
       const quietMs = atBoundary ? QUIET_AT_BOUNDARY_MS : sawAnyEvent ? QUIET_MID_REPLAY_MS : 0;
+      const waitedFrom = performance.now();
       const r = quietMs
         ? await Promise.race([
             read,
@@ -138,6 +163,9 @@ async function streamProbe(url, headers) {
             ),
           ])
         : await read;
+      // Only a window that WON the race cost anything; when the read came back
+      // first the timer was free.
+      if (r.kind === "quiet") out.quietMs += performance.now() - waitedFrom;
       /**
        * An abort does NOT reject out of this race in a way you can see from
        * `r` alone: the hard timer aborts the signal, `reader.read()` rejects,
@@ -165,6 +193,14 @@ async function streamProbe(url, headers) {
         if (!l.trim()) continue;
         try {
           const ev = JSON.parse(l);
+          // The replay-end marker is bookkeeping, not conversation: it is not
+          // an event, and the reader stops on it without paying a quiet window.
+          if (ev.type === "ops.replay.end") {
+            out.markerIndex = typeof ev.data?.index === "number" ? ev.data.index : null;
+            out.drained = ev.data?.drained !== false;
+            if (out.drained) finished = true;
+            continue;
+          }
           out.lines += 1;
           sawAnyEvent = true;
           if (ev.type === "session.waiting" && ev.data?.continuationToken) {
@@ -195,6 +231,62 @@ async function streamProbe(url, headers) {
     out.totalMs = performance.now() - started;
   }
   return out;
+}
+
+/**
+ * A WHOLE open, not one segment.
+ *
+ * `replaySession` keeps reopening the stream at the advanced index until the
+ * session is at rest, because eve severs a stream on a ~120s boundary with a
+ * clean EOF mid-history. A harness that measured one segment measured the first
+ * two minutes of a long thread's open and called it the open. Same bounds as
+ * the client: 12 segments, a 60s budget (12s for a shared read).
+ */
+async function replayProbe(urlFor, headers, { bounded = false, startIndex = 0 } = {}) {
+  const started = performance.now();
+  const deadline = started + (bounded ? 12_000 : 60_000);
+  const agg = {
+    segments: 0,
+    status: 0,
+    headersMs: null,
+    firstByteMs: null,
+    lastByteMs: null,
+    totalMs: 0,
+    quietMs: 0,
+    bytes: 0,
+    lines: 0,
+    boundary: "none",
+    continuationToken: false,
+    index: startIndex,
+    stop: "eof",
+    error: null,
+  };
+  let cursor = startIndex;
+  for (;;) {
+    const seg = await streamProbe(urlFor(cursor), headers);
+    agg.segments += 1;
+    if (agg.headersMs == null) agg.headersMs = seg.headersMs;
+    if (agg.firstByteMs == null) agg.firstByteMs = seg.firstByteMs;
+    if (seg.lastByteMs != null) agg.lastByteMs = performance.now() - started;
+    agg.status = seg.status;
+    agg.quietMs += seg.quietMs;
+    agg.bytes += seg.bytes;
+    agg.lines += seg.lines;
+    agg.stop = seg.stop;
+    agg.error ??= seg.error;
+    if (seg.boundary !== "none") agg.boundary = seg.boundary;
+    if (seg.continuationToken) agg.continuationToken = true;
+    cursor = seg.markerIndex ?? cursor + seg.lines;
+    agg.index = cursor;
+    const atRest =
+      seg.stop === "marker" ||
+      seg.stop === "terminal" ||
+      seg.stop === "park-quiet" ||
+      seg.lines === 0;
+    if (atRest || bounded || performance.now() > deadline || agg.segments >= 12) break;
+  }
+  agg.totalMs = performance.now() - started;
+  return agg;
 }
 
 function readToken() {
@@ -274,8 +366,11 @@ function streamRow(label, r) {
     r.status ? String(r.status) : "ERR",
     ms(r.headersMs),
     ms(r.firstByteMs),
-    ms(r.lastByteMs),
     ms(r.totalMs),
+    // The part of `total` that was spent waiting for silence rather than
+    // reading. A big number here is client-side latency by construction.
+    ms(r.quietMs ?? 0),
+    String(r.segments ?? 1),
     bytes(r.bytes),
     String(r.lines),
     r.boundary,
@@ -289,14 +384,55 @@ const STREAM_HEADERS = [
   "status",
   "headers",
   "first",
-  "last",
   "total",
+  "quiet",
+  "segs",
   "bytes",
-  "lines",
+  "events",
   "boundary",
   "token",
   "stop",
 ];
+
+/**
+ * THE NEW OPEN, measured end to end: the cached transcript, then only the tail.
+ *
+ * Phase 1 is one indexed row (`/api/ops/chat-snapshots`) and is what the user
+ * actually waits for — the thread paints from it. Phase 2 reads the stream from
+ * one event BEFORE the snapshot ends (the seam the client verifies) and is
+ * normally empty, because a parked thread is the normal resting state.
+ *
+ * Returns null when there is no snapshot for this session yet, which is a
+ * legitimate answer: the first open after a deploy still pays the old price and
+ * writes the row that makes every later one cheap.
+ */
+async function newOpenProbe(sessionId, headers) {
+  const snap = await probe(
+    `${FRONT}/api/ops/chat-snapshots?session=${encodeURIComponent(sessionId)}`,
+    { headers },
+  );
+  if (!snap.ok || snap.status !== 200) return { snapshot: snap, tail: null, missing: true };
+  let parsed = null;
+  try {
+    parsed = JSON.parse(snap.body).snapshot ?? null;
+  } catch {
+    /* treated as a miss below */
+  }
+  if (!parsed) return { snapshot: snap, tail: null, missing: true };
+  const tail = await replayProbe(
+    (cursor) =>
+      `${FRONT}/api/ops/chat-replay?session=${encodeURIComponent(sessionId)}&startIndex=${cursor}&parked=1`,
+    headers,
+    { startIndex: Math.max(0, parsed.eventIndex - 1) },
+  );
+  return {
+    snapshot: snap,
+    tail,
+    missing: false,
+    eventIndex: parsed.eventIndex,
+    storedEvents: Array.isArray(parsed.events) ? parsed.events.length : 0,
+  };
+}
 
 async function main() {
   const json = hasFlag("json");
@@ -378,43 +514,107 @@ async function main() {
   if (pinnedShared && !shared) console.log(`${glyph.warn} --shared ${pinnedShared} is not in your thread list.`);
 
   const rows = [];
+  /** old vs new, per thread, so the summary is measured and not asserted. */
+  const comparisons = [];
   if (owned) {
     const sid = encodeURIComponent(owned.eveSessionId);
     for (let i = 0; i < runs; i++) {
-      const viaRewrite = await streamProbe(`${FRONT}/eve/v1/session/${sid}/stream`, headers);
+      const suffix = runs > 1 ? ` #${i + 1}` : "";
+      // THE OLD OPEN: the whole stream, from event zero, in segments, stopping
+      // on a quiet window. This is what every reopen used to cost.
+      const viaRewrite = await replayProbe(
+        (cursor) => `${FRONT}/eve/v1/session/${sid}/stream?startIndex=${cursor}`,
+        headers,
+      );
       // Same session, no Next in the path: the difference is the rewrite hop and
       // nothing else, so it is only meaningful measured back to back.
       const direct = await streamProbe(`${AGENT}/eve/v1/session/${sid}/stream`, headers);
-      const suffix = runs > 1 ? ` #${i + 1}` : "";
-      rows.push(streamRow(`owned via rewrite${suffix}`, viaRewrite));
-      rows.push(streamRow(`owned DIRECT to agent${suffix}`, direct));
-      rows.push([
-        `  ↳ rewrite hop cost${suffix}`,
-        "",
-        ms((viaRewrite.headersMs ?? 0) - (direct.headersMs ?? 0)),
-        "",
-        "",
-        ms(viaRewrite.totalMs - direct.totalMs),
-        "",
-        "",
-        "",
-        "",
-        "",
-      ]);
+      rows.push(streamRow(`OLD owned full replay${suffix}`, viaRewrite));
+      rows.push(streamRow(`  ↳ same, DIRECT to agent (1 seg)${suffix}`, direct));
+
+      // THE NEW OPEN: one cached row, then only what is new.
+      const fresh = await newOpenProbe(owned.eveSessionId, headers);
+      if (fresh.missing) {
+        rows.push([
+          `NEW owned snapshot+tail${suffix}`,
+          String(fresh.snapshot.status || "ERR"),
+          ms(fresh.snapshot.headersMs),
+          "",
+          ms(fresh.snapshot.totalMs),
+          "",
+          "",
+          bytes(fresh.snapshot.bytes),
+          "",
+          "",
+          "",
+          "no-snapshot-yet",
+        ]);
+      } else {
+        rows.push([
+          `NEW ↳ snapshot fetch${suffix}`,
+          String(fresh.snapshot.status),
+          ms(fresh.snapshot.headersMs),
+          ms(fresh.snapshot.headersMs),
+          ms(fresh.snapshot.totalMs),
+          "0ms",
+          "1",
+          bytes(fresh.snapshot.bytes),
+          String(fresh.storedEvents),
+          `index ${fresh.eventIndex}`,
+          "n/a",
+          "row",
+        ]);
+        rows.push(streamRow(`NEW ↳ tail replay${suffix}`, fresh.tail));
+        const newTotal = fresh.snapshot.totalMs + fresh.tail.totalMs;
+        const newQuiet = fresh.tail.quietMs;
+        const newBytes = fresh.snapshot.bytes + fresh.tail.bytes;
+        rows.push([
+          `NEW owned open TOTAL${suffix}`,
+          "",
+          "",
+          // What the user waits for before the thread PAINTS: the snapshot
+          // alone. The tail lands behind an already-drawn conversation.
+          ms(fresh.snapshot.totalMs),
+          ms(newTotal),
+          ms(newQuiet),
+          String(1 + fresh.tail.segments),
+          bytes(newBytes),
+          String(fresh.storedEvents + fresh.tail.lines),
+          "",
+          "",
+          fresh.tail.stop,
+        ]);
+        comparisons.push({
+          thread: owned.id,
+          oldMs: viaRewrite.totalMs,
+          oldQuietMs: viaRewrite.quietMs,
+          oldBytes: viaRewrite.bytes,
+          oldEvents: viaRewrite.lines,
+          newMs: newTotal,
+          newPaintMs: fresh.snapshot.totalMs,
+          newQuietMs: newQuiet,
+          newBytes,
+          newEvents: fresh.tail.lines,
+        });
+        report.phases.push({ phase: "owned-snapshot", thread: owned.id, ...fresh.snapshot, body: undefined });
+        report.phases.push({ phase: "owned-tail", thread: owned.id, ...fresh.tail });
+      }
       report.phases.push({ phase: "owned-rewrite", thread: owned.id, ...viaRewrite });
       report.phases.push({ phase: "owned-direct", thread: owned.id, ...direct });
     }
   }
   if (shared) {
     for (let i = 0; i < runs; i++) {
-      const r = await streamProbe(
-        `${FRONT}/api/ops/threads/${encodeURIComponent(shared.id)}/stream`,
+      const r = await replayProbe(
+        () => `${FRONT}/api/ops/threads/${encodeURIComponent(shared.id)}/stream?replay=1&replayOnly=1`,
         headers,
+        { bounded: true },
       );
       rows.push(streamRow(`shared via proxy${runs > 1 ? ` #${i + 1}` : ""}`, r));
       report.phases.push({ phase: "shared-proxy", thread: shared.id, ...r });
     }
   }
+  report.comparisons = comparisons;
 
   if (!json) {
     console.log(`\nThread open — stream phases (replaySession semantics)\n`);
@@ -429,10 +629,26 @@ async function main() {
       );
     }
     console.log(
-      `\n  stop: terminal = session.completed/failed · park-quiet = client quiet window\n` +
+      `\n  stop: terminal = session.completed/failed · marker = the server said where\n` +
+        `        replay ends (costs no wait) · park-quiet = client quiet window\n` +
         `        (${QUIET_AT_BOUNDARY_MS}ms at a park, ${QUIET_MID_REPLAY_MS}ms mid-replay) · eof = server closed ·\n` +
         `        HARD-TIMEOUT = the full ${HARD_TIMEOUT_MS / 1000}s, what the user actually waits\n`,
     );
+    /**
+     * The one line the change is answerable for. Both terms, separately: a fix
+     * that removed bytes but not quiet windows (or the reverse) would otherwise
+     * read as a modest overall win and hide which half actually moved.
+     */
+    for (const c of comparisons) {
+      const pct = (a, b) => (a > 0 ? `${Math.round((1 - b / a) * 100)}% less` : "—");
+      console.log(
+        `  ${glyph.ok} open cost for ${c.thread}:\n` +
+          `      total   ${ms(c.oldMs)} → ${ms(c.newMs)} (${pct(c.oldMs, c.newMs)}), painted at ${ms(c.newPaintMs)}\n` +
+          `      quiet   ${ms(c.oldQuietMs)} → ${ms(c.newQuietMs)} (${pct(c.oldQuietMs, c.newQuietMs)})\n` +
+          `      bytes   ${bytes(c.oldBytes)} → ${bytes(c.newBytes)} (${pct(c.oldBytes, c.newBytes)})\n` +
+          `      events  ${c.oldEvents} replayed → ${c.newEvents} replayed\n`,
+      );
+    }
   } else {
     console.log(JSON.stringify(report, null, 2));
   }

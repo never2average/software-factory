@@ -30,7 +30,7 @@ export const dynamic = "force-dynamic";
 
 const schema = z.object({
   sessionId: z.string().max(200).optional(),
-  kind: z.enum(["stream-error", "stream-gave-up", "save-failed", "resume", "gate-denied"]),
+  kind: z.enum(["stream-error", "stream-gave-up", "save-failed", "resume", "gate-denied", "render-loop"]),
   detail: z.string().max(400).optional(),
   elapsedMs: z.number().int().nonnegative().max(86_400_000).optional(),
   attempt: z.number().int().nonnegative().max(10_000).optional(),
@@ -57,7 +57,12 @@ export async function POST(request: NextRequest) {
             ? "Chat list failed to save"
             : kind === "gate-denied"
               ? "Session access denied"
-              : "Chat stream resumed",
+              // A React render loop that reached the eve store. Its own sentence, because
+              // falling through to "resumed" would file the one error nobody can see from
+              // the outside under the one word that means everything is fine.
+              : kind === "render-loop"
+                ? "Chat render loop (turn kept running)"
+                : "Chat stream resumed",
     ];
     if (typeof attempt === "number") parts.push(`attempt ${attempt}`);
     if (typeof elapsedMs === "number") parts.push(`after ${Math.round(elapsedMs / 1000)}s`);

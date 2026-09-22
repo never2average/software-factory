@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOpsDb } from "@/lib/ops-db";
 import { accessForThread, callerEmail, loadThread } from "@/lib/chat-threads";
+import { boundedReplay } from "@/lib/chat-replay-stream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,25 +10,15 @@ export const maxDuration = 300;
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
 
 /**
- * How long the replay must stay silent before we call it drained.
- *
- * A parked session's run is SUSPENDED — it emits nothing until someone sends —
- * so silence right after `session.waiting` means the history is complete, and a
- * short window is enough. With no boundary yet the turn may still be thinking
- * between tool calls, so we wait considerably longer before declaring the
- * backlog drained and letting the reader paint.
- *
- * Both windows are measured HERE, between two Vercel deployments in the same
- * region, not across the reader's network — which is the point of moving the
- * decision to the server.
- *
  * tenancy-ok: the only reads are loadThread() and accessForThread(), which
  * resolve and enforce the caller's access to ONE thread — accessFor refuses a
  * thread whose workspace is not the caller's (lib/chat-threads.ts). Past that
  * point this route is a stream proxy and touches no tenant table.
+ *
+ * The replay-end marker itself lives in lib/chat-replay-stream.ts: it used to be
+ * defined here, which is exactly why only SHARED threads ever got one and every
+ * thread you own paid the browser's own quiet window instead.
  */
-const PARKED_IDLE_MS = 400;
-const IN_FLIGHT_IDLE_MS = 2500;
 
 /**
  * GET /api/ops/threads/:id/stream?startIndex=N&replay=1 — a MEMBERSHIP-CHECKED
@@ -105,7 +96,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   }
 
   const body = wantsMarker
-    ? boundedReplay(upstream.body, startIndex, replayOnly)
+    ? boundedReplay(upstream.body, { startIndex, replayOnly })
     : upstream.body;
 
   return new Response(body, {
@@ -114,113 +105,6 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       "content-type": upstream.headers.get("content-type") ?? "application/x-ndjson",
       "cache-control": "no-store, no-transform",
       "x-accel-buffering": "no",
-    },
-  });
-}
-
-/** Session-level events that mean the run is over — the replay cannot grow. */
-const TERMINAL_EVENTS = new Set(["session.completed", "session.failed"]);
-
-/**
- * Pass the upstream NDJSON through byte-for-byte, inserting one
- * `ops.replay.end` line at the point the backlog runs dry. Nothing is
- * rewritten or reordered: the marker is additive, so every real event still
- * reaches the reader in its original form and at its original position.
- */
-function boundedReplay(
-  upstream: ReadableStream<Uint8Array>,
-  startIndex: number,
-  replayOnly: boolean,
-): ReadableStream<Uint8Array> {
-  const reader = upstream.getReader();
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-
-  let partial = "";
-  let seen = 0;
-  let parked = false;
-  let terminal = false;
-  let markerSent = false;
-  let pending: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
-
-  const enqueueMarkerInto = (controller: ReadableStreamDefaultController<Uint8Array>) => {
-    markerSent = true;
-    controller.enqueue(
-      encoder.encode(
-        `${JSON.stringify({
-          type: "ops.replay.end",
-          // Deliberately NOT the continuation token: for a shared thread the
-          // token belongs to the relay and the row, never to a reader.
-          data: { index: startIndex + seen, parked, done: terminal },
-        })}\n`,
-      ),
-    );
-  };
-
-  const inspect = (chunk: Uint8Array) => {
-    partial += decoder.decode(chunk, { stream: true });
-    const lines = partial.split("\n");
-    // The trailing fragment is an incomplete event; hold it for the next chunk.
-    partial = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      seen += 1;
-      try {
-        const event = JSON.parse(line) as { type?: string };
-        if (event.type === "session.waiting") parked = true;
-        else if (event.type && TERMINAL_EVENTS.has(event.type)) terminal = true;
-      } catch {
-        // A line we cannot parse still counts as an event for indexing — the
-        // reader saw it — but it tells us nothing about the replay boundary.
-      }
-    }
-  };
-
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      pending ??= reader.read();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      // Once the marker is out we are relaying live events, so there is nothing
-      // left to time out on — wait for the upstream indefinitely.
-      const next: ReadableStreamReadResult<Uint8Array> | "idle" = markerSent
-        ? await pending
-        : await Promise.race<ReadableStreamReadResult<Uint8Array> | "idle">([
-            pending,
-            new Promise((resolve) => {
-              timer = setTimeout(() => resolve("idle"), parked ? PARKED_IDLE_MS : IN_FLIGHT_IDLE_MS);
-            }),
-          ]);
-      if (timer !== undefined) clearTimeout(timer);
-
-      if (next === "idle") {
-        // The read is still outstanding — keep it for the next pull rather than
-        // dropping the chunk it will eventually deliver.
-        enqueueMarkerInto(controller);
-        if (replayOnly) {
-          void reader.cancel().catch(() => undefined);
-          controller.close();
-        }
-        return;
-      }
-
-      pending = null;
-      if (next.done) {
-        if (!markerSent) enqueueMarkerInto(controller);
-        controller.close();
-        return;
-      }
-      inspect(next.value);
-      controller.enqueue(next.value);
-      if (terminal && !markerSent) {
-        enqueueMarkerInto(controller);
-        if (replayOnly) {
-          void reader.cancel().catch(() => undefined);
-          controller.close();
-        }
-      }
-    },
-    cancel(reason) {
-      void reader.cancel(reason).catch(() => undefined);
     },
   });
 }

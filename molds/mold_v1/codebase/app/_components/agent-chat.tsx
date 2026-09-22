@@ -96,17 +96,43 @@ const abandonedTurns = new Map<string, number>();
  */
 const resyncsSpent = new Map<string, number>();
 const RESYNC_BUDGET = 4;
+/**
+ * `${chatKey}:${turn ordinal}` → how many times THIS turn has been seen to
+ * detach, and how many events the last resync mounted with.
+ *
+ * Both live at module scope because a resync REMOUNTS this component, and both
+ * questions are about the turn, not the mount. Measured on 2026-09-21: one
+ * session reported "Chat stream ended mid-turn and stopped resuming" three
+ * times in 63 seconds, every record identical (`last event: message.appended`).
+ * That was not three incidents; it was one detached turn, remounted by each
+ * resync, re-reporting itself from a fresh mount. The replay a resync performs
+ * deliberately returns as soon as a live turn goes quiet, so a turn that is
+ * still running comes back mid-turn and the new mount is detached again.
+ *
+ * So: count the detaches here, report the FIRST one and the give-up at the end
+ * of the budget, and refuse to spend another resync on a turn the last resync
+ * made no progress on (that one needs a real session boundary, not a blind
+ * retry).
+ */
+const detachesSeen = new Map<string, number>();
+const detachesReported = new Map<string, number>();
+const resyncEventFloor = new Map<string, number>();
 const COMPACT_INSTRUCTION =
   "Summarize our entire conversation so far into a compact handoff brief: the goal, the key decisions and facts established, the current state, and what remains to do. Keep every constraint, preference, datum, and reference needed to continue. Reply with ONLY the summary — no preamble.";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Spinner } from "@/components/ui/spinner";
 import {
   composerRoute,
+  deadInputRequestIds,
   holdLabel,
-  isSessionBoundary,
+  isRenderLoopError,
+  renderLoopScene,
+  resyncDecision,
   retryStormDetected,
   sendGate,
+  shouldReportDetach,
   turnsStarted,
+  withRequestIds,
   withSessionEpochs,
 } from "@/lib/chat-turn-state";
 import { composeAttachmentMessage, wrapDirectives } from "@/lib/chat-attachments";
@@ -433,6 +459,18 @@ export function AgentChat({
    * dying" looks from the outside.
    */
   const [streamError, setStreamError] = useState<string | null>(null);
+  /**
+   * The last store error was a React render loop, not a stream failure.
+   *
+   * Declared ABOVE the store so `onError` never reads it through the temporal
+   * dead zone (the same trap the DEAD_TOKEN_SIGNAL comment below describes). It
+   * suppresses the "Request failed" card for an error the reader can do nothing
+   * about and that says nothing true about their reply.
+   */
+  const renderLoopRef = useRef(false);
+  /** The scene at the moment the store throws — see renderLoopScene. */
+  const sceneRef = useRef("");
+  const [renderLoop, setRenderLoop] = useState(false);
 
   /**
    * Say something happened. Fire-and-forget, never throws, never awaited.
@@ -499,6 +537,39 @@ export function AgentChat({
       // closure, and relying on it being initialised by call time is a
       // temporal-dead-zone crash waiting for the one path that fires early.
       const recoverable = /continuationToken/i.test(msg) && !msg.includes("Cannot deliver inputResponses");
+      /**
+       * A RENDER loop is not a stream failure — and must not end the turn.
+       *
+       * The store notifies its subscribers synchronously from inside the
+       * `for await` that reads the stream (eve-agent-store.js, `#O()`), so a
+       * React "maximum update depth" throw unwinds into the store's own catch,
+       * where it is recorded as `agent.error` and the turn is marked `error`.
+       * Measured once in production (2026-09-21 13:33:52, `Minified React error
+       * #185`) against a turn whose stream was perfectly healthy. No
+       * ErrorBoundary can catch it: the throw is delivered at the next setState
+       * call site, which is the store's, not inside the boundary's subtree.
+       *
+       * Counted under its own kind so a loop is findable, but never painted as a
+       * dropped connection and never treated as the end of the reply — the turn
+       * is still running server-side, and the detached-turn hold plus the resync
+       * watcher below pull the rest of it in.
+       */
+      if (isRenderLoopError(msg)) {
+        renderLoopRef.current = true;
+        setRenderLoop(true);
+        report("render-loop", {
+          sessionId: sessionIdRef.current ?? undefined,
+          // The scene, not just the code: #185 minifies to a sentence that names nothing.
+          detail: `${msg.slice(0, 170)} — ${sceneRef.current}`.slice(0, 300),
+        });
+        return;
+      }
+      // A REAL failure after a loop must be shown: the suppression above is for
+      // the loop error only, never a blanket mute on `agent.error`.
+      if (renderLoopRef.current) {
+        renderLoopRef.current = false;
+        setRenderLoop(false);
+      }
       if (!recoverable) setStreamError(msg || "The connection to the agent dropped.");
       report(recoverable ? "resume" : "stream-error", {
         sessionId: sessionIdRef.current ?? undefined,
@@ -509,7 +580,14 @@ export function AgentChat({
   // Any forward progress means the stream is alive again — clear the notice
   // rather than leaving a stale error above a streaming reply.
   useEffect(() => {
-    if (agent.status === "streaming" || agent.status === "submitted") setStreamError(null);
+    if (agent.status === "streaming" || agent.status === "submitted") {
+      setStreamError(null);
+      // Forward progress means the loop (if there ever was one) is behind us.
+      if (renderLoopRef.current) {
+        renderLoopRef.current = false;
+        setRenderLoop(false);
+      }
+    }
   }, [agent.status]);
 
   useEffect(() => {
@@ -555,10 +633,16 @@ export function AgentChat({
       setStreamError(
         "This turn kept failing and has stopped retrying. Send it again — the agent won't recover this one.",
       );
-      report("stream-gave-up", {
-        sessionId: sessionIdRef.current ?? undefined,
-        detail: `retry storm · ${agent.events.length} events · last ${lastEventType ?? "none"}`,
-      });
+      // A storm re-emits its prologue, so this effect re-ran on every one of
+      // them and filed a record each time. One record per stormed turn.
+      const stormKey = `storm:${chatKey}:${turnsStarted(agent.events as { type?: string }[])}`;
+      if ((detachesReported.get(stormKey) ?? 0) === 0) {
+        detachesReported.set(stormKey, 1);
+        report("stream-gave-up", {
+          sessionId: sessionIdRef.current ?? undefined,
+          detail: `retry storm · ${agent.events.length} events · last ${lastEventType ?? "none"}`,
+        });
+      }
       return;
     }
     if (agent.status !== "ready") return;
@@ -583,12 +667,31 @@ export function AgentChat({
     // No amber "the reply stopped" banner any more: that state is now HELD and
     // watched (sendGate "detached" + the resync watcher below), and says so in
     // its own status line. Still counted, so it stays queryable.
+    //
+    // ONCE PER DETACHED TURN, not once per mount. A resync remounts this
+    // component, and a replay that comes back mid-turn remounts it detached
+    // again — which is how one session filed three byte-identical
+    // "ended mid-turn and stopped resuming" records inside 63 seconds on
+    // 2026-09-21. Counted at module scope (the map outlives the remount) so the
+    // telemetry counts incidents; the tail of a cycling turn is still reported,
+    // once, when the resync budget runs out, so a stuck one is visible rather
+    // than silent.
+    const key = `${chatKey}:${turnsStarted(agent.events as { type?: string }[])}`;
+    const seen = (detachesSeen.get(key) ?? 0) + 1;
+    detachesSeen.set(key, seen);
+    const reported = detachesReported.get(key) ?? 0;
+    const resyncs = resyncsSpent.get(key) ?? 0;
+    if (!shouldReportDetach({ reported, resyncsSpent: resyncs, resyncBudget: RESYNC_BUDGET })) return;
+    detachesReported.set(key, reported + 1);
     report("stream-gave-up", {
       sessionId: sessionIdRef.current ?? undefined,
-      detail: `last event: ${lastEventType ?? "none"}`,
+      detail:
+        resyncs >= RESYNC_BUDGET
+          ? `still detached after ${resyncs} resyncs · ${seen} detaches · last event: ${lastEventType ?? "none"}`
+          : `last event: ${lastEventType ?? "none"}`,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.status, lastEventType, seenEvents]);
+  }, [agent.status, lastEventType, seenEvents, chatKey]);
 
   /**
    * NOT a remount loop — see the history here before adding one back.
@@ -728,9 +831,11 @@ export function AgentChat({
     useState<ReadonlySet<string>>(readDismissed);
   const dismissInput = (requestId: string) => {
     setDismissedRequestIds((prev) => {
-      const next = new Set(prev);
-      next.add(requestId);
-      persistDismissed(next);
+      // `withRequestIds` returns `prev` unchanged when the id is already there:
+      // a second click is then one render instead of a new Set that re-projects
+      // every memo keyed on this state (see lib/chat-turn-state).
+      const next = withRequestIds(prev, [requestId]);
+      if (next !== prev) persistDismissed(next);
       return next;
     });
   };
@@ -747,11 +852,7 @@ export function AgentChat({
   // never mark an expired request answered (no inputResponse exists).
   const [expiredRequestIds, setExpiredRequestIds] = useState<ReadonlySet<string>>(new Set());
   const markExpired = (requestIds: readonly string[]) =>
-    setExpiredRequestIds((prev) => {
-      const next = new Set(prev);
-      for (const id of requestIds) next.add(id);
-      return next;
-    });
+    setExpiredRequestIds((prev) => withRequestIds(prev, requestIds));
   // The spent-token signal: keying expiry on this specific message (not any
   // non-2xx / any thrown error) is what keeps a live, re-parking run's approval
   // answerable through a transient blip.
@@ -861,6 +962,28 @@ export function AgentChat({
   const isMissingTokenError = (msg: string) =>
     /continuationToken/i.test(msg) && !msg.includes(DEAD_TOKEN_SIGNAL);
   /**
+   * Approvals and questions whose RUN IS GONE — read from the stream, so the
+   * verdict survives a reload (see `deadInputRequestIds`).
+   *
+   * The three sets beside it (responded / dismissed / expired) are in-memory:
+   * after a reopen they are empty, and a part left non-terminal by a turn that
+   * died was hoisted as a live approval and held the composer on
+   * `awaiting-input` forever — "permission decisions resurface and block
+   * streaming for chats that are already completed". A LIVE park still behaves
+   * exactly as before; only a request the stream shows to be unanswerable drops
+   * out of the gate, and it stays on screen as the muted expired note.
+   *
+   * Keyed on the event COUNT: the stream only ever appends, and the verdict is a
+   * fold over it. `deadInputRequestIds` returns one shared empty set when there
+   * is nothing dead, so an ordinary transcript keeps the same reference on every
+   * projection and the memos below it do not churn.
+   */
+  const deadRequests = useMemo(
+    () => deadInputRequestIds(agent.events as { type?: string }[]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agent.events.length],
+  );
+  /**
    * Every input request this turn is waiting on, answered-by-us or not.
    *
    * Deliberately does NOT exclude locally answered ones: the batch size is what
@@ -879,11 +1002,16 @@ export function AgentChat({
         const rid = eve?.inputRequest?.requestId;
         if (!rid || eve?.inputResponse) continue;
         if (dismissedRequestIds.has(rid) || expiredRequestIds.has(rid)) continue;
+        // A dead request can never be answered, so it must not count as a
+        // SIBLING either: the batch waits for every open request to have an
+        // answer before delivering, and one stale id in the batch swallowed a
+        // real answer to a live question and delivered nothing at all.
+        if (deadRequests.has(rid)) continue;
         if (!ids.includes(rid)) ids.push(rid);
       }
     }
     return ids;
-  }, [agent.data.messages, dismissedRequestIds, expiredRequestIds]);
+  }, [agent.data.messages, dismissedRequestIds, expiredRequestIds, deadRequests]);
   const openRequestsRef = useRef<string[]>([]);
   openRequestsRef.current = openRequestIds;
 
@@ -923,11 +1051,7 @@ export function AgentChat({
     // A view-only member of a shared thread can never answer approvals/questions
     // — the owner/participants hold the turn.
     if (readOnly) return;
-    setRespondedRequestIds((prev) => {
-      const next = new Set(prev);
-      for (const r of inputResponses) next.add(r.requestId);
-      return next;
-    });
+    setRespondedRequestIds((prev) => withRequestIds(prev, inputResponses.map((r) => r.requestId)));
     // Record the real responses so they persist as answered regardless of which
     // delivery path (store send vs directDeliver) actually carried them.
     setAnsweredResponses((prev) => {
@@ -1049,6 +1173,16 @@ export function AgentChat({
   // the child stream replays history on attach, meaning a reloaded run shows
   // its full step data instead of falling back to a summary blob.
   const eventCount = agent.events.length;
+  // Kept current as the transcript grows so `onError` — which cannot see `agent`
+  // at all (it is declared inside the store's own config) — has something to say.
+  useEffect(() => {
+    sceneRef.current = renderLoopScene(
+      agent.data.messages as readonly { parts?: readonly unknown[] }[],
+      agent.events as { type?: string }[],
+      typeof window === "undefined" ? undefined : { width: window.innerWidth, height: window.innerHeight },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventCount]);
   const childSessions = useMemo(() => {
     const map: Record<string, string> = {};
     for (const raw of agent.events) {
@@ -1104,14 +1238,20 @@ export function AgentChat({
   const lastParts = (lastMessage?.parts ?? []) as Array<{
     type?: string;
     state?: string;
-    toolMetadata?: { eve?: { inputRequest?: unknown; inputResponse?: unknown } };
+    toolMetadata?: { eve?: { inputRequest?: { requestId?: string }; inputResponse?: unknown } };
   }>;
-  const awaitingUser = lastParts.some(
-    (p) =>
+  const awaitingUser = lastParts.some((p) => {
+    // A request the stream has already ended is not something the reader is
+    // being waited on for — otherwise the "Working…" strip stays hidden behind a
+    // prompt nobody can answer.
+    const rid = p.toolMetadata?.eve?.inputRequest?.requestId;
+    if (rid && deadRequests.has(rid)) return false;
+    return (
       p.state === "approval-requested" ||
       p.state === "required" ||
-      (Boolean(p.toolMetadata?.eve?.inputRequest) && !p.toolMetadata?.eve?.inputResponse),
-  );
+      (Boolean(p.toolMetadata?.eve?.inputRequest) && !p.toolMetadata?.eve?.inputResponse)
+    );
+  });
   const streamingTextTail =
     agent.status === "streaming" &&
     lastMessage?.role === "assistant" &&
@@ -1158,6 +1298,10 @@ export function AgentChat({
         if (requestId && dismissedRequestIds.has(requestId)) continue;
         // Answered cards drop out — UNLESS the answer failed and expired them:
         // an expired card stays, re-rendered as a muted "run has stopped" note.
+        // A DEAD request (its run ended on the stream) is kept for the same
+        // reason and rendered the same way: the operator sees what was asked and
+        // that nothing is waiting on them, rather than a Yes/No that can only
+        // fail. It no longer counts towards the send gate — see openInputRequests.
         if (
           requestId &&
           respondedRequestIds.has(requestId) &&
@@ -1187,11 +1331,14 @@ export function AgentChat({
     for (const p of pendingInputParts) {
       const req = (p as { toolMetadata?: { eve?: { inputRequest?: OpenRequest } } }).toolMetadata?.eve
         ?.inputRequest;
-      // An expired card stays on screen as a note, but its run is gone.
-      if (req?.requestId && !expiredRequestIds.has(req.requestId)) out.push(req);
+      // An expired card stays on screen as a note, but its run is gone. Same for
+      // one the STREAM says is gone: it renders, it never holds the composer.
+      if (req?.requestId && !expiredRequestIds.has(req.requestId) && !deadRequests.has(req.requestId)) {
+        out.push(req);
+      }
     }
     return out;
-  }, [pendingInputParts, expiredRequestIds]);
+  }, [pendingInputParts, expiredRequestIds, deadRequests]);
   const startedTurns = useMemo(
     () => turnsStarted(agent.events as { type?: string }[]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1289,12 +1436,15 @@ export function AgentChat({
         // the part's own state, which lags for proxied child approvals.
         const rid = (part.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined)?.requestId;
         if (rid && (respondedRequestIds.has(rid) || expiredRequestIds.has(rid))) continue;
+        // The stream says this one's call resolved or its turn ended: the banner
+        // would be nagging about a decision nobody can make any more.
+        if (rid && deadRequests.has(rid)) continue;
         return true;
       }
     }
     return false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.data.messages, respondedRequestIds, expiredRequestIds, ownActionCallIds, hasSubagent]);
+  }, [agent.data.messages, respondedRequestIds, expiredRequestIds, deadRequests, ownActionCallIds, hasSubagent]);
   const insights = useMemo(() => {
     const base = deriveInsights(agent.data.messages);
     return {
@@ -1996,7 +2146,7 @@ export function AgentChat({
   // main agent can continue — best-effort, and the result is preserved in the
   // transcript regardless of whether the parent resumes.
   const bringResult = (h: { callId: string; name: string; result: string }) => {
-    setHandledHandoffs((prev) => new Set(prev).add(h.callId));
+    setHandledHandoffs((prev) => withRequestIds(prev, [h.callId]));
     const msg = `The ${h.name} subagent finished, but its result did not come through automatically. Here is its final result verbatim:\n\n${h.result}\n\nUse this to continue and complete the task.`;
     if (gate.hold) {
       // The parent turn is stuck — it's "busy" awaiting a child that already
@@ -2078,24 +2228,36 @@ export function AgentChat({
       }
       const tail = await readTail();
       if (cancelled) return;
-      let settled = isSessionBoundary(tail ?? undefined);
-      if (!tail && (silent += 1) >= 3) {
-        // The tail read answered nothing, three times. Do not wait forever on a
-        // probe that may not work here: try the full replay instead.
-        silent = 0;
-        settled = true;
-      }
       const budgetKey = `${chatKey}:${startedTurns}`;
-      const spent = resyncsSpent.get(budgetKey) ?? 0;
-      if (settled && spent < RESYNC_BUDGET) {
-        resyncsSpent.set(budgetKey, spent + 1);
+      const known = (agent.events as { type?: string }[]).filter((e) => !e.type?.startsWith("client.")).length;
+      if (!tail) silent += 1;
+      /**
+       * ONE DETACH, ONE RESYNC THAT HOLDS — see `resyncDecision` for the why.
+       *
+       * The budget alone only bounded the spin at four; the replay coming back
+       * mid-turn is what made each remount detach again, and each cycle cost a
+       * full replay and another telemetry record.
+       */
+      const decision = resyncDecision({
+        tail: tail ?? undefined,
+        silentReads: silent,
+        knownEvents: known,
+        lastResyncEvents: resyncEventFloor.get(budgetKey),
+        spent: resyncsSpent.get(budgetKey) ?? 0,
+        budget: RESYNC_BUDGET,
+      });
+      if (decision.reason === "blind") silent = 0;
+      if (decision.resync) {
+        resyncsSpent.set(budgetKey, (resyncsSpent.get(budgetKey) ?? 0) + 1);
+        // What the NEXT detach of this turn is measured against: a replay that
+        // brings back no more than this made no progress, so it is not repeated.
+        resyncEventFloor.set(budgetKey, known);
         report("resync", { sessionId: sid, detail: tail?.type ?? "blind" });
-        const known = (agent.events as { type?: string }[]).filter((e) => !e.type?.startsWith("client.")).length;
         const mounted = await onResync(sid, clientMarkers(), known).catch(() => false);
         if (mounted || cancelled) return; // remounting — this instance is done
         // The server says the session is at rest but the replay could not be
         // mounted. A turn known only by our own POST has nothing else to hold on.
-        if (isSessionBoundary(tail ?? undefined)) setRemoteTurn(false);
+        if (decision.reason === "boundary") setRemoteTurn(false);
       }
       delay = Math.min(delay * 1.5, 15_000);
       timer = setTimeout(tick, delay);
@@ -2245,7 +2407,12 @@ export function AgentChat({
         </div>
       </header>
 
-      {agent.error ? (
+      {/* A render loop is not a failed request. The store records it as
+          `agent.error` because React threw at its own setState call site (see
+          onError), and telling the reader their request failed is both alarming
+          and wrong — the turn is still running, and the detached-turn watcher
+          pulls the rest of it in. */}
+      {agent.error && !renderLoop ? (
         <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pt-2 sm:px-6">
           <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
             <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
@@ -2387,7 +2554,11 @@ export function AgentChat({
                   return (
                     <PendingApprovalCard
                       key={p.toolCallId}
-                      expired={Boolean(requestId && expiredRequestIds.has(requestId))}
+                      // A dead request reads exactly like an expired one: the run
+                      // that asked has stopped, so the card is a note, not a prompt.
+                      expired={Boolean(
+                        requestId && (expiredRequestIds.has(requestId) || deadRequests.has(requestId)),
+                      )}
                       part={p}
                       onInputResponses={respondToInput}
                       onDismiss={requestId ? () => dismissInput(requestId) : undefined}
@@ -2438,7 +2609,7 @@ export function AgentChat({
                   <button
                     type="button"
                     onClick={() =>
-                      setHandledHandoffs((prev) => new Set(prev).add(h.callId))
+                      setHandledHandoffs((prev) => withRequestIds(prev, [h.callId]))
                     }
                     className="rounded-lg border border-border px-2.5 py-1 text-xs hover:bg-muted"
                   >

@@ -186,8 +186,17 @@ assert.deepEqual(sent, { method: "POST", path: "/api/ops/deployments", body: { c
 const journal = JSON.parse(readFileSync(join(ROOT, "drizzle/meta/_journal.json"), "utf8")).entries;
 const entry = journal.find((e) => e.tag === "0017_record_custom_fields");
 assert.ok(entry, "the migration is in the journal (scripts/migrate-production.mjs applies what the journal lists)");
-assert.equal(entry.idx, journal.length - 1, "…as the latest entry");
-assert.ok(entry.when > journal[journal.length - 2].when, "…later than the one before it, or drizzle's migrator skips it");
+/**
+ * The invariant is ORDER, not "nothing has been added since".
+ *
+ * This used to assert `entry.idx === journal.length - 1`, which made the test
+ * fail the moment anyone wrote the NEXT migration — a green suite that goes red
+ * on unrelated, correct work teaches people to ignore it. What actually matters
+ * is what the migrator needs: the entry sits at its own index, and its timestamp
+ * is later than the entry before it, or drizzle's migrator skips it.
+ */
+assert.equal(journal[entry.idx]?.tag, entry.tag, "…at its own index in the journal");
+assert.ok(entry.when > journal[entry.idx - 1].when, "…later than the one before it, or drizzle's migrator skips it");
 const migration = readFileSync(join(ROOT, "drizzle/0017_record_custom_fields.sql"), "utf8");
 const statements = migration.split("--> statement-breakpoint").map((s) => s.replace(/^--.*$/gm, "").trim()).filter(Boolean);
 assert.deepEqual(statements, [

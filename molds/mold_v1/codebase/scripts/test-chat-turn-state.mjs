@@ -15,7 +15,16 @@
  * Run:  npm run test:chat-turn-state
  */
 import assert from "node:assert/strict";
-import { retryStormDetected, turnUnfinished } from "../lib/chat-turn-state.ts";
+import {
+  deadInputRequestIds,
+  isRenderLoopError,
+  resyncDecision,
+  retryStormDetected,
+  shouldReportDetach,
+  turnUnfinished,
+  withRequestIds,
+  renderLoopScene,
+} from "../lib/chat-turn-state.ts";
 
 let passed = 0;
 const check = (label, condition) => {
@@ -86,5 +95,204 @@ check(
     "message.received", "message.received", "message.received")),
 );
 check("the threshold is adjustable", retryStormDetected(ev("message.received", "message.received"), 2));
+
+/* ------------------------------------------------------------------------- */
+
+console.log("\ndeadInputRequestIds (a parked approval vs one nothing can answer):");
+// Shapes taken from eve's own reducer (client/message-reducer.js): an
+// `input.requested` carries `data.requests[].requestId` and `.action.callId`;
+// an `action.result` carries `data.result.callId`; turn boundaries carry
+// `data.turnId`.
+const started = (turnId) => ({ type: "turn.started", data: { turnId } });
+const asked = (turnId, requestId, callId) => ({
+  type: "input.requested",
+  data: { turnId, stepIndex: 0, requests: [{ requestId, action: { callId, kind: "tool-call", toolName: "send_email" } }] },
+});
+const resulted = (turnId, callId) => ({
+  type: "action.result",
+  data: { turnId, stepIndex: 0, status: "completed", result: { callId, kind: "tool-result", toolName: "send_email" } },
+});
+const park = { type: "session.waiting", data: { continuationToken: "ct_1" } };
+
+const livePark = [started("turn_0"), asked("turn_0", "req_1", "call_1"), park];
+check("a live park is answerable", !deadInputRequestIds(livePark).has("req_1"));
+check("…and session.waiting alone kills nothing", deadInputRequestIds(livePark).size === 0);
+check(
+  "the call resolving kills the request",
+  deadInputRequestIds([...livePark, resulted("turn_0", "call_1")]).has("req_1"),
+);
+for (const end of ["turn.completed", "turn.failed", "turn.cancelled"]) {
+  check(
+    `${end} on the request's own turn kills it`,
+    deadInputRequestIds([...livePark, { type: end, data: { turnId: "turn_0" } }]).has("req_1"),
+  );
+}
+check(
+  "a LATER turn starting kills it",
+  deadInputRequestIds([...livePark, started("turn_1")]).has("req_1"),
+);
+check(
+  "a REPLAYED turn.started with the same id does not (eve replays a turn that threw)",
+  !deadInputRequestIds([...livePark, started("turn_0")]).has("req_1"),
+);
+check(
+  "a turn ending elsewhere leaves it alone",
+  !deadInputRequestIds([...livePark, { type: "turn.completed", data: { turnId: "turn_9" } }]).has("req_1"),
+);
+check(
+  "the session ending kills every request it held",
+  deadInputRequestIds([...livePark, { type: "session.completed", data: {} }]).has("req_1"),
+);
+check(
+  "a RE-PARK brings a request back to life",
+  !deadInputRequestIds([
+    ...livePark,
+    { type: "turn.completed", data: { turnId: "turn_0" } },
+    started("turn_1"),
+    asked("turn_1", "req_1", "call_1"),
+    park,
+  ]).has("req_1"),
+);
+check(
+  "two requests are judged separately",
+  (() => {
+    const dead = deadInputRequestIds([
+      started("turn_0"),
+      asked("turn_0", "req_a", "call_a"),
+      asked("turn_0", "req_b", "call_b"),
+      resulted("turn_0", "call_a"),
+      park,
+    ]);
+    return dead.has("req_a") && !dead.has("req_b");
+  })(),
+);
+check(
+  "a transcript with nothing dead keeps ONE reference (no memo churn)",
+  deadInputRequestIds(livePark) === deadInputRequestIds([started("turn_3")]),
+);
+check("an empty stream is quiet", deadInputRequestIds([]).size === 0);
+
+console.log("\nwithRequestIds (the fixed point a render loop needs):");
+{
+  const base = new Set(["a"]);
+  check("adding an id it already has returns the SAME set", withRequestIds(base, ["a"]) === base);
+  check("adding nothing returns the same set", withRequestIds(base, []) === base);
+  check("a new id makes a new set", withRequestIds(base, ["b"]) !== base);
+  check("…which keeps both", [...withRequestIds(base, ["b"])].join(",") === "a,b");
+  check("the original is untouched", base.size === 1);
+  const twice = withRequestIds(base, ["b"]);
+  check("and re-adding it is then a no-op", withRequestIds(twice, ["a", "b"]) === twice);
+  check("empty ids are ignored", withRequestIds(base, [""]) === base);
+}
+
+console.log("\nisRenderLoopError (a UI loop is not a dead stream):");
+check("the minified form (what production reports)", isRenderLoopError("Minified React error #185; visit https://react.dev/errors/185"));
+check("the development form", isRenderLoopError("Maximum update depth exceeded. This can happen when…"));
+check("the render-phase form", isRenderLoopError("Too many re-renders. React limits the number of renders"));
+check("a real stream failure is not one", !isRenderLoopError("terminated: network error"));
+check("a token failure is not one", !isRenderLoopError("Missing or empty 'continuationToken' field"));
+check("nothing is not one", !isRenderLoopError(undefined));
+
+console.log("\nshouldReportDetach (telemetry counts incidents, not remounts):");
+{
+  const budget = 4;
+  check(
+    "the first detach of a turn is filed",
+    shouldReportDetach({ reported: 0, resyncsSpent: 0, resyncBudget: budget }),
+  );
+  check(
+    "the same detach, seen again after a resync remount, is not",
+    !shouldReportDetach({ reported: 1, resyncsSpent: 1, resyncBudget: budget }),
+  );
+  check(
+    "…nor the third time (the 63-second trio)",
+    !shouldReportDetach({ reported: 1, resyncsSpent: 2, resyncBudget: budget }),
+  );
+  check(
+    "a turn that outlives the whole budget is filed once more",
+    shouldReportDetach({ reported: 1, resyncsSpent: budget, resyncBudget: budget }),
+  );
+  check(
+    "…and only once more",
+    !shouldReportDetach({ reported: 2, resyncsSpent: budget, resyncBudget: budget }),
+  );
+}
+
+console.log("\nresyncDecision (one detach leads to one resync that holds):");
+{
+  const budget = 4;
+  const at = (type) => ({ type });
+  check(
+    "a session boundary on the tail is worth a resync",
+    resyncDecision({ tail: at("session.waiting"), silentReads: 0, knownEvents: 40, spent: 0, budget }).reason ===
+      "boundary",
+  );
+  check(
+    "a mid-turn tail is not",
+    !resyncDecision({ tail: at("message.appended"), silentReads: 0, knownEvents: 40, spent: 0, budget }).resync,
+  );
+  check(
+    "three silent probes fall back to a blind replay",
+    resyncDecision({ tail: undefined, silentReads: 3, knownEvents: 40, spent: 0, budget }).reason === "blind",
+  );
+  check(
+    "…but not before three",
+    !resyncDecision({ tail: undefined, silentReads: 2, knownEvents: 40, spent: 0, budget }).resync,
+  );
+  check(
+    "a resync that brought back nothing new is NOT repeated blind",
+    !resyncDecision({ tail: undefined, silentReads: 5, knownEvents: 40, lastResyncEvents: 40, spent: 1, budget })
+      .resync,
+  );
+  check(
+    "…and a real boundary still gets through after one that stalled",
+    resyncDecision({
+      tail: at("session.waiting"),
+      silentReads: 5,
+      knownEvents: 40,
+      lastResyncEvents: 40,
+      spent: 1,
+      budget,
+    }).resync,
+  );
+  check(
+    "a resync that DID bring more events may try again",
+    resyncDecision({ tail: undefined, silentReads: 3, knownEvents: 57, lastResyncEvents: 40, spent: 1, budget })
+      .resync,
+  );
+  check(
+    "the budget is still the ceiling",
+    !resyncDecision({ tail: at("session.waiting"), silentReads: 0, knownEvents: 40, spent: budget, budget }).resync,
+  );
+}
+
+
+// --- renderLoopScene: what a #185 report says, since the error itself says nothing ---------------------------
+{
+  const msg = (parts) => [{ parts }];
+  const ev = (type) => ({ type });
+  const scene = renderLoopScene(
+    msg([{ type: "text", state: "streaming", text: "| Metric | Q1 |\n| --- | --- |\n| AUM | 1 |" }]),
+    [ev("message.appended")],
+    { width: 900, height: 700 },
+  );
+  check("names the streaming renderer that was mounted", scene.includes("table"));
+  check("carries the tail part and the last event", scene.includes("tail text/streaming") && scene.includes("event message.appended"));
+  check("carries the viewport, because a resize loop is width-dependent", scene.includes("900x700"));
+  check("stays inside a telemetry detail", scene.length < 200);
+  check(
+    "a code fence is not mistaken for a table",
+    renderLoopScene(msg([{ type: "text", text: "```js\nconst a = 1;\n```" }]), [ev("x")]).includes("code"),
+  );
+  check(
+    "mermaid is named rather than lumped in with code",
+    renderLoopScene(msg([{ type: "text", text: "```mermaid\ngraph TD;\n```" }]), [ev("x")]).includes("mermaid"),
+  );
+  check(
+    "an open approval card is named",
+    renderLoopScene(msg([{ type: "dynamic-tool", state: "approval-requested" }]), [ev("input.requested")]).includes("approval"),
+  );
+  check("an empty transcript still yields a line", renderLoopScene([], []).includes("msgs 0"));
+}
 
 console.log(`\nchat turn state: ${passed}/${passed} behavioural checks passed`);

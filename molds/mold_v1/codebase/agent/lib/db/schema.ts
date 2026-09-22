@@ -1472,6 +1472,17 @@ export const chatThreads = pgTable(
   (t) => [
     index("chat_threads_owner_idx").on(t.ownerEmail),
     index("chat_threads_session_idx").on(t.eveSessionId),
+    /**
+     * The sidebar's own query, which had no index that matched it.
+     *
+     * GET /api/ops/threads runs `WHERE owner_email = … AND org_id = … AND
+     * archived_at IS NULL ORDER BY updated_at DESC`, every 20 seconds, for every
+     * signed-in tab — and it is phase 1 of opening a chat, so it is in front of
+     * the thing the user is actually waiting for. `chat_threads_owner_idx`
+     * covers only the first column, leaving the workspace filter and the sort to
+     * be done by hand on the rows it returns.
+     */
+    index("chat_threads_org_owner_updated_idx").on(t.orgId, t.ownerEmail, t.updatedAt.desc()),
   ],
 );
 
@@ -1690,6 +1701,72 @@ export const chatSessions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("chat_sessions_owner_idx").on(t.ownerEmail, t.orgId, t.updatedAt.desc())],
+);
+
+/**
+ * The transcript CACHE that makes reopening a chat cost what is NEW.
+ *
+ * `chat_sessions` above is metadata only, on the stated principle that "the
+ * message history is REPLAYED from the eve session on open". That principle is
+ * what makes opening an old thread slow: the replay re-reads every event the
+ * conversation has ever produced, and eve's stream is a live tail that never
+ * ends for a parked run, so the browser also waits out a quiet window per
+ * segment to decide the backlog has drained. The cost grows with the whole
+ * conversation and is paid on every single open.
+ *
+ * A row here is the transcript a thread has ALREADY been shown, plus the
+ * ABSOLUTE stream index it covers, so an open mounts the prefix and replays only
+ * from that index forward. It is a CACHE, never the truth: lib/chat-snapshot.ts
+ * refuses it on a version bump, a different session, or a seam the stream
+ * disagrees with, and the old full replay takes over.
+ *
+ * Deliberately NOT a column on `chat_sessions`: that row is rewritten on every
+ * debounced sidebar sync (up to 200 rows per request, and on `pagehide` under a
+ * ~64KB keepalive cap). Transcripts are large and change only at a turn
+ * boundary, so folding them into that payload would make the write that exists
+ * so a conversation is never lost the one most likely to be dropped for size.
+ *
+ * Keyed by SESSION, not by owner: one conversation has one transcript, and a
+ * thread shared with a teammate must not fork a second copy of it. WHO may read
+ * a row is decided by thread membership (`snapshotAccess` in
+ * lib/chat-snapshot.ts), never by the key.
+ */
+export const chatTranscriptSnapshots = pgTable(
+  "chat_transcript_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    // The eve session this transcript belongs to — the thread's real identity
+    // (`chat_threads` reconciles on it for the same reason).
+    eveSessionId: text("eve_session_id").notNull(),
+    // Who wrote it. Never the access decision (see snapshotAccess), but a cached
+    // transcript nobody can be named for is one nobody can be asked about.
+    ownerEmail: text("owner_email").notNull(),
+    // The client-side StoredSession.id, so a row can be traced back to the
+    // sidebar entry it accelerates.
+    chatSessionId: text("chat_session_id"),
+    // SNAPSHOT_VERSION (lib/chat-snapshot.ts). A bump discards every older row
+    // rather than mounting a transcript under projection rules that have moved.
+    version: integer("version").notNull(),
+    // ABSOLUTE count of server events covered. NOT events.length: compaction
+    // drops superseded deltas, so the transcript is shorter than the stream it
+    // represents, and the resume cursor has to mean the stream.
+    eventIndex: integer("event_index").notNull(),
+    events: jsonb("events").$type<unknown[]>().notNull(),
+    // The browser-only `client.*` markers (answered questions and approvals).
+    // eve's replay has never heard of them, so without these a reopened thread
+    // shows questions that were answered days ago as pending again.
+    clientEvents: jsonb("client_events").$type<unknown[]>(),
+    // What the row costs, so a transcript that has stopped being worth caching
+    // shows up as a number instead of as a slow open.
+    bytes: integer("bytes").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per session per workspace — and the upsert target.
+    uniqueIndex("chat_transcript_snapshots_session_uidx").on(t.orgId, t.eveSessionId),
+  ],
 );
 
 /* -------------------------------------------------------------------------- */

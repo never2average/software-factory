@@ -182,6 +182,75 @@ export function holdLabel(reason: HoldReason | null, specialistRunning = false):
 }
 
 /**
+ * ONE DETACH IS ONE INCIDENT, however many times it is rendered.
+ *
+ * A detached turn is HELD and watched, not shown as an error, but it is still
+ * counted so it stays queryable. The count was per MOUNT, and a resync remounts
+ * the chat — so one session filed three byte-identical "Chat stream ended
+ * mid-turn and stopped resuming · last event: message.appended" records inside
+ * 63 seconds on 2026-09-21. That reads as three failures; it was one, seen three
+ * times.
+ *
+ * File the first detach of a turn, and file one more when the watcher has spent
+ * its whole resync budget on that same turn — because a turn that never comes
+ * back is the thing worth knowing about, and going silent about it would trade
+ * one bad signal for none.
+ */
+export function shouldReportDetach(input: {
+  /** Reports already filed for this turn (module scope — survives the remount). */
+  readonly reported: number;
+  readonly resyncsSpent: number;
+  readonly resyncBudget: number;
+}): boolean {
+  const exhausted = input.resyncsSpent >= input.resyncBudget;
+  return input.reported < (exhausted ? 2 : 1);
+}
+
+/**
+ * May the watcher spend a resync on this detached turn right now?
+ *
+ * A resync is a full replay AND a remount, and the replay deliberately returns
+ * as soon as a live turn goes quiet (chat-shell's `replaySession`: a 1.5s gap
+ * mid-turn, or its own deadline). So replaying a turn that is still running
+ * mounts it MID-TURN, and the fresh mount is detached again — detach → resync →
+ * detach, which is the cycle the telemetry recorded. The resync budget bounded
+ * the spin at four, it did not stop it.
+ *
+ * Two gates, then:
+ *
+ *  - a real session boundary on the tail (`startIndex=-1`, eve docs "Reconnect
+ *    and rewind") means the session is genuinely at rest and the replay will
+ *    come back whole. Always worth a resync.
+ *  - otherwise, only the BLIND fallback is left (the tail probe answered nothing
+ *    three times running), and that is allowed exactly once per genuine step
+ *    forward: if this mount holds no more server events than the last resync was
+ *    asked with, the last one did not hold and another would fetch the same
+ *    transcript again.
+ */
+export function resyncDecision(input: {
+  /** The one event the tail probe returned, if any. */
+  readonly tail: TurnEvent | undefined;
+  /** Consecutive tail reads that answered nothing, including this one. */
+  readonly silentReads: number;
+  /** Server events this mount holds. */
+  readonly knownEvents: number;
+  /** Server events the LAST resync of this turn was asked with, if any. */
+  readonly lastResyncEvents?: number;
+  readonly spent: number;
+  readonly budget: number;
+  readonly blindAfter?: number;
+}): { readonly resync: boolean; readonly reason: "boundary" | "blind" | null } {
+  if (input.spent >= input.budget) return { resync: false, reason: null };
+  if (isSessionBoundary(input.tail)) return { resync: true, reason: "boundary" };
+  const stalled =
+    input.lastResyncEvents !== undefined && input.knownEvents <= input.lastResyncEvents;
+  if (!input.tail && !stalled && input.silentReads >= (input.blindAfter ?? 3)) {
+    return { resync: true, reason: "blind" };
+  }
+  return { resync: false, reason: null };
+}
+
+/**
  * Keep turn ids unique across eve SESSIONS inside one transcript.
  *
  * Turn ids are `turn_<n>` counted per session. When a session ends for good
@@ -246,6 +315,183 @@ export function withSessionEpochs<TData extends object, TEvent extends TurnEvent
 }
 
 /**
+ * WHICH OPEN INPUT REQUESTS ARE STILL ANSWERABLE — read from the stream alone.
+ *
+ * A parked request survives a reload: that is the point of eve's human-in-the-
+ * loop (docs/tools/human-in-the-loop — "parks at `session.waiting`, durably, for
+ * as long as it takes — seconds or days"). So the card is rebuilt from the
+ * message PART, whose `approval-requested` state / `inputRequest` metadata has
+ * no expiry of its own.
+ *
+ * The three sets the chat kept alongside it (responded / dismissed / expired)
+ * are in-memory, so they are EMPTY after a reload. Any request whose part never
+ * reached a terminal state — its turn died, it was answered through a path that
+ * never wrote `inputResponse` back onto the part, or its `action.result` was
+ * simply not in the replay — was therefore hoisted again as a LIVE approval, and
+ * `sendGate` then held the composer on `awaiting-input` forever. Reported as
+ * "permission decisions resurface and block streaming for chats that are already
+ * completed", and it is unrecoverable by the user: the card's Yes/No posts a
+ * continuation token that is long gone.
+ *
+ * The stream can tell the two apart, and only the stream can:
+ *
+ *  - LIVE PARK — an `input.requested` and nothing after it that ends the call or
+ *    the turn. Still answerable. Unchanged behaviour: hoist it, hold the
+ *    composer, let a composer answer resolve it.
+ *  - DEAD — the same `input.requested`, but the stream later shows the call
+ *    resolved (`action.result` for its `callId`) or the run ended
+ *    (`turn.completed` / `turn.failed` / `turn.cancelled` for its `turnId`, a
+ *    LATER turn started, or the session ended). Nothing can answer it any more.
+ *
+ * `session.waiting` is the PARK signal, not an end (see the table in
+ * docs/concepts/sessions-runs-and-streaming): it must never kill a request, or
+ * every approval would be dead the instant it was asked.
+ *
+ * Returns the DEAD ids. Callers drop them from `pendingInputs` (so the chat is
+ * sendable) and render them the way an expired card renders — a muted note that
+ * the run has stopped — never as a live prompt.
+ */
+const NO_REQUEST_IDS: ReadonlySet<string> = new Set<string>();
+
+interface OpenRequestShape {
+  readonly requestId?: unknown;
+  readonly action?: { readonly callId?: unknown };
+}
+interface RequestEventData {
+  readonly turnId?: unknown;
+  readonly requests?: readonly OpenRequestShape[];
+  readonly result?: { readonly callId?: unknown };
+}
+
+export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<string> {
+  /** requestId → the call and turn it belongs to, while it is still answerable. */
+  const open = new Map<string, { turnId?: string; callId?: string }>();
+  const dead = new Set<string>();
+  const kill = (requestId: string) => {
+    open.delete(requestId);
+    dead.add(requestId);
+  };
+  for (const raw of events) {
+    const type = raw?.type;
+    if (!type) continue;
+    const data = (raw as { data?: RequestEventData }).data;
+    const turnId = typeof data?.turnId === "string" ? data.turnId : undefined;
+    switch (type) {
+      case "input.requested": {
+        for (const req of data?.requests ?? []) {
+          const requestId = typeof req?.requestId === "string" ? req.requestId : undefined;
+          if (!requestId) continue;
+          // A RE-PARK restates the same request (eve mints a fresh token and asks
+          // again after a failed answer). It is alive again, whatever happened
+          // before — otherwise one bad click would bury a live approval.
+          dead.delete(requestId);
+          const callId = typeof req?.action?.callId === "string" ? req.action.callId : undefined;
+          open.set(requestId, { turnId, callId });
+        }
+        break;
+      }
+      case "action.result": {
+        // The gated call RAN (or was denied): its approval was consumed, whether
+        // or not this client is the one that answered it.
+        const callId = typeof data?.result?.callId === "string" ? data.result.callId : undefined;
+        if (!callId) break;
+        for (const [requestId, req] of [...open]) if (req.callId === callId) kill(requestId);
+        break;
+      }
+      case "turn.completed":
+      case "turn.failed":
+      case "turn.cancelled": {
+        // The turn that was suspended on the request is over. Nothing will pick
+        // the answer up.
+        for (const [requestId, req] of [...open]) {
+          if (req.turnId === undefined || turnId === undefined || req.turnId === turnId) {
+            kill(requestId);
+          }
+        }
+        break;
+      }
+      case "turn.started": {
+        // A LATER turn started, so the parked one cannot still be suspended.
+        // eve re-emits `turn.started` for the SAME turn when it replays a turn
+        // after a step throws (see retryStormDetected) — same id, still alive.
+        for (const [requestId, req] of [...open]) {
+          if (req.turnId !== undefined && turnId !== undefined && req.turnId !== turnId) {
+            kill(requestId);
+          }
+        }
+        break;
+      }
+      case "session.completed":
+      case "session.failed": {
+        // The session is over for good; a new send opens a new one (see
+        // withSessionEpochs). Every request it held is unreachable.
+        for (const requestId of [...open.keys()]) kill(requestId);
+        break;
+      }
+      default:
+        // `session.waiting` lands here ON PURPOSE. It is the park.
+        break;
+    }
+  }
+  // One shared empty set, so a transcript with no dead requests keeps the same
+  // reference on every projection (see withRequestIds for why that matters).
+  return dead.size === 0 ? NO_REQUEST_IDS : dead;
+}
+
+/**
+ * Add ids to a set WITHOUT changing its identity when nothing is added.
+ *
+ * `setX(prev => new Set(prev).add(id))` always produces a new object, so the
+ * memos keyed on that state recompute, the effects keyed on those memos re-run,
+ * and an effect that calls the setter again never reaches a fixed point — the
+ * shape that ends as "Maximum update depth exceeded" (React #185). Because the
+ * chat's store re-renders synchronously while it reads a turn, that throw is
+ * delivered to whichever `setState` comes next — usually eve's own store notify,
+ * where it becomes `agent.error` and kills a turn that was streaming fine.
+ *
+ * Returning `prev` unchanged is the fixed point, so the same answer twice is one
+ * render, not an escalating series of them.
+ */
+export function withRequestIds(
+  prev: ReadonlySet<string>,
+  ids: Iterable<string>,
+): ReadonlySet<string> {
+  let next: Set<string> | null = null;
+  for (const id of ids) {
+    if (!id || prev.has(id)) continue;
+    next ??= new Set(prev);
+    next.add(id);
+  }
+  return next ?? prev;
+}
+
+/**
+ * Is this a RENDER loop rather than a stream failure?
+ *
+ * React reports an update-depth blow-up as #185 (minified) or "Maximum update
+ * depth exceeded" (development). Measured once in production on 2026-09-21
+ * 13:33:52 as `Chat stream errored · — Minified React error #185`: it arrived
+ * through the eve store's `onError`, because the store notifies subscribers
+ * synchronously inside its `for await` over the stream, so React's throw
+ * unwinds into the store's own catch. There the turn is marked `error` and the
+ * user is told the connection dropped — about a stream that never faltered.
+ *
+ * No ErrorBoundary can intercept that: the error is not thrown while rendering
+ * the boundary's subtree, it is thrown at the next `setState` call site, which
+ * is the store's. So the chat classifies it instead, and leaves a turn that is
+ * still running to the detached-turn watcher.
+ */
+export function isRenderLoopError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return (
+    /maximum update depth exceeded/i.test(message) ||
+    /too many re-?renders/i.test(message) ||
+    /minified react error #(185|301)\b/i.test(message) ||
+    /react\.dev\/errors\/(185|301)\b/i.test(message)
+  );
+}
+
+/**
  * Where does text typed into the composer go?
  *
  * A pending QUESTION has no text box of its own here — a freeform question can
@@ -265,4 +511,46 @@ export function composerRoute(input: {
   if (!input.gate.hold) return "send";
   if (input.gate.reason === "awaiting-input" && input.answers > 0 && !input.hasFiles) return "answer";
   return "queue";
+}
+
+/**
+ * What was on screen when a render loop threw.
+ *
+ * A production React "maximum update depth" error is minified to the bare string
+ * "Minified React error #185" and carries no component stack — and no
+ * ErrorBoundary ever sees it, because the store delivers it at its own setState
+ * call site (see agent-chat's onError). The single occurrence recorded on
+ * 2026-09-21 therefore named nothing that could be searched for, and an offline
+ * repro of the streaming transcript (including a wide KPI table, the content
+ * this product streams most) did not reproduce it.
+ *
+ * So record the SCENE instead of guessing: what the transcript held, what the
+ * tail part was, and which of the renderers known to drive their own updates —
+ * a streaming markdown table, a code block, a mermaid diagram, an open approval
+ * card — were mounted. Pure, so a test drives the real thing; one short line,
+ * because it travels inside a 300-character telemetry detail.
+ */
+export function renderLoopScene(
+  messages: readonly { parts?: readonly unknown[] }[],
+  events: readonly TurnEvent[],
+  viewport?: { width: number; height: number },
+): string {
+  const last = messages[messages.length - 1];
+  const parts = (last?.parts ?? []) as Array<{ type?: string; state?: string; text?: string }>;
+  const tail = parts[parts.length - 1];
+  const text = typeof tail?.text === "string" ? tail.text : "";
+  const bits = [
+    `msgs ${messages.length}`,
+    `parts ${parts.length}`,
+    `tail ${tail?.type ?? "none"}/${tail?.state ?? "-"}`,
+    `event ${events[events.length - 1]?.type ?? "none"}`,
+  ];
+  // A table is the one that matters most here: half of what this product streams
+  // is a KPI table, and a table is also the widest thing a transcript renders.
+  if (/^\s*\|.*\|/m.test(text)) bits.push("table");
+  if (text.includes("```mermaid")) bits.push("mermaid");
+  else if (text.includes("```")) bits.push("code");
+  if (parts.some((p) => p.state === "approval-requested")) bits.push("approval");
+  if (viewport) bits.push(`${viewport.width}x${viewport.height}`);
+  return bits.join(" · ");
 }

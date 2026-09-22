@@ -103,11 +103,37 @@ jobs:
         if: always()
         run: npm run test:chat-persistence
 
-      # The only BEHAVIOURAL chat test — it executes the real module rather than
+      # The BEHAVIOURAL chat tests — they execute the real module rather than
+      # Reopening a thread mounts a CACHED transcript and replays only the tail,
+      # so a conversation can now be assembled from two sources — and one
+      # assembled wrongly is invisible to the person reading it. This runs eve's
+      # real reducer over several transcripts, at every point one could be split,
+      # and fails if the result differs from a full replay by a single byte. It
+      # also holds the access rule: a cached transcript is the most complete copy
+      # of a conversation this system stores.
+      - name: Thread snapshot equals a full replay (behavioural)
+        if: always()
+        run: npm run test:thread-snapshot
+
+      # The other BEHAVIOURAL chat test — it executes the real module rather than
       # grepping source, which is how every other chat regression got past CI.
       - name: Chat turn state (behavioural)
         if: always()
         run: npm run test:chat-turn-state
+
+      # A parked approval survives a reload on purpose; one whose run has ENDED
+      # must not, or it comes back as a live prompt and wedges the composer on a
+      # chat that is already finished. Runs eve's own reducer over persisted
+      # streams.
+      - name: Chat stale approvals (behavioural)
+        if: always()
+        run: npm run test:chat-stale-approvals
+
+      # The send gate against the REAL eve store over a stubbed fetch. It existed
+      # and was never wired in — the same gap that put the three tests above here.
+      - name: Chat send gate (behavioural)
+        if: always()
+        run: npm run test:chat-send-gate
 
       # The offline half of the attachment contract. The end-to-end companion
       # (test:attachment-e2e) needs production credentials and a live agent, so
