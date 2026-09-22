@@ -2,7 +2,7 @@
   "$schema": "../app_id/application.schema.json",
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
-  "mold_commit": "6634664ff0cb75c123c94f6a236058a38922ffdb",
+  "mold_commit": "56677b8002ac21748a821f3a3de3fbaf7e81c4a5",
   "status": "stamped",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
@@ -192,28 +192,28 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-09-20T15:00:24+00:00",
-      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-09-20T150024Z.md"
+      "run_at": "2026-09-22T07:06:50+00:00",
+      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-09-22T070650Z.md"
     },
     "context": {
       "status": "skipped",
-      "run_at": "2026-09-20T14:59:57+00:00",
-      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-20T145957Z.md"
+      "run_at": "2026-09-22T07:06:27+00:00",
+      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-22T070627Z.md"
     },
     "functional": {
-      "status": "pass",
-      "run_at": "2026-09-20T14:57:34+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-20T145734Z.md"
+      "status": "skipped",
+      "run_at": "2026-09-22T07:04:09+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-22T070409Z.md"
     },
     "accessibility": {
-      "status": "pass",
-      "run_at": "2026-09-20T15:02:18+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-20T150218Z.md"
+      "status": "skipped",
+      "run_at": "2026-09-22T07:08:35+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-22T070835Z.md"
     },
     "responsiveness": {
-      "status": "pass",
-      "run_at": "2026-09-20T15:02:56+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-20T150256Z.md"
+      "status": "skipped",
+      "run_at": "2026-09-22T07:08:50+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-22T070850Z.md"
     }
   },
   "customer_id": "internal",

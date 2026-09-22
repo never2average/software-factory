@@ -1,6 +1,6 @@
 # What it took to mint `onfinance_hfc`
 
-Generated 2026-09-20T15:36Z · status **stamped** · https://onfinance-hfc.vercel.app · packs: hfc-research
+Generated 2026-09-22T07:11Z · status **stamped** · https://onfinance-hfc.vercel.app · packs: hfc-research
 
 Every figure is *measured* from a record written when the thing happened, unless the row says otherwise.
 
@@ -13,19 +13,19 @@ Every figure is *measured* from a record written when the thing happened, unless
 | Deploys so far | 12 (latest 2026-09-20T14:49Z) |
 | Agent working: model time | 5h 12m |
 | Agent working: running commands, builds, deploys, tests | 1h 42m |
-| Session active time (idle gaps over 5 min removed) | 5h 59m |
-| Operator messages | 44 |
-| Agent messages / tool calls / subagents | 1424 / 686 / 25 |
-| Test-lane reports written | 77 (functional 18, context 15, load 14, accessibility 14, responsiveness 16) |
-| Commits touching the app, its brief and its packs | 27 |
-| Pull requests merged upstream in the same window | 21 (+16062 / −2240 lines) in never2average/fde-agent |
+| Session active time (idle gaps over 5 min removed) | 6h 28m |
+| Operator messages | 48 |
+| Agent messages / tool calls / subagents | 1592 / 778 / 27 |
+| Test-lane reports written | 82 (functional 19, context 16, load 15, accessibility 15, responsiveness 17) |
+| Commits touching the app, its brief and its packs | 28 |
+| Pull requests merged upstream in the same window | 24 (+19368 / −2487 lines) in never2average/fde-agent |
 
 ## Money
 
 | Item | Amount | How it is known |
 |---|---|---|
 | Agent (Claude) work | **$274.39** | measured: the sessions' own cost counters, at API list prices, subagents included. On a Claude subscription this is the *equivalent value used*, not an invoice. |
-| Agent work the counter has not seen yet | about $153 | **estimated**: the measured cost scaled by the tokens the main session used after its last cost record (subagents since then are not included). Replaced by a measured figure at the next cost record. Total so far: about **$427**. |
+| Agent work the counter has not seen yet | about $196 | **estimated**: the measured cost scaled by the tokens the main session used after its last cost record (subagents since then are not included). Replaced by a measured figure at the next cost record. Total so far: about **$470**. |
 | · claude-fable-5-1 | $264.57 | 354.5M tokens read, 1.57M written |
 | · claude-opus-5[1m] | $9.27 | 8.9M tokens read, 0.07M written |
 | · claude-haiku-4-5-20251001 | $0.56 | 0.2M tokens read, 0.01M written |
@@ -39,4 +39,4 @@ Every figure is *measured* from a record written when the thing happened, unless
 
 - The agent figure is for **everything done in those sessions**, not only this app's own files: it includes building factory features the next app reuses (packs, the mint line, the per-app package, the domain step) and the upstream pull requests. The next app's report is the marginal cost; this one is the cost of the first.
 - Calendar time includes every wait for the operator (keys, decisions, sign-in codes) and overnight gaps. Agent working time does not.
-- The cost and working-time counters are as of the session's last cost record; 541 of its 1424 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part.
+- The cost and working-time counters are as of the session's last cost record; 709 of its 1592 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part.
