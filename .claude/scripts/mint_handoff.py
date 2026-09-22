@@ -58,6 +58,14 @@ def facts(app_id):
         t = json.loads(l)
         if t.get("status") == "todo": tasks.append(dict(id=t["task_id"], priority=t.get("priority", 9), title=t["title"]))
     tasks.sort(key=lambda t: (t["priority"], t["id"]))
+    # What changed lately, with the evidence that closed it. A handoff that lists only what is LEFT reads as if
+    # nothing has happened, and the next agent re-opens a question that was answered yesterday.
+    done = []
+    for l in open(tf) if os.path.exists(tf) else []:
+        t = json.loads(l)
+        if t.get("status") == "done" and t.get("evidence"):
+            done.append(dict(id=t["task_id"], at=t.get("updated") or "", title=t["title"], evidence=t["evidence"][-1]))
+    done = sorted(done, key=lambda t: t["at"])[-6:][::-1]
     url = (infra.get("vercel") or {}).get("production_url"); cli = infra.get("agent_cli") or {}
     testing = {k: v.get("status") for k, v in (app.get("testing") or {}).items()}
     return dict(app_id=app_id, generated_at=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"), product=dict(name=brand.get("product_name") or prod.get("name") or app_id, tagline=brand.get("tagline") or prod.get("tagline") or "", color=brand.get("brand_color")),
@@ -65,7 +73,7 @@ def facts(app_id):
                 models=(app.get("model") or {}).get("roles"), stations=stations, packs=packs, workspaces=spaces, testing=testing, took=took,
                 access=dict(people=f"{url} — sign in with a six-digit code emailed to you, or Continue with Google where the workspace uses it. Access is by workspace membership: the owner invites people from Workspace → People." if url else None,
                             agents_hosted=f"{url}/api/mcp" if url else None, agents_package=cli.get("package"), package_published=bool((cli.get("published") or {}).get("version")), custom_domain=(infra.get("vercel") or {}).get("custom_domain")),
-                open_tasks=tasks, repo=dict(state=f"state/application/{app_id}/", packs=[f"packs/{p}/" for p in app.get("packs") or []], brief=f"briefs/{app_id}.md", report=f"reports/mint/{app_id}.md"))
+                open_tasks=tasks, recent=done, repo=dict(state=f"state/application/{app_id}/", packs=[f"packs/{p}/" for p in app.get("packs") or []], brief=f"briefs/{app_id}.md", report=f"reports/mint/{app_id}.md"))
 
 MARK = {"done": ("ok", "Done"), "not needed": ("na", "Not needed"), "next": ("go", "Next"), "needs you": ("ask", "Needs the operator"), "failed": ("bad", "Failed"), "later": ("wait", "Later")}
 
@@ -85,6 +93,7 @@ def page(f):
         packs += f'<h3>Specialists <span class="muted">from the pack “{E(k["pack_id"])}”</span></h3><div class="scroll"><table><thead><tr><th>Specialist</th><th>What it does</th><th class="num">Skills</th></tr></thead><tbody>{subs}</tbody></table></div><h3>Its own records</h3><div class="areas">{areas}</div>'
     spaces = "".join(f'<tr><td><b>{E(w["name"] or "")}</b></td><td class="num">{w["people"]}</td><td class="num">{w["accounts"]}</td></tr>' for w in f["workspaces"])
     tests = "".join(f'<li><span class="pill {"ok" if v == "pass" else "wait" if v == "skipped" else "bad"}">{E(v)}</span> {E(k)}</li>' for k, v in sorted(f["testing"].items()))
+    recent = "".join(f'<details><summary>{E(x["title"][:110])}{"…" if len(x["title"]) > 110 else ""} <span class="muted">— {E(x["id"])}, {E(x["at"])}</span></summary><p>{E(x["evidence"])}</p></details>' for x in f["recent"])
     tasks = "".join(f'<tr><td class="mono">{E(x["id"])}</td><td class="num">P{x["priority"]}</td><td>{E(x["title"])}</td></tr>' for x in f["open_tasks"][:14])
     money = f'${t["agent_cost_usd_measured"]:,.0f} measured' + (f' + about ${t["agent_cost_usd_estimated_since"]:,} estimated since the last cost record' if t["agent_cost_usd_estimated_since"] else "")
     cal = ""
@@ -139,6 +148,8 @@ details{{background:var(--panel);border:1px solid var(--line);padding:10px 14px}
 <section><h2>What was measured</h2><ul class="tests">{tests}</ul>
 <div class="figs"><div class="fig"><b>{cal or "—"}</b><span>first message to first live deploy</span></div><div class="fig"><b>{t["deploys"]}</b><span>deploys</span></div><div class="fig"><b>{t["model_hours"]}h + {t["tool_hours"]}h</b><span>agent model time + tool time</span></div><div class="fig"><b>{t["operator_messages"]}</b><span>operator messages</span></div><div class="fig"><b>{t["upstream_prs"] if t["upstream_prs"] is not None else "—"}</b><span>pull requests merged upstream</span></div><div class="fig"><b>{t["lane_reports"]}</b><span>test-lane reports</span></div></div>
 <p>Agent cost: <b>{money}</b>, at API list prices (on a subscription this is value used, not an invoice). It covers the whole first build, including factory features the next application reuses. Hosting, database, model-provider, email and search bills are not readable from the factory; the full report says where each is seen: <code>{E(f["repo"]["report"])}</code>.</p></section>
+
+<section><h2>Recently finished</h2><p class="muted">Newest first, each with the evidence that closed it — so nobody re-opens a question answered last week.</p>{recent}</section>
 
 <section><h2>Open work</h2><div class="scroll"><table><thead><tr><th>Task</th><th class="num">Priority</th><th>What</th></tr></thead><tbody>{tasks or '<tr><td colspan="3">None.</td></tr>'}</tbody></table></div><p class="muted">From <code>state/tasks/{E(f["mold"]["id"])}.jsonl</code>; <code>python3 .claude/scripts/factory.py next {E(f["mold"]["id"])}</code> gives the current one.</p></section>
 
