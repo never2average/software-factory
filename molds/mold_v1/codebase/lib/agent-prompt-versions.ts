@@ -23,6 +23,15 @@ export interface PromptVersion {
  * entry point here treats "no table" as "no history" rather than an error: the
  * Agents tab must keep working, and a prompt edit must never fail because its
  * audit trail is unavailable.
+ *
+ * tenancy-ok: the probe below is the one statement in this file on an unscoped
+ * handle, and it reads no tenant DATA — it discards the row and keeps only
+ * "did that parse and execute". Under the fail-closed policy it returns zero
+ * rows WITHOUT erroring, which is still the right answer to the only question
+ * it asks; a missing table throws, which is the other one. Every real read and
+ * write here runs inside `withOrgRls(orgId, …)`. This surface was widened from
+ * `app/api` to `app lib`, and the file surfaced then rather than because
+ * anything about it changed.
  */
 let tableKnownReady = false;
 async function tableReady(db: Db): Promise<boolean> {

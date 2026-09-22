@@ -27,6 +27,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { defaultMessageReducer } from "eve/client";
 import { withSessionEpochs } from "../lib/chat-turn-state.ts";
+import { withFreshestToken } from "../lib/chat-session-cursor.ts";
 import {
   SNAPSHOT_VERSION,
   buildSnapshot,
@@ -37,6 +38,8 @@ import {
   snapshotAccess,
   snapshotUsable,
   splitClientEvents,
+  createEventDeduper,
+  dedupeEvents,
 } from "../lib/chat-snapshot.ts";
 
 let passed = 0;
@@ -417,6 +420,151 @@ check(
   ).events.filter((e) => e.type === "client.input.responded").length === 1,
 );
 
+/* ---- 3b. the cursor the transcript is mounted on -------------------------- */
+
+/**
+ * A DEAD SESSION'S TOKEN MUST NOT COME BACK.
+ *
+ * The mount is two things — a transcript and a cursor — and the cursor is the
+ * half that decides where the next message goes. When a turn ends on
+ * `session.failed` or `session.completed`, eve's `advanceSession` hands back
+ * `createInitialSessionState()`: no id, no token, because that session cannot be
+ * continued. `withFreshestToken` repairs a MISSING token from the stream, and it
+ * used to do that by scanning backwards for the newest `session.waiting` — which
+ * walks straight past the failure and restores the token from an earlier park of
+ * the session that has just died. The next message posted to a finished session
+ * with a spent token and the reader was told the connection dropped.
+ *
+ * So it stops at the LAST boundary now, exactly as eve does, and the rule is run
+ * here rather than described: the same stream, ended three different ways.
+ */
+console.log("\nThe cursor a reopened chat is mounted on:");
+
+// `park` is the fixture helper above — eve's own `session.waiting` shape.
+const say = (text) => ev("message.completed", { turnId: "t", stepIndex: 0, message: text });
+// What eve's advanceSession hands back for a session that cannot continue.
+const EMPTY_CURSOR = { streamIndex: 0 };
+
+check(
+  "a parked session's token is still repaired onto a cursor that lost it",
+  withFreshestToken(EMPTY_CURSOR, [say("hi"), park("ct_live")]).continuationToken === "ct_live",
+);
+check(
+  "…across the deltas and markers that follow the park",
+  withFreshestToken(EMPTY_CURSOR, [park("ct_live"), { type: "client.input.responded", data: {} }])
+    .continuationToken === "ct_live",
+);
+check(
+  "a session that FAILED gets no token back, however many parks precede it",
+  withFreshestToken(EMPTY_CURSOR, [park("ct_dead"), say("working"), { type: "session.failed", data: { message: "boom" } }])
+    .continuationToken === undefined,
+);
+check(
+  "…and neither does one that COMPLETED",
+  withFreshestToken(EMPTY_CURSOR, [park("ct_dead"), { type: "session.completed" }]).continuationToken === undefined,
+);
+check(
+  "a turn still running supplies nothing — there is no boundary to read",
+  withFreshestToken(EMPTY_CURSOR, [say("thinking")]).continuationToken === undefined,
+);
+check(
+  "an empty token on the park is not a token (eve rejects a send carrying one)",
+  withFreshestToken(EMPTY_CURSOR, [park("")]).continuationToken === undefined,
+);
+check(
+  "a cursor that already holds a token is returned untouched",
+  withFreshestToken({ streamIndex: 4, continuationToken: "ct_held" }, [{ type: "session.failed", data: {} }])
+    .continuationToken === "ct_held",
+);
+check(
+  "the boundary set is eve's own, not a second copy of it",
+  (() => {
+    // Every type eve's isCurrentTurnBoundaryEvent accepts, and nothing else.
+    const src = readFileSync("lib/chat-session-cursor.ts", "utf8");
+    return (
+      /"session\.waiting", "session\.completed", "session\.failed"/.test(src) &&
+      /advanceSession/.test(src)
+    );
+  })(),
+);
+
+/* ---- 3c. the live persist path's dedupe ---------------------------------- */
+
+/**
+ * THE INCREMENTAL DEDUPE MUST BE THE SAME ANSWER.
+ *
+ * `handlePersist` runs once per text delta, and it ran `dedupeEvents` — a
+ * JSON.stringify per event — over the whole stream each time. eve's deltas each
+ * carry `messageSoFar`, so that is a stringify of a quadratically-growing list
+ * on the main thread, between a chunk of output and the paint that shows it.
+ * `createEventDeduper` pays only for what arrived since the previous call.
+ *
+ * That is a performance change hiding a correctness claim, so the claim is
+ * executed: fed a transcript one event at a time, the incremental answer is
+ * byte-identical to a full `dedupeEvents` at EVERY prefix — including when the
+ * array is replaced rather than appended to (a remount or a resync), and when
+ * the duplicates it exists to collapse are present.
+ */
+console.log("\nDeduping a live stream incrementally:");
+
+const DUPED = [
+  ...WITH_TOOLS,
+  ...WITH_TOOLS_MARKERS,
+  structuredClone(WITH_TOOLS_MARKERS[0]), // the marker re-appended on the next persist
+  ...WITH_TOOLS.slice(-4).map((e) => structuredClone(e)), // a reattach's byte-identical re-emission
+];
+
+check(
+  "it collapses the duplicates a live turn accumulates",
+  createEventDeduper()(DUPED).length === dedupeEvents(DUPED).length &&
+    dedupeEvents(DUPED).length < DUPED.length,
+);
+check(
+  "…and matches a full pass at EVERY prefix, growing one event at a time",
+  (() => {
+    const step = createEventDeduper();
+    for (let n = 0; n <= DUPED.length; n++) {
+      const grown = DUPED.slice(0, n);
+      if (canonicalJson(step(grown)) !== canonicalJson(dedupeEvents(grown))) return false;
+    }
+    return true;
+  })(),
+);
+check(
+  "…when the array is REPLACED rather than appended to (a remount or a resync)",
+  (() => {
+    const step = createEventDeduper();
+    step(DUPED);
+    // A shorter, differently-identified stream: the prefix check must fail and
+    // the full pass take over, or the previous turn's events leak into this one.
+    const replaced = structuredClone(MULTI_TURN);
+    return canonicalJson(step(replaced)) === canonicalJson(dedupeEvents(replaced));
+  })(),
+);
+check(
+  "…and when the stream goes empty and starts again",
+  (() => {
+    const step = createEventDeduper();
+    step(DUPED);
+    step([]);
+    return canonicalJson(step(WITH_TOOLS)) === canonicalJson(dedupeEvents(WITH_TOOLS));
+  })(),
+);
+check(
+  "what it returns is a copy — the caller stores it, and the next call appends",
+  (() => {
+    const step = createEventDeduper();
+    const first = step(WITH_TOOLS.slice(0, 5));
+    const held = first.length;
+    step(WITH_TOOLS);
+    return first.length === held;
+  })(),
+);
+check(
+  "the live persist path is the one that uses it",
+  /deduperRef\.current\(rawEvents\)/.test(readFileSync("app/_components/chat-shell.tsx", "utf8")),
+);
+
 /* ---- 4. tenancy and membership ------------------------------------------- */
 
 console.log("\nWho may read a cached transcript:");
@@ -439,8 +587,22 @@ check(
 );
 check("a thread's owner reads and writes", accessFor("owner@onfinance.in", OWNER, null).write);
 check(
-  "a participant reads and writes",
-  accessFor("mate@onfinance.in", OWNER, { role: "participant", status: "accepted" }).write,
+  /**
+   * Was "a participant reads and writes".
+   *
+   * `POST /api/ops/chat-snapshots` takes the transcript as arbitrary client
+   * JSON and `checkSeam` verifies exactly ONE event, so a participant could
+   * hand every other member a fabricated prefix with a true tail on it — and
+   * compaction means the length proves nothing either. Verifying the whole
+   * thing is the full replay this cache exists to avoid, so the WRITER is
+   * narrowed to the owner instead and a participant falls back to the replay.
+   * The reasoning lives on `snapshotAccess`.
+   */
+  "a participant reads but never replaces what everyone else mounts",
+  (() => {
+    const a = accessFor("mate@onfinance.in", OWNER, { role: "participant", status: "accepted" });
+    return a.read && !a.write;
+  })(),
 );
 check(
   "a viewer reads but never replaces what everyone else mounts",

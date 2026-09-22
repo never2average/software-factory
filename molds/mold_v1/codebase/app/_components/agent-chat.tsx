@@ -129,6 +129,56 @@ const resyncEventFloor = new Map<string, number>();
  */
 const attachFailures = new Map<string, number>();
 const stallsReported = new Map<string, number>();
+/** How many readers this turn has already opened — see the telemetry note. */
+const attachStarts = new Map<string, number>();
+/**
+ * Turns whose share was REVOKED (403). Terminal, and deliberately kept out of
+ * `attachFailures`: that map is forgiven when the tab comes back, and forgiving
+ * a revocation means re-probing the membership gate on every single focus — the
+ * small denial-of-service against our own gate lib/chat-attach.ts says it is
+ * avoiding. A 401 is the opposite case and is NOT recorded here (the credential
+ * can be refreshed by signing in again).
+ */
+const attachRevoked = new Set<string>();
+/**
+ * Forget everything recorded about a chat's EARLIER turns.
+ *
+ * Every map above is keyed `chatKey:turn ordinal` and lives at module scope so
+ * that a resync remount cannot reset it. Nothing ever removed an entry, so a
+ * tab left open on a long conversation accumulated one entry per map per turn
+ * for the life of the tab — small, but unbounded, and invisible. A turn that is
+ * over can never be reported, resynced or attached again, so its entries are
+ * dead the moment the next turn starts.
+ *
+ * The ordinal immediately behind the current one is SPARED: `turnsStarted`
+ * counts `turn.started` events, and eve re-emits one for the SAME turn when it
+ * replays after a step throws — so the newest ordinal can step forward without a
+ * new turn having begun, and pruning it there would hand a still-running turn a
+ * fresh attach budget and a second `attach-started`.
+ */
+function forgetFinishedTurns(chatKey: string, currentTurn: number): void {
+  const oldest = currentTurn - 1;
+  const prefix = `${chatKey}:`;
+  for (const map of [
+    detachesSeen,
+    detachesReported,
+    resyncEventFloor,
+    attachFailures,
+    stallsReported,
+    attachStarts,
+  ]) {
+    for (const key of [...map.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      const turn = Number(key.slice(prefix.length));
+      if (Number.isFinite(turn) && turn < oldest) map.delete(key);
+    }
+  }
+  for (const key of [...attachRevoked]) {
+    if (!key.startsWith(prefix)) continue;
+    const turn = Number(key.slice(prefix.length));
+    if (Number.isFinite(turn) && turn < oldest) attachRevoked.delete(key);
+  }
+}
 /** Outer attach attempts per turn, then the resync/replay watcher owns it. */
 const ATTACH_BUDGET = 4;
 /**
@@ -147,9 +197,11 @@ const COMPACT_INSTRUCTION =
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  appendTailEvent,
   attachDecision,
   composerRoute,
   deadInputRequestIds,
+  handBackSession,
   holdLabel,
   isRenderLoopError,
   mergeAttachedEvents,
@@ -157,10 +209,12 @@ import {
   resyncDecision,
   retryStormDetected,
   sendGate,
+  absoluteIndexBase,
   serverEventCount,
   shouldReportDetach,
   turnsStarted,
   turnUnfinished,
+  withoutRequestIds,
   withRequestIds,
   withSessionEpochs,
   type IndexedEvent,
@@ -539,6 +593,19 @@ export function AgentChat({
   // Turn ids restart at turn_0 in every eve session; keep them unique when one
   // transcript spans two (see withSessionEpochs). Read once, at store creation.
   const [reducer] = useState(() => withSessionEpochs(defaultMessageReducer()));
+  /**
+   * The absolute-index deficit of THIS mount (see absoluteIndexBase). Read once,
+   * from the cursor and transcript the mount was seeded with — a cached transcript
+   * is compacted, so counting it understates where the stream actually is.
+   */
+  const [indexBase] = useState(() =>
+    absoluteIndexBase(initialSession?.streamIndex, initialEvents as readonly TurnEvent[] | undefined),
+  );
+  /** Absolute stream position of a transcript, compaction included. */
+  const absoluteIndex = useCallback(
+    (events: readonly TurnEvent[]) => serverEventCount(events) + indexBase,
+    [indexBase],
+  );
   const agent = useEveAgent({
     reducer,
     headers: getAuthHeaders,
@@ -660,9 +727,30 @@ export function AgentChat({
    * deciding a turn is dead while its reply is arriving two lines away.
    */
   const [attachedTail, setAttachedTail] = useState<readonly IndexedEvent[]>([]);
+  /**
+   * The merge's `nextIndex` is the store's ABSOLUTE position, never its length.
+   *
+   * `mergeAttachedEvents` defaults it to `serverEventCount(storeEvents)`, and
+   * that default is only right for a transcript read straight off the stream.
+   * A reopened thread mounts a COMPACTED cached transcript (#38), so the store
+   * holds fewer events than the index it covers — while the reader is started
+   * at `absoluteIndex(...)`, count PLUS the compaction deficit. The tail then
+   * began at 103 while the merge was still looking for 100, every entry read as
+   * a gap, and the merge returned the store's array untouched: on exactly the
+   * mount the reattach exists for — a thread reopened mid-turn — the live tail
+   * never reached the transcript at all, while `view` above projected it, so
+   * the reply was on screen and the gate, the telemetry and the reader's own
+   * resume index could not see it. The two changes shipped the same day and
+   * each one's offline test passed alone.
+   */
   const mergedEvents = useMemo(
-    () => mergeAttachedEvents(agent.events as readonly TurnEvent[], attachedTail),
-    [agent.events, attachedTail],
+    () =>
+      mergeAttachedEvents(
+        agent.events as readonly TurnEvent[],
+        attachedTail,
+        absoluteIndex(agent.events as readonly TurnEvent[]),
+      ),
+    [agent.events, attachedTail, absoluteIndex],
   ) as typeof agent.events;
   /**
    * The transcript as projected from the store's events AND the live tail.
@@ -676,22 +764,29 @@ export function AgentChat({
    * The cache is keyed on identity: a new `agent.data` (the store advanced, or
    * a send replaced the optimistic bubble) throws it away and re-folds the whole
    * tail, which is correct because `reduce` is pure.
+   *
+   * What is folded is what the MERGE accepted, not the raw tail. Projecting the
+   * raw tail let the screen and the transcript disagree: a tail entry the merge
+   * dropped (an index the store already holds, or one stranded behind a gap)
+   * was still reduced into the view, so the reply could be visibly on screen
+   * while `mergedEvents` — which is what the send gate, the stall telemetry and
+   * the reader's own resume index are computed from — did not contain it.
    */
   const projectionRef = useRef<{ base: unknown; applied: number; data: typeof agent.data } | null>(
     null,
   );
   const view = useMemo(() => {
-    if (attachedTail.length === 0) return agent.data;
+    const accepted = mergedEvents.length - agent.events.length;
+    if (accepted <= 0) return agent.data;
     const cached = projectionRef.current;
-    const reusable =
-      cached !== null && cached.base === agent.data && cached.applied <= attachedTail.length;
+    const reusable = cached !== null && cached.base === agent.data && cached.applied <= accepted;
     let data = reusable ? cached.data : agent.data;
-    for (let i = reusable ? cached.applied : 0; i < attachedTail.length; i++) {
-      data = reducer.reduce(data, attachedTail[i].event as never) as typeof agent.data;
+    for (let i = agent.events.length + (reusable ? cached.applied : 0); i < mergedEvents.length; i++) {
+      data = reducer.reduce(data, mergedEvents[i] as never) as typeof agent.data;
     }
-    projectionRef.current = { base: agent.data, applied: attachedTail.length, data };
+    projectionRef.current = { base: agent.data, applied: accepted, data };
     return data;
-  }, [agent.data, attachedTail, reducer]);
+  }, [agent.data, agent.events, mergedEvents, reducer]);
   const viewMessages = view.messages;
 
   /**
@@ -869,6 +964,17 @@ export function AgentChat({
   const [attachLive, setAttachLive] = useState(false);
   /** Bumped when a reader gives up, to arm the next attempt within the budget. */
   const [attachEpoch, setAttachEpoch] = useState(0);
+  /**
+   * The reader stopped on a 401: this browser's sign-in expired under the turn.
+   *
+   * Its own state, not a failure count, because it needs its own WORDS. The
+   * session token lasts about an hour and auth-gate drops it 60 seconds before
+   * `exp`, so a long turn crossing that boundary is ordinary — and every path
+   * that could show the rest of the reply (the reader, the poll, the replay) is
+   * equally locked out. Telling the person "Still working…" hides the single
+   * action that recovers it.
+   */
+  const [authExpired, setAuthExpired] = useState(false);
   /**
    * The transcript IS streaming, whoever is reading it.
    *
@@ -1186,6 +1292,42 @@ export function AgentChat({
     inputResponses = batch;
     const requestIds = inputResponses.map((r) => r.requestId);
     pendingAnswerRef.current = requestIds;
+    /**
+     * A SHARED thread answers through the relay, exactly as its messages do.
+     *
+     * Both paths below reach for a continuation token, and on a shared thread
+     * there is no longer one to reach for: the token is stripped as the stream
+     * passes the membership-checked proxy, because handing every viewer the live
+     * resume token let a read-only member send into the thread. Without this
+     * branch a participant's Yes/No would fall through to
+     * `if (!sessionId || !continuationToken) return;` inside directDeliver and be
+     * dropped in silence, leaving an answered card that answered nothing.
+     *
+     * The relay is also the only correct writer here for the same reason it is
+     * for messages: it holds the single-writer claim on that token, so two people
+     * answering at once serialise instead of spending it twice.
+     */
+    if (relayThreadId) {
+      setRelayPending(requestIds.join(","));
+      setRelayError(null);
+      try {
+        await opsFetch(`/api/ops/threads/${relayThreadId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ inputResponses }),
+        });
+        pendingAnswerRef.current = [];
+        onRelaySent?.();
+      } catch (e) {
+        // The card stays answerable: an answer that did not reach the relay is
+        // not an answer, and silently keeping it "responded" is the failure this
+        // whole branch exists to prevent.
+        setRespondedRequestIds((prev) => withoutRequestIds(prev, requestIds));
+        setRelayError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRelayPending(null);
+      }
+      return;
+    }
     const busy = agent.status === "submitted" || agent.status === "streaming";
     if (!busy) {
       // Same pre-empt as messages: a parked session whose store cursor lost its
@@ -1803,6 +1945,37 @@ export function AgentChat({
   const respondedCount = responded.length;
   const respondedRef = useRef(responded);
   respondedRef.current = responded;
+  /**
+   * WHY THE PERSIST IS ON A CLOCK AND NOT ON `preview`.
+   *
+   * `preview = lastText(viewMessages)` is the FULL TEXT of the last part, so it
+   * changes with every single character the model streams — and this effect
+   * depended on it. Every delta therefore ran the whole persist: `dedupeEvents`
+   * (a `JSON.stringify` per event, into a Set) plus a SYNCHRONOUS
+   * `localStorage.setItem` of the entire chat list. Measured by review on a
+   * mid-range core, on a 1,500-event turn with a 60 KB table in it: ~460 ms of
+   * blocking main-thread work PER DELTA, against a 47 MB string. That is the
+   * chat freezing while it writes, not while it thinks. It predates the
+   * reattach; the reattach made it fire during detached turns too, which is how
+   * it became this change's problem.
+   *
+   * The transcript still has to be persisted WHILE a reply streams (a reload
+   * mid-turn must not lose it), so the fix is not to drop the dependency but to
+   * take it off the character: a tick that advances at most once every two
+   * seconds while anything is streaming, plus the events that already mark real
+   * progress (a new message, an answered input, the status settling). `preview`
+   * itself is read from a ref at write time, so the row still carries the latest
+   * line without the effect ever keying on it.
+   */
+  const previewRef = useRef(preview);
+  previewRef.current = preview;
+  const [persistTick, setPersistTick] = useState(0);
+  const streamingNow = isBusy || attachLive;
+  useEffect(() => {
+    if (!streamingNow) return;
+    const id = setInterval(() => setPersistTick((n) => n + 1), 2_000);
+    return () => clearInterval(id);
+  }, [streamingNow]);
   /** Client-only markers the server replay lacks — carried through a resync. */
   const clientMarkers = () => [
     ...(mergedEvents as { type?: string }[]).filter((e) => e.type?.startsWith("client.")),
@@ -1820,12 +1993,14 @@ export function AgentChat({
         attachedTail.length > 0
           ? ({
               ...agent.session,
-              streamIndex: serverEventCount(mergedEvents as readonly TurnEvent[]),
+              streamIndex: absoluteIndex(mergedEvents as readonly TurnEvent[]),
             } as AgentSession)
           : agent.session,
         {
           title: title ?? "New chat",
-          preview,
+          // Read from the ref: the LATEST line still reaches the sidebar row,
+          // but this effect never has to wake up for a character (see above).
+          preview: previewRef.current,
           messageCount,
           customers: selectedCustomers.length ? selectedCustomers : undefined,
           forkedFrom,
@@ -1840,7 +2015,7 @@ export function AgentChat({
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, title, preview, messageCount, customersKey, status, respondedCount]);
+  }, [sessionId, title, messageCount, customersKey, status, respondedCount, persistTick]);
 
   // A snapshot for the Share dialog — the server thread row needs the current
   // session id, freshest resume token, and the client-side input-response
@@ -2068,6 +2243,9 @@ export function AgentChat({
    */
   const [stopping, setStopping] = useState(false);
   const stopFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The transcript as it stands when a deferred callback finally runs. */
+  const mergedEventsRef = useRef(mergedEvents);
+  mergedEventsRef.current = mergedEvents;
   const stopTurn = useCallback(() => {
     const sid = liveSessionIdRef.current;
     const storeBusy = agent.status === "submitted" || agent.status === "streaming";
@@ -2102,15 +2280,38 @@ export function AgentChat({
         if (storeBusy) agent.stop();
         setStopping(false);
       });
-    if (storeBusy) {
-      if (stopFallbackRef.current) clearTimeout(stopFallbackRef.current);
-      stopFallbackRef.current = setTimeout(() => {
+    if (stopFallbackRef.current) clearTimeout(stopFallbackRef.current);
+    stopFallbackRef.current = setTimeout(() => {
+      if (storeBusy) {
         // No boundary arrived. Detach so the composer is not frozen; the gate
         // keeps new messages queued until the turn is seen to settle.
         agent.stop();
         setStopping(false);
-      }, 12_000);
-    }
+        return;
+      }
+      /**
+       * STOP HAS TO WORK EVEN WHEN NOTHING CAN HEAR THE ANSWER.
+       *
+       * On a DETACHED turn the cancel request goes out fine and eve really does
+       * stop the turn — but `turn.cancelled` → `session.waiting` can only reach
+       * this transcript through the live reader or the poll, and when BOTH
+       * budgets are spent (four readers, four resyncs) neither will ever arrive.
+       * `turnUnfinished` then stays true for good: the composer holds on
+       * "Still working…", the queue never flushes, and pressing Stop again
+       * changes nothing — the complaint the operator has actually made.
+       *
+       * The turn the person asked to stop is exactly the turn the server was
+       * told to stop, so after the grace we record it as abandoned, which is
+       * the same state the `no_active_turn` answer produces: the gate releases,
+       * the reader stands down, and the replay picks up whatever really
+       * happened on the next open.
+       */
+      if (turnUnfinished(mergedEventsRef.current as readonly TurnEvent[])) {
+        abandonedTurns.set(chatKey, wasTurn);
+        setAbandonedTurn(wasTurn);
+      }
+      setStopping(false);
+    }, 12_000);
     report("stop", { sessionId: sid, detail: storeBusy ? "streaming" : "detached" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, chatKey, getAuthHeaders, report, onResync]);
@@ -2355,7 +2556,7 @@ export function AgentChat({
       const tail = await readTail();
       if (cancelled) return;
       const budgetKey = `${chatKey}:${startedTurns}`;
-      const known = serverEventCount(mergedEvents as readonly TurnEvent[]);
+      const known = absoluteIndex(mergedEvents as readonly TurnEvent[]);
       if (!tail) silent += 1;
       /**
        * ONE DETACH, ONE RESYNC THAT HOLDS — see `resyncDecision` for the why.
@@ -2464,12 +2665,15 @@ export function AgentChat({
    *
    * Never `agent.session.streamIndex`: the store RESETS that cursor whenever a
    * stream ends without a session boundary, which is precisely the detached case
-   * this path exists for. `serverEventCount` derives it from the transcript
-   * instead, skipping the browser-only `client.*` markers that would otherwise
-   * push it past events we do not have.
+   * this path exists for. It is derived from the transcript instead, skipping the
+   * browser-only `client.*` markers that would otherwise push it past events we do
+   * not have — PLUS this mount's compaction deficit, because a cached transcript
+   * (lib/chat-snapshot.ts) holds fewer events than the index it covers. Counting
+   * alone resumes the reader BEHIND the stream, and re-applying an older
+   * `message.appended` rewinds the reply on screen.
    */
   const nextIndexRef = useRef(0);
-  nextIndexRef.current = serverEventCount(mergedEvents as readonly TurnEvent[]);
+  nextIndexRef.current = absoluteIndex(mergedEvents as readonly TurnEvent[]);
   /**
    * HAND THE RECOVERED TURN BACK TO THE STORE.
    *
@@ -2490,11 +2694,27 @@ export function AgentChat({
    * Built from the reader's own collected events rather than from state, because
    * React has not necessarily committed the last `setAttachedTail` by the time
    * the reader resolves.
+   *
+   * COLLECTED ACROSS READERS, NOT PER READER. This was a per-effect array, and
+   * the effect re-runs mid-turn on three ordinary events: a reader failure
+   * bumping `attachEpoch`, the tab becoming visible again, and `attachKey`
+   * changing because eve re-emits `turn.started` when it replays a turn after a
+   * step throws (see `retryStormDetected`). Reader #2 then starts PAST the
+   * store's own index, so its array began after a gap, `mergeAttachedEvents`
+   * returned the identical array, and the `merged === agent.events` bail below
+   * skipped the hand-off entirely. Proved: store 0..99, tail 100..149 from
+   * reader #1, reader #2 collecting 150..202 including the `session.waiting` —
+   * no hand-off and no remount. The user watched the reply finish, and then the
+   * NEXT message re-projected the stranded tail over the new turn while the
+   * store, never having regained the session id or the fresh token, opened a
+   * NEW eve session whose `turn_0` wrote over the first exchange. So the tail
+   * lives in a ref that outlives the effect and is cleared only on a hand-off
+   * or on unmount.
    */
-  const handBackRef = useRef<(collected: readonly IndexedEvent[], attachedTo: string) => void>(
-    () => {},
-  );
-  handBackRef.current = (collected, attachedTo) => {
+  const collectedRef = useRef<readonly IndexedEvent[]>([]);
+  const handBackRef = useRef<(attachedTo: string) => void>(() => {});
+  handBackRef.current = (attachedTo) => {
+    const collected = collectedRef.current;
     const sid = liveSessionIdRef.current;
     // Deliberately NOT gated on the effect still being mounted: the reader can
     // resolve after React has already committed the terminal event and torn the
@@ -2507,16 +2727,31 @@ export function AgentChat({
     // membership-checked proxy), and a view-only member has no cursor to carry.
     if (!onReattach || attachVia || readOnly || relayThreadId) return;
     if (collected.length === 0) return;
-    const merged = mergeAttachedEvents(agent.events as readonly TurnEvent[], collected);
-    if (merged === agent.events) return;
-    onReattach(
-      {
-        sessionId: sid,
-        continuationToken: freshestToken(),
-        streamIndex: serverEventCount(merged),
-      } as AgentSession,
-      [...merged, ...clientMarkers()] as AgentEvents,
+    const merged = mergeAttachedEvents(
+      agent.events as readonly TurnEvent[],
+      collected,
+      absoluteIndex(agent.events as readonly TurnEvent[]),
     );
+    if (merged === agent.events) return;
+    /**
+     * The cursor eve itself would keep — see `handBackSession`.
+     *
+     * A hand-off on `session.failed` / `session.completed` used to reinstate the
+     * DEAD session with a token `freshestToken()` had scraped off an earlier
+     * park, so the next message posted to a session that is over with a spent
+     * token and read as "The connection to the agent dropped." eve's
+     * `advanceSession` returns an EMPTY session state on exactly those two
+     * boundaries, which is how a new session gets opened and what
+     * `withSessionEpochs` is written against.
+     */
+    const cursor = handBackSession({
+      boundary: merged[merged.length - 1] as TurnEvent | undefined,
+      sessionId: sid,
+      continuationToken: freshestToken(),
+      streamIndex: absoluteIndex(merged),
+    });
+    collectedRef.current = [];
+    onReattach(cursor as AgentSession, [...merged, ...clientMarkers()] as AgentEvents);
   };
   const attachVerdict = attachDecision({
     sessionId: attachId,
@@ -2534,14 +2769,27 @@ export function AgentChat({
     const startIndex = nextIndexRef.current;
     const started = Date.now();
     let alive = true;
-    /** What this reader delivered, for the hand-off (see handBackRef). */
-    const collected: IndexedEvent[] = [];
     setAttachLive(true);
-    report("attach-started", {
-      sessionId: liveSessionIdRef.current ?? undefined,
-      attempt: attachFailures.get(attachKey) ?? 0,
-      detail: `from index ${startIndex} · ${attachVia ? "shared proxy" : "eve stream"}`,
-    });
+    /**
+     * ONE `attach-started` PER TURN, not one per effect re-run.
+     *
+     * The comparison this kind exists for is attach-started vs attach-complete:
+     * the gap is meant to read as "how often a live tail could not finish the
+     * job". Reported on every effect run it read as several failed tails
+     * wherever it was really ONE tail restarting — and the restarts are
+     * ordinary (an epoch bump, a tab return, eve re-emitting `turn.started` on
+     * a replay), so the gap was measuring the restart rate, not the failure
+     * rate. Restarts are still counted, in the detail, where they are honest.
+     */
+    const restarts = attachStarts.get(attachKey) ?? 0;
+    attachStarts.set(attachKey, restarts + 1);
+    if (restarts === 0) {
+      report("attach-started", {
+        sessionId: liveSessionIdRef.current ?? undefined,
+        attempt: attachFailures.get(attachKey) ?? 0,
+        detail: `from index ${startIndex} · ${attachVia ? "shared proxy" : "eve stream"}`,
+      });
+    }
     void readLiveTail({
       open: attachVia
         ? threadProxyStream({ threadId: attachVia, headers: getAuthHeaders })
@@ -2564,14 +2812,14 @@ export function AgentChat({
           ctrl.abort();
           return;
         }
-        // Appended, never merged in place: the reader emits strictly increasing
-        // indices, so comparing with the last one is the whole dedupe this side
-        // needs. `mergeAttachedEvents` holds the authoritative rule.
-        if (collected.length > 0 && collected[collected.length - 1].index >= entry.index) return;
-        collected.push(entry);
-        setAttachedTail((prev) =>
-          prev.length > 0 && prev[prev.length - 1].index >= entry.index ? prev : [...prev, entry],
-        );
+        // Placed BY INDEX, never appended blindly. A reader that restarted
+        // mid-turn reopens BELOW the tail's last index to close a gap, and the
+        // old "compare with the last entry" guard dropped every one of those
+        // deliveries — which froze the transcript for the rest of the session
+        // (see `appendTailEvent`). `mergeAttachedEvents` still holds the
+        // authoritative rule; this keeps the tail orderly for it.
+        collectedRef.current = appendTailEvent(collectedRef.current, entry);
+        setAttachedTail((prev) => appendTailEvent(prev, entry));
       },
     })
       .then((result) => {
@@ -2581,29 +2829,52 @@ export function AgentChat({
           attachFailures.delete(attachKey);
           // A turn delivered AROUND the store (directDeliver) has now been seen
           // to settle, so the hold it placed can lift without a replay.
-          if (alive) setRemoteTurn(false);
+          if (alive) {
+            setRemoteTurn(false);
+            // A reader that read a turn to its end had a working credential.
+            setAuthExpired(false);
+          }
           report("attach-complete", {
             sessionId: liveSessionIdRef.current ?? undefined,
             elapsedMs: Date.now() - started,
             attempt: result.segments,
-            detail: `${result.events} events · index ${startIndex}→${result.index}`,
+            detail: `${result.events} events · index ${startIndex}→${result.index}${
+              restarts > 0 ? ` · reader restart ${restarts}` : ""
+            }`,
           });
-          handBackRef.current(collected, captured);
+          handBackRef.current(captured);
           return;
         }
         // A revoked share can never come back; everything else gets the rest of
         // its budget and then the resync/replay watcher.
         if (!alive) return;
+        if (result.outcome === "unauthorized") {
+          // NOT the turn's fault and NOT a revoked share: the hour-long session
+          // token expired under a long turn (auth-gate drops it 60s before
+          // `exp`, after which `getAuthHeaders()` returns `{}`). Retrying spends
+          // an ownership-gated read per attempt and can never succeed, and
+          // "Still working…" is a lie — so stop the reader and say the one
+          // thing that fixes it.
+          attachFailures.set(attachKey, ATTACH_BUDGET);
+          setAuthExpired(true);
+        }
         const spent =
-          result.outcome === "forbidden"
+          result.outcome === "forbidden" || result.outcome === "unauthorized"
             ? ATTACH_BUDGET
             : (attachFailures.get(attachKey) ?? 0) + 1;
         attachFailures.set(attachKey, spent);
+        // A revoked share is FINAL. Remembered outside the budget, because the
+        // budget is forgiven on a tab return — and re-probing a revoked share on
+        // every focus is the small denial-of-service against our own membership
+        // gate that this module says it is avoiding.
+        if (result.outcome === "forbidden") attachRevoked.add(attachKey);
         report("attach-failed", {
           sessionId: liveSessionIdRef.current ?? undefined,
           elapsedMs: Date.now() - started,
           attempt: spent,
-          detail: `${result.outcome} · ${result.events} events · ${result.detail ?? "no detail"}`,
+          detail: `${result.outcome} · ${result.events} events · ${result.detail ?? "no detail"}${
+            restarts > 0 ? ` · reader restart ${restarts}` : ""
+          }`,
         });
         setAttachEpoch((n) => n + 1);
       })
@@ -2619,6 +2890,25 @@ export function AgentChat({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldAttach, attachId, attachVia, attachKey, attachEpoch]);
+
+  /**
+   * A NEW TURN retires everything recorded about the old ones.
+   *
+   * The collected tail belongs to the turn it was read from — carrying it into
+   * the next one would re-project a finished reply over a running one — and the
+   * module-scope maps keyed `chatKey:turn` are otherwise never pruned, which is
+   * a slow leak in a tab left open on a long conversation.
+   */
+  useEffect(() => {
+    forgetFinishedTurns(chatKey, startedTurns);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatKey, startedTurns]);
+  useEffect(
+    () => () => {
+      collectedRef.current = [];
+    },
+    [],
+  );
 
   /**
    * A TAB COMING BACK is a fresh chance, not a spent budget.
@@ -2637,13 +2927,46 @@ export function AgentChat({
   attachKeyRef.current = attachKey;
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const onVisible = () => {
-      if (document.visibilityState !== "visible" || attachLiveRef.current) return;
+    /**
+     * A fresh chance for a turn whose conditions changed — but NOT for a turn
+     * whose share is gone.
+     *
+     * This used to clear `attachFailures` unconditionally, so a genuinely
+     * revoked share (403) re-opened the membership-gated stream on every single
+     * tab focus, forever: the exact self-inflicted load lib/chat-attach.ts stops
+     * the reader to avoid. A revocation is terminal and is remembered outside
+     * the budget; everything else — a suspended socket, a cold gate, an expired
+     * credential the person has since renewed — is forgiven.
+     */
+    const rearm = () => {
+      if (attachLiveRef.current || attachRevoked.has(attachKeyRef.current)) return;
       attachFailures.delete(attachKeyRef.current);
+      // Signing in again happens in another tab or through the gate above this
+      // component, and neither tells the chat. A tab return is the moment to
+      // find out: clear the claim and let the next reader re-establish it.
+      setAuthExpired(false);
       setAttachEpoch((n) => n + 1);
     };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      rearm();
+    };
+    /**
+     * AND THE NETWORK COMING BACK.
+     *
+     * Only `visibilitychange` re-armed the reader, so a laptop that goes offline
+     * with the tab in front burns all four attach attempts in under a minute
+     * against a connection that cannot work, hands the turn to the poll (which
+     * cannot reach the network either) and then nothing at all re-arms when the
+     * network returns — the tab was never hidden, so no visibility event ever
+     * fires. `online` is the event for exactly that, and it costs one listener.
+     */
+    window.addEventListener("online", rearm);
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("online", rearm);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   /**
@@ -3174,7 +3497,12 @@ export function AgentChat({
             >
               <Spinner className="size-3 shrink-0" />
               <span className="flex-1">
-                {stopping
+                {authExpired
+                  ? // A 401, not a slow turn. Every path that could show the rest
+                    // of this reply is locked out until the person signs in
+                    // again, so say that instead of "still working".
+                    "Your sign-in expired while this reply was running. Sign in again to pick it up — nothing is lost."
+                  : stopping
                   ? "Stopping the earlier reply…"
                   : specialistRunning
                     ? "Still working — a specialist is running. The rest of the reply will appear here when it finishes."
@@ -3198,7 +3526,7 @@ export function AgentChat({
           {queued.length > 0 ? (
             <div className="mb-2 flex flex-col gap-1">
               <p className="px-1 text-3xs text-muted-foreground" aria-live="polite">
-                {holdLabel(gate.reason, specialistRunning, attachLive)}
+                {holdLabel(gate.reason, specialistRunning, attachLive, authExpired)}
               </p>
               {queued.map((q, i) => (
                 <div

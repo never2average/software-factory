@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOpsDb } from "@/lib/ops-db";
 import { accessForThread, callerEmail, loadThread } from "@/lib/chat-threads";
-import { boundedReplay } from "@/lib/chat-replay-stream";
+import { boundedReplay, withoutContinuationTokens } from "@/lib/chat-replay-stream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,6 +72,20 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   }
   const access = await accessForThread(db, await threadPromise, email);
   if (!access) return NextResponse.json({ error: "You don't have access to this thread." }, { status: 403 });
+  /**
+   * UN-SHARING has to end the stream too.
+   *
+   * `DELETE /api/ops/threads/:id` un-shares by stamping `archived_at`, and
+   * `accessForThread` never looked at it — so every member kept reading the
+   * live conversation of a thread its owner had taken back. The route now
+   * revokes the member rows as well, which is what makes this real for a caller
+   * who has already loaded the page; this is the second half, for the thread
+   * itself. The OWNER loses nothing: their own chat is read through
+   * /api/ops/chat-replay, not through this proxy.
+   */
+  if (access.thread.archivedAt) {
+    return NextResponse.json({ error: "This thread is no longer shared." }, { status: 403 });
+  }
 
   const params = new URL(request.url).searchParams;
   const rawStart = params.get("startIndex");
@@ -95,9 +109,20 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     return NextResponse.json({ error: `Stream unavailable (${upstream.status}).` }, { status: 502 });
   }
 
-  const body = wantsMarker
-    ? boundedReplay(upstream.body, { startIndex, replayOnly })
-    : upstream.body;
+  /**
+   * The resume token never leaves the server on THIS path.
+   *
+   * Redaction is on the OUTSIDE of the marker, so `boundedReplay` still sees
+   * eve's original `session.waiting` and can tell a parked run from a thinking
+   * one — the marker itself has never carried a token and says so where it is
+   * built. Everything a client of a shared thread receives has been through
+   * `withoutContinuationTokens`, replay and live tail alike: this used to be a
+   * byte-for-byte pipe, which is how a read-only member's page came to hold a
+   * live send capability (see that function).
+   */
+  const body = withoutContinuationTokens(
+    wantsMarker ? boundedReplay(upstream.body, { startIndex, replayOnly }) : upstream.body,
+  );
 
   return new Response(body, {
     status: 200,

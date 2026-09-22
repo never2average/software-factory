@@ -22,6 +22,39 @@
  * `db.select` in a Next route failed CI while the identical mistake in an agent
  * tool shipped, and surfaced as the agent calmly reporting that a workspace has
  * no customers. That guard is lifted here, where it runs on every commit.
+ *
+ * …AND THE WEB SURFACE WAS `app/api`, WHICH IS NOT WHERE THE WEB APP LIVES.
+ *
+ * `grep -rl getOpsDb app/api` has never once looked at `app/eve/**` or at
+ * `lib/**`. Both hold code that reads tenant rows on the `getOpsDb()` handle,
+ * and the worst of it was the ownership gate in front of eve's own session
+ * routes: three queries, no workspace, 0 rows under the fail-closed policy, and
+ * a branch that reads "no rows" as "we have no record of this session, let it
+ * through". Every signed-in caller could read and send into every session they
+ * had an id for, and this check reported the web surface clean on every commit
+ * while that was true.
+ *
+ * The surface is `app lib` now. A checker aimed at the wrong directory is worth
+ * less than no checker, because it is also a claim.
+ *
+ * WHAT WIDENING IT FOUND, AND WHAT THE BASELINE OF 1 IS.
+ *
+ * Two files, and they are not the same kind of thing.
+ *
+ *   lib/agent-prompt-versions.ts — a `tenancy-ok:` with a reason. Its one
+ *     unscoped statement is an existence probe that discards the row; every
+ *     real read and write already runs inside withOrgRls.
+ *
+ *   lib/workspace-attention.ts — REAL DEBT, recorded as debt rather than
+ *     waved through with a marker. It counts "things needing attention" per
+ *     workspace for the workspace SWITCHER, which is genuinely a question no
+ *     single workspace can answer — but it asks it with six grouped queries on
+ *     the bare handle, so under the fail-closed policy every count comes back
+ *     zero and the switcher confidently shows nothing to do. A `tenancy-ok:`
+ *     marker saying "cross-workspace by design" would be true and would also
+ *     conceal that it does not work; the baseline of 1 says the same thing
+ *     without the reassurance. The fix is the `acrossOrgsRls` shape, and it is
+ *     a correctness bug, not a leak.
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -43,6 +76,24 @@ const CONTROL_PLANE = [
   ["app/api/ops/health/", "liveness — reads no tenant rows"],
   ["app/api/ops/env/", "deployment configuration, not tenant data"],
   ["app/api/ops/runtime-env/", "deployment configuration, not tenant data"],
+  ["lib/org-context.ts", "RESOLVES which workspace you are in — cannot run inside its own answer"],
+  ["lib/ops-db.ts", "defines withOrgRls/acrossOrgsRls; its own handle is the mechanism"],
+];
+
+/**
+ * Exemptions the prefixes above grant by accident, taken back by name.
+ *
+ * A path prefix is a blunt instrument: `app/api/ops/orgs/` is genuinely the
+ * workspace control plane, and it also contains a route that reads
+ * `automation_audit` — an ordinary tenant table with an `org_isolation` policy.
+ * The prefix exempted it, so nobody ever asked, and the query ran on the bare
+ * handle and returned zero rows in production for as long as it has existed.
+ *
+ * An exemption is a claim about a file. When the claim is wrong for one file
+ * under a prefix that is right for the rest, the honest fix is to name it.
+ */
+const NOT_CONTROL_PLANE = [
+  ["app/api/ops/orgs/[id]/audit/route.ts", "reads automation_audit, a tenant table, not workspace metadata"],
 ];
 
 const BASELINE_FILE = "scripts/.tenancy-baseline.json";
@@ -122,9 +173,25 @@ function classify(files, { isExempt, offends = (src) => unscopedQuery(src) || un
 
 /* ---- surface 1: the web app's API routes --------------------------------- */
 
-const webFiles = execSync("grep -rl 'getOpsDb' app/api --include=*.ts").toString().trim().split("\n");
+/**
+ * `app lib`, not `app/api`.
+ *
+ * The gate route that let every signed-in caller into every conversation lives
+ * at `app/eve/v1/session/[...segments]/route.ts`, and the access helpers it
+ * leans on live in `lib/`. Neither directory had ever been looked at. Widening
+ * the grep is the regression guard for that bug: the pre-fix file matches
+ * `db.select` on an unscoped handle, so it lands in `pending` and the ratchet
+ * fails, which is what should have happened the day it was written.
+ *
+ * `--include=*.ts` deliberately keeps `.tsx` out: components do not hold a
+ * database handle, and `lib/**` and `app/**` route files are where this
+ * question is decided.
+ */
+const webFiles = execSync("grep -rl 'getOpsDb' app lib --include=*.ts").toString().trim().split("\n");
 const web = classify(webFiles, {
-  isExempt: (f) => CONTROL_PLANE.some(([prefix]) => f.startsWith(prefix)),
+  isExempt: (f) =>
+    !NOT_CONTROL_PLANE.some(([path]) => f === path) &&
+    CONTROL_PLANE.some(([prefix]) => f.startsWith(prefix)),
 });
 
 /* ---- surface 2: the agent ------------------------------------------------ */

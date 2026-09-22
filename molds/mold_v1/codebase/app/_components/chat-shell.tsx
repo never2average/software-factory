@@ -16,8 +16,11 @@ import {
   mountFromSnapshot,
   snapshotUsable,
   splitClientEvents,
+  createEventDeduper,
+  dedupeEvents,
   type TranscriptSnapshot,
 } from "@/lib/chat-snapshot";
+import { withFreshestToken } from "@/lib/chat-session-cursor";
 import { cn } from "@/lib/utils";
 
 /**
@@ -101,56 +104,26 @@ interface DbChatSession {
 }
 
 /**
- * Drop EXACT-duplicate events from a stored stream, keeping the first of each.
- *
- * The eve message reducer upserts by message id, so replaying an identical event
- * twice yields the same messages as replaying it once — duplicates are pure
- * redundancy. But they DO accumulate: (a) every persist re-appends the synthetic
- * `client.input.responded` markers (they never live in `agent.events`), so each
- * reload adds another identical copy; (b) a mid-stream reattach after a stream
- * error re-appends byte-identical turn events to the store's raw list. Left in,
- * a corrupted/bloated stream is what renders as duplicated / jumbled / blank
- * messages on reopen. Collapsing exact duplicates is safe (it can't change a
- * clean stream's projection) and keeps the persisted payload from ballooning.
- */
-/**
  * The session cursor, with its resume token repaired from the stream.
  *
- * A session parked on user input carries its resume token on the latest
- * `session.waiting` EVENT; the store's `session` cursor only advances at a clean
- * turn boundary, so it can be handed over WITHOUT the token. Resuming from such
- * a cursor sends an empty continuationToken, which eve rejects ("Missing or
- * empty 'continuationToken' field") and the next message is lost.
+ * MOVED to lib/chat-session-cursor.ts, and changed while it went: it scanned
+ * backwards for the newest `session.waiting` carrying a token, which sails
+ * straight past a `session.failed` and resurrects the dead session's token onto
+ * a cursor that had just been emptied on purpose. It now stops at the LAST turn
+ * boundary, the way eve's own `advanceSession` does. Re-exported because this is
+ * where every reader has looked for it; the rule lives in a module with no React
+ * in it so scripts/test-thread-snapshot.mjs can execute it.
  */
-export function withFreshestToken(session: AgentSession, events: readonly unknown[]): AgentSession {
-  if (session.continuationToken) return session;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i] as { type?: string; data?: { continuationToken?: string } };
-    if (e?.type === "session.waiting" && typeof e.data?.continuationToken === "string" && e.data.continuationToken) {
-      return { ...session, continuationToken: e.data.continuationToken };
-    }
-  }
-  return session;
-}
+export { withFreshestToken } from "@/lib/chat-session-cursor";
 
-export function dedupeEvents<T>(events: readonly T[] | undefined): T[] {
-  if (!events?.length) return events ? [...events] : [];
-  const seen = new Set<string>();
-  const out: T[] = [];
-  for (const e of events) {
-    let key: string;
-    try {
-      key = JSON.stringify(e);
-    } catch {
-      out.push(e);
-      continue;
-    }
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(e);
-  }
-  return out;
-}
+/**
+ * Dropping exact-duplicate events MOVED to lib/chat-snapshot.ts, beside the
+ * other transcript utilities and where it can be executed by a test. Re-exported
+ * because this is where readers have always found it. `createEventDeduper` is
+ * the same rule computed incrementally, which is what the live persist path
+ * uses — see `handlePersist`.
+ */
+export { dedupeEvents } from "@/lib/chat-snapshot";
 
 /** Customer ids referenced anywhere in a chat's event stream (matched against a
  *  known id set). Shared by the sidebar (live) and persist (snapshot). */
@@ -929,6 +902,17 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const storeSnapshotRef = useRef<typeof storeSnapshot | null>(null);
   storeSnapshotRef.current = storeSnapshot;
 
+  /**
+   * The live persist path's incremental deduper (lib/chat-snapshot.ts).
+   *
+   * A ref, not state: it carries the previous call's answer so the next one
+   * only pays for what arrived since, and recreating it per render would throw
+   * that away — which is the entire saving. It is safe to keep across mounts
+   * because a stream that is not an append of the one it last saw falls back to
+   * the full pass on its own.
+   */
+  const deduperRef = useRef(createEventDeduper<unknown>());
+
   // Called by the live chat as it gains a server session + a first line.
   /**
    * "Continue" on a cut-off reply: remount THIS chat on its own cursor so a
@@ -940,6 +924,20 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
    */
   const reattach = useCallback((session: AgentSession, events: AgentEvents) => {
     const clean = dedupeEvents(events) as AgentEvents;
+    /**
+     * The hand-off may deliberately carry an EMPTY cursor.
+     *
+     * When a turn ends on `session.failed` or `session.completed`, eve's own
+     * `advanceSession` returns `createInitialSessionState()` — no session id, no
+     * token — because that session cannot be continued. `withFreshestToken` used
+     * to scan backwards for the newest `session.waiting` with a token, walk
+     * straight past the failure, and put the dead session's token back on the
+     * cursor. The next message then posted to a finished session with a spent
+     * token and the reader was told "The connection to the agent dropped."
+     *
+     * It now stops at the LAST boundary, so a failure or a completion means no
+     * backfill at all. See lib/chat-session-cursor.ts.
+     */
     setInitialSession(withFreshestToken(session, clean));
     setInitialEvents(clean);
     setAttachNonce((n) => n + 1);
@@ -983,11 +981,24 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     (rawSession: AgentSession, meta: ChatMeta, rawEvents: AgentEvents, chatKey: string) => {
       const id = rawSession.sessionId;
       if (!id) return;
-      // Collapse exact-duplicate events (accumulated `client.input.responded`,
-      // byte-identical reattach re-emissions) BEFORE anything else keys off the
-      // length — so the stored stream stays clean and the anti-truncation guard
-      // compares like with like.
-      const events = dedupeEvents(rawEvents) as AgentEvents;
+      /**
+       * Collapse exact-duplicate events (accumulated `client.input.responded`,
+       * byte-identical reattach re-emissions) BEFORE anything else keys off the
+       * length — so the stored stream stays clean and the anti-truncation guard
+       * compares like with like.
+       *
+       * INCREMENTALLY, because this runs once per text delta. `dedupeEvents`
+       * stringifies every event in the list, and eve's deltas each carry
+       * `messageSoFar` — the whole answer so far — so a long turn was paying a
+       * JSON.stringify of a quadratically-growing stream on the main thread
+       * between each chunk of output and the paint that shows it. A live turn
+       * only APPENDS, and first-occurrence-wins means the previous answer is
+       * still correct for the prefix, so the deduper checks the prefix by
+       * reference and stringifies only what arrived since. Anything that is not
+       * an append — a remount, a resync, a replaced array — falls back to the
+       * full pass, so the RESULT is unchanged; only the cost is.
+       */
+      const events = deduperRef.current(rawEvents) as AgentEvents;
       // A session parked on user input carries its resume token on the latest
       // `session.waiting` EVENT — the store's `session` cursor can lag (it only
       // advances at a clean turn boundary) and be persisted WITHOUT the token.
@@ -1924,7 +1935,28 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       setInitialEvents(events as AgentEvents);
       setInitialSession({
         sessionId: thread.eveSessionId,
-        continuationToken: fresh?.continuationToken,
+        /**
+         * NO RESUME TOKEN, for a participant or a viewer.
+         *
+         * A shared thread's token lives in the `chat_threads` row and is
+         * claimed by the send relay — that is what serializes two people
+         * writing into one eve session, and what
+         * `app/api/ops/threads/[id]/messages/route.ts` means by "once shared,
+         * the token lives ONLY in the row, never on a client".
+         *
+         * This line mounted it anyway, for viewers as well as participants,
+         * because the stream proxy handed eve's `session.waiting` through
+         * untouched and `replaySession` picks the token out of it. Only the
+         * composer's own UI then stopped a read-only member from sending. The
+         * proxy now strips it server-side (`withoutContinuationTokens`), so
+         * `fresh.continuationToken` is already undefined here; leaving the
+         * field off is the client saying the same thing, so a future reader
+         * cannot re-introduce the mount from some other source.
+         *
+         * Nothing here needs it: a participant sends through `relayThreadId`
+         * (agent-chat's `handleSubmit` short-circuits to the relay before it
+         * touches a token) and a viewer sends nothing at all.
+         */
         // The SERVER's absolute index when it has one. `events.length` counts
         // the client-only `client.input.responded` markers appended above, so
         // it drifts above the true server index — and eve passes streamIndex
@@ -2047,8 +2079,18 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         method: "DELETE",
         headers: getAuthHeaders(),
       }).catch(() => {});
-      // …and the cached transcript. A cache that outlives the thing it caches is
-      // a copy of a conversation the user believes they deleted.
+      /**
+       * …and the cached transcript. A cache that outlives the thing it caches
+       * is a copy of a conversation the user believes they deleted.
+       *
+       * The DELETE above now does this server-side as well — the mirror row,
+       * the transcript and the share, in one authorized request — because a
+       * deletion that depends on the deleter's browser staying alive is not a
+       * deletion: this call is `void fetch(…).catch(() => {})`, so closing the
+       * tab on the click left the full conversation behind for good. This stays
+       * as the local half (it also clears `snapshotIndexRef`, which is in this
+       * browser and nowhere else) and is now belt to the server's braces.
+       */
       const sid = gone?.session?.sessionId;
       if (sid) {
         snapshotIndexRef.current.delete(sid);

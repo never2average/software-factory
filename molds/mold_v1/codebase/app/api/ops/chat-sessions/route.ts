@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
-import { chatSessions, chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
+import {
+  chatSessions,
+  chatThreadMembers,
+  chatThreads,
+  chatTranscriptSnapshots,
+} from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
@@ -17,7 +22,8 @@ export const dynamic = "force-dynamic";
  *
  *  GET    /api/ops/chat-sessions          — this user's non-archived threads.
  *  POST   /api/ops/chat-sessions {sessions}— upsert a batch (owner = caller).
- *  DELETE /api/ops/chat-sessions?id=…      — remove one.
+ *  DELETE /api/ops/chat-sessions?id=…      — remove one, AND every copy of it:
+ *                                            the transcript cache and the share.
  *
  * Fail-safe: a MISSING TABLE is reported as an empty store, so the front-end
  * DB-sync is harmless before the migration runs. Every other failure is a 503.
@@ -185,6 +191,38 @@ export async function POST(request: NextRequest) {
       for (const o of owners) {
         if (o.ownerEmail.toLowerCase() !== email) foreign.add(o.eveSessionId);
       }
+
+      /**
+       * NOR IS A SESSION SOMEBODY ELSE HAS ALREADY MIRRORED.
+       *
+       * The check above only knows about SHARED conversations, because a
+       * `chat_threads` row exists only once a thread has been shared. An
+       * ordinary private chat has no such row — so this route would happily
+       * write "I own eve session X" for any id a caller named, and
+       * `lib/chat-session-access.ts` then derived read AND write access to the
+       * cached transcript from exactly that row. A colleague who learned a
+       * session id (they appear in the audit feed, in logs, in links) could
+       * claim somebody's private conversation and then read, overwrite or
+       * delete the most complete copy of it this system stores, through
+       * /api/ops/chat-snapshots and /api/ops/chat-replay.
+       *
+       * One session, one owner: the first mirror row wins. The read rule
+       * independently refuses a session with more than one claimant, because
+       * rows minted before this check still exist.
+       */
+      const claimed = await withOrgRls(ctx.orgId, (tx) =>
+        tx
+          .select({
+            id: chatSessions.id,
+            eveSessionId: chatSessions.eveSessionId,
+            ownerEmail: chatSessions.ownerEmail,
+          })
+          .from(chatSessions)
+          .where(inArray(chatSessions.eveSessionId, sessionIds)),
+      );
+      for (const c of claimed) {
+        if (c.eveSessionId && c.ownerEmail.toLowerCase() !== email) foreign.add(c.eveSessionId);
+      }
     }
 
     let refused = 0;
@@ -252,6 +290,80 @@ export async function DELETE(request: NextRequest) {
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
   try {
+    /**
+     * DELETING A CHAT DELETES THE COPIES OF IT, HERE, NOT IN THE BROWSER.
+     *
+     * The client used to fire three independent requests — this one, a snapshot
+     * DELETE and nothing at all for the thread — from a `void fetch(…)` with an
+     * empty catch. Closing the tab on the click, losing the network for a
+     * second, or simply navigating away left the cached transcript (the most
+     * complete copy of the conversation this system stores) in the table for
+     * good, attached to a chat the person watched disappear. A deletion that
+     * depends on the deleter's browser staying alive is not a deletion.
+     *
+     * So the server does the whole cascade, in the one request that is already
+     * authorized: the mirror row, the transcript cache, and the share.
+     */
+    const [mine] = await withOrgRls(ctx.orgId, (tx) =>
+      tx
+        .select({ eveSessionId: chatSessions.eveSessionId })
+        .from(chatSessions)
+        .where(
+          and(
+            eq(chatSessions.id, id),
+            eq(chatSessions.ownerEmail, email),
+            eq(chatSessions.orgId, ctx.orgId),
+          ),
+        )
+        .limit(1),
+    );
+    const eveSessionId = mine?.eveSessionId ?? null;
+    if (eveSessionId) {
+      await withOrgRls(ctx.orgId, (tx) =>
+        tx
+          .delete(chatTranscriptSnapshots)
+          .where(
+            and(
+              eq(chatTranscriptSnapshots.orgId, ctx.orgId),
+              eq(chatTranscriptSnapshots.eveSessionId, eveSessionId),
+            ),
+          ),
+      );
+      /**
+       * A deleted chat cannot stay shared.
+       *
+       * The `chat_threads` row was never touched by a delete, so members kept
+       * the thread in "Shared with you", kept streaming it and kept reading the
+       * transcript of a conversation its owner had deleted. Archived rather
+       * than dropped — the row is referenced by turn authorship and the audit
+       * trail, and "who was in this thread" is a question worth being able to
+       * answer afterwards — with the member rows revoked, which is what every
+       * access check in the system already reads.
+       */
+      const threads = await withOrgRls(ctx.orgId, (tx) =>
+        tx
+          .update(chatThreads)
+          .set({ archivedAt: new Date(), continuationToken: null, updatedAt: new Date() })
+          .where(and(eq(chatThreads.eveSessionId, eveSessionId), eq(chatThreads.ownerEmail, email)))
+          .returning({ id: chatThreads.id }),
+      );
+      if (threads.length) {
+        await withOrgRls(ctx.orgId, (tx) =>
+          tx
+            .update(chatThreadMembers)
+            .set({ status: "revoked", revokedAt: new Date() })
+            .where(
+              and(
+                inArray(
+                  chatThreadMembers.threadId,
+                  threads.map((t) => t.id),
+                ),
+                ne(chatThreadMembers.status, "revoked"),
+              ),
+            ),
+        );
+      }
+    }
     await withOrgRls(ctx.orgId, (tx) =>
       tx
         .delete(chatSessions)

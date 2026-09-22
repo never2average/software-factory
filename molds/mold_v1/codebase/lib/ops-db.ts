@@ -87,6 +87,32 @@ export async function withOrgRls<T>(
 }
 
 /**
+ * Every workspace, suspended ones included.
+ *
+ * `orgs` is the tenancy control plane — no org_id, no policy — and nothing can
+ * enumerate it from inside a workspace's scope. The same read {@link
+ * acrossOrgsRls} makes, exported so a caller that needs the LIST but not the
+ * loop does not have to reach for a bare handle of its own and become the next
+ * thing `check:tenancy` has to reason about.
+ *
+ * The ownership gate in front of eve's session routes is that caller: before it
+ * may treat a session as one nobody has ever recorded — which is the branch
+ * that lets a brand-new chat work during the debounce window — it has to have
+ * looked everywhere, and "everywhere" is a question only this table answers.
+ *
+ * Suspended workspaces are INCLUDED, unlike the sweep below. A sweep is work to
+ * be done and a suspended workspace has none; but a session recorded in one
+ * still belongs to somebody, and skipping it would make suspending a workspace
+ * a way to make its conversations readable by strangers.
+ */
+export async function listWorkspaceIds(): Promise<string[]> {
+  const db = getOpsDb();
+  if (!db) return [];
+  const rows = await db.select({ orgId: orgs.orgId }).from(orgs);
+  return rows.map((r) => r.orgId);
+}
+
+/**
  * Run a query once per workspace, in each workspace's RLS scope, and
  * concatenate.
  *

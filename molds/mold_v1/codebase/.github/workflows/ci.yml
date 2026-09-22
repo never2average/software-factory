@@ -115,8 +115,31 @@ jobs:
         if: always()
         run: npm run test:thread-snapshot
 
+      # WHO MAY REACH A CONVERSATION. Every hole closed here was a
+      # correct-looking rule sitting on top of a read that returned nothing —
+      # the gate in front of eve's own session routes said "deny when it belongs
+      # to someone else" in a comment and allowed every signed-in caller in
+      # fact, because it asked an unscoped handle under a fail-closed policy. So
+      # this RUNS the decisions, RUNS the shared-thread proxy's token redaction
+      # over real NDJSON at every chunk boundary, and requires check:tenancy to
+      # fail on the SHAPE of the original bug — the regression guard matters as
+      # much as the fix, since the reason it survived is that nothing ever
+      # scanned the directory it lived in. The database half (those reads really
+      # do return zero rows) is in the isolation job below.
+      - name: Chat access control (behavioural)
+        if: always()
+        run: npm run test:chat-access
+
       # The other BEHAVIOURAL chat test — it executes the real module rather than
       # grepping source, which is how every other chat regression got past CI.
+      # It also holds the pure half of the adversarial review of #37: a gap in
+      # the attached tail must be CLOSABLE by a restarted reader (it was
+      # permanent, and froze the transcript for the rest of the session), that
+      # reader must reopen at the index the transcript actually needs, a hand-off
+      # on `session.failed`/`session.completed` must hand back no session id and
+      # no token (eve's own advanceSession drops both, and overriding it posted
+      # the next message to a dead session), and an expired sign-in must read as
+      # "sign in again" rather than "still working".
       - name: Chat turn state (behavioural)
         if: always()
         run: npm run test:chat-turn-state
@@ -129,6 +152,13 @@ jobs:
       # every telemetry kind the chat emits through the route's own schema —
       # the check that would have caught the #34 trap, and that caught two more
       # kinds (`resync`, `stop`) that were being dropped silently.
+      #
+      # Since the adversarial review of #37 it also holds the reader's own load
+      # and liveness rules, each one measured before it was fixed: a stream that
+      # yields one event per open must not reopen 200 times in 3 ms against an
+      # ownership-gated route, a segment that produces nothing must be cut rather
+      # than hanging the turn forever with the poll stood down, and a 401 (a
+      # stale hour-long token) must be told apart from a 403 (a revoked share).
       - name: Chat reattach to a detached turn (behavioural)
         if: always()
         run: npm run test:chat-reattach
@@ -251,6 +281,21 @@ jobs:
 
       - name: Cross-tenant isolation
         run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" node scripts/test-org-isolation.mjs
+
+      # The chat access holes all rested on ONE database fact: under the
+      # production fail-closed policy an unscoped read returns zero rows, and
+      # the session gate read zero rows as "no record of this session, let it
+      # through". That is not visible in source and cannot be asserted without a
+      # database, so it is asserted here: the same queries, made both ways,
+      # against a Postgres whose policies this step flips to the production
+      # shape (bootstrap-test-db builds the permissive one the isolation test
+      # above needs) and restores afterwards.
+      - name: Chat access control, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          node scripts/test-chat-access-db.mjs
 
 # NOT RUN HERE, deliberately:
 #

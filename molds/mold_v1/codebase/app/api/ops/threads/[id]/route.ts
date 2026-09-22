@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -102,12 +102,36 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
     if (access.role !== "owner") {
       return NextResponse.json({ error: "Only the owner can delete this thread." }, { status: 403 });
     }
-    // Archive (soft) — keeps the audit trail and any in-flight member links.
+    /**
+     * UN-SHARING HAS TO REMOVE ACCESS, not just a row from a list.
+     *
+     * Archiving alone did nothing. Neither `accessFor` (lib/chat-threads.ts)
+     * nor `accessForSession` (lib/chat-session-access.ts) looked at
+     * `archived_at`, so every member went on streaming the thread and reading
+     * its cached transcript exactly as before — the words "un-shared the
+     * thread" appeared in the activity feed and nowhere in the access rules.
+     *
+     * Three things, because each one is read by a different check: the archive
+     * stamp (the stream proxy and the transcript rule refuse it now), the
+     * revoked member rows (what `accessFor` has always read, and what the eve
+     * session gate now reads), and clearing the relay's token so a claim cannot
+     * outlive the share.
+     *
+     * Archived rather than deleted: turn authorship and the audit trail
+     * reference this row, and "who was in this thread" is a question worth
+     * still being able to answer.
+     */
     await withOrgRls(access.thread.orgId, (tx) =>
       tx
         .update(chatThreads)
-        .set({ archivedAt: new Date(), updatedAt: new Date() })
+        .set({ archivedAt: new Date(), continuationToken: null, updatedAt: new Date() })
         .where(eq(chatThreads.id, id)),
+    );
+    await withOrgRls(access.thread.orgId, (tx) =>
+      tx
+        .update(chatThreadMembers)
+        .set({ status: "revoked", revokedAt: new Date() })
+        .where(and(eq(chatThreadMembers.threadId, id), ne(chatThreadMembers.status, "revoked"))),
     );
     void recordActivity(db, {
       entityType: "thread",

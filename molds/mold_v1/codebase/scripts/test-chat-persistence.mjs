@@ -73,17 +73,41 @@ check(
 const gate = readFileSync("app/eve/v1/session/[...segments]/route.ts", "utf8");
 const nextCfg = readFileSync("next.config.ts", "utf8");
 const threads = readFileSync("app/api/ops/threads/route.ts", "utf8");
+const gateRule = readFileSync("lib/chat-gate.ts", "utf8");
+const gateReads = readFileSync("lib/chat-session-access.ts", "utf8");
 
 console.log("\nSession ownership:");
-check("per-session paths are gated, not blindly proxied", /permitted\(sessionId, identity\.email\)/.test(gate));
+check(
+  "per-session paths are gated, not blindly proxied",
+  /permitted\(ctx\.orgId, sessionId, identity\.email\)/.test(gate),
+);
+check(
+  // The gate asked its three questions on the BARE handle, and under the
+  // production fail-closed policy all three answered "no rows" — which it read
+  // as "no record of this session" and turned into "allow everybody". The
+  // workspace is now part of the question, which is the whole fix.
+  "…inside the workspace's scope, or the reads cannot answer at all",
+  /orgContextForRequest\(request\)/.test(gate),
+);
 check("a non-owner is refused", /status: 403/.test(gate));
 // The gate is a dynamic route; `afterFiles` rewrites (a bare array) beat dynamic
 // routes, so the handler built fine and was never reached. Measured, not guessed.
 check("the eve rewrite is a fallback so the gate wins", /fallback: \[/.test(nextCfg));
 check("…and no afterFiles rewrite shadows it", /afterFiles: \[\]/.test(nextCfg));
 check("the stream is passed through, never buffered", /new Response\(upstream\.body/.test(gate));
-check("an unknown session fails open (never lock someone out of a new chat)", /if \(owners\.length === 0 && threads\.length === 0\) return true/.test(gate));
-check("shared-thread members keep access", /chatThreadMembers/.test(gate));
+// The rule itself moved to lib/chat-gate.ts, where it can be EXECUTED rather
+// than matched — see scripts/test-chat-access.mjs, which runs every branch of
+// it. These two keep watch on the properties this file has always guarded.
+check(
+  "an unknown session still fails open (never lock someone out of a new chat)",
+  /reason: "unknown"/.test(gateRule),
+);
+check(
+  "…but 'unknown' now means we looked EVERYWHERE, not that we could not see",
+  /reason: "other-workspace"/.test(gateRule) && /knownElsewhere/.test(gateRule),
+);
+check("shared-thread members keep access", /reason: "member"/.test(gateRule));
+check("…and a revoked one does not", /ne\(chatThreadMembers\.status, "revoked"\)/.test(gateReads));
 
 console.log("\nThread fork:");
 check(

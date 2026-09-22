@@ -182,9 +182,17 @@ export function holdLabel(
   reason: HoldReason | null,
   specialistRunning = false,
   attached = false,
+  signedOut = false,
 ): string {
   switch (reason) {
     case "detached":
+      // A 401 is not a slow turn: the hour-long session token expired under it
+      // (auth-gate drops it 60s before `exp`), so the reader cannot read and the
+      // poll cannot poll. "Still working" would be a lie that hides the one
+      // action that fixes it.
+      if (signedOut) {
+        return "Your sign-in expired while this reply was running. Sign in again to pick it up — nothing is lost.";
+      }
       return specialistRunning
         ? "Still working — a specialist is running. Queued messages send when it finishes."
         : attached
@@ -387,6 +395,78 @@ export function serverEventCount(events: readonly TurnEvent[]): number {
   return n;
 }
 
+/**
+ * How far the ABSOLUTE stream index runs ahead of the events actually held.
+ *
+ * `serverEventCount` counts what is in the transcript, and for a transcript read
+ * straight off the stream that IS the absolute index. It is not, for one mounted
+ * from a cached transcript: `compactTranscript` (lib/chat-snapshot.ts) drops
+ * superseded `*.appended` deltas on purpose, so the stored events are FEWER than
+ * the index they cover — `mountFromSnapshot` returns both, and says so.
+ *
+ * Counting such a transcript and calling the result an absolute index understates
+ * it by every delta compaction removed. A reader resuming there would be handed
+ * events the transcript already contains, and re-applying an older
+ * `message.appended` rewinds the reply on screen (the reducer replaces a part by
+ * key, it does not append). The two changes that meet here shipped the same day,
+ * built in parallel, and their offline tests each passed alone.
+ *
+ * The deficit is fixed for the life of a mount — events are only ever appended
+ * after it — so it is measured once, from the cursor and the transcript the mount
+ * was given, and added to every count taken from then on.
+ */
+export function absoluteIndexBase(
+  mountedStreamIndex: number | undefined,
+  mountedEvents: readonly TurnEvent[] | undefined,
+): number {
+  if (typeof mountedStreamIndex !== "number" || !Number.isFinite(mountedStreamIndex)) return 0;
+  // Never negative: a cursor BEHIND the transcript would push a reader backwards,
+  // which is the very failure this exists to stop.
+  return Math.max(0, Math.floor(mountedStreamIndex) - serverEventCount(mountedEvents ?? []));
+}
+
+/**
+ * WHAT CURSOR MAY BE HANDED BACK WHEN A READER REACHES A BOUNDARY.
+ *
+ * The hand-off used to return `{ sessionId, continuationToken: freshestToken(),
+ * streamIndex }` unconditionally — and `isSessionBoundary` counts
+ * `session.failed` and `session.completed` as terminals, so it did that for a
+ * session that is OVER. `freshestToken()` scans back to the last
+ * `session.waiting`, which after a failure is the token from an earlier park of
+ * the now-dead session. The next message then posted to a dead session with a
+ * spent token and surfaced as "The connection to the agent dropped."
+ *
+ * eve says this itself, in `advanceSession` (client/session-utils.js): on any
+ * boundary that is not `session.waiting` it returns
+ * `createInitialSessionState()` — `{ streamIndex: 0 }`, no session id, no token.
+ * That EMPTY state is how a new session gets opened, and `withSessionEpochs`
+ * below is written assuming exactly that (it renumbers `turn_0` of the next
+ * session so it cannot overwrite this transcript's first exchange). Overriding
+ * it put the app back in the state the epochs exist to survive.
+ *
+ * So: `session.waiting` is a park and the cursor is carried; `session.failed`
+ * and `session.completed` end the session and the cursor is dropped, exactly as
+ * eve would have dropped it.
+ */
+export function handBackSession(input: {
+  /** The boundary the reader stopped on. */
+  readonly boundary: TurnEvent | undefined;
+  readonly sessionId: string;
+  readonly continuationToken: string | undefined;
+  readonly streamIndex: number;
+}): { sessionId?: string; continuationToken?: string; streamIndex: number } {
+  const type = input.boundary?.type;
+  if (type === "session.completed" || type === "session.failed") {
+    // Identical to eve's own `createInitialSessionState()`.
+    return { streamIndex: 0 };
+  }
+  return {
+    sessionId: input.sessionId,
+    continuationToken: input.continuationToken,
+    streamIndex: input.streamIndex,
+  };
+}
+
 /** One event of the attached tail, with the absolute index it arrived at. */
 export interface IndexedEvent<T = TurnEvent> {
   readonly index: number;
@@ -405,8 +485,23 @@ export interface IndexedEvent<T = TurnEvent> {
  *  - The tail is applied in index order, and stops at the FIRST GAP. An event
  *    whose predecessor is missing cannot be placed: eve's reducer updates "the
  *    assistant message of turn N" in place, so applying 104 without 103 does not
- *    leave a hole, it writes the wrong text. The gap closes itself on the next
- *    reconnect, which reopens at the missing index.
+ *    leave a hole, it writes the wrong text.
+ *
+ *    THIS FILE USED TO CLAIM "the gap closes itself on the next reconnect,
+ *    which reopens at the missing index". It did not, and the claim was the
+ *    whole defect: `readLiveTail` reopens at ITS OWN counter, never at the index
+ *    the transcript needs, and the component's append guard compared a new entry
+ *    only against the LAST one it held — so a restarted reader that re-delivered
+ *    100..159 over a tail already holding 103..149 had 100, 101 and 102 silently
+ *    dropped, and `mergedEvents` was then frozen for the rest of the session.
+ *    `turnUnfinished` stayed true, `attachDecision` kept answering "live turn",
+ *    and the composer sat on "Still working…" with the queue never flushing —
+ *    unrecoverable on a shared thread, where the poll returns early on
+ *    `relayThreadId` and the hand-off is skipped on `attachVia`.
+ *
+ *    A gap now closes because `appendTailEvent` below places an entry by INDEX
+ *    rather than appending it, and because a restarted reader is started at
+ *    exactly the index the merged transcript is missing.
  *  - Nothing to add returns the SAME ARRAY REFERENCE, so every memo keyed on
  *    the event list keeps its identity on an ordinary, unattached transcript.
  *    (Same reason `deadInputRequestIds` shares one empty set.)
@@ -427,6 +522,49 @@ export function mergeAttachedEvents<T extends TurnEvent>(
   const extra: T[] = [];
   for (let i = nextIndex; byIndex.has(i); i++) extra.push(byIndex.get(i) as T);
   return extra.length === 0 ? storeEvents : [...storeEvents, ...extra];
+}
+
+/**
+ * Place one delivered event in the tail BY ITS INDEX, not at the end.
+ *
+ * The guard this replaces was `prev[prev.length - 1].index >= entry.index ? prev
+ * : [...prev, entry]` — a comparison against the LAST entry only. It is correct
+ * for one reader, whose indices are strictly increasing, and wrong the moment a
+ * reader RESTARTS mid-turn, which three ordinary things cause: a reader failure
+ * bumping the attach epoch, the tab becoming visible again, and eve re-emitting
+ * `turn.started` when it replays a turn after a step throws (see
+ * `retryStormDetected`). The restarted reader reopens at the index the
+ * transcript is missing, so its first deliveries are BELOW the tail's last
+ * index — and every one of them was dropped, which made the hole permanent.
+ *
+ * Proved: a tail holding 103..149 met a reader delivering 100..159 and kept
+ * 103..159; 100, 101 and 102 were gone for good and `mergeAttachedEvents`
+ * returned the store's array unchanged from then on.
+ *
+ * Rules, in the order they matter:
+ *  - an index already held is kept as it was (FIRST DELIVERY WINS — a re-sent
+ *    `message.appended` would otherwise rewind the reply on screen, because the
+ *    reducer replaces a part by key rather than appending to it);
+ *  - the common case, an index past the end, is still a plain append with no
+ *    copying beyond the spread;
+ *  - anything else is inserted at its place, so the list stays index-ordered
+ *    and `mergeAttachedEvents` can walk it from `nextIndex` without a gap;
+ *  - nothing added returns the SAME ARRAY REFERENCE, so the memos keyed on the
+ *    tail do not churn on a duplicate delivery.
+ */
+export function appendTailEvent<T extends TurnEvent>(
+  prev: readonly IndexedEvent<T>[],
+  entry: IndexedEvent<T>,
+): readonly IndexedEvent<T>[] {
+  if (!entry || !Number.isFinite(entry.index)) return prev;
+  const last = prev[prev.length - 1];
+  if (last === undefined || entry.index > last.index) return [...prev, entry];
+  // Backwards from the end: a restarted reader's deliveries land near the tail's
+  // own range, not at its start.
+  let at = prev.length - 1;
+  while (at >= 0 && prev[at].index > entry.index) at--;
+  if (at >= 0 && prev[at].index === entry.index) return prev;
+  return [...prev.slice(0, at + 1), entry, ...prev.slice(at + 1)];
 }
 
 /**
@@ -668,6 +806,28 @@ export function withRequestIds(
     if (!id || prev.has(id)) continue;
     next ??= new Set(prev);
     next.add(id);
+  }
+  return next ?? prev;
+}
+
+/**
+ * Take request ids back out, on the same fixed-point discipline.
+ *
+ * Needed when a delivery FAILS after the card was optimistically marked
+ * answered: a shared thread's answer goes to the relay, and a relay that refuses
+ * it (409 someone else holds the turn, 502 a spent token) must leave the card
+ * answerable. Marking it answered anyway is the quiet failure — the person sees
+ * their Yes recorded and the agent never hears it.
+ */
+export function withoutRequestIds(
+  prev: ReadonlySet<string>,
+  ids: Iterable<string>,
+): ReadonlySet<string> {
+  let next: Set<string> | null = null;
+  for (const id of ids) {
+    if (!id || !prev.has(id)) continue;
+    next ??= new Set(prev);
+    next.delete(id);
   }
   return next ?? prev;
 }

@@ -138,6 +138,113 @@ export function compactTranscript(events: readonly unknown[]): unknown[] {
 }
 
 /**
+ * Collapse exact-duplicate events.
+ *
+ * A clean stream has none, so this is never a correctness fix in the normal
+ * case — but they DO accumulate: every persist re-appends the synthetic
+ * `client.input.responded` markers (they never live in the store's own event
+ * list), and a mid-stream reattach re-appends byte-identical turn events to it.
+ * Left in, a bloated stream renders as duplicated, jumbled or blank messages on
+ * reopen. Collapsing exact duplicates cannot change a clean stream's projection
+ * — the reducer's `upsertPart` is keyed, so a byte-identical repeat writes the
+ * same part to the same slot — and it keeps the persisted payload from
+ * ballooning against the storage quota.
+ *
+ * First occurrence wins and order is preserved, which is what makes
+ * {@link createEventDeduper} able to do this incrementally.
+ */
+export function dedupeEvents<T>(events: readonly T[] | undefined): T[] {
+  if (!events?.length) return events ? [...events] : [];
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const e of events) {
+    let key: string;
+    try {
+      key = JSON.stringify(e);
+    } catch {
+      out.push(e);
+      continue;
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
+}
+
+/**
+ * The same answer, for the cost of what is NEW.
+ *
+ * `handlePersist` is the only persistence that runs during a live conversation,
+ * and it ran {@link dedupeEvents} over the WHOLE event list on every call —
+ * which is once per text delta. eve's deltas each carry `messageSoFar`, the
+ * entire answer so far, so that is a `JSON.stringify` of a quadratically-growing
+ * stream, on the main thread, between a keystroke of output and the paint that
+ * shows it. Measured at 1,500 events it is the largest single blocking cost in
+ * the turn.
+ *
+ * A LIVE turn only ever APPENDS to the store's event array, and the array
+ * elements are stable references, so the previous call's answer is still the
+ * right answer for the prefix — first-occurrence-wins means an earlier decision
+ * can never be revised by a later event. So: check the prefix by REFERENCE
+ * (no stringify at all), and stringify only the events that arrived since.
+ * Anything that is not an append — a remount, a resync, a replaced array — falls
+ * back to the full pass, so the OUTPUT is always identical to calling
+ * {@link dedupeEvents} directly. That equivalence is executed in
+ * scripts/test-thread-snapshot.mjs rather than asserted here.
+ *
+ * One deduper per mounted chat; a new mount gets a new one, which is also what
+ * makes the fallback safe.
+ */
+export function createEventDeduper<T>(): (events: readonly T[] | undefined) => T[] {
+  let source: readonly T[] | undefined;
+  let result: T[] = [];
+  let seen = new Set<string>();
+
+  const full = (events: readonly T[]) => {
+    seen = new Set<string>();
+    result = [];
+    for (const e of events) add(e);
+  };
+  const add = (e: T) => {
+    let key: string;
+    try {
+      key = JSON.stringify(e);
+    } catch {
+      result.push(e);
+      return;
+    }
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(e);
+  };
+  /** Is `prev` the same array, element for element, as the head of `next`? */
+  const extendsPrefix = (prev: readonly T[], next: readonly T[]): boolean => {
+    if (next.length < prev.length) return false;
+    for (let i = 0; i < prev.length; i++) if (prev[i] !== next[i]) return false;
+    return true;
+  };
+
+  return (events) => {
+    if (!events?.length) {
+      source = events;
+      result = [];
+      seen = new Set<string>();
+      return events ? [] : [];
+    }
+    if (source && extendsPrefix(source, events)) {
+      for (let i = source.length; i < events.length; i++) add(events[i]);
+    } else {
+      full(events);
+    }
+    source = events;
+    // A copy, because the caller stores what it is given and the next call
+    // appends to `result` in place.
+    return [...result];
+  };
+}
+
+/**
  * JSON with object keys sorted, at every depth.
  *
  * Needed because the snapshot round-trips through a Postgres `jsonb` column,
@@ -304,7 +411,10 @@ export function mountFromSnapshot(
  *   thread only gets one once it is SHARED).
  * - `membership` is the caller's non-revoked `chat_thread_members` row on it.
  * - `ownsMirrorRow` is true when the caller owns the `chat_sessions` row for
- *   this session — an ordinary private chat of their own.
+ *   this session AND is the only person claiming it — an ordinary private chat
+ *   of their own. The "only person" half is load-bearing: writing such a row
+ *   for an arbitrary session id was a POST away, so a claim that is not
+ *   exclusive is a claim that proves nothing.
  *
  * The order matters: once a thread row exists it OWNS the access decision, so a
  * revoked member cannot fall back to "well, I have a mirror row for it" and keep
@@ -322,12 +432,34 @@ export function snapshotAccess(input: {
     if (input.thread.ownerEmail.toLowerCase() === me) return { read: true, write: true };
     const m = input.membership;
     if (!m || m.status === "revoked") return { read: false, write: false };
-    // A viewer may READ the cached transcript — it is the same transcript the
-    // stream proxy already hands them. Only the people who can send into the
-    // thread may replace it, so a read-only member can never be the one who
-    // decides what everyone else mounts.
-    return { read: true, write: m.role === "participant" };
+    /**
+     * A member may READ the cached transcript — it is the same transcript the
+     * stream proxy already hands them — and NOBODY but the owner may replace
+     * it. This used to read `write: m.role === "participant"`.
+     *
+     * The choice was between verifying more of a submitted transcript and
+     * narrowing who may submit one, and verification cannot be made to work
+     * here. `POST /api/ops/chat-snapshots` takes `events` as arbitrary client
+     * JSON, and {@link checkSeam} re-reads exactly ONE event: the one the
+     * snapshot claims to end on. Everything before that seam is unverified, and
+     * length proves nothing either, because {@link compactTranscript}
+     * deliberately makes the stored transcript shorter than the stream it
+     * covers. Verifying several seam events moves the line without changing the
+     * shape — an author who controls the prefix can always put a true tail on a
+     * fabricated body, and the body is what a reader mounts. The only check
+     * that would actually hold is replaying the whole stream and comparing it,
+     * which is exactly the cost this cache exists to remove.
+     *
+     * So: one writer, the person whose conversation it is. A participant loses
+     * only speed — their open falls back to the bounded replay, which is what
+     * every open did before this cache existed — and they still READ the cache
+     * the owner writes. Nobody else decides what everyone in a shared thread
+     * sees when they open it.
+     */
+    return { read: true, write: false };
   }
-  // No thread row: an unshared chat. It is yours or it is nobody's.
+  // No thread row: an unshared chat. It is yours or it is nobody's — and
+  // `ownsMirrorRow` now means the caller is the ONLY claimant (see
+  // lib/chat-session-access.ts), because minting a claim used to be a POST away.
   return { read: input.ownsMirrorRow, write: input.ownsMirrorRow };
 }

@@ -32,6 +32,7 @@ import {
   projectAttached,
   serverEventCount,
   withSessionEpochs,
+  absoluteIndexBase,
 } from "../lib/chat-turn-state.ts";
 import { eveSessionStream, readLiveTail, readNdjson, StreamOpenError } from "../lib/chat-attach.ts";
 import {
@@ -573,6 +574,379 @@ console.log("\ntelemetry kinds round-trip through the route's schema:");
   check(
     "the route derives its enum from the one map, so the trap cannot come back",
     /z\.enum\(CHAT_TELEMETRY_KINDS\)/.test(route),
+  );
+}
+
+
+// --- a CACHED transcript is compacted, so counting it is NOT the absolute index -------------------------------
+{
+  const { compactTranscript, mountFromSnapshot } = await import("../lib/chat-snapshot.ts");
+  const ev = (type, data = {}) => ({ type, data: { turnId: "turn_0", stepIndex: 0, ...data } });
+  const server = [
+    ev("session.started"), ev("turn.started"), ev("message.received", { message: "hi" }), ev("step.started"),
+    ev("message.appended", { messageSoFar: "a" }), ev("message.appended", { messageSoFar: "ab" }),
+    ev("message.appended", { messageSoFar: "abc" }), ev("message.completed", { message: "abc" }),
+    ev("turn.completed"), ev("session.waiting"),
+  ];
+  const compacted = compactTranscript(server);
+  check("compaction really does drop events", compacted.length < server.length);
+  const mounted = mountFromSnapshot(
+    { version: 1, eventIndex: server.length, events: compacted, clientEvents: [] }, [], [],
+  );
+  const base = absoluteIndexBase(mounted.streamIndex, mounted.events);
+  check("counting a cached transcript understates the stream", serverEventCount(mounted.events) < server.length);
+  check("count + base IS where the stream actually is", serverEventCount(mounted.events) + base === server.length);
+  check("an uncompacted transcript needs no correction", absoluteIndexBase(server.length, server) === 0);
+  check("no cursor means no correction", absoluteIndexBase(undefined, compacted) === 0);
+  check("a cursor behind the transcript never pushes a reader backwards", absoluteIndexBase(2, server) === 0);
+  check(
+    "client-only markers never inflate the base",
+    absoluteIndexBase(server.length, [...compacted, { type: "client.message.submitted" }]) === base,
+  );
+}
+
+/* ═══ 6. WHAT AN ADVERSARIAL REVIEW OF #37 FOUND ══════════════════════════
+ *
+ * Six defects, each one proved against the real modules before it was fixed.
+ * Every block here fails on the code that shipped and passes on the fix.
+ */
+
+console.log("\nthe reader never opens in a tight loop, however productive (finding 4):");
+{
+  /**
+   * `if (got > 0) { fruitless = 0; continue; }` made the backoff reachable ONLY
+   * by a segment that delivered nothing. An opener that yields one event and
+   * then ends is therefore reopened as fast as the event loop allows: measured
+   * on the shipped code at **200 opens in 3 ms**, and with the epoch re-arm
+   * allowing four readers per turn, 800. Every one of those runs the session
+   * proxy's ownership gate — two or three workspace-scoped queries — so this is
+   * exactly the shape that turns a slow database into an outage of our own
+   * making. The module's own header promises "never a tight retry … always a
+   * backoff".
+   */
+  let opens = 0;
+  const waits = [];
+  const result = await readLiveTail({
+    open: async function* () {
+      opens += 1;
+      yield { type: "message.appended", data: { turnId: "turn_0", messageSoFar: "…" } };
+    },
+    startIndex: 0,
+    signal: new AbortController().signal,
+    onEvent: () => {},
+    maxSegments: 50,
+    sleep: (ms) => {
+      waits.push(ms);
+      return Promise.resolve();
+    },
+  });
+  check("a one-event-per-open stream still ends on the segment budget", result.outcome === "exhausted");
+  check("…but every single reopen is paid for", waits.length >= opens - 1);
+  check(
+    "…with the 250ms floor charged from the open, so 50 opens cost 12 seconds rather than 1 millisecond",
+    waits.reduce((a, b) => a + b, 0) >= 12_000,
+  );
+
+  // A HEALTHY segment — one that ran for longer than the floor — must not be
+  // delayed at all: the gap between segments is dead air on the reader's screen.
+  const realWaits = [];
+  await readLiveTail({
+    open: async function* (startIndex) {
+      if (startIndex > 0) return;
+      for (const e of LIVE_TURN) yield e;
+    },
+    startIndex: 0,
+    signal: new AbortController().signal,
+    onEvent: () => {},
+    minSegmentGapMs: 0,
+    sleep: (ms) => {
+      realWaits.push(ms);
+      return Promise.resolve();
+    },
+  });
+  check("a segment that reaches the boundary never waits at all", realWaits.length === 0);
+}
+
+console.log("\na hung open cannot stall the turn forever (finding 5):");
+{
+  /**
+   * `for await (const event of input.open(index, input.signal))` had no timeout:
+   * the only abort was component teardown. A proxy that holds the connection
+   * open without sending — or a black-holed socket — hung the reader forever,
+   * and because `attachLive` is true while it hangs, the detached-turn watcher
+   * stands down: reader hung, poll disabled, nothing on screen, nothing
+   * recovers. The poll's own `readTail` aborts at 8s; this follows that
+   * precedent, with a fuse ABOVE the ~120s seam so it can never cut a healthy
+   * segment that is merely quiet through one long tool call.
+   */
+  let opens = 0;
+  let sawAbort = 0;
+  const reader = readLiveTail({
+    open: async function* (_startIndex, signal) {
+      opens += 1;
+      await new Promise((resolve) => {
+        if (signal.aborted) return resolve();
+        signal.addEventListener("abort", () => {
+          sawAbort += 1;
+          resolve();
+        }, { once: true });
+      });
+    },
+    startIndex: 0,
+    signal: new AbortController().signal,
+    onEvent: () => {},
+    idleTimeoutMs: 20,
+    sleep: () => Promise.resolve(),
+  });
+  const result = await Promise.race([
+    reader,
+    new Promise((resolve) => setTimeout(() => resolve("HUNG"), 3_000)),
+  ]);
+  check("a silent connection does not hang the reader", result !== "HUNG");
+  check("…it is cut and handed to the poll", result.outcome === "stream-failed");
+  check("…having said why, in the record", /silent for 20ms/.test(result.detail ?? ""));
+  check("…after the full budget of reopens, not one", opens === 4 && sawAbort === 4);
+
+  // A segment that DELIVERED and then went quiet made real progress: it reopens
+  // at the advanced index instead of counting against the budget.
+  let segs = 0;
+  const progressing = await readLiveTail({
+    open: async function* (startIndex, signal) {
+      segs += 1;
+      if (startIndex < LIVE_TURN.length) {
+        yield LIVE_TURN[startIndex];
+        if (startIndex + 1 >= LIVE_TURN.length) return;
+      }
+      await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+    },
+    startIndex: 0,
+    signal: new AbortController().signal,
+    onEvent: () => {},
+    idleTimeoutMs: 20,
+    sleep: () => Promise.resolve(),
+  });
+  check(
+    "a segment that delivered before going quiet reopens instead of giving up",
+    progressing.outcome === "terminal" && segs === LIVE_TURN.length,
+  );
+}
+
+console.log("\n401 is a stale credential, 403 is a revoked share (finding 6):");
+{
+  /**
+   * They were lumped together and the whole attach budget was spent on both.
+   * They are opposites. 403 on the membership-checked proxy means the share was
+   * REVOKED: never retry, and never forgive it on a tab return either. 401 means
+   * the credential went stale — and the session token here lives about an hour
+   * while auth-gate.tsx drops it 60 SECONDS BEFORE `exp`, after which
+   * `getAuthHeaders()` returns `{}`. A turn long enough to cross that boundary
+   * meets a 401 as a matter of course, and "Still working…" hides the one action
+   * that fixes it.
+   */
+  fakeEveStream({ log: LIVE_TURN, status: 401 });
+  const waits = [];
+  const stale = await readLiveTail({
+    open: eveSessionStream({ sessionId: "ses_1", headers: () => ({}) }),
+    startIndex: 0,
+    signal: new AbortController().signal,
+    onEvent: () => {},
+    sleep: (ms) => {
+      waits.push(ms);
+      return Promise.resolve();
+    },
+  });
+  check("an expired credential is its own outcome, not 'forbidden'", stale.outcome === "unauthorized");
+  check("…and it stops the reader at once, without spending the gate", waits.length === 0 && stale.segments === 1);
+  check("…saying which status it was", stale.detail === "access 401");
+
+  fakeEveStream({ log: LIVE_TURN, status: 403 });
+  const revoked = await readLiveTail({
+    open: eveSessionStream({ sessionId: "ses_1", headers: () => ({}) }),
+    startIndex: 0,
+    signal: new AbortController().signal,
+    onEvent: () => {},
+    sleep: () => Promise.resolve(),
+  });
+  check("a revoked share is still 'forbidden'", revoked.outcome === "forbidden");
+  check("…and the two are told apart", revoked.outcome !== stale.outcome);
+}
+
+/* ---- the half that lives in the component -------------------------------
+ *
+ * These read the component's source, which is the right input for exactly one
+ * class of bug: a rule that is stated in one place and has to hold in another.
+ * The behaviour each one guards is proved above and in
+ * scripts/test-chat-turn-state.mjs; what cannot be executed offline is the React
+ * effect that has to USE it, so that much is ratcheted.
+ */
+console.log("\nthe component holds the reader's end of the contract:");
+{
+  const chat = readFileSync(new URL("../app/_components/agent-chat.tsx", import.meta.url), "utf8");
+  const attachEffect = chat.slice(
+    chat.indexOf("const shouldAttach = attachVerdict.attach"),
+    chat.indexOf("A TAB COMING BACK is a fresh chance"),
+  );
+  check("the attach effect was found", attachEffect.length > 500);
+
+  /**
+   * FINDING 1 — the hand-off is skipped whenever the reader restarted mid-turn.
+   *
+   * `collected` was a per-effect array, and the effect re-runs mid-turn on three
+   * ordinary things: a reader failure bumping `attachEpoch`, the tab becoming
+   * visible again, and `attachKey = ${chatKey}:${startedTurns}` changing because
+   * eve re-emits `turn.started` when it replays a turn after a step throws.
+   * Reader #2's array then begins after a gap, `mergeAttachedEvents` returns the
+   * identical array, and `if (merged === agent.events) return;` bails: no
+   * hand-off, no remount — and the store never regains the session id or the
+   * fresh token, so the NEXT message opens a new eve session whose `turn_0`
+   * overwrites the first exchange.
+   */
+  check(
+    "the collected tail survives the effect (finding 1)",
+    /const collectedRef = useRef/.test(chat) && !/const collected: IndexedEvent\[\] = \[\]/.test(attachEffect),
+  );
+  check(
+    "…and the hand-off reads THAT, not a per-reader array",
+    /handBackRef\.current = \(attachedTo\) => \{[\s\S]{0,200}collectedRef\.current/.test(chat),
+  );
+  check(
+    "…and it is cleared once it has been handed over",
+    /collectedRef\.current = \[\];\s*\n\s*onReattach\(/.test(chat),
+  );
+  // The bail itself, proved with the real merge: this is what "skipped" means.
+  const store = Array.from({ length: 100 }, (_, i) => ({ type: `e${i}` }));
+  const readerTwoOnly = [];
+  for (let i = 150; i <= 202; i++) readerTwoOnly.push({ index: i, event: { type: i === 202 ? "session.waiting" : "message.appended" } });
+  check(
+    "…because a tail that starts past the store merges to nothing at all",
+    mergeAttachedEvents(store, readerTwoOnly) === store,
+  );
+
+  /** FINDING 2 — a restarted reader's lower indices must be placed, not dropped. */
+  check(
+    "the tail is appended by INDEX (finding 2)",
+    /appendTailEvent\(prev, entry\)/.test(attachEffect) &&
+      !/prev\[prev\.length - 1\]\.index >= entry\.index/.test(attachEffect),
+  );
+
+  /** FINDING 3 — the hand-off after a session terminal. */
+  check(
+    "the hand-off cursor comes from handBackSession (finding 3)",
+    /const cursor = handBackSession\(\{/.test(chat) &&
+      !/sessionId: sid,\s*\n\s*continuationToken: freshestToken\(\),\s*\n\s*streamIndex: absoluteIndex\(merged\),\s*\n\s*\} as AgentSession/.test(chat),
+  );
+
+  /** FINDING 5 — nothing re-arms a reader when the network comes back. */
+  check(
+    "the network coming back re-arms the reader (finding 5)",
+    /addEventListener\("online", rearm\)/.test(chat) && /removeEventListener\("online", rearm\)/.test(chat),
+  );
+
+  /** FINDING 6 — a revoked share is not forgiven by the tab-return handler. */
+  check(
+    "a 403 is remembered outside the forgiven budget (finding 6)",
+    /attachRevoked\.add\(attachKey\)/.test(chat) && /attachRevoked\.has\(attachKeyRef\.current\)/.test(chat),
+  );
+  check(
+    "…and a 401 stops the reader and says to sign in again",
+    /result\.outcome === "unauthorized"/.test(chat) && /setAuthExpired\(true\)/.test(chat),
+  );
+
+  /**
+   * FINDING 7 (the cheap half) — the persist storm.
+   *
+   * `preview = lastText(viewMessages)` is the full text of the last part, so it
+   * changes with every delta; the persist effect depended on it and each fire
+   * ran `dedupeEvents` plus a synchronous `localStorage` write of every event —
+   * measured by review at ~460 ms of blocking main-thread work PER DELTA on a
+   * 1,500-event turn with a 60 KB table. The expensive half lives in
+   * chat-shell.tsx and is described in the PR.
+   */
+  const persistDeps = chat.slice(chat.indexOf("// Persist chat metadata once it has a server session."));
+  const depLine = persistDeps.slice(persistDeps.indexOf("}, [sessionId, title"), persistDeps.indexOf("}, [sessionId, title") + 200);
+  check(
+    "the persist effect cannot fire per delta (finding 7)",
+    !/^\}, \[[^\]]*\bpreview\b/.test(depLine) && /persistTick/.test(depLine),
+  );
+  check(
+    "…and the tick is a clock, not a character",
+    /setInterval\(\(\) => setPersistTick\(\(n\) => n \+ 1\), 2_000\)/.test(chat),
+  );
+
+  /**
+   * FINDING 8 — telemetry honesty. `attach-started` fired on every effect
+   * re-run, so one reader restarting read as several failed live tails in the
+   * attach-started vs attach-complete comparison this kind exists for.
+   */
+  check(
+    "attach-started is reported once per turn (finding 8)",
+    /const restarts = attachStarts\.get\(attachKey\) \?\? 0;/.test(attachEffect) &&
+      /if \(restarts === 0\) \{\s*\n\s*report\("attach-started"/.test(attachEffect),
+  );
+  check(
+    "…and a restart is still counted, in the detail",
+    /reader restart \$\{restarts\}/.test(attachEffect),
+  );
+
+  /** The two lower-confidence ones the review also flagged. */
+  check(
+    "the per-turn maps are pruned, so a long-lived tab does not leak",
+    /function forgetFinishedTurns/.test(chat) && /forgetFinishedTurns\(chatKey, startedTurns\)/.test(chat),
+  );
+  const stopFallback = chat.slice(
+    chat.indexOf("stopFallbackRef.current = setTimeout("),
+    chat.indexOf("}, 12_000);"),
+  );
+  check(
+    "Stop clears a turn even when the reader and the poll are both spent",
+    /setAbandonedTurn\(wasTurn\)/.test(stopFallback) && /turnUnfinished\(mergedEventsRef\.current/.test(stopFallback),
+  );
+
+  /**
+   * AND THE ONE THE REVIEW DID NOT LIST: the merge's `nextIndex`.
+   *
+   * It defaults to `serverEventCount(storeEvents)`, which is only the absolute
+   * index for a transcript read straight off the stream. A reopened thread
+   * mounts a COMPACTED one (#38), so the reader was started at count + deficit
+   * while the merge was still looking for count — every tail entry read as a gap
+   * and the merge returned the store's array untouched. On exactly the mount the
+   * reattach exists for, the live tail never reached the transcript.
+   */
+  check(
+    "the merge is given the ABSOLUTE index, not the store's length",
+    /mergeAttachedEvents\(\s*\n\s*agent\.events as readonly TurnEvent\[\],\s*\n\s*attachedTail,\s*\n\s*absoluteIndex\(agent\.events as readonly TurnEvent\[\]\),/.test(chat),
+  );
+}
+{
+  // …and the same thing, executed: a compacted mount's tail must merge.
+  const store = Array.from({ length: 100 }, (_, i) => ({ type: `e${i}` }));
+  const base = absoluteIndexBase(103, store); // cursor 103, transcript 100 events
+  const tail = [{ index: 103, event: { type: "message.appended" } }];
+  check(
+    "a compacted mount's tail merges when the absolute index is used",
+    mergeAttachedEvents(store, tail, serverEventCount(store) + base).length === 101,
+  );
+  check(
+    "…and was dropped entirely by the default",
+    mergeAttachedEvents(store, tail) === store,
+  );
+}
+
+
+// --- a SHARED thread answers through the relay, or the answer is dropped -------------------------------------
+{
+  const src = readFileSync(new URL("../app/_components/agent-chat.tsx", import.meta.url), "utf8");
+  const fn = src.slice(src.indexOf("const respondToInput = async"), src.indexOf("const handleSubmit"));
+  check("respondToInput has a relay branch", /if \(relayThreadId\) \{/.test(fn));
+  const relayAt = fn.indexOf("if (relayThreadId) {");
+  check(
+    "it comes BEFORE the paths that reach for a continuation token",
+    relayAt > 0 && relayAt < fn.indexOf("directDeliver(") && relayAt < fn.indexOf("agent.send("),
+  );
+  check("it posts the answers to the relay", /threads\/\$\{relayThreadId\}\/messages/.test(fn));
+  check(
+    "a relay failure un-marks the card so it stays answerable",
+    /withoutRequestIds\(prev, requestIds\)/.test(fn),
   );
 }
 

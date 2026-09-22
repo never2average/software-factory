@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
-import { chatSessions, chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
 import { getOpsDb } from "@/lib/ops-db";
+import { gateForSession } from "@/lib/chat-session-access";
+import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 
 export const runtime = "nodejs";
@@ -43,6 +43,23 @@ export const maxDuration = 800;
  * gains a record, so the exposure this closes — someone turning up later with an
  * id they should not have — is closed. A brand-new session is unknown to the
  * attacker for the same reason it is unknown to us.
+ *
+ * …AND IT WAS PERMANENTLY OPEN, because of HOW it asked.
+ *
+ * The three reads ran on the bare `getOpsDb()` handle, naming no workspace.
+ * Production RLS fails closed, so all three returned zero rows, "no record of
+ * it" was true of every session in the product, and the asymmetry above turned
+ * into "allow everybody". Measured on the live database on 2026-09-22 and
+ * reproduced on a throwaway Postgres carrying the production policy shape:
+ * unscoped 0 sessions / 0 threads / 0 members, the same reads scoped to the
+ * workspace 1 / 1 / 1. Any signed-in person holding a session id could read the
+ * whole conversation through `GET /eve/v1/session/:id/stream` and send into it
+ * with a POST.
+ *
+ * The rule now lives in lib/chat-gate.ts and the reads in
+ * `gateForSession` (lib/chat-session-access.ts), scoped with `withOrgRls` — and
+ * "unknown" now means WE LOOKED PROPERLY AND FOUND NOTHING, in this workspace
+ * and in every other one, rather than "we cannot see".
  */
 
 const AGENT = process.env.NEXT_PUBLIC_EVE_API_URL ?? "https://fde-agent-api.vercel.app";
@@ -58,47 +75,43 @@ function forwardHeaders(request: NextRequest): Headers {
 }
 
 /**
- * May `email` touch `sessionId`? Owner of the mirrored chat, owner of a shared
- * thread on that session, or an accepted member of one.
+ * May `email`, in workspace `orgId`, touch `sessionId`? Owner of the mirrored
+ * chat, owner of a thread on that session, or a NON-REVOKED member of one.
+ *
+ * `gateForSession` reads the rows inside the workspace's RLS scope and
+ * `sessionGateDecision` applies the rule; this wrapper owns only the question
+ * of what a FAILURE means, which is the part that has to be decided here and
+ * nowhere else.
  */
-async function permitted(sessionId: string, email: string): Promise<boolean> {
+async function permitted(orgId: string, sessionId: string, email: string): Promise<boolean> {
   const db = getOpsDb();
   if (!db) return true; // no database to consult — fail OPEN, see the note above
   try {
-    const owners = await db
-      .select({ owner: chatSessions.ownerEmail })
-      .from(chatSessions)
-      .where(eq(chatSessions.eveSessionId, sessionId));
-    const threads = await db
-      .select({ id: chatThreads.id, owner: chatThreads.ownerEmail })
-      .from(chatThreads)
-      .where(eq(chatThreads.eveSessionId, sessionId));
-
-    // Unknown session: nothing to contradict, so let it through.
-    if (owners.length === 0 && threads.length === 0) return true;
-
-    const me = email.toLowerCase();
-    if (owners.some((o) => o.owner?.toLowerCase() === me)) return true;
-    if (threads.some((t) => t.owner?.toLowerCase() === me)) return true;
-
-    // Shared with them? A thread member (viewer or participant) may read it.
-    for (const t of threads) {
-      const [member] = await db
-        .select({ email: chatThreadMembers.email })
-        .from(chatThreadMembers)
-        .where(and(eq(chatThreadMembers.threadId, t.id), eq(chatThreadMembers.email, me)))
-        .limit(1);
-      if (member) return true;
+    const { allow, reason } = await gateForSession(orgId, email, sessionId);
+    if (!allow) {
+      // Someone reaching for a conversation that is not theirs is worth a
+      // record, whether it is an attack or a bug in our own reconcile logic.
+      console.warn("session access denied", { sessionId, email, orgId, reason });
     }
-    return false;
+    return allow;
   } catch (error) {
-    // A database hiccup must not take chat down — the failure we refuse to
-    // introduce is locking people out of their own conversations. But an access
-    // check that disables ITSELF is a security event, and this used to happen in
-    // total silence. Say it, loudly, every time.
+    /**
+     * A database hiccup must not take chat down — the failure we refuse to
+     * introduce is locking people out of their own conversations. But an access
+     * check that disables ITSELF is a security event, and this used to happen
+     * in total silence. Say it, loudly, every time.
+     *
+     * This is now genuinely the exception. It used to be the EVERYDAY path
+     * wearing a different mask: the unscoped reads did not throw, they returned
+     * zero rows, so the gate took its "unknown session, let it through" branch
+     * on every request and nothing was ever logged at all. Fail-open is a
+     * deliberate availability choice only while the ordinary request is decided
+     * by a read that works.
+     */
     console.error("SESSION GATE FAILED OPEN — ownership not verified", {
       sessionId,
       email,
+      orgId,
       error: error instanceof Error ? error.message : String(error),
     });
     return true;
@@ -110,11 +123,22 @@ async function proxy(request: NextRequest, segments: string[]): Promise<Response
   if (!identity) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
+  /**
+   * The workspace, resolved the way every neighbouring ops route resolves it.
+   *
+   * A null context means there is no verified identity — `resolveOrgForIdentity`
+   * has its own fail-safes and always answers for a caller it can name — so
+   * this is the same 401 as above, not a third outcome to reason about. It is
+   * emphatically NOT the "unknown session" branch: an unresolvable caller is
+   * the one case where allowing the request would be the gate deciding it does
+   * not know who is asking and letting them in anyway.
+   */
+  const ctx = await orgContextForRequest(request);
+  if (!ctx) {
+    return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
+  }
   const sessionId = segments[0];
-  if (sessionId && !(await permitted(sessionId, identity.email))) {
-    // Someone reaching for a conversation that is not theirs is worth a record,
-    // whether it is an attack or a bug in our own reconcile logic.
-    console.warn("session access denied", { sessionId, email: identity.email });
+  if (sessionId && !(await permitted(ctx.orgId, sessionId, identity.email))) {
     return NextResponse.json({ error: "That conversation isn't yours." }, { status: 403 });
   }
 
