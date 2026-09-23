@@ -1,6 +1,6 @@
 {
   "app_id": "onfinance_hfc",
-  "generated_at": "2026-09-23T09:38:24.982430+00:00",
+  "generated_at": "2026-09-23T17:26:20.475421+00:00",
   "status": "stamped",
   "url": "https://onfinance-hfc.vercel.app",
   "packs": [
@@ -10,14 +10,14 @@
     {
       "session": "9129ce07",
       "first": "2026-09-18T12:04:27.586000+00:00",
-      "last": "2026-09-23T09:38:22.361000+00:00",
-      "active_s": 30791.421,
-      "operator_messages": 56,
-      "assistant_messages": 2021,
-      "tool_calls": 996,
-      "subagents": 38,
+      "last": "2026-09-23T17:26:17.666000+00:00",
+      "active_s": 37265.676,
+      "operator_messages": 73,
+      "assistant_messages": 2278,
+      "tool_calls": 1120,
+      "subagents": 43,
       "cost_usd": 274.3930005,
-      "cost_uncounted_est_usd": 381.42975264178733,
+      "cost_uncounted_est_usd": 523.6272943812979,
       "model_s": 18772.14,
       "tool_s": 6143.651,
       "lines_added": 12229,
@@ -38,13 +38,13 @@
           "input_tokens": 354549552
         }
       },
-      "cost_as_of": "The cost and working-time counters are as of the session's last cost record; 1138 of its 2021 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part."
+      "cost_as_of": "The cost and working-time counters are as of the session's last cost record; 1395 of its 2278 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part."
     }
   ],
   "calendar": {
     "first_commit": "2026-09-18T14:53:56+00:00",
-    "last_commit": "2026-09-23T08:52:59+00:00",
-    "commits": 40,
+    "last_commit": "2026-09-23T17:17:57+00:00",
+    "commits": 47,
     "deploys": [
       "2026-09-19T09:49:59+00:00",
       "2026-09-19T10:16:59+00:00",
@@ -63,7 +63,13 @@
       "2026-09-22T19:18:01+00:00",
       "2026-09-22T20:29:13+00:00",
       "2026-09-23T05:42:22+00:00",
-      "2026-09-23T08:43:18+00:00"
+      "2026-09-23T08:43:18+00:00",
+      "2026-09-23T09:17:25+00:00",
+      "2026-09-23T13:44:02+00:00",
+      "2026-09-23T14:15:36+00:00",
+      "2026-09-23T14:46:10+00:00",
+      "2026-09-23T15:20:09+00:00",
+      "2026-09-23T16:38:34+00:00"
     ],
     "stations": []
   },
@@ -76,9 +82,9 @@
   },
   "upstream": {
     "repo": "never2average/fde-agent",
-    "merged": 35,
-    "additions": 30073,
-    "deletions": 3604,
+    "merged": 41,
+    "additions": 35799,
+    "deletions": 3801,
     "numbers": [
       13,
       14,
@@ -114,7 +120,13 @@
       44,
       45,
       46,
-      47
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53
     ]
   },
   "running_app": [
