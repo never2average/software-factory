@@ -22,6 +22,16 @@ import {
   XIcon,
 } from "lucide-react";
 import { ArtifactCard } from "./artifact-view";
+import { PdfView } from "./pdf-view";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { extractAttachmentRefs, visibleText, type AttachmentRef } from "@/lib/chat-attachments";
+import { isPreviewablePdfPath } from "@/lib/pdf-preview";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { ErrorBoundary } from "./error-boundary";
 import { toolCallSummary, toolDisplayName } from "./tool-display";
@@ -345,42 +355,93 @@ function stripDirectives(text: string) {
  * eve encodes user file attachments into the message text as `[file: name]`
  * tokens (its message-part union has no file type — see summarizeUserContent).
  * Pull those out so we can render them as attachment chips instead of raw text.
+ *
+ * BOTH halves now come from lib/chat-attachments — the same module the SENDER
+ * composed the message with. The inline copies of those regexes that used to
+ * live here are gone: the file's own comment already said two copies is how the
+ * visible message drifts back to leaking paths, and a third consequence showed
+ * up as soon as the chips had to be openable — the path was being stripped
+ * here and was therefore unrecoverable one line later.
  */
-function extractAttachments(text: string): { text: string; files: string[] } {
-  const files: string[] = [];
-  const cleaned = text
-    /**
-     * Strip model-only attachment instructions, using the SAME function the
-     * sender used to add them (lib/chat-attachments) — two copies of one regex
-     * is how the visible message drifts back to leaking paths.
-     */
-    .replace(/⁦attachments⁩[\s\S]*?⁦\/attachments⁩/g, "")
-    .replace(/⁦directives⁩[\s\S]*?⁦\/directives⁩/g, "")
-    .replace(/\[file(?:: ([^\]]*))?\]/g, (_m, name?: string) => {
-      files.push(name?.trim() || "attachment");
-      return "";
-    })
-    // Collapse the blank lines the removed tokens leave behind.
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return { text: cleaned, files };
+function extractAttachments(text: string): { text: string; files: AttachmentRef[] } {
+  return { text: visibleText(text), files: extractAttachmentRefs(text) };
 }
 
-function AttachmentChips({ files }: { readonly files: readonly string[] }) {
+/**
+ * The chips above a sent message. A chip whose file is a PDF IN THE DATA ROOM
+ * is a button that opens it in the in-app viewer; every other chip stays the
+ * inert label it has always been.
+ *
+ * WHY A DIALOG AND NOT THE RIGHT RAIL: the rail (ArtifactPanel) is addressed by
+ * URL and versioned by published name, and an attachment has neither — it has a
+ * data-room path. A dialog is also what the published-artifact card in this
+ * same transcript already opens, so a person gets one behaviour for "show me
+ * that file", wherever in the chat it came from.
+ *
+ * The viewer only MOUNTS while the dialog is open (`{open ? … : null}`, the same
+ * shape ArtifactCard uses): mounting it eagerly for every chip in a long
+ * transcript would start a fetch and a pdf.js parse per attached file the
+ * moment the conversation loaded.
+ */
+function AttachmentChips({ files }: { readonly files: readonly AttachmentRef[] }) {
   if (files.length === 0) return null;
   return (
     <div className="mb-1.5 flex flex-wrap gap-1.5">
-      {files.map((name, i) => (
-        <span
-          key={`${name}:${i}`}
-          className="flex max-w-[14rem] items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs"
-          title={name}
-        >
-          <PaperclipIcon className="size-3 shrink-0 text-muted-foreground" />
-          <span className="truncate">{name}</span>
-        </span>
-      ))}
+      {files.map((file, i) =>
+        /**
+         * `isPreviewablePdfPath` is the gate, and it is checked on the PATH, not
+         * the displayed name. A chip's name comes from `[file: …]` in message
+         * text and can say anything at all; the path is what would be requested,
+         * so that is what has to be a data-room path ending in .pdf. A name that
+         * merely reads "…pdf" buys nothing.
+         *
+         * It grants no access: the request is workspace-scoped server-side. All
+         * this decides is whether to offer a click that could only ever succeed.
+         */
+        isPreviewablePdfPath(file.path) ? (
+          <AttachmentPreviewChip key={`${file.name}:${i}`} name={file.name} path={file.path} />
+        ) : (
+          <span
+            key={`${file.name}:${i}`}
+            className="flex max-w-[14rem] items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs"
+            title={file.name}
+          >
+            <PaperclipIcon className="size-3 shrink-0 text-muted-foreground" />
+            <span className="truncate">{file.name}</span>
+          </span>
+        ),
+      )}
     </div>
+  );
+}
+
+function AttachmentPreviewChip({ name, path }: { readonly name: string; readonly path: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        data-testid="attachment-preview-chip"
+        className="flex max-w-[14rem] items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs transition-colors hover:border-foreground/30 hover:bg-muted"
+        title={`Open ${name}`}
+      >
+        <PaperclipIcon className="size-3 shrink-0 text-muted-foreground" />
+        <span className="truncate">{name}</span>
+        <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="flex h-[90vh] w-[92vw] max-w-[92vw] flex-col gap-0 overflow-hidden rounded-2xl border border-white/10 bg-popover p-0 shadow-2xl sm:max-w-[92vw]">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{name}</DialogTitle>
+            <DialogDescription>Attached file preview</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-hidden bg-muted/10">
+            {open ? <PdfView dataroomPath={path} filename={name} /> : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

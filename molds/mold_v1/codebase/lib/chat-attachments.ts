@@ -115,6 +115,54 @@ export function wrapDirectives(directives: readonly string[]): string {
   return directives.length === 0 ? "" : `${DIRECTIVE_OPEN}${directives.join(" ")}${DIRECTIVE_CLOSE}`;
 }
 
+/** One attachment as the TRANSCRIPT can recover it: the chip's name, and the
+ *  data-room path it was stored at when the message still carries one. */
+export interface AttachmentRef {
+  readonly name: string;
+  /** Absent for a message sent before the marker existed, or replayed without it. */
+  readonly path?: string;
+}
+
+/**
+ * Recover the attachments of a sent message — name AND where the file went.
+ *
+ * `composeAttachmentMessage` writes two things about the same list: a
+ * `[file: name]` chip token per file, for the reader, and one `- <path>` line
+ * per file inside the model-only block, for the agent. The renderer read the
+ * first and threw the second away, so the transcript knew a file had been
+ * attached and had no idea where it was — which is why an attached PDF could be
+ * named in the chat and not opened from it. Everything needed to open it was in
+ * the message the whole time.
+ *
+ * PAIRED BY POSITION, because both lists are built from the same `stored` array
+ * in the same order, and a name is not a key: two files can share one, and the
+ * chip's name is `chipSafe`'d while the path is not, so they do not even match
+ * as strings. A failed upload contributes neither a chip nor a path (it goes in
+ * the separate failure sentence), so the two lists cannot drift apart.
+ *
+ * The path is left exactly as written, untrusted and unvalidated. This is
+ * MESSAGE TEXT — a person can type `[file: x]` and an ⁦attachments⁩ block by
+ * hand — so whatever comes out of here is a REQUEST, never a permission:
+ * `isPreviewablePdfPath` decides whether it is worth rendering, and the server
+ * decides, per workspace, whether it may be read at all.
+ */
+export function extractAttachmentRefs(text: string): AttachmentRef[] {
+  const paths: string[] = [];
+  for (const block of text.matchAll(/⁦attachments⁩([\s\S]*?)⁦\/attachments⁩/g)) {
+    for (const line of block[1].split("\n")) {
+      const path = /^\s*-\s+(\S.*?)\s*$/.exec(line);
+      if (path) paths.push(path[1]);
+    }
+  }
+  const refs: AttachmentRef[] = [];
+  for (const token of stripAgentOnly(text).matchAll(/\[file(?:: ([^\]]*))?\]/g)) {
+    const name = token[1]?.trim() || "attachment";
+    const path = paths[refs.length];
+    refs.push(path === undefined ? { name } : { name, path });
+  }
+  return refs;
+}
+
 /**
  * What the reader ends up seeing: model-only blocks gone, chip tokens lifted
  * out. Mirrors the renderer so a test can assert on the real thing.

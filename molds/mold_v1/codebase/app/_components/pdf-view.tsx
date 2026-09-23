@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { opsFetchRaw } from "./ops/lib";
+import { MAX_PDF_PREVIEW_BYTES, dataroomPdfHref, megabytes } from "@/lib/pdf-preview";
 import "./pdf-view.css";
 
 /**
@@ -24,7 +25,16 @@ import "./pdf-view.css";
  * BYTES are fetched with the signed-in fetch and drawn to <canvas> by pdf.js:
  *
  *   - a stored artifact  → the freshly signed same-origin proxy url (`storedSrc`)
+ *   - a DATA-ROOM file   → /api/dataroom?path=…&as=bytes (`dataroomPath`), the
+ *     same workspace-scoped read every other data-room fetch goes through
  *   - any other https host → /api/ops/pdf-fetch, the server's guarded public fetch
+ *
+ * THIS IS THE ONLY PDF VIEWER, and until now it was reachable from ONE of those
+ * three. That meant a PDF the agent PUBLISHED previewed, while the documents
+ * this desk actually runs on — a filing an analyst uploads into the data room,
+ * a deck they attach in chat — had no preview at all: listed, downloadable, and
+ * nothing else. `dataroomPath` is that gap closed. Nothing about the drawing,
+ * the memory behaviour or the failure vocabulary differs between the sources.
  *
  * pdf.js is imported lazily, so none of it is in the main bundle; its worker is
  * emitted by the bundler as a same-origin asset (`worker-src 'self'`).
@@ -33,7 +43,8 @@ import "./pdf-view.css";
  * when they leave, so a 400-page annual report costs a few pages of memory.
  */
 
-const MAX_PREVIEW_BYTES = 40 * 1024 * 1024;
+/** Shared with the server, which refuses an over-size object before it streams. */
+const MAX_PREVIEW_BYTES = MAX_PDF_PREVIEW_BYTES;
 /** Backing-store budget per page canvas (~48 MB RGBA). Past this, render softer. */
 const MAX_CANVAS_PIXELS = 12_000_000;
 const ZOOM_STEPS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4];
@@ -62,7 +73,18 @@ type Failure = "not_pdf" | "too_large" | "blocked" | "signin" | "expired" | "mis
 
 const FAILURE_TEXT: Record<Failure, string> = {
   not_pdf: "This link is not a PDF.",
-  too_large: "Too large to preview (over 40 MB) — open the original.",
+  /**
+   * Names the limit from the ONE constant the server refuses by, so the two can
+   * never quote different numbers at the same person.
+   *
+   * It no longer ends "— open the original": the "Open original" button below
+   * appears only when there IS an original to open, and a data-room file has
+   * none, so that half-sentence pointed at nothing. When the SERVER refused the
+   * file it sends a better line than this one (it knows the actual size) and
+   * that is what gets shown; this is the fallback for the case where nothing
+   * declared a length and the streaming cap tripped.
+   */
+  too_large: `Too large to preview here (over ${megabytes(MAX_PDF_PREVIEW_BYTES)}).`,
   blocked: "This address cannot be previewed.",
   signin: "Your sign-in has expired. Sign in again, then reopen this file.",
   expired: "This file link has expired — reopen the file for a fresh one.",
@@ -73,19 +95,34 @@ const FAILURE_TEXT: Record<Failure, string> = {
 
 class PdfLoadError extends Error {
   readonly failure: Failure;
-  constructor(failure: Failure) {
+  /** The server's own sentence, when it wrote a better one than ours (it knows
+   *  the file's actual size; we only know the limit). */
+  readonly detail?: string;
+  constructor(failure: Failure, detail?: string) {
     super(failure);
     this.failure = failure;
+    this.detail = detail;
   }
 }
 
-function failureFor(status: number, code: string | undefined, external: boolean): Failure {
+/** Which of the three sources a fetch came from — they fail differently. */
+type Source = { external: string } | { stored: string } | { dataroom: string };
+
+function failureFor(status: number, code: string | undefined, source: Source): Failure {
+  const signedIn = !("stored" in source); // a stored src carries its own signature
   if (code === "not_pdf" || status === 415) return "not_pdf";
   if (code === "too_large" || status === 413) return "too_large";
   if (code === "blocked_host") return "blocked";
-  if (status === 401) return external ? "signin" : "expired";
+  /**
+   * 401 means two different things and they need different sentences. On a
+   * route we authenticate to (the public fetch, the data room) it is OUR bearer
+   * that has expired — an hour-old tab — and the fix is to sign in again. On a
+   * stored artifact the request carried no identity at all; the signature in
+   * the url was the authority and it is the thing that ran out.
+   */
+  if (status === 401) return signedIn ? "signin" : "expired";
   if (code === "upstream_missing" || status === 404) return "missing";
-  if (status === 403 && !external) return "expired";
+  if (status === 403 && !signedIn) return "expired";
   return "generic";
 }
 
@@ -132,24 +169,33 @@ function hasPdfHeader(bytes: Uint8Array): boolean {
   return false;
 }
 
-async function fetchPdfBytes(source: { external: string } | { stored: string }): Promise<Uint8Array> {
-  const external = "external" in source;
+async function fetchPdfBytes(source: Source): Promise<Uint8Array> {
   let res: Response;
   try {
-    res = external
-      ? await opsFetchRaw(`/api/ops/pdf-fetch?url=${encodeURIComponent(source.external)}`)
-      : await fetch(source.stored);
+    res =
+      "external" in source
+        ? await opsFetchRaw(`/api/ops/pdf-fetch?url=${encodeURIComponent(source.external)}`)
+        : "dataroom" in source
+          ? // The signed-in read. `opsFetchRaw` carries the bearer AND the active
+            // workspace header, so this asks for the file exactly as the data
+            // room's own list and text reads do — no second notion of who the
+            // caller is, and no signed blob url ever reaching the browser.
+            await opsFetchRaw(dataroomPdfHref(source.dataroom))
+          : await fetch(source.stored);
   } catch {
     throw new PdfLoadError("generic");
   }
   if (!res.ok) {
     let code: string | undefined;
+    let detail: string | undefined;
     try {
-      code = ((await res.json()) as { code?: string }).code;
+      const body = (await res.json()) as { code?: string; error?: string };
+      code = body.code;
+      detail = body.error;
     } catch {
       /* not JSON */
     }
-    throw new PdfLoadError(failureFor(res.status, code, external));
+    throw new PdfLoadError(failureFor(res.status, code, source), detail);
   }
   const bytes = await readCapped(res);
   if (!hasPdfHeader(bytes)) throw new PdfLoadError("not_pdf");
@@ -159,6 +205,7 @@ async function fetchPdfBytes(source: { external: string } | { stored: string }):
 export function PdfView({
   storedSrc,
   externalUrl,
+  dataroomPath,
   originalHref,
   filename,
   ready = true,
@@ -167,6 +214,9 @@ export function PdfView({
   readonly storedSrc?: string;
   /** A PDF on someone else's https host — read through /api/ops/pdf-fetch. */
   readonly externalUrl?: string;
+  /** A logical data-room path ("Uploads/<person>/<file>.pdf") — read through
+   *  /api/dataroom, which resolves it inside the CALLER'S workspace. */
+  readonly dataroomPath?: string;
   /** Where "Open original" goes: the real address, in a new tab. */
   readonly originalHref?: string;
   readonly filename: string;
@@ -175,13 +225,19 @@ export function PdfView({
 }) {
   const [state, setState] = useState<
     | { status: "loading" }
-    | { status: "error"; failure: Failure }
+    | { status: "error"; failure: Failure; detail?: string }
     | { status: "ready"; pdfjs: PdfJs; doc: PdfDoc; base: { w: number; h: number } }
   >({ status: "loading" });
 
   useEffect(() => {
     if (!ready) return;
-    const source = externalUrl ? { external: externalUrl } : storedSrc ? { stored: storedSrc } : null;
+    const source: Source | null = externalUrl
+      ? { external: externalUrl }
+      : dataroomPath
+        ? { dataroom: dataroomPath }
+        : storedSrc
+          ? { stored: storedSrc }
+          : null;
     if (!source) {
       setState({ status: "error", failure: "generic" });
       return;
@@ -221,7 +277,11 @@ export function PdfView({
               : (err as { name?: string })?.name === "InvalidPDFException"
                 ? "not_pdf"
                 : "generic";
-        setState({ status: "error", failure });
+        setState({
+          status: "error",
+          failure,
+          detail: err instanceof PdfLoadError ? err.detail : undefined,
+        });
       }
     })();
     return () => {
@@ -229,7 +289,7 @@ export function PdfView({
       // Destroys the document and its worker-side state with it.
       if (task) void task.destroy();
     };
-  }, [ready, storedSrc, externalUrl]);
+  }, [ready, storedSrc, externalUrl, dataroomPath]);
 
   if (state.status === "loading") {
     return (
@@ -247,7 +307,10 @@ export function PdfView({
         <div className="flex flex-col items-center gap-3">
           <FileWarningIcon className="size-10 text-muted-foreground" />
           <p className="font-medium text-sm">{filename}</p>
-          <p className="max-w-xs text-muted-foreground text-sm">{FAILURE_TEXT[state.failure]}</p>
+          {/* The server's sentence when it has one — for "too large" it names
+              the file's REAL size, which we cannot know from here, and a number
+              is the difference between "it's broken" and "it's too big". */}
+          <p className="max-w-xs text-muted-foreground text-sm">{state.detail ?? FAILURE_TEXT[state.failure]}</p>
           {originalHref ? (
             <a
               href={originalHref}

@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { PdfView } from "./pdf-view";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
 import customersData from "@/data/customers.json";
@@ -1485,10 +1486,17 @@ interface FileItem {
   meta?: string;
 }
 
-/** Fetched body of one Blob-backed file, cached per path for the open session. */
+/** Fetched body of one Blob-backed file, cached per path for the open session.
+ *
+ *  `binary` is the PDF case: the file IS in the store, but its bytes are not
+ *  text and are not cached here — the viewer streams them itself. The state
+ *  exists so a PDF gets the same three-way answer every other kind gets
+ *  (loading / not there yet / here), instead of the one placeholder card that
+ *  read "preview isn't wired up yet" whether the file existed or not. */
 type FileBody =
   | { status: "loading" }
   | { status: "ready"; content: string }
+  | { status: "binary" }
   | { status: "missing" }
   | { status: "error"; message: string };
 interface FolderNode {
@@ -2082,11 +2090,35 @@ export function Dataroom({
   const openFile = findFile(root, openId);
 
   // When a Blob-backed file is opened, fetch its body once and cache it for
-  // the session. Binary kinds (pdf/audio) and sheet workbooks never fetch.
+  // the session. Sheet workbooks are app-rendered and audio has no viewer, so
+  // neither fetches.
+  //
+  // A PDF does not fetch HERE EITHER, and that is not the old "binaries never
+  // fetch" rule — it is a different one. /api/dataroom's JSON answer decodes the
+  // object as UTF-8 text, which destroys a PDF, and holding a 40 MB string in
+  // `fileBodies` for the session would be a second copy of a file that is
+  // already expensive. The viewer streams the bytes itself
+  // (pdf-view.tsx → /api/dataroom?as=bytes) and hands the memory back page by
+  // page; all this state has to know is whether the file is THERE.
   const fetchPath =
     openFile?.path && openFile.kind !== "sheet" && openFile.kind !== "pdf" && openFile.kind !== "audio"
       ? openFile.path
       : null;
+  /**
+   * A PDF's "body" is DERIVED, never cached in `fileBodies`.
+   *
+   * All it has to answer is whether the object is in the store, and that answer
+   * CHANGES: an upload shows optimistically (`live`) and the live path list is
+   * refetched a moment later. Caching the first answer froze a filing the
+   * analyst had just dropped in as "Not created yet" until they closed and
+   * reopened the room. Nothing is saved by caching it either — the bytes are the
+   * viewer's to stream, so there is no body here to hold on to.
+   */
+  const binaryBody = (file: FileItem): FileBody => {
+    if (file.live) return { status: "binary" };
+    if (livePaths === null) return { status: "loading" };
+    return livePaths.includes(file.path ?? "") ? { status: "binary" } : { status: "missing" };
+  };
   useEffect(() => {
     if (!open || !fetchPath || fileBodies[fetchPath]) return;
     const path = fetchPath;
@@ -2324,7 +2356,13 @@ export function Dataroom({
             ) : openFile ? (
               <FilePreview
                 file={openFile}
-                body={openFile.path ? fileBodies[openFile.path] : undefined}
+                body={
+                  !openFile.path
+                    ? undefined
+                    : openFile.kind === "pdf"
+                      ? binaryBody(openFile)
+                      : fileBodies[openFile.path]
+                }
               />
             ) : (
               <p className="grid flex-1 place-items-center text-muted-foreground text-sm">
@@ -2616,7 +2654,8 @@ function FileStateCard({
   );
 }
 
-/** Renders a Blob-backed file's fetched content by extension; binaries keep the placeholder card. */
+/** Renders a Blob-backed file's fetched content by extension; a PDF is drawn by
+ *  the in-app viewer, audio still keeps the placeholder card. */
 function FilePreview({
   file,
   body,
@@ -2624,8 +2663,10 @@ function FilePreview({
   readonly file: FileItem;
   readonly body?: FileBody;
 }) {
-  // Binary artifacts / files with no data-room path: no inline preview.
-  if (!file.path || file.kind === "pdf" || file.kind === "audio") {
+  // Audio, and any tree entry with no data-room path behind it: nothing to show.
+  // A PDF used to be in this list, which is the whole defect — an analyst could
+  // upload a filing, watch the agent read it, and never look at it themselves.
+  if (!file.path || file.kind === "audio") {
     return (
       <FileStateCard file={file}>
         <p className="text-muted-foreground text-xs">
@@ -2634,7 +2675,46 @@ function FilePreview({
       </FileStateCard>
     );
   }
-  if (!body || body.status === "loading") {
+  /**
+   * The PDF, drawn by THE viewer — the same pdf.js component the published
+   * artifact preview uses (app/_components/pdf-view.tsx), reading through
+   * /api/dataroom, which resolves the path inside the caller's own workspace.
+   * No second renderer, and no signed blob url in this page.
+   *
+   * The three states are the SAME three the text kinds show, for the same
+   * reasons: nothing yet from the store → the "Loading from the data room…"
+   * card; a tree slot the store has no object for → the "Not created yet" card;
+   * the object is there → render it. Everything past that — a file too large to
+   * draw, an expired sign-in, a password-protected document — is the viewer's
+   * own error card, which names the file and says what happened.
+   */
+  if (file.kind === "pdf") {
+    if (body?.status === "binary") {
+      return (
+        // Sized like the artifact panel's body: the viewer scrolls itself, so
+        // this box must not add a second scrollbar around it.
+        <div className="min-h-0 flex-1 overflow-hidden" data-testid="dataroom-pdf">
+          <PdfView dataroomPath={file.path} filename={file.name} />
+        </div>
+      );
+    }
+    if (body?.status === "missing") {
+      return (
+        <FileStateCard file={file}>
+          <p className="text-muted-foreground text-xs">
+            Not created yet — this dm.md slot has no artifact in the data room. Agents write it here
+            as the engagement progresses.
+          </p>
+        </FileStateCard>
+      );
+    }
+    return (
+      <FileStateCard file={file}>
+        <p className="animate-pulse text-muted-foreground text-xs">Loading from the data room…</p>
+      </FileStateCard>
+    );
+  }
+  if (!body || body.status === "loading" || body.status === "binary") {
     return (
       <FileStateCard file={file}>
         <p className="animate-pulse text-muted-foreground text-xs">Loading from the data room…</p>

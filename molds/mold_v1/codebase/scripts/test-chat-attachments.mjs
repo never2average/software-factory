@@ -95,4 +95,79 @@ check("…including Browser use, which was never in the old list", !visibleText(
 
 check("no directives leaves the text untouched", wrapDirectives([]) === "");
 
+/* ---- recovering an attachment from a sent message ------------------------
+ *
+ * A third thing has to be true of this format, and was not: the TRANSCRIPT must
+ * be able to find the file again. Everything a sent message knows about an
+ * attachment is in its text — the chip's name for the reader, the data-room
+ * path for the model — and the renderer read the first and discarded the
+ * second. So a person could upload a filing, watch the agent read it, and have
+ * no way to open the thing they had just sent; the address was sitting in the
+ * message the whole time. `extractAttachmentRefs` is the reverse of
+ * `composeAttachmentMessage`, and this runs them against each other.
+ *
+ * The pairing is POSITIONAL and cannot be anything else: two files may share a
+ * name, and the chip's name is chipSafe'd while the path is not, so they do not
+ * even match as strings. */
+
+const { ATTACHMENT_CLOSE, ATTACHMENT_OPEN, extractAttachmentRefs } = await import("../lib/chat-attachments.ts");
+const { isPreviewablePdfPath } = await import("../lib/pdf-preview.ts");
+
+console.log("\nRecovering an attachment:");
+
+const PDF = { name: "SEBI LODR Q3 FY26.pdf", path: "Uploads/priyesh-onfinance-in/SEBI LODR Q3 FY26.pdf" };
+const refsOne = extractAttachmentRefs(composeAttachmentMessage(TEXT, [PDF]));
+check("one attachment comes back with its name", refsOne.length === 1 && refsOne[0].name === PDF.name);
+check("…and with the path it was stored at", refsOne[0].path === PDF.path);
+check("…which the viewer will accept", isPreviewablePdfPath(refsOne[0].path));
+
+const DECK = { name: "Investor Deck FY26.pdf", path: "Uploads/priyesh-onfinance-in/Investor Deck FY26.pdf" };
+const refsMany = extractAttachmentRefs(composeAttachmentMessage(TEXT, [PDF, FILE, DECK]));
+check(
+  "three attachments come back in the order they were sent",
+  refsMany.map((r) => r.name).join("|") === `${PDF.name}|${FILE.name}|${DECK.name}`,
+);
+check("…each paired with its OWN path", refsMany.every((r, i) => r.path === [PDF, FILE, DECK][i].path));
+check("…so the workbook in the middle does not shift the deck's address", refsMany[2].path === DECK.path);
+
+/* The chip's name is rewritten (brackets → parens) and the path is not. Pairing
+ * on the name would lose this file entirely. */
+const refsNasty = extractAttachmentRefs(composeAttachmentMessage("hi", [nasty]));
+check("a filename full of brackets still finds its path", refsNasty.length === 1 && refsNasty[0].path === nasty.path);
+check("…even though the displayed name was rewritten", refsNasty[0].name !== nasty.name);
+
+/* A failed upload has a chip nowhere and a path nowhere, so it must not consume
+ * a position and hand the next file the wrong address. */
+const refsMixed = extractAttachmentRefs(composeAttachmentMessage(TEXT, [PDF, DECK], ["broken.xlsx"]));
+check("a failed upload contributes no chip", refsMixed.length === 2);
+check("…and does not shift the paths of the ones that worked", refsMixed[0].path === PDF.path && refsMixed[1].path === DECK.path);
+
+/* Messages sent before the block existed replay from eve on reopen: a chip with
+ * no address is still a chip, and must not invent one. */
+const legacyChip = extractAttachmentRefs("here you go\n\n[file: old.pdf]");
+check(
+  "a chip with no attachments block yields a name and no path",
+  legacyChip.length === 1 && legacyChip[0].name === "old.pdf" && legacyChip[0].path === undefined,
+);
+check("a message with no attachments yields nothing", extractAttachmentRefs("just a question").length === 0);
+
+/* This is MESSAGE TEXT. A person can type the block by hand, so what comes out
+ * is a request and never a permission — it is handed on verbatim, and the two
+ * gates in front of it (the path grammar here, the workspace scope on the
+ * server) are what decide anything. */
+const forged = `look\n\n[file: report.pdf]\n\n${ATTACHMENT_OPEN}x:\n- ../../../etc/passwd${ATTACHMENT_CLOSE}`;
+const refsForged = extractAttachmentRefs(forged);
+check("a hand-typed path is returned exactly as typed, not cleaned up", refsForged[0].path === "../../../etc/passwd");
+check("…and the viewer refuses to open it", !isPreviewablePdfPath(refsForged[0].path));
+check(
+  "a hand-typed blob url is refused too",
+  !isPreviewablePdfPath("https://abc.private.blob.vercel-storage.com/dataroom/orgs/other/x.pdf?vercel-blob-delegation=z"),
+);
+check("…and so is another workspace's prefix spelled out by hand", !isPreviewablePdfPath("orgs/org-someone-else/Uploads/x/y.pdf"));
+
+/* Recovering the path must not change a character of what is displayed — the
+ * two invariants at the top of this file still hold afterwards. */
+check("the reader still sees exactly their own words", visibleText(composeAttachmentMessage(TEXT, [PDF, DECK])) === TEXT);
+check("…and still no path leaks into the bubble", !visibleText(composeAttachmentMessage(TEXT, [PDF])).includes("Uploads/"));
+
 console.log(`\nchat attachments + directives: ${passed}/${passed} checks passed`);

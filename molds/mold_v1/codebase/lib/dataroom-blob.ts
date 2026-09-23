@@ -172,6 +172,62 @@ export async function readDataroomFile(path: string, orgId?: string | null): Pro
   return pieces.join("");
 }
 
+/**
+ * One stored object's size, without reading it — `null` when it is not there.
+ *
+ * The listing already carries `size`, so this costs one prefix-scoped list call
+ * and no bytes. That is the whole reason it exists: the binary read below has to
+ * be able to REFUSE a file over the preview ceiling (the operator has hit a
+ * 44 MB one) with a sentence, and a refusal that first pulls 44 MB through the
+ * Node function is not a refusal — it is the same stall one layer down, plus the
+ * egress.
+ *
+ * Exact-match on the object key, so `Uploads/x/a.pdf` never reports the size of
+ * `Uploads/x/a.pdf.appends/0001`.
+ */
+export async function statDataroomObject(
+  path: string,
+  orgId?: string | null,
+): Promise<{ size: number } | null> {
+  const token = blobToken();
+  if (!token) return null;
+  const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
+  const page = await listBlobs({ token, prefix: objectPathname, limit: 1000 });
+  const hit = page.blobs.find((blob) => blob.pathname === objectPathname);
+  return hit ? { size: hit.size } : null;
+}
+
+/**
+ * The RAW response for one stored object, over a short-lived presigned GET, so
+ * a caller can stream its bytes straight through. `null` when it is not there.
+ *
+ * Deliberately NOT `readDataroomFile`: that one calls `response.text()`, which
+ * decodes as UTF-8 and mangles every byte of a PDF that is not valid UTF-8 —
+ * which is most of them. It also stitches `.appends/` parts, a text-file
+ * concept; a binary object has none, and concatenating one onto a PDF would
+ * produce a file no reader accepts.
+ *
+ * The presigned URL lives and dies inside this process. It is the entire
+ * authority to read the object, for anyone holding it, signed in or not — so it
+ * is never returned, never logged and never put in a redirect. The caller gets
+ * bytes.
+ */
+export async function openDataroomObject(
+  path: string,
+  orgId?: string | null,
+): Promise<Response | null> {
+  const token = blobToken();
+  if (!token) return null;
+  const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
+  const { url } = await presignBlobRead(token, objectPathname, READ_LINK_TTL_MS);
+  const response = await fetch(url, { cache: "no-store" });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`blob read failed for "${objectPathname}": HTTP ${response.status}`);
+  }
+  return response;
+}
+
 /** Parse a .jsonl body into records; skips blank lines, throws on bad JSON. */
 export function parseJsonlRecords(path: string, content: string): unknown[] {
   const records: unknown[] = [];

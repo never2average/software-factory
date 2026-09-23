@@ -223,6 +223,20 @@ jobs:
         if: always()
         run: npm run test:chat-attachments
 
+      # A pdf an analyst UPLOADS must be previewable, which it was not: the one
+      # viewer in the app was wired to a pdf the AGENT publishes, so a filing
+      # dropped into the data room or a deck attached in chat was listed,
+      # downloadable, and unreadable in the product that had just read it. This
+      # runs the rules the viewer, the data-room bytes mode and the chat chip all
+      # import — the path grammar, the 40 MB ceiling decided from the blob
+      # listing before a byte moves, and the same-origin url that must never
+      # carry a presigned blob signature — and ratchets the four wiring facts a
+      # pure module cannot hold. CI runs no browser, so this is the guard that
+      # runs; the drawing itself is still checked by hand.
+      - name: PDF preview (rules, and the wiring that ships)
+        if: always()
+        run: npm run test:pdf-preview
+
       - name: Auth gates in lockstep
         if: always()
         run: npm run check:gates
