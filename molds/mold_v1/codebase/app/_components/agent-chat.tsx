@@ -214,6 +214,8 @@ import {
   absoluteIndexBase,
   serverEventCount,
   shouldReportDetach,
+  tailStillWriting,
+  turnFinished,
   turnsStarted,
   turnUnfinished,
   withoutRequestIds,
@@ -1488,9 +1490,10 @@ export function AgentChat({
     typeof part.toolCallId === "string" &&
     !ownActionCallIds.has(part.toolCallId);
 
-  // "Working…" strip: the turn is active but nothing on screen is visibly
-  // progressing — no text tail streaming (the caret covers that), and the turn
-  // is not parked waiting on the user (approval / question / authorization).
+  // The tail of the transcript, and whether it is parked on the user (approval /
+  // question / authorization). Read by the "Working…" strip, the plan hand-off
+  // and the composer — all of which live below the send gate, because "is the
+  // answer over" is a question about the TURN and the gate is what answers it.
   const lastMessage = viewMessages[viewMessages.length - 1];
   const lastParts = (lastMessage?.parts ?? []) as Array<{
     type?: string;
@@ -1509,11 +1512,6 @@ export function AgentChat({
       (Boolean(p.toolMetadata?.eve?.inputRequest) && !p.toolMetadata?.eve?.inputResponse)
     );
   });
-  const streamingTextTail =
-    liveStreaming &&
-    lastMessage?.role === "assistant" &&
-    lastParts[lastParts.length - 1]?.type === "text";
-  const showWorking = isBusy && !awaitingUser && !streamingTextTail;
 
   // Pending approvals/questions hoisted to the conversation tail: eve's
   // proxied child approvals carry stale turn ids, so the reducer attaches them
@@ -1585,6 +1583,35 @@ export function AgentChat({
   );
   holdRef.current = gate.hold;
   const detached = gate.reason === "detached";
+  /**
+   * IS THE ANSWER OVER — for the transcript, not for the composer.
+   *
+   * Same verdict, same input, one function (`turnFinished` = `!sendGate().hold`,
+   * see lib/chat-turn-state for the measurement). This used to be `isBusy`,
+   * which is the STORE's status, so every detached stretch of a turn — a
+   * reopened thread, a resync remount, a severed segment, a turn POSTed around
+   * the store — read as "finished" and put the copy/vote/retry row under a half
+   * written reply while the composer, one gate away, was holding the next
+   * message on "Still working".
+   */
+  const answerOver = turnFinished({
+    storeBusy: isBusy,
+    events: mergedEvents as { type?: string }[],
+    pendingInputs: openInputRequests.length,
+    abandoned: abandonedTurn !== null && abandonedTurn === startedTurns,
+    remoteTurn,
+  });
+  /**
+   * "Working…": the turn is running and nothing on screen is visibly moving.
+   *
+   * Both halves were wrong. `isBusy` hid the strip for the whole detached half
+   * of a turn, and `lastParts[…].type === "text"` treated a CLOSED paragraph as
+   * a live one — eve marks the text part `done` at the step boundary before a
+   * tool runs, and the relay does not flush the tool part until the next one, so
+   * the tail is a finished paragraph for exactly the gap this strip exists to
+   * fill. `tailStillWriting` asks for `state === "streaming"` instead.
+   */
+  const showWorking = !answerOver && !awaitingUser && !tailStillWriting(lastParts);
   // A delegation that has not reached a terminal state: "a specialist is running".
   const specialistRunning = useMemo(
     () =>
@@ -2260,7 +2287,10 @@ export function AgentChat({
     // The delivered plan: the last assistant message's text once a plan-mode turn
   // has fully finished and nothing is parked on user input.
   const planText =
-    mode === "plan" && !isBusy && !awaitingUser && lastMessage?.role === "assistant"
+    // `answerOver`, not `!isBusy`: "fully finished" is a property of the TURN.
+    // On `isBusy` a detached plan turn offered "Approve this plan" over the
+    // first paragraph of one still being written.
+    mode === "plan" && answerOver && !awaitingUser && lastMessage?.role === "assistant"
       ? (lastMessage.parts ?? [])
           .map((p) => {
             const part = p as { type?: string; text?: string };
@@ -3129,9 +3159,11 @@ export function AgentChat({
                       setFocusSubagent(toolCallId);
                     }}
                     onInputResponses={respondToInput}
-                    turnActive={isBusy}
+                    // NOT `isBusy`: the store goes idle on every detached
+                    // stretch of a live turn. See `answerOver` above.
+                    turnActive={!answerOver}
                     onRetry={
-                      !isBusy &&
+                      answerOver &&
                       message.role === "assistant" &&
                       index === viewMessages.length - 1
                         ? retryLast

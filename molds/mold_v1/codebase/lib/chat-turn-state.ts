@@ -154,6 +154,87 @@ export function sendGate(input: SendGateInput): SendGate {
   return { hold: false, reason: null };
 }
 
+/**
+ * IS THE ANSWER OVER? — the one question behind every end-of-answer affordance.
+ *
+ * THE DEFECT. "When waiting for a tool call the agent pretends like things are
+ * done and it shows the feedback, copy, and retry buttons normally seen at the
+ * end of answers." Measured on a turn that read a 21-page pdf: one sentence,
+ * four tool calls, then the rest of the reply — and the copy/vote/retry row sat
+ * under the sentence for the whole of the middle.
+ *
+ * TWO SOURCES OF THE LIE, and this function removes both.
+ *
+ * 1. eve's own reducer. `upsertPart` (node_modules/eve/dist/src/client/
+ *    message-reducer.js) writes `metadata.status = "complete"` whenever the
+ *    part it just wrote is a TEXT part in state `done`, and `streaming`
+ *    otherwise. eve closes the text part at every step boundary — a step that
+ *    ends in tool calls emits `message.completed` with `finishReason:
+ *    "tool-calls"`, which the reducer does not look at — so a turn that writes a
+ *    sentence and then calls a tool passes through `complete` once per step.
+ *    `turn.completed` sets the SAME field to the SAME value, so nothing
+ *    downstream can tell a paragraph from a turn. (And `turn.failed` /
+ *    `session.failed` are `return e` in that reducer: a turn that died leaves
+ *    the message on `streaming` for ever, so the field is wrong in both
+ *    directions.) Nothing in this repo may key "finished" off it.
+ *
+ * 2. THE STORE'S STATUS IS NOT THE TURN'S STATUS. `agent.status` is
+ *    `submitted | streaming` only while eve's store is inside a `send()`
+ *    (eve-agent-store.js: it is set `ready` the moment that `for await` ends).
+ *    A turn is alive with the store idle on every path the reattach exists for
+ *    — a thread reopened mid-turn, a resync remount, a severed stream past the
+ *    budget, Stop, a turn POSTed around the store — and those are exactly the
+ *    long turns, i.e. the ones with tool calls in them. `turnActive={isBusy}`
+ *    therefore said "finished" for the whole detached half of a reply.
+ *
+ * The turn is over, not the paragraph, and `sendGate` already knows when: it is
+ * the same question ("is this session at rest?") asked for the composer. Reuse
+ * it rather than growing a second notion that can disagree with the first — a
+ * screen that offers Retry while the composer holds the next message on "Still
+ * working" is telling the person two different things at once.
+ *
+ * Deliberately TRUE for the two dead-turn verdicts `sendGate` releases on:
+ * `abandoned` (the cancel route answered `no_active_turn`, or Stop's grace ran
+ * out) and a retry storm. Nothing more is coming, and Retry is precisely what
+ * the person needs. `turn.failed`, `turn.cancelled` and a transcript mounted
+ * from the cached snapshot all land here through `turnUnfinished`'s TERMINAL
+ * set, which reads history, so "finished" never depends on having watched the
+ * turn end.
+ */
+export function turnFinished(input: SendGateInput): boolean {
+  return !sendGate(input).hold;
+}
+
+/** Only the shape we read off a message part. Parts carry much more. */
+export interface PartState {
+  readonly type?: string;
+  readonly state?: string;
+}
+
+/**
+ * Is this part a line the model is STILL WRITING?
+ *
+ * The block caret and the "Working…" strip both asked "is the last part a text
+ * part?", which is true right through the tool-call gap: eve closes the text
+ * part (`state: "done"`) at the step boundary BEFORE the tool runs, and the
+ * hosted relay flushes the tool part only at the NEXT step boundary, so for the
+ * whole of a long call the transcript's tail is a finished paragraph. The
+ * caret therefore blinked under text nobody was writing, and the strip whose
+ * entire job is that gap hid itself in it.
+ *
+ * `=== "streaming"` and not `!== "done"`: a part with no state at all (the
+ * optimistic user bubble, `client.message.submitted`) is not being written by
+ * the model either.
+ */
+export function partStillWriting(part: PartState | undefined): boolean {
+  return part?.type === "text" && part.state === "streaming";
+}
+
+/** Is the tail of this message a line still being written? */
+export function tailStillWriting(parts: readonly PartState[]): boolean {
+  return partStillWriting(parts[parts.length - 1]);
+}
+
 /** How many turns this transcript has started — a remount-stable turn ordinal. */
 export function turnsStarted(events: readonly TurnEvent[]): number {
   let n = 0;

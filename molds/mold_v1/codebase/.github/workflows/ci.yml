@@ -231,6 +231,19 @@ jobs:
         if: always()
         run: npm run test:chat-send-gate
 
+      # "When waiting for a tool call the agent pretends like things are done and
+      # it shows the feedback, copy, and retry buttons normally seen at the end of
+      # answers" — reported by the operator against a turn that read a 21-page pdf
+      # (one sentence, four tool calls, then the rest). Two traps, both driven here
+      # over eve's OWN reducer: eve writes `metadata.status = "complete"` for any
+      # text part it closes, tool-call steps included (and writes nothing at all on
+      # turn.failed), and the eve store's status describes the local READER, so
+      # every detached stretch of a live turn looked finished. 26 of these 56
+      # checks fail on the rules that shipped.
+      - name: Chat end of answer (behavioural)
+        if: always()
+        run: npm run test:chat-end-of-answer
+
       # The offline half of the attachment contract. The end-to-end companion
       # (test:attachment-e2e) needs production credentials and a live agent, so
       # it is run by hand; this half holds the two invariants on every PR.

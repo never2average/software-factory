@@ -3064,7 +3064,13 @@ function SubagentDetail({
                   canRespond
                   isLast={i === transcript.length - 1}
                   isStreaming={false}
-                  turnActive={Boolean(feed?.turnActive)}
+                  // `Boolean(undefined)` is `false`, so a rail whose feed has
+                  // not seen a turn event yet — the whole replay window of a run
+                  // that is still executing, and every run whose stream came
+                  // back `unavailable` — put copy/vote/retry under the child's
+                  // half-written answer. Unknown falls back to the run's own
+                  // status; only an observed terminal says finished.
+                  turnActive={feed?.turnActive ?? live}
                   hoistPendingInput={false}
                   onInputResponses={onInputResponses ?? (() => {})}
                 />

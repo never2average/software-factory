@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { extractAttachmentRefs, visibleText, type AttachmentRef } from "@/lib/chat-attachments";
+import { partStillWriting } from "@/lib/chat-turn-state";
 import { isPreviewablePdfPath } from "@/lib/pdf-preview";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { ErrorBoundary } from "./error-boundary";
@@ -204,7 +205,12 @@ export function AgentMessage({
   readonly onFocusSubagent?: (toolCallId: string) => void;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly onRetry?: () => void;
-  /** The agent is mid-turn (submitted or streaming) anywhere in the chat. */
+  /**
+   * The TURN is still going anywhere in the chat — not "the eve store is
+   * reading". The caller derives it from the event stream (`turnFinished` in
+   * lib/chat-turn-state); passing the store's own `submitted | streaming` put
+   * the end-of-answer row under a reply whose tool call had not come back yet.
+   */
   readonly turnActive: boolean;
 }) {
   const lastTextIndex = message.parts.reduce(
@@ -266,10 +272,17 @@ export function AgentMessage({
                   onInputResponses={onInputResponses}
                   part={segment.part}
                   role={message.role}
+                  // The caret marks a line being WRITTEN, not the last line that
+                  // was. eve closes the text part (`state: "done"`) at the step
+                  // boundary before a tool runs, so on `isStreaming` alone it
+                  // blinked under a finished paragraph for the whole of a tool
+                  // call — the same "it looks done" the actions row caused,
+                  // read the other way round.
                   showCaret={
                     isStreaming &&
                     message.role === "assistant" &&
-                    segment.index === lastTextIndex
+                    segment.index === lastTextIndex &&
+                    partStillWriting(segment.part)
                   }
                 />
               </ErrorBoundary>
