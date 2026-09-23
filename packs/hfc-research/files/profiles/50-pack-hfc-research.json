@@ -1,5 +1,5 @@
 {
-  "$comment": "hfc-research pack: equity and credit research on Indian housing finance companies. Wording only — identifiers (customer_id, Customers/, list_customers) are unchanged.",
+  "$comment": "hfc-research pack: equity and credit research on Indian housing finance companies. The model reads the profile's words (list_companies, company_id, Companies/); storage keeps customer_id and Customers/ and is translated at the boundary (needs fde-agent #55). The base persona is off: agent/instructions/50-pack-hfc-research.md says who the agent is.",
   "product": {
     "tagline": "Research workspace for Indian housing finance companies.",
     "description": "{product} — a research workspace for analysts covering Indian housing finance companies: an agent that fetches SEBI LODR filings and investor presentations, reads them, and builds cited KPI tables."
@@ -15,6 +15,20 @@
     },
     "owner": "Covering analyst",
     "account_context": "Company context"
+  },
+  "persona": {
+    "base": false
+  },
+  "specialists": {
+    "exclude": [
+      "deployment",
+      "configuration",
+      "data-migration",
+      "customer-context",
+      "research",
+      "follow-ups",
+      "evals"
+    ]
   },
   "chat": {
     "hero_lines": [
@@ -79,7 +93,7 @@
     "seed": [
       {
         "path": "README.md",
-        "content": "# {workspace} — research room\n\nEverything the analysts and the agent know about the covered companies lives here as plain files. Every figure the agent reports is cited to a file in this room and a page or slide in it.\n\n## The tree\n\n```\nCustomers/{customer_id}/            one folder per covered company (shown as \"Companies\")\n  context.md                        what we know about the company, curated by its covering analyst\n  interactions.jsonl                earnings calls and meetings, append-only\n  filings/\n    lodr/                           SEBI LODR filings: {YYYY-MM-DD}_{tag}_{name}; annual report maps and extracts\n    presentations/                  investor presentations, concall transcripts, ip-metrics.jsonl, guidance.jsonl\n    filing-log.jsonl                the dated log of everything filed\n    kpis.jsonl                      the standard quarterly KPI table, one row per KPI, cited\n    annual-report-data.jsonl        line items extracted from annual reports\nPeople/{person_id}/                 management and IR contacts (external people only)\nUploads/                            files analysts attach in chat\n```\n\nTwo rules the room depends on:\n\n1. A company's material never goes outside its own `Customers/{customer_id}/` folder.\n2. Nothing is written without its validator passing, and nothing is reported without its source.\n"
+        "content": "# {workspace} — research room\n\nEverything the analysts and the agent know about the covered companies lives here as plain files. Every figure the agent reports is cited to a file in this room and a page or slide in it.\n\n## The tree\n\n```\nCompanies/{company_id}/             one folder per covered company\n  context.md                        what we know about the company, curated by its covering analyst\n  interactions.jsonl                earnings calls and meetings, append-only\n  filings/\n    lodr/                           SEBI LODR filings: {YYYY-MM-DD}_{tag}_{name}; annual report maps and extracts\n    presentations/                  investor presentations, concall transcripts, ip-metrics.jsonl, guidance.jsonl\n    filing-log.jsonl                the dated log of everything filed\n    kpis.jsonl                      the standard quarterly KPI table, one row per KPI, cited\n    annual-report-data.jsonl        line items extracted from annual reports\nPeople/{person_id}/                 management and IR contacts (external people only)\nUploads/                            files analysts attach in chat\n```\n\nTwo rules the room depends on:\n\n1. A company's material never goes outside its own `Companies/{company_id}/` folder.\n2. Nothing is written without its validator passing, and nothing is reported without its source.\n"
       },
       {
         "path": "Customers/README.md",
@@ -88,7 +102,7 @@
     ]
   },
   "agent": {
-    "briefing": "This is a financial research workspace for analysts covering Indian housing finance companies. Your job here is research, not account management: the stand-up, signoff, ticket-triage and customer-onboarding parts of your instructions do not apply. For research requests delegate to the research specialists (`lodr-filings`, `investor-presentations`, `annual-report-format`, `hfc-kpi-extraction`) and relay their `needs_review`, `carried_forward` and `not_found` statuses as they are. Every figure carries its document and page or slide; never state a number from memory. Keep the two tracking areas true as work happens: a company's Portfolio entry (its build-out stage and completeness) and a Coverage report for each report you produce."
+    "briefing": "This is a financial research workspace for analysts covering Indian housing finance companies. For research requests delegate to the research specialists (`lodr-filings`, `investor-presentations`, `annual-report-format`, `hfc-kpi-extraction`) and relay their `needs_review`, `carried_forward` and `not_found` statuses as they are. Every figure carries its document and page or slide; never state a number from memory. Keep the two tracking areas true as work happens: a company's Portfolio entry (its build-out stage and completeness) and a Coverage report for each report you produce."
   },
   "domains": {
     "deployments": {

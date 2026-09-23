@@ -78,4 +78,4 @@ A flag means "confirm against the filing", nothing more. Report flags in the sum
 
 ## What to remember per company (via `remember`)
 
-`<customer_id>: yield = <definition>; CoF = <definition>; spread = disclosed|computed; NIM = <numerator>/<denominator>, <annualisation>; source slide title "<title>"`
+`<company_id>: yield = <definition>; CoF = <definition>; spread = disclosed|computed; NIM = <numerator>/<denominator>, <annualisation>; source slide title "<title>"`

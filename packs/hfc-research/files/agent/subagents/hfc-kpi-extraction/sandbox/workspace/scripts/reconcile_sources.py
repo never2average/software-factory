@@ -4,8 +4,8 @@ analysts' rulebook.
 
   python3 /workspace/scripts/reconcile_sources.py --request request.json
   echo '{"kpi":"disbursements","period":"Q2 FY26","listing":"listed",
-         "qr":{"value":"1,88,000","unit":"lakh","document":"Customers/example-hfl/filings/lodr/q2fy26-results.pdf","page_or_slide":7},
-         "ip":{"value":"1,900","unit":"crore","document":"Customers/example-hfl/filings/presentations/q2fy26-ip.pdf","page_or_slide":"slide 9"}}' \
+         "qr":{"value":"1,88,000","unit":"lakh","document":"Companies/example-hfl/filings/lodr/q2fy26-results.pdf","page_or_slide":7},
+         "ip":{"value":"1,900","unit":"crore","document":"Companies/example-hfl/filings/presentations/q2fy26-ip.pdf","page_or_slide":"slide 9"}}' \
       | python3 /workspace/scripts/reconcile_sources.py --stdin
   python3 /workspace/scripts/reconcile_sources.py --self-test
 
@@ -139,8 +139,8 @@ def _self_test():
     fails = []
     def eq(name, got, want):
         if got != want: fails.append(f"{name}: got {got!r}, want {want!r}")
-    QR = {"document": "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 7}
-    IP = {"document": "Customers/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 9"}
+    QR = {"document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 7}
+    IP = {"document": "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 9"}
     base = {"period": "Q2 FY26", "listing": "listed"}
     def run(kpi, qr=None, ip=None, **kw):
         req = dict(base, kpi=kpi, **kw)

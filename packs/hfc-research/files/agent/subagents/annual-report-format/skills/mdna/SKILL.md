@@ -47,7 +47,7 @@ wants the facts and commitments in it, with pages, and a short neutral summary o
 
 ## What to write
 
-`Customers/{customer_id}/filings/lodr/{fy}_annual-report/management-discussion-and-analysis.md`: the seven buckets as
+`Companies/{company_id}/filings/lodr/{fy}_annual-report/management-discussion-and-analysis.md`: the seven buckets as
 headings, quotes with `(printed p., PDF p.)`, summaries marked as summaries, tables as tables, and a closing list
 "Shown only as charts".
 

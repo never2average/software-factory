@@ -23,7 +23,7 @@ python3 /workspace/scripts/derive_quarter.py --kind flow --metric disbursements 
 
 Row: `value 2060.0`, `source "IP"`, `document` = the Q4 deck, `page_or_slide` = its slide,
 `derived_from_cumulative true`, `status "ok"`, footnote = the script's text plus "9M FY26 from
-Customers/example-hfl/filings/presentations/q3fy26-ip.pdf, slide 9."
+Companies/example-hfl/filings/presentations/q3fy26-ip.pdf, slide 9."
 
 ## 3. Restated comparative
 

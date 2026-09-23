@@ -21,7 +21,7 @@
     },
     "source_path": {
       "type": "string",
-      "pattern": "^Customers/[a-z0-9][a-z0-9_-]*/filings/"
+      "pattern": "^(Companies|Customers)/[a-z0-9][a-z0-9_-]*/filings/"
     },
     "as_on": {
       "type": "string",

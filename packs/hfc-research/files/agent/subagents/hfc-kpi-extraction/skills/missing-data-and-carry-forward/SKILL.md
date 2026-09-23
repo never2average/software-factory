@@ -53,7 +53,7 @@ quarter that has the value. If it is more than one quarter old, `validate_kpis.p
 
    ```json
    {"kpi": "branches", "value": 198, "unit": "count", "period": "Q2 FY26", "value_period": "Q1 FY26",
-    "source": "IP", "document": "Customers/example-hfl/filings/presentations/q1fy26-ip.pdf", "page_or_slide": "slide 4",
+    "source": "IP", "document": "Companies/example-hfl/filings/presentations/q1fy26-ip.pdf", "page_or_slide": "slide 4",
     "status": "carried_forward",
     "footnote": "Branches not published for Q2 FY26; value as of Q1 FY26 from the previous quarter's investor presentation."}
    ```

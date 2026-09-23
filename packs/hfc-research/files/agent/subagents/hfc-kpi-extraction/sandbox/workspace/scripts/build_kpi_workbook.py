@@ -2,7 +2,7 @@
 """kpis.jsonl -> the analysts' KPI workbook.
 
   python3 /workspace/scripts/build_kpi_workbook.py /workspace/out/kpis-all.jsonl --xlsx /workspace/out/example-hfl-kpis.xlsx
-  python3 /workspace/scripts/build_kpi_workbook.py /workspace/out/kpis-all.jsonl --customer example-hfl --name "Example Housing Finance Ltd" > spec.json
+  python3 /workspace/scripts/build_kpi_workbook.py /workspace/out/kpis-all.jsonl --company example-hfl --name "Example Housing Finance Ltd" > spec.json
   python3 /workspace/scripts/build_kpi_workbook.py --self-test
 
 Layout
@@ -22,6 +22,8 @@ from finlib import periods, schema
 import kpi_catalog as cat
 import validate_kpis
 
+ROW_KEY = schema.ROW_KEY
+
 NOT_FOUND_TEXT = "not found"
 STATUS_WORDS = {"needs_review": "needs review", "carried_forward": "carried forward", "not_found": "not found", "ok": ""}
 FILL = {"needs_review": "FFE8A3", "carried_forward": "DCE6F5", "not_found": "EEEEEE"}
@@ -39,13 +41,13 @@ def _pkey(p):
     n = periods.normalise(p); return n["fy"] * 10 + n["quarter"]
 
 
-def build(rows, customer=None, names=None):
+def build(rows, company=None, names=None):
     """rows: [obj] (already valid) -> workbook spec"""
     names = names or {}
     latest = {}
     for o in rows:
-        if customer and o["customer_id"] != customer: continue
-        key = (o["customer_id"], o["period"], o["kpi"])
+        if company and o[ROW_KEY] != company: continue
+        key = (o[ROW_KEY], o["period"], o["kpi"])
         if key not in latest or o["extracted_at"] >= latest[key]["extracted_at"]: latest[key] = o
     companies = sorted({k[0] for k in latest})
     used = {"footnotes", "citations"}
@@ -70,7 +72,7 @@ def build(rows, customer=None, names=None):
                                   None if o.get("page_or_slide") is None else str(o["page_or_slide"]), o.get("definition"), o["extracted_at"]])
             line.append("; ".join(notes) or None)
             body.append(line)
-        sheets.append({"name": sheet_name(names.get(cid, cid), used), "customer_id": cid, "columns": columns, "rows": body, "cell_status": cell_status})
+        sheets.append({"name": sheet_name(names.get(cid, cid), used), "company_id": cid, "columns": columns, "rows": body, "cell_status": cell_status})
     sheets.append({"name": "Footnotes", "columns": ["Ref", "Company", "KPI", "Period", "Status", "Value period", "Footnote"], "rows": foot_rows, "cell_status": []})
     sheets.append({"name": "Citations", "columns": ["Company", "KPI", "Period", "Value", "Unit", "Basis", "Source", "Document", "Page or slide", "Definition", "Extracted at"],
                    "rows": cite_rows, "cell_status": []})
@@ -97,15 +99,15 @@ def write_xlsx(spec, path):
     return True, None
 
 
-def run(path, customer=None, names=None, xlsx=None):
+def run(path, company=None, names=None, xlsx=None):
     rows, problems = schema.read_jsonl(path)
     rep = validate_kpis.validate_rows(rows, problems)
     if not rep["valid"]:
         return {"ok": False, "problem": "the input fails validate_kpis; nothing was built", "errors": rep["errors"][:50]}
     objs = [o for _, o in rows]
-    if customer and not any(o["customer_id"] == customer for o in objs):
-        return {"ok": False, "problem": f"no rows for customer {customer!r}", "errors": []}
-    spec = build(objs, customer, names)
+    if company and not any(o[ROW_KEY] == company for o in objs):
+        return {"ok": False, "problem": f"no rows for company {company!r}", "errors": []}
+    spec = build(objs, company, names)
     out = {"ok": True, "workbook": spec, "flags": rep["flags"], "xlsx": {"requested": bool(xlsx), "written": False, "path": xlsx, "reason": None if xlsx else "no --xlsx given"}}
     if xlsx:
         w, why = write_xlsx(spec, xlsx); out["xlsx"].update(written=w, reason=why)
@@ -118,9 +120,9 @@ def _self_test():
         if got != want: fails.append(f"{name}: got {got!r}, want {want!r}")
     def row(cid, period, kpi, value, ts="2026-09-18T10:00:00Z", **kw):
         e = cat.BY_KEY[kpi]
-        r = {"customer_id": cid, "extracted_at": ts, "kpi": kpi, "category": e["category"], "value": value, "unit": e["unit"], "period": period,
+        r = {ROW_KEY: cid, "extracted_at": ts, "kpi": kpi, "category": e["category"], "value": value, "unit": e["unit"], "period": period,
              "basis": "standalone", "source": "computed" if e["source_pref"] == "computed" else e["source_pref"],
-             "document": f"Customers/{cid}/filings/lodr/results.pdf", "page_or_slide": 3, "status": "ok", "footnote": ""}
+             "document": f"Companies/{cid}/filings/lodr/results.pdf", "page_or_slide": 3, "status": "ok", "footnote": ""}
         r.update(kw); return r
     rows = [
         row("example-hfl", "Q2 FY26", "aum", 10000.0), row("example-hfl", "Q1 FY26", "aum", 9600.0), row("example-hfl", "Q4 FY25", "aum", 9300.0),
@@ -147,7 +149,7 @@ def _self_test():
     eq("footnote refs sequential", [f[0] for f in foot], [1, 2, 3, 4])
     eq("footnote carries value period", [f for f in foot if f[2] == "Branches"][0][5], "Q1 FY26")
     eq("citations for every latest cell", len(spec["sheets"][3]["rows"]), 7)
-    eq("single-company filter", build(rows, customer="sample-home-loans")["filename"], "sample-home-loans-kpis.xlsx")
+    eq("single-company filter", build(rows, company="sample-home-loans")["filename"], "sample-home-loans-kpis.xlsx")
     used = {"footnotes"}
     eq("duplicate sheet names disambiguated", [sheet_name("Footnotes", used), sheet_name("Footnotes", used)], ["Footnotes (2)", "Footnotes (3)"])
     d = tempfile.mkdtemp(); p = os.path.join(d, "kpis.jsonl")
@@ -159,15 +161,15 @@ def _self_test():
     with open(p, "a", encoding="utf-8") as f: f.write(json.dumps(row("example-hfl", "Q2 FY26", "nnpa_pct", 2.5), ensure_ascii=False) + "\n")
     out = run(p)
     eq("invalid input builds nothing", (out["ok"], out["errors"][0]["code"]), (False, "E-NNPA"))
-    eq("unknown customer", run(p, customer="nobody")["ok"], False)
+    eq("unknown company", run(p, company="nobody")["ok"], False)
     return fails, 19
 
 
 def main():
     ap = argparse.ArgumentParser(description="kpis.jsonl -> workbook spec JSON (one sheet per company, KPIs as rows by category, quarters as columns, Footnotes and Citations sheets) and, with --xlsx, the .xlsx.")
     ap.add_argument("path", nargs="?", help="kpis.jsonl with every row to show (history + the new batch)")
-    ap.add_argument("--customer", help="build for this customer_id only")
-    ap.add_argument("--name", action="append", default=[], metavar="CUSTOMER_ID=Display Name", help="sheet title for a company (repeatable); with --customer a bare name is accepted")
+    ap.add_argument("--company", "--customer", dest="company", help="build for this company_id only")
+    ap.add_argument("--name", action="append", default=[], metavar="COMPANY_ID=Display Name", help="sheet title for a company (repeatable); with --company a bare name is accepted")
     ap.add_argument("--xlsx", help="write the workbook here (needs openpyxl, installed in the sandbox)")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args()
@@ -178,9 +180,9 @@ def main():
     names = {}
     for item in a.name:
         if "=" in item: k, v = item.split("=", 1); names[k.strip()] = v.strip()
-        elif a.customer: names[a.customer] = item.strip()
-        else: print(f"--name {item!r}: write CUSTOMER_ID=Display Name", file=sys.stderr); return 2
-    try: out = run(a.path, a.customer, names, a.xlsx)
+        elif a.company: names[a.company] = item.strip()
+        else: print(f"--name {item!r}: write COMPANY_ID=Display Name", file=sys.stderr); return 2
+    try: out = run(a.path, a.company, names, a.xlsx)
     except OSError as x: print(f"cannot read or write: {x}", file=sys.stderr); return 2
     print(json.dumps(out, ensure_ascii=False, indent=1))
     if not out["ok"]: print(out["problem"], file=sys.stderr); return 1

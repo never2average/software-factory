@@ -17,7 +17,7 @@ the next best.
 
 ## Procedure
 
-1. Find out whether the company is equity-listed or debt-listed (`get_customer`). Pass it as `--listing`. If the
+1. Find out whether the company is equity-listed or debt-listed (`get_company`). Pass it as `--listing`. If the
    record does not say, run without it; the script will tell you when it matters.
 2. Run the classifier on the first pages, and give it the exchange subject line too when you have it:
 

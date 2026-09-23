@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "One row of Customers/{customer_id}/filings/presentations/guidance.jsonl",
+  "title": "One row of Companies/{company_id}/filings/presentations/guidance.jsonl",
   "description": "One forward-looking statement by management on an earnings call, with how it changed from the previous quarter. The eight required fields are the contract; optional fields make next quarter's comparison computable. Length bounds, the withdrawn rule and duplicate checks are in scripts/validate_guidance.py.",
   "type": "object",
   "additionalProperties": false,

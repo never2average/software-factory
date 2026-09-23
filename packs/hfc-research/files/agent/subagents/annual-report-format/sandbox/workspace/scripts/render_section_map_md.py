@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""map.json -> the content of Customers/{customer_id}/filings/lodr/{fy}_annual-report-map.md.
+"""map.json -> the content of Companies/{company_id}/filings/lodr/{fy}_annual-report-map.md.
 
 The map is validated first (validate_section_map.py's rules); an invalid map is not rendered. The markdown ends with
 the map itself in a fenced JSON block, so next year (or the next request) the map is read back with --extract instead
@@ -110,7 +110,7 @@ def extract(markdown):
 
 
 def dataroom_path(m):
-    return f"Customers/{m['customer_id']}/filings/lodr/{m['fy']}_annual-report-map.md"
+    return f"Companies/{m['customer_id']}/filings/lodr/{m['fy']}_annual-report-map.md"
 
 
 def _cases():
@@ -128,7 +128,7 @@ def _cases():
         assert "RBI disclosures are Note 52" in md and "| Chairman's Message | 4 | 12 |" in md
         back, err = extract(md)
         assert err is None and back == m
-        assert dataroom_path(m) == "Customers/example-housing-finance/filings/lodr/FY26_annual-report-map.md"
+        assert dataroom_path(m) == "Companies/example-housing-finance/filings/lodr/FY26_annual-report-map.md"
 
     def spreads_rule_text():
         m = V._good_map()

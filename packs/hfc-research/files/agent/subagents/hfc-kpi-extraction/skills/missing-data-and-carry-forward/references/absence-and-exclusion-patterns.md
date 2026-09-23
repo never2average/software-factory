@@ -49,7 +49,7 @@ movement of restructured accounts. Do not add a footnote like "GNPA includes res
 
 | Finding | Reply to the orchestrator |
 |---|---|
-| no QR for the quarter in `Customers/{customer_id}/filings/lodr/` | "Missing: quarterly results for <period> (Reg 33 / Reg 52 filing). Ask `lodr-filings` to fetch it." |
+| no QR for the quarter in `Companies/{company_id}/filings/lodr/` | "Missing: quarterly results for <period> (Reg 33 / Reg 52 filing). Ask `lodr-filings` to fetch it." |
 | no IP for the quarter in `.../filings/presentations/` | "Missing: investor presentation for <period>. Ask `investor-presentations` to fetch it." For an unlisted company name the PARENT's presentation. |
 | previous quarter's IP missing and branches / employees absent this quarter | same, naming the previous quarter |
 | scanned PDF | "The <document> is a scanned image with no text layer; it cannot be read in the sandbox." |

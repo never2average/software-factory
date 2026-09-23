@@ -3,7 +3,7 @@
 Keep it short. Numbers come from the validated rows, never retyped from memory.
 
 ```
-<Company name> (<customer_id>): KPIs for <period>, <basis>
+<Company name> (<company_id>): KPIs for <period>, <basis>
 
 | Category | KPI | <period> | Source |
 |---|---|---|---|
@@ -29,7 +29,7 @@ Filings needed and not found
 Conventions recorded
 - NIM = NII incl. assignment income / average AUM, annualised (remembered).
 
-Written: 27 rows appended to Customers/<customer_id>/filings/kpis.jsonl; workbook <customer_id>-kpis.xlsx published.
+Written: 27 rows appended to Companies/<company_id>/filings/kpis.jsonl; workbook <company_id>-kpis.xlsx published.
 ```
 
 If validation failed, replace the last line with:

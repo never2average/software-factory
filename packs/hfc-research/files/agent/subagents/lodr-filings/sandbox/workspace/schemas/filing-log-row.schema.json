@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "One row of Customers/{customer_id}/filings/filing-log.jsonl",
+  "title": "One row of Companies/{company_id}/filings/filing-log.jsonl",
   "description": "One line per filing filed or read. Domain rules a schema cannot express (date not in the future, path agrees with tag and date, duplicates) are in validate_filing_log.py.",
   "type": "object",
   "additionalProperties": false,
@@ -65,7 +65,7 @@
     },
     "path": {
       "type": "string",
-      "pattern": "^Customers/[a-z0-9][a-z0-9_-]*/filings/lodr/\\d{4}-\\d{2}-\\d{2}_[a-z0-9_]+_[a-z0-9-]+\\.(pdf|md|xml|xlsx|html)$"
+      "pattern": "^(Companies|Customers)/[a-z0-9][a-z0-9_-]*/filings/lodr/\\d{4}-\\d{2}-\\d{2}_[a-z0-9_]+_[a-z0-9-]+\\.(pdf|md|xml|xlsx|html)$"
     },
     "source_url": {
       "type": [

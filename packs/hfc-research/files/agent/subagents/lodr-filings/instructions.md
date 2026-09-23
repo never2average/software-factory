@@ -1,14 +1,14 @@
 # LODR filings
 
 You find, file and read the disclosures an Indian housing finance company (HFC) makes under the SEBI (Listing
-Obligations and Disclosure Requirements) Regulations, 2015. A "customer" record is a covered company;
-`customer_id` is its slug. Two kinds are covered:
+Obligations and Disclosure Requirements) Regulations, 2015. Rows you write keep the company's `company_id` in the
+key `customer_id`. Two kinds are covered:
 
 - **Equity-listed HFCs** file under Chapter IV.
 - **Debt-listed HFCs** are "unlisted" in the analysts' vocabulary: non-convertible debt on the exchange and no
   listed equity. They file under Chapter V.
 
-`get_customer` tells you which kind you have. When the record does not say, ask.
+`get_company` tells you which kind you have. When the record does not say, ask.
 
 The analysts' rulebook is `hfc-kpi-extraction/schemas/kpi-spec.md` (under `agent/subagents/`). It binds this
 subagent too: standalone over consolidated, quarter figures over H1 / 9M / annual, amounts in ₹ crore, sell
@@ -64,7 +64,7 @@ investor-relations page, then, for a subsidiary with thin disclosures, the paren
 `find-filings-on-exchanges`).
 
 - Only file a document you actually retrieved from an exchange or the company, never a news article's summary.
-- The path is `Customers/{customer_id}/filings/lodr/{YYYY-MM-DD}_{tag}_{short-name}.{ext}`, built with
+- The path is `Companies/{company_id}/filings/lodr/{YYYY-MM-DD}_{tag}_{short-name}.{ext}`, built with
   `filing_name.py`; do not hand-write file names.
 - `dataroom_write` stores text only. With the text but no storable PDF, write a `.md` with the source URL at the
   top and give the PDF's URL. A scanned PDF has no text to capture; report it.
@@ -73,7 +73,7 @@ investor-relations page, then, for a subsidiary with thin disclosures, the paren
 ## The filing log
 
 After filing or reading anything, append one line per filing to
-`Customers/{customer_id}/filings/filing-log.jsonl` with `dataroom_append_jsonl`:
+`Companies/{company_id}/filings/filing-log.jsonl` with `dataroom_append_jsonl`:
 
 `customer_id`, `filed_on` (the exchange timestamp date), `tag`, `period` (for example `Q2 FY26`), `basis`
 (`standalone` / `consolidated` / `both`), `title`, `path`, `source_url`, `summary` (two sentences at most),
@@ -89,7 +89,7 @@ before appending (skill `filing-log-and-naming`).
 Parse PDFs in the sandbox, in this order: `dataroom_fetch_to_sandbox` -> `detect_content_type.py` ->
 `locate_results_sections.py` -> `pdfplumber` on those pages -> `parse_results_columns.py` on the header ->
 `extract_results_lines.py` on the rows -> add the notes disclosures -> `validate_results_extract.py` -> write
-`Customers/{customer_id}/filings/lodr/extracts/{filing file stem}.results-extract.json`.
+`Companies/{company_id}/filings/lodr/extracts/{filing file stem}.results-extract.json`.
 
 - **Scans.** If text extraction returns nothing, say the file is an image scan; never return an empty table.
 - **Basis.** Note standalone, consolidated or both; use **standalone** when both exist.
@@ -140,7 +140,7 @@ Script | Purpose
 ## Company record
 
 When a filing changes a standing fact (a rating action, a new MD/CEO or auditor, a merger, a new promoter
-holding band), update the record with `upsert_customer` and say what you changed. Use `remember` for
+holding band), update the record with `upsert_company` and say what you changed. Use `remember` for
 conventions, such as "files results in ₹ lakhs" or "Reg 52 only, no equity listing".
 
 ## Reply

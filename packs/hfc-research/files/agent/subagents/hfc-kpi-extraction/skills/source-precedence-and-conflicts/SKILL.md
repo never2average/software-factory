@@ -20,7 +20,7 @@ You never apply the 5% rule in your head. The script does it.
 - You found the KPI in both the QR and the IP for the same quarter.
 - The KPI is "operational" but only the QR has it, or "financial" but only the IP has it (very common: yield, cost of
   funds and NIM are usually presentation-only).
-- The company has no presentation of its own: check `get_customer` and `list_memories` for "unlisted" / the parent's
+- The company has no presentation of its own: check `get_company` and `list_memories` for "unlisted" / the parent's
   name. If you cannot tell whether the company is listed, ask the orchestrator; do not assume.
 
 Which KPI is operational and which is financial is fixed in the catalog:
@@ -70,8 +70,8 @@ The QR's notes give disbursements of 1,88,000 (table header "₹ in lakhs"). The
 
 ```
 echo '{"kpi":"disbursements","period":"Q2 FY26","listing":"listed",
- "qr":{"value":"1,88,000","unit":"lakh","document":"Customers/example-hfl/filings/lodr/q2fy26-results.pdf","page_or_slide":7},
- "ip":{"value":"1,900","unit":"crore","document":"Customers/example-hfl/filings/presentations/q2fy26-ip.pdf","page_or_slide":"slide 9"}}' \
+ "qr":{"value":"1,88,000","unit":"lakh","document":"Companies/example-hfl/filings/lodr/q2fy26-results.pdf","page_or_slide":7},
+ "ip":{"value":"1,900","unit":"crore","document":"Companies/example-hfl/filings/presentations/q2fy26-ip.pdf","page_or_slide":"slide 9"}}' \
  | python3 /workspace/scripts/reconcile_sources.py --stdin
 ```
 

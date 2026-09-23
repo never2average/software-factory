@@ -17,7 +17,7 @@ Both validators print JSON `{file, rows, valid, errors[], warnings[], next}` and
 | `approximate` | `approximate: true` without a note | Say what was read and how |
 | `parent` | `from_parent` without `parent_document` or without a `_parent-` document; or the reverse | `parent-deck-for-unlisted-hfc` |
 | `restructured` | metric key or `source_label` names restructured-book detail | Drop the row: the rulebook excludes it |
-| `duplicate` | same customer/period/metric/basis twice with different values; or already in `--existing` (same value twice in the new file is a warning) | `deck-layout-variants` > which slide to cite |
+| `duplicate` | same company/period/metric/basis twice with different values; or already in `--existing` (same value twice in the new file is a warning) | `deck-layout-variants` > which slide to cite |
 | `aum_loan_book` | AUM equals loan book while sell down or off-book is positive (warnings: AUM below loan book; loan book + off-book ≠ AUM) | `aum-mix-and-off-book`, `sell-down-and-buy-out-in-appendix` |
 | `mix_sum` | product or customer mix shares on one basis exceed 100 | Overlapping classifications: give the cut its own `basis` |
 | `carry_forward` | carried fields on a row that is not `not_disclosed`; carried period without value (warning: branches/employees not disclosed and nothing offered) | `operational-metrics` step 7 |

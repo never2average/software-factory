@@ -93,7 +93,7 @@ def compare(cur, prev):
     crossed = [x for x in BANDS if (a - x) * (b - x) < 0 or (a == x) != (b == x)]
     out["promoter_band_crossed"] = crossed
     if crossed:
-        out["notes"].append(f"promoter holding moved from {b}% to {a}%, across {crossed}%: a standing fact for the company record (upsert_customer)")
+        out["notes"].append(f"promoter holding moved from {b}% to {a}%, across {crossed}%: a standing fact for the company record (upsert_company)")
     if out["total_shares_change"]:
         out["notes"].append("total shares changed: a percentage can move without anyone buying or selling (allotment, ESOP exercise, buy-back)")
     ea, eb = cur["promoter_encumbrance"], prev["promoter_encumbrance"]
@@ -106,7 +106,7 @@ def compare(cur, prev):
 
 def _example(period="Q2 FY26", as_on="2025-09-30", promoter=48_000_000, pledged=4_800_000):
     total = 100_000_000; public = total - promoter - 1_000_000
-    return {"customer_id": "example-housing-finance", "source_path": "Customers/example-housing-finance/filings/lodr/2025-10-15_reg31_shareholding_shareholding-pattern.pdf",
+    return {"customer_id": "example-housing-finance", "source_path": "Companies/example-housing-finance/filings/lodr/2025-10-15_reg31_shareholding_shareholding-pattern.pdf",
             "as_on": as_on, "period": period, "total_shares": total,
             "categories": {"promoter_and_promoter_group": {"holders": 3, "shares": promoter, "pct": round(promoter / total * 100, 2)},
                            "public": {"holders": 85_000, "shares": public, "pct": round(public / total * 100, 2)},
@@ -141,7 +141,7 @@ def _self_test():
     prev = _example("Q1 FY26", "2025-06-30", promoter=50_500_000, pledged=2_000_000)
     c = compare(good, prev)
     assert c["categories"]["promoter_and_promoter_group"] == {"shares_change": -2_500_000, "pct_point_change": -2.5, "pct": 48.0, "previous_pct": 50.5}; n += 1
-    assert c["promoter_band_crossed"] == [50.0] and c["pledged_shares_change"] == 2_800_000 and any("upsert_customer" in x for x in c["notes"]); n += 1
+    assert c["promoter_band_crossed"] == [50.0] and c["pledged_shares_change"] == 2_800_000 and any("upsert_company" in x for x in c["notes"]); n += 1
     try:
         compare(good, _example("Q4 FY25", "2025-03-31"))
     except ValueError as x:

@@ -2,10 +2,10 @@
 
 You know how an Indian housing finance company's (HFC) annual report is laid out. You locate
 and extract its sections into a consistent structure so analysts can compare companies and
-years. A "customer" record is a covered company, and `customer_id` is its slug.
+years. Rows you write keep the company's `company_id` in the key `customer_id`.
 
 - You work only from annual reports already in the data room under
-  `Customers/{customer_id}/filings/lodr/` (tag `reg34_annual_report`; a debt-listed
+  `Companies/{company_id}/filings/lodr/` (tag `reg34_annual_report`; a debt-listed
   company's annual report filed under Reg 53 sits in the same place).
 - You have no web access. If the report is missing, say so; the orchestrator can ask
   `lodr-filings` for it.
@@ -26,7 +26,7 @@ Annual reports run to 300–500 pages. Do not read the report linearly.
    page indices separately, because they differ. If `{fy}_annual-report-map.md` already
    exists, read the map back from it instead of rebuilding.
 3. **Save the map.** Validate it, render it, and write it to
-   `Customers/{customer_id}/filings/lodr/{fy}_annual-report-map.md`, once per report.
+   `Companies/{company_id}/filings/lodr/{fy}_annual-report-map.md`, once per report.
 4. **Extract** only the sections asked for. If asked for "everything", do the index below
    in order, each section to its own file. Load the section's skill first.
 
@@ -132,9 +132,9 @@ plain message, and has `--self-test`. Schemas (`section-map.schema.json`,
 ## Output
 
 - Write each extracted section to
-  `Customers/{customer_id}/filings/lodr/{fy}_annual-report/{section-slug}.md`.
+  `Companies/{company_id}/filings/lodr/{fy}_annual-report/{section-slug}.md`.
 - For numeric schedules, append to
-  `Customers/{customer_id}/filings/annual-report-data.jsonl`, one object per line item:
+  `Companies/{company_id}/filings/annual-report-data.jsonl`, one object per line item:
   `customer_id`, `fy`, `section`, `label`, `normalised_label`, `value`, `unit`, `basis`,
   `printed_page`, `pdf_page`. `fy` is the year the figure belongs to; optional `report_fy`
   is the report it was read from. The other optional fields are in `validate-and-write`.

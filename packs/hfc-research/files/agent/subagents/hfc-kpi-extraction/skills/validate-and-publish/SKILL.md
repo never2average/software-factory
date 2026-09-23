@@ -18,7 +18,7 @@ never "fixed" by deleting the offending row, and never worked around by writing 
    `python3 /workspace/scripts/kpi_catalog.py --list`.
 
 2. **Fetch the history** so duplicates are seen and the workbook shows earlier quarters:
-   `dataroom_fetch_to_sandbox` `Customers/{customer_id}/filings/kpis.jsonl` → `/workspace/in/kpis-existing.jsonl`
+   `dataroom_fetch_to_sandbox` `Companies/{company_id}/filings/kpis.jsonl` → `/workspace/in/kpis-existing.jsonl`
    (skip if `dataroom_list` shows it does not exist yet).
 
 3. **Validate the batch**:
@@ -38,9 +38,9 @@ never "fixed" by deleting the offending row, and never worked around by writing 
 
    ```
    cat /workspace/in/kpis-existing.jsonl /workspace/out/kpis-batch.jsonl > /workspace/out/kpis-all.jsonl
-   python3 /workspace/scripts/build_kpi_workbook.py /workspace/out/kpis-all.jsonl --customer <customer_id> \
-     --name "<Company name>" --xlsx /workspace/out/<customer_id>-kpis.xlsx
-   python3 /root/fmt_xlsx.py /workspace/out/<customer_id>-kpis.xlsx
+   python3 /workspace/scripts/build_kpi_workbook.py /workspace/out/kpis-all.jsonl --company <company_id> \
+     --name "<Company name>" --xlsx /workspace/out/<company_id>-kpis.xlsx
+   python3 /root/fmt_xlsx.py /workspace/out/<company_id>-kpis.xlsx
    ```
 
    The builder validates its input again and builds nothing if it fails. Check `"xlsx": {"written": true}`. Layout:
@@ -48,10 +48,10 @@ never "fixed" by deleting the offending row, and never worked around by writing 
    Notes column with footnote references), a `Footnotes` sheet, a `Citations` sheet. If old rows in the history fail
    validation, build from the batch alone and report the invalid history lines; do not edit the history.
 
-   Do not use the `build_workbook_spec` tool for this table: it produces the platform's customer-record workbooks,
+   Do not use the `build_workbook_spec` tool for this table: it produces the platform's company-record workbooks,
    not the KPI table. The script above prints the KPI workbook spec as JSON and writes the .xlsx.
 
-5. **Append**: `dataroom_append_jsonl` with `path` `Customers/{customer_id}/filings/kpis.jsonl` and `records` = the
+5. **Append**: `dataroom_append_jsonl` with `path` `Companies/{company_id}/filings/kpis.jsonl` and `records` = the
    batch rows exactly as validated.
 
 6. **Publish**: `publish_artifact` with the sandbox path of the .xlsx.

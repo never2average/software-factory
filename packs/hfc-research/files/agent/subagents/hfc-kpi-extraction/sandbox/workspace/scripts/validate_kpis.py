@@ -20,10 +20,10 @@ ERRORS (exit 1; the batch must not be appended or published)
   E-RESTRUCT    restructured-book content in kpi / label / definition (the rulebook excludes it)
   E-SOURCE      computed KPI not marked source 'computed', or a disclosed KPI marked 'computed' (spread_pct may be either)
   E-ARITH       a computed row whose value does not follow from the rows it is computed from (spread, disbursement per branch / employee)
-  E-DUP         the same (customer_id, period, kpi) twice with the same extracted_at
+  E-DUP         the same (company, period, kpi) twice with the same extracted_at
 FLAGS (exit 0; reported to the analyst, never silently dropped)
   F-RANGE       a percentage outside its usual range (e.g. GNPA % > 25), or a percentage that looks like a fraction (0.0182 for 1.82%)
-  F-DUP         the same (customer_id, period, kpi) with different extracted_at: a re-extraction; the workbook uses the latest
+  F-DUP         the same (company, period, kpi) with different extracted_at: a re-extraction; the workbook uses the latest
   F-FOOTNOTE    not_found without a footnote saying where it was looked for; restructuring mentioned in a footnote
   F-MISSING     with --expect-complete: a catalog KPI has no row for a company and quarter
   F-DERIVED     derived_from_cumulative on a KPI that is not a flow
@@ -161,7 +161,7 @@ def validate_rows(rows, problems=None, loan_book_tol_pct=1.0, expect_complete=Fa
 
 def _self_test():
     fails = []
-    DOC_QR, DOC_IP = "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "Customers/example-hfl/filings/presentations/q2fy26-ip.pdf"
+    DOC_QR, DOC_IP = "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf"
     def row(kpi, value, **kw):
         e = cat.BY_KEY[kpi]
         r = {"customer_id": "example-hfl", "extracted_at": "2026-09-18T10:00:00Z", "kpi": kpi, "category": e["category"], "value": value, "unit": e["unit"],

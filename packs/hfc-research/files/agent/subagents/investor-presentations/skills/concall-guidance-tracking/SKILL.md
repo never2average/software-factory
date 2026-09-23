@@ -44,7 +44,7 @@ Speaker turns start with `Name:` at the beginning of a line.
    characters, continuous, from one speaker, with the page where the sentence starts.
 5. Write the rows to `/workspace/out/guidance.new.jsonl` with `change_vs_previous` left as your first
    reading, then fetch the history (`dataroom_fetch_to_sandbox` on
-   `Customers/{customer_id}/filings/presentations/guidance.jsonl` to `/workspace/in/guidance.jsonl`) and run:
+   `Companies/{company_id}/filings/presentations/guidance.jsonl` to `/workspace/in/guidance.jsonl`) and run:
    `python3 /workspace/scripts/guidance_diff.py --current /workspace/out/guidance.new.jsonl --previous /workspace/in/guidance.jsonl`
 6. Set `change_vs_previous` from the diff:
    | Diff says | You write |

@@ -1,7 +1,7 @@
 # Investor presentations and concalls
 
 You read the investor presentations (IP) and earnings-call transcripts of Indian housing
-finance companies (HFCs). A "customer" record is a covered company; `customer_id` is its slug.
+finance companies (HFCs). Rows you write keep the company's `company_id` in the key `customer_id`.
 
 The analysts' rulebook is `hfc-kpi-extraction/schemas/kpi-spec.md`. It binds you: the IP is
 their source for **operational metrics** (branches, employees, disbursements) and for **sell
@@ -74,8 +74,8 @@ With web search, look in this order: (1) the exchange intimation for the present
 transcript (Reg 30 disclosures on BSE and NSE); (2) the company's investor-relations page;
 (3) for a subsidiary, the parent's. File only a document you retrieved, at:
 
-- `Customers/{customer_id}/filings/presentations/{YYYY-MM-DD}_{period}_investor-presentation.pdf`
-- `Customers/{customer_id}/filings/presentations/{YYYY-MM-DD}_{period}_concall-transcript.pdf`
+- `Companies/{company_id}/filings/presentations/{YYYY-MM-DD}_{period}_investor-presentation.pdf`
+- `Companies/{company_id}/filings/presentations/{YYYY-MM-DD}_{period}_concall-transcript.pdf`
 
 Write `period` as `Q2FY26`. For a parent's deck, add `_parent-{parent-slug}` before the
 extension. Check `dataroom_list` first so nothing is filed twice. Without web search, work
@@ -110,7 +110,7 @@ self-employed), on-book vs off-book AUM, sell down (assigned or transferred) and
 - **Repeated numbers.** One row per metric per period, citing the slide whose subject is
   the metric; if two slides disagree, write no row and report both.
 
-After validation, append to `Customers/{customer_id}/filings/presentations/ip-metrics.jsonl`
+After validation, append to `Companies/{company_id}/filings/presentations/ip-metrics.jsonl`
 with `dataroom_append_jsonl`, one object per metric:
 
 `customer_id`, `period`, `metric`, `value`, `unit`, `document`, `slide`, `approximate`,
@@ -136,7 +136,7 @@ From the transcript, extract:
 - **Analyst questions** management did not answer or deflected.
 
 After validation, append guidance to
-`Customers/{customer_id}/filings/presentations/guidance.jsonl`:
+`Companies/{company_id}/filings/presentations/guidance.jsonl`:
 
 `customer_id`, `period`, `topic`, `statement`, `speaker`, `page`, `change_vs_previous`,
 `extracted_at`.

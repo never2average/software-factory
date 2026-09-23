@@ -20,7 +20,7 @@ Classify and name as usual:
 
 ```
 python3 /workspace/scripts/classify_filing.py --pdf /workspace/in/filing.pdf --listing equity
-python3 /workspace/scripts/filing_name.py --customer-id example-housing-finance --filed-on 2025-11-10 --tag reg23_rpt --title "Related party transactions H1 FY26" --ext pdf --period "H1 FY26"
+python3 /workspace/scripts/filing_name.py --company-id example-housing-finance --filed-on 2025-11-10 --tag reg23_rpt --title "Related party transactions H1 FY26" --ext pdf --period "H1 FY26"
 ```
 
 `period` on the log row: `H1 FY26` / `FY26` for the RPT disclosure (it is half-yearly: the second-half filing covers
@@ -62,7 +62,7 @@ Routine unless one of these changes. Compare with the previous quarter's report 
 - any "No" in the compliance grid, and the explanation given;
 - for a company that is "high value debt listed", which governance provisions it says apply.
 
-A changed MD / CEO, CFO or auditor is a standing fact: `upsert_customer` (skill `material-events-and-ratings`), but
+A changed MD / CEO, CFO or auditor is a standing fact: `upsert_company` (skill `material-events-and-ratings`), but
 cite the Reg 30 intimation for the date if there is one; the Reg 27 report only confirms it.
 
 ## Reg 24A: what matters

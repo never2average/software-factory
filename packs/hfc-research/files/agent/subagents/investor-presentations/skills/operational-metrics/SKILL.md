@@ -60,15 +60,15 @@ Example Housing Finance Ltd, Q2 FY26, slide 15 "Pan-India distribution network":
 Slide 9 table: `Disbursements 890 960 1,050 2,010` under `Q2 FY25  Q1 FY26  Q2 FY26  H1 FY26`, unit ₹ crore.
 
 ```json
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"branches","value":215,"unit":"count","document":"Customers/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf","slide":15,"approximate":false,"from_parent":false,"note":"","extracted_at":"2025-11-05T10:00:00Z","basis":"branches","source_label":"Branches"}
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"employees","value":3410,"unit":"count","document":"Customers/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf","slide":15,"approximate":false,"from_parent":false,"note":"","extracted_at":"2025-11-05T10:00:00Z","basis":"on_roll","source_label":"On-roll employees"}
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"disbursements","value":1050,"unit":"crore","document":"Customers/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf","slide":9,"approximate":false,"from_parent":false,"note":"Discrete quarter from the quarterly trend table; H1 FY26 of 2,010 shown alongside was not used.","extracted_at":"2025-11-05T10:00:00Z","source_label":"Disbursements"}
+{"customer_id":"example-hfl","period":"Q2FY26","metric":"branches","value":215,"unit":"count","document":"Companies/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf","slide":15,"approximate":false,"from_parent":false,"note":"","extracted_at":"2025-11-05T10:00:00Z","basis":"branches","source_label":"Branches"}
+{"customer_id":"example-hfl","period":"Q2FY26","metric":"employees","value":3410,"unit":"count","document":"Companies/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf","slide":15,"approximate":false,"from_parent":false,"note":"","extracted_at":"2025-11-05T10:00:00Z","basis":"on_roll","source_label":"On-roll employees"}
+{"customer_id":"example-hfl","period":"Q2FY26","metric":"disbursements","value":1050,"unit":"crore","document":"Companies/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf","slide":9,"approximate":false,"from_parent":false,"note":"Discrete quarter from the quarterly trend table; H1 FY26 of 2,010 shown alongside was not used.","extracted_at":"2025-11-05T10:00:00Z","source_label":"Disbursements"}
 ```
 
 Next quarter the Q3 FY26 deck drops the employee count:
 
 ```json
-{"customer_id":"example-hfl","period":"Q3FY26","metric":"employees","value":null,"unit":"count","document":"Customers/example-hfl/filings/presentations/2026-02-03_Q3FY26_investor-presentation.pdf","slide":null,"approximate":false,"from_parent":false,"note":"Not given in the Q3 FY26 deck (checked slides 4, 15, 33). Q2 FY26 IP value offered for carry-forward.","extracted_at":"2026-02-04T09:00:00Z","status":"not_disclosed","carried_from_period":"Q2FY26","carried_value":3410,"carried_document":"Customers/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf","carried_slide":15}
+{"customer_id":"example-hfl","period":"Q3FY26","metric":"employees","value":null,"unit":"count","document":"Companies/example-hfl/filings/presentations/2026-02-03_Q3FY26_investor-presentation.pdf","slide":null,"approximate":false,"from_parent":false,"note":"Not given in the Q3 FY26 deck (checked slides 4, 15, 33). Q2 FY26 IP value offered for carry-forward.","extracted_at":"2026-02-04T09:00:00Z","status":"not_disclosed","carried_from_period":"Q2FY26","carried_value":3410,"carried_document":"Companies/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf","carried_slide":15}
 ```
 
 Reply line: "Employees: not disclosed in the Q3 FY26 deck. Previous value 3,410 (on-roll), Q2 FY26 deck,

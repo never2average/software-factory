@@ -14,7 +14,7 @@ Two page numbers exist for every page and both are recorded, always:
 
 ## Before building: is there a map already?
 
-1. `dataroom_list` on `Customers/{customer_id}/filings/lodr/`. If `{fy}_annual-report-map.md` exists, fetch it and read
+1. `dataroom_list` on `Companies/{company_id}/filings/lodr/`. If `{fy}_annual-report-map.md` exists, fetch it and read
    the map back. Do not rebuild it:
 
    ```
@@ -37,7 +37,7 @@ Two page numbers exist for every page and both are recorded, always:
 
    ```
    python3 /workspace/scripts/section_map.py /workspace/in/FY26_annual-report.pdf \
-     --customer-id example-housing-finance --fy FY26 --content-type text --out /workspace/out/map.json
+     --company-id example-housing-finance --fy FY26 --content-type text --out /workspace/out/map.json
    ```
 
    | Order | Evidence | What it gives | Weakness |
@@ -73,7 +73,7 @@ Two page numbers exist for every page and both are recorded, always:
    ```
 
    Write the rendered file with `dataroom_write` to the `dataroom_path` the script prints
-   (`Customers/{customer_id}/filings/lodr/{fy}_annual-report-map.md`).
+   (`Companies/{company_id}/filings/lodr/{fy}_annual-report-map.md`).
 7. `remember` the layout facts that will save time next year, in one line each, for example
    "example-housing-finance: RBI disclosures are Note 52, after the related-party note; statements are paginated
    continuously; no bookmarks". Put the same lines in the map's `layout_memories` before rendering.
@@ -85,7 +85,7 @@ into a text file, sample a few page labels, and build the map from that:
 
 ```
 python3 /workspace/scripts/section_map.py --toc-text /workspace/out/contents.txt \
-  --samples /workspace/out/samples.json --page-count 412 --customer-id example-housing-finance --fy FY26
+  --samples /workspace/out/samples.json --page-count 412 --company-id example-housing-finance --fy FY26
 ```
 
 Everything built this way is `unconfirmed` until you have looked at the pages.
@@ -104,7 +104,7 @@ Build this year's map with the script as usual, then compare: a section that was
 ## What to write
 
 - `/workspace/out/map.json`, validated.
-- `Customers/{customer_id}/filings/lodr/{fy}_annual-report-map.md`, rendered from it.
+- `Companies/{company_id}/filings/lodr/{fy}_annual-report-map.md`, rendered from it.
 - In the reply, on first contact with a report: the sections table, the offsets, what was not found.
 
 ## Worked example

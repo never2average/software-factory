@@ -84,4 +84,4 @@ More cases are in [references/variants-checklist.md](references/variants-checkli
 - The first auditor's report's basis cannot be read from its first page: leave it `unconfirmed` and read the opinion
   paragraph, which names the statements audited.
 - A subsidiary's numbers appear inside a parent's report (an unlisted HFC covered through its parent): this subagent
-  extracts only the report of the company named by `customer_id`. Say what you saw and stop.
+  extracts only the report of the company named by `company_id`. Say what you saw and stop.

@@ -13,7 +13,7 @@ reported to the analyst. It is never bypassed, and a row is never edited just to
    - `/workspace/out/ip-metrics.new.jsonl`
    - `/workspace/out/guidance.new.jsonl`
 2. Fetch what is already filed, so duplicates and changes can be checked:
-   `dataroom_fetch_to_sandbox` `Customers/{customer_id}/filings/presentations/ip-metrics.jsonl` → `/workspace/in/ip-metrics.jsonl`
+   `dataroom_fetch_to_sandbox` `Companies/{company_id}/filings/presentations/ip-metrics.jsonl` → `/workspace/in/ip-metrics.jsonl`
    and `…/guidance.jsonl` → `/workspace/in/guidance.jsonl`. If a file does not exist yet, leave the option out.
 3. Validate the metrics:
    `python3 /workspace/scripts/validate_ip_metrics.py /workspace/out/ip-metrics.new.jsonl --existing /workspace/in/ip-metrics.jsonl --require-core`
@@ -30,7 +30,7 @@ reported to the analyst. It is never bypassed, and a row is never edited just to
      with slide numbers.
    - Never change a value, drop a note, or flip `approximate` to get past the gate.
 7. Append: `dataroom_append_jsonl` each validated row to
-   `Customers/{customer_id}/filings/presentations/ip-metrics.jsonl` and `…/guidance.jsonl`.
+   `Companies/{company_id}/filings/presentations/ip-metrics.jsonl` and `…/guidance.jsonl`.
 8. `record_interaction` for the call, and `publish_artifact` if a brief was asked for, **after** the appends.
 9. Reply (the instructions' "Reply" section): brief, guidance table with changes, operational metrics with
    slide numbers, anything not found. Approximate values are marked "about"; parent-sourced values say so.

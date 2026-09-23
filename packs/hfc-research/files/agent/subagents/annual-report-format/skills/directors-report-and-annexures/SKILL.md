@@ -70,7 +70,7 @@ information, the Corporate Governance Report and the BRSR.
 
 ## What to write
 
-`Customers/{customer_id}/filings/lodr/{fy}_annual-report/directors-report.md`, with one heading per item above, each
+`Companies/{company_id}/filings/lodr/{fy}_annual-report/directors-report.md`, with one heading per item above, each
 fact followed by `(printed p. 33, PDF p. 41)`. Rows for the financial summary, dividend per share and capital raised
 go to `annual-report-data.jsonl` with `section: "directors_report"`.
 

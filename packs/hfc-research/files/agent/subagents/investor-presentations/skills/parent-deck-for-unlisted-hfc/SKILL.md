@@ -11,7 +11,7 @@ figure comes from the **parent's** document.
 
 ## Recognise the situation
 
-- `get_customer` says the company is unlisted / debt-listed, or names a parent. Examples: IIFL Home Finance
+- `get_company` says the company is unlisted / debt-listed, or names a parent. Examples: IIFL Home Finance
   inside IIFL Finance's deck, Tata Capital Housing Finance inside Tata Capital's.
 - The company has no deck of its own on its investor page (some debt-listed HFCs do publish one: if so, that
   is its own deck and this skill does not apply).
@@ -19,7 +19,7 @@ figure comes from the **parent's** document.
 
 ## Procedure
 
-1. Get the parent's name and slug from `get_customer` (or the company's website). If the record does not
+1. Get the parent's name and slug from `get_company` (or the company's website). If the record does not
    say who the parent is, ask; do not guess from the brand name.
 2. Find and file the parent's deck (`find-the-deck-and-transcript`), under the **subsidiary's** folder with
    `_parent-{parent-slug}` before the extension.
@@ -62,13 +62,13 @@ In the reply, never "Example Home Finance reported…". Always:
 
 ## Worked example
 
-Customer `example-home-finance` (debt-listed), parent Example Finance Ltd (`example-finance`). Parent's
+Company `example-home-finance` (debt-listed), parent Example Finance Ltd (`example-finance`). Parent's
 Q2 FY26 deck, 70 slides; slide 28 is a divider "Housing Finance: Example Home Finance Ltd"; slide 30
 (₹ crore) gives "AUM 5,000 | Disbursements 420 | Branches 96 | GNPA 1.1%". No employee count, no assignment table.
 
 ```json
-{"customer_id":"example-home-finance","period":"Q2FY26","metric":"aum","value":5000,"unit":"crore","document":"Customers/example-home-finance/filings/presentations/2025-10-29_Q2FY26_investor-presentation_parent-example-finance.pdf","slide":30,"approximate":false,"from_parent":true,"parent_document":"Example Finance Ltd investor presentation Q2 FY26","note":"From the parent's deck, housing finance segment slide (entity named on the slide).","extracted_at":"2025-10-30T08:00:00Z"}
-{"customer_id":"example-home-finance","period":"Q2FY26","metric":"employees","value":null,"unit":"count","document":"Customers/example-home-finance/filings/presentations/2025-10-29_Q2FY26_investor-presentation_parent-example-finance.pdf","slide":null,"approximate":false,"from_parent":true,"parent_document":"Example Finance Ltd investor presentation Q2 FY26","note":"The parent's deck gives group headcount only (slide 6), not the subsidiary's. No earlier value on file.","extracted_at":"2025-10-30T08:00:00Z","status":"not_disclosed"}
+{"customer_id":"example-home-finance","period":"Q2FY26","metric":"aum","value":5000,"unit":"crore","document":"Companies/example-home-finance/filings/presentations/2025-10-29_Q2FY26_investor-presentation_parent-example-finance.pdf","slide":30,"approximate":false,"from_parent":true,"parent_document":"Example Finance Ltd investor presentation Q2 FY26","note":"From the parent's deck, housing finance segment slide (entity named on the slide).","extracted_at":"2025-10-30T08:00:00Z"}
+{"customer_id":"example-home-finance","period":"Q2FY26","metric":"employees","value":null,"unit":"count","document":"Companies/example-home-finance/filings/presentations/2025-10-29_Q2FY26_investor-presentation_parent-example-finance.pdf","slide":null,"approximate":false,"from_parent":true,"parent_document":"Example Finance Ltd investor presentation Q2 FY26","note":"The parent's deck gives group headcount only (slide 6), not the subsidiary's. No earlier value on file.","extracted_at":"2025-10-30T08:00:00Z","status":"not_disclosed"}
 ```
 
 ## Failure modes and what to report

@@ -5,7 +5,8 @@
 
 Checks each row against schemas/filing-log-row.schema.json and the rules a schema cannot express:
 - filed_on is a real date, not in the future, not before 2015; logged_at is not before filed_on
-- path is the canonical pattern, and the customer_id, date and tag inside it agree with the row
+- path is the canonical pattern (Companies/, or the stored folder name older rows carry), and the company id, date and tag inside
+  it agree with the row
 - period parses with finlib.periods; it is required (with basis) for reg33_results / reg52_results, and for those
   the short name in the path starts with the period slug
 - source_url is present for every fetched file (source bse / nse / company_ir / parent_company); a row with no
@@ -44,11 +45,11 @@ def check_row(o, today):
         e.append(str(x)); d = None
     parts = filing_name.parse_path(o.get("path") or "")
     if isinstance(o.get("path"), str) and not parts:
-        e.append(f"path {o['path']!r} is not canonical: Customers/{{customer_id}}/filings/lodr/{{YYYY-MM-DD}}_{{tag}}_{{short-name}}.{{ext}} (build it with filing_name.py)")
+        e.append(f"path {o['path']!r} is not canonical: Companies/{{company_id}}/filings/lodr/{{YYYY-MM-DD}}_{{tag}}_{{short-name}}.{{ext}} (build it with filing_name.py)")
     if parts:
-        for k in ("customer_id", "filed_on", "tag"):
-            if o.get(k) is not None and parts[k] != o.get(k):
-                e.append(f"path says {k} = {parts[k]!r} but the row says {o.get(k)!r}")
+        for k, pk in ((filing_name.ROW_KEY, "company_id"), ("filed_on", "filed_on"), ("tag", "tag")):
+            if o.get(k) is not None and parts[pk] != o.get(k):
+                e.append(f"path says {pk} = {parts[pk]!r} but the row says {k} = {o.get(k)!r}")
     per = o.get("period")
     if per:
         p = periods.normalise(per)
@@ -111,11 +112,11 @@ def _self_test():
     today = datetime.date(2026, 9, 18); n = 0
     good = {"customer_id": "example-housing-finance", "filed_on": "2025-10-24", "tag": "reg33_results", "period": "Q2 FY26", "basis": "both",
             "title": "Outcome of Board Meeting - Unaudited Financial Results for the quarter ended September 30, 2025",
-            "path": "Customers/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-outcome-board-meeting-unaudited-financial-results.pdf",
+            "path": "Companies/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-outcome-board-meeting-unaudited-financial-results.pdf",
             "source_url": "https://www.example-exchange.invalid/announcements/abc.pdf", "source": "bse", "also_covers": ["reg30_event", "reg52_results"], "content": "mixed",
             "summary": "Standalone and consolidated results for Q2 FY26 with limited review reports. Reg 52(4) ratios appended at p.11.", "logged_at": "2025-10-25T04:30:00Z"}
     event = {"customer_id": "example-housing-finance", "filed_on": "2026-05-02", "tag": "reg30_event", "title": "Credit rating reaffirmed",
-             "path": "Customers/example-housing-finance/filings/lodr/2026-05-02_reg30_event_credit-rating-reaffirmed.md", "source_url": "https://www.example-exchange.invalid/x",
+             "path": "Companies/example-housing-finance/filings/lodr/2026-05-02_reg30_event_credit-rating-reaffirmed.md", "source_url": "https://www.example-exchange.invalid/x",
              "source": "nse", "summary": "Rating reaffirmed at the same level with a stable outlook.", "logged_at": "2026-05-03T10:00:00+05:30"}
     d = tempfile.mkdtemp()
 
@@ -130,6 +131,8 @@ def _self_test():
                 f.write("\n".join(json.dumps(r) for r in existing) + "\n")
         return validate(p, ex, today)
     r = run([good, event]); assert r["valid"] and r["rows"] == 2, r["errors"]; n += 1
+    # an older row filed under the stored folder name is still canonical
+    r = run([{**good, "path": filing_name.FOLDERS[1] + good["path"][len(filing_name.FOLDERS[0]):]}]); assert r["valid"], r["errors"]; n += 1
 
     def bad(change, expect, base=good, drop=()):
         row = {k: v for k, v in {**base, **change}.items() if k not in drop}
@@ -139,8 +142,8 @@ def _self_test():
     n += bad({"tag": "reg33"}, "is not one of")
     n += bad({"tag": "reg52_results"}, "path says tag = 'reg33_results'")
     n += bad({"filed_on": "2025-10-25"}, "path says filed_on")
-    n += bad({"customer_id": "another-hfc"}, "path says customer_id")
-    n += bad({"path": "Customers/example-housing-finance/filings/lodr/results q2.pdf"}, "does not match")
+    n += bad({"customer_id": "another-hfc"}, "path says company_id")
+    n += bad({"path": "Companies/example-housing-finance/filings/lodr/results q2.pdf"}, "does not match")
     n += bad({}, "missing required 'period'", drop=("period",))
     n += bad({}, "missing required 'basis'", drop=("basis",))
     n += bad({"period": "Q2FY26"}, "does not match")                       # schema pattern: canonical form only

@@ -863,9 +863,9 @@ def _cases():
 
 def main():
     ap = argparse.ArgumentParser(description="Build an annual report's section map: outline, then contents page, then heading search.",
-                                 epilog="Example: section_map.py /workspace/in/FY26_annual-report.pdf --customer-id example-housing-finance --fy FY26 --out /workspace/out/map.json")
+                                 epilog="Example: section_map.py /workspace/in/FY26_annual-report.pdf --company-id example-housing-finance --fy FY26 --out /workspace/out/map.json")
     ap.add_argument("pdf", nargs="?", help="the annual report PDF")
-    ap.add_argument("--customer-id", help="company slug, recorded in the map")
+    ap.add_argument("--company-id", "--customer-id", dest="company_id", help="the company's id, recorded in the map")
     ap.add_argument("--fy", help="financial year of the report, e.g. FY26")
     ap.add_argument("--content-type", choices=["text", "mixed", "scanned"], help="what detect_content_type.py reported, recorded in the map")
     ap.add_argument("--out", help="also write the map to this file")
@@ -877,7 +877,7 @@ def main():
     args = ap.parse_args()
     if args.self_test:
         C.run_self_test(_cases())
-    meta = {"customer_id": args.customer_id, "fy": args.fy, "content_type": args.content_type}
+    meta = {"customer_id": args.company_id, "fy": args.fy, "content_type": args.content_type}
     if args.fy:
         from finlib import periods
         p = periods.normalise(args.fy)

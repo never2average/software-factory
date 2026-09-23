@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate rows for Customers/{customer_id}/filings/annual-report-data.jsonl BEFORE dataroom_append_jsonl.
+"""Validate rows for Companies/{company_id}/filings/annual-report-data.jsonl BEFORE dataroom_append_jsonl.
 
 Schema: ../schemas/annual-report-data-row.schema.json. Rules a schema cannot express:
   - fy (and report_fy) parse as financial years; a figure's fy is not later than the report it came from;
@@ -40,7 +40,7 @@ def validate_rows(rows, problems=None, existing=None, section_map=None):
     errors, warnings = list(problems or []), []
     if not rows and not errors:
         errors.append("no rows: an empty file is never appended; if nothing could be extracted, say why instead")
-    seen, customers = {}, set()
+    seen, companies = {}, set()
     for n, o in rows:
         where = f"line {n}"
         bad = schema.validate(o, row_schema)
@@ -83,7 +83,7 @@ def validate_rows(rows, problems=None, existing=None, section_map=None):
         if o.get("normalised_label") is None:
             warnings.append(f"{where}: {o.get('label')!r} has no normalised label (kept as printed)")
         if isinstance(o.get("customer_id"), str):
-            customers.add(o["customer_id"])
+            companies.add(o["customer_id"])
         k = _key(o)
         if k in seen:
             same = seen[k][1].get("value") == v
@@ -101,8 +101,8 @@ def validate_rows(rows, problems=None, existing=None, section_map=None):
                 msg = PO.check_pair(section_map["offsets"], o["printed_page"], o["pdf_page"], pc)
                 if msg and not spread:
                     errors.append(f"{where}: {msg}")
-    if len(customers) > 1:
-        warnings.append(f"rows for more than one company in one file: {sorted(customers)}")
+    if len(companies) > 1:
+        warnings.append(f"rows for more than one company in one file: {sorted(companies)}")
 
     if existing:
         old = {}

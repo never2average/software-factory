@@ -54,12 +54,12 @@ itself. `python3 /workspace/scripts/detect_content_type.py <file>` tells you whi
 
    The comparison is refused unless `--previous` is the immediately preceding quarter.
 7. Standing facts: when `promoter_band_crossed` is non-empty, or the pledge status changes between nil and
-   disclosed, update the company record (`upsert_customer`) and say what you changed. Small moves within a band are
+   disclosed, update the company record (`upsert_company`) and say what you changed. Small moves within a band are
    reported, not recorded.
 
 ## What to write
 
-`Customers/{customer_id}/filings/lodr/extracts/{filing file stem}.shareholding.json` via `dataroom_write`, after the
+`Companies/{company_id}/filings/lodr/extracts/{filing file stem}.shareholding.json` via `dataroom_write`, after the
 validator exits 0; then the log row (`tag: reg31_shareholding`, `period` = the as-on quarter, no `basis`).
 
 ## Worked example
@@ -82,7 +82,7 @@ Validator output (abridged):
  "comparison": {"period": "Q2 FY26", "previous_period": "Q1 FY26",
   "categories": {"promoter_and_promoter_group": {"shares_change": -2500000, "pct_point_change": -2.5, "pct": 48.0, "previous_pct": 50.5}},
   "promoter_band_crossed": [50.0], "pledged_shares_change": 2800000,
-  "notes": ["promoter holding moved from 50.5% to 48.0%, across [50.0]%: a standing fact for the company record (upsert_customer)"]}}
+  "notes": ["promoter holding moved from 50.5% to 48.0%, across [50.0]%: a standing fact for the company record (upsert_company)"]}}
 ```
 
 Reply: "Promoter holding 48.00% as on 30 Sep 2025 (50.50% on 30 Jun 2025), p.2. Pledged / encumbered promoter

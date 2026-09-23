@@ -115,7 +115,7 @@ the quarter is the KPI subagent's step, with its own footnote.
 
 ## What to write
 
-`Customers/{customer_id}/filings/lodr/extracts/{filing file stem}.results-extract.json` with `dataroom_write`, only
+`Companies/{company_id}/filings/lodr/extracts/{filing file stem}.results-extract.json` with `dataroom_write`, only
 after `validate_results_extract.py` exits 0; then the log row. Schema:
 `/workspace/schemas/results-extract.schema.json`.
 

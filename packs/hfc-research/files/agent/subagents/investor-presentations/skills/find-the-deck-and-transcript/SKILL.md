@@ -11,18 +11,18 @@ right names, and for saying plainly what you could not get.
 ## Recognise the situation
 
 - The request names a company and a quarter ("Q2 FY26 deck for Example Housing Finance").
-- `dataroom_list` on `Customers/{customer_id}/filings/presentations/` does not show that quarter.
+- `dataroom_list` on `Companies/{company_id}/filings/presentations/` does not show that quarter.
 - Or it shows a file and you need to know whether it is the same document you just found.
 
 ## Procedure
 
-1. **Look in the data room first.** `dataroom_list` on `Customers/{customer_id}/filings/presentations/`.
+1. **Look in the data room first.** `dataroom_list` on `Companies/{company_id}/filings/presentations/`.
    File names carry the period, so `Q2FY26` in a name means that quarter is already filed. Do not file a
    second copy. If a file is there, go straight to reading it.
-2. **Find out what kind of company it is** with `get_customer`: equity-listed (own deck) or unlisted /
+2. **Find out what kind of company it is** with `get_company`: equity-listed (own deck) or unlisted /
    debt-listed (parent's deck; load `parent-deck-for-unlisted-hfc`).
 3. **If `web_search` is not among your tools, stop searching.** Work only from the data room and open your
-   reply with: "Web search is disabled in this deployment, so I worked only from documents already in the
+   reply with: "Web search is disabled in this workspace, so I worked only from documents already in the
    data room." List what is missing. Do not describe a document you have not opened.
 4. **With web search, look in this order** and stop at the first place that gives you the document itself:
    1. The exchange intimation. Companies send the presentation and, later, the transcript to BSE and NSE as
@@ -40,8 +40,8 @@ right names, and for saying plainly what you could not get.
 6. **Confirm the period from the document's own cover or first slide**, never from the search result's
    title. Run `python3 /workspace/scripts/slide_index.py /workspace/in/<file>` and read slide 1 to 3.
 7. **Name and file it** (rules in `references/naming-and-dedupe.md`):
-   - `Customers/{customer_id}/filings/presentations/{YYYY-MM-DD}_{period}_investor-presentation.pdf`
-   - `Customers/{customer_id}/filings/presentations/{YYYY-MM-DD}_{period}_concall-transcript.pdf`
+   - `Companies/{company_id}/filings/presentations/{YYYY-MM-DD}_{period}_investor-presentation.pdf`
+   - `Companies/{company_id}/filings/presentations/{YYYY-MM-DD}_{period}_concall-transcript.pdf`
    - parent's document: `_parent-{parent-slug}` before the extension.
    - `period` is written `Q2FY26`. The date is the date the document was published or sent to the exchange,
      as printed on it. A `.pptx` keeps its own extension.
@@ -58,13 +58,13 @@ summary of a news article about the results, no transcript reconstructed from a 
 Request: "Get the Q2 FY26 deck and concall for Example Housing Finance Ltd."
 
 1. `dataroom_list` shows `2025-08-02_Q1FY26_investor-presentation.pdf` only. Q2 is missing.
-2. `get_customer`: equity-listed. Own deck.
+2. `get_company`: equity-listed. Own deck.
 3. Search "Example Housing Finance investor presentation Q2 FY26" restricted to the exchange sites. The
    first result is an intimation dated 4 November 2025 with a PDF attached.
 4. Fetched to `/workspace/in/ehfl-q2.pdf`. `detect_content_type.py` says
    `{"kind": "pdf", "text_layer": "text", "slide_count": 46, "looks_like": "slides"}`.
 5. Slide 2 of the PDF (slide 1 is the covering letter) reads "Investor Presentation, Q2 FY26". Period confirmed.
-6. Filed as `Customers/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf`.
+6. Filed as `Companies/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf`.
 7. The transcript is not yet on the exchange or the IR page (transcripts usually follow the call by some
    days). Reply: "The Q2 FY26 transcript is not published yet as far as I could find; I looked at the exchange
    announcements and the company's investor page on <date>. The audio recording link exists but I do not

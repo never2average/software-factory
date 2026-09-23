@@ -26,7 +26,7 @@ Wording to search for is in [references/restatement-wording.md](references/resta
 
 1. Both years' reports need maps and extracted rows. If a year is missing from the data room, say so; the orchestrator
    can ask `lodr-filings`. Do not compare from the comparative column alone without saying that is what you did.
-2. Fetch `Customers/{customer_id}/filings/annual-report-data.jsonl` to the sandbox and run:
+2. Fetch `Companies/{company_id}/filings/annual-report-data.jsonl` to the sandbox and run:
 
    ```
    python3 /workspace/scripts/compare_years.py /workspace/in/annual-report-data.jsonl --fy FY26 --prior FY25 \

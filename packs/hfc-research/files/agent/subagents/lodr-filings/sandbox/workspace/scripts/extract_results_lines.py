@@ -5,7 +5,7 @@
 
 Input JSON:
   {
-    "customer_id": "example-housing-finance", "source_path": "Customers/.../filings/lodr/....pdf",
+    "customer_id": "example-housing-finance", "source_path": "Companies/.../filings/lodr/....pdf",
     "tag": "reg33_results", "filing_period": "Q2 FY26",
     "basis": "standalone", "bases_in_filing": "both",
     "unit": "lakh",                      the unit read from THIS table's header (locate_results_sections.py)
@@ -190,7 +190,7 @@ def _example_doc():
         ["12", "A row the extractor split badly", "1.00", "2.00"],
     ]
     return {"customer_id": "example-housing-finance", "tag": "reg33_results", "filing_period": "Q2 FY26", "basis": "standalone", "bases_in_filing": "both",
-            "source_path": "Customers/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-financial-results.pdf",
+            "source_path": "Companies/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-financial-results.pdf",
             "unit": "lakh", "page": 4, "columns": cols, "rows": rows}
 
 

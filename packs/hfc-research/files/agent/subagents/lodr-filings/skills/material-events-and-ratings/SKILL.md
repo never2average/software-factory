@@ -39,12 +39,12 @@ Debt-listed HFCs file the same events under Reg 51 (and rating reviews under Reg
 3. Name and log:
 
    ```
-   python3 /workspace/scripts/filing_name.py --customer-id example-housing-finance --filed-on 2026-05-02 --tag reg30_event --title "Credit rating upgrade - long term NCDs" --ext pdf
+   python3 /workspace/scripts/filing_name.py --company-id example-housing-finance --filed-on 2026-05-02 --tag reg30_event --title "Credit rating upgrade - long term NCDs" --ext pdf
    python3 /workspace/scripts/validate_filing_log.py /workspace/out/new-rows.jsonl --existing /workspace/in/filing-log.jsonl
    ```
 
-4. Company record. `get_customer` first. If the filing changes a standing fact (third column above), call
-   `upsert_customer` with the new value, and say in the reply what you changed, from what, to what, citing the
+4. Company record. `get_company` first. If the filing changes a standing fact (third column above), call
+   `upsert_company` with the new value, and say in the reply what you changed, from what, to what, citing the
    filing. If the record has no field for the fact, put it in the record's notes / context rather than dropping it.
    Use `remember` for conventions ("rating letters are filed under Reg 30 and Reg 55 together"), not for facts.
 5. Follow-ups you hand back to the orchestrator, not do yourself: the investor presentation and transcript

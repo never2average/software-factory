@@ -3,6 +3,12 @@ Supports: type (incl. lists and null), required, properties, additionalPropertie
 minimum, maximum, minLength, items, and allOf/if/then (for 'when status is X, field Y is required')."""
 import json, re
 
+# The key that holds a company's id in every row this pack stores (.jsonl, extracts, maps). The agent's tools call the
+# same value company_id; the key keeps its stored name because renaming it would need a data migration.
+ROW_KEY = "customer_id"
+# A company's data-room folder: the name the agent's tools show, then the stored name (older rows and paths carry it).
+COMPANY_FOLDERS = ("Companies", "Customers")
+
 _T = {"string": str, "number": (int, float), "integer": int, "boolean": bool, "object": dict, "array": list, "null": type(None)}
 
 def _type_ok(v, t):

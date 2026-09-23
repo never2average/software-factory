@@ -237,16 +237,16 @@ def to_rows(result, inp, extracted_at=None):
 
 EXAMPLE = {
     "customer_id": "example-hfl", "period": "Q2 FY26", "basis": "standalone", "flows_are_discrete_quarter": True,
-    "aum": {"value": 10000, "document": "Customers/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 5"},
-    "loan_book": {"value": "8,20,000", "unit": "lakh", "document": "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 5},
-    "disbursements": {"value": 1900, "document": "Customers/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 9"},
-    "networth": {"value": 2400, "document": "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 5},
-    "opex": {"value": 60, "document": "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 3},
-    "employee_cost": {"value": 36, "document": "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 3},
-    "nii": {"value": 150, "document": "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 3},
-    "pat_quarter": {"value": 75, "document": "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 3},
-    "branches": {"value": 200, "document": "Customers/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 4"},
-    "employees": {"value": 2500, "document": "Customers/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 4"},
+    "aum": {"value": 10000, "document": "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 5"},
+    "loan_book": {"value": "8,20,000", "unit": "lakh", "document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 5},
+    "disbursements": {"value": 1900, "document": "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 9"},
+    "networth": {"value": 2400, "document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 5},
+    "opex": {"value": 60, "document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 3},
+    "employee_cost": {"value": 36, "document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 3},
+    "nii": {"value": 150, "document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 3},
+    "pat_quarter": {"value": 75, "document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 3},
+    "branches": {"value": 200, "document": "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 4"},
+    "employees": {"value": 2500, "document": "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 4"},
     "yield_pct": 11.4, "cost_of_funds_pct": 8.1,
     "opex_definition": "employee benefits expense + depreciation + other expenses", "opex_includes_employee_cost": True,
     "published": {"roa_pct": 3.4, "cost_to_income_pct": 33.5},
@@ -270,7 +270,7 @@ def _self_test():
     eq("verdict: off-book exists", (r["sell_down_verdict"]["action"], r["sell_down_verdict"]["off_book"]), ("search", 1800.0))
     rows = to_rows(r, EXAMPLE, "2026-09-18T10:00:00Z")
     eq("rows cite inputs", (rows[1]["source"], rows[1]["page_or_slide"], rows[1]["document"]),
-       ("computed", "opex: 3; nii: 3", "Customers/example-hfl/filings/lodr/q2fy26-results.pdf"))
+       ("computed", "opex: 3; nii: 3", "Companies/example-hfl/filings/lodr/q2fy26-results.pdf"))
     with open(os.path.join(os.path.dirname(SCHEMA), "kpi-row.schema.json"), encoding="utf-8") as f: row_schema = json.load(f)
     eq("rows pass kpi-row schema", [p for row in rows[1:] for p in schema.validate(row, row_schema)], [])
     # missing inputs -> not_found with the reason, others still computed
@@ -281,7 +281,7 @@ def _self_test():
     eq("unaffected KPI still computed", by["roe_pct"]["value"], 12.5)
     # carried-forward input propagates
     c = dict(EXAMPLE, branches={"value": 198, "status": "carried_forward", "period": "Q1 FY26", "footnote": "Not published for Q2 FY26 (previous quarter's IP used).",
-                                "document": "Customers/example-hfl/filings/presentations/q1fy26-ip.pdf", "page_or_slide": "slide 4"})
+                                "document": "Companies/example-hfl/filings/presentations/q1fy26-ip.pdf", "page_or_slide": "slide 4"})
     by = {k["kpi"]: k for k in compute(c)["kpis"]}
     eq("carried_forward propagates", (by["disbursement_per_branch"]["status"], "Q1 FY26" in by["disbursement_per_branch"]["footnote"], by["roe_pct"]["status"]), ("carried_forward", True, "ok"))
     cf_rows = [x for x in to_rows(compute(c), c, "2026-09-18T10:00:00Z") if x["kpi"] == "disbursement_per_branch"]

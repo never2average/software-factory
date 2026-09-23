@@ -70,7 +70,7 @@ The analyst asked for the auditor's report and the balance sheet. Reply:
 > The standalone Independent Auditor's Report (printed pages 150-163, PDF pages 158-171) is a scanned image in this
 > file, so its text cannot be extracted: opinion type, key audit matters and CARO remarks are **not reported**. The
 > balance sheet (printed page 164, PDF page 172) is text and has been extracted to
-> `Customers/example-housing-finance/filings/lodr/FY26_annual-report/standalone-financial-statements.md`. Another
+> `Companies/example-housing-finance/filings/lodr/FY26_annual-report/standalone-financial-statements.md`. Another
 > copy of the report may have a text layer; `lodr-filings` can look for one.
 
 Reply wording for the other cases is in [references/what-to-report.md](references/what-to-report.md).

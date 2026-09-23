@@ -1,11 +1,11 @@
 # filing-log.jsonl: fields
 
-One JSON object per line at `Customers/{customer_id}/filings/filing-log.jsonl`. Schema:
+One JSON object per line at `Companies/{company_id}/filings/filing-log.jsonl`. Schema:
 `/workspace/schemas/filing-log-row.schema.json`. No other fields are allowed.
 
 | Field | Required | Rule |
 |---|---|---|
-| `customer_id` | yes | the company's slug; must equal the one in `path` |
+| `customer_id` | yes | the company's `company_id`; must equal the one in `path` |
 | `filed_on` | yes | `YYYY-MM-DD`, the exchange timestamp date; real, not in the future, not before 2015; must equal the date in `path` |
 | `tag` | yes | one of the fifteen tags; must equal the tag in `path` |
 | `period` | for `reg33_results`, `reg52_results`; optional otherwise | canonical form only: `Q2 FY26`, `H1 FY26`, `9M FY26`, `FY26`. For results it is the filing period (the quarter), and the path's short name starts with it. Results cannot be dated before the period ends. |

@@ -10,7 +10,7 @@ log has exactly one row per filing. Both are produced by script and validated be
 ## Canonical name
 
 ```
-Customers/{customer_id}/filings/lodr/{YYYY-MM-DD}_{tag}_{short-name}.{ext}
+Companies/{company_id}/filings/lodr/{YYYY-MM-DD}_{tag}_{short-name}.{ext}
 ```
 
 - `{YYYY-MM-DD}` = `filed_on`: the exchange's dissemination date. If you only have the company's IR copy, the date
@@ -22,13 +22,13 @@ Customers/{customer_id}/filings/lodr/{YYYY-MM-DD}_{tag}_{short-name}.{ext}
 - `{ext}` = `pdf`, `md` (text capture), `xml` (XBRL), `xlsx`, `html`. From the file's real content
   (`detect_content_type.py`), not the URL's ending.
 
-Derived files sit beside the filings: `Customers/{customer_id}/filings/lodr/extracts/{stem}.results-extract.json`
+Derived files sit beside the filings: `Companies/{company_id}/filings/lodr/extracts/{stem}.results-extract.json`
 and `.../extracts/{stem}.shareholding.json`, where `{stem}` is the filing's file name without its extension.
 
 ## Procedure
 
-1. **Read the log first.** `dataroom_read` `Customers/{customer_id}/filings/filing-log.jsonl` (a missing file means
-   an empty log). Also `dataroom_list` `Customers/{customer_id}/filings/lodr/`. Save the log text to
+1. **Read the log first.** `dataroom_read` `Companies/{company_id}/filings/filing-log.jsonl` (a missing file means
+   an empty log). Also `dataroom_list` `Companies/{company_id}/filings/lodr/`. Save the log text to
    `/workspace/in/filing-log.jsonl` in the sandbox for the validator.
 2. **Dedupe before fetching or writing.** A filing is already filed when the log has a row with the same
    `filed_on` + `tag` + `period` + title (ignoring case and punctuation), or the same `path`. Then do not write
@@ -38,7 +38,7 @@ and `.../extracts/{stem}.shareholding.json`, where `{stem}` is the filing's file
 3. **Build the name:**
 
    ```
-   python3 /workspace/scripts/filing_name.py --customer-id example-housing-finance --filed-on 2025-10-24 \
+   python3 /workspace/scripts/filing_name.py --company-id example-housing-finance --filed-on 2025-10-24 \
        --tag reg33_results --period "Q2 FY26" --ext pdf \
        --title "Outcome of Board Meeting - Unaudited Financial Results for the quarter ended September 30, 2025"
    ```
@@ -79,14 +79,14 @@ Example Housing Finance Ltd. The log already holds the Q1 FY26 results. New: the
 results (text PDF, pages 2-3 images), fetched from the company's IR page.
 
 `filing_name.py` ->
-`Customers/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-outcome-board-meeting-unaudited-financial-results.pdf`
+`Companies/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-outcome-board-meeting-unaudited-financial-results.pdf`
 
 Row:
 
 ```json
 {"customer_id": "example-housing-finance", "filed_on": "2025-10-24", "tag": "reg33_results", "period": "Q2 FY26", "basis": "both",
  "title": "Outcome of Board Meeting - Unaudited Financial Results for the quarter ended September 30, 2025",
- "path": "Customers/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-outcome-board-meeting-unaudited-financial-results.pdf",
+ "path": "Companies/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-outcome-board-meeting-unaudited-financial-results.pdf",
  "source_url": "https://www.example-hfl.invalid/investors/results/q2fy26.pdf", "source": "company_ir",
  "also_covers": ["reg30_event", "reg52_results"], "content": "mixed",
  "summary": "Standalone and consolidated results for Q2 FY26 with limited review reports; Reg 52(4) ratios at p.11. Pages 2-3 are image scans.",

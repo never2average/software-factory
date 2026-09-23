@@ -10,16 +10,16 @@ on the slide: "on AUM").
 
 ```json
 {"kpi": "gnpa_pct", "period": "Q2 FY26", "listing": "listed",
- "qr": {"value": "1.82%", "document": "Customers/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 6,
+ "qr": {"value": "1.82%", "document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 6,
         "definition": "Gross Stage 3 / gross loans (on-book)"},
- "ip": {"value": "1.20%", "document": "Customers/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 14",
+ "ip": {"value": "1.20%", "document": "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 14",
         "definition": "GNPA on AUM"}}
 ```
 
 Output (abridged): `value 1.82`, `source QR`, `status needs_review`, `pct_diff 34.07`, `alt_value 1.2`,
 `alt_source IP`, footnote:
 
-> QR 1.82% vs IP 1.20% (IP: Customers/example-hfl/filings/presentations/q2fy26-ip.pdf, slide 14) differ by 34.07%,
+> QR 1.82% vs IP 1.20% (IP: Companies/example-hfl/filings/presentations/q2fy26-ip.pdf, slide 14) differ by 34.07%,
 > more than the 5% tolerance. QR value shown; needs analyst review. Definitions differ: QR 'Gross Stage 3 / gross
 > loans (on-book)', IP 'GNPA on AUM'.
 
@@ -31,10 +31,10 @@ company's presentation states GNPA on AUM.
 
 ```json
 [{"kpi": "networth", "period": "Q2 FY26", "listing": "unlisted",
-  "qr": {"value": "2,40,000", "header": "(Rs. in Lakhs)", "document": "Customers/example-home-sub/filings/lodr/q2fy26-reg52.pdf", "page_or_slide": 3},
-  "parent_ip": {"value": "23.9", "header": "INR bn", "document": "Customers/example-home-sub/filings/presentations/parent-q2fy26-ip.pdf", "page_or_slide": "slide 31"}},
+  "qr": {"value": "2,40,000", "header": "(Rs. in Lakhs)", "document": "Companies/example-home-sub/filings/lodr/q2fy26-reg52.pdf", "page_or_slide": 3},
+  "parent_ip": {"value": "23.9", "header": "INR bn", "document": "Companies/example-home-sub/filings/presentations/parent-q2fy26-ip.pdf", "page_or_slide": "slide 31"}},
  {"kpi": "branches", "period": "Q2 FY26", "listing": "unlisted",
-  "parent_ip": {"value": "96", "document": "Customers/example-home-sub/filings/presentations/parent-q2fy26-ip.pdf", "page_or_slide": "slide 30"}}]
+  "parent_ip": {"value": "96", "document": "Companies/example-home-sub/filings/presentations/parent-q2fy26-ip.pdf", "page_or_slide": "slide 30"}}]
 ```
 
 - networth: 2,40,000 lakh = ₹2,400.00 crore; 23.9 bn = ₹2,390.00 crore; 0.42% apart → `value 2400.0`, `source QR`,

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "One row of Customers/{customer_id}/filings/presentations/ip-metrics.jsonl",
+  "title": "One row of Companies/{company_id}/filings/presentations/ip-metrics.jsonl",
   "description": "One metric read from one slide of an investor presentation. The eleven required fields are the contract with hfc-kpi-extraction; the optional fields add provenance and never replace a required one. Domain rules that a schema cannot express (unit per metric, integer counts, parent naming, duplicates, the restructured-book exclusion, AUM == loan book) are in scripts/validate_ip_metrics.py.",
   "type": "object",
   "additionalProperties": false,

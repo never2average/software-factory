@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "annual-report-data.jsonl row",
-  "description": "One line item extracted from an annual report, appended to Customers/{customer_id}/filings/annual-report-data.jsonl. Checked by validate_ar_data.py, which adds the rules a schema cannot express (fy parses, duplicates, restructured-book items absent, amounts in crore).",
+  "description": "One line item extracted from an annual report, appended to Companies/{company_id}/filings/annual-report-data.jsonl. Checked by validate_ar_data.py, which adds the rules a schema cannot express (fy parses, duplicates, restructured-book items absent, amounts in crore).",
   "type": "object",
   "additionalProperties": false,
   "required": [

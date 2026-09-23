@@ -9,17 +9,17 @@ description: Use when asked to fetch, refresh or look for a company's LODR filin
 | Situation | Route |
 |---|---|
 | `web_search` is in your tool list | Exchange first, then the company's IR page, then the parent (order below). |
-| `web_search` is not in your tool list | Web search is disabled for this deployment. Work only from `dataroom_list` on `Customers/{customer_id}/filings/` and say so in the reply. Do not describe filings from memory. |
+| `web_search` is not in your tool list | Web search is disabled in this workspace. Work only from `dataroom_list` on `Companies/{company_id}/filings/` and say so in the reply. Do not describe filings from memory. |
 | Debt-listed ("unlisted") company | Same exchanges, but it appears under the debt segment. It has a scrip code / symbol for its debt securities, no equity quote page. |
 | Subsidiary with thin disclosures | The subsidiary's own Reg 52 filings first; then the parent's filings and presentation, logged as from the parent. |
 
 ## Procedure
 
-1. **Identify the company.** `get_customer` for the legal name, BSE scrip code, NSE symbol, listing kind, parent.
+1. **Identify the company.** `get_company` for the legal name, BSE scrip code, NSE symbol, listing kind, parent.
    If the scrip code or symbol is missing, find it once (search "<legal name> BSE scrip code"), confirm it on an
-   exchange page whose title shows the same legal name, then `upsert_customer` and `remember` it. A similar name is
+   exchange page whose title shows the same legal name, then `upsert_company` and `remember` it. A similar name is
    not a match: group companies share names.
-2. **Read the log first.** `dataroom_read` `Customers/{customer_id}/filings/filing-log.jsonl`. Note the latest
+2. **Read the log first.** `dataroom_read` `Companies/{company_id}/filings/filing-log.jsonl`. Note the latest
    `filed_on` per tag. You are looking for what is newer or missing, not everything.
 3. **Search, in this order**, using the query patterns in `references/search-queries.md`:
    1. the exchange's corporate announcements page and financial results page for the company (BSE by scrip code,
@@ -62,14 +62,14 @@ description: Use when asked to fetch, refresh or look for a company's LODR filin
 The analysts' rule for unlisted companies is: first the company's own SEBI LODR filings, then the parent's investor
 presentation. When you take something from the parent:
 
-- store it under the subsidiary's `customer_id` with `source: "parent_company"` in the log row;
+- store it under the subsidiary's `company_id` with `source: "parent_company"` in the log row;
 - put the parent's name in the title ("<Parent> Q2 FY26 results: segment note on housing finance subsidiary");
 - say in the summary that the figures are the parent's disclosure about the subsidiary, and whether they are
   subsidiary standalone numbers or a segment of the parent's consolidated numbers. They are not the same thing.
 
 ## What to write
 
-Files under `Customers/{customer_id}/filings/lodr/`, one log row per file, company-record updates when a standing
+Files under `Companies/{company_id}/filings/lodr/`, one log row per file, company-record updates when a standing
 fact changed (skill `material-events-and-ratings`). Validation comes first: `validate_filing_log.py`.
 
 ## Worked example

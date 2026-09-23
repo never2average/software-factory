@@ -1,6 +1,6 @@
 {
  "$schema": "http://json-schema.org/draft-07/schema#",
- "title": "One KPI cell of Customers/{customer_id}/filings/kpis.jsonl",
+ "title": "One KPI cell of Companies/{company_id}/filings/kpis.jsonl",
  "description": "One JSON object per KPI per company per quarter. Keys, categories and units come from scripts/kpi_catalog.py (kpi_catalog.py --self-test fails if this enum drifts). Domain rules a schema cannot express are in scripts/validate_kpis.py.",
  "type": "object",
  "additionalProperties": false,

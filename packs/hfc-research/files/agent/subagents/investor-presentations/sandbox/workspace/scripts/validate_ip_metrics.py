@@ -18,7 +18,7 @@ Rules (each error names its rule):
   approximate       a boolean; true rows carry a note saying what was read off the chart
   parent            from_parent rows name the parent document and cite a '_parent-<slug>' file; the reverse also holds
   restructured      no restructured-book metric, by key or by label (the rulebook excludes it)
-  duplicate         one row per customer/period/metric/basis; a second row with another value is a conflict
+  duplicate         one row per company/period/metric/basis; a second row with another value is a conflict
   aum_loan_book     AUM equal to the loan book means no off-book loans, so no sell down may be reported (rulebook)
   mix_sum           product-mix and customer-mix percentages on one basis do not add up to more than 100
   carry_forward     (warning) a not_disclosed branches/employees row should offer the previous quarter's IP value
@@ -156,7 +156,7 @@ def validate(rows, problems, table, sch, existing=None, require_core=False):
             msg = f"{cust} {period}: no row for core metric(s) {missing}. hfc-kpi-extraction needs a row for each, a not_disclosed (or no_off_book) row when the deck does not give it"
             (E if require_core else W)(None, "core", msg)
     if len({r.get("customer_id") for _, r in rows}) > 1:
-        W(None, "schema", "rows for more than one customer_id in one file; each customer has its own ip-metrics.jsonl")
+        W(None, "schema", "rows for more than one company in one file; each company has its own ip-metrics.jsonl")
     return errors, warnings
 
 
@@ -165,7 +165,7 @@ def _self_test():
     checks = []
     def ok(name, cond, detail=None):
         checks.append({"check": name, "ok": bool(cond), **({"detail": detail} if not cond else {})})
-    DOC = "Customers/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf"
+    DOC = "Companies/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf"
     def row(metric, value, unit, slide=5, **kw):
         return {"customer_id": "example-hfl", "period": "Q2FY26", "metric": metric, "value": value, "unit": unit, "document": DOC, "slide": slide,
                 "approximate": False, "from_parent": False, "note": "", "extracted_at": "2025-11-05T10:00:00Z", **kw}

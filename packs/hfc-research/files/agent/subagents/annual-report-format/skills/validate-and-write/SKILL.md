@@ -12,9 +12,9 @@ saying so, and never worked around by writing to a different path.
 
 | Output | Path | Gate |
 |---|---|---|
-| Section map | `Customers/{customer_id}/filings/lodr/{fy}_annual-report-map.md` | `validate_section_map.py`, then `render_section_map_md.py` (which refuses an invalid map) |
-| Section extract | `Customers/{customer_id}/filings/lodr/{fy}_annual-report/{section-slug}.md` | the checklist below |
-| Numeric rows | `Customers/{customer_id}/filings/annual-report-data.jsonl` (append) | `validate_ar_data.py` |
+| Section map | `Companies/{company_id}/filings/lodr/{fy}_annual-report-map.md` | `validate_section_map.py`, then `render_section_map_md.py` (which refuses an invalid map) |
+| Section extract | `Companies/{company_id}/filings/lodr/{fy}_annual-report/{section-slug}.md` | the checklist below |
+| Numeric rows | `Companies/{company_id}/filings/annual-report-data.jsonl` (append) | `validate_ar_data.py` |
 | Formatted deliverable | via `render_account_report` / `publish_artifact` | built only from extracts and rows that passed the gates above |
 
 Section slugs: `corporate-information`, `directors-report`, `management-discussion-and-analysis`,
