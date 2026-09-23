@@ -13,15 +13,18 @@ Connectors, Workflows and Crons, driven from your editor.
 
 > **There is no default address.** This same package serves every application
 > built from this codebase, so it cannot know which one is yours. Set
-> `FDE_OPS_URL` to your deployment's address (the one you open in a browser), or
+> `WORKSPACE_OPS_URL` to your deployment's address (the one you open in a browser), or
 > save it once with `fde-login --url <address>`. Without it every tool fails with
-> a message naming `FDE_OPS_URL`. (It used to default to one product's production
+> a message naming `WORKSPACE_OPS_URL`. (It used to default to one product's production
 > address, which silently connected everyone else to the wrong app.)
 
 > **A deployment can have its own package instead.** `npm run build:agent-cli` in the
 > platform repo builds one with that deployment's address, product name, skills and
-> data-room description baked in, so `npx <package> login` needs no configuration. See
-> `docs/AGENT_CLI.md`. This directory is its source: every product word and the default
+> data-room description baked in, so `npx <package> login` needs no configuration. That
+> package is named after itself: the five files below ship as `<package>-login.mjs` and so
+> on, its commands are `login` / `mcp` / `install-skills`, and it keeps its sign-in in
+> `~/.config/<package>/<host>/`. The names on THIS page are the base product's own CLI's and
+> do not move. See `docs/AGENT_CLI.md`. This directory is its source: every product word and the default
 > address live in `deployment.generated.mjs` (here: the generic wording and no address;
 > rewrite it with `npm run build:agent-cli -- --write-default`, never by hand).
 
@@ -44,7 +47,7 @@ npx -p @delivery-agents/cli fde-login --url https://your-deployment.example.com
 ```
 
 `--url` saves your deployment's address next to the credentials so `fde-mcp`
-needs no `FDE_OPS_URL`. Opens your browser for Google consent, catches the code on `127.0.0.1`, and
+needs no `WORKSPACE_OPS_URL`. Opens your browser for Google consent, catches the code on `127.0.0.1`, and
 exchanges it with PKCE. Use your **work** Google account — personal Gmail
 addresses aren't admitted.
 
@@ -83,7 +86,7 @@ Add this to your Claude Code MCP config (`~/.claude/mcp.json`, or a project
       "command": "npx",
       "args": ["-y", "-p", "@delivery-agents/cli", "fde-mcp"],
       "env": {
-        "FDE_OPS_URL": "https://your-deployment.example.com",
+        "WORKSPACE_OPS_URL": "https://your-deployment.example.com",
         "BLOB_READ_WRITE_TOKEN": "blob_rw_..."
       }
     }
@@ -111,7 +114,7 @@ customer_create                # the first customer
 connector_create               # a source, then connector_secret_set
 ```
 
-`fde_status` is a good first call — it reports what the workspace already has,
+`workspace_status` is a good first call — it reports what the workspace already has,
 so you do not recreate it.
 
 ### About that token
@@ -127,11 +130,17 @@ paste it into a chat or into `dataroom_write`.
 
 | Variable | Purpose |
 |---|---|
-| `FDE_OPS_URL` | **Required** (unless saved by `fde-login --url`): your deployment's address. No default. |
-| `FDE_ORG` | Pin the workspace these tools write to. Checked against your membership server-side. |
-| `WEB_ORIGIN` | Address used in links handed back to people. Defaults to `FDE_OPS_URL`. |
+| `WORKSPACE_OPS_URL` | **Required** (unless saved by `fde-login --url`): your deployment's address. No default. |
+| `WORKSPACE_ORG` | Pin the workspace these tools write to. Checked against your membership server-side. |
+| `WEB_ORIGIN` | Address used in links handed back to people. Defaults to `WORKSPACE_OPS_URL`. |
 | `BLOB_READ_WRITE_TOKEN` | Direct-blob mode for the Data Room tools (platform repo only). Without it they go through the Ops API as you. |
-| `FDE_OAUTH_CLIENT_ID` / `FDE_OAUTH_CLIENT_SECRET` | Override the built-in desktop OAuth client. |
+| `WORKSPACE_OAUTH_CLIENT_ID` / `WORKSPACE_OAUTH_CLIENT_SECRET` | Override the built-in desktop OAuth client. |
+
+Every variable above was once spelled `FDE_*` (`FDE_OPS_URL`, `FDE_ORG`,
+`FDE_ACTOR`, `FDE_OAUTH_CLIENT_ID`, `FDE_OAUTH_CLIENT_SECRET`,
+`FDE_PRODUCT_NAME`). **The old names still work** — an MCP config you wrote
+months ago needs no edit — and using one prints a single line on stderr naming
+the variable to move to. They will be removed once nobody is on them.
 
 The desktop client id and secret ship inside this package deliberately. Google's
 docs are explicit that an installed-app secret ["is not treated as a
@@ -142,8 +151,8 @@ Google's JWKS.
 
 ## Troubleshooting
 
-**"FDE_OPS_URL is not set"** — the server does not know which deployment to talk
-to. Add `"FDE_OPS_URL": "<your deployment's address>"` to the MCP server's `env`
+**"WORKSPACE_OPS_URL is not set"** — the server does not know which deployment to talk
+to. Add `"WORKSPACE_OPS_URL": "<your deployment's address>"` to the MCP server's `env`
 block, or run `fde-login --url <address>` once.
 
 **`401` / "not signed in"** — the refresh token expired or was revoked. Re-run

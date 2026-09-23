@@ -74,12 +74,12 @@ Present a single request covering the whole run. It must state:
   they should put them. Never ask them to paste a secret into the chat.
 
 If the session is not authenticated, this list starts with the sign-in step
-that `fde_status` reports and stops there: nothing else can proceed, so asking
+that `workspace_status` reports and stops there: nothing else can proceed, so asking
 for the rest is noise. Connected to the workspace's own address (`…/api/mcp`),
 that is a fresh access token (the emailed-code sign-in in the invite, step 2) in
 the MCP config's `Authorization` header; through the npm package it is
 `npx @delivery-agents/cli fde-login`. Never guess an address: the package needs
-`FDE_OPS_URL` set to the workspace's own address and has no default.
+`WORKSPACE_OPS_URL` set to the workspace's own address and has no default.
 
 Once they approve, run to the end without checking back.
 

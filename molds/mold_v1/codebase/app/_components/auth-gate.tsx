@@ -5,6 +5,7 @@ import { ChatShell } from "./chat-shell";
 import { EmailSignIn } from "./email-sign-in";
 import { Spinner } from "@/components/ui/spinner";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
+import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 
 // Minimal typing for the Google Identity Services client we load at runtime.
 declare global {
@@ -36,11 +37,17 @@ interface PromptNotification {
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
 const GIS_SRC = "https://accounts.google.com/gsi/client";
-const TOKEN_KEY = "fde-google-token";
+/**
+ * The signed-in session. These three keys were `fde-*` until the base product's
+ * role name came out of the wire; every read below goes through lib/browser-storage,
+ * which falls back to the old spelling, because renaming the token key outright
+ * signs out every analyst with an open tab.
+ */
+const TOKEN_KEY = STORAGE_KEYS.token;
 /** Where the invite outcome is left for ChatShell to render. */
-export const INVITE_RESULT_KEY = "fde-invite-result";
+export const INVITE_RESULT_KEY = STORAGE_KEYS.inviteResult;
 
-const NONCE_KEY = "fde-google-nonce";
+const NONCE_KEY = STORAGE_KEYS.nonce;
 
 interface Claims {
   email?: string;
@@ -117,7 +124,7 @@ export function AuthGate() {
     if (!tokenRef.current) return {};
     const headers: Record<string, string> = { Authorization: `Bearer ${tokenRef.current}` };
     try {
-      const org = localStorage.getItem("fde-active-org");
+      const org = readStored(STORAGE_KEYS.activeOrg);
       if (org) headers["x-ops-org"] = org;
     } catch {
       /* private mode — the server falls back to the default workspace */
@@ -148,11 +155,7 @@ export function AuthGate() {
         `${claims.email ?? "That account"} is a personal Google account, which Google sign-in cannot admit. ` +
           "If you were invited, use “Invited by email? Sign in with a code” below.",
       );
-      try {
-        localStorage.removeItem(TOKEN_KEY);
-      } catch {
-        /* ignore */
-      }
+      removeStored(TOKEN_KEY);
       return;
     }
     tokenRef.current = credential;
@@ -162,11 +165,7 @@ export function AuthGate() {
     setPicture(claims.picture ?? null);
     setError(null);
     // Persist so a page refresh restores the session instead of forcing re-login.
-    try {
-      localStorage.setItem(TOKEN_KEY, credential);
-    } catch {
-      /* ignore */
-    }
+    writeStored(TOKEN_KEY, credential);
     // Drop the session a little before the token actually expires (~1h).
     if (expiryTimer.current) clearTimeout(expiryTimer.current);
     if (claims.exp) {
@@ -174,11 +173,7 @@ export function AuthGate() {
       expiryTimer.current = setTimeout(() => {
         tokenRef.current = null;
         setToken(null);
-        try {
-          localStorage.removeItem(TOKEN_KEY);
-        } catch {
-          /* ignore */
-        }
+        removeStored(TOKEN_KEY);
       }, Math.max(msLeft, 0));
     }
   }, []);
@@ -191,11 +186,9 @@ export function AuthGate() {
     setEmail(null);
     setName(null);
     setPicture(null);
-    try {
-      localStorage.removeItem(TOKEN_KEY);
-    } catch {
-      /* ignore */
-    }
+    // Both spellings: a sign-out that cleared only the new key would leave a live
+    // token under the old one, and the next load would silently restore it.
+    removeStored(TOKEN_KEY);
   }, []);
 
   // Coming back from the redirect flow: Google puts the id_token in the URL
@@ -207,13 +200,8 @@ export function AuthGate() {
     const idToken = params.get("id_token");
     history.replaceState(null, "", window.location.pathname + window.location.search);
     if (!idToken) return;
-    let expected: string | null = null;
-    try {
-      expected = sessionStorage.getItem(NONCE_KEY);
-      sessionStorage.removeItem(NONCE_KEY);
-    } catch {
-      /* ignore */
-    }
+    const expected = readStored(NONCE_KEY, "session");
+    removeStored(NONCE_KEY, "session");
     if (expected && decodeJwt(idToken).nonce !== expected) {
       setError("Sign-in could not be verified. Please try again.");
       return;
@@ -224,18 +212,14 @@ export function AuthGate() {
 
   // Restore a still-valid token across refreshes (before Google even loads).
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(TOKEN_KEY);
-      if (!stored) return;
-      const claims = decodeJwt(stored);
-      if (claims.exp && claims.exp * 1000 > Date.now() + 60_000) {
-        restoredRef.current = true;
-        applyToken(stored);
-      } else {
-        localStorage.removeItem(TOKEN_KEY);
-      }
-    } catch {
-      /* ignore */
+    const stored = readStored(TOKEN_KEY);
+    if (!stored) return;
+    const claims = decodeJwt(stored);
+    if (claims.exp && claims.exp * 1000 > Date.now() + 60_000) {
+      restoredRef.current = true;
+      applyToken(stored);
+    } else {
+      removeStored(TOKEN_KEY);
     }
   }, [applyToken]);
 
@@ -313,18 +297,20 @@ export function AuthGate() {
             const d = (await r.json().catch(() => null)) as
               | { orgId?: string; role?: string; error?: string }
               | null;
-            sessionStorage.setItem(
+            writeStored(
               INVITE_RESULT_KEY,
               JSON.stringify(
                 r.ok && d?.orgId
                   ? { kind: "ok", text: `You've joined the ${d.orgId} workspace as ${d.role}.` }
                   : { kind: "err", text: d?.error ?? "That invite couldn't be redeemed." },
               ),
+              "session",
             );
           } catch {
-            sessionStorage.setItem(
+            writeStored(
               INVITE_RESULT_KEY,
               JSON.stringify({ kind: "err", text: "Couldn't reach the server to redeem the invite." }),
+              "session",
             );
           }
           // Drop the token from the URL either way — it is single-use and has no
@@ -386,11 +372,8 @@ export function AuthGate() {
   const signInRedirect = () => {
     if (!CLIENT_ID) return setError("Google sign-in is not configured.");
     const nonce = crypto.randomUUID();
-    try {
-      sessionStorage.setItem(NONCE_KEY, nonce);
-    } catch {
-      /* private mode — the token is still signature-verified server-side */
-    }
+    // private mode swallows this; the token is still signature-verified server-side
+    writeStored(NONCE_KEY, nonce, "session");
     const p = new URLSearchParams({
       client_id: CLIENT_ID,
       redirect_uri: window.location.origin,

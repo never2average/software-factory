@@ -44,7 +44,7 @@ export async function seedFixtureStore() {
    * Set before the chdir and before any module that reads it is imported —
    * workbook-spec resolves this once, at load.
    */
-  process.env.FDE_PEOPLE_SEED ??= PEOPLE_FIXTURE;
+  process.env.WORKSPACE_PEOPLE_SEED ??= PEOPLE_FIXTURE;
 
   // Keep every write out of the repo. Do this before the store module loads.
   process.chdir(mkdtempSync(join(tmpdir(), "fde-fixture-")));

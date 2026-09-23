@@ -1,0 +1,49 @@
+{
+  "$comment": "Verbatim from a package built by scripts/build-agent-cli.mjs at commit a586846 (before fix/agent-cli-neutral-names), with --name @probe-scope/research-kit --origin https://research.probe-deployment.dev. scripts/test-agent-cli-build.mjs replays it through ownNameGate: this is the layout the gate must refuse, and it is what a real deployment published.",
+  "name": "@probe-scope/research-kit",
+  "paths": [
+    "README.md",
+    "deployment.generated.mjs",
+    "dm.md",
+    "fde-cli.mjs",
+    "fde-install-skill.mjs",
+    "fde-login.mjs",
+    "fde-mcp.mjs",
+    "fde-tools.mjs",
+    "package.json",
+    "skills/delivered-setup/SKILL.md"
+  ],
+  "packageJson": {
+    "name": "@probe-scope/research-kit",
+    "version": "1.2.3",
+    "bin": {
+      "research-kit": "./fde-cli.mjs",
+      "research-kit-login": "./fde-login.mjs",
+      "research-kit-mcp": "./fde-mcp.mjs",
+      "research-kit-install-skills": "./fde-install-skill.mjs"
+    },
+    "files": [
+      "fde-cli.mjs",
+      "fde-login.mjs",
+      "fde-mcp.mjs",
+      "fde-tools.mjs",
+      "fde-install-skill.mjs",
+      "deployment.generated.mjs",
+      "dm.md",
+      "README.md",
+      "skills"
+    ]
+  },
+  "readmeLines": [
+    "`npx @probe-scope/research-kit fde-login`, `fde-mcp` and `fde-install-skill` are the same commands under their older",
+    "Which address is used, first match wins: `--url <address>` or `FDE_OPS_URL`, then the address saved",
+    "- `delivered-setup` - Set up a Delivered workspace end to end — verify the fde MCP wiring, choose and install a vertical data room, connect the first source, and onboard the first customer. Use when someone is invited to a Delivered workspace, says \"set up my Delivered workspace\", \"finish the Delivered setup checks\", \"run the Delivered onboarding\", or when the fde MCP tools return 401 / are not wired yet.",
+    "- The sign-in is stored only on your machine (`~/.config/fde-mcp/research.probe-deployment.dev/credentials.json`,",
+    "- The Google client id and secret inside `fde-login.mjs` are for an installed-app client. Google does"
+  ],
+  "loginConfigLines": [
+    " * ~/.config/fde-mcp/credentials.json (mode 600). After that, `fde-mcp.mjs` mints",
+    "  ? join(homedir(), \".config\", \"fde-mcp\", BAKED_HOST)",
+    "  : join(homedir(), \".config\", \"fde-mcp\");"
+  ]
+}

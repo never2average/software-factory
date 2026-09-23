@@ -125,7 +125,7 @@ passed++;
 /* …and the stdio package, asked the same question over its real transport. */
 const cliNames = await new Promise((resolve, reject) => {
   const child = spawn(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "setup/fde-mcp.mjs"], {
-    env: { ...process.env, HOME: "/nonexistent", FDE_OPS_URL: ORIGIN, BLOB_READ_WRITE_TOKEN: "" },
+    env: { ...process.env, HOME: "/nonexistent", WORKSPACE_OPS_URL: ORIGIN, BLOB_READ_WRITE_TOKEN: "" },
     stdio: ["pipe", "pipe", "ignore"],
   });
   let out = "";
@@ -143,7 +143,11 @@ const cliNames = await new Promise((resolve, reject) => {
 });
 assert.deepEqual(hosted, cliNames, "hosted tools/list === the stdio package's tools/list");
 passed++;
-check("there are tools at all", hosted.length > 50 && hosted.includes("fde_status") && hosted.includes("dataroom_write"));
+check("there are tools at all", hosted.length > 50 && hosted.includes("workspace_status") && hosted.includes("dataroom_write"));
+/* The orientation tool is `workspace_status` on both transports, and NEITHER advertises the
+ * name it had before — an alias exists to be accepted by tools/call, never offered by
+ * tools/list, or a newly connected assistant learns the old name all over again. */
+check("neither transport advertises the pre-rename tool name", !hosted.includes("fde_status") && !cliNames.includes("fde_status"));
 check("every tool has a schema and a description", body.result.tools.every((t) => t.description && t.inputSchema?.type === "object"));
 check("no tool description carries a credential or a foreign address", !/GOCSPX|fde-agent\.vercel\.app|useimmaculate|Bearer ey/.test(JSON.stringify(body.result.tools)));
 
@@ -241,7 +245,7 @@ check(
   c.claudeCommand === `claude mcp add --transport http acme-research ${ORIGIN}/api/mcp --header "Authorization: Bearer <token>"`,
 );
 check("every client's snippet carries this deployment's endpoint", c.clients.every((m) => m.snippet.includes(`${ORIGIN}/api/mcp`)));
-check("the package alternative spells out FDE_OPS_URL", c.packageAlternative.claudeCommand.includes(`FDE_OPS_URL=${ORIGIN}`));
+check("the package alternative spells out WORKSPACE_OPS_URL", c.packageAlternative.claudeCommand.includes(`WORKSPACE_OPS_URL=${ORIGIN}`));
 
 /* ---- source-level: the defaults that caused this stay gone ---------------- */
 

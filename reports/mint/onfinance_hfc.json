@@ -1,6 +1,6 @@
 {
   "app_id": "onfinance_hfc",
-  "generated_at": "2026-09-22T20:44:12.213504+00:00",
+  "generated_at": "2026-09-23T09:38:24.982430+00:00",
   "status": "stamped",
   "url": "https://onfinance-hfc.vercel.app",
   "packs": [
@@ -10,14 +10,14 @@
     {
       "session": "9129ce07",
       "first": "2026-09-18T12:04:27.586000+00:00",
-      "last": "2026-09-22T20:44:10.296000+00:00",
-      "active_s": 25524.231,
-      "operator_messages": 49,
-      "assistant_messages": 1736,
-      "tool_calls": 861,
-      "subagents": 32,
+      "last": "2026-09-23T09:38:22.361000+00:00",
+      "active_s": 30791.421,
+      "operator_messages": 56,
+      "assistant_messages": 2021,
+      "tool_calls": 996,
+      "subagents": 38,
       "cost_usd": 274.3930005,
-      "cost_uncounted_est_usd": 253.3088805945598,
+      "cost_uncounted_est_usd": 381.42975264178733,
       "model_s": 18772.14,
       "tool_s": 6143.651,
       "lines_added": 12229,
@@ -38,13 +38,13 @@
           "input_tokens": 354549552
         }
       },
-      "cost_as_of": "The cost and working-time counters are as of the session's last cost record; 853 of its 1736 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part."
+      "cost_as_of": "The cost and working-time counters are as of the session's last cost record; 1138 of its 2021 agent messages came after it and are not yet counted, so the true figures are higher; the Money table carries an estimate for that part."
     }
   ],
   "calendar": {
     "first_commit": "2026-09-18T14:53:56+00:00",
-    "last_commit": "2026-09-22T20:38:14+00:00",
-    "commits": 32,
+    "last_commit": "2026-09-23T08:52:59+00:00",
+    "commits": 40,
     "deploys": [
       "2026-09-19T09:49:59+00:00",
       "2026-09-19T10:16:59+00:00",
@@ -61,22 +61,24 @@
       "2026-09-22T06:56:04+00:00",
       "2026-09-22T18:40:52+00:00",
       "2026-09-22T19:18:01+00:00",
-      "2026-09-22T20:29:13+00:00"
+      "2026-09-22T20:29:13+00:00",
+      "2026-09-23T05:42:22+00:00",
+      "2026-09-23T08:43:18+00:00"
     ],
     "stations": []
   },
   "lanes": {
-    "functional": 21,
-    "context": 18,
-    "load": 17,
-    "accessibility": 17,
-    "responsiveness": 19
+    "functional": 24,
+    "context": 21,
+    "load": 20,
+    "accessibility": 20,
+    "responsiveness": 24
   },
   "upstream": {
     "repo": "never2average/fde-agent",
-    "merged": 29,
-    "additions": 24137,
-    "deletions": 2803,
+    "merged": 35,
+    "additions": 30073,
+    "deletions": 3604,
     "numbers": [
       13,
       14,
@@ -106,7 +108,13 @@
       38,
       39,
       40,
-      41
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47
     ]
   },
   "running_app": [
@@ -119,10 +127,10 @@
     },
     {
       "org": "icici-hfc",
-      "runs": 3,
+      "runs": 4,
       "cost": 0,
-      "inp": 19651420,
-      "outp": 304507
+      "inp": 21412249,
+      "outp": 337016
     }
   ]
 }

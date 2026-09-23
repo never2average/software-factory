@@ -2,7 +2,7 @@
   "$schema": "../app_id/application.schema.json",
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
-  "mold_commit": "a586846eb27afaeb4a720c52a6b721249e0590c0",
+  "mold_commit": "363d4225b2b32951690452ecc85fc40f2a1cf3cf",
   "status": "stamped",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
@@ -192,28 +192,28 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-09-23T04:50:56+00:00",
-      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-09-23T045056Z.md"
+      "run_at": "2026-09-23T09:29:11+00:00",
+      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-09-23T092911Z.md"
     },
     "context": {
       "status": "skipped",
-      "run_at": "2026-09-23T04:50:28+00:00",
-      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-23T045028Z.md"
+      "run_at": "2026-09-23T09:28:37+00:00",
+      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-23T092837Z.md"
     },
     "functional": {
       "status": "pass",
-      "run_at": "2026-09-23T04:48:08+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-23T044808Z.md"
+      "run_at": "2026-09-23T09:26:07+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-23T092607Z.md"
     },
     "accessibility": {
       "status": "pass",
-      "run_at": "2026-09-23T04:52:36+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-23T045236Z.md"
+      "run_at": "2026-09-23T09:31:02+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-23T093102Z.md"
     },
     "responsiveness": {
-      "status": "fail",
-      "run_at": "2026-09-23T05:00:21+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-23T050021Z.md"
+      "status": "pass",
+      "run_at": "2026-09-23T09:31:42+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-23T093142Z.md"
     }
   },
   "customer_id": "internal",

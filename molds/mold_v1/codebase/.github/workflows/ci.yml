@@ -103,6 +103,23 @@ jobs:
         if: always()
         run: npm run test:chat-persistence
 
+      # Saving the sidebar to localStorage has been rewritten twice under
+      # pressure, and both rewrites lost something — one evicted old chats on
+      # overflow, the other stripped every transcript but the newest four.
+      # Neither could have been caught, because the only thing guarding that
+      # code was a regex over a .tsx file. The rules now live in
+      # lib/chat-persist.ts and this RUNS them. It matters more since the write
+      # was moved off the React commit onto an animation frame (it was 266 ms of
+      # JSON.stringify + setItem per persist of a streaming turn): what must
+      # still hold is checked against a storage that really throws
+      # QuotaExceededError, and against the pre-change implementation byte for
+      # byte — a departing page still persists synchronously, a half-updated
+      # list can never be stored, the back-off still strips oldest-first and
+      # still caps, and a chat that did not change is not serialised again.
+      - name: Chat list persistence (behavioural)
+        if: always()
+        run: npm run test:chat-persist-coalesce
+
       # The BEHAVIOURAL chat tests — they execute the real module rather than
       # Reopening a thread mounts a CACHED transcript and replays only the tail,
       # so a conversation can now be assembled from two sources — and one
@@ -213,6 +230,25 @@ jobs:
       - name: Vocabulary comes from the deployment profile
         run: npm run check:vocabulary
 
+      # The same bug one layer in, on the identifiers rather than the words: the
+      # tool names a coding assistant is served, the environment variables a person
+      # types into an MCP config, and the keys in an analyst's browser. `fde_status`
+      # was one of 59 tools and the only one not use-case agnostic — and it survived
+      # PR #46 because both existing gates exempt identifiers containing "_". This
+      # covers that remainder, reading the tool names from the REAL tool list rather
+      # than from the tree, since what ships is applied into the tree by a pack.
+      - name: Wire identifiers are use-case agnostic
+        if: always()
+        run: npm run check:wire-names
+
+      # And the migration those names rest on, which is invisible in a diff: an
+      # assistant that learned the old tool name is still answered, a deployment
+      # still set with FDE_* still reads it (once, loudly), and an analyst signed in
+      # before the rename is not signed out by it.
+      - name: Wire-name migration (behavioural)
+        if: always()
+        run: npm run test:wire-names
+
       # The profile generator's rules (including custom_fields) and the per-turn briefing. It existed and was not
       # wired in; the custom-field checks below lean on it, so both run.
       - name: Deployment profile (generator rules, briefing)
@@ -312,6 +348,20 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           node scripts/test-chat-access-db.mjs
+
+      # THE RUN HISTORY, which is two database facts and nothing else. That a
+      # parent writing a row for a child that never started cannot produce a
+      # SECOND row is the unique index on run_key doing its job, and an index
+      # either behaves that way or it does not — source says nothing. That the
+      # abandoned-run sweeper closes only rows which cannot still be live is one
+      # WHERE clause whose whole value is in what it does not match, including
+      # the specialist parked on a question that a person will answer tomorrow.
+      # Both are run here against the real recorder the hooks call.
+      - name: Subagent run history, against a real Postgres
+        if: always()
+        run: |
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:run-history-db
 
 # NOT RUN HERE, deliberately:
 #

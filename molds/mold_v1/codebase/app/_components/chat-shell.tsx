@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { INVITE_RESULT_KEY } from "./auth-gate";
+import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 import { AgentChat, type AgentEvents, type AgentSession } from "./agent-chat";
 import { ChatSidebar } from "./chat-sidebar";
 import { ChatSearchDialog } from "./chat-search";
@@ -21,6 +22,7 @@ import {
   type TranscriptSnapshot,
 } from "@/lib/chat-snapshot";
 import { withFreshestToken } from "@/lib/chat-session-cursor";
+import { createPersistWriter } from "@/lib/chat-persist";
 import { cn } from "@/lib/utils";
 
 /**
@@ -222,59 +224,68 @@ function storageKey(email: string | null) {
    * A workspace you have not opened yet simply starts empty and fills from the
    * server, which is org-scoped and owns the list anyway.
    */
-  return `fde-chats:${email ?? "anon"}:${activeOrg() ?? "default"}`;
+  // The prefix was `fde-chats:` until the base product's role name came out of the
+  // wire. readStored falls back to it, so nobody's sidebar empties on the deploy
+  // that renamed it — see lib/browser-storage.ts.
+  return `${STORAGE_KEYS.chats}:${email ?? "anon"}:${activeOrg() ?? "default"}`;
 }
 
-/** A ceiling so a runaway can't wedge storage — far above any real sidebar. */
-const STORAGE_MAX_CHATS = 300;
+/**
+ * The quota back-off and the coalescer MOVED to lib/chat-persist.ts, for the
+ * reason `dedupeEvents` moved to lib/chat-snapshot.ts: this is the code whose
+ * bugs lose conversations, and there it can be EXECUTED by a test rather than
+ * matched by a regex. Re-exported because this is where readers have always
+ * found the storage ceiling.
+ */
+export { STORAGE_MAX_CHATS } from "@/lib/chat-persist";
 
 /**
- * Persist the session list to localStorage.
- *
- * The payload embeds each chat's full event stream, which grows without bound
- * and eventually blows the ~5 MB quota. The FIRST version of this fix evicted
- * old chats on overflow — which is why the sidebar started "pruning chats from
- * the beginning". The SECOND version fixed that but always stripped events down
- * to the 4 most-recent chats, so after a reload every older chat had to REPLAY
- * its whole stream from the server on open — which is why switching threads went
- * "very very slow".
- *
- * This version keeps events for as MANY recent chats as actually FIT: it tries
- * to persist everything, and only when that overflows does it strip the oldest
- * chats' event streams (progressively) until it fits. A chat whose events are
- * cached opens instantly; only the oldest, quota-permitting, re-hydrate from the
- * server (`openChat`/`replaySession`). Metadata for EVERY chat is always kept,
- * so the sidebar list never loses an entry. The active/`protect`ed chats always
- * keep their events regardless of position.
+ * The one writer for the whole shell. Module scope because `writeSessions` has
+ * always been module scope, and because there is exactly one ChatShell on the
+ * page — a per-mount writer would drop a pending write on every remount, which
+ * is the one thing this must never do.
  */
-function writeSessions(email: string | null, sessions: StoredSession[], protect: ReadonlySet<string>): boolean {
-  const key = storageKey(email);
-  const list = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
-  const kept = (s: StoredSession) => protect.has(s.id) || protect.has(s.clientKey ?? "");
-  // Keep full events for the first `n` chats (and any protected one anywhere);
-  // strip the rest to metadata only.
-  const stripBeyond = (n: number): StoredSession[] =>
-    list.map((s, i) => (i < n || kept(s) ? s : { ...s, events: undefined }));
-  const tryWrite = (l: StoredSession[]): boolean => {
-    try {
-      localStorage.setItem(key, JSON.stringify(l));
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  // Try to keep ALL events, then back off the kept-count until it fits — so the
-  // most-recent chats stay cached (instant open) and only the oldest are stripped
-  // when genuinely over quota. Coarse steps keep this to a handful of attempts.
-  const steps = [list.length, 64, 32, 16, 8, 4, 2, 0].filter(
-    (n, i, a) => n <= list.length && a.indexOf(n) === i,
-  );
-  for (const n of steps) {
-    if (tryWrite(stripBeyond(n))) return true;
-  }
-  // Truly pathological single huge chat — cap the count (very high), metadata only.
-  console.warn("[chat-shell] localStorage still over quota after stripping all event streams — capping chat count.");
-  return tryWrite(stripBeyond(0).slice(0, STORAGE_MAX_CHATS));
+const persistWriter = createPersistWriter({
+  onWarn: (message) => console.warn(message),
+});
+
+/**
+ * QUEUE a write of the session list to localStorage — one per animation frame,
+ * superseded writes dropped.
+ *
+ * It used to build the string and call `setItem` right here, synchronously,
+ * from inside the `setSessions` updater. Measured on the operator's real thread
+ * shape (a 1,500-event turn whose answer holds a 60 KB table) that was 266 ms of
+ * `JSON.stringify` + `setItem` sitting between React deciding what the chat
+ * looks like and the browser painting it — per persist, and a streaming turn
+ * persists on every message, every answered input and every 2 s tick. The chat
+ * froze while it SAVED, not while it thought.
+ *
+ * What is queued is the whole list, so a flush can never store a half-updated
+ * one and a newer queue call is a strict replacement for an older one. The list
+ * itself is not copied: it is the array React is about to hold, and every update
+ * in this file replaces chats rather than mutating them — which is also what
+ * lets lib/chat-persist.ts reuse the JSON of the chats that did not change.
+ *
+ * Nothing here may be the last word before a close: see `flushSessionWrite`.
+ */
+function writeSessions(email: string | null, sessions: StoredSession[], protect: ReadonlySet<string>): void {
+  persistWriter.queue(storageKey(email), sessions, protect);
+}
+
+/**
+ * Write anything queued, NOW, on this stack.
+ *
+ * A page that is going away gets no animation frame, no idle callback and no
+ * promise continuation — it gets one synchronous stack and then it is gone. So
+ * every departure path (`pagehide`, the tab going hidden, unmount) calls this
+ * before anything else, and it is deliberately synchronous all the way down to
+ * `setItem`. This is the constraint that made the previous engineer leave the
+ * write inside the React commit; it is honoured by keeping a synchronous path,
+ * not by keeping every write synchronous.
+ */
+function flushSessionWrite(): boolean {
+  return persistWriter.flush();
 }
 
 /**
@@ -483,7 +494,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   // must not survive a reload; re-save the cleaned list so they never return.
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(storageKey(email));
+      const raw = readStored(storageKey(email));
       if (!raw) return;
       const stored = JSON.parse(raw) as StoredSession[];
       const cleaned = stored
@@ -497,7 +508,10 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         .map((s) => (s.events?.length ? { ...s, events: dedupeEvents(s.events) as AgentEvents } : s));
       setSessions(cleaned);
       if (cleaned.length !== stored.length) {
-        localStorage.setItem(storageKey(email), JSON.stringify(cleaned));
+        // Land any coalesced write FIRST, so a frame that has not fired yet
+        // cannot arrive after this repair and put the dropped entries back.
+        flushSessionWrite();
+        writeStored(storageKey(email), JSON.stringify(cleaned));
       }
     } catch {
       /* ignore corrupt storage */
@@ -742,11 +756,25 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
    * tab close and the bfcache; `visibilitychange` covers a phone being locked or
    * the tab being backgrounded, which on mobile is often the last event a page
    * ever receives.
+   *
+   * BOTH stores, in this order. The localStorage write is now coalesced onto an
+   * animation frame (see `writeSessions`), and a closing page never gets that
+   * frame — so `flushSessionWrite` runs first and synchronously, before the
+   * network flush that may not complete at all. It is also the cheaper of the
+   * two to lose a race with: the mirror can be rebuilt from the server, the
+   * cached transcript cannot.
+   *
+   * Deliberately NOT `beforeunload`: registering one disqualifies the page from
+   * the bfcache, and `pagehide` fires in every case `beforeunload` would,
+   * including the bfcache entry this would otherwise break.
    */
   useEffect(() => {
-    const onHide = () => flushSessions(true);
+    const onHide = () => {
+      flushSessionWrite();
+      flushSessions(true);
+    };
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") flushSessions(true);
+      if (document.visibilityState === "hidden") onHide();
     };
     window.addEventListener("pagehide", onHide);
     document.addEventListener("visibilitychange", onVisibility);
@@ -754,6 +782,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       window.removeEventListener("pagehide", onHide);
       document.removeEventListener("visibilitychange", onVisibility);
       // Unmounting is also a departure — don't drop what is queued.
+      flushSessionWrite();
       flushSessions(true);
     };
   }, [flushSessions]);
@@ -796,7 +825,15 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       setSessions(next);
       // The in-memory state keeps everything; the WRITE may be pruned to fit,
       // always sparing the active chat's events.
+      //
+      // WRITTEN THROUGH, not coalesced. This is the deliberate-action path —
+      // open, delete, archive, re-tag — which happens once per click, never per
+      // delta, so the coalescing buys nothing here and the cost of being wrong
+      // is high: a delete that has not reached storage when the tab dies comes
+      // back on the next load. Only the streaming path (`handlePersist`) waits
+      // for a frame, because only the streaming path repeats.
       writeSessions(email, next, new Set([activeIdForWrite.current ?? ""]));
+      flushSessionWrite();
       syncSessionsToDb(next);
     },
     [email, syncSessionsToDb],
@@ -1072,7 +1109,24 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         const next = existing
           ? prev.map((s) => (s === existing ? { ...s, ...entry, updatedAt: now } : s))
           : [entry, ...prev];
-        // Prune-and-retry write that always spares THIS chat's events.
+        /**
+         * Prune-and-retry write that always spares THIS chat's events — now
+         * QUEUED rather than performed here.
+         *
+         * This line used to be 266 ms of `JSON.stringify` and a synchronous
+         * `localStorage.setItem` INSIDE a `setSessions` updater, i.e. inside the
+         * React commit, on a 1,500-event turn with a 60 KB table in it. It runs
+         * on every message, every answered input and every 2 s of streaming
+         * (agent-chat's `persistTick`), so it was a quarter of a second of frozen
+         * chat between the answer changing and the answer appearing.
+         *
+         * `next` deliberately stays inside the updater: the previous attempt to
+         * fix this foundered on hoisting it out, because this updater also feeds
+         * `syncRef` and `storeSnapshotRef`. Nothing is hoisted. The list is
+         * handed to a queue that builds the string on the next frame, and every
+         * departure path flushes that queue synchronously
+         * (`flushSessionWrite`), so the state before a close still lands.
+         */
         writeSessions(email, next, new Set([entry.id, chatKey]));
         /**
          * AND the durable mirror. This was missing, and it was the whole bug.
@@ -1987,9 +2041,9 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   // and never gets here. All that is left is to say how it went.
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(INVITE_RESULT_KEY);
+      const raw = readStored(INVITE_RESULT_KEY, "session");
       if (!raw) return;
-      sessionStorage.removeItem(INVITE_RESULT_KEY);
+      removeStored(INVITE_RESULT_KEY, "session");
       setNotice(JSON.parse(raw) as { kind: "ok" | "err"; text: string });
     } catch {
       /* nothing to report */

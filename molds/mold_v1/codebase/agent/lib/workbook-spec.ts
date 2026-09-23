@@ -34,6 +34,7 @@ import {
   type Interaction,
 } from "./customer-schema.ts";
 import { readFileSync } from "node:fs";
+import { compatEnv } from "./compat-env.ts";
 import peopleSeedJson from "../../data/people.json" with { type: "json" };
 
 /* -------------------------------------------------------------------------- */
@@ -87,13 +88,13 @@ export interface WorkbookSpec {
  * and the workbook People sheets became untestable: the assertions covering
  * them have been failing since that commit.
  *
- * FDE_PEOPLE_SEED lets a test point at its own fixture. It is read once, at
+ * WORKSPACE_PEOPLE_SEED (once FDE_PEOPLE_SEED) lets a test point at its own fixture. It is read once, at
  * module load, and is never set in production — the default is exactly the
  * bundled (empty) seed, so this changes no shipped behaviour.
  */
 const peopleSeed = peopleStoreSchema.parse(
-  process.env.FDE_PEOPLE_SEED
-    ? JSON.parse(readFileSync(process.env.FDE_PEOPLE_SEED, "utf8"))
+  compatEnv("WORKSPACE_PEOPLE_SEED")
+    ? JSON.parse(readFileSync(compatEnv("WORKSPACE_PEOPLE_SEED") as string, "utf8"))
     : peopleSeedJson,
 );
 

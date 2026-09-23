@@ -44,13 +44,13 @@ const ctxFor = (email) => ({
   messages: [],
 });
 
-const FDE_A = "priyesh@onfinance.in";
-const FDE_B = "lena@onfinance.in";
+const PERSON_A = "priyesh@onfinance.in";
+const PERSON_B = "lena@onfinance.in";
 const OTHER_ORG = "org-someone-else";
 
 // --- create via tool: createdBy = ctx email, enabled, nextRunAt echoes ------
 
-const ORG = await orgForSession(ctxFor(FDE_A));
+const ORG = await orgForSession(ctxFor(PERSON_A));
 assert.equal(typeof ORG, "string", "the tools resolve a workspace even with no database");
 
 const firstRunAt = "2026-07-11T09:00:00Z";
@@ -62,10 +62,10 @@ const created = await createScheduleTool.execute(
     everyMinutes: 1440,
     customerId: "acme-bank",
   },
-  ctxFor(FDE_A),
+  ctxFor(PERSON_A),
 );
 assert.equal(created.created, true);
-assert.equal(created.rule.createdBy, FDE_A, "createdBy comes from the verified caller, not the model");
+assert.equal(created.rule.createdBy, PERSON_A, "createdBy comes from the verified caller, not the model");
 assert.equal(created.rule.enabled, true, "new rules are enabled");
 assert.equal(created.rule.kind, "prompt", "kind defaults to 'prompt'");
 assert.equal(created.rule.customerId, "acme-bank");
@@ -80,24 +80,24 @@ const ruleId = created.rule.id;
 // A second, team-wide, one-time rule (everyMinutes null default).
 const teamRule = await createScheduleTool.execute(
   { name: "One-off reminder", prompt: "Ping the team once.", firstRunAt },
-  ctxFor(FDE_B),
+  ctxFor(PERSON_B),
 );
 assert.equal(teamRule.rule.customerId, null, "omitted customerId => team-wide (null)");
 assert.equal(teamRule.rule.everyMinutes, null, "everyMinutes defaults to null (one-time)");
 
 // --- list + filter ----------------------------------------------------------
 
-const all = await listSchedulesTool.execute({}, ctxFor(FDE_A));
+const all = await listSchedulesTool.execute({}, ctxFor(PERSON_A));
 assert.equal(all.rules.length, 2, "both rules are listed");
 
-const acmeOnly = await listSchedulesTool.execute({ customerId: "acme-bank" }, ctxFor(FDE_A));
+const acmeOnly = await listSchedulesTool.execute({ customerId: "acme-bank" }, ctxFor(PERSON_A));
 assert.deepEqual(
   acmeOnly.rules.map((r) => r.id),
   [ruleId],
   "customerId filter returns only that customer's rule",
 );
 
-const enabledOnly = await listSchedulesTool.execute({ enabled: true }, ctxFor(FDE_A));
+const enabledOnly = await listSchedulesTool.execute({ enabled: true }, ctxFor(PERSON_A));
 assert.equal(enabledOnly.rules.length, 2, "both rules are enabled");
 
 // --- update: enabled flip, everyMinutes change, updatedAt bump --------------
@@ -105,18 +105,18 @@ assert.equal(enabledOnly.rules.length, 2, "both rules are enabled");
 const beforeUpdate = created.rule.updatedAt;
 const updated = await updateScheduleTool.execute(
   { id: ruleId, everyMinutes: 60, enabled: false },
-  ctxFor(FDE_A),
+  ctxFor(PERSON_A),
 );
 assert.equal(updated.updated, true);
 assert.equal(updated.rule.everyMinutes, 60, "everyMinutes changed");
 assert.equal(updated.rule.enabled, false, "enabled flipped");
 assert.ok(updated.rule.updatedAt >= beforeUpdate, "updatedAt bumped");
 // re-enable and reset to daily for the lease tests below
-await updateScheduleTool.execute({ id: ruleId, everyMinutes: 1440, enabled: true }, ctxFor(FDE_A));
+await updateScheduleTool.execute({ id: ruleId, everyMinutes: 1440, enabled: true }, ctxFor(PERSON_A));
 
 // unknown id throws
 await assert.rejects(
-  updateScheduleTool.execute({ id: "00000000-0000-0000-0000-000000000000" }, ctxFor(FDE_A)),
+  updateScheduleTool.execute({ id: "00000000-0000-0000-0000-000000000000" }, ctxFor(PERSON_A)),
   /not found/,
   "updating an unknown id throws",
 );
@@ -131,7 +131,7 @@ const recurring = await store.createScheduleRule({
   prompt: "sweep",
   firstRunAt: now, // due exactly at `now`
   everyMinutes: 30,
-  createdBy: FDE_A,
+  createdBy: PERSON_A,
 });
 
 const firstClaim = await store.claimDueRules({ now });
@@ -190,7 +190,7 @@ const leaseRule = await store.createScheduleRule({
   prompt: "x",
   firstRunAt: t0,
   everyMinutes: 15,
-  createdBy: FDE_A,
+  createdBy: PERSON_A,
 });
 const claimA = await store.claimDueRules({ now: t0, leaseForMs });
 assert.equal(claimA.length, 1, "claimed once");
@@ -222,7 +222,7 @@ const oneShot = await store.createScheduleRule({
   prompt: "run once",
   firstRunAt: t0,
   everyMinutes: null,
-  createdBy: FDE_A,
+  createdBy: PERSON_A,
 });
 const oneClaim = await store.claimDueRules({ now: t0 });
 assert.equal(oneClaim.length, 1);
@@ -245,7 +245,7 @@ const relRule = await store.createScheduleRule({
   prompt: "x",
   firstRunAt: t0,
   everyMinutes: 60,
-  createdBy: FDE_A,
+  createdBy: PERSON_A,
 });
 const relClaim = await store.claimDueRules({ now: t0 });
 const retryAt = new Date(t0.getTime() + 15 * 60_000);
@@ -269,9 +269,9 @@ assert.equal(await store.deleteScheduleRule(ORG, relRule.id), false, "deleting a
 store.__resetFallbackScheduleRules();
 const toDelete = await store.createScheduleRule({
   orgId: ORG,
-  name: "del", prompt: "x", firstRunAt: t0, everyMinutes: null, createdBy: FDE_A,
+  name: "del", prompt: "x", firstRunAt: t0, everyMinutes: null, createdBy: PERSON_A,
 });
-const del = await deleteScheduleTool.execute({ id: toDelete.id }, ctxFor(FDE_A));
+const del = await deleteScheduleTool.execute({ id: toDelete.id }, ctxFor(PERSON_A));
 assert.equal(del.deleted, true, "delete tool removes the rule");
 
 // --- the fallback map is workspace-scoped, exactly like the table ------------
@@ -280,7 +280,7 @@ assert.equal(del.deleted, true, "delete tool removes the rule");
 // enforced with `eq(scheduleRules.orgId, orgId)`, and the fallback silently did not.
 store.__resetFallbackScheduleRules();
 const mine = await store.createScheduleRule({
-  orgId: ORG, name: "mine", prompt: "x", firstRunAt: t0, everyMinutes: null, createdBy: FDE_A,
+  orgId: ORG, name: "mine", prompt: "x", firstRunAt: t0, everyMinutes: null, createdBy: PERSON_A,
 });
 assert.equal(mine.orgId, ORG, "a rule created without a database still records its workspace");
 assert.deepEqual(

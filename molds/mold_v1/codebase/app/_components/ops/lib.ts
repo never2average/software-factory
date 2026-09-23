@@ -15,6 +15,7 @@ import {
   WorkflowIcon,
 } from "lucide-react";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 
 /** What a TODO is filed under — only the containers whose data-room domain this deployment shows. */
 const TODO_CONTAINERS = [
@@ -395,11 +396,7 @@ export interface WorkflowAnalysis {
  * something the person who started it could not do themselves.
  */
 export function authToken(): string | null {
-  try {
-    return localStorage.getItem("fde-google-token");
-  } catch {
-    return null;
-  }
+  return readStored(STORAGE_KEYS.token);
 }
 
 /**
@@ -476,23 +473,16 @@ export function fmtTokens(r: ApiRun): string | null {
 }
 
 /** Where the chosen workspace is remembered, for people who belong to several. */
-export const ACTIVE_ORG_KEY = "fde-active-org";
+export const ACTIVE_ORG_KEY = STORAGE_KEYS.activeOrg;
 
 export function activeOrg(): string | null {
-  try {
-    return localStorage.getItem(ACTIVE_ORG_KEY);
-  } catch {
-    return null;
-  }
+  return readStored(ACTIVE_ORG_KEY);
 }
 
 export function setActiveOrg(orgId: string | null): void {
-  try {
-    if (orgId) localStorage.setItem(ACTIVE_ORG_KEY, orgId);
-    else localStorage.removeItem(ACTIVE_ORG_KEY);
-  } catch {
-    /* private mode — the server just falls back to the default workspace */
-  }
+  // private mode swallows both; the server just falls back to the default workspace
+  if (orgId) writeStored(ACTIVE_ORG_KEY, orgId);
+  else removeStored(ACTIVE_ORG_KEY);
 }
 
 /**

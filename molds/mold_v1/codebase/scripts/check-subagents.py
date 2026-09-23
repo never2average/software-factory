@@ -442,6 +442,7 @@ def check_registry(root, reg=None, grammar=None, skip=()):
             r.check(key in declared, "%s/%s/targets.json names \"%s\", which is not a subagent under agent/subagents/" % (SHARED_DIR, family, key))
     for key in declared:
         check_usage_hook(r, root, key)
+    check_delegation_recorder(r, root)
     agent_dir = os.path.join(root, "agent")
     for base, dirs, files in os.walk(agent_dir):
         dirs[:] = [d for d in dirs if d not in ("node_modules", "sandbox")]
@@ -484,6 +485,41 @@ def check_usage_hook(r, root, key):
             "%s opens no run row on turn.started - an invocation whose provider reports no tokens leaves NO history" % rel)
     r.check("ctx.session.id" in src,
             "%s does not pass ctx.session.id - eve's turn ids count within a session, so every invocation would share one run_key" % rel)
+
+
+def check_delegation_recorder(r, root):
+    """The half of the run history a subagent CANNOT record about itself.
+
+    Every recorder in hooks/usage.ts is driven by the child's own turn events. Two measured cases produce no
+    turn event at all, and both are only visible from the PARENT - which is the root agent, whose hooks live in
+    agent/hooks/ and are never supplied by a pack:
+
+      - a child that dies during bootstrap never emits turn.started, so the invocation left NO row at all.
+        Recorded verbatim in scripts/fixtures/subagent-delivery/child-fails.ndjson: subagent.called, then an
+        action.result flagged isError, and nothing from the child in between;
+      - a child PARKED on a question is live for as long as nobody answers (across six live sessions every
+        declared specialist parked - #42), so its open row must be marked as waiting or the abandoned-run
+        sweeper in agent/lib/workflow-usage.ts would close a run that is still working.
+
+    Checked here, beside check_usage_hook, for the same reason that one is: this is a contract about run
+    history that must hold for the specialists that ship in a pack, and a rule kept anywhere a pack cannot be
+    seen is the mistake #43 was written to stop repeating.
+    """
+    rel = "agent/hooks/delegation-runs.ts"
+    path = os.path.join(root, rel)
+    if not r.check(os.path.isfile(path),
+                   "%s is missing - a delegation that dies before turn.started leaves NO run history, for every "
+                   "subagent including a pack's" % rel):
+        return
+    src = read(path)
+    r.check('"subagent.called"' in src,
+            "%s does not watch subagent.called - the failed result carries no child session id, and the run key is "
+            "nothing without it" % rel)
+    r.check('"action.result"' in src and "recordFailedDelegation" in src,
+            "%s does not record a failed delegation - an invocation that died before its first turn leaves no row" % rel)
+    r.check('"input.requested"' in src and "markDelegationParked" in src,
+            "%s does not mark a parked delegation - the abandoned-run sweeper would close a specialist that is still "
+            "waiting for an answer" % rel)
 
 
 def run(root, keys, as_json, timeout, out=sys.stdout):
@@ -558,6 +594,15 @@ def _fixture(root, key, broken=False):
         _write(os.path.join(sub, "tools/web_search.ts"), 'export { webSearchTool as default } from "#lib/tools.js";\n')
 
 
+def _root_hooks(root):
+    """The root agent's parent-side run recorder, as a complete codebase carries it (agent/hooks/ is never
+    supplied by a pack, which is the point of checking it there)."""
+    _write(os.path.join(root, "agent/hooks/delegation-runs.ts"),
+           'events: { "subagent.called"(e, ctx) {},\n'
+           '  async "input.requested"(e, ctx) { await markDelegationParked(); },\n'
+           '  async "action.result"(e, ctx) { await recordFailedDelegation(); } }\n')
+
+
 def _generated(root, keys, templates=(), labels=None, summaries=None):
     """What scripts/gen-subagent-meta.mjs would have written for `keys`."""
     labels, summaries = labels or {}, summaries or {}
@@ -617,8 +662,21 @@ def self_test():
         registry = check_registry(tmp)
         for e in ["does not list unbuilt-one", "still lists removed", "no subagent.json declares (Customers/{customer_id}/old/**)",
                   "targets.json names \"gone\"", "agent/subagents/bad-one: subagent.json has unknown field",
-                  "agent/subagents/bad-one/tools/web_search.ts does not gate"]:
+                  "agent/subagents/bad-one/tools/web_search.ts does not gate",
+                  # The half no subagent can record about itself, and which no pack supplies.
+                  "agent/hooks/delegation-runs.ts is missing"]:
             cases.append(("the registry reports: " + e, any(e in f for f in registry.failures), registry.failures))
+        # A root hook that watches the delegation but never marks a park would let the abandoned-run sweeper
+        # close a specialist that is still waiting for an answer.
+        _write(os.path.join(tmp, "agent/hooks/delegation-runs.ts"),
+               'events: { "subagent.called"(e, ctx) {}, async "action.result"(e, ctx) { await recordFailedDelegation(); } }\n')
+        half = check_registry(tmp)
+        cases.append(("a recorder that never marks a parked delegation is reported",
+                      any("does not mark a parked delegation" in f for f in half.failures), half.failures))
+        _root_hooks(tmp)
+        whole = check_registry(tmp)
+        cases.append(("a complete parent-side recorder passes",
+                      not any("delegation-runs.ts" in f for f in whole.failures), whole.failures))
         cases.append(("a folder without agent.ts is not a subagent", "stray-folder" not in declared_keys(tmp), declared_keys(tmp)))
         cases.append(("default scope skips subagents without sandbox/workspace",
                       default_keys(tmp) == ["bad-one", "good-one", "unbuilt-one"], default_keys(tmp)))
@@ -646,6 +704,7 @@ def self_test():
         clean = tempfile.mkdtemp(prefix="check-subagents-clean-")
         try:
             _fixture(clean, "good-one")
+            _root_hooks(clean)
             _write(os.path.join(clean, "agent/subagents/legacy/agent.ts"), 'export default defineAgent({ description: "Legacy." });\n')
             _write(os.path.join(clean, "agent/subagents/legacy/hooks/usage.ts"), 'const WORKFLOW = "legacy";\\nevents: { async "turn.started"(event, ctx) { await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id); } }\\n')
             _generated(clean, ["good-one", "legacy"])

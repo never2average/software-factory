@@ -15,13 +15,17 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultDeployment, isSemver, npmNameProblems, parseOrigin, parseSkillFrontmatter, renderDeploymentModule, renderDmMd, safetyGate } from "./lib/agent-cli.mjs";
+import { defaultDeployment, isSemver, moduleFileNames, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter, renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate } from "./lib/agent-cli.mjs";
+import { declaredAliases } from "./lib/wire-names.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD = join(ROOT, "scripts/build-agent-cli.mjs");
 const NAME = "@probe-scope/research-kit";
+const OWN = unscopedName(NAME);
+/** The five program files a built package ships, each named after IT: research-kit-login.mjs, … */
+const MODULES = moduleFileNames(OWN);
 const ORIGIN = "https://research.probe-deployment.dev";
 const OTHER = "https://other.probe-deployment.dev";
 const NODE_FLAGS = ["--experimental-strip-types", "--disable-warning=ExperimentalWarning"];
@@ -62,7 +66,7 @@ function runAsync(file, args = [], { env = {}, input = "" } = {}) {
 }
 const writeSkill = (dir, name, body = "") => {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: "Demo: set up a research desk. Use when asked to set up coverage."\n---\n\n# Demo setup\n\nCall \`fde_status\` first.\n${body}`);
+  writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: "Demo: set up a research desk. Use when asked to set up coverage."\n---\n\n# Demo setup\n\nCall \`workspace_status\` first.\n${body}`);
 };
 
 try {
@@ -97,9 +101,10 @@ try {
     assert.ok(pkg.description.includes(baseProfile.product.tagline));
     assert.ok(pkg.engines.node);
     assert.ok(!("repository" in pkg) && !("homepage" in pkg) && !("scripts" in pkg) && !("dependencies" in pkg));
-    // Every bin carries the package's name: a bare `login` would shadow the system's on a global install.
-    assert.deepEqual(pkg.bin, { "research-kit": "./fde-cli.mjs", "research-kit-login": "./fde-login.mjs", "research-kit-mcp": "./fde-mcp.mjs", "research-kit-install-skills": "./fde-install-skill.mjs" });
-    assert.deepEqual(pkg.files.slice().sort(), ["README.md", "deployment.generated.mjs", "dm.md", "fde-cli.mjs", "fde-install-skill.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-tools.mjs", "skills"]);
+    // Every bin AND the file behind it carry the package's name: a bare `login` would shadow the
+    // system's on a global install, and an fde-* file is another company's name in node_modules.
+    assert.deepEqual(pkg.bin, { "research-kit": "./research-kit-cli.mjs", "research-kit-login": "./research-kit-login.mjs", "research-kit-mcp": "./research-kit-mcp.mjs", "research-kit-install-skills": "./research-kit-install-skills.mjs" });
+    assert.deepEqual(pkg.files.slice().sort(), ["README.md", "deployment.generated.mjs", "dm.md", "research-kit-cli.mjs", "research-kit-install-skills.mjs", "research-kit-login.mjs", "research-kit-mcp.mjs", "research-kit-tools.mjs", "skills"]);
   });
   await check("--access restricted and --repository/--homepage are written when given", () => {
     const out = join(TMP, "restricted");
@@ -118,19 +123,26 @@ try {
     }
   });
   await check("`npx <package>` with no command prints help and succeeds; the hosted one-liner is lib/mcp-connect.ts's", async () => {
-    const r = run(join(D, "fde-cli.mjs"));
+    const r = run(join(D, MODULES.cli));
     assert.equal(r.status, 0);
     assert.ok(r.stderr.includes(`claude mcp add --transport http delivered ${ORIGIN}/api/mcp --header "Authorization: Bearer <token>"`));
     assert.ok(r.stderr.includes(`npx ${NAME} login`));
     assert.ok(r.stderr.includes(`npx ${NAME} login --email <address>`) && !/Google Workspace accounts\)/.test(r.stderr), "help shows both ways to sign in");
     assert.ok(!r.stderr.includes("@delivery-agents/cli"));
   });
-  await check("login, mcp, install-skills and their older names all go through the dispatcher", () => {
-    for (const cmd of ["login", "mcp", "install-skills", "fde-login", "fde-mcp", "fde-install-skill"]) {
-      const r = run(join(D, "fde-cli.mjs"), [cmd, "--help"]);
+  await check("login, mcp, install-skills go through the dispatcher - and the base product's names do NOT", () => {
+    for (const cmd of ["login", "mcp", "install-skills", "install-skill", "skills"]) {
+      const r = run(join(D, MODULES.cli), [cmd, "--help"]);
       assert.equal(r.status, 0, `${cmd}: ${r.stderr}`); assert.ok(r.stderr.includes(ORIGIN), cmd);
     }
-    assert.match(run(join(D, "fde-login.mjs"), ["--help"]).stderr, /--email <address>/);
+    // The old aliases are gone on purpose: a package a research desk bought must not answer to
+    // another company's command names, and nothing this build writes points at them any more.
+    for (const cmd of ["fde-login", "fde-mcp", "fde-install-skill"]) {
+      const r = run(join(D, MODULES.cli), [cmd, "--help"]);
+      assert.equal(r.status, 1, `${cmd} should not be a command of this package`);
+      assert.match(r.stderr, /Unknown command "fde-/);
+    }
+    assert.match(run(join(D, MODULES.login), ["--help"]).stderr, /--email <address>/);
   });
   const { mcpConnect } = await import(join(ROOT, "lib/mcp-connect.ts"));
   await check("the baked connect strings equal mcpConnect()'s", async () => {
@@ -140,29 +152,48 @@ try {
     assert.equal(baked.connect.claudeCommand, c.claudeCommand); assert.equal(baked.mcpEndpoint, c.endpoint); assert.equal(baked.slug, c.slug);
     assert.equal(baked.origin, ORIGIN); assert.equal(baked.packageName, NAME); assert.equal(baked.name, baseProfile.product.name);
     assert.deepEqual(baked.vocabulary.account, baseProfile.vocabulary.account);
-    assert.ok(c.packageAlternative.login === `npx ${NAME} login` && !c.packageAlternative.claudeCommand.includes("FDE_OPS_URL"));
-    assert.ok(mcpConnect({ origin: ORIGIN, productName: "X" }).packageAlternative.claudeCommand.includes(`FDE_OPS_URL=${ORIGIN}`), "without a package of its own the alternative still spells the address out");
+    assert.ok(c.packageAlternative.login === `npx ${NAME} login` && !/(?:WORKSPACE|FDE)_OPS_URL/.test(c.packageAlternative.claudeCommand));
+    // WORKSPACE_OPS_URL since the wire names became use-case agnostic. The package still READS
+    // FDE_OPS_URL, so an instruction copied into a config last month keeps working; what it PRINTS
+    // is the neutral name, because what is printed today is what someone runs next year.
+    assert.ok(mcpConnect({ origin: ORIGIN, productName: "X" }).packageAlternative.claudeCommand.includes(`WORKSPACE_OPS_URL=${ORIGIN}`), "without a package of its own the alternative still spells the address out");
   });
   const ready = (r) => /Ops API: (\S*) \(([^)]*)\)/.exec(r.stderr);
   await check("address: the baked-in origin with no env", () => {
-    const m = ready(run(join(D, "fde-mcp.mjs")));
+    const m = ready(run(join(D, MODULES.mcp)));
     assert.equal(m[1], ORIGIN); assert.equal(m[2], "built into this package");
   });
-  await check("address: FDE_OPS_URL overrides the baked-in origin", () => {
-    const m = ready(run(join(D, "fde-mcp.mjs"), [], { FDE_OPS_URL: `${OTHER}/` }));
-    assert.equal(m[1], OTHER); assert.equal(m[2], "FDE_OPS_URL");
+  await check("address: WORKSPACE_OPS_URL overrides the baked-in origin", () => {
+    const m = ready(run(join(D, MODULES.mcp), [], { WORKSPACE_OPS_URL: `${OTHER}/` }));
+    assert.equal(m[1], OTHER); assert.equal(m[2], "WORKSPACE_OPS_URL");
   });
-  await check("address: a saved login outranks the baked-in origin, and FDE_OPS_URL outranks both", () => {
-    const dir = join(HOME, ".config/fde-mcp", new URL(ORIGIN).host);
+  /**
+   * The SAME variable under the name it had before the wire names became use-case
+   * agnostic. Somebody's MCP config has `FDE_OPS_URL` in it and has had for months;
+   * a rename that stopped reading it would point their agent at the baked-in address
+   * instead of the one they chose — silently, and successfully, which is the exact
+   * shape of the bug that made this package refuse to have a default at all.
+   */
+  await check("address: the pre-rename FDE_OPS_URL still overrides it, and says which name answered", () => {
+    const r = run(join(D, MODULES.mcp), [], { FDE_OPS_URL: `${OTHER}/` });
+    const m = ready(r);
+    assert.equal(m[1], OTHER); assert.equal(m[2], "WORKSPACE_OPS_URL");
+    assert.match(r.stderr, /FDE_OPS_URL still works but is the old name for WORKSPACE_OPS_URL/);
+  });
+  await check("address: the new name wins when a config sets both", () => {
+    assert.equal(ready(run(join(D, MODULES.mcp), [], { WORKSPACE_OPS_URL: OTHER, FDE_OPS_URL: "https://stale.probe-deployment.dev" }))[1], OTHER);
+  });
+  await check("address: a saved login outranks the baked-in origin, and WORKSPACE_OPS_URL outranks both", () => {
+    const dir = join(HOME, ".config", OWN, new URL(ORIGIN).host);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "credentials.json"), JSON.stringify({ ops_url: "https://saved.probe-deployment.dev" }));
     try {
-      assert.equal(ready(run(join(D, "fde-mcp.mjs")))[1], "https://saved.probe-deployment.dev");
-      assert.equal(ready(run(join(D, "fde-mcp.mjs"), [], { FDE_OPS_URL: OTHER }))[1], OTHER);
+      assert.equal(ready(run(join(D, MODULES.mcp)))[1], "https://saved.probe-deployment.dev");
+      assert.equal(ready(run(join(D, MODULES.mcp), [], { WORKSPACE_OPS_URL: OTHER }))[1], OTHER);
     } finally { rmSync(join(HOME, ".config"), { recursive: true, force: true }); }
   });
   await check("the MCP server answers initialize as this product", () => {
-    const r = spawnSync(process.execPath, [join(D, "fde-cli.mjs"), "mcp"], { encoding: "utf8", env: { PATH: process.env.PATH, HOME }, input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } })}\n` });
+    const r = spawnSync(process.execPath, [join(D, MODULES.cli), "mcp"], { encoding: "utf8", env: { PATH: process.env.PATH, HOME }, input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } })}\n` });
     const res = JSON.parse(r.stdout.trim().split("\n")[0]);
     assert.ok(res.result.instructions.startsWith(`${baseProfile.product.name} control plane`));
     assert.ok(res.result.instructions.includes(ORIGIN));
@@ -193,8 +224,10 @@ try {
   });
   await new Promise((r) => stub.listen(0, "127.0.0.1", r));
   const STUB = `http://127.0.0.1:${stub.address().port}`;
-  const CRED = join(HOME, ".config/fde-mcp", new URL(ORIGIN).host, "credentials.json");
-  const LOGIN = join(D, "fde-login.mjs");
+  // ~/.config/<the package's own name>/<the deployment's host>/: see "the credentials folder" below.
+  const CRED = join(HOME, ".config", OWN, new URL(ORIGIN).host, "credentials.json");
+  const LEGACY_CRED = join(HOME, ".config", "fde-mcp", new URL(ORIGIN).host, "credentials.json");
+  const LOGIN = join(D, MODULES.login);
   try {
     await check("happy path: asks for a code, reads it from stdin, stores an email session (mode 600), never prints the token", async () => {
       const r = await runAsync(LOGIN, ["--email", "Person@Probe-Deployment.dev", "--url", STUB], { input: "123 456\n" });
@@ -210,7 +243,7 @@ try {
     });
     await check("--code verifies the code in hand without requesting a new one, through the dispatcher, and tightens a loose file", async () => {
       calls.length = 0; chmodSync(CRED, 0o644);
-      const r = await runAsync(join(D, "fde-cli.mjs"), ["login", "--email", "person@probe-deployment.dev", "--code", "123456", "--url", STUB]);
+      const r = await runAsync(join(D, MODULES.cli), ["login", "--email", "person@probe-deployment.dev", "--code", "123456", "--url", STUB]);
       assert.equal(r.status, 0, r.stderr);
       assert.deepEqual(calls.map((c) => c.path), ["/api/auth/email/verify"]);
       assert.equal(statSync(CRED).mode & 0o777, 0o600); assert.ok(!(r.stdout + r.stderr).includes(SESSION));
@@ -219,7 +252,7 @@ try {
       rmSync(CRED);
       const r = await runAsync(LOGIN, ["--email", "person@probe-deployment.dev", "--url", STUB], { input: "000000\n" });
       assert.equal(r.status, 1); assert.ok(r.stderr.includes(REFUSED), r.stderr); assert.ok(!existsSync(CRED));
-      assert.ok(!/at .*fde-login\.mjs|Error:/.test(r.stderr), "a sentence, not a stack trace");
+      assert.ok(!/at .*-login\.mjs|Error:/.test(r.stderr), "a sentence, not a stack trace");
     });
     await check("429 and 503 are shown as the server's sentences; something that is not a code is refused before any verify", async () => {
       const busy = await runAsync(LOGIN, ["--email", "eager@probe-deployment.dev", "--url", STUB], { input: "123456\n" });
@@ -248,11 +281,14 @@ try {
       assert.equal(emailSessionBearer(null), null);
       assert.equal(parseCode(" 123-456\n"), "123456"); assert.equal(parseCode("12345"), null); assert.equal(parseCode("1234567"), null);
     });
+    // Called by its PRE-RENAME name on purpose: this is a real built package over its real
+    // stdio transport, which is the only place the unadvertised alias can be proven to still
+    // reach the handler an in-flight coding assistant is depending on.
     const statusCall = [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "fde_status", arguments: {} } }].map((m) => JSON.stringify(m)).join("\n") + "\n";
     const writeCreds = (expiresAt) => { mkdirSync(dirname(CRED), { recursive: true }); writeFileSync(CRED, JSON.stringify({ kind: "email-session", session_token: SESSION, email: "person@probe-deployment.dev", expires_at: expiresAt, ops_url: STUB }), { mode: 0o600 }); };
     await check("the MCP server sends an unexpired email session as its bearer", async () => {
       calls.length = 0; writeCreds(Math.floor(Date.now() / 1000) + 3600);
-      const r = await runAsync(join(D, "fde-mcp.mjs"), [], { input: statusCall });
+      const r = await runAsync(join(D, MODULES.mcp), [], { input: statusCall });
       const text = JSON.parse(r.stdout.trim().split("\n")[0]).result.content[0].text;
       assert.equal(JSON.parse(text).identity.email, "person@probe-deployment.dev");
       assert.ok(calls.length && calls.every((c) => c.authorization === `Bearer ${SESSION}`), JSON.stringify(calls.map((c) => c.path)));
@@ -260,9 +296,33 @@ try {
     });
     await check("and refuses an expired one with one sentence, sending nothing", async () => {
       calls.length = 0; writeCreds(Math.floor(Date.now() / 1000) - 10);
-      const r = await runAsync(join(D, "fde-mcp.mjs"), [], { input: statusCall });
+      const r = await runAsync(join(D, MODULES.mcp), [], { input: statusCall });
       assert.match(r.stdout, /Your email sign-in has expired\. Run `npx @probe-scope\/research-kit login --email person@probe-deployment\.dev`/);
       assert.deepEqual(calls, []); assert.ok(!r.stdout.includes(SESSION));
+    });
+    // THE MIGRATION. Renaming the config folder without this signs out everyone who signed in
+    // before the upgrade - no error, no message, just "please sign in again" on a package they
+    // had working yesterday. The whole rename is not worth one of those.
+    await check("a sign-in made before the folder was renamed still works, and is moved up on first use", async () => {
+      rmSync(join(HOME, ".config"), { recursive: true, force: true });
+      mkdirSync(dirname(LEGACY_CRED), { recursive: true });
+      writeFileSync(LEGACY_CRED, JSON.stringify({ kind: "email-session", session_token: SESSION, email: "person@probe-deployment.dev", expires_at: Math.floor(Date.now() / 1000) + 3600, ops_url: STUB }), { mode: 0o600 });
+      assert.ok(!existsSync(CRED), "the new folder starts empty");
+      calls.length = 0;
+      const r = await runAsync(join(D, MODULES.mcp), [], { input: statusCall });
+      const text = JSON.parse(r.stdout.trim().split("\n")[0]).result.content[0].text;
+      assert.equal(JSON.parse(text).identity.email, "person@probe-deployment.dev", "the old sign-in still authenticates");
+      assert.ok(calls.every((c) => c.authorization === `Bearer ${SESSION}`));
+      assert.equal(statSync(CRED).mode & 0o777, 0o600, "the copy is as private as the original");
+      assert.deepEqual(JSON.parse(readFileSync(CRED, "utf8")), JSON.parse(readFileSync(LEGACY_CRED, "utf8")));
+      assert.ok(existsSync(LEGACY_CRED), "the old file is left alone: an older installed copy of the package still reads it");
+    });
+    await check("the login command finds it too, and the new file wins once both exist", async () => {
+      // Two different sessions: whichever address comes back proves which file was read.
+      writeFileSync(CRED, JSON.stringify({ kind: "email-session", session_token: SESSION, email: "new@probe-deployment.dev", expires_at: Math.floor(Date.now() / 1000) + 3600, ops_url: OTHER }), { mode: 0o600 });
+      const m = /Ops API: (\S*) \(([^)]*)\)/.exec((await runAsync(join(D, MODULES.mcp), [])).stderr);
+      assert.equal(m[1], OTHER); assert.equal(m[2], "saved login");
+      rmSync(join(HOME, ".config"), { recursive: true, force: true });
     });
   } finally {
     stub.close(); stub.closeAllConnections?.();
@@ -276,13 +336,92 @@ try {
   await check("the base skill ships, renamed to this package", () => {
     assert.deepEqual(readdirSync(join(D, "skills")), readdirSync(join(ROOT, "skills")));
     const text = readFileSync(join(D, "skills/delivered-setup/SKILL.md"), "utf8");
-    assert.ok(!text.includes("@delivery-agents/cli") && text.includes(`npx ${NAME} fde-login`));
+    // The base skill is written for the base product; here every name in it is this package's,
+    // because its description is quoted verbatim into the README an analyst reads.
+    assert.ok(!text.includes("@delivery-agents/cli") && text.includes(`npx ${NAME} login`));
+    assert.ok(!/(^|[^A-Za-z0-9_])fde([^A-Za-z0-9_]|$)/i.test(text), "no base-product name survives in a shipped base skill");
   });
   await check("the README leads with the hosted one-liner, then login / mcp / install-skills", () => {
     const t = readFileSync(join(D, "README.md"), "utf8");
     const at = (s) => { const i = t.indexOf(s); assert.ok(i > -1, s); return i; };
     assert.ok(at("claude mcp add --transport http") < at(`npx ${NAME} login`));
     at(`npx ${NAME} mcp`); at(`npx ${NAME} install-skills`); at("## Security"); at(baseProfile.product.name);
+    // The "older names" line is gone with the aliases it advertised: a README that tells an
+    // analyst to type another company's command name is the bug, not a convenience.
+    assert.ok(!/older\s+names/i.test(t), "the README no longer offers the base product's command names");
+  });
+
+  console.log("the package is named after ITSELF");
+  // Not one check but five surfaces, because this regressed on four of them at once: the files
+  // in node_modules, the bins, the README, and the folder the sign-in lands in. ownNameGate
+  // (lib/agent-cli.mjs) is the gate; these assert the built artifact directly, so a gate that
+  // stopped looking would not also silence them.
+  const builtFiles = (dir) => {
+    const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
+    return walk(dir).filter((p) => !p.endsWith("manifest.json")).map((p) => ({ path: p.slice(dir.length + 1).split(sep).join("/"), bytes: readFileSync(p) }));
+  };
+  await check("every shipped file is named after the package, and the five program files are there", () => {
+    const onDisk = readdirSync(D).filter((f) => f.endsWith(".mjs")).sort();
+    assert.deepEqual(onDisk, [...Object.values(MODULES), "deployment.generated.mjs"].sort());
+    for (const f of builtFiles(D)) assert.ok(!/(^|[^A-Za-z0-9_])fde([^A-Za-z0-9_]|$)/i.test(f.path), `${f.path} names the base product`);
+  });
+  await check("the credentials folder is this package's own, under the deployment's host", () => {
+    const text = readFileSync(join(D, "deployment.generated.mjs"), "utf8");
+    const baked = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("};") + 1));
+    assert.equal(baked.configDir, OWN);
+    assert.deepEqual(baked.modules, Object.fromEntries(Object.entries(MODULES).map(([k, v]) => [k, `./${v}`])));
+    // What the login command tells the person, and what it actually writes, are the same path.
+    const help = run(join(D, MODULES.login), ["--help"]).stderr;
+    assert.ok(help.includes(join(HOME, ".config", OWN, new URL(ORIGIN).host, "credentials.json")), help);
+    assert.ok(readFileSync(join(D, "README.md"), "utf8").includes(`~/.config/${OWN}/${new URL(ORIGIN).host}/credentials.json`));
+  });
+  await check("the gate passes on this build, and would have failed on the package built before it", () => {
+    assert.deepEqual(ownNameGate(builtFiles(D), { name: NAME }), []);
+    // scripts/fixtures/agent-cli-before-rename.json is verbatim from a real build of the
+    // commit before this change - the layout @onfinance/hfc-research was published with.
+    const before = JSON.parse(readFileSync(join(ROOT, "scripts/fixtures/agent-cli-before-rename.json"), "utf8"));
+    const asFiles = [
+      ...before.paths.filter((p) => p !== "package.json" && p !== "README.md").map((p) => ({ path: p, bytes: Buffer.alloc(0) })),
+      { path: "package.json", bytes: Buffer.from(JSON.stringify(before.packageJson)) },
+      { path: "README.md", bytes: Buffer.from(before.readmeLines.join("\n")) },
+      { path: "fde-login.mjs", bytes: Buffer.from(before.loginConfigLines.join("\n")) },
+    ];
+    const found = ownNameGate(asFiles, { name: before.name });
+    const hits = (re) => found.filter((o) => re.test(o));
+    assert.ok(hits(/^fde-(cli|login|mcp|tools|install-skill)\.mjs: a shipped file name/).length >= 5, "the five file names");
+    assert.ok(hits(/the bin "research-kit(-login|-mcp|-install-skills)?" -> \.\/fde-/).length >= 4, "every bin's target");
+    assert.ok(hits(/the packed path "fde-/).length >= 5, "package.json files\\[\\]");
+    assert.ok(hits(/README\.md:\d+: "`npx @probe-scope\/research-kit fde-login`/).length === 1, "the older-names line");
+    assert.ok(hits(/the folder "~\/\.config\/fde-mcp\/" it writes/).length >= 2, "the credentials folder, in the README and in the code");
+  });
+  /**
+   * THE REMAINDER #46 LEFT. ownNameGate excludes `_` on both sides, which is why the
+   * package it passed still shipped a tool called `fde_status` and read `FDE_OPS_URL`
+   * from the analyst's MCP config. That exemption is spent: what a package advertises
+   * and what it reads are checked too, with the declared aliases — and only those —
+   * allowed to stand.
+   */
+  await check("the wire gate passes on this build, and catches a new offender of each kind", () => {
+    assert.deepEqual(wireNameGate(builtFiles(D), { aliases: declaredAliases() }), []);
+    const plant = (path, body) => wireNameGate([{ path, bytes: Buffer.from(body, "utf8") }], { aliases: declaredAliases() });
+    assert.match(plant(`${OWN}-tools.mjs`, '    name: "fde_reindex",\n')[0] ?? "", /an advertised tool name/);
+    assert.match(plant(`${OWN}-mcp.mjs`, "process.env.FDE_NEW_THING;\n")[0] ?? "", /an environment variable/); // wire-name-ok: the offender this proves the gate catches
+    assert.match(plant(`${OWN}-cli.mjs`, 'localStorage.setItem("fde-new-thing", v);\n')[0] ?? "", /a browser-storage key/); // wire-name-ok: the offender this proves the gate catches
+    // The three the package legitimately still carries, because something still honours them.
+    assert.deepEqual(plant(`${OWN}-tools.mjs`, '    name: "workspace_status",\n    aliases: ["fde_status"],\n'), []);
+    assert.deepEqual(plant(`${OWN}-mcp.mjs`, "const a = process.env.WORKSPACE_OPS_URL;\n"), []);
+  });
+  await check("the built package advertises the neutral tool name and still answers the old one", () => {
+    const tools = readFileSync(join(D, MODULES.tools), "utf8");
+    assert.ok(tools.includes('name: "workspace_status"'), "the advertised name");
+    assert.ok(tools.includes('aliases: ["fde_status"]'), "the unadvertised alias an in-flight assistant still calls");
+    // The README an analyst reads names neither: a tool name is not instructions.
+    assert.ok(!/fde_status/.test(readFileSync(join(D, "README.md"), "utf8")));
+  });
+  await check("a package whose own name contains the word is not accused of naming the base product", () => {
+    const own = { path: "fde-desk-login.mjs", bytes: Buffer.from(`stored in ~/.config/fde-desk/host/credentials.json`) };
+    assert.deepEqual(ownNameGate([own], { name: "@acme/fde-desk" }), []);
+    assert.equal(ownNameGate([own], { name: "@acme/research-kit" }).length, 2);
   });
   const packList = (dir) => JSON.parse(spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: dir, encoding: "utf8" }).stdout)[0].files.map((f) => f.path).sort();
   await check("npm pack --dry-run lists exactly the manifest's files, with matching sizes and digests", async () => {
@@ -320,17 +459,35 @@ try {
   });
   await check("it still has no default address and says so", () => {
     const r = run(join(ROOT, "setup/fde-mcp.mjs"));
-    assert.match(r.stderr, /FDE_OPS_URL is not set/);
+    assert.match(r.stderr, /WORKSPACE_OPS_URL is not set/);
     const help = run(join(ROOT, "setup/fde-cli.mjs"), ["--help"]);
     assert.equal(help.status, 0); assert.match(help.stderr, /NO default address/); assert.match(help.stderr, /npx @delivery-agents\/cli fde-login --url <address>/);
     assert.equal(run(join(ROOT, "setup/fde-cli.mjs")).status, 1, "bare invocation of the generic package is still an error");
-    assert.equal(ready(run(join(ROOT, "setup/fde-mcp.mjs"), [], { FDE_OPS_URL: OTHER }))[1], OTHER);
+    assert.equal(ready(run(join(ROOT, "setup/fde-mcp.mjs"), [], { WORKSPACE_OPS_URL: OTHER }))[1], OTHER);
+    assert.equal(ready(run(join(ROOT, "setup/fde-mcp.mjs"), [], { FDE_OPS_URL: OTHER }))[1], OTHER, "and under the name that variable had before the rename");
   });
   await check("no product word is left in setup/*.mjs outside the generated module", () => {
     for (const f of ["fde-cli.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-tools.mjs", "fde-install-skill.mjs"]) {
       const t = readFileSync(join(ROOT, "setup", f), "utf8");
       assert.ok(!/delivery-agents|Delivered|onfinance/i.test(t), `${f} names a product`);
     }
+  });
+  await check("and no sibling module's FILE NAME either: they come from the generated module", () => {
+    // If a source spelled "./fde-tools.mjs", a package built under another name would import a
+    // file that is not in it. This is what lets the five sources be copied byte for byte.
+    for (const f of ["fde-cli.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-install-skill.mjs"]) {
+      const code = readFileSync(join(ROOT, "setup", f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      const imports = [...code.matchAll(/from\s+"(\.\/[^"]+)"|import\(\s*"(\.\/[^"]+)"/g)].map((m) => m[1] ?? m[2]);
+      assert.deepEqual(imports, ["./deployment.generated.mjs"], `${f} imports a sibling by name: ${imports.join(", ")}`);
+    }
+  });
+  await check("its own sign-in folder is untouched: ~/.config/fde-mcp/, no host segment, no migration", async () => {
+    // The generic package IS the base product's CLI. Renaming its folder would re-sign-in every
+    // engineer using it to fix a problem it does not have (docs/AGENT_CLI.md).
+    const login = await import(join(ROOT, "setup/fde-login.mjs"));
+    const { homedir } = await import("node:os");
+    assert.equal(login.CRED_PATH, join(homedir(), ".config", "fde-mcp", "credentials.json"));
+    assert.equal(login.LEGACY_CRED_PATH, null, "nothing to migrate from");
   });
 
   console.log("probe profile + agent-kit");
@@ -349,11 +506,11 @@ try {
     const pp = JSON.parse(readFileSync(join(P, "package.json"), "utf8"));
     assert.ok(pp.description.startsWith("Probe Research: Coverage for a research desk."));
     assert.ok(pp.keywords.includes("probe-research"));
-    const help = run(join(P, "fde-cli.mjs"), ["--help"]).stderr;
+    const help = run(join(P, MODULES.cli), ["--help"]).stderr;
     assert.ok(help.includes("Probe Research CLI") && help.includes(`claude mcp add --transport http probe-research ${ORIGIN}/api/mcp`));
     assert.ok(readFileSync(join(P, "deployment.generated.mjs"), "utf8").includes('"plural": "companies"'));
     assert.ok(readFileSync(join(P, "README.md"), "utf8").includes("companies"));
-    const all = readdirSync(P).filter((f) => /\.(mjs|md|json)$/.test(f) && f !== "fde-tools.mjs").map((f) => readFileSync(join(P, f), "utf8")).join("\n");
+    const all = readdirSync(P).filter((f) => /\.(mjs|md|json)$/.test(f) && f !== MODULES.tools).map((f) => readFileSync(join(P, f), "utf8")).join("\n");
     assert.ok(!all.includes("Delivered"), "the base product's name is nowhere in the probe package");
   });
   const dm = readFileSync(join(P, "dm.md"), "utf8");
@@ -462,6 +619,10 @@ try {
   await plant("an environment file", { ".env.local": "A=1\n" }, /\.env\.local: an environment file/);
   await plant("an email address", { "notes.md": "Ask priya.sharma@somebank.co.in for access.\n" }, /an email address that is not on the allowlist/);
   await plant("the generic package's name", { "notes.md": "Run npx @delivery-agents/cli fde-login.\n" }, /names another package/);
+  // End to end through the real builder, not just the pure gate: a pack that adds a file named
+  // after the base product, or that tells the person to look in the old folder, fails the build.
+  await plant("a shipped file named after the base product", { "fde-notes.md": "# Notes\n" }, /fde-notes\.md: a shipped file name carries the base product's name/);
+  await plant("a pack naming the old credentials folder", { "notes.md": "Your login is in ~/.config/fde-mcp/.\n" }, /the folder "~\/\.config\/fde-mcp\/" it writes on the user's machine/);
   await check("each secret shape is recognised, placeholders and this deployment's own address are not", () => {
     const j = (...parts) => parts.join("");
     const shapes = {

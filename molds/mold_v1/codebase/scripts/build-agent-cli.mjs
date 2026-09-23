@@ -2,7 +2,10 @@
 /**
  * Build THIS deployment's own agent package: a complete, publishable npm package directory
  * with the deployment's address, product name, vocabulary, skills and data-room description
- * baked in. One per application stamped from this codebase. docs/AGENT_CLI.md is the manual.
+ * baked in, and named after ITSELF throughout - its five program files, its bins, its README
+ * and the ~/.config folder it writes all carry the package's own name, never the base
+ * product's (ownNameGate in lib/agent-cli.mjs fails the build otherwise). One per application
+ * stamped from this codebase. docs/AGENT_CLI.md is the manual.
  *
  *   npm run build:agent-cli -- --name @acme/research --version 1.0.0 --origin https://research.acme.com
  *
@@ -28,13 +31,17 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ALLOWED_HOSTS, buildManifest, defaultDeployment, isSemver, npmNameProblems, parseOrigin, parseSkillFrontmatter,
-  renderDeploymentModule, renderDmMd, safetyGate, unscopedName,
+  ALLOWED_HOSTS, ALWAYS_ALLOWED_FILES, GENERIC_MODULE_FILES, buildManifest, defaultDeployment, isSemver,
+  moduleFileNames, moduleSpecifiers, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter,
+  renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate,
 } from "./lib/agent-cli.mjs";
+// The migration tables the wire-name gate allows and nothing else, read from the modules that
+// HONOUR them, so the gate and the compatibility shim can never drift into disagreeing about
+// what is deliberate.
+import { declaredAliases } from "./lib/wire-names.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SETUP = join(ROOT, "setup");
-const CLI_SOURCES = ["fde-cli.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-tools.mjs", "fde-install-skill.mjs"];
 
 function die(msg) { console.error(`build-agent-cli: ${msg}`); process.exit(1); }
 
@@ -100,7 +107,9 @@ const access = opt["--access"] ?? "public";
 if (!["public", "restricted"].includes(access)) problems.push(`--access must be "public" or "restricted"`);
 if (access === "restricted" && opt["--name"] && !opt["--name"].startsWith("@")) problems.push("--access restricted needs a scoped name (@scope/name): npm has no private unscoped packages");
 for (const flag of ["--repository", "--homepage"]) if (opt[flag] && !/^(https:\/\/|git\+https:\/\/)\S+$/.test(opt[flag])) problems.push(`${flag} must be an https URL`);
-const RESERVED_BINS = ["login", "mcp", "install-skills", "fde-login", "fde-mcp", "fde-install-skill"];
+// The commands a built package answers to. A package named after one of them would take
+// `npx <package> login` to mean the package, not the command.
+const RESERVED_BINS = ["login", "mcp", "install-skills", "skills"];
 if (opt["--name"] && RESERVED_BINS.includes(unscopedName(opt["--name"]))) problems.push(`--name: "${unscopedName(opt["--name"])}" is one of this package's own command names`);
 if (problems.length) die(`\n  - ${problems.join("\n  - ")}`);
 
@@ -153,27 +162,58 @@ const tagline = profile.product.tagline;
 const slug = productSlug(productName);
 const connect = mcpConnect({ origin, productName, agentPackage: name });
 const commands = { login: "login", mcp: "mcp", installSkills: "install-skills" };
+// Every file, command and on-disk folder this package ships is named after the package or the
+// deployment — never after the base product. See ownNameGate in lib/agent-cli.mjs for why.
+const own = unscopedName(name);
+const moduleFiles = moduleFileNames(own);
+// ~/.config/<this>/<host>/credentials.json. The package's own unscoped name, not the product
+// slug: it is the one string the person actually typed to install this, and it cannot quietly
+// become the BASE product's name the way the slug can when a deployment ships the default
+// profile. The host segment under it still separates two deployments of one product.
+const configDir = own;
 
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 const write = (rel, text) => { mkdirSync(dirname(join(OUT, rel)), { recursive: true }); writeFileSync(join(OUT, rel), text); };
 
-for (const f of CLI_SOURCES) write(f, readFileSync(join(SETUP, f)));
+// The five sources are copied byte for byte under this package's names: they hold no module
+// name, product word or folder of their own, only lookups into the generated module below.
+for (const [role, source] of Object.entries(GENERIC_MODULE_FILES)) write(moduleFiles[role], readFileSync(join(SETUP, source)));
 write("deployment.generated.mjs", renderDeploymentModule({
-  packageName: name, name: productName, slug, tagline, origin, mcpEndpoint: connect.endpoint, vocabulary: profile.vocabulary, commands,
+  packageName: name, name: productName, slug, tagline, origin, mcpEndpoint: connect.endpoint, vocabulary: profile.vocabulary,
+  commands, modules: moduleSpecifiers(moduleFiles), configDir,
   connect: { claudeCommand: connect.claudeCommand, tokenCommands: connect.tokenCommands, tokenNote: connect.tokenNote, packageAlternative: connect.packageAlternative },
 }));
 write("dm.md", renderDmMd({ source: readFileSync(join(ROOT, "dm.md"), "utf8"), profile, defaultDomains, extraTemplates: [...EXTRA_DATAROOM_PATH_TEMPLATES], productName }));
 
+/**
+ * A base skill is written for the base product: it names the generic package, the generic
+ * package's command names (`npx @delivery-agents/cli fde-login`) and the base product's role
+ * ("the fde MCP is wired"). In THIS package all three are this package's own - and a skill
+ * description is quoted verbatim into the README, so leaving them would put another company's
+ * initials in front of the analyst reading it.
+ */
+const GENERIC_COMMANDS = defaultDeployment({ packageName: GENERIC_AGENT_PACKAGE, profile, slug }).commands;
+function rebrandBaseSkill(text) {
+  let out = text.split(GENERIC_AGENT_PACKAGE).join(name);
+  for (const role of Object.keys(commands)) out = out.split(`${name} ${GENERIC_COMMANDS[role]}`).join(`${name} ${commands[role]}`);
+  // "fde" as a word only, never inside an identifier: check-vocabulary.mjs draws the same
+  // line. There is no longer a wire identifier hiding behind it - the tool is workspace_status
+  // and the variables are WORKSPACE_* (check:wire-names holds that), so this rewrite meets
+  // only real prose now.
+  return out.replace(/(?<![A-Za-z0-9_])fde(?![A-Za-z0-9_])/gi, own);
+}
 for (const s of shippedSkills) {
   cpSync(s.dir, join(OUT, "skills", s.name), { recursive: true, verbatimSymlinks: true });
-  // A base skill names the generic package; in this package the same commands are this package's.
   if (s.base && name !== GENERIC_AGENT_PACKAGE) {
     for (const file of walk(join(OUT, "skills", s.name))) {
       if (!/\.(md|txt|json|ya?ml)$/i.test(file) || lstatSync(file).isSymbolicLink()) continue;
       const text = readFileSync(file, "utf8");
-      if (text.includes(GENERIC_AGENT_PACKAGE)) writeFileSync(file, text.split(GENERIC_AGENT_PACKAGE).join(name));
+      const rebranded = rebrandBaseSkill(text);
+      if (rebranded !== text) writeFileSync(file, rebranded);
     }
+    // The README quotes this line; it was read from the frontmatter before the rewrite above.
+    s.description = rebrandBaseSkill(s.description);
   }
 }
 function walk(dir) {
@@ -186,13 +226,14 @@ function walk(dir) {
 }
 
 const license = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).license ?? "UNLICENSED";
-// Every bin carries the package's own name. A bare `login` shadows the system's on a global
-// install, and `fde-*` would collide between two deployments' packages. `npx <package> login`
-// (and the older fde-login / fde-mcp / fde-install-skill) still work: fde-cli.mjs dispatches them.
-const own = unscopedName(name);
+// Every bin, and now every file behind it, carries the package's own name. A bare `login`
+// shadows the system's on a global install (PR #28), and an `fde-*` bin would collide between
+// two deployments' packages. `npx <package> login | mcp | install-skills` is the whole surface:
+// the base product's own command names are NOT aliased here, because a package sold to one desk
+// answering to another company's command names is the leak this build exists to close.
 const bin = Object.fromEntries([
-  [own, "./fde-cli.mjs"],
-  [`${own}-login`, "./fde-login.mjs"], [`${own}-mcp`, "./fde-mcp.mjs"], [`${own}-install-skills`, "./fde-install-skill.mjs"],
+  [own, `./${moduleFiles.cli}`],
+  [`${own}-login`, `./${moduleFiles.login}`], [`${own}-mcp`, `./${moduleFiles.mcp}`], [`${own}-install-skills`, `./${moduleFiles.installSkills}`],
 ]);
 const pkg = {
   name, version,
@@ -200,7 +241,7 @@ const pkg = {
   type: "module",
   license,
   bin,
-  files: [...CLI_SOURCES, "deployment.generated.mjs", "dm.md", "README.md", "skills"],
+  files: [...Object.values(moduleFiles), "deployment.generated.mjs", "dm.md", "README.md", "skills"],
   engines: basePackage.engines ?? { node: ">=20" },
   keywords: ["mcp", "cli", slug],
   publishConfig: { access },
@@ -264,11 +305,10 @@ Any other client, as JSON:
 { "command": "npx", "args": ["-y", "${name}", "mcp"] }
 \`\`\`
 
-\`npx ${name} fde-login\`, \`fde-mcp\` and \`fde-install-skill\` are the same commands under their older
-names. Installed globally, the commands are \`${own}\`, \`${own}-login\`, \`${own}-mcp\` and
+Installed globally, the commands are \`${own}\`, \`${own}-login\`, \`${own}-mcp\` and
 \`${own}-install-skills\`: each carries the package's name, so none shadows a system command.
 
-Which address is used, first match wins: \`--url <address>\` or \`FDE_OPS_URL\`, then the address saved
+Which address is used, first match wins: \`--url <address>\` or \`WORKSPACE_OPS_URL\`, then the address saved
 at sign-in, then the built-in ${origin}.
 
 ## Skills in this package
@@ -282,9 +322,9 @@ name, and the one every tool path uses.
 
 - Everything the agent does is done as YOU: the sign-in is your own Google work account or your
   own email address, checked by ${productName} on every call. Leaving a workspace ends access to it.
-- The sign-in is stored only on your machine (\`~/.config/fde-mcp/${new URL(origin).host}/credentials.json\`,
+- The sign-in is stored only on your machine (\`~/.config/${configDir}/${new URL(origin).host}/credentials.json\`,
   readable by you alone). This package sends it to Google (to refresh a Google sign-in) and to ${origin}, nowhere else.
-- The Google client id and secret inside \`fde-login.mjs\` are for an installed-app client. Google does
+- The Google client id and secret inside \`${moduleFiles.login}\` are for an installed-app client. Google does
   not treat such a secret as confidential; it grants nothing without your interactive sign-in.
 - The tools write to the LIVE workspace. Writes to the data room and invitations preview first and
   need your confirmation.
@@ -302,12 +342,23 @@ const files = walk(OUT).map((abs) => {
 const offenders = safetyGate(files, {
   origin, allowHosts: lists["--allow-host"], allowEmails: lists["--allow-email"],
   foreignPackageNames: name === GENERIC_AGENT_PACKAGE ? [] : [GENERIC_AGENT_PACKAGE],
+  allowFiles: [...ALWAYS_ALLOWED_FILES, ...Object.values(moduleFiles)],
 });
+// The generic package IS the base product's CLI, so it alone may carry the base product's names.
+if (name !== GENERIC_AGENT_PACKAGE) offenders.push(...ownNameGate(files, { name }));
+/**
+ * The wire half, on EVERY package including the generic one. ownNameGate is skipped
+ * for the generic package because that package IS the base product's CLI and may
+ * legitimately be called after it — but a tool name and an environment variable are
+ * not the package's name. They are a contract every deployment's assistant speaks,
+ * so the base product's role word has no business in either, in any package.
+ */
+offenders.push(...wireNameGate(files, { aliases: declaredAliases() }));
 if (offenders.length) {
   rmSync(OUT, { recursive: true, force: true });
   console.error(`build-agent-cli: SAFETY GATE FAILED - nothing was written. ${offenders.length} problem${offenders.length === 1 ? "" : "s"}:\n`);
   for (const o of offenders) console.error(`  - ${o}`);
-  console.error(`\nA public package is readable by anyone. Only agent-kit/ content ships; rulebooks (*-spec.md) and schemas/ never do.\nThird-party hosts allowed by default: ${ALLOWED_HOSTS.join(", ")} (add one with --allow-host).`);
+  console.error(`\nA public package is readable by anyone. Only agent-kit/ content ships; rulebooks (*-spec.md) and schemas/ never do.\nThird-party hosts allowed by default: ${ALLOWED_HOSTS.join(", ")} (add one with --allow-host).\nA package is also named after itself: its files, bins, README and the folder it writes under ~/.config carry ${name}, never the base product.`);
   process.exit(1);
 }
 

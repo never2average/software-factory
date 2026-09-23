@@ -318,4 +318,262 @@ console.log("\n8. The run-accounting contract is enforced where a pack can be se
   }
 }
 
+// ---------------------------------------------------------------------------
+// GAP 1: an invocation that dies BEFORE the child's first turn.
+//
+// Sections 7 and 8 hold the child's side of the run history. This is the half
+// the child cannot record: the usage hooks fire on TURN events, and a child
+// that dies during bootstrap never emits one, so the invocation left no row at
+// all — not "a failed run", nothing. The parent IS told (section 5 proves the
+// failure reaches it as a subagent-result flagged isError), so the parent
+// records it.
+//
+// Driven over the REAL recorded streams, through the module the hook actually
+// calls, with the session ids and the counter-shaped call ids the runtime
+// really produced.
+console.log("\n9. A specialist that dies before its first turn still leaves a run");
+{
+  const { existsSync } = await import("node:fs");
+  check(
+    "there is a parent-side recorder for a delegation that never started",
+    existsSync("agent/lib/delegation-failures.ts") && existsSync("agent/hooks/delegation-runs.ts"),
+  );
+  const { createDelegationTracker } = await import("../agent/lib/delegation-failures.ts");
+  const { delegatedRunKey, runKeyFor } = await import("../agent/lib/workflow-usage.ts");
+
+  /** The hook's own event loop (agent/hooks/delegation-runs.ts), minus the database. */
+  function drive(events) {
+    const tracker = createDelegationTracker();
+    // ctx.session.id in the parent — which is what `subagent.called` also
+    // reports as `sessionId`, so the fixtures carry it.
+    const sessionId = events.find((e) => e.type === "subagent.called")?.data?.sessionId;
+    const recorded = [];
+    const parked = [];
+    for (const e of events) {
+      if (e.type === "subagent.called") tracker.called(sessionId, e.data);
+      else if (e.type === "input.requested") parked.push(...tracker.parked(sessionId, e.data));
+      else if (e.type === "action.result") {
+        const settled = tracker.settled(sessionId, e.data);
+        if (settled) recorded.push(settled);
+      }
+    }
+    return { sessionId, recorded, parked, tracker };
+  }
+
+  {
+    // THE MEASURED CASE: a real sandbox bootstrap failure, recorded from this
+    // repo's agent under `eve dev`. subagent.called → action.result, and not one
+    // turn event from the child in between, which is why nothing was recorded.
+    const events = load("child-fails");
+    const { recorded } = drive(events);
+    check("the failed invocation is recognised from the parent's stream", recorded.length === 1);
+    check("it ended in failure", recorded[0].failed === true);
+    check("filed under the specialist that was called", recorded[0].name === "research");
+    check(
+      "carrying the CHILD's session — the run key is nothing without it",
+      recorded[0].childSessionId === "wrun_01M36ARFBE2WW4S9443H4T8RHM",
+    );
+    check(
+      "and eve's reason, which names the bootstrap that failed",
+      String(recorded[0].message).startsWith('Step "step//eve@0.25.1//turnStep" failed after 3 retries'),
+    );
+    // WHY IT CANNOT DOUBLE-WRITE. The row the parent writes is keyed on exactly
+    // the key the child's own openWorkflowRun uses for its first turn — eve
+    // numbers turns within a session and a delegated child session is fresh, so
+    // that turn is always turn_0. run_key is UNIQUE and the insert is
+    // onConflictDoNothing, so whichever side writes second is a no-op.
+    check(
+      "the parent writes the key the child's own first turn would have written",
+      delegatedRunKey("wf1", recorded[0].childSessionId) ===
+        runKeyFor("wf1", recorded[0].childSessionId, "turn_0"),
+    );
+  }
+
+  {
+    // The other side of the same rule: when the child DOES start and return,
+    // the parent records nothing at all, so there is no second row to collide.
+    const events = load("child-completes");
+    const { recorded } = drive(events);
+    check("a child that returns normally settles its delegation", recorded.length === 1);
+    check("and is NOT recorded as a failure by the parent", recorded[0].failed === false);
+    const answered = drive(load("child-parks-then-answered")).recorded;
+    check("nor is one that parked and was then answered", answered.length === 1 && answered[0].failed === false);
+  }
+
+  {
+    // THE WARM-INSTANCE HAZARD, with the ids the runtime really minted. Both
+    // recorded streams delegate under the literal call id
+    // `call_000000000000000000000002` (agent/lib/unique-tool-call-ids.ts: some
+    // models COUNT instead of minting ids). A module-scope map keyed on the
+    // call id alone would file session B's failure against session A's child —
+    // inventing a failed run for a specialist that is still working, which is
+    // exactly the mis-close that ruled out module-scope turn tracking.
+    const callId = "call_000000000000000000000002";
+    const tracker = createDelegationTracker();
+    tracker.called("parent-A", { callId, childSessionId: "child-A", name: "research" });
+    tracker.called("parent-B", { callId, childSessionId: "child-B", name: "research" });
+    const b = tracker.settled("parent-B", {
+      result: { callId, kind: "subagent-result", isError: true, output: { code: "SUBAGENT_EXECUTION_FAILED" } },
+    });
+    check("a shared call id does not cross sessions", b?.childSessionId === "child-B");
+    const a = tracker.settled("parent-A", {
+      result: { callId, kind: "subagent-result", output: "CHILD-RESULT" },
+    });
+    check("and the other session's delegation is untouched by it", a?.childSessionId === "child-A" && a.failed === false);
+  }
+
+  {
+    // A result for a delegation this instance never saw start (it was recycled
+    // mid-session) carries no child session id, and one keyed on a guess would
+    // collide with some real invocation's row. Nothing is written.
+    const tracker = createDelegationTracker();
+    check(
+      "a failure with no remembered delegation writes nothing",
+      tracker.settled("parent-A", {
+        result: { callId: "call_unseen", kind: "subagent-result", isError: true, output: {} },
+      }) === null,
+    );
+    // Unbounded, this map would grow for the life of a warm instance.
+    for (let i = 0; i < 600; i++) {
+      tracker.called("parent-A", { callId: `call_${i}`, childSessionId: `child_${i}`, name: "research" });
+    }
+    check("outstanding delegations are bounded", tracker.size <= 512);
+    check(
+      "and the OLDEST is what goes: an unresolved delegation from hours ago never resolves",
+      tracker.settled("parent-A", { result: { callId: "call_599", kind: "subagent-result", isError: true, output: {} } })
+        ?.childSessionId === "child_599" &&
+        tracker.settled("parent-A", { result: { callId: "call_0", kind: "subagent-result", isError: true, output: {} } }) ===
+          null,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GAP 2: a row that stays `running` for ever.
+//
+// `session.failed` carries no turnId, so a child that dies mid-turn without a
+// `turn.failed` leaves its row open — measured live: icici-hfc holds three rows
+// and one is still `running`. The fix is a clock, not a remembered turn id: a
+// warm instance serves several sessions, so the turn id it remembers may belong
+// to a LIVE run and closing that is worse than leaving one open.
+//
+// The closing itself is a database statement and is proved against a real
+// Postgres by scripts/test-run-history-db.mjs. What is held HERE is everything
+// that decides whether it is safe: the interval, and the exclusion that keeps a
+// parked run out of its way.
+console.log("\n10. A run that nobody closes is closed by the clock — and a live one never is");
+{
+  const { existsSync } = await import("node:fs");
+  const CRON = "/api/cron/close-abandoned-runs";
+  const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
+  check(
+    "a cron sweeps abandoned runs",
+    (vercel.crons ?? []).some((c) => c.path === CRON),
+  );
+  check("and the route it calls exists", existsSync(`app${CRON}/route.ts`));
+  const route = readFileSync(`app${CRON}/route.ts`, "utf8");
+  // The same fail-closed guard the other four crons carry: `if (secret && …)`
+  // skips the check when CRON_SECRET is unset, and it is set on Production
+  // ONLY — which left every preview deployment's crons open.
+  check(
+    "it fails closed when CRON_SECRET is unset, like its four siblings",
+    /if \(!secret\)/.test(route) && /status: 503/.test(route),
+  );
+
+  const { ABANDONED_RUN_MS, ABANDONED_RUN_ERROR, AWAITING_ANSWER_SUMMARY } = await import(
+    "../agent/lib/workflow-usage.ts"
+  );
+  // THE INTERVAL, against the longest a row can legitimately still be live.
+  // One attempt of a turn runs under `maxDuration: "max"`, which this repo pins
+  // at 800s where it controls it (app/eve/v1/session/[...segments]/route.ts),
+  // and eve retries a failed turn step three times — "failed after 3 retries",
+  // measured verbatim in child-fails.ndjson — so four attempts can be live.
+  const RETRY_BOUND_MS = 4 * 800_000;
+  check("the interval clears four 800s attempts of one turn", ABANDONED_RUN_MS > RETRY_BOUND_MS);
+  check(
+    "which is the bound eve's own retry count sets",
+    load("child-fails").some((e) =>
+      String(e.data?.result?.output?.message ?? "").includes("failed after 3 retries"),
+    ),
+  );
+  // The longest specialist run anyone has actually observed on the live
+  // deployment: lodr-filings, 5m30s (2026-09-23).
+  check("and is many times the longest run ever measured", ABANDONED_RUN_MS > 10 * 5.5 * 60_000);
+
+  // The status stays inside the closed set the API type mirrors exactly; the
+  // SENTENCE is what makes an abandoned run distinguishable from a completed
+  // one and from one that genuinely failed.
+  const apiRun = readFileSync("app/_components/ops/lib.ts", "utf8");
+  check(
+    "automation run status is still the three values every consumer handles",
+    /status: "success" \| "failed" \| "running";/.test(apiRun),
+  );
+  check("an abandoned run says it was never heard from again", /never heard from again/.test(ABANDONED_RUN_ERROR));
+
+  // A PARKED CHILD IS LIVE, for as long as nobody answers — six live sessions
+  // ended exactly that way (#42). No interval is long enough for a question,
+  // so the sweeper excludes marked rows instead of waiting longer.
+  const usage = readFileSync("agent/lib/workflow-usage.ts", "utf8");
+  check("the sweeper skips a run that is waiting on a person", /summary} is null/.test(usage));
+  check("which is marked, not guessed", AWAITING_ANSWER_SUMMARY.length > 0 && /markDelegationParked/.test(usage));
+  check("and unmarked when the delegation comes back", /clearDelegationPark/.test(usage));
+
+  // The mark is set from the PARENT's stream, because the specialists that park
+  // in production ship in a pack with their own hooks/usage.ts — the blind spot
+  // section 8 exists for.
+  const hook = readFileSync("agent/hooks/delegation-runs.ts", "utf8");
+  for (const event of ["subagent.called", "input.requested", "action.result"]) {
+    check(`the root agent's hook watches ${event}`, hook.includes(`"${event}"`));
+  }
+  const { createDelegationTracker } = await import("../agent/lib/delegation-failures.ts");
+  {
+    // THE SWALLOW ITSELF, as the parent recorded it: the child asked a
+    // question and the session is still sitting on it. Its run row is
+    // `running` and must stay that way.
+    const events = load("child-parks-never-answered");
+    const sessionId = events.find((e) => e.type === "subagent.called")?.data?.sessionId;
+    const tracker = createDelegationTracker();
+    const parked = [];
+    for (const e of events) {
+      if (e.type === "actions.requested") tracker.declared(sessionId, e.data);
+      else if (e.type === "subagent.called") tracker.called(sessionId, e.data);
+      else if (e.type === "input.requested") parked.push(...tracker.parked(sessionId, e.data));
+    }
+    check("the live park is seen from the parent's stream", parked.length === 1);
+    check("naming the child whose row must not be swept", parked[0].childSessionId === "wrun_01M36BB9YBDWYYSK9ANGQ8SC1P");
+    check("and the delegation stays outstanding, so a re-park finds it again", tracker.size === 1);
+    // The proxied request does NOT name the delegation: eve passes the child's
+    // own `ask_question` call through verbatim, so the id on the request
+    // (call_…0a) is not the id of the delegation (call_…09). Attribution is by
+    // exclusion, which is why the rule above cannot be "match the call id".
+    const request = events.find((e) => e.type === "input.requested").data.requests[0];
+    const delegation = events.find((e) => e.type === "subagent.called").data.callId;
+    check("the proxied question does not carry the delegation's call id", request.action.callId !== delegation);
+  }
+  {
+    // The parent's OWN approval is not a child park. It was declared in this
+    // session's `actions.requested`, so it marks nothing and an ordinary run
+    // stays sweepable — otherwise one `send_email?` prompt would exempt every
+    // open run in the session from the sweep for ever.
+    const tracker = createDelegationTracker();
+    tracker.declared("parent-A", { actions: [{ callId: "c-own", kind: "tool-call" }] });
+    tracker.called("parent-A", { callId: "c-child", childSessionId: "child-A", name: "research" });
+    check(
+      "a parent-declared approval marks nothing",
+      tracker.parked("parent-A", { requests: [{ requestId: "r1", action: { callId: "c-own" } }] }).length === 0,
+    );
+    check(
+      "a request with no call id at all marks nothing either",
+      tracker.parked("parent-A", { requests: [{ requestId: "r2" }] }).length === 0,
+    );
+    // And a park in ANOTHER session never exempts this session's run — the
+    // warm-instance hazard again, on the other write path.
+    tracker.declared("parent-B", { actions: [{ callId: "c-own-b", kind: "tool-call" }] });
+    check(
+      "a park in another session exempts nothing here",
+      tracker.parked("parent-B", { requests: [{ requestId: "r3", action: { callId: "c-proxied" } }] }).length === 0,
+    );
+  }
+}
+
 console.log(`\ntest-subagent-delivery: ${passed} assertions passed`);

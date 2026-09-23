@@ -289,7 +289,7 @@ check(
  * tenant's chats under another tenant's name. */
 check(
   "the local chat cache is keyed by workspace",
-  /fde-chats:\$\{email \?\? "anon"\}:\$\{activeOrg\(\) \?\? "default"\}/.test(
+  /STORAGE_KEYS\.chats\}:\$\{email \?\? "anon"\}:\$\{activeOrg\(\) \?\? "default"\}/.test(
     readFileSync("app/_components/chat-shell.tsx", "utf8"),
   ),
 );

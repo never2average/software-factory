@@ -43,6 +43,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { STORAGE_KEYS, readStored, writeStored } from "@/lib/browser-storage";
 
 /** Approx model context window for the gauge (Claude/GLM-class). Approximate on
  *  purpose — the ring is an indicator; eve owns the real compaction threshold. */
@@ -398,11 +399,11 @@ function lastText(messages: MsgList) {
  */
 /** Dismissed (waved-away) input requests, persisted across reopens. Keyed
  *  globally because requestIds are unique UUIDs — no need to scope by chat. */
-const DISMISSED_KEY = "fde-dismissed-inputs";
+const DISMISSED_KEY = STORAGE_KEYS.dismissedInputs;
 function readDismissed(): ReadonlySet<string> {
   if (typeof window === "undefined") return new Set();
   try {
-    const raw = window.localStorage.getItem(DISMISSED_KEY);
+    const raw = readStored(DISMISSED_KEY);
     const arr = raw ? (JSON.parse(raw) as unknown) : [];
     return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
   } catch {
@@ -413,7 +414,7 @@ function persistDismissed(ids: ReadonlySet<string>): void {
   if (typeof window === "undefined") return;
   try {
     // Cap so this can't grow without bound; the tail is what matters.
-    window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...ids].slice(-500)));
+    writeStored(DISMISSED_KEY, JSON.stringify([...ids].slice(-500)));
   } catch {
     /* quota — a dropped dismissal just re-hoists, not fatal */
   }

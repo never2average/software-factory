@@ -26,7 +26,7 @@ You need:
 Confirm the platform is healthy first:
 
 ```bash
-curl -s "$FDE_OPS_URL/api/ops/health" | python3 -m json.tool
+curl -s "$WORKSPACE_OPS_URL/api/ops/health" | python3 -m json.tool
 ```
 
 Want `"ok": true` with `db`, `blob`, and `inference` all green. This does a real
@@ -74,8 +74,8 @@ No secret to hunt for: the OAuth client ID and secret are for a Google *desktop*
 client, which Google treats as non-confidential (an installed app can't keep a
 secret), so they're baked into `fde-login.mjs`. They grant nothing on their own —
 every token needs your interactive sign-in and is re-verified by the Ops API. Repo
-access is all you need. Override with `FDE_OAUTH_CLIENT_ID` /
-`FDE_OAUTH_CLIENT_SECRET` only if your team mints its own client.
+access is all you need. Override with `WORKSPACE_OAUTH_CLIENT_ID` /
+`WORKSPACE_OAUTH_CLIENT_SECRET` only if your team mints its own client.
 
 ---
 
@@ -92,7 +92,7 @@ Add this to your Claude Code MCP config (`~/.claude/mcp.json`, or a project
       "args": ["--experimental-strip-types", "setup/fde-mcp.mjs"],
       "cwd": "/absolute/path/to/fde-agent",
       "env": {
-        "FDE_OPS_URL": "https://your-deployment.example.com",
+        "WORKSPACE_OPS_URL": "https://your-deployment.example.com",
         "BLOB_READ_WRITE_TOKEN": "blob_rw_..."
       }
     }
@@ -105,7 +105,7 @@ Add this to your Claude Code MCP config (`~/.claude/mcp.json`, or a project
 stored refresh token and refreshes the ID token per session using the baked-in
 desktop-client credentials, so there's nothing more to configure.
 
-**Required env: `FDE_OPS_URL`** — your deployment's address. There is no default:
+**Required env: `WORKSPACE_OPS_URL`** — your deployment's address. There is no default:
 this codebase is stamped into many applications, and a built-in address sent
 everyone but one product to somebody else's app. `node setup/fde-login.mjs --url
 <address>` saves it instead, if you prefer.

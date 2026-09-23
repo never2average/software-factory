@@ -51,7 +51,7 @@ export function mcpConnect(input: {
   email?: string;
   /**
    * This deployment's own published package (built by scripts/build-agent-cli.mjs with the
-   * address baked in). Without it the alternative is the generic package plus FDE_OPS_URL.
+   * address baked in). Without it the alternative is the generic package plus WORKSPACE_OPS_URL.
    */
   agentPackage?: string;
 }): McpConnect {
@@ -121,8 +121,12 @@ export function mcpConnect(input: {
         }
       : {
           login: `npx ${GENERIC_AGENT_PACKAGE} fde-login --url ${origin}`,
-          claudeCommand: `claude mcp add ${slug} --env FDE_OPS_URL=${origin} -- npx -y -p ${GENERIC_AGENT_PACKAGE} fde-mcp`,
-          note: `Alternative for Google Workspace accounts: the npm package. It has no built-in address, so FDE_OPS_URL=${origin} is required.`,
+          // WORKSPACE_OPS_URL, not the FDE_OPS_URL this used to print: these instructions are
+          // copied into an MCP config by hand and then live there for months, so what is printed
+          // today is what a person is still running next year. The package reads the old name
+          // too (LEGACY_ENV_NAMES), so an instruction already followed keeps working.
+          claudeCommand: `claude mcp add ${slug} --env WORKSPACE_OPS_URL=${origin} -- npx -y -p ${GENERIC_AGENT_PACKAGE} fde-mcp`,
+          note: `Alternative for Google Workspace accounts: the npm package. It has no built-in address, so WORKSPACE_OPS_URL=${origin} is required.`,
         },
   };
 }

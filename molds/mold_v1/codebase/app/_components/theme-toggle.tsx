@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 
 export type Theme = "system" | "light" | "dark";
 
 /** Where the choice is stored. Read by the inline script in layout.tsx too — if
- *  you rename this, rename it there or the page flashes the wrong theme. */
-export const THEME_KEY = "fde-theme";
+ *  you rename this, rename it there or the page flashes the wrong theme. That
+ *  script reads the OLD key as well, for the same reason this does: a person who
+ *  chose dark before the rename must not be shown light on the next deploy. */
+export const THEME_KEY = STORAGE_KEYS.theme;
 
 /**
  * Apply a theme by setting (or clearing) `data-theme` on <html>.
@@ -38,7 +41,7 @@ export function ThemeToggle({ className }: { className?: string }) {
   // itself never flashes — only this button's icon settles a tick later.
   const [theme, setTheme] = useState<Theme>("system");
   useEffect(() => {
-    const stored = localStorage.getItem(THEME_KEY) as Theme | null;
+    const stored = readStored(THEME_KEY) as Theme | null;
     if (stored === "light" || stored === "dark" || stored === "system") setTheme(stored);
   }, []);
 
@@ -47,8 +50,8 @@ export function ThemeToggle({ className }: { className?: string }) {
     setTheme(next);
     applyTheme(next);
     try {
-      if (next === "system") localStorage.removeItem(THEME_KEY);
-      else localStorage.setItem(THEME_KEY, next);
+      if (next === "system") removeStored(THEME_KEY);
+      else writeStored(THEME_KEY, next);
     } catch {
       /* private mode — the choice just won't persist */
     }

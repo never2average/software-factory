@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { verifySessionToken } from "@/lib/auth-session";
+import { compatEnv } from "../agent/lib/compat-env";
 import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 
 /**
@@ -9,7 +10,7 @@ import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
  * for connectors, workflows and crons, which used to be an open door:
  *
  *  - a person with an `@onfinance.in` Google identity, presenting a Google ID
- *    token — from the browser (the app already holds `fde-google-token`) or from
+ *    token — from the browser (the app already holds `workspace-google-token`) or from
  *    the setup MCP after `fde-login`. It is verified against Google's JWKS the
  *    same way the agent verifies it (audience = one of our OAuth clients, hosted
  *    domain = onfinance.in), so a forged "hd: onfinance.in" JWT does not pass —
@@ -64,8 +65,16 @@ const CLI_CLIENT_ID = "865110163807-dsiua8j7v253dqngcccechjbc4a14scp.apps.google
  * client minted it).
  */
 const LEGACY_CLI_CLIENT_ID = "1086316340555-c5igmjvsqbg5oqgmiqn282h5538nsv3t.apps.googleusercontent.com";
-/** Optional extra audience, for rotating the CLI client without a code change. */
-const EXTRA_CLI_CLIENT_ID = process.env.FDE_CLI_CLIENT_ID;
+/**
+ * Optional extra audience, for rotating the CLI client without a code change.
+ *
+ * Read through compatEnv: this was `FDE_CLI_CLIENT_ID`, and it is the one
+ * renamed variable that DEPLOYED code reads. Dropping the old name outright
+ * would silently narrow the accepted audiences on any project that still sets
+ * it — every CLI-minted token 401s, with nothing on screen saying why, which is
+ * the exact outage scripts/check-gates.mjs exists to catch.
+ */
+const EXTRA_CLI_CLIENT_ID = compatEnv("WORKSPACE_CLI_CLIENT_ID");
 const acceptedAudiences = (): string[] =>
   [
     process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,

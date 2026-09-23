@@ -15,22 +15,30 @@
  *                                   `login` bin: globally installed, that one
  *                                   would shadow the system's)
  *
- * Every product word and the address come from deployment.generated.mjs: this
- * file is the same in every package built from this codebase.
+ * Every product word, the address and the NAME OF EVERY SIBLING MODULE come from
+ * deployment.generated.mjs: this file is byte for byte the same in every package
+ * built from this codebase, while the files it dispatches to are named after the
+ * package that ships them (fde-login.mjs here; <name>-login.mjs in a deployment's
+ * own package, which must not put another company's initials in node_modules).
  */
 import { DEPLOYMENT } from "./deployment.generated.mjs";
 
 const [cmd, ...rest] = process.argv.slice(2);
 
+/**
+ * What this package answers to: the neutral names, plus whatever this package calls
+ * them. In the generic package those are `fde-login` / `fde-mcp` / `install-skill`,
+ * which is how the base product's own CLI keeps working. A package built for one
+ * deployment calls them `login` / `mcp` / `install-skills` and so does NOT answer to
+ * the base product's names — a package a desk of analysts bought should not take
+ * another company's command names, and nothing published points at them.
+ */
+const C = DEPLOYMENT.commands;
+const M = DEPLOYMENT.modules;
 const COMMANDS = {
-  "fde-login": "./fde-login.mjs",
-  login: "./fde-login.mjs",
-  "fde-mcp": "./fde-mcp.mjs",
-  mcp: "./fde-mcp.mjs",
-  "install-skill": "./fde-install-skill.mjs",
-  "install-skills": "./fde-install-skill.mjs",
-  "fde-install-skill": "./fde-install-skill.mjs",
-  skills: "./fde-install-skill.mjs",
+  login: M.login, [C.login]: M.login,
+  mcp: M.mcp, [C.mcp]: M.mcp,
+  "install-skills": M.installSkills, "install-skill": M.installSkills, skills: M.installSkills, [C.installSkills]: M.installSkills,
 };
 
 /** The help text. A package with a baked-in address names its product and leads with the hosted endpoint. */
@@ -42,7 +50,7 @@ function helpText(d = DEPLOYMENT) {
       "Workspace CLI",
       "",
       "Your deployment also serves MCP directly at <its address>/api/mcp - no package needed.",
-      "This package has NO default address: set FDE_OPS_URL=<your deployment's address>,",
+      "This package has NO default address: set WORKSPACE_OPS_URL=<your deployment's address>,",
       `or save it once with: ${c.login} --url <address>`,
       "",
       "Usage:",
@@ -52,7 +60,7 @@ function helpText(d = DEPLOYMENT) {
       `  npx ${pkg} ${c.installSkills}  Install the setup skills`,
       "",
       "MCP config (Claude Code / Cursor / Codex):",
-      `  { "command": "npx", "args": ["-y", "-p", "${pkg}", "${c.mcp}"], "env": { "FDE_OPS_URL": "<address>" } }`,
+      `  { "command": "npx", "args": ["-y", "-p", "${pkg}", "${c.mcp}"], "env": { "WORKSPACE_OPS_URL": "<address>" } }`,
     ].join("\n");
   }
   return [
@@ -76,7 +84,7 @@ function helpText(d = DEPLOYMENT) {
     "MCP config (Claude Code / Cursor / Codex):",
     `  { "command": "npx", "args": ["-y", "${pkg}", "${c.mcp}"] }`,
     "",
-    "Another address: --url <address> or FDE_OPS_URL=<address> wins over the built-in one.",
+    "Another address: --url <address> or WORKSPACE_OPS_URL=<address> wins over the built-in one.",
   ].join("\n");
 }
 

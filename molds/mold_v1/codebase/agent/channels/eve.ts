@@ -1,5 +1,6 @@
 import { eveChannel } from "eve/channels/eve";
 import { jwtEcdsa, localDev, oidc, vercelOidc, vercelSubject } from "eve/channels/auth";
+import { compatEnv } from "../lib/compat-env.ts";
 
 // Google sign-in (free). The web chat attaches the signed-in user's Google ID
 // token as a bearer; this verifier accepts it only when it was minted for our
@@ -41,7 +42,9 @@ const googleAudiences = [
   googleClientId,
   CLI_CLIENT_ID,
   LEGACY_CLI_CLIENT_ID,
-  process.env.FDE_CLI_CLIENT_ID,
+  // Same variable, same fallback to its old name (FDE_CLI_CLIENT_ID), as the
+  // front door above — check:gates fails if these two lists stop agreeing.
+  compatEnv("WORKSPACE_CLI_CLIENT_ID"),
 ].filter((a): a is string => Boolean(a));
 
 const googleAuth = googleClientId

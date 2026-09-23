@@ -59,6 +59,28 @@ check(
   /if \(email && pendingSessions\.current\) flushSessions\(\)/.test(shell),
 );
 
+/* The write that used to block the paint — and the two ways making it
+ * asynchronous could lose a conversation. The rules themselves are EXECUTED in
+ * scripts/test-chat-persist-coalesce.mjs; these hold the wiring in the shell,
+ * which that file cannot reach. */
+check("the chat list write is coalesced, not performed per persist", /createPersistWriter/.test(shell));
+check(
+  // 266 ms of JSON.stringify + setItem sat between React deciding what the chat
+  // looks like and the browser painting it, on every persist of a turn.
+  "…and it no longer builds the payload inside the setSessions updater",
+  !/localStorage\.setItem\(key, JSON\.stringify/.test(shell),
+);
+check(
+  // A closing page gets one synchronous stack. A coalesced write waiting for an
+  // animation frame that will never come is a lost transcript.
+  "a departing page flushes the pending write synchronously, before the network one",
+  /const onHide = \(\) => \{\s*\n\s*flushSessionWrite\(\);\s*\n\s*flushSessions\(true\);/.test(shell),
+);
+check(
+  "deleting/archiving a chat still writes through rather than waiting for a frame",
+  /flushSessionWrite\(\);\s*\n\s*syncSessionsToDb\(next\)/.test(shell),
+);
+
 /* And the user has to be able to SEE that saving is broken. */
 check("the flag reaches the sidebar", /saveFailed=\{syncFailed\}/.test(shell));
 check("the sidebar renders it", /saveFailed \? \(/.test(sidebar));

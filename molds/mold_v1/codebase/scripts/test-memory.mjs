@@ -49,43 +49,43 @@ async function recallForTurn(email, userText) {
   );
 }
 
-const FDE_A = "priyesh@onfinance.in";
-const FDE_B = "lena@onfinance.in";
+const PERSON_A = "priyesh@onfinance.in";
+const PERSON_B = "lena@onfinance.in";
 
 // --- remember: team, customer, and person scoped facts (saved by FDE A) ----
 
 const teamFact = await rememberTool.execute(
   { scope: "team", key: "standup-time", value: "Daily stand-up is 09:30 IST, capped at 30 minutes." },
-  ctxFor(FDE_A),
+  ctxFor(PERSON_A),
 );
 assert.equal(teamFact.saved, true);
 assert.equal(teamFact.memory.scope, "team");
-assert.equal(teamFact.memory.authorEmail, FDE_A);
+assert.equal(teamFact.memory.authorEmail, PERSON_A);
 assert.equal(teamFact.memory.version, 1);
 
 await rememberTool.execute(
   { scope: "customer:acme-bank", key: "deploy-window", value: "Acme Bank only allows production deploys on Tuesdays 06:00-08:00 UTC." },
-  ctxFor(FDE_A),
+  ctxFor(PERSON_A),
 );
 await rememberTool.execute(
   { scope: "customer:northwind-cap", key: "escalation-path", value: "Northwind escalations go straight to Alex Kim, never the shared inbox." },
-  ctxFor(FDE_A),
+  ctxFor(PERSON_A),
 );
 await rememberTool.execute(
   { scope: "person:sam@acmebank.com", key: "comm-preference", value: "Sam Cole (CISO) wants security findings by encrypted email only." },
-  ctxFor(FDE_A),
+  ctxFor(PERSON_A),
 );
 
 // --- list_memories: stored facts come back (for a DIFFERENT teammate) -------
 
-const all = await listMemoriesTool.execute({}, ctxFor(FDE_B));
+const all = await listMemoriesTool.execute({}, ctxFor(PERSON_B));
 assert.equal(all.memories.length, 4, "all four memories are listed");
 assert.ok(
   all.memories.some((m) => m.scope === "team" && m.key === "standup-time" && m.value.includes("09:30 IST")),
   "the remembered team fact is returned by list_memories",
 );
 
-const acmeOnly = await listMemoriesTool.execute({ scope: "customer:acme-bank" }, ctxFor(FDE_B));
+const acmeOnly = await listMemoriesTool.execute({ scope: "customer:acme-bank" }, ctxFor(PERSON_B));
 assert.deepEqual(
   acmeOnly.memories.map((m) => m.key),
   ["deploy-window"],
@@ -96,12 +96,12 @@ assert.deepEqual(
 
 const updated = await rememberTool.execute(
   { scope: "team", key: "standup-time", value: "Daily stand-up moved to 09:00 IST." },
-  ctxFor(FDE_B),
+  ctxFor(PERSON_B),
 );
 assert.equal(updated.memory.version, 2, "re-remembering bumps the version");
-assert.equal(updated.memory.authorEmail, FDE_B, "the latest author is recorded");
+assert.equal(updated.memory.authorEmail, PERSON_B, "the latest author is recorded");
 assert.equal(
-  (await listMemoriesTool.execute({ scope: "team" }, ctxFor(FDE_A))).memories.length,
+  (await listMemoriesTool.execute({ scope: "team" }, ctxFor(PERSON_A))).memories.length,
   1,
   "upsert did not duplicate the team fact",
 );
@@ -109,48 +109,48 @@ assert.equal(
 // --- fresh-turn recall: turn.started injects team + named-entity memories ---
 
 // Turn naming acme-bank by id (from teammate B, who never saved the fact).
-let injected = await recallForTurn(FDE_B, "Prep me for the acme-bank deploy tomorrow.");
+let injected = await recallForTurn(PERSON_B, "Prep me for the acme-bank deploy tomorrow.");
 assert.ok(injected, "recall produced instructions");
 assert.match(injected.markdown, /09:00 IST/, "team memory is always recalled");
 assert.match(injected.markdown, /Tuesdays 06:00-08:00 UTC/, "acme-bank memory recalled when named by id");
 assert.doesNotMatch(injected.markdown, /Alex Kim/, "northwind memory NOT recalled when unnamed");
 
 // Turn naming the customer by display name, not id.
-injected = await recallForTurn(FDE_B, "Anything I should know before the Northwind Capital QBR?");
+injected = await recallForTurn(PERSON_B, "Anything I should know before the Northwind Capital QBR?");
 assert.match(injected.markdown, /Alex Kim/, "customer memory recalled when named by display name");
 assert.doesNotMatch(injected.markdown, /Tuesdays 06:00-08:00 UTC/, "acme memory NOT recalled when unnamed");
 
 // Turn naming a person by name (memory is keyed by their email).
-injected = await recallForTurn(FDE_B, "Drafting the pen-test summary for Sam Cole — anything to keep in mind?");
+injected = await recallForTurn(PERSON_B, "Drafting the pen-test summary for Sam Cole — anything to keep in mind?");
 assert.match(injected.markdown, /encrypted email only/, "person memory recalled when named by name");
 
 // Turn naming nobody: only team memories.
-injected = await recallForTurn(FDE_B, "What is on my plate today?");
+injected = await recallForTurn(PERSON_B, "What is on my plate today?");
 assert.match(injected.markdown, /09:00 IST/);
 assert.doesNotMatch(injected.markdown, /Tuesdays 06:00-08:00 UTC|Alex Kim|encrypted email only/);
 
 // --- forget removes the fact from listing AND recall -------------------------
 
-const forgotten = await forgetTool.execute({ scope: "customer:acme-bank", key: "deploy-window" }, ctxFor(FDE_A));
+const forgotten = await forgetTool.execute({ scope: "customer:acme-bank", key: "deploy-window" }, ctxFor(PERSON_A));
 assert.equal(forgotten.deleted, true);
 assert.equal(
-  (await forgetTool.execute({ scope: "customer:acme-bank", key: "deploy-window" }, ctxFor(FDE_A))).deleted,
+  (await forgetTool.execute({ scope: "customer:acme-bank", key: "deploy-window" }, ctxFor(PERSON_A))).deleted,
   false,
   "forgetting a missing memory reports deleted: false",
 );
 assert.equal(
-  (await listMemoriesTool.execute({ scope: "customer:acme-bank" }, ctxFor(FDE_A))).memories.length,
+  (await listMemoriesTool.execute({ scope: "customer:acme-bank" }, ctxFor(PERSON_A))).memories.length,
   0,
   "forgotten memory is gone from list_memories",
 );
-injected = await recallForTurn(FDE_A, "Prep me for the acme-bank deploy tomorrow.");
+injected = await recallForTurn(PERSON_A, "Prep me for the acme-bank deploy tomorrow.");
 assert.doesNotMatch(injected.markdown, /Tuesdays 06:00-08:00 UTC/, "forgotten memory is no longer recalled");
 assert.match(injected.markdown, /09:00 IST/, "other memories still recalled");
 
 // --- scope validation --------------------------------------------------------
 
 await assert.rejects(
-  store.rememberMemory({ scope: "customer:", key: "x", value: "y", authorEmail: FDE_A }),
+  store.rememberMemory({ scope: "customer:", key: "x", value: "y", authorEmail: PERSON_A }),
   /Scope must be/,
   "malformed scope strings are rejected",
 );

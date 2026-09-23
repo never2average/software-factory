@@ -6,7 +6,7 @@
  * from a bare URL is mutable, unversioned and unauditable, and "pipe this URL
  * into your coding agent" is the shape security review rejects. A published npm
  * package is a real trust anchor — pinned by version, immutable once released,
- * and already the thing they run for `fde-login`.
+ * and already the thing they run for the login command.
  *
  * It does NOT reimplement agent detection. The `skills` CLI already resolves
  * Claude Code, Cursor, VS Code, Codex and a dozen more, and handles symlink vs

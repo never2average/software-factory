@@ -10,11 +10,12 @@
 import { useEffect, useState } from "react";
 import { ArrowLeftIcon } from "lucide-react";
 import { WorkspacePanel } from "@/app/_components/ops/workspace-panel";
+import { STORAGE_KEYS, readStored } from "@/lib/browser-storage";
 
 /** The signed-in email, decoded from the Google ID token in localStorage. */
 function emailFromToken(): string | undefined {
   try {
-    const token = localStorage.getItem("fde-google-token");
+    const token = readStored(STORAGE_KEYS.token);
     const payload = token?.split(".")[1];
     if (!payload) return undefined;
     const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as { email?: unknown };

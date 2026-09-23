@@ -17,6 +17,10 @@
     {
       "path": "/api/cron/sync-inbox",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/close-abandoned-runs",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

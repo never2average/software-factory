@@ -31,6 +31,58 @@
  */
 import { createHash } from "node:crypto";
 
+/* ------------------------------------------------------------------ env names
+ *
+ * This package's configuration variables, renamed off the base product's role
+ * name — and the old spellings, still honoured.
+ *
+ * `FDE_OPS_URL` and its siblings are typed by a person into an MCP config file
+ * on their own laptop, or into a shell, and then forgotten for months. A
+ * deployment sold to a desk of analysts that has never heard of an "FDE" should
+ * not ask them to set a variable named after one; but renaming without reading
+ * the old name breaks every config file already written, at the moment an agent
+ * starts up and with no obvious cause. So both are read, the new one wins, and
+ * using the old one says so once.
+ *
+ * Disjoint from agent/lib/compat-env.ts on purpose: that file holds the two
+ * variables DEPLOYED code reads, which is a different risk (a live project's
+ * settings) and lives where the deployed code can import it. Nothing is in both.
+ * scripts/check-wire-names.mjs reads these two tables as its only allowance.
+ */
+export const LEGACY_ENV_NAMES = {
+  WORKSPACE_OPS_URL: "FDE_OPS_URL",
+  WORKSPACE_ORG: "FDE_ORG",
+  WORKSPACE_ACTOR: "FDE_ACTOR",
+  WORKSPACE_PRODUCT_NAME: "FDE_PRODUCT_NAME",
+  WORKSPACE_OAUTH_CLIENT_ID: "FDE_OAUTH_CLIENT_ID",
+  WORKSPACE_OAUTH_CLIENT_SECRET: "FDE_OAUTH_CLIENT_SECRET",
+};
+
+/** One warning per variable per process — a per-read warning would drown an MCP session's stderr. */
+const warnedEnv = new Set();
+
+/**
+ * `env[name]`, falling back to whatever the variable used to be called.
+ *
+ * `env` is passed in rather than read here: this file is bundled into a Next.js
+ * route as well as shipped in the package, and it reads no environment of its
+ * own. `onLegacy` is called at most once per old name — stderr in the stdio
+ * server, because stdout carries the protocol.
+ */
+export function compatEnv(env, name, onLegacy) {
+  const current = env?.[name]?.trim?.() ?? env?.[name];
+  if (current) return current;
+  const legacy = LEGACY_ENV_NAMES[name];
+  if (!legacy) return current;
+  const old = env?.[legacy]?.trim?.() ?? env?.[legacy];
+  if (!old) return current;
+  if (!warnedEnv.has(legacy)) {
+    warnedEnv.add(legacy);
+    onLegacy?.(`${legacy} still works but is the old name for ${name}. Set ${name} instead; ${legacy} will stop being read.`);
+  }
+  return old;
+}
+
 export function createTools(ctx) {
   const api = ctx.api;
   /**
@@ -92,7 +144,7 @@ function requireBlob() {
  */
 async function myWorkspace() {
   const { items = [] } = await api("GET", "/api/ops/orgs");
-  // An explicit FDE_ORG settles it — including the "ambiguous, say which one"
+  // An explicit WORKSPACE_ORG settles it — including the "ambiguous, say which one"
   // case below, which otherwise has no answer you can give from a config file.
   if (ctx.getOrg()) {
     const named = items.find((o) => o.orgId === ctx.getOrg());
@@ -283,7 +335,28 @@ const TOOLS = [
     },
   },
   {
-    name: "fde_status",
+    /**
+     * THE ONE TOOL NAME THAT WAS NOT USE-CASE AGNOSTIC.
+     *
+     * 58 of the 59 tools here are already neutral (`workspace_list`,
+     * `customer_create`, `connector_secrets`…). This one was `fde_status` — the
+     * base product's role name, in the most prominent identifier of the whole
+     * protocol, on a base that verticals with no engineers and no "FDE" are
+     * stamped from. It reports the workspace, so `workspace_status` is what it
+     * does; a per-deployment name was rejected on purpose, because baking an
+     * identity into a wire contract is the mistake this is undoing.
+     *
+     * `aliases` is the migration, and it is why this is additive. A coding
+     * assistant that has already read `tools/list` in a running conversation
+     * holds `fde_status` and will keep calling it — swapping the name would
+     * break it mid-sentence, with an `unknown tool` it cannot recover from.
+     * Aliases are accepted by `tools/call` (see handleRpc) and NEVER
+     * advertised, so an assistant connecting from now on only ever learns the
+     * new name and nothing new can grow a dependency on the old one. Deleting
+     * this one line removes the alias, once no live conversation still holds it.
+     */
+    name: "workspace_status",
+    aliases: ["fde_status"],
     description:
       "START HERE. Who you are signed in as, which workspace you're operating on, what's already set up (connectors/workflows/crons), and the concrete next steps. Call this before anything else — every other tool depends on the identity and workspace it reports.",
     inputSchema: { type: "object", properties: {} },
@@ -302,7 +375,7 @@ const TOOLS = [
       // package, the verified bearer for the hosted endpoint.
       const who = await whoami();
       if (!who) {
-        out.nextSteps.push(`${ctx.signInHint} Then call fde_status again.`);
+        out.nextSteps.push(`${ctx.signInHint} Then call workspace_status again.`);
         return json(out);
       }
       out.signedIn = true;
@@ -324,7 +397,7 @@ const TOOLS = [
         const { items = [] } = await api("GET", "/api/ops/orgs");
         if (items.length === 0) {
           out.nextSteps.push(
-            `No workspace yet. Open ${ctx.opsUrl}/onboard in a browser to create one, then call fde_status again.`,
+            `No workspace yet. Open ${ctx.opsUrl}/onboard in a browser to create one, then call workspace_status again.`,
           );
           return json(out);
         }
@@ -1463,7 +1536,7 @@ export function serverInstructions({ productName, opsUrl, signInHint }) {
   return [
     `${productName} control plane — operate a real workspace from this editor.`,
     "",
-    "**Call `fde_status` first.** It reports who you're signed in as, which workspace",
+    "**Call `workspace_status` first.** It reports who you're signed in as, which workspace",
     "you're operating on, what already exists, and the concrete next step. Every other",
     "tool depends on that identity; without it they fail with 'Not signed in'.",
     "",
@@ -1564,7 +1637,18 @@ export async function handleRpc(msg, { tools, serverInfo, instructions, maxResul
     return ok({ tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
   }
   if (method === "tools/call") {
-    const tool = tools.find((t) => t.name === params?.name);
+    /**
+     * Advertised name first, then an UNADVERTISED alias.
+     *
+     * `tools/list` above hands back `name` only, so nothing new ever learns an
+     * alias. But an assistant that listed the tools an hour ago still holds the
+     * name it learned then, and a rename that answered it with `unknown tool`
+     * would end that conversation — a tool list is read once per connection,
+     * not per call. Accepting the old name here is what makes the rename
+     * additive; it costs one lookup and can be dropped by deleting `aliases`
+     * from the definition.
+     */
+    const tool = tools.find((t) => t.name === params?.name) ?? tools.find((t) => t.aliases?.includes(params?.name));
     if (!tool) return err(-32602, `unknown tool: ${params?.name}`);
     try {
       let text = String(await tool.handler(params.arguments ?? {}));
