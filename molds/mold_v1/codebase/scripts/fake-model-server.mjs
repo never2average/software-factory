@@ -26,6 +26,7 @@ const arg = (name, fallback) => {
 const PORT = Number(arg("port", "8788"));
 const SCRIPT = arg("script", "delegate-plain");
 const SUBAGENT = arg("subagent", "research");
+const NO_USAGE = argv.includes("--no-usage");
 const LOG = [];
 
 const textOf = (content) =>
@@ -71,7 +72,7 @@ function completion(decision, model) {
       created: Math.floor(Date.now() / 1000),
       model,
       choices: [{ index: 0, message: { role: "assistant", content: decision.text }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+      ...(NO_USAGE ? {} : { usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } }),
     };
   }
   return {
@@ -96,7 +97,7 @@ function completion(decision, model) {
         finish_reason: "tool_calls",
       },
     ],
-    usage: { prompt_tokens: 13, completion_tokens: 9, total_tokens: 22 },
+    ...(NO_USAGE ? {} : { usage: { prompt_tokens: 13, completion_tokens: 9, total_tokens: 22 } }),
   };
 }
 
@@ -107,7 +108,7 @@ function sseChunks(decision, model) {
   const out = [];
   if (decision.text) {
     out.push({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: decision.text }, finish_reason: null }] });
-    out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } });
+    out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], ...(NO_USAGE ? {} : { usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } }) });
   } else {
     out.push({
       ...base,
@@ -129,7 +130,7 @@ function sseChunks(decision, model) {
         },
       ],
     });
-    out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 13, completion_tokens: 9, total_tokens: 22 } });
+    out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], ...(NO_USAGE ? {} : { usage: { prompt_tokens: 13, completion_tokens: 9, total_tokens: 22 } }) });
   }
   return out;
 }

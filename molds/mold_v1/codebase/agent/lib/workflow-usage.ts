@@ -3,10 +3,11 @@
  *
  * A subagent turn is not a single event: the runtime emits one `step.completed`
  * per model call, each carrying that call's usage, and one `turn.completed` at
- * the end. So a "run" here is ASSEMBLED, not written once — every step upserts
- * the same `automation_runs` row (keyed by `run_key = <workflow id>:<turn id>`)
- * and ADDS its tokens to the running totals; `turn.completed` closes the row
- * out with a duration.
+ * the end. So a "run" here is ASSEMBLED, not written once — `turn.started`
+ * opens the `automation_runs` row, every step ADDS its tokens to it, and
+ * `turn.completed` closes it out with a duration. The row is keyed by
+ * `run_key = <workflow id>:<session id>:<turn id>`; see `runKeyFor` for why the
+ * session id is load-bearing and not decoration.
  *
  * The workflow row is looked up by NAME (the subagent id) because that is all a
  * hook knows about itself, and `automation_runs.automation_id` stores the
@@ -99,6 +100,33 @@ async function workflowIdFor(name: string): Promise<{ id: string; orgId: string 
   return found;
 }
 
+/**
+ * THE KEY OF ONE RUN — and why a turn id alone is not one.
+ *
+ * eve mints turn ids by COUNTING within a session: `turn_${sequence}`
+ * (eve/dist/src/protocol/message.js). A delegated child session is created
+ * fresh for every invocation, so its first turn is ALWAYS `turn_0`. That makes
+ * `<workflow id>:<turn id>` the same string for every run a specialist ever
+ * does, and because the step upsert is `onConflictDoUpdate` on `run_key`, run
+ * number two did not appear — it silently ADDED its tokens to run number one.
+ * Measured 2026-09-23 against a local Postgres carrying the real fail-closed
+ * tenancy model: three separate invocations of one specialist left ONE row,
+ * keyed `…:turn_0`.
+ *
+ * This is the defect agent/lib/unique-tool-call-ids.ts documents for tool-call
+ * ids ("Some models do not mint random ids; they COUNT"), one level up: eve's
+ * own ids are per-session counters, and anything that treats one as a global
+ * identity collapses. The SESSION is the invocation, so its id goes in the key.
+ * A caller with no session id keeps the old shape rather than inventing one.
+ */
+export function runKeyFor(
+  workflowId: string,
+  sessionId: string | undefined,
+  turnId: string,
+): string {
+  return sessionId ? `${workflowId}:${sessionId}:${turnId}` : `${workflowId}:${turnId}`;
+}
+
 /** Sum of the token fields — used only to decide whether a step is worth writing. */
 function isEmpty(usage: StepUsage | undefined): boolean {
   if (!usage) return true;
@@ -131,7 +159,7 @@ function isEmpty(usage: StepUsage | undefined): boolean {
  * `turn.failed` / `session.failed` close it. `onConflictDoNothing` keeps this
  * idempotent across a replayed step.
  */
-export async function openWorkflowRun(name: string, turnId: string): Promise<void> {
+export async function openWorkflowRun(name: string, turnId: string, sessionId?: string): Promise<void> {
   try {
     if (!turnId) return;
     const db = getDb();
@@ -147,7 +175,7 @@ export async function openWorkflowRun(name: string, turnId: string): Promise<voi
           automationId: wf.id,
           status: "running",
           startedAt: new Date(),
-          runKey: `${wf.id}:${turnId}`,
+          runKey: runKeyFor(wf.id, sessionId, turnId),
           inputTokens: 0,
           outputTokens: 0,
           cacheReadTokens: 0,
@@ -170,6 +198,7 @@ export async function recordWorkflowStep(
   name: string,
   turnId: string,
   usage: StepUsage | undefined,
+  sessionId?: string,
 ): Promise<void> {
   try {
     if (isEmpty(usage) || !turnId) return;
@@ -179,7 +208,7 @@ export async function recordWorkflowStep(
     if (!wf) return;
     const workflowId = wf.id;
 
-    const runKey = `${workflowId}:${turnId}`;
+    const runKey = runKeyFor(workflowId, sessionId, turnId);
     const input = usage?.inputTokens ?? 0;
     const output = usage?.outputTokens ?? 0;
     const cacheRead = usage?.cacheReadTokens ?? 0;
@@ -232,6 +261,7 @@ export async function finishWorkflowRun(
   name: string,
   turnId: string,
   outcome: { status: "success" | "failed"; error?: string },
+  sessionId?: string,
 ): Promise<void> {
   try {
     if (!turnId) return;
@@ -239,7 +269,7 @@ export async function finishWorkflowRun(
     if (!db) return;
     const wf = await workflowIdFor(name);
     if (!wf) return;
-    const runKey = `${wf.id}:${turnId}`;
+    const runKey = runKeyFor(wf.id, sessionId, turnId);
     await withOrgDb(wf.orgId, (tx) =>
       tx
       .update(automationRuns)

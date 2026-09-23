@@ -440,6 +440,8 @@ def check_registry(root, reg=None, grammar=None, skip=()):
             continue
         for key in targets:
             r.check(key in declared, "%s/%s/targets.json names \"%s\", which is not a subagent under agent/subagents/" % (SHARED_DIR, family, key))
+    for key in declared:
+        check_usage_hook(r, root, key)
     agent_dir = os.path.join(root, "agent")
     for base, dirs, files in os.walk(agent_dir):
         dirs[:] = [d for d in dirs if d not in ("node_modules", "sandbox")]
@@ -448,6 +450,40 @@ def check_registry(root, reg=None, grammar=None, skip=()):
             r.check(web_search_gated(path), "%s does not gate on WEB_SEARCH_ENABLED (ENABLE_WEB_SEARCH=false would leave it on the web)"
                     % os.path.relpath(path, root))
     return r
+
+
+def check_usage_hook(r, root, key):
+    """A subagent's run accounting, checked for EVERY declared subagent - a pack's included.
+
+    This lives in the codebase-wide registry check on purpose. The run-history defect fixed on
+    2026-09-23 was fixed in this repo's ten subagents and NOT in the four that actually run in
+    production, because those come from a pack (docs/SUBAGENT_PACKS.md) and carry their own copy
+    of this file. Nothing compared the two, and the repo's own test walked only agent/subagents/,
+    so it passed while the deployed specialists were untouched. A pack is applied INTO
+    agent/subagents/, so checking here is what finally sees it.
+
+    Each rule below is one measured failure:
+      - no hook at all          -> that subagent's runs are never recorded anywhere;
+      - wrong WORKFLOW constant -> its runs are filed under another subagent's history;
+      - no turn.started/open    -> the row was created by the first step that reported TOKENS, so
+                                   a turn whose provider reported none left no row at all
+                                   (automation_runs was EMPTY in production);
+      - no ctx.session.id       -> eve numbers turns WITHIN a session (`turn_<sequence>`) and a
+                                   delegated child session is new each time, so every invocation
+                                   keyed `...:turn_0` and run two merged into run one (three
+                                   invocations, one row).
+    """
+    rel = "agent/subagents/%s/hooks/usage.ts" % key
+    path = os.path.join(root, "agent/subagents", key, "hooks/usage.ts")
+    if not r.check(os.path.isfile(path), "%s is missing - this subagent's runs are never recorded" % rel):
+        return
+    src = read(path)
+    r.check('const WORKFLOW = "%s";' % key in src,
+            "%s does not set WORKFLOW = \"%s\" - its runs are filed under another subagent" % (rel, key))
+    r.check('"turn.started"' in src and "openWorkflowRun" in src,
+            "%s opens no run row on turn.started - an invocation whose provider reports no tokens leaves NO history" % rel)
+    r.check("ctx.session.id" in src,
+            "%s does not pass ctx.session.id - eve's turn ids count within a session, so every invocation would share one run_key" % rel)
 
 
 def run(root, keys, as_json, timeout, out=sys.stdout):
@@ -499,7 +535,11 @@ def _fixture(root, key, broken=False):
     _write(os.path.join(sub, "instructions/00-mode.ts"), "export default 1;\n")
     _write(os.path.join(sub, "instructions/operator-override.ts"),
            'await loadWorkflowOverride("%s", orgId);\n' % ("research" if broken else key))
-    _write(os.path.join(sub, "hooks/usage.ts"), 'const WORKFLOW = "%s";\n' % key)
+    # The full run-accounting contract check_usage_hook holds every declared subagent to:
+    # the key it files under, the turn.started row, and the session id that keeps one
+    # invocation's run_key distinct from the next one's.
+    _write(os.path.join(sub, "hooks/usage.ts"),
+           'const WORKFLOW = "%s";\nevents: { async "turn.started"(event, ctx) { await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id); } }\n' % key)
     _write(os.path.join(sub, "sandbox/sandbox.ts"), "export default defineSandbox({});\n")
     _write(os.path.join(sub, "schemas/%s-spec.md" % key), "# Rulebook\n\n## Open points\n")
     _write(os.path.join(sub, "sandbox/workspace/schemas/rows.schema.json"), '{"type": "object"}' if not broken else '{"properties": {}}')
@@ -540,6 +580,7 @@ def self_test():
         _fixture(tmp, "unbuilt-one")
         os.makedirs(os.path.join(tmp, "agent/subagents/stray-folder"))
         _write(os.path.join(tmp, "agent/subagents/legacy/agent.ts"), 'export default defineAgent({ description: "Legacy." });\n')
+        _write(os.path.join(tmp, "agent/subagents/legacy/hooks/usage.ts"), 'const WORKFLOW = "legacy";\\nevents: { async "turn.started"(event, ctx) { await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id); } }\\n')
         sub = lambda key, *parts: os.path.join(tmp, "agent/subagents", key, *parts)
         # the data-room grammar the store would enforce
         _write(os.path.join(tmp, "agent/lib/dataroom-schema.ts"), 'export const dataroomDomainSchema = z.enum([\n  "Customers",\n  "Uploads",\n]);\n')
@@ -606,6 +647,7 @@ def self_test():
         try:
             _fixture(clean, "good-one")
             _write(os.path.join(clean, "agent/subagents/legacy/agent.ts"), 'export default defineAgent({ description: "Legacy." });\n')
+            _write(os.path.join(clean, "agent/subagents/legacy/hooks/usage.ts"), 'const WORKFLOW = "legacy";\\nevents: { async "turn.started"(event, ctx) { await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id); } }\\n')
             _generated(clean, ["good-one", "legacy"])
             sink = Sink()
             cases.append(("exit code is 0 when the registry and every subagent pass", run(clean, [], False, 30, sink) == 0, sink.text))

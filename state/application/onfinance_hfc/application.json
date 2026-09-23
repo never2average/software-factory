@@ -3,7 +3,7 @@
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
   "mold_commit": "fc4c48e499353de938f8bdca2bcd5c6fd31fea73",
-  "status": "stamped",
+  "status": "stamping",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
   "model": {

@@ -241,44 +241,81 @@ console.log("\n6. The parent's OWN approvals are untouched by any of this");
   );
 }
 
-console.log("\n7. Every declared subagent records its runs");
+console.log("\n7. Every declared subagent records its runs, once per invocation");
 {
   const { readdirSync, existsSync } = await import("node:fs");
+  const { runKeyFor } = await import("../agent/lib/workflow-usage.ts");
   const keys = readdirSync("agent/subagents", { withFileTypes: true })
     .filter((d) => d.isDirectory() && existsSync(`agent/subagents/${d.name}/agent.ts`))
     .map((d) => d.name);
   check("there are declared subagents to check", keys.length > 0);
   for (const key of keys) {
     const path = `agent/subagents/${key}/hooks/usage.ts`;
-    // FAILS BEFORE THE FIX for app-author, browser and workflow-author, which
-    // had no usage hook at all — their runs could never appear in any history.
     assert.ok(existsSync(path), `${key} has no hooks/usage.ts — its runs are never recorded`);
     const src = readFileSync(path, "utf8");
     assert.ok(
       src.includes(`const WORKFLOW = "${key}";`),
       `${key}'s usage hook files its runs under another workflow name`,
     );
-    // FAILS BEFORE THE FIX for all of them: the row was created by the first
-    // step that reported TOKENS, so a turn whose provider reported none left no
-    // row and finishWorkflowRun (an UPDATE) had nothing to close. The operator's
-    // automation_runs table was completely empty.
     assert.ok(
       src.includes('"turn.started"') && src.includes("openWorkflowRun"),
       `${key} opens no run row on turn.started — an invocation with no token usage leaves no history`,
     );
+    assert.ok(
+      src.includes("ctx.session.id"),
+      `${key} does not pass ctx.session.id — every invocation would share one run_key`,
+    );
     passed++;
   }
-  console.log(`  ok   ${keys.length} subagents open a run row per invocation and file it under their own key`);
+  console.log(`  ok   ${keys.length} subagents open a run row per invocation, keyed by session, under their own key`);
+
+  // THE COLLISION. eve numbers turns within a session (`turn_${sequence}`,
+  // eve/dist/src/protocol/message.js) and a delegated child session is created
+  // fresh for every invocation, so its first turn is ALWAYS `turn_0`. Keyed on
+  // the turn id alone, every run of a specialist shared one run_key and the
+  // step upsert (onConflictDoUpdate) merged them. Measured 2026-09-23 against a
+  // local Postgres carrying the real fail-closed tenancy model: three separate
+  // invocations left ONE row, keyed `…:turn_0`.
+  check(
+    "two invocations of the same specialist do not share a run key",
+    runKeyFor("wf1", "child-session-a", "turn_0") !== runKeyFor("wf1", "child-session-b", "turn_0"),
+  );
+  check(
+    "two turns of the SAME session still differ",
+    runKeyFor("wf1", "child-session-a", "turn_0") !== runKeyFor("wf1", "child-session-a", "turn_1"),
+  );
+  check(
+    "a caller with no session id keeps the old key shape rather than inventing one",
+    runKeyFor("wf1", undefined, "turn_0") === "wf1:turn_0",
+  );
 
   const usage = readFileSync("agent/lib/workflow-usage.ts", "utf8");
   check(
     "a missing workflows row is a warning naming the fix, not silence",
     usage.includes("fde:seed-subagent-rows"),
   );
-  // A pack's workflows row is seeded AFTER the deploy that introduced the
-  // subagent, so a permanently cached miss meant seeding fixed nothing until
-  // the instance was recycled.
   check("a lookup MISS expires", usage.includes("NEGATIVE_TTL_MS"));
+}
+
+// THE PACK BLIND SPOT. Section 7 walks agent/subagents/ — and the four
+// specialists that actually run in production do not live there. They ship in a
+// pack (docs/SUBAGENT_PACKS.md) that is copied INTO agent/subagents/ at build
+// time, each with its own copy of hooks/usage.ts. So this file passed while the
+// deployed specialists were untouched, and the operator's run history stayed
+// empty after a fix that reported itself green. The contract now lives in
+// check-subagents.py's CODEBASE-WIDE registry pass, which runs over whatever is
+// in agent/subagents/ — a pack's subagents included, once applied.
+console.log("\n8. The run-accounting contract is enforced where a pack can be seen");
+{
+  const checker = readFileSync("scripts/check-subagents.py", "utf8");
+  check("check_usage_hook exists", checker.includes("def check_usage_hook("));
+  check(
+    "and is called from the codebase-wide registry pass, not the per-workspace one",
+    /def check_registry\([\s\S]*?check_usage_hook\(r, root, key\)/.test(checker),
+  );
+  for (const rule of ["turn.started", "ctx.session.id", "const WORKFLOW ="]) {
+    check(`it holds the "${rule}" rule`, checker.includes(rule));
+  }
 }
 
 console.log(`\ntest-subagent-delivery: ${passed} assertions passed`);
