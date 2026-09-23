@@ -8,10 +8,10 @@
   "product_id": "onfinance_hfc_research",
   "model": {
     "provider": "cloudflare",
-    "model": "@cf/zai-org/glm-5.2",
-    "context_window": 262144,
+    "model": "@cf/zai-org/glm-5.3",
+    "context_window": 1310720,
     "roles": {
-      "orchestrator": "@cf/moonshotai/kimi-k2.6",
+      "orchestrator": "@cf/zai-org/glm-5.3",
       "specialist": "@cf/zai-org/glm-5.3"
     }
   },
