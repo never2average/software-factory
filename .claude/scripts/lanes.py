@@ -79,6 +79,33 @@ def redact(s):
     for rx, rep in SECRETS: s = rx.sub(rep, s or "")
     return s
 
+def clear_stale_revert(adir, app_id, ordered):
+    """An ORDERED run that failed nothing is exactly the evidence a lane-filed revert was waiting for.
+
+    Until now only a deploy cleared `reverted`, so an application whose cause was fixed and then re-proven
+    by a full passing run still read `reverted` in the one machine-readable place the gate consults — while
+    the deployment in front of traffic was fine. That is the self-contradictory record HARD RULE 8 exists to
+    prevent, and it bit onfinance_hfc on 2026-09-23: a responsiveness lane failed on a VM busy with someone
+    else's browsers, the re-run passed 6/6, and the record still said reverted.
+
+    Narrow on purpose:
+      * only an ordered run (a single `--lane` re-run does not re-measure the lanes before it);
+      * only a revert a LANE filed (`revert.lane`) — a deploy-filed revert, e.g. row-level security not
+        enforced on the running app, is not answered by a green lane and must stand until a deploy clears it;
+      * only when no lane is `fail` and none was left `pending` by an earlier stop.
+    Returns a sentence for stdout, or None when nothing was cleared."""
+    app = load(os.path.join(adir, "application.json"))
+    if app.get("status") != "reverted": return None
+    rev = app.get("revert") or {}
+    if not rev.get("lane") or not ordered: return None
+    t = app.get("testing") or {}
+    if any(v.get("status") in ("fail", "pending") for v in t.values()): return None
+    app.pop("revert", None); app["status"] = "stamped"
+    save(os.path.join(adir, "application.json"), app)
+    return (f"{app_id}: status reverted -> stamped. The standing revert was filed by the {rev['lane']} lane "
+            f"({rev.get('at', '')[:16]}) and this ordered run re-measured every lane with nothing failing, "
+            f"which is the evidence it was waiting for.\n")
+
 def reserve_report(rdir, app_id, stamp):
     """Claim a report path that cannot already hold someone's evidence, and return an open fd for it.
 
@@ -461,6 +488,7 @@ def main(a):
     which = ("all five lanes in order (" + ", ".join(todo) + ")") if ordered else ", ".join(todo)
     print(f"{len(verdicts)} lane(s) finished for {app_id} — {which}: {c('pass')} passed, {c('skipped')} skipped. "
           f"Nothing failed, so {app_id} was not reverted." + tail + unmeasured)
+    print(clear_stale_revert(adir, app_id, ordered) or "", end="")
     return 0
 
 if __name__ == "__main__": sys.exit(main(sys.argv[1:]))
