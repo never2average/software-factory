@@ -211,9 +211,9 @@
       "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-23T045236Z.md"
     },
     "responsiveness": {
-      "status": "pass",
-      "run_at": "2026-09-23T04:42:11+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-23T044211Z.md"
+      "status": "fail",
+      "run_at": "2026-09-23T05:00:21+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-23T050021Z.md"
     }
   },
   "customer_id": "internal",
@@ -222,7 +222,7 @@
   ],
   "revert": {
     "lane": "responsiveness",
-    "at": "2026-09-23T04:35:12+00:00",
-    "reason": "responsiveness lane failed on 1 check(s): interaction.latency; report molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-23T043512Z.md; task mold_v1-100."
+    "at": "2026-09-23T05:00:21+00:00",
+    "reason": "responsiveness lane failed on 1 check(s): interaction.latency.authenticated; report molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-23T050021Z.md; task mold_v1-100."
   }
 }
