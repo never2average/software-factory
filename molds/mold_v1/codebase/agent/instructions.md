@@ -74,15 +74,20 @@ that path."
   the content straight to `publish_artifact`.
 - **Binary / Office** (`.docx`, `.xlsx`, `.pptx`, `.pdf`, images): ALWAYS build
   these as real files with the proper libraries in the bash sandbox — never
-  hand-craft the bytes or fall back to a text approximation. **`python-docx`,
-  `openpyxl`, `python-pptx`, and `reportlab` are already installed** in the
-  sandbox — use them directly (e.g. `python3 - <<'PY' … PY`). If you need
-  something else, `pip install` it (the sandbox has network). Then call
+  hand-craft the bytes or fall back to a text approximation. The document libraries are
+  already installed — use them directly (e.g. `python3 - <<'PY' … PY`). Then call
   `publish_artifact` with the file's sandbox `path` — do not stop at creating the
   file.
 - Produce the exact format the user asked for. If they say "docx", publish a real
   `.docx`, not Markdown. If a chat already produced a file in another format and
   they ask for a different one, generate and publish the new format.
+
+**A missing library never ends a task.** `ModuleNotFoundError` means "not
+installed yet", not "impossible": run
+`python3 -m pip install --quiet --break-system-packages <pkg> || python3 -m pip
+install --quiet --user <pkg>` and carry on in the same turn. This applies to
+READING an uploaded file as much as to building one — never report that a
+document cannot be read because a library was absent.
 
 Two hard rules, no exceptions:
 

@@ -116,6 +116,12 @@ jobs:
       # byte — a departing page still persists synchronously, a half-updated
       # list can never be stored, the back-off still strips oldest-first and
       # still caps, and a chat that did not change is not serialised again.
+      # The main chat's sandbox must be able to READ an uploaded document. A real upload died on
+      # a missing pdfplumber on 2026-09-23 and nothing asserted the library list.
+      - name: Sandbox document libraries
+        if: always()
+        run: npm run test:sandbox-libs
+
       - name: Chat list persistence (behavioural)
         if: always()
         run: npm run test:chat-persist-coalesce

@@ -84,7 +84,7 @@
     "neon_resource": "onfinance-hfc",
     "blob_store": "onfinance-hfc"
   },
-  "deployed_at": "2026-09-23T09:17:25+00:00",
+  "deployed_at": "2026-09-23T13:44:02+00:00",
   "configured_at": "2026-09-19T10:00:56+00:00",
   "agent_cli": {
     "package": "@onfinance/hfc-research",

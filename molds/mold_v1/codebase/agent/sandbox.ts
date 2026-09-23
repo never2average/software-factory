@@ -1,9 +1,9 @@
 import { defineSandbox } from "eve/sandbox";
 
 /**
- * Pre-install document-generation libraries into the sandbox template so agents
- * can ALWAYS produce real `.docx` / `.xlsx` / `.pptx` / `.pdf` files without a
- * flaky runtime `pip install` (and without "no packages installed, I'll hand-
+ * Pre-install document libraries into the sandbox template so agents can ALWAYS
+ * READ an uploaded `.pdf` and produce real `.docx` / `.xlsx` / `.pptx` / `.pdf`
+ * files without a flaky runtime `pip install` (and without "no packages installed, I'll hand-
  * craft it" fallbacks). `bootstrap` runs once when the template is built and the
  * snapshot carries into every later session; default egress is allow-all so the
  * install can reach PyPI.
@@ -14,7 +14,13 @@ import { defineSandbox } from "eve/sandbox";
  * deployed snapshot silently stale.
  */
 const INSTALL_DOC_LIBS = `set -u
-PKGS="python-docx openpyxl python-pptx reportlab"
+# reportlab WRITES a pdf; pdfplumber and pypdf READ one. Both readers are here because a
+# person uploading a filing and asking a question of it is the commonest thing this product
+# does, and the root agent had no way to open one: measured 2026-09-23, a real upload died on
+# \`ModuleNotFoundError: No module named 'pdfplumber'\` then \`… 'PyPDF2'\`, and the turn ended
+# with an empty model response because nothing was left to try. The specialists' own sandboxes
+# already carry pdfplumber and pypdf; the main chat did not.
+PKGS="python-docx openpyxl python-pptx reportlab pdfplumber pypdf"
 LOG=/tmp/eve-doc-libs.log
 : > "$LOG"
 
@@ -39,7 +45,7 @@ $SUDO python3 -m pip install --quiet --break-system-packages $PKGS >>"$LOG" 2>&1
   || python3 -m pip install --quiet --user $PKGS >>"$LOG" 2>&1 \\
   || true
 
-MISSING=$(python3 -c 'import importlib.util as u; print(" ".join(p for m, p in (("docx","python-docx"),("openpyxl","openpyxl"),("pptx","python-pptx"),("reportlab","reportlab")) if u.find_spec(m) is None))')
+MISSING=$(python3 -c 'import importlib.util as u; print(" ".join(p for m, p in (("docx","python-docx"),("openpyxl","openpyxl"),("pptx","python-pptx"),("reportlab","reportlab"),("pdfplumber","pdfplumber"),("pypdf","pypdf")) if u.find_spec(m) is None))')
 if [ -n "$MISSING" ]; then
   echo "missing after install: $MISSING" >&2
   tail -30 "$LOG" >&2
