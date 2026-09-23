@@ -24,15 +24,28 @@
  * REPRODUCED EXACTLY ONCE, AND ONLY THIS WAY: a low output cap. `max_tokens:
  * 256` returns `finish_reason: "length"` with EMPTY content and 256 completion
  * tokens burned — Kimi is a reasoning model and spends the budget thinking. With
- * no cap, or 8192, the same conversation answers correctly. That is the
- * strongest lead and it is UNCONFIRMED for the live call: `agent/agent.ts` sets
- * no `limits.*`, `agent/lib/model.ts` sets no `maxOutputTokens`, and eve's
- * `maxOutputTokensPerSession` is a session BUDGET that parks a turn, never a
- * per-call `max_tokens` (harness/subagent-token-budget.js,
- * harness/session-limit-enforcement.js). So the cap is reported as a field on
- * every empty rather than asserted here: `cap=none` on a live row kills the
- * hypothesis outright, `cap=256` proves it, and either answer is worth more than
- * another afternoon of probing from outside.
+ * no cap, or 8192, the same conversation answers correctly.
+ *
+ * AND THE `cap=` FIELD BELOW SETTLED IT — which is the job it was added for. The
+ * row this middleware wrote on the live deployment:
+ *
+ *     model=@cf/moonshotai/kimi-k2.6  path=generate
+ *     finish=length  finish_raw=length  in=2999  out=1500  out_thinking=1500
+ *
+ * `path=generate` names the call: the chat STREAMS, so the only generator in the
+ * product is `read_image` — and `agent/lib/vision-tools.ts` set
+ * `maxOutputTokens: 1_500` itself, sized for the ANSWER ("a page description, not
+ * a report") on a model that pays for its thinking out of the same budget. The
+ * cap was neither absent nor a provider default; it was this repo's own, on the
+ * one path #51's wire proof did not drive (that proof ran `streamText`, the chat).
+ * Every role now carries a budget chosen for its job, in
+ * agent/lib/model-output-budget.ts, so a future row reads as a real number: `cap`
+ * close to `out` with `out_thinking ≈ out` is this failure again, `cap` far above
+ * `out` says the budget was fine and something else is wrong.
+ *
+ * eve's `maxOutputTokensPerSession`, for the avoidance of the same hunt: a
+ * session BUDGET that parks a turn, never a per-call `max_tokens`
+ * (harness/subagent-token-budget.js, harness/session-limit-enforcement.js).
  *
  * WHY THIS LIVES AT THE MODEL BOUNDARY and not in a fork of eve's tool-loop:
  * this is the one seam that sees BOTH halves of the problem. The
@@ -46,6 +59,7 @@
  * scripts/test-empty-model-response.mjs can drive the real middleware with a
  * scripted model and no provider, no network and no spend.
  */
+import { MAX_OUTPUT_BUDGET_TOKENS } from "./model-output-budget.ts";
 import type { LanguageModelMiddleware } from "ai";
 
 /* Structural aliases off the SDK's own middleware type, so an AI SDK bump that
@@ -77,10 +91,14 @@ export interface ModelCallShape {
   /**
    * The per-call output cap actually in force, or null for "uncapped".
    *
-   * THE FIELD THIS WHOLE FILE IS FOR. Read off the call options the provider is
-   * about to be handed, so it reflects whatever eve, the AI SDK, a provider
-   * default or `agent/instrumentation.ts` put there — not what this repo's
-   * source says it puts there.
+   * THE FIELD THIS WHOLE FILE IS FOR, and the one that named the cause. Read off
+   * the call options the provider is about to be handed, so it reflects whatever
+   * eve, the AI SDK, the role's budget middleware, a call site or a provider
+   * default put there — not what this repo's source says it puts there. Since
+   * the budget landed it is a real number on every Workers AI call, and it is
+   * read off the params of the ATTEMPT THAT FAILED, so a retry that raised the
+   * budget and still came back empty records the raised number and not the
+   * original.
    */
   readonly outputCap: number | null;
   /**
@@ -140,6 +158,16 @@ export interface EmptyResponseRecord extends ModelCallShape, ModelCallOutcome {
   readonly next: RecoveryAction;
   /** Why, in one word, when the plan could not do the obvious thing. */
   readonly nextReason: string | null;
+  /**
+   * The budget the next attempt was given, when this one was raised — null when
+   * the next attempt reuses the budget on the row's `outputCap`.
+   *
+   * Without it two rows an operator reads as identical ("empty at 8192, retried,
+   * empty at 16384") are indistinguishable from a ladder that changed nothing,
+   * and the question "does raising it actually help?" cannot be answered from the
+   * feed — which is the whole reason that question is still open.
+   */
+  readonly nextOutputCap: number | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -330,6 +358,48 @@ export interface RecoveryStep {
   readonly delayMs: number;
   /** Set when the obvious action was not the one chosen. */
   readonly reason: string | null;
+  /**
+   * The output budget the NEXT attempt must be made with, or null to keep the
+   * one that just failed. See `raisedOutputBudget`.
+   */
+  readonly outputBudget: number | null;
+}
+
+/**
+ * RETRYING A `length` FAILURE ON THE SAME BUDGET IS A CALL THAT CANNOT SUCCEED.
+ *
+ * `finish=length` with empty content means the model was cut off mid-thought:
+ * the budget was the binding constraint, not the prompt. Reissuing at the same
+ * ceiling — even with the nudge appended — asks a model that ran out of room to
+ * do strictly more inside the same room, and the measured failure repeated on
+ * every attempt for exactly that reason. So the retry doubles it.
+ *
+ * DOUBLING, not jumping straight to the ceiling: the budget in force is a number
+ * somebody chose from a measurement (agent/lib/model-output-budget.ts), and one
+ * doubling clears the case that number was merely a little short — 8,192 → 16,384
+ * is still inside the range probed as accepted on this account — while going
+ * straight to 65,536 would put a runaway thinking loop's worst case on a recovery
+ * path that fires precisely when the model is already misbehaving.
+ *
+ * NULL, i.e. change nothing, in three cases, each for its own reason:
+ *   - no cap was in force. Nothing to raise, and inventing one on a retry would
+ *     make the retry a different experiment from the call it is retrying.
+ *   - the model did NOT stop on `length`. It said nothing for some other reason;
+ *     more room buys nothing and only widens the worst case.
+ *   - the budget is already at MAX_OUTPUT_BUDGET_TOKENS. The ladder is a ladder:
+ *     a raise that cannot raise must not read as one on the row.
+ */
+export const RETRY_BUDGET_MULTIPLIER = 2;
+
+/** Did this answer stop because it ran out of output budget? Raw first: `length` is the provider's own word. */
+export const ranOutOfBudget = (outcome: ModelCallOutcome): boolean =>
+  outcome.finishReasonRaw === "length" || outcome.finishReason === "length";
+
+export function raisedOutputBudget(shape: ModelCallShape, outcome: ModelCallOutcome): number | null {
+  if (shape.outputCap === null) return null;
+  if (!ranOutOfBudget(outcome)) return null;
+  if (shape.outputCap >= MAX_OUTPUT_BUDGET_TOKENS) return null;
+  return Math.min(shape.outputCap * RETRY_BUDGET_MULTIPLIER, MAX_OUTPUT_BUDGET_TOKENS);
 }
 
 /**
@@ -364,22 +434,29 @@ export const FALLBACK_DELAY_MS = 250;
 export function planRecovery(input: {
   readonly attempt: number;
   readonly shape: ModelCallShape;
+  /** What the attempt that just failed looked like — `length` decides whether the budget is raised. */
+  readonly outcome: ModelCallOutcome;
   readonly fallbackAvailable: boolean;
   /** Has the other role's model already had its go on this call? */
   readonly fallbackUsed: boolean;
 }): RecoveryStep {
+  // Computed once, for whichever attempt is planned. A fallback gets it too: by
+  // then the raise has already failed to help on THIS model, and handing the
+  // second model the budget that was too small for the first would make the one
+  // genuinely independent attempt in the ladder the most constrained one.
+  const outputBudget = raisedOutputBudget(input.shape, input.outcome);
   if (input.attempt <= SAME_MODEL_RETRIES) {
-    return { action: "retry", delayMs: RETRY_DELAY_MS, reason: null };
+    return { action: "retry", delayMs: RETRY_DELAY_MS, reason: null, outputBudget };
   }
   if (input.fallbackUsed) {
     // The ladder is a LADDER, not a loop. Without this the second model's empty
     // answer plans a second fallback, and the middleware reissues for ever
     // against a model that has already said nothing — a hung chat and an
     // unbounded bill, which is strictly worse than the failure being fixed.
-    return { action: "explain", delayMs: 0, reason: "fallback-also-empty" };
+    return { action: "explain", delayMs: 0, reason: "fallback-also-empty", outputBudget: null };
   }
   if (!input.fallbackAvailable) {
-    return { action: "explain", delayMs: 0, reason: "no-fallback-configured" };
+    return { action: "explain", delayMs: 0, reason: "no-fallback-configured", outputBudget: null };
   }
   if (input.shape.hasImageInput) {
     // WHAT FALLING BACK COSTS: the specialist is text-only. On this deployment
@@ -389,9 +466,23 @@ export function planRecovery(input: {
     // replaces. So a turn carrying a real image never falls back; it gets the
     // sentence instead. The measured pdf workflow is unaffected: the sandbox
     // hands the model TEXT.
-    return { action: "explain", delayMs: 0, reason: "vision-required" };
+    //
+    // THE BUDGET DOES NOT WEAKEN THIS. A vision call that ran out of room is the
+    // measured failure itself, and the answer to it is the raise on the retry
+    // above — never a text-only model. This branch is reached after that raise
+    // has already been tried, so the outcome here is still an explanation.
+    return { action: "explain", delayMs: 0, reason: "vision-required", outputBudget: null };
   }
-  return { action: "fallback", delayMs: FALLBACK_DELAY_MS, reason: null };
+  return { action: "fallback", delayMs: FALLBACK_DELAY_MS, reason: null, outputBudget };
+}
+
+/**
+ * The same call, with a different output budget. Null leaves it exactly as it
+ * was — including leaving an uncapped call uncapped, which is a different request
+ * from one capped at any number.
+ */
+export function withOutputBudget(params: ModelCallParams, budget: number | null): ModelCallParams {
+  return budget === null ? params : { ...params, maxOutputTokens: budget };
 }
 
 /**
@@ -468,10 +559,16 @@ export function formatEmptyResponseDetail(record: EmptyResponseRecord): string {
     `msgs=${record.messages}`,
     `tools=${record.tools}`,
     `bytes=${record.approxBytes < 0 ? "?" : record.approxBytes}`,
-    // The hypothesis, settled per occurrence. `cap=none` means nothing in the
-    // path — eve, the AI SDK, the provider default, instrumentation — put a
-    // per-call output cap on this request.
+    // The cause, per occurrence. `cap=none` means nothing in the path — eve, the
+    // AI SDK, the role's budget, a call site, a provider default — put a per-call
+    // output cap on this request. On Workers AI it is now always a number, and
+    // `cap` against `out`/`out_thinking` is the whole diagnosis in three figures:
+    // `out == cap` with `out_thinking == out` is the 2026-09-23 failure, `out`
+    // well under `cap` is a different fault wearing the same error message.
     `cap=${record.outputCap === null ? "none" : record.outputCap}`,
+    // Only when the ladder raised it — an absent field reads as "the next attempt
+    // ran on the same budget", which is what it means.
+    ...(record.nextOutputCap === null ? [] : [`next_cap=${record.nextOutputCap}`]),
     `images=${record.hasImageInput ? "yes" : "no"}`,
     `next=${record.next}${record.nextReason ? `:${record.nextReason}` : ""}`,
   ];
@@ -538,6 +635,7 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
       path: input.path,
       next: input.step.action,
       nextReason: input.step.reason,
+      nextOutputCap: input.step.outputBudget,
     };
     try {
       deps.publish(row);
@@ -555,14 +653,24 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
       let attempt = 0;
       let activeId = deps.modelId();
       let fallbackUsed = false;
+      /**
+       * The params THIS attempt was made with — which is not `params` any more,
+       * because a `length` failure has its output budget raised for the next go.
+       * The row must describe the call that actually failed, and the next call
+       * must inherit the raise rather than silently dropping back.
+       *
+       * Never carries the nudge: that is appended to a copy at the call, so one
+       * retry cannot leave two copies of it in a later attempt's prompt.
+       */
+      let callParams = params;
       let result = await doGenerate();
       for (;;) {
         attempt++;
         const outcome = summarizeGenerateResult(result);
         if (!outcome.empty) return result;
-        const shape = describeModelCall(params);
+        const shape = describeModelCall(callParams);
         const fallback = deps.fallback();
-        const step = planRecovery({ attempt, shape, fallbackAvailable: fallback !== null, fallbackUsed });
+        const step = planRecovery({ attempt, shape, outcome, fallbackAvailable: fallback !== null, fallbackUsed });
         record({ shape, outcome, attempt, modelId: activeId, path: "generate", step });
         if (step.delayMs > 0) await deps.sleep(step.delayMs);
         if (step.action === "explain") {
@@ -573,16 +681,17 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
           };
           return explained;
         }
+        callParams = withOutputBudget(callParams, step.outputBudget);
         if (step.action === "fallback" && fallback) {
           activeId = fallback.id;
           fallbackUsed = true;
-          result = (await fallback.model.doGenerate(params)) as GenerateResult;
+          result = (await fallback.model.doGenerate(callParams)) as GenerateResult;
         } else {
           // `model.doGenerate` rather than `doGenerate()`, because the latter
           // can only reissue the IDENTICAL request — and identical is what
           // already failed. This middleware is the innermost one, so calling the
           // model directly skips nothing.
-          result = (await model.doGenerate(buildNudgedParams(params))) as GenerateResult;
+          result = (await model.doGenerate(buildNudgedParams(callParams))) as GenerateResult;
         }
       }
     },
@@ -639,6 +748,9 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
         let fallbackUsed = false;
         let stream = first.stream;
         let suppressStart = false;
+        // See the generate path: the params of the attempt being judged, which a
+        // raised output budget changes between attempts.
+        let callParams = params;
         try {
           for (;;) {
             const { outcome, finish, sawError } = await pump(stream, suppressStart);
@@ -647,9 +759,9 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
               if (finish) await writer.write(finish);
               return;
             }
-            const shape = describeModelCall(params);
+            const shape = describeModelCall(callParams);
             const fallback = deps.fallback();
-            const step = planRecovery({ attempt, shape, fallbackAvailable: fallback !== null, fallbackUsed });
+            const step = planRecovery({ attempt, shape, outcome, fallbackAvailable: fallback !== null, fallbackUsed });
             record({ shape, outcome, attempt, modelId: activeId, path: "stream", step });
             if (step.delayMs > 0) await deps.sleep(step.delayMs);
             if (step.action === "explain") {
@@ -677,13 +789,14 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
               return;
             }
             suppressStart = true;
+            callParams = withOutputBudget(callParams, step.outputBudget);
             if (step.action === "fallback" && fallback) {
               activeId = fallback.id;
               fallbackUsed = true;
-              stream = ((await fallback.model.doStream(params)) as StreamResult).stream;
+              stream = ((await fallback.model.doStream(callParams)) as StreamResult).stream;
             } else {
               // See the generate path: a nudged reissue, not an identical one.
-              stream = ((await model.doStream(buildNudgedParams(params))) as StreamResult).stream;
+              stream = ((await model.doStream(buildNudgedParams(callParams))) as StreamResult).stream;
             }
           }
         } catch (error) {

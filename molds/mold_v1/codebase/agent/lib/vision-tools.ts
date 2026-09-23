@@ -44,7 +44,7 @@ import { z } from "zod";
 import { DataroomPathError } from "./dataroom-store.ts";
 import { LAST_RESORT_SENTENCE } from "./empty-model-response.ts";
 import { storeForSession } from "./dataroom-session.ts";
-import { agentModel, agentModelId } from "./model.ts";
+import { agentModel, agentModelId, modelOutputBudgetTokens } from "./model.ts";
 import type { SessionCtxLike } from "./org-context.ts";
 
 /**
@@ -62,8 +62,28 @@ const MAX_TOTAL_IMAGE_BYTES = 12 * 1024 * 1024;
 const VISION_TIMEOUT_MS = 120_000;
 /** The render, including a pip install of pymupdf in a sandbox that lacks it (~30 s cold). */
 const RENDER_TIMEOUT_MS = 180_000;
-/** A page description, not a report. The agent composes; this observes. */
-const MAX_OUTPUT_TOKENS = 1_500;
+/**
+ * THE OUTPUT BUDGET IS NO LONGER A NUMBER IN THIS FILE.
+ *
+ * It used to be `const MAX_OUTPUT_TOKENS = 1_500`, commented "a page
+ * description, not a report" — a number sized for the ANSWER. On 2026-09-23 that
+ * is precisely what this call returned:
+ *
+ *     model=@cf/moonshotai/kimi-k2.6  path=generate
+ *     finish=length  in=2999  out=1500  out_thinking=1500
+ *
+ * All 1,500 tokens went on THINKING about a scanned page and the description was
+ * never reached — `read_image` reported "returned no text" on a page it could
+ * have read, over and over, all day. On a reasoning model the output budget buys
+ * the thinking first and the answer out of what is left, so it cannot be sized
+ * from the answer alone. The role's budget (and the measurement behind it) lives
+ * in agent/lib/model-output-budget.ts, where the chat's budget lives too, so the
+ * two can never again disagree about what this deployment sends.
+ *
+ * Passed EXPLICITLY here rather than left to the middleware in `agentModel`: that
+ * middleware only exists in cloudflare mode, and `read_image` must be budgeted on
+ * the gateway as well. The middleware's `??` leaves this value alone.
+ */
 /** Where the render script and its output live in the sandbox. */
 const RENDER_DIR = "/workspace/.read_image";
 
@@ -394,7 +414,7 @@ export const readImageTool = defineTool({
     try {
       const response = await generateText({
         model: agentModel("vision"),
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        maxOutputTokens: modelOutputBudgetTokens("vision"),
         // An explicit deadline. Without one a provider that accepts the request and
         // never answers holds the turn open until the platform kills it, and the
         // person sees a spinner rather than a sentence.

@@ -25,12 +25,18 @@
  *                           "false" removes the tool entirely (see visionModelConfigured).
  *   CLOUDFLARE_BASE_URL     default "https://api.cloudflare.com/client/v4/accounts/${id}/ai/v1"
  *   CLOUDFLARE_CONTEXT_WINDOW default 262144   (GLM 5.2 on Workers AI)
+ *   MODEL_MAX_OUTPUT_TOKENS_ORCHESTRATOR / _SPECIALIST / _VISION
+ *                           the per-call OUTPUT budget, per role (8192 / 16384 / 16384).
+ *                           Unprefixed because a budget is a property of the ROLE'S JOB, not of
+ *                           a provider's model — see agent/lib/model-output-budget.ts, which
+ *                           holds the measurement every default is chosen from.
  */
 import { randomUUID } from "node:crypto";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { wrapLanguageModel } from "ai";
 import { createEmptyResponseRecovery, type ModelLike } from "./empty-model-response.ts";
 import { publishEmptyResponse } from "./empty-model-response-log.ts";
+import { createOutputBudget, resolveOutputBudget } from "./model-output-budget.ts";
 import { uniqueToolCallIds } from "./unique-tool-call-ids.ts";
 import type { LanguageModel } from "ai";
 
@@ -102,6 +108,28 @@ export function modelContextWindowTokens(role: AgentRole = "orchestrator"): numb
     envTrim(process.env[`CLOUDFLARE_CONTEXT_WINDOW_${role.toUpperCase()}`]) ?? envTrim(process.env.CLOUDFLARE_CONTEXT_WINDOW);
   if (override && Number.isFinite(Number(override)) && Number(override) > 0) return Number(override);
   return CLOUDFLARE_CONTEXT_WINDOWS[agentModelId(role)] ?? 262_144;
+}
+
+/**
+ * The per-call OUTPUT budget for a role, in tokens, or undefined for "send none".
+ *
+ * Same shape as `modelContextWindowTokens` above — a per-role number with an env
+ * override — and deliberately NOT the same thing. The context window is how much
+ * the model can READ; this is how much it may WRITE on one call, and on a
+ * reasoning model the writing budget pays for the thinking first. On 2026-09-23
+ * the vision call ran on 1,500 and spent all 1,500 of it thinking
+ * (`finish=length  out=1500  out_thinking=1500`), delivering nothing.
+ *
+ * Applies on EVERY provider, unlike the window: `agentModel` installs it as
+ * middleware only in cloudflare mode (gateway mode hands the AI SDK a plain id
+ * with nowhere to hang middleware), so `agent/lib/vision-tools.ts` — the one call
+ * site in this repo that sets its own — reads it from here directly and is
+ * therefore budgeted on both.
+ *
+ * The values and what each trades: agent/lib/model-output-budget.ts.
+ */
+export function modelOutputBudgetTokens(role: AgentRole = "orchestrator"): number | undefined {
+  return resolveOutputBudget(role, process.env);
 }
 
 /** Context windows of the Workers AI models this app is run on (Cloudflare model catalogue, 2026-09-19). */
@@ -264,11 +292,20 @@ export function agentModel(role: AgentRole): LanguageModel {
   // tool-call ids get rewritten exactly like the orchestrator's. Swap them and a
   // fallback turn's delegations start replacing each other in the Control Panel,
   // which is the bug unique-tool-call-ids.ts exists to prevent.
+  //
+  // THE OUTPUT BUDGET GOES IN THE MIDDLE, and that position is load-bearing too.
+  // Its `transformParams` runs on the way DOWN, so by the time the recovery below
+  // is entered the call already carries `maxOutputTokens` — which is the field the
+  // recovery reports as `cap=` and the field its retry raises. Put it inside the
+  // recovery instead and every empty-response row goes on saying `cap=none` while
+  // a budget is in force, which is the exact reading that sent the 2026-09-23
+  // diagnosis looking for a provider default that did not exist.
   if (providerChoice !== "cloudflare") return id;
   return wrapLanguageModel({
     model: cloudflare(id),
     middleware: [
       uniqueToolCallIds,
+      createOutputBudget({ budget: () => modelOutputBudgetTokens(role) }),
       createEmptyResponseRecovery({
         modelId: () => id,
         fallback: () => fallbackFor(role),

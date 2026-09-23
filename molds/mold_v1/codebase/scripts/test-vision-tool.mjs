@@ -243,6 +243,10 @@ check("and with neither set it is present", (await toolPresence({})).present);
 console.log("\nThe model hands over a reference, never bytes:");
 
 const { readImageTool } = await import("../agent/lib/vision-tools.ts");
+// The budget this deployment gives the vision role, from the one place that
+// decides it (agent/lib/model-output-budget.ts) — asserted at the wire below.
+const { modelOutputBudgetTokens } = await import("../agent/lib/model.ts");
+const visionBudget = modelOutputBudgetTokens("vision");
 const shape = readImageTool.inputSchema.shape ?? readImageTool.inputSchema._def?.shape?.() ?? {};
 const fields = Object.keys(shape);
 check("its inputs are the reference, the question and the page bounds", fields.length > 0);
@@ -360,6 +364,28 @@ await useModelScript("vision");
   check("...on the VISION model, not the orchestrator's", /model=@cf\/moonshotai\/kimi-k2\.6/.test(result.answer));
   check("the tool reports which model answered", result.model === "@cf/moonshotai/kimi-k2.6");
   check("and where it read from", result.source.kind === "sandbox" && result.source.path === "/workspace/page.png");
+
+  /**
+   * AND WITH ENOUGH ROOM TO ANSWER IN. This call shipped with
+   * `maxOutputTokens: 1_500`, commented "a page description, not a report" —
+   * sized for the ANSWER on a model that pays for its thinking out of the same
+   * budget. The live row of 2026-09-23 is that number twice over:
+   *
+   *     model=@cf/moonshotai/kimi-k2.6  path=generate
+   *     finish=length  in=2999  out=1500  out_thinking=1500
+   *
+   * — the whole budget spent thinking about one scanned page, no description at
+   * all, and `read_image` reporting "returned no text" on a page it could have
+   * read. Asserted on the REQUEST BODY the provider received rather than on the
+   * source, because the source saying what it sends is exactly the evidence that
+   * was wrong last time.
+   */
+  const [request] = await recordedRequests();
+  check(
+    `the vision call asks for the vision ROLE's budget, not the 1,500 that burned itself out thinking (saw max_tokens=${request?.max_tokens ?? "absent"})`,
+    request?.max_tokens === visionBudget,
+  );
+  check("…which is well clear of that 1,500", visionBudget >= 8_192);
 }
 
 // ---------------------------------------------------------------------------

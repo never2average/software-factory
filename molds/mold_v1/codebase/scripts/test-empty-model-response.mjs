@@ -252,7 +252,13 @@ console.log("\nWhat happens after an empty answer:");
   const shape = describeModelCall(params({}));
   const vision = describeModelCall(params({ image: true }));
   check("the first empty buys exactly one same-model retry", SAME_MODEL_RETRIES === 1);
-  const plan = (over) => planRecovery({ attempt: 1, shape, fallbackAvailable: true, fallbackUsed: false, ...over });
+  // The outcome is part of the plan since the output budget landed: an answer that
+  // ran out of room (`length`) is retried with MORE room, because the same call at
+  // the same ceiling cannot succeed. The budget's own rules are in
+  // scripts/test-model-output-budget.mjs; here it is only passed so the ladder's
+  // shape is judged on a real outcome rather than on an absent one.
+  const ranOut = summarizeGenerateResult(emptyGenerate());
+  const plan = (over) => planRecovery({ attempt: 1, shape, outcome: ranOut, fallbackAvailable: true, fallbackUsed: false, ...over });
   check("attempt 1 retries the same model", plan({}).action === "retry");
   check(
     "attempt 2 changes the model — a deterministic failure is not fixed by repeating it",
@@ -549,15 +555,36 @@ console.log("\nThe wiring:");
   check("agentModel installs the recovery", /createEmptyResponseRecovery\(/.test(model));
   check(
     "…INSIDE uniqueToolCallIds, so a fallback model's counter ids are rewritten too",
-    /middleware: \[\s*uniqueToolCallIds,\s*createEmptyResponseRecovery/.test(model),
+    /middleware: \[\s*uniqueToolCallIds,\s*createOutputBudget\([^\n]*\),\s*createEmptyResponseRecovery/.test(model),
+  );
+  check(
+    "…and OUTSIDE the output budget, whose transformParams must have run before this middleware reads `cap`",
+    model.indexOf("createOutputBudget({") < model.indexOf("createEmptyResponseRecovery({"),
   );
   check("…and the fallback is the other configured role", /agentModelId\(other\)/.test(model));
   check("…which is null when both roles are the same model", /if \(id === agentModelId\(role\)\) return null/.test(model));
 
-  // The hypothesis, on the source side: nothing this repo authors caps output.
+  // THE HYPOTHESIS, SETTLED AND THEN CORRECTED. These three checks used to assert
+  // the opposite — "nothing this repo authors caps output" — which was true of the
+  // CHAT path and false of the one call that was failing: the live row says
+  // `path=generate`, and only `read_image` generates. agent/lib/vision-tools.ts
+  // set `maxOutputTokens: 1_500` itself, sized for the answer on a model that pays
+  // for its thinking out of the same budget, and burned all 1,500 of it thinking.
+  // So the absence is no longer the thing to protect; the SINGLE SOURCE is.
   const agent = src("agent/agent.ts");
-  check("agent/agent.ts sets no limits.* — so no session output budget exists", !/limits\s*:/.test(agent));
-  check("agent/lib/model.ts sets no maxOutputTokens", !/maxOutputTokens\s*:/.test(model));
+  check("agent/agent.ts still sets no limits.* — a session budget parks a turn, it does not cap a call", !/limits\s*:/.test(agent));
+  check(
+    "agent/lib/model.ts now installs a per-role output budget rather than leaving the ceiling to whatever the provider picks today",
+    /createOutputBudget\(/.test(model) && /modelOutputBudgetTokens/.test(model),
+  );
+  check(
+    "…and the one call site that set its own number now asks for the same role budget",
+    /maxOutputTokens: modelOutputBudgetTokens\("vision"\)/.test(src("agent/lib/vision-tools.ts")),
+  );
+  check(
+    "…so nothing but agent/lib/model-output-budget.ts decides what the agent sends",
+    !/maxOutputTokens:\s*\d/.test(src("agent/lib/vision-tools.ts")) && !/maxOutputTokens:\s*\d/.test(model),
+  );
   check(
     "agent/instrumentation.ts contributes runtime context only, never call settings",
     !/maxOutputTokens/.test(src("agent/instrumentation.ts")),
@@ -603,13 +630,22 @@ console.log("\nThe real provider path, against a model that answers empty:");
     const requests = await (await fetch(`http://127.0.0.1:${port}/__requests`)).json();
     check("…by reissuing the call, not by giving up", requests.length >= 2);
 
-    // THE HYPOTHESIS, settled at the wire. If anything in the path — eve, the AI
-    // SDK, this repo, agent/instrumentation.ts — put a per-call output cap on a
-    // request, it would be here as `max_tokens`. It is not.
-    const caps = requests.map((r) => ("max_tokens" in r ? r.max_tokens : "absent"));
+    // THE HYPOTHESIS, settled at the wire — and then acted on. This assertion used
+    // to read "nothing in the model path sets max_tokens", and it was TRUE: the
+    // chat, which is what this section drives, left the ceiling to the provider.
+    // That is no longer safe to leave alone, because an unchosen ceiling is exactly
+    // what could not be diagnosed from a row. Every call now carries the role's
+    // budget (agent/lib/model-output-budget.ts), and the RETRY after a `length`
+    // failure carries twice it, because reissuing a call that ran out of room
+    // inside the same room is a call that cannot succeed.
+    const caps = requests.map((r) => ("max_tokens" in r && r.max_tokens !== null ? r.max_tokens : "absent"));
     check(
-      `nothing in the model path sets max_tokens — eve, the AI SDK, this repo or a default (saw: ${caps.join(", ")})`,
-      caps.every((cap) => cap === "absent" || cap === null),
+      `every call in the model path now carries a budget somebody chose (saw: ${caps.join(", ")})`,
+      caps.every((cap) => typeof cap === "number" && cap > 0),
+    );
+    check(
+      `…and the reissue after a "length" finish asks for more room than the call that ran out (saw: ${caps.join(", ")})`,
+      caps.length >= 2 && caps[1] > caps[0],
     );
     check(
       "…and the model server can emit the capped failure when asked, so the shape is testable",

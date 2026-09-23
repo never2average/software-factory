@@ -273,12 +273,28 @@ jobs:
       # scripted server, extended to emit `finish_reason: "length"` with no
       # content and the whole budget spent on reasoning), proves a person always
       # gets either an answer or a sentence, proves the record carries the shape
-      # and none of the prompt, and asserts at the WIRE that nothing in the model
-      # path sets `max_tokens` — the hypothesis that only a live request could
-      # settle.
+      # and none of the prompt, and asserts at the WIRE what `max_tokens` the model
+      # path really sends — the hypothesis that only a live request could settle.
       - name: Empty model response (survival, telemetry, output cap)
         if: always()
         run: npm run test:empty-model-response
+
+      # THE OUTPUT BUDGET — what that `cap=` field went on to name. The live row of
+      # 2026-09-23 reads `finish=length out=1500 out_thinking=1500` on
+      # `path=generate`: the VISION call's own `maxOutputTokens: 1_500`, sized for
+      # the answer, spent entirely on the thinking a reasoning model does first, so
+      # `read_image` reported "returned no text" on pages it could have read, all
+      # day. Every role now carries a budget chosen from a measurement (max_tokens
+      # 256 reproduces the failure exactly; 8192 and 16384 are accepted and answer
+      # normally; switching models is not available on this account), and a retry
+      # after a `length` failure asks for twice the room rather than repeating a
+      # call that cannot succeed. This asserts on the REQUEST BODIES the scripted
+      # provider recorded — the source saying what it sends is the evidence that
+      # was wrong last time — and holds the env grammar, in particular that an
+      # EMPTY variable means the default and not "off" (#46/#47).
+      - name: Model output budget (per role, at the wire)
+        if: always()
+        run: npm run test:model-output-budget
 
       - name: Auth gates in lockstep
         if: always()
