@@ -300,6 +300,17 @@ export interface DataroomBackend {
    * real filesystem, so there is nothing to bridge.
    */
   downloadUrl?(path: string): Promise<string>;
+  /**
+   * The file's RAW BYTES, or null when absent.
+   *
+   * `read()` decodes UTF-8, which is correct for markdown and jsonl and
+   * destructive for a png: the replacement characters it produces are not the
+   * image, and nothing downstream can tell that from an image of a blank page.
+   * Optional on the interface for the same reason `downloadUrl` is — a backend
+   * that cannot serve bytes says so by not having it, rather than by returning
+   * something that looks like bytes.
+   */
+  readBytes?(path: string): Promise<Uint8Array | null>;
 }
 
 function ensureTrailingNewline(text: string): string {
@@ -347,6 +358,18 @@ export class LocalDataroomBackend implements DataroomBackend {
   async read(path: string): Promise<string | null> {
     try {
       return await fs.readFile(this.absolute(path), "utf8");
+    } catch (error) {
+      if (isEnoent(error)) return null;
+      throw error;
+    }
+  }
+
+  async readBytes(path: string): Promise<Uint8Array | null> {
+    try {
+      // Through `absolute()`, so the raw-byte read goes past the SAME root check
+      // as every text read. A second reader with its own path arithmetic is how
+      // one of two doors ends up missing a guard the other has.
+      return new Uint8Array(await fs.readFile(this.absolute(path)));
     } catch (error) {
       if (isEnoent(error)) return null;
       throw error;
@@ -475,6 +498,21 @@ export class BlobDataroomBackend implements DataroomBackend {
       throw new Error(`blob read failed for "${pathname}": HTTP ${response.status}`);
     }
     return await response.text();
+  }
+
+  /**
+   * One private blob's RAW BYTES via the same short-lived presigned GET; null on 404.
+   *
+   * No append-part assembly, unlike `read()`. A binary is always written whole
+   * (`appendJsonl` refuses a non-`.jsonl` path), so there are no parts to
+   * concatenate — and concatenating them onto a png would corrupt it silently.
+   */
+  async readBytes(path: string): Promise<Uint8Array | null> {
+    const pathname = this.objectPathname(path);
+    const response = await fetch(await this.downloadUrl(path));
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`blob read failed for "${pathname}": HTTP ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   private async listObjectPathnames(rawPrefix: string): Promise<string[]> {
@@ -609,6 +647,22 @@ export class DataroomStore {
   async read(path: string): Promise<string | null> {
     validateDataroomPath(path);
     return this.backend.read(path);
+  }
+
+  /**
+   * Raw bytes of a dm.md file (images, pdfs), or null when it does not exist.
+   *
+   * `validateDataroomPath` FIRST and unconditionally, exactly as `read()` does:
+   * this is a second way into the same tree, and the reason a store instance is
+   * per-workspace is that the instance — not the caller — decides which tree the
+   * path is resolved against. A byte reader that skipped the template check
+   * would accept paths the text reader refuses, which is a wider door reached by
+   * changing one argument.
+   */
+  async readBytes(path: string): Promise<Uint8Array | null> {
+    validateDataroomPath(path);
+    if (!this.backend.readBytes) return null;
+    return this.backend.readBytes(path);
   }
 
   /** Parse a .jsonl file into records; [] when the file does not exist yet. */

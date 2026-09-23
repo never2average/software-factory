@@ -2,8 +2,8 @@
   "$schema": "../app_id/application.schema.json",
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
-  "mold_commit": "81d243d2f2c59bad9add041636b88b8ce7e47aca",
-  "status": "reverted",
+  "mold_commit": "38a6cae052ab04907956260d81d3c9894464563a",
+  "status": "stamped",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
   "model": {
@@ -219,10 +219,5 @@
   "customer_id": "internal",
   "packs": [
     "hfc-research"
-  ],
-  "revert": {
-    "reason": "eve api build failed:\nns/schemas\nWarning [discover/unsupported-directory]: Ignoring unsupported directory \"scripts/\" in the local subagent root.\n  source: /root/software-factory/build/onfinance_hfc/agent/subagents/investor-presentations/scripts\nWarning [discover/unsupported-directory]: Ignoring unsupported directory \"schemas/\" in the local subagent root.\n  source: /root/software-factory/build/onfi",
-    "lane": "functional",
-    "at": "2026-09-23T14:29:46+00:00"
-  }
+  ]
 }

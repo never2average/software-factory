@@ -22,12 +22,15 @@
  *
  *   ENABLE_WEB_SEARCH=false   removes web_search
  *   ENABLE_BROWSER=false      removes the browser subagent's 8 tools
+ *   ENABLE_VISION=false       removes read_image
  *
  * Set them in Vercel per environment. Because eve normalises tool definitions
  * when the bundle is built, these are read at BUILD time — flipping one needs a
  * rebuild and redeploy, not just an env change. That is the trade for the model
  * never seeing the tool.
  */
+
+import { visionModelConfigured } from "./model.ts";
 
 /** An explicit falsey string turns a capability off; anything else leaves it on. */
 function enabled(name: string): boolean {
@@ -40,3 +43,18 @@ export const WEB_SEARCH_ENABLED = enabled("ENABLE_WEB_SEARCH");
 
 /** The browser runtime — a real browser session at a third-party provider. */
 export const BROWSER_ENABLED = enabled("ENABLE_BROWSER");
+
+/**
+ * `read_image` — one call to a vision-language model per image.
+ *
+ * TWO ways off, because there are two different reasons to have it off. The flag
+ * is a policy decision ("no image is to be sent to an inference provider"); an
+ * unnamed vision model is a fact about the account ("there is nothing here that
+ * can read one"). Either must produce the SAME outcome — the tool absent — or
+ * the model sees a capability, calls it, and burns a turn per attempt learning
+ * it does not work. `visionModelConfigured()` is imported rather than re-read
+ * from env here so exactly one file knows which variable names the model; the
+ * gate reading a different variable than the selector is how a flag comes to
+ * report a guarantee it does not provide.
+ */
+export const VISION_ENABLED = enabled("ENABLE_VISION") && visionModelConfigured();

@@ -74,6 +74,41 @@ export const CHAT_TELEMETRY_SENTENCES = {
    * for a while, once per turn, whatever the store thinks it is doing.
    */
   stall: "Chat turn stalled with no new events",
+
+  /* ---- what NOTHING could see: the server side (this change) ------------- */
+
+  /**
+   * The model answered a step with nothing at all — no text, no tool call.
+   *
+   * Measured on the live deployment on 2026-09-23. A person uploaded a pdf and
+   * asked for KPIs; the sandbox fetched it and `pdfplumber` returned real page
+   * text; about three bash calls later every attempt died the same way —
+   * `step.failed`/`turn.failed`, `MODEL_CALL_FAILED`, `"Empty model response"`,
+   * with `[eve:harness.tool-loop] empty model response; reissuing the model call
+   * once` twice in the server log before the turn ended. Every attempt, the same
+   * depth, two separate sessions.
+   *
+   * NOTHING RECORDED IT. Every kind above is emitted by the browser, so a
+   * server-side death left the chat log exactly as it was and a person had to
+   * notice before any instrument did. That is the whole reason this kind exists.
+   *
+   * The row carries only SHAPE — finish reason, prompt/completion tokens,
+   * whether any tool call came back, how many messages and tool definitions went
+   * up, the request's approximate byte size, the model id, and whether an output
+   * cap was in force AND WHAT IT WAS. Never prompt text, document content or
+   * tool arguments. `agent/lib/empty-model-response.ts` formats it; the cap
+   * field is there because the one reproduction anybody has (`max_tokens: 256`
+   * → `finish_reason: "length"`, empty content, 256 completion tokens burned by
+   * a reasoning model) can only be confirmed or killed from the live call.
+   */
+  "model-empty": "Model returned an empty response",
+  /**
+   * Every attempt came back empty — the retries AND the text-only fallback — so
+   * the person was handed a sentence instead of a chat that simply stops. One of
+   * these is a real defect with a real person behind it; a run of them means the
+   * fallback is not the escape hatch it was built to be.
+   */
+  "model-empty-gave-up": "Model returned only empty responses; the person was told rather than left waiting",
 } as const satisfies Record<string, string>;
 
 export type ChatTelemetryKind = keyof typeof CHAT_TELEMETRY_SENTENCES;
@@ -96,4 +131,38 @@ export function isChatTelemetryKind(kind: unknown): kind is ChatTelemetryKind {
 /** The opening clause for a kind. Unknown kinds never reach here (see the enum). */
 export function chatTelemetrySentence(kind: ChatTelemetryKind): string {
   return CHAT_TELEMETRY_SENTENCES[kind];
+}
+
+/**
+ * The session id, as something you can CORRELATE but not USE.
+ *
+ * Lived in `app/api/ops/chat-telemetry/route.ts` until the agent runtime needed
+ * to write the same kind of row from the other side of the deployment boundary.
+ * Two hashes of the same session id computed by two different files is exactly
+ * how "this conversation has severed six times in twelve minutes" stops being
+ * visible, so there is one function and both surfaces call it.
+ *
+ * WHY A HASH AT ALL. `automation_id` used to be the raw eve session id, and
+ * `GET /api/ops/orgs/:id/audit` returns the last 100 rows of this table to
+ * anyone in the workspace — so the telemetry written when a chat went wrong
+ * published the ids of the chats it went wrong in. A session id is a capability
+ * in this system's shape: it is what the eve gate decides on, what the
+ * transcript cache is keyed by, and what the mirror row used to let a colleague
+ * claim.
+ *
+ * A truncated SHA-256 keeps the only property the feed uses — two lines about
+ * the same chat carry the same id — while the value in the row opens nothing.
+ * 16 hex characters is 64 bits: far beyond collision range for a chat feed, and
+ * short enough to read. NOT reversible by a reader, and not meant to be private
+ * FROM us: the same hash of the same id is how an operator matches a row back to
+ * a session they already legitimately hold.
+ *
+ * The hasher is a PARAMETER, not a `node:crypto` import, because this file is
+ * the one module both deployments share and `app/_components/agent-chat.tsx`
+ * takes its type — a top-level `node:crypto` here is one accidental value import
+ * away from putting a node builtin in the browser bundle. Each caller passes the
+ * SHA-256 hex it already has.
+ */
+export function chatSessionTag(sessionId: string, sha256Hex: (value: string) => string): string {
+  return `chat_${sha256Hex(sessionId).slice(0, 16)}`;
 }

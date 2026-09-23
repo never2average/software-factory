@@ -122,6 +122,21 @@ jobs:
         if: always()
         run: npm run test:sandbox-libs
 
+      # VISION IS A TOOL NOW, NOT A PROPERTY OF THE ORCHESTRATOR. The orchestrator was
+      # Kimi K2.6 only because it reads images; it began returning MODEL_CALL_FAILED
+      # ("Empty model response") on real uploads, so the fleet moved to a text-only
+      # GLM 5.3 and lost image understanding. This holds the replacement: the tool is
+      # declared in what SHIPS and gated everywhere it is declared (a pack's subagents
+      # included), the vision role does NOT chain to the fleet's text-only model, an
+      # image reaches the provider as an image, an empty completion is one refusal
+      # rather than a dead turn, a scanned pdf is rendered and read inside a page and
+      # byte bound, and the data-room reader accepts exactly the paths the data-room
+      # door accepts. It calls no provider: scripts/fake-model-server.mjs answers and a
+      # stub `fitz` stands in for pymupdf, so there is no network and no wheel download.
+      - name: Vision tool (behavioural)
+        if: always()
+        run: npm run test:vision
+
       - name: Chat list persistence (behavioural)
         if: always()
         run: npm run test:chat-persist-coalesce
@@ -236,6 +251,21 @@ jobs:
       - name: PDF preview (rules, and the wiring that ships)
         if: always()
         run: npm run test:pdf-preview
+
+      # AN EMPTY MODEL RESPONSE. On 2026-09-23 the live chat died on every
+      # attempt with `MODEL_CALL_FAILED "Empty model response"` AFTER the pdf had
+      # already been read and extracted — and left no row anywhere, because every
+      # chat telemetry kind that existed is emitted by the browser. This runs the
+      # real recovery middleware against a model that really answers empty (the
+      # scripted server, extended to emit `finish_reason: "length"` with no
+      # content and the whole budget spent on reasoning), proves a person always
+      # gets either an answer or a sentence, proves the record carries the shape
+      # and none of the prompt, and asserts at the WIRE that nothing in the model
+      # path sets `max_tokens` — the hypothesis that only a live request could
+      # settle.
+      - name: Empty model response (survival, telemetry, output cap)
+        if: always()
+        run: npm run test:empty-model-response
 
       - name: Auth gates in lockstep
         if: always()

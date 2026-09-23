@@ -18,8 +18,18 @@ import { and, desc, eq } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { automationRuns } from "./db/schema.ts";
 
-/** The closed set of automation kinds a run row may describe. */
-export const AUTOMATION_TYPES = ["schedule", "system_cron", "connector", "workflow", "browser"] as const;
+/**
+ * The closed set of automation kinds a run or AUDIT row may describe.
+ *
+ * `chat` is not an automation and never appears in `automation_runs`; it is here
+ * because `automation-audit.ts` shares this union, and the web surface has
+ * written `automation_type = 'chat'` audit rows since chat telemetry shipped
+ * (`OpsAutomationType`, lib/ops-audit.ts). The agent runtime could not — a
+ * server-side chat incident had no kind to file under. That is one reason an
+ * empty model response killed live turns on 2026-09-23 and left no row anywhere
+ * an operator could read.
+ */
+export const AUTOMATION_TYPES = ["schedule", "system_cron", "connector", "workflow", "browser", "chat"] as const;
 export type AutomationType = (typeof AUTOMATION_TYPES)[number];
 
 export type AutomationRunStatus = "success" | "failed" | "running";

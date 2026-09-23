@@ -65,13 +65,15 @@ model provider you bill).
 
 ### Capability flags
 
-Two capabilities can be removed from a deployment entirely, for customers whose
-security review forbids outbound network access from the agent:
+Three capabilities can be removed from a deployment entirely, for customers whose
+security review forbids outbound network access from the agent (or, for vision,
+sending a document image to an inference provider):
 
 | Flag | Effect when `false` |
 |---|---|
 | `ENABLE_WEB_SEARCH` | removes `web_search` (Exa) |
 | `ENABLE_BROWSER` | removes the browser subagent's 8 tools |
+| `ENABLE_VISION` | removes `read_image` (the vision-language model behind a tool call). `CLOUDFLARE_MODEL_VISION=off` removes it the same way, for an account with no vision model |
 
 Both default **on**, so a deployment that sets neither is unchanged.
 

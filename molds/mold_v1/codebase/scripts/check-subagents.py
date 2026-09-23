@@ -232,6 +232,14 @@ def web_search_gated(path):
     return "WEB_SEARCH_ENABLED" in src and "disableTool" in src
 
 
+def read_image_gated(path):
+    """Same rule, second capability. ENABLE_VISION=false (or no vision model named) must remove
+    read_image EVERYWHERE it is declared. A subagent that re-exports the tool ungated would call a
+    vision model the deployment does not have, once per attempt, and report it as a broken document."""
+    src = read(path)
+    return "VISION_ENABLED" in src and "disableTool" in src
+
+
 class Report:
     def __init__(self, key):
         self.key, self.failures, self.warnings, self.passed = key, [], [], 0
@@ -368,6 +376,10 @@ def check_subagent(root, key, timeout=60, reg=None, grammar=None):
     if os.path.isfile(ws):
         r.check(web_search_gated(ws),
                 "tools/web_search.ts does not gate on WEB_SEARCH_ENABLED (ENABLE_WEB_SEARCH=false would leave this subagent on the web)")
+    ri = p("tools/read_image.ts")
+    if os.path.isfile(ri):
+        r.check(read_image_gated(ri),
+                "tools/read_image.ts does not gate on VISION_ENABLED (ENABLE_VISION=false would leave this subagent calling a vision model that is not configured)")
 
     # 8. registration = the generated registry knows the key (nothing is registered by hand)
     r.check(KEY_OK.match(key) is not None, "key \"%s\" is not lowercase letters, digits and hyphens (the MCP and the API refuse it)" % key)
@@ -449,6 +461,10 @@ def check_registry(root, reg=None, grammar=None, skip=()):
         if "web_search.ts" in files and os.path.basename(base) == "tools":
             path = os.path.join(base, "web_search.ts")
             r.check(web_search_gated(path), "%s does not gate on WEB_SEARCH_ENABLED (ENABLE_WEB_SEARCH=false would leave it on the web)"
+                    % os.path.relpath(path, root))
+        if "read_image.ts" in files and os.path.basename(base) == "tools":
+            path = os.path.join(base, "read_image.ts")
+            r.check(read_image_gated(path), "%s does not gate on VISION_ENABLED (ENABLE_VISION=false would leave it calling a vision model that is not there)"
                     % os.path.relpath(path, root))
     return r
 
@@ -592,6 +608,7 @@ def _fixture(root, key, broken=False):
     if broken:
         _write(os.path.join(sub, "sandbox.ts"), "export default defineSandbox({});\n")
         _write(os.path.join(sub, "tools/web_search.ts"), 'export { webSearchTool as default } from "#lib/tools.js";\n')
+        _write(os.path.join(sub, "tools/read_image.ts"), 'export { readImageTool as default } from "#lib/vision-tools.js";\n')
 
 
 def _root_hooks(root):
@@ -663,6 +680,7 @@ def self_test():
         for e in ["does not list unbuilt-one", "still lists removed", "no subagent.json declares (Customers/{customer_id}/old/**)",
                   "targets.json names \"gone\"", "agent/subagents/bad-one: subagent.json has unknown field",
                   "agent/subagents/bad-one/tools/web_search.ts does not gate",
+                  "agent/subagents/bad-one/tools/read_image.ts does not gate",
                   # The half no subagent can record about itself, and which no pack supplies.
                   "agent/hooks/delegation-runs.ts is missing"]:
             cases.append(("the registry reports: " + e, any(e in f for f in registry.failures), registry.failures))

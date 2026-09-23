@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getOpsDb } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { recordOpsAudit } from "@/lib/ops-audit";
-import { CHAT_TELEMETRY_KINDS, chatTelemetrySentence } from "@/lib/chat-telemetry";
+import { CHAT_TELEMETRY_KINDS, chatSessionTag, chatTelemetrySentence } from "@/lib/chat-telemetry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,26 +54,15 @@ const schema = z.object({
 /**
  * The session id, as something you can CORRELATE but not USE.
  *
- * `automation_id` was the raw eve session id, and `GET /api/ops/orgs/:id/audit`
- * returns the last 100 rows of this table to anyone in the workspace. So the
- * telemetry written when a chat went wrong published the ids of the chats it
- * went wrong in — which is the one secret every other hole in this area needs.
- * A session id is a capability in this system's shape: it is what the eve gate
- * decides on, what the transcript cache is keyed by, and what the mirror row
- * used to let a colleague claim.
- *
- * A truncated SHA-256 keeps the only property the feed actually uses — two
- * lines about the same chat carry the same id, so "this conversation has
- * severed six times in twelve minutes" is still visible at 2am — while the
- * value in the row opens nothing. 16 hex characters is 64 bits: far beyond
- * collision range for a chat feed, and short enough to read.
- *
- * NOT reversible by a reader, and not meant to be private FROM us: the same
- * hash of the same id computed here is how an operator matches a row back to a
- * session they already legitimately hold.
+ * The rule itself — a truncated SHA-256, and why a raw session id must never
+ * reach this table — now lives in `lib/chat-telemetry.ts` beside the kinds,
+ * because the agent runtime writes rows of the same shape from the other side
+ * of the deployment boundary (agent/lib/empty-model-response-log.ts) and two
+ * copies of a hash is exactly how "this conversation has severed six times in
+ * twelve minutes" stops being visible.
  */
 function sessionTag(sessionId: string): string {
-  return `chat_${createHash("sha256").update(sessionId).digest("hex").slice(0, 16)}`;
+  return chatSessionTag(sessionId, (value) => createHash("sha256").update(value).digest("hex"));
 }
 
 export async function POST(request: NextRequest) {

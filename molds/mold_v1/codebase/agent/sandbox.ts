@@ -20,7 +20,15 @@ const INSTALL_DOC_LIBS = `set -u
 # \`ModuleNotFoundError: No module named 'pdfplumber'\` then \`… 'PyPDF2'\`, and the turn ended
 # with an empty model response because nothing was left to try. The specialists' own sandboxes
 # already carry pdfplumber and pypdf; the main chat did not.
-PKGS="python-docx openpyxl python-pptx reportlab pdfplumber pypdf"
+# pymupdf (imported as \`fitz\`) RENDERS a pdf page to an image. That is the only route into a
+# SCANNED filing — and SEBI filings routinely are scans — because pdfplumber returns "" for a page
+# with no text layer, and "" is indistinguishable from an empty page to everything downstream. The
+# \`read_image\` tool runs its renderer in this sandbox and pip-installs pymupdf itself when it is
+# absent (agent/lib/vision-tools.ts), so this line is not what makes the feature work: it is what
+# keeps a ~30 s wheel download out of the middle of a person's turn on every cold sandbox. pdf2image
+# was the alternative and needs poppler, an apt package — a wheel installs where an apt-get needs a
+# root this sandbox may not have.
+PKGS="python-docx openpyxl python-pptx reportlab pdfplumber pypdf pymupdf"
 LOG=/tmp/eve-doc-libs.log
 : > "$LOG"
 
@@ -45,7 +53,7 @@ $SUDO python3 -m pip install --quiet --break-system-packages $PKGS >>"$LOG" 2>&1
   || python3 -m pip install --quiet --user $PKGS >>"$LOG" 2>&1 \\
   || true
 
-MISSING=$(python3 -c 'import importlib.util as u; print(" ".join(p for m, p in (("docx","python-docx"),("openpyxl","openpyxl"),("pptx","python-pptx"),("reportlab","reportlab"),("pdfplumber","pdfplumber"),("pypdf","pypdf")) if u.find_spec(m) is None))')
+MISSING=$(python3 -c 'import importlib.util as u; print(" ".join(p for m, p in (("docx","python-docx"),("openpyxl","openpyxl"),("pptx","python-pptx"),("reportlab","reportlab"),("pdfplumber","pdfplumber"),("pypdf","pypdf"),("fitz","pymupdf")) if u.find_spec(m) is None))')
 if [ -n "$MISSING" ]; then
   echo "missing after install: $MISSING" >&2
   tail -30 "$LOG" >&2

@@ -11,6 +11,37 @@
  *   delegate-plain     root delegates to `research`; the child answers and ends.
  *   delegate-parks     root delegates to `research`; the child calls ask_question
  *                      first, then answers once the reply reaches it.
+ *   vision             answers a `read_image` call by REPORTING what arrived on the
+ *                      wire: the model id, how many image parts and their media types.
+ *                      That makes "the picture really reached the provider, as an image
+ *                      part, on the VISION model" checkable without a provider — which
+ *                      is the one thing a mocked tool could never show. It is the only
+ *                      script that reads the request body rather than the messages,
+ *                      which is why `decide` takes the payload.
+ *   vision-empty       the same call, answered EMPTY — reusing `empty-always`'s shape
+ *                      below rather than inventing a second one, so `read_image` is
+ *                      shown surviving the MEASURED failure and not an approximation
+ *                      of it. Kimi K2.6 is both this repo's vision model and the model
+ *                      that produced that failure, so the two are the same event.
+ *   empty-always       EVERY completion comes back with no content at all —
+ *                      `finish_reason: "length"`, `content: null`, and the whole
+ *                      completion budget spent on reasoning. This is the live
+ *                      failure of 2026-09-23 (`MODEL_CALL_FAILED "Empty model
+ *                      response"` after the pdf had already been read) and the
+ *                      one shape that was ever reproduced by hand: `max_tokens:
+ *                      256` returns `length` + empty content + 256 completion
+ *                      tokens, because the orchestrator is a reasoning model and
+ *                      spends the budget thinking.
+ *   empty-then-answer  the first `--empties N` (default 1) completions come back
+ *                      empty the same way, then a plain text answer — so a
+ *                      recovery can be shown to actually recover rather than
+ *                      merely to stop crashing.
+ *
+ * Every request body is kept and served at `GET /__requests`, because the field
+ * that settles the empty-response hypothesis is one nothing else can see: the
+ * `max_tokens` the whole stack (eve, the AI SDK, this repo, a provider default)
+ * actually put on the wire. A test asserts on what arrived here, not on what the
+ * source says it sends.
  *
  * Who is calling is read off the prompt, not off a header: eve wraps every
  * delegated message with `You are the subagent "<name>".` (its
@@ -27,7 +58,12 @@ const PORT = Number(arg("port", "8788"));
 const SCRIPT = arg("script", "delegate-plain");
 const SUBAGENT = arg("subagent", "research");
 const NO_USAGE = argv.includes("--no-usage");
+const EMPTIES = Number(arg("empties", "1"));
+/** Completion tokens an empty reasoning answer burns — the measured 256. */
+const EMPTY_COMPLETION_TOKENS = Number(arg("empty-completion-tokens", "256"));
 const LOG = [];
+/** Every request body, in order — see the header note on `GET /__requests`. */
+const REQUESTS = [];
 
 const textOf = (content) =>
   typeof content === "string"
@@ -47,7 +83,53 @@ const childAlreadyAsked = (messages) =>
 /** Has the parent already received the delegation's tool result? */
 const parentHasResult = (messages) => messages.some((m) => m.role === "tool");
 
-function decide(messages) {
+/** How many completions have been answered empty so far (empty-* scripts). */
+let emptied = 0;
+
+/**
+ * The image parts of the last user message, as the OpenAI-compatible WIRE carries
+ * them: `{ type: "image_url", image_url: { url: "data:image/png;base64,..." } }`.
+ *
+ * The tool sends AI SDK `file` parts; the provider converts them to this on the
+ * way out. Reading the wire rather than the SDK-level part is the point — it is
+ * what the provider was actually sent, not what the tool believes it sent.
+ */
+function imagePartsIn(messages) {
+  const last = [...messages].reverse().find((m) => m.role === "user");
+  if (!last || !Array.isArray(last.content)) return [];
+  return last.content
+    .filter((part) => part?.type === "image_url" && typeof part.image_url?.url === "string")
+    .map((part) => {
+      const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(part.image_url.url) ?? [];
+      return { mediaType: match[1] ?? "unknown", base64Length: (match[3] ?? "").length };
+    });
+}
+
+function decide(messages, payload = {}) {
+  if (SCRIPT === "vision" || SCRIPT === "vision-empty") {
+    // `{ empty: true }` — the same shape `empty-always` returns, so `completion()`
+    // and `sseChunks()` need no case of their own for this. The branch that used to
+    // be here returned `{ text: "" }`, which the truthiness test below reads as "no
+    // text", sending it to the tool-call branch with no tool name.
+    if (SCRIPT === "vision-empty") return { empty: true };
+    const images = imagePartsIn(messages);
+    return {
+      text: `VISION-READ model=${payload.model} images=${images.length} types=${
+        images.map((i) => i.mediaType).join(",") || "none"
+      } bytes=${images.map((i) => i.base64Length).join(",") || "0"}`,
+    };
+  }
+  if (SCRIPT === "empty-always") return { empty: true };
+  if (SCRIPT === "empty-then-answer") {
+    if (emptied < EMPTIES) {
+      emptied++;
+      return { empty: true };
+    }
+    // Plain text, not the delegation script: what is being shown is that a
+    // reissue after an empty answer reaches the person, and a tool call would
+    // put an unrelated tool loop in the way of saying so.
+    return { text: "RECOVERED: the answer that the empty response was hiding." };
+  }
   if (isChild(messages)) {
     if (SCRIPT === "delegate-parks" && !childAlreadyAsked(messages)) {
       return {
@@ -61,10 +143,36 @@ function decide(messages) {
   return { tool: SUBAGENT, args: { message: "Do the specialist work." } };
 }
 
+/**
+ * Usage for an empty answer: the budget went on thinking.
+ *
+ * `completion_tokens_details.reasoning_tokens` is what the provider-level usage
+ * breaks out as `outputTokens.reasoning`, and "reasoning ≈ completion on an
+ * empty answer" is the whole reproduction in two numbers.
+ */
+const emptyUsage = () => ({
+  prompt_tokens: 8213,
+  completion_tokens: EMPTY_COMPLETION_TOKENS,
+  total_tokens: 8213 + EMPTY_COMPLETION_TOKENS,
+  completion_tokens_details: { reasoning_tokens: EMPTY_COMPLETION_TOKENS },
+});
+
 let seq = 0;
 function completion(decision, model) {
   seq++;
   const id = `chatcmpl-${seq}`;
+  if (decision.empty) {
+    // content null AND no tool_calls: nothing for the caller to show and nothing
+    // to run. `length` is the raw finish reason the live reproduction returns.
+    return {
+      id,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{ index: 0, message: { role: "assistant", content: null }, finish_reason: "length" }],
+      ...(NO_USAGE ? {} : { usage: emptyUsage() }),
+    };
+  }
   if (decision.text) {
     return {
       id,
@@ -106,6 +214,18 @@ function sseChunks(decision, model) {
   const id = `chatcmpl-${seq}`;
   const base = { id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model };
   const out = [];
+  if (decision.empty) {
+    // A role delta and then the end: a well-formed stream that says nothing.
+    // Streaming was ruled out as the cause, so the empty must be reproducible on
+    // the streamed path too or the test is not testing the live path.
+    out.push({ ...base, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
+    out.push({
+      ...base,
+      choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+      ...(NO_USAGE ? {} : { usage: emptyUsage() }),
+    });
+    return out;
+  }
   if (decision.text) {
     out.push({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: decision.text }, finish_reason: null }] });
     out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], ...(NO_USAGE ? {} : { usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } }) });
@@ -139,6 +259,11 @@ const server = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    if (req.url?.includes("__requests")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(REQUESTS));
+      return;
+    }
     if (!req.url?.includes("chat/completions")) {
       res.writeHead(404).end("{}");
       return;
@@ -150,10 +275,13 @@ const server = createServer((req, res) => {
       res.writeHead(400).end("{}");
       return;
     }
+    REQUESTS.push(payload);
     const messages = payload.messages ?? [];
-    const decision = decide(messages);
+    const decision = decide(messages, payload);
     LOG.push({ child: isChild(messages), decision });
-    console.error(`[fake-model] ${isChild(messages) ? "CHILD " : "ROOT  "} -> ${decision.tool ?? "text"}`);
+    console.error(
+      `[fake-model] ${isChild(messages) ? "CHILD " : "ROOT  "} -> ${decision.empty ? "EMPTY" : (decision.tool ?? "text")} (max_tokens=${payload.max_tokens ?? "unset"})`,
+    );
     if (payload.stream) {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
       for (const chunk of sseChunks(decision, payload.model)) res.write(`data: ${JSON.stringify(chunk)}\n\n`);

@@ -26,7 +26,7 @@ import {
   personInteractionRecordSchema,
   personaSchema,
 } from "#lib/dataroom-schema.js";
-import { DataroomPathError, getDataroomStore } from "#lib/dataroom-store.js";
+import { DataroomPathError } from "#lib/dataroom-store.js";
 import {
   commitChangeset,
   openChangeset,
@@ -34,21 +34,15 @@ import {
   writeVersioned,
 } from "#lib/dataroom-versions.js";
 import { callerFromCtx, orgForSession, type SessionCtxLike } from "#lib/org-context.js";
+// The workspace-scoped store resolver, shared with every other data-room reader
+// (agent/lib/dataroom-session.ts) so a second reader cannot arrive with its own.
+import { storeForSession } from "./dataroom-session.ts";
 
 import { inheritedScope } from "./session-scope.ts";
 /** Re-throw as a model-readable message when the store rejects a path. */
 function pathErrorMessage(error: unknown): string | null {
   if (error instanceof DataroomPathError) return error.message;
   return null;
-}
-
-/**
- * The data-room store scoped to the CALLER's workspace. Fail-safe: with the
- * multi-tenant flag off (or no tenancy), every caller resolves to org #1, so
- * this returns the legacy-root store — byte-identical to before.
- */
-async function storeForSession(ctx: SessionCtxLike | undefined) {
-  return getDataroomStore(await orgForSession(ctx));
 }
 
 /** Who a version row is attributed to: the verified caller, else the agent itself. */
