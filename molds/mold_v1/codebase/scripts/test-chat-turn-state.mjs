@@ -134,8 +134,16 @@ for (const end of ["turn.completed", "turn.failed", "turn.cancelled"]) {
   );
 }
 check(
-  "a LATER turn starting kills it",
-  deadInputRequestIds([...livePark, started("turn_1")]).has("req_1"),
+  "a LATER turn running a step kills it (eve resolves pending input before any step)",
+  deadInputRequestIds([...livePark, started("turn_1"), { type: "step.started", data: { turnId: "turn_1", stepIndex: 0 } }]).has("req_1"),
+);
+check(
+  "a LATER turn with no step does not (eve DEFERRED a message behind the approval)",
+  !deadInputRequestIds([...livePark, started("turn_1"), { type: "turn.completed", data: { turnId: "turn_1" } }, park]).has("req_1"),
+);
+check(
+  "its own turn's epilogue BEFORE the park does not kill it (eve's real park order)",
+  !deadInputRequestIds([started("turn_0"), asked("turn_0", "req_1", "call_1"), { type: "turn.completed", data: { turnId: "turn_0" } }, park]).has("req_1"),
 );
 check(
   "a REPLAYED turn.started with the same id does not (eve replays a turn that threw)",

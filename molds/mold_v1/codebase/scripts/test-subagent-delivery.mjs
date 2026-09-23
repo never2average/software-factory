@@ -207,8 +207,10 @@ console.log("\n5. A child that dies still reports back to the parent");
 
 console.log("\n6. The parent's OWN approvals are untouched by any of this");
 {
-  // A request whose call id the parent declared is not proxied, and must keep
-  // its old lifecycle: killed by the turn that was suspended on it ending.
+  // A request whose call id the parent declared is not proxied, and keeps the
+  // parent's lifecycle: eve's park epilogue (`turn.completed`, then
+  // `session.waiting`) is the park, not an end; the turn completing AFTER the
+  // park, or a later turn running a step, ends it.
   const turnId = "t1";
   const events = [
     { type: "session.started", data: {} },
@@ -234,11 +236,12 @@ console.log("\n6. The parent's OWN approvals are untouched by any of this");
   ];
   check("a parent-declared request is not proxied", proxiedChildRequestIds(events).size === 0);
   check("it is alive while its turn is open", !deadInputRequestIds(events).has("r1"));
-  const ended = [...events, { type: "turn.completed", data: { turnId } }];
-  check(
-    "and dies with its own turn, exactly as before",
-    deadInputRequestIds(ended).has("r1"),
-  );
+  const parked = [...events, { type: "turn.completed", data: { turnId } }, { type: "session.waiting", data: {} }];
+  check("its own turn's park epilogue leaves it alive", !deadInputRequestIds(parked).has("r1"));
+  const ended = [...parked, { type: "turn.completed", data: { turnId } }];
+  check("and it dies with its own turn once parked", deadInputRequestIds(ended).has("r1"));
+  const resumed = [...parked, { type: "turn.started", data: { turnId: "t2" } }, { type: "step.started", data: { turnId: "t2", stepIndex: 0 } }];
+  check("or when a later turn runs a step", deadInputRequestIds(resumed).has("r1"));
 }
 
 console.log("\n7. Every declared subagent records its runs, once per invocation");

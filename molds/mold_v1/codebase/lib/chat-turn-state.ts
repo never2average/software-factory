@@ -766,12 +766,24 @@ export function withSessionEpochs<TData extends object, TEvent extends TurnEvent
  *    composer, let a composer answer resolve it.
  *  - DEAD — the same `input.requested`, but the stream later shows the call
  *    resolved (`action.result` for its `callId`) or the run ended
- *    (`turn.completed` / `turn.failed` / `turn.cancelled` for its `turnId`, a
- *    LATER turn started, or the session ended). Nothing can answer it any more.
+ *    (`turn.failed` / `turn.cancelled` for its `turnId`, its turn completing
+ *    AFTER the park, a LATER turn running a step, or the session ended).
+ *    Nothing can answer it any more.
  *
  * `session.waiting` is the PARK signal, not an end (see the table in
  * docs/concepts/sessions-runs-and-streaming): it must never kill a request, or
  * every approval would be dead the instant it was asked.
+ *
+ * Nor does the parked turn's own `turn.completed` BEFORE that park. eve ends a
+ * parked turn with its epilogue — the recorded order is `input.requested` →
+ * `turn.completed` (same turn) → `session.waiting` — so treating it as the end
+ * of the run marked every approval the parent raised "expired" the instant it
+ * appeared (live, 2026-09-23; scripts/fixtures/approval-park/). Likewise a
+ * later `turn.started` alone proves nothing: a follow-up message that does not
+ * answer a pending approval is DEFERRED by eve (harness resolvePendingInput →
+ * `deferredMessage`) as a turn with a preamble and an epilogue and NO step, and
+ * the approval is still parked. Only a later turn that runs a step shows the
+ * batch was resolved — eve clears it before any `step.started`.
  *
  * Returns the DEAD ids. Callers drop them from `pendingInputs` (so the chat is
  * sendable) and render them the way an expired card renders — a muted note that
@@ -857,7 +869,18 @@ export function proxiedChildRequestIds(events: readonly TurnEvent[]): ReadonlySe
 
 export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<string> {
   /** requestId → the call and turn it belongs to, while it is still answerable. */
-  const open = new Map<string, { turnId?: string; callId?: string; proxied?: boolean }>();
+  const open = new Map<
+    string,
+    {
+      turnId?: string;
+      callId?: string;
+      proxied?: boolean;
+      /** A `session.waiting` has been seen since it was asked: the turn's epilogue is behind it. */
+      parked?: boolean;
+      /** A later turn has started since: its first `step.started` means the batch was resolved. */
+      superseded?: boolean;
+    }
+  >();
   const dead = new Set<string>();
   /** Call ids the PARENT declared — see proxiedChildRequestIds for why this is the test. */
   const declared = new Set<string>();
@@ -933,8 +956,15 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
         // calls emitTurnEpilogue so the channel can render the prompt), so the
         // parent's turn ending says nothing about the child's. Killing it here is
         // what made the question unanswerable the instant it was asked.
+        //
+        // The parent's OWN park has the same epilogue: eve emits `turn.completed`
+        // for the parked turn right after `input.requested` and before
+        // `session.waiting`. That one is the park, not an end, so a completion
+        // only counts once the request has parked. (A failure or cancellation is
+        // an end whenever it comes.)
         for (const [requestId, req] of [...open]) {
           if (req.proxied) continue;
+          if (type === "turn.completed" && !req.parked) continue;
           if (req.turnId === undefined || turnId === undefined || req.turnId === turnId) {
             kill(requestId);
           }
@@ -942,18 +972,42 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
         break;
       }
       case "turn.started": {
-        // A LATER turn started, so the parked one cannot still be suspended.
+        // A LATER turn started. That alone does not end the park: a message
+        // that does not answer a pending approval is DEFERRED behind it (eve's
+        // resolvePendingInput → `deferredMessage`) and arrives as a turn with a
+        // preamble, an epilogue and no step, the approval still parked. The
+        // turn's first `step.started` is the proof (below).
         // eve re-emits `turn.started` for the SAME turn when it replays a turn
         // after a step throws (see retryStormDetected) — same id, still alive.
-        // Proxied requests are exempt for the same reason as above: they carry a
-        // CHILD turn id, so every parent turn looks "later" than them. Only the
-        // delegation settling (or the session ending) retires one.
-        for (const [requestId, req] of [...open]) {
+        // Proxied requests are exempt: they carry a CHILD turn id, so every
+        // parent turn looks "later" than them. Only the delegation settling (or
+        // the session ending) retires one.
+        for (const req of open.values()) {
           if (req.proxied) continue;
           if (req.turnId !== undefined && turnId !== undefined && req.turnId !== turnId) {
-            kill(requestId);
+            req.superseded = true;
           }
         }
+        break;
+      }
+      case "step.started": {
+        // A later turn is RUNNING THE MODEL, so the parked batch is gone: eve
+        // resolves (and clears) pending input before any step starts, and a turn
+        // it cannot resolve emits no step at all. Covers the answer whose
+        // `action.result` never made it into the persisted stream.
+        for (const [requestId, req] of [...open]) {
+          if (req.proxied) continue;
+          const later =
+            req.superseded ||
+            (req.turnId !== undefined && turnId !== undefined && req.turnId !== turnId);
+          if (later) kill(requestId);
+        }
+        break;
+      }
+      case "session.waiting": {
+        // The PARK. It never kills anything; it only marks that the parked
+        // turn's epilogue is behind every request open now.
+        for (const req of open.values()) req.parked = true;
         break;
       }
       case "session.completed":
@@ -964,7 +1018,6 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
         break;
       }
       default:
-        // `session.waiting` lands here ON PURPOSE. It is the park.
         break;
     }
   }
