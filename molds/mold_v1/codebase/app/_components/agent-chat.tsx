@@ -205,6 +205,7 @@ import {
   holdLabel,
   isRenderLoopError,
   mergeAttachedEvents,
+  pendingInputRequestParts,
   renderLoopScene,
   resyncDecision,
   retryStormDetected,
@@ -1517,58 +1518,22 @@ export function AgentChat({
   // proxied child approvals carry stale turn ids, so the reducer attaches them
   // to an EARLIER assistant message — in place they render above newer
   // messages. Collected here and rendered after the last message instead.
-  const pendingInputParts = useMemo(() => {
-    const out: Array<React.ComponentProps<typeof PendingApprovalCard>["part"]> = [];
-    for (const m of viewMessages) {
-      for (const p of m.parts ?? []) {
-        const part = p as {
-          type?: string;
-          toolName?: string;
-          state?: string;
-          toolCallId?: string;
-          toolMetadata?: { eve?: { inputRequest?: unknown; inputResponse?: unknown } };
-        };
-        if (part.type !== "dynamic-tool") continue;
-        if (part.toolName?.startsWith("eve:subagent:")) continue;
-        // Subagent-proxied approvals live in the rail, never in this thread.
-        if (isProxiedChildApproval(part)) continue;
-        // A tool that has already RUN (terminal) is never awaiting approval —
-        // even when its inputRequest metadata lingers and no inputResponse was
-        // recorded on the part (a write approved via the parent proxy). Without
-        // this guard a completed approval-gated write is hoisted to the tail as a
-        // DUPLICATE (empty) approval card. Mirrors proxiedApprovalPending below.
-        const terminal =
-          part.state === "output-available" ||
-          part.state === "output-error" ||
-          part.state === "output-denied";
-        const pending =
-          !terminal &&
-          (part.state === "approval-requested" ||
-            (Boolean(part.toolMetadata?.eve?.inputRequest) && !part.toolMetadata?.eve?.inputResponse));
-        if (!pending) continue;
-        const requestId = (
-          part.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined
-        )?.requestId;
-        // Waved away by the operator — never re-hoist it.
-        if (requestId && dismissedRequestIds.has(requestId)) continue;
-        // Answered cards drop out — UNLESS the answer failed and expired them:
-        // an expired card stays, re-rendered as a muted "run has stopped" note.
-        // A DEAD request (its run ended on the stream) is kept for the same
-        // reason and rendered the same way: the operator sees what was asked and
-        // that nothing is waiting on them, rather than a Yes/No that can only
-        // fail. It no longer counts towards the send gate — see openInputRequests.
-        if (
-          requestId &&
-          respondedRequestIds.has(requestId) &&
-          !expiredRequestIds.has(requestId)
-        )
-          continue;
-        out.push(part as never);
-      }
-    }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMessages, respondedRequestIds, expiredRequestIds, dismissedRequestIds, ownActionCallIds, hasSubagent]);
+  //
+  // A DELEGATED CHILD'S REQUEST BELONGS HERE TOO, and used not to: the old
+  // `if (isProxiedChildApproval(part)) continue` sent it to the rail instead,
+  // which is why a declared specialist's output never reached this chat. See
+  // `pendingInputRequestParts` in lib/chat-turn-state for the measurement and
+  // the three things that one `continue` broke.
+  const pendingInputParts = useMemo(
+    () =>
+      pendingInputRequestParts({
+        messages: viewMessages as readonly { parts?: readonly unknown[] }[],
+        dismissed: dismissedRequestIds,
+        responded: respondedRequestIds,
+        expired: expiredRequestIds,
+      }) as Array<React.ComponentProps<typeof PendingApprovalCard>["part"]>,
+    [viewMessages, respondedRequestIds, expiredRequestIds, dismissedRequestIds],
+  );
 
   /**
    * THE SEND GATE — see lib/chat-turn-state `sendGate` for the why.
@@ -1637,69 +1602,6 @@ export function AgentChat({
     [viewMessages],
   );
 
-  // A subagent parked on an approval that we've pulled out of the main thread.
-  // We surface a single tail notice (not the mis-positioned card) so the run is
-  // still discoverable when the rail is closed. The child-proxied event carries
-  // no childSessionId, so name the currently running subagent if there is one.
-  const proxiedApprovalPending = useMemo(() => {
-    // A proxied approval is only LIVE while its subagent is still parked. Once
-    // every subagent DELEGATION has reached a terminal state, any lingering
-    // approval part is stale — the child answered it via the parent proxy and
-    // ran to completion, but the mis-positioned parent-thread part never got its
-    // terminal update. Gating on a live delegation is what kills the stale
-    // "a subagent needs your approval" banner after the run finishes (a done
-    // T-800 in the rail while the banner still nagged).
-    let anyDelegationLive = false;
-    for (const m of viewMessages) {
-      for (const p of m.parts ?? []) {
-        const part = p as { type?: string; state?: string; toolName?: string };
-        if (part.type !== "dynamic-tool" || !part.toolName?.startsWith("eve:subagent:")) continue;
-        const done =
-          part.state === "output-available" ||
-          part.state === "output-error" ||
-          part.state === "output-denied";
-        if (!done) anyDelegationLive = true;
-      }
-    }
-    if (!anyDelegationLive) return false;
-
-    for (const m of viewMessages) {
-      for (const p of m.parts ?? []) {
-        const part = p as {
-          type?: string;
-          state?: string;
-          toolName?: string;
-          toolCallId?: string;
-          toolMetadata?: { eve?: { inputRequest?: unknown; inputResponse?: unknown } };
-        };
-        if (!isProxiedChildApproval(part)) continue;
-        // A completed tool (terminal state) is NOT awaiting approval, even if
-        // its own part never recorded the response (subagent approvals answered
-        // via the parent proxy) — otherwise the banner lingers after the run.
-        const terminal =
-          part.state === "output-available" ||
-          part.state === "output-error" ||
-          part.state === "output-denied";
-        const pending =
-          !terminal &&
-          Boolean(part.toolMetadata?.eve?.inputRequest) &&
-          !part.toolMetadata?.eve?.inputResponse;
-        if (!pending) continue;
-        // Already answered (via the Control Panel proxy) or its run has DIED —
-        // in both cases the part can stay non-terminal forever, so consult the
-        // responded/expired sets the card already tracks rather than trusting
-        // the part's own state, which lags for proxied child approvals.
-        const rid = (part.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined)?.requestId;
-        if (rid && (respondedRequestIds.has(rid) || expiredRequestIds.has(rid))) continue;
-        // The stream says this one's call resolved or its turn ended: the banner
-        // would be nagging about a decision nobody can make any more.
-        if (rid && deadRequests.has(rid)) continue;
-        return true;
-      }
-    }
-    return false;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMessages, respondedRequestIds, expiredRequestIds, deadRequests, ownActionCallIds, hasSubagent]);
   const insights = useMemo(() => {
     const base = deriveInsights(viewMessages);
     return {
@@ -3284,27 +3186,15 @@ export function AgentChat({
                 })}
               </div>
             ) : null}
-            {/* A proxied child approval is only live while the PARENT turn is
-                in-flight (its open stream is how the approval reaches us). Once
-                the turn ends and the composer is back, a lingering approval is
-                stale — gate on isBusy so it never outlives its turn. */}
-            {proxiedApprovalPending && isBusy ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setCockpitOpen(true);
-                  const running = insights.subagents.find((s) => s.status === "running");
-                  if (running) setFocusSubagent(running.callId);
-                }}
-                className="flex w-full items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-amber-500/10"
-              >
-                <ClockIcon className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                <span className="min-w-0 flex-1">
-                  A subagent needs your approval — open the Control Panel to respond.
-                </span>
-                <PanelRightIcon className="size-4 shrink-0 text-muted-foreground" />
-              </button>
-            ) : null}
+            {/* The "A subagent needs your approval — open the Control Panel to
+                respond" banner that used to sit here is gone. It was gated on
+                `isBusy`, which goes false the moment eve emits the parent's turn
+                epilogue for a parked child (turn.completed → session.waiting is
+                the PARK, not the end) — so it disappeared exactly when the child
+                was waiting, and while it showed it only pointed somewhere else.
+                The child's request is now an answerable card in
+                `pendingInputParts` above, which also holds the send gate, so
+                typed text becomes the answer instead of vanishing. */}
             {shownHandoffs.map((h) => (
               <div
                 key={h.callId}

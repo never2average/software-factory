@@ -702,16 +702,88 @@ interface OpenRequestShape {
   readonly requestId?: unknown;
   readonly action?: { readonly callId?: unknown };
 }
+interface ActionShape {
+  readonly kind?: unknown;
+  readonly callId?: unknown;
+}
 interface RequestEventData {
   readonly turnId?: unknown;
   readonly requests?: readonly OpenRequestShape[];
-  readonly result?: { readonly callId?: unknown };
+  readonly actions?: readonly ActionShape[];
+  readonly result?: { readonly callId?: unknown; readonly kind?: unknown };
+}
+
+/**
+ * IS THIS REQUEST THE PARENT'S OWN, OR PROXIED UP FROM A DELEGATED CHILD?
+ *
+ * Every call the PARENT makes is announced as an `actions.requested` carrying
+ * that call's id. A delegated child's approval or question is not: eve forwards
+ * it onto the parent's stream as a bare `input.requested` whose `action.callId`
+ * belongs to the CHILD's tool call, with no `actions.requested` of its own
+ * (eve/dist/src/execution/subagent-adapter.js forwards the child's event verbatim
+ * through `forwardSubagentInputRequestStep`). So "its call id was never declared
+ * here" is the only signal on this stream that distinguishes the two, and it is
+ * exact — measured on a recorded delegation stream, where the child's
+ * `ask_question` call id appears in `input.requested` and nowhere else
+ * (scripts/fixtures/subagent-delivery/child-parks-then-answered.ndjson).
+ *
+ * This matters because the two are answered through DIFFERENT eve paths. The
+ * parent's own request resolves from plain follow-up text server-side; a proxied
+ * one does not — eve routes only structured `inputResponses`, keyed by
+ * `requestId`, to the child (`routeDeliverPayload` in
+ * eve/dist/src/execution/subagent-hitl-proxy.js splits the payload on that field
+ * alone and everything else goes to the parent). Text typed at a parked child is
+ * therefore not an answer: it is buffered behind the very delegation it was
+ * meant to release, and never reaches anybody. Measured 2026-09-23 against the
+ * real runtime: after the parent's `input.requested`, a follow-up `message`
+ * produced no `message.received`, no new turn, and no result — it vanished with
+ * `{"ok":true}` (scripts/fixtures/subagent-delivery/child-parks-never-answered.ndjson).
+ *
+ * "Not declared here" is only trusted once a `subagent.called` has been seen, so
+ * the rule stays dormant in a plain conversation. That guard is not cosmetic: a
+ * transcript can legitimately begin AFTER the `actions.requested` that declared
+ * a call — a replay from a later index, a compacted cache — and without a child
+ * in the picture the parent's own approval would then be misread as proxied and
+ * outlive its turn, which is the stale-approval defect running backwards.
+ */
+export function proxiedChildRequestIds(events: readonly TurnEvent[]): ReadonlySet<string> {
+  const declared = new Set<string>();
+  const proxied = new Set<string>();
+  let sawDelegation = false;
+  for (const raw of events) {
+    const data = (raw as { data?: RequestEventData }).data;
+    if (raw?.type === "subagent.called") {
+      sawDelegation = true;
+      continue;
+    }
+    if (raw?.type === "actions.requested") {
+      for (const a of data?.actions ?? []) {
+        if (typeof a?.callId === "string") declared.add(a.callId);
+      }
+      continue;
+    }
+    if (raw?.type !== "input.requested") continue;
+    for (const req of data?.requests ?? []) {
+      const requestId = typeof req?.requestId === "string" ? req.requestId : undefined;
+      if (!requestId) continue;
+      const callId = typeof req?.action?.callId === "string" ? req.action.callId : undefined;
+      // No call id at all is the parent's own session-limit prompt, not a child's.
+      if (sawDelegation && callId !== undefined && !declared.has(callId)) proxied.add(requestId);
+    }
+  }
+  return proxied.size === 0 ? NO_REQUEST_IDS : proxied;
 }
 
 export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<string> {
   /** requestId → the call and turn it belongs to, while it is still answerable. */
-  const open = new Map<string, { turnId?: string; callId?: string }>();
+  const open = new Map<string, { turnId?: string; callId?: string; proxied?: boolean }>();
   const dead = new Set<string>();
+  /** Call ids the PARENT declared — see proxiedChildRequestIds for why this is the test. */
+  const declared = new Set<string>();
+  /** Delegations dispatched minus delegations settled. */
+  let liveDelegations = 0;
+  /** No child has been started, so nothing on this stream can be proxied from one. */
+  let sawDelegation = false;
   const kill = (requestId: string) => {
     open.delete(requestId);
     dead.add(requestId);
@@ -722,6 +794,17 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
     const data = (raw as { data?: RequestEventData }).data;
     const turnId = typeof data?.turnId === "string" ? data.turnId : undefined;
     switch (type) {
+      case "actions.requested": {
+        for (const a of data?.actions ?? []) {
+          if (typeof a?.callId === "string") declared.add(a.callId);
+          if (a?.kind === "subagent-call" || a?.kind === "remote-agent-call") liveDelegations++;
+        }
+        break;
+      }
+      case "subagent.called": {
+        sawDelegation = true;
+        break;
+      }
       case "input.requested": {
         for (const req of data?.requests ?? []) {
           const requestId = typeof req?.requestId === "string" ? req.requestId : undefined;
@@ -731,14 +814,31 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
           // before — otherwise one bad click would bury a live approval.
           dead.delete(requestId);
           const callId = typeof req?.action?.callId === "string" ? req.action.callId : undefined;
-          open.set(requestId, { turnId, callId });
+          open.set(requestId, {
+            turnId,
+            callId,
+            proxied: sawDelegation && callId !== undefined && !declared.has(callId),
+          });
         }
         break;
       }
       case "action.result": {
+        const callId = typeof data?.result?.callId === "string" ? data.result.callId : undefined;
+        // A DELEGATION settling retires every question that child still had open.
+        // It has to: a proxied request carries the CHILD's turn id and the CHILD's
+        // call id, so neither of the two rules below can ever reach it — the
+        // parent's `turn.completed` names a different turn, and the delegation's
+        // own `action.result` names a different call. Without this, a child that
+        // died or was answered elsewhere left a question that looked live for
+        // ever, and (since these now hold the send gate) the composer with it.
+        if (data?.result?.kind === "subagent-result") {
+          liveDelegations = Math.max(0, liveDelegations - 1);
+          if (liveDelegations === 0) {
+            for (const [requestId, req] of [...open]) if (req.proxied) kill(requestId);
+          }
+        }
         // The gated call RAN (or was denied): its approval was consumed, whether
         // or not this client is the one that answered it.
-        const callId = typeof data?.result?.callId === "string" ? data.result.callId : undefined;
         if (!callId) break;
         for (const [requestId, req] of [...open]) if (req.callId === callId) kill(requestId);
         break;
@@ -747,8 +847,13 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
       case "turn.failed":
       case "turn.cancelled": {
         // The turn that was suspended on the request is over. Nothing will pick
-        // the answer up.
+        // the answer up. A PROXIED request is exempt: the parent emits this
+        // epilogue while the child is still parked (eve's emitProxiedInputRequest
+        // calls emitTurnEpilogue so the channel can render the prompt), so the
+        // parent's turn ending says nothing about the child's. Killing it here is
+        // what made the question unanswerable the instant it was asked.
         for (const [requestId, req] of [...open]) {
+          if (req.proxied) continue;
           if (req.turnId === undefined || turnId === undefined || req.turnId === turnId) {
             kill(requestId);
           }
@@ -759,7 +864,11 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
         // A LATER turn started, so the parked one cannot still be suspended.
         // eve re-emits `turn.started` for the SAME turn when it replays a turn
         // after a step throws (see retryStormDetected) — same id, still alive.
+        // Proxied requests are exempt for the same reason as above: they carry a
+        // CHILD turn id, so every parent turn looks "later" than them. Only the
+        // delegation settling (or the session ending) retires one.
         for (const [requestId, req] of [...open]) {
+          if (req.proxied) continue;
           if (req.turnId !== undefined && turnId !== undefined && req.turnId !== turnId) {
             kill(requestId);
           }
@@ -781,6 +890,91 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
   // One shared empty set, so a transcript with no dead requests keeps the same
   // reference on every projection (see withRequestIds for why that matters).
   return dead.size === 0 ? NO_REQUEST_IDS : dead;
+}
+
+/** The shape of a message part this projection reads; deliberately structural. */
+export interface InputRequestPart {
+  readonly type?: string;
+  readonly toolName?: string;
+  readonly state?: string;
+  readonly toolCallId?: string;
+  readonly toolMetadata?: {
+    readonly eve?: { readonly inputRequest?: unknown; readonly inputResponse?: unknown };
+  };
+}
+
+/**
+ * WHICH REQUESTS BELONG AT THE TAIL OF THE CONVERSATION, ANSWERABLE.
+ *
+ * Extracted from agent-chat so the decision can be RUN over a recorded stream
+ * rather than read. It is the whole of the subagent hand-back defect: the chat
+ * used to `continue` here on any proxied child request ("Subagent-proxied
+ * approvals live in the rail, never in this thread"), and everything downstream
+ * is derived from this list — the answer cards, and `openInputRequests`, which
+ * is what `sendGate` counts and what `composerRoute` resolves typed text
+ * against. Dropping them here therefore did three things at once:
+ *
+ *   1. no card, so the only way to answer was to open the Control Panel, find
+ *      the run, and wait for its child stream to attach;
+ *   2. `sendGate` saw zero pending inputs, so the composer re-opened as if the
+ *      chat were idle;
+ *   3. `composerRoute` could only return "send", so the operator's typed answer
+ *      left as a plain `message` — which eve does NOT route to a parked child
+ *      (see proxiedChildRequestIds). It was swallowed in silence.
+ *
+ * Measured 2026-09-23 against the live deployment: across six sessions, not one
+ * declared specialist ever returned a result, while the built-in `agent` tool —
+ * which the model calls without ever parking — returned fine. The operator's
+ * workaround was to paste the specialist's output into the chat by hand as a
+ * 21 KB message.
+ *
+ * A proxied request is hoisted to the TAIL, not rendered in place, because it
+ * carries the child's turn id and eve's reducer therefore attaches it to an
+ * earlier assistant message — in place it renders above newer text. That is
+ * what this collection was built for; it just refused its own occupants.
+ */
+export function pendingInputRequestParts(input: {
+  readonly messages: readonly { readonly parts?: readonly unknown[] }[];
+  readonly dismissed: ReadonlySet<string>;
+  readonly responded: ReadonlySet<string>;
+  readonly expired: ReadonlySet<string>;
+}): InputRequestPart[] {
+  const out: InputRequestPart[] = [];
+  for (const m of input.messages) {
+    for (const p of m.parts ?? []) {
+      const part = p as InputRequestPart;
+      if (part.type !== "dynamic-tool") continue;
+      // The DELEGATION card itself is not a request — it is the running child.
+      if (part.toolName?.startsWith("eve:subagent:")) continue;
+      // A tool that has already RUN (terminal) is never awaiting approval —
+      // even when its inputRequest metadata lingers and no inputResponse was
+      // recorded on the part (a write approved via the parent proxy). Without
+      // this guard a completed approval-gated write is hoisted to the tail as a
+      // DUPLICATE (empty) approval card.
+      const terminal =
+        part.state === "output-available" ||
+        part.state === "output-error" ||
+        part.state === "output-denied";
+      const pending =
+        !terminal &&
+        (part.state === "approval-requested" ||
+          (Boolean(part.toolMetadata?.eve?.inputRequest) && !part.toolMetadata?.eve?.inputResponse));
+      if (!pending) continue;
+      const requestId = (part.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined)
+        ?.requestId;
+      // Waved away by the operator — never re-hoist it.
+      if (requestId && input.dismissed.has(requestId)) continue;
+      // Answered cards drop out — UNLESS the answer failed and expired them:
+      // an expired card stays, re-rendered as a muted "run has stopped" note.
+      // A DEAD request (its run ended on the stream) is kept for the same
+      // reason and rendered the same way: the operator sees what was asked and
+      // that nothing is waiting on them, rather than a Yes/No that can only
+      // fail. It no longer counts towards the send gate — see openInputRequests.
+      if (requestId && input.responded.has(requestId) && !input.expired.has(requestId)) continue;
+      out.push(part);
+    }
+  }
+  return out;
 }
 
 /**

@@ -1,8 +1,8 @@
 /**
- * Run + token accounting for the "customer-context" workflow.
+ * Run + token accounting for the "app-author" workflow.
  *
  * Subagent hooks fire only inside this subagent's scope, so every event here
- * belongs to a customer-context turn. `turn.started` OPENS this turn's automation_runs
+ * belongs to a app-author turn. `turn.started` OPENS this turn's automation_runs
  * row, each model step adds its usage to it, and turn.completed / turn.failed
  * close it out. That row is what the Ops Center's run history and token usage
  * read.
@@ -19,7 +19,7 @@
 import { defineHook } from "eve/hooks";
 import { finishWorkflowRun, openWorkflowRun, recordWorkflowStep } from "#lib/workflow-usage.js";
 
-const WORKFLOW = "customer-context";
+const WORKFLOW = "app-author";
 
 export default defineHook({
   events: {

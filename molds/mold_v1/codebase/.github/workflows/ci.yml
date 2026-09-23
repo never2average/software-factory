@@ -163,6 +163,22 @@ jobs:
         if: always()
         run: npm run test:chat-reattach
 
+      # THE SUBAGENT HAND-BACK. A declared specialist's output never reached the
+      # chat — measured across six live sessions, where the built-in `agent`
+      # tool returned every time and not one declared specialist ever did. The
+      # difference is that a specialist PARKS, and eve routes an answer to a
+      # parked child only as structured `inputResponses`; this chat dropped
+      # every proxied child request before it could become one, so the
+      # operator's typed answer left as a plain message and was swallowed. This
+      # runs eve's own reducer and this repo's own rules over streams RECORDED
+      # from the real runtime (scripts/fixtures/subagent-delivery), including
+      # the swallow itself, and holds the run-accounting half: a specialist's
+      # invocation must leave an automation_runs row even when the provider
+      # reports no tokens, which is why that table was empty.
+      - name: Subagent result delivery (behavioural)
+        if: always()
+        run: npm run test:subagent-delivery
+
       # A parked approval survives a reload on purpose; one whose run has ENDED
       # must not, or it comes back as a live prompt and wedges the composer on a
       # chat that is already finished. Runs eve's own reducer over persisted

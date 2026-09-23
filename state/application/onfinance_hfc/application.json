@@ -2,8 +2,8 @@
   "$schema": "../app_id/application.schema.json",
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
-  "mold_commit": "57ebce90d8a871f38d63c722bb1ddd0db98b83cd",
-  "status": "reverted",
+  "mold_commit": "fc4c48e499353de938f8bdca2bcd5c6fd31fea73",
+  "status": "stamped",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
   "model": {
@@ -219,10 +219,5 @@
   "customer_id": "internal",
   "packs": [
     "hfc-research"
-  ],
-  "revert": {
-    "lane": "responsiveness",
-    "at": "2026-09-23T05:00:21+00:00",
-    "reason": "responsiveness lane failed on 1 check(s): interaction.latency.authenticated; report molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-23T050021Z.md; task mold_v1-100."
-  }
+  ]
 }

@@ -43,6 +43,26 @@ export interface StepUsage {
 const idCache = new Map<string, { id: string; orgId: string } | null>();
 
 /**
+ * A MISS is remembered only briefly, a HIT for the life of the process.
+ *
+ * The row for a subagent that ships in a pack is created out of band, by
+ * `npm run fde:seed-subagent-rows -- --org <id>` (docs/SUBAGENT_PACKS.md), which
+ * runs AFTER the deploy that introduced the subagent. Caching the miss for ever
+ * meant a warm instance that had already been delegated to once went on
+ * returning null until it was recycled — so seeding the rows fixed nothing that
+ * anyone could see, and the operator's run history stayed empty. A miss is
+ * therefore provisional; a hit is not, because a row's id never changes.
+ */
+const NEGATIVE_TTL_MS = 60_000;
+const missAt = new Map<string, number>();
+
+/** Test seam: forget everything looked up so far. */
+export function __resetWorkflowIdCache(): void {
+  idCache.clear();
+  missAt.clear();
+}
+
+/**
  * Resolve a workflow by NAME, and return its workspace with it.
  *
  * The usage row it feeds is workspace-scoped, and a name is not unique across
@@ -51,7 +71,12 @@ const idCache = new Map<string, { id: string; orgId: string } | null>();
  */
 async function workflowIdFor(name: string): Promise<{ id: string; orgId: string } | null> {
   const cached = idCache.get(name);
-  if (cached !== undefined) return cached;
+  if (cached) return cached;
+  if (cached === null) {
+    const since = missAt.get(name) ?? 0;
+    if (Date.now() - since < NEGATIVE_TTL_MS) return null;
+    idCache.delete(name);
+  }
   const db = getDb();
   if (!db) return null;
   // A name is not unique across workspaces and the caller has only the name,
@@ -65,6 +90,12 @@ async function workflowIdFor(name: string): Promise<{ id: string; orgId: string 
   );
   const found = rows[0] ? { id: rows[0].id, orgId: rows[0].orgId } : null;
   idCache.set(name, found);
+  if (found === null) {
+    missAt.set(name, Date.now());
+    console.warn(
+      `[workflow-usage] no workflows row named "${name}" in any workspace — this subagent's runs are not being recorded. Fix: npm run fde:seed-subagent-rows -- --org <org_id>`,
+    );
+  }
   return found;
 }
 
@@ -78,6 +109,57 @@ function isEmpty(usage: StepUsage | undefined): boolean {
     !usage.cacheWriteTokens &&
     !usage.costUsd
   );
+}
+
+/**
+ * OPEN THIS TURN'S ROW, before the model has done anything.
+ *
+ * The run history used to be a side effect of token accounting: the row was
+ * created by the first `step.completed` that carried usage, and `isEmpty(usage)`
+ * returned early otherwise. So a turn whose provider reported no usage left NO
+ * ROW AT ALL — not "a run with zero tokens", nothing — and `finishWorkflowRun`,
+ * which only UPDATEs, had nothing to close. Two ordinary cases hit that: the
+ * OpenAI-compatible provider this fleet runs on (agent/lib/model.ts) omits
+ * `usage` on some streamed completions, and a child that dies before its first
+ * model call never reports any. Measured 2026-09-23 on the operator's
+ * workspace: `automation_runs` completely EMPTY, across six sessions in which
+ * declared specialists were delegated to repeatedly — reported by them as "I
+ * don't think subagents invoked in the thread are all maintained".
+ *
+ * A run is an INVOCATION, so it is recorded when the invocation starts. Tokens
+ * are then added to a row that already exists, and `turn.completed` /
+ * `turn.failed` / `session.failed` close it. `onConflictDoNothing` keeps this
+ * idempotent across a replayed step.
+ */
+export async function openWorkflowRun(name: string, turnId: string): Promise<void> {
+  try {
+    if (!turnId) return;
+    const db = getDb();
+    if (!db) return;
+    const wf = await workflowIdFor(name);
+    if (!wf) return;
+    await withOrgDb(wf.orgId, (tx) =>
+      tx
+        .insert(automationRuns)
+        .values({
+          orgId: wf.orgId,
+          automationType: "workflow",
+          automationId: wf.id,
+          status: "running",
+          startedAt: new Date(),
+          runKey: `${wf.id}:${turnId}`,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: 0,
+        })
+        // A step may replay; the row it opened stands, tokens and all.
+        .onConflictDoNothing({ target: automationRuns.runKey }),
+    );
+  } catch (error) {
+    console.error(`[workflow-usage] could not open the run for ${name}:`, error);
+  }
 }
 
 /**
@@ -139,8 +221,12 @@ export async function recordWorkflowStep(
 }
 
 /**
- * Close out this turn's run row: a terminal status and how long it took. A turn
- * whose steps reported no usage has no row, and nothing is written.
+ * Close out this turn's run row: a terminal status and how long it took.
+ *
+ * Every turn has a row to close, because `openWorkflowRun` writes it on
+ * `turn.started` rather than waiting for a step that reports tokens. The
+ * `status = "running"` predicate keeps this idempotent and stops a late step
+ * from re-opening a closed run.
  */
 export async function finishWorkflowRun(
   name: string,
