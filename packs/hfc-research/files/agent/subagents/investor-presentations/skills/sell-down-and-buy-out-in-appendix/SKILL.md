@@ -70,8 +70,8 @@ Loans acquired (portfolio buyout)                  Nil        Nil
 Slide 44 "Restructured book" also has a line "Assigned from restructured pool 4": excluded, never read.
 
 ```json
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"sell_down_volume","value":225,"unit":"crore","document":"…/2025-11-04_Q2FY26_investor-presentation.pdf","slide":41,"approximate":false,"from_parent":false,"note":"Direct assignment 180 + co-lending partner share 45, both printed for Q2 FY26 and shown by the deck as transferred; H1 FY26 column (310 + 80) not used.","extracted_at":"2025-11-05T10:00:00Z","source_label":"Loans transferred through direct assignment; Co-lending: partner's share"}
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"buy_out_volume","value":0,"unit":"crore","document":"…","slide":41,"approximate":false,"from_parent":false,"note":"Deck prints 'Nil' for loans acquired in Q2 FY26.","extracted_at":"2025-11-05T10:00:00Z","status":"nil"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"sell_down_volume","value":225,"unit":"crore","document":"…/2025-11-04_Q2FY26_investor-presentation.pdf","slide":41,"approximate":false,"from_parent":false,"note":"Direct assignment 180 + co-lending partner share 45, both printed for Q2 FY26 and shown by the deck as transferred; H1 FY26 column (310 + 80) not used.","extracted_at":"2025-11-05T10:00:00Z","source_label":"Loans transferred through direct assignment; Co-lending: partner's share"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"buy_out_volume","value":0,"unit":"crore","document":"…","slide":41,"approximate":false,"from_parent":false,"note":"Deck prints 'Nil' for loans acquired in Q2 FY26.","extracted_at":"2025-11-05T10:00:00Z","status":"nil"}
 ```
 
 ## Failure modes and what to report

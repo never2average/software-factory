@@ -22,7 +22,8 @@ import section_map as SM
 def validate(m, table=None):
     from finlib import schema
     table = table or SM.load_table()
-    errors = [f"schema: {p}" for p in schema.validate(m, C.load_schema("section-map.schema.json"))]
+    m, key_problems = schema.normalise_row(m)       # a map stored under the key's older name reads as the new key
+    errors = [f"schema: {p}" for p in key_problems + schema.validate(m, C.load_schema("section-map.schema.json"))]
     warnings = []
     if not isinstance(m, dict) or not isinstance(m.get("sections"), list):
         return errors or ["not a section map"], warnings
@@ -129,7 +130,7 @@ def _good_map():
     seg = PO.compute_segments([[3, "i"], [4, "ii"], [9, "1"], [10, "2"], [200, "192"], [350, "342"]], 360)
     entries = SM.parse_toc_lines(SM.TOC_SINGLE, table)["entries"]
     return SM.build_map(entries, "contents", table, seg["segments"], seg["inconsistencies"], 360,
-                        {"customer_id": "example-housing-finance", "fy": "FY26", "source_file": "FY26_annual-report.pdf",
+                        {"primary_context_entity": "example-housing-finance", "fy": "FY26", "source_file": "FY26_annual-report.pdf",
                          "content_type": "text", "method_summary": "contents"})
 
 

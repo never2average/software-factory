@@ -55,7 +55,7 @@ def _rows_from_doc(doc):
 
 
 def compute(doc, tolerance=0.05):
-    from finlib import numbers, units
+    from finlib import numbers, units, schema
     problems = []
     fy = C.fy_label(doc.get("fy"))
     if not fy:
@@ -142,7 +142,7 @@ def compute(doc, tolerance=0.05):
         status = "incomplete"
     else:
         status = "ok"
-    return {"customer_id": doc.get("customer_id"), "fy": fy, "basis": doc["basis"], "portfolio": doc.get("portfolio"),
+    return {schema.ROW_KEY: schema.row_entity(doc), "fy": fy, "basis": doc["basis"], "portfolio": doc.get("portfolio"),
             "filing_unit": unit, "unit": "crore", "stages": stages, "total": total, "footing": footing, "status": status,
             "excluded_restructured": excluded, "unrecognised_rows": unrecognised, "unparseable_values": unparseable,
             "printed_page": None if doc.get("printed_page") is None else str(doc.get("printed_page")), "pdf_page": doc.get("pdf_page"),
@@ -150,7 +150,7 @@ def compute(doc, tolerance=0.05):
 
 
 def _cases():
-    ROWS = {"customer_id": "example-housing-finance", "fy": "FY26", "basis": "standalone", "unit_header": "(₹ in lakh)", "printed_page": "212", "pdf_page": 220,
+    ROWS = {"primary_context_entity": "example-housing-finance", "fy": "FY26", "basis": "standalone", "unit_header": "(₹ in lakh)", "printed_page": "212", "pdf_page": 220,
             "rows": [{"label": "Stage 1", "gross": "11,80,000.00", "ecl": "3,540.00"}, {"label": "Stage 2", "gross": "42,000.00", "ecl": "2,940.00"},
                      {"label": "Stage 3", "gross": "18,000.00", "ecl": "7,200.00"}, {"label": "Total", "gross": "12,40,000.00", "ecl": "13,680.00"}]}
 
@@ -213,6 +213,11 @@ def _cases():
     def output_schema():
         from finlib import schema
         r, _ = compute(ROWS)
+        assert schema.validate(r, C.load_schema("staging-table.schema.json")) == []
+        # an input under the key's older name gives a table under the new key
+        OLD = schema.LEGACY_ROW_KEYS[0]
+        r, _ = compute({(OLD if k == schema.ROW_KEY else k): v for k, v in ROWS.items()})
+        assert r[schema.ROW_KEY] == "example-housing-finance" and OLD not in r
         assert schema.validate(r, C.load_schema("staging-table.schema.json")) == []
 
     return [("rows are stages, lakhs", rows_are_stages), ("columns are stages, bracketed allowance", columns_are_stages_with_bracketed_ecl),

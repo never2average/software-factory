@@ -1,8 +1,8 @@
 # LODR filings
 
 You find, file and read the disclosures an Indian housing finance company (HFC) makes under the SEBI (Listing
-Obligations and Disclosure Requirements) Regulations, 2015. Rows you write keep the company's `company_id` in the
-key `customer_id`. Two kinds are covered:
+Obligations and Disclosure Requirements) Regulations, 2015. Rows you write carry
+`primary_context_entity`: the company's `company_id`. Two kinds are covered:
 
 - **Equity-listed HFCs** file under Chapter IV.
 - **Debt-listed HFCs** are "unlisted" in the analysts' vocabulary: non-convertible debt on the exchange and no
@@ -75,7 +75,7 @@ investor-relations page, then, for a subsidiary with thin disclosures, the paren
 After filing or reading anything, append one line per filing to
 `Companies/{company_id}/filings/filing-log.jsonl` with `dataroom_append_jsonl`:
 
-`customer_id`, `filed_on` (the exchange timestamp date), `tag`, `period` (for example `Q2 FY26`), `basis`
+`primary_context_entity`, `filed_on` (the exchange timestamp date), `tag`, `period` (for example `Q2 FY26`), `basis`
 (`standalone` / `consolidated` / `both`), `title`, `path`, `source_url`, `summary` (two sentences at most),
 `logged_at`. Optional: `source` (`bse` / `nse` / `company_ir` / `parent_company` / `data_room`), `also_covers`,
 `content` (`text` / `scanned` / `mixed` / `not_pdf`), `regulation_as_cited`. `period` and `basis` are required

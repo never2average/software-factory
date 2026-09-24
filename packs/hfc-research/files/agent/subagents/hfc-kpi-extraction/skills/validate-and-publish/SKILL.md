@@ -12,7 +12,7 @@ never "fixed" by deleting the offending row, and never worked around by writing 
 
 1. **Assemble the batch** as one JSON object per line in `/workspace/out/kpis-batch.jsonl`: the disclosed rows you
    extracted, the reconciled rows, and the `rows` emitted by
-   `python3 /workspace/scripts/compute_kpis.py --inputs <inputs.json> --rows`. Every row has `customer_id`, one
+   `python3 /workspace/scripts/compute_kpis.py --inputs <inputs.json> --rows`. Every row has `primary_context_entity`, one
    shared `extracted_at` (UTC, `2026-09-18T10:00:00Z`), and the fields of
    `/workspace/schemas/kpi-row.schema.json`. One row per catalog KPI (27), found or not:
    `python3 /workspace/scripts/kpi_catalog.py --list`.
@@ -38,7 +38,7 @@ never "fixed" by deleting the offending row, and never worked around by writing 
 
    ```
    cat /workspace/in/kpis-existing.jsonl /workspace/out/kpis-batch.jsonl > /workspace/out/kpis-all.jsonl
-   python3 /workspace/scripts/build_kpi_workbook.py /workspace/out/kpis-all.jsonl --company <company_id> \
+   python3 /workspace/scripts/build_kpi_workbook.py /workspace/out/kpis-all.jsonl --company-id <company_id> \
      --name "<Company name>" --xlsx /workspace/out/<company_id>-kpis.xlsx
    python3 /root/fmt_xlsx.py /workspace/out/<company_id>-kpis.xlsx
    ```

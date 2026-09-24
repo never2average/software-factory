@@ -67,7 +67,8 @@ def _read_input(name, raw):
 
 
 def compute(inp, sd_tolerance_pct=None):
-    with open(SCHEMA, encoding="utf-8") as f: problems = schema.validate(inp, json.load(f))
+    inp, problems = schema.normalise_row(inp)       # inputs under the key's older name read as the new key
+    with open(SCHEMA, encoding="utf-8") as f: problems += schema.validate(inp, json.load(f))
     if problems: return {"ok": False, "problems": problems}
     period = periods.normalise(inp["period"])["period"]
     vals = {n: _read_input(n, inp.get(n)) for n in AMOUNTS + COUNTS + PCTS}
@@ -167,7 +168,7 @@ def compute(inp, sd_tolerance_pct=None):
             else: extra.append("The rulebook formula adds Employee Cost to Operating Expenses; whether this filing's operating expenses already include employee cost was not determined.")
         emit(key, names, fn(v) if v is not None and reason is None else None, reason, extra)
 
-    out = {"ok": True, "customer_id": inp["customer_id"], "period": period, "basis": inp["basis"], "kpis": kpis, "spread": spread_note,
+    out = {"ok": True, schema.ROW_KEY: inp[schema.ROW_KEY], "period": period, "basis": inp["basis"], "kpis": kpis, "spread": spread_note,
            "sell_down_verdict": sell_down_verdict(vals, inp.get("sell_down_tolerance_pct") if sd_tolerance_pct is None else sd_tolerance_pct),
            "warnings": []}
     if not discrete: out["warnings"].append("flows_are_discrete_quarter is false: no flow-based KPI was computed")
@@ -223,7 +224,7 @@ def to_rows(result, inp, extracted_at=None):
         for _, c in cites:
             if c.get("document") and c["document"] not in docs: docs.append(c["document"])
         pages = "; ".join(f"{n}: {c['page_or_slide']}" for n, c in cites if c.get("page_or_slide") is not None)
-        row = {"customer_id": result["customer_id"], "extracted_at": ts, "kpi": k["kpi"], "category": k["category"], "value": k["value"], "unit": k["unit"],
+        row = {schema.ROW_KEY: result[schema.ROW_KEY], "extracted_at": ts, "kpi": k["kpi"], "category": k["category"], "value": k["value"], "unit": k["unit"],
                "period": result["period"], "basis": result["basis"], "source": "computed", "document": " | ".join(docs) or None, "page_or_slide": pages or None,
                "status": k["status"], "footnote": k["footnote"]}
         if k["value"] is not None: row["inputs"] = k["inputs_used"]
@@ -236,7 +237,7 @@ def to_rows(result, inp, extracted_at=None):
 
 
 EXAMPLE = {
-    "customer_id": "example-hfl", "period": "Q2 FY26", "basis": "standalone", "flows_are_discrete_quarter": True,
+    "primary_context_entity": "example-hfl", "period": "Q2 FY26", "basis": "standalone", "flows_are_discrete_quarter": True,
     "aum": {"value": 10000, "document": "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 5"},
     "loan_book": {"value": "8,20,000", "unit": "lakh", "document": "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "page_or_slide": 5},
     "disbursements": {"value": 1900, "document": "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf", "page_or_slide": "slide 9"},
@@ -332,7 +333,16 @@ def _self_test():
     eq("fractional employees refused", by["disbursement_per_employee"]["status"], "not_found")
     by = {k["kpi"]: k for k in compute(dict(EXAMPLE, opex={"value": "6,000", "unit": "lakh"}, nii={"value": "1.5", "unit": "billion"}))["kpis"]}
     eq("mixed units converted", by["cost_to_income_pct"]["value"], 40.0)
-    return fails, 37
+    # inputs under the key's older name: same KPIs, rows written under the new key; both keys disagreeing is refused
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    old_inp = {(OLD if k == schema.ROW_KEY else k): v for k, v in EXAMPLE.items()}
+    r = compute(old_inp)
+    eq("older key: same KPIs", (r["ok"], r.get(schema.ROW_KEY), {k["kpi"]: k["value"] for k in r["kpis"]}), (True, "example-hfl", want))
+    eq("older key: rows carry only the new key", all(x[schema.ROW_KEY] == "example-hfl" and OLD not in x for x in to_rows(r, old_inp, "2026-09-18T10:00:00Z")), True)
+    eq("both keys, same value", compute(dict(EXAMPLE, **{OLD: "example-hfl"}))["ok"], True)
+    r = compute(dict(EXAMPLE, **{OLD: "another-hfc"}))
+    eq("both keys, different values", (r["ok"], any("disagree" in p for p in r.get("problems", []))), (False, True))
+    return fails, 41
 
 
 def main():

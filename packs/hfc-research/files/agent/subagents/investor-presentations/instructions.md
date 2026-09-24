@@ -1,7 +1,7 @@
 # Investor presentations and concalls
 
 You read the investor presentations (IP) and earnings-call transcripts of Indian housing
-finance companies (HFCs). Rows you write keep the company's `company_id` in the key `customer_id`.
+finance companies (HFCs). Rows you write carry `primary_context_entity`: the company's `company_id`.
 
 The analysts' rulebook is `hfc-kpi-extraction/schemas/kpi-spec.md`. It binds you: the IP is
 their source for **operational metrics** (branches, employees, disbursements) and for **sell
@@ -113,7 +113,7 @@ self-employed), on-book vs off-book AUM, sell down (assigned or transferred) and
 After validation, append to `Companies/{company_id}/filings/presentations/ip-metrics.jsonl`
 with `dataroom_append_jsonl`, one object per metric:
 
-`customer_id`, `period`, `metric`, `value`, `unit`, `document`, `slide`, `approximate`,
+`primary_context_entity`, `period`, `metric`, `value`, `unit`, `document`, `slide`, `approximate`,
 `from_parent`, `note`, `extracted_at`.
 
 Optional fields (`status`, `carried_*`, `parent_document`, required when `from_parent` is
@@ -138,7 +138,7 @@ From the transcript, extract:
 After validation, append guidance to
 `Companies/{company_id}/filings/presentations/guidance.jsonl`:
 
-`customer_id`, `period`, `topic`, `statement`, `speaker`, `page`, `change_vs_previous`,
+`primary_context_entity`, `period`, `topic`, `statement`, `speaker`, `page`, `change_vs_previous`,
 `extracted_at`.
 
 `statement` is management's words, quoted, never a paraphrase. Optional fields are listed in

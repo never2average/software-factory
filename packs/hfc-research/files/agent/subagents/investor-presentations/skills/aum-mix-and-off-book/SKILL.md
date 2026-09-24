@@ -59,17 +59,17 @@ finance 10%`, footer `Affordable housing (ticket < ₹ 25 lakh): 35% of AUM`, `S
 `Average ticket size ₹ 15 lakh | Average LTV at origination 62%`.
 
 ```json
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"aum","value":12345,"unit":"crore","document":"…/2025-11-04_Q2FY26_investor-presentation.pdf","slide":9,"approximate":false,"from_parent":false,"note":"","extracted_at":"2025-11-05T10:00:00Z"}
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"loan_book","value":10900,"unit":"crore","document":"…","slide":9,"approximate":false,"from_parent":false,"note":"Deck's 'On-book' figure, gross. The balance-sheet loan book is hfc-kpi-extraction's to take from the results.","extracted_at":"2025-11-05T10:00:00Z","source_label":"On-book"}
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"off_book_aum","value":1445,"unit":"crore","document":"…","slide":9,"approximate":false,"from_parent":false,"note":"Direct assignment 1,020 + co-lending 425, as printed.","extracted_at":"2025-11-05T10:00:00Z"}
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"aum_mix_affordable","value":35,"unit":"percent","document":"…","slide":12,"approximate":false,"from_parent":false,"note":"A cut across products (ticket below Rs 25 lakh), not a fourth product; the product pie adds to 100 without it.","extracted_at":"2025-11-05T10:00:00Z","basis":"affordable_cut"}
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"avg_ticket_size","value":0.15,"unit":"crore","document":"…","slide":12,"approximate":false,"from_parent":false,"note":"Rs 15 lakh, on the outstanding book.","extracted_at":"2025-11-05T10:00:00Z","source_value":15,"source_unit":"lakh"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"aum","value":12345,"unit":"crore","document":"…/2025-11-04_Q2FY26_investor-presentation.pdf","slide":9,"approximate":false,"from_parent":false,"note":"","extracted_at":"2025-11-05T10:00:00Z"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"loan_book","value":10900,"unit":"crore","document":"…","slide":9,"approximate":false,"from_parent":false,"note":"Deck's 'On-book' figure, gross. The balance-sheet loan book is hfc-kpi-extraction's to take from the results.","extracted_at":"2025-11-05T10:00:00Z","source_label":"On-book"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"off_book_aum","value":1445,"unit":"crore","document":"…","slide":9,"approximate":false,"from_parent":false,"note":"Direct assignment 1,020 + co-lending 425, as printed.","extracted_at":"2025-11-05T10:00:00Z"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"aum_mix_affordable","value":35,"unit":"percent","document":"…","slide":12,"approximate":false,"from_parent":false,"note":"A cut across products (ticket below Rs 25 lakh), not a fourth product; the product pie adds to 100 without it.","extracted_at":"2025-11-05T10:00:00Z","basis":"affordable_cut"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"avg_ticket_size","value":0.15,"unit":"crore","document":"…","slide":12,"approximate":false,"from_parent":false,"note":"Rs 15 lakh, on the outstanding book.","extracted_at":"2025-11-05T10:00:00Z","source_value":15,"source_unit":"lakh"}
 ```
 
 A company with no off-book (AUM 8,200 = loan book 8,200 on slide 6):
 
 ```json
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"sell_down_volume","value":null,"unit":"crore","document":"…","slide":null,"approximate":false,"from_parent":false,"note":"AUM equals the loan book (8,200, slide 6): no off-book loans, so no sell down is found.","extracted_at":"2025-11-05T10:00:00Z","status":"no_off_book"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"sell_down_volume","value":null,"unit":"crore","document":"…","slide":null,"approximate":false,"from_parent":false,"note":"AUM equals the loan book (8,200, slide 6): no off-book loans, so no sell down is found.","extracted_at":"2025-11-05T10:00:00Z","status":"no_off_book"}
 ```
 
 ## Failure modes and what to report

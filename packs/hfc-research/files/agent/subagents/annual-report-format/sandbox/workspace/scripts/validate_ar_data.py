@@ -21,7 +21,7 @@ BASIS_OF_SECTION = {"standalone_financial_statements": "standalone", "consolidat
 
 
 def _key(o, with_report=True):
-    k = (o.get("customer_id"), o.get("fy"), o.get("section"), o.get("statement"), o.get("basis"),
+    k = (o.get("primary_context_entity"), o.get("fy"), o.get("section"), o.get("statement"), o.get("basis"),
          C.clean(o.get("label")).lower(), o.get("dimension"))
     return k + ((o.get("report_fy"),) if with_report else ())
 
@@ -38,6 +38,12 @@ def validate_rows(rows, problems=None, existing=None, section_map=None):
     kinds = {e["normalised"]: e["value_kind"] for e in labels["labels"]}
     restructured = labels["restructured_patterns"]
     errors, warnings = list(problems or []), []
+    # rows stored under the key's older name read as the new key; both keys disagreeing is an error
+    normed = []
+    for n, o in rows:
+        o, kp = schema.normalise_row(o); normed.append((n, o)); errors += [f"line {n}: {p}" for p in kp]
+    rows = normed
+    if existing: existing = [(n, schema.normalise_row(o)[0]) for n, o in existing]
     if not rows and not errors:
         errors.append("no rows: an empty file is never appended; if nothing could be extracted, say why instead")
     seen, companies = {}, set()
@@ -82,8 +88,8 @@ def validate_rows(rows, problems=None, existing=None, section_map=None):
             warnings.append(f"{where}: {v} percent looks wrong")
         if o.get("normalised_label") is None:
             warnings.append(f"{where}: {o.get('label')!r} has no normalised label (kept as printed)")
-        if isinstance(o.get("customer_id"), str):
-            companies.add(o["customer_id"])
+        if isinstance(o.get(schema.ROW_KEY), str):
+            companies.add(o[schema.ROW_KEY])
         k = _key(o)
         if k in seen:
             same = seen[k][1].get("value") == v
@@ -121,7 +127,7 @@ def validate_rows(rows, problems=None, existing=None, section_map=None):
 
 
 def _row(**kw):
-    base = {"customer_id": "example-housing-finance", "fy": "FY26", "report_fy": "FY26", "section": "standalone_financial_statements",
+    base = {"primary_context_entity": "example-housing-finance", "fy": "FY26", "report_fy": "FY26", "section": "standalone_financial_statements",
             "statement": "balance_sheet", "label": "Loans", "normalised_label": "loan_book", "value": 12345.678, "unit": "crore",
             "original_value": 1234567.8, "original_unit": "lakh", "basis": "standalone", "printed_page": "164", "pdf_page": 172}
     base.update(kw)
@@ -186,11 +192,21 @@ def _cases():
         check([_row(pdf_page=173)], "maps to pdf page 172", section_map=m)
         check([_row(pdf_page=400, printed_page="392")], "beyond the report's 360 pages", section_map=m)
 
+    def older_key():
+        from finlib import schema
+        OLD = schema.LEGACY_ROW_KEYS[0]
+        as_old = lambda r: {(OLD if k == schema.ROW_KEY else k): v for k, v in r.items()}
+        check([as_old(_row()), _row(fy="FY25", value=10111.213, original_value=1011121.3, restated=True)])       # old and new rows mixed
+        check([as_old(_row())], "already in the data room", existing=[_row()])
+        check([_row()], "already in the data room", existing=[as_old(_row())])
+        check([_row(**{OLD: "example-housing-finance"})])                                                     # both keys, same value
+        check([_row(**{OLD: "another-hfc"})], "disagree")                                                     # both keys, different values
+
     def files():
         from finlib import schema
         d = tempfile.mkdtemp(); p = os.path.join(d, "annual-report-data.jsonl")
         with open(p, "w", encoding="utf-8") as f:
-            f.write('{"customer_id": "example-housing-finance"\n[1,2]\n\n')
+            f.write('{"primary_context_entity": "example-housing-finance"\n[1,2]\n\n')
         rows, problems = schema.read_jsonl(p)
         errors, _ = validate_rows(rows, problems)
         assert any("line 1: not JSON" in e for e in errors) and any("line 2: not a JSON object" in e for e in errors)
@@ -199,7 +215,7 @@ def _cases():
     return [("good rows, including a nil disclosure", good), ("amounts in crore, EPS in rupees", units_rules), ("pages and basis", pages_and_basis),
             ("financial years", years), ("duplicates and dimension", duplicates_and_dimension), ("restructured-book items rejected", restructured),
             ("against what the data room already holds", against_the_data_room), ("against the section map", against_the_map),
-            ("broken lines and empty files", files)]
+            ("rows under the key's older name, and mixed rows", older_key), ("broken lines and empty files", files)]
 
 
 def main():

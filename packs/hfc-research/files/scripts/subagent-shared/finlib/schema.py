@@ -3,11 +3,50 @@ Supports: type (incl. lists and null), required, properties, additionalPropertie
 minimum, maximum, minLength, items, and allOf/if/then (for 'when status is X, field Y is required')."""
 import json, re
 
-# The key that holds a company's id in every row this pack stores (.jsonl, extracts, maps). The agent's tools call the
-# same value company_id; the key keeps its stored name because renaming it would need a data migration.
-ROW_KEY = "customer_id"
+# The key that holds the entity a row is about in every row this pack stores (.jsonl, extracts, maps): here the
+# covered company's company_id, the value the agent's tools return.
+ROW_KEY = "primary_context_entity"
+# The key's older name. Rows written before the rename carry it: readers accept it (normalise_row), writers never emit it.
+LEGACY_ROW_KEYS = ("customer_id",)
 # A company's data-room folder: the name the agent's tools show, then the stored name (older rows and paths carry it).
 COMPANY_FOLDERS = ("Companies", "Customers")
+
+def row_entity(obj):
+    """-> the company id a row is about: the current key first, else an older name; None when neither is there."""
+    if not isinstance(obj, dict): return None
+    if ROW_KEY in obj: return obj[ROW_KEY]
+    for k in LEGACY_ROW_KEYS:
+        if k in obj: return obj[k]
+    return None
+
+def normalise_row(obj):
+    """-> (row, problems). The row with its older key renamed to ROW_KEY, in the same position, every other field
+    untouched. Both keys with the same value: the older one is dropped. Both with different values: a problem (the
+    current key's value is kept). Not a dict: returned as is."""
+    if not isinstance(obj, dict) or not any(k in obj for k in LEGACY_ROW_KEYS): return obj, []
+    problems, out = [], {}
+    for k, v in obj.items():
+        if k in LEGACY_ROW_KEYS:
+            if ROW_KEY in obj:
+                if obj[ROW_KEY] != v: problems.append(f"{ROW_KEY} {obj[ROW_KEY]!r} and its older name {k} {v!r} disagree: keep one")
+                continue
+            if ROW_KEY in out: continue
+            out[ROW_KEY] = v
+        else:
+            out[k] = v
+    return out, problems
+
+def normalise_doc(obj):
+    """normalise_row for a document that also carries rows: the top level and every dict in a top-level list."""
+    obj, problems = normalise_row(obj)
+    if isinstance(obj, dict):
+        for k, v in list(obj.items()):
+            if isinstance(v, list) and any(isinstance(x, dict) for x in v):
+                fixed = []
+                for i, x in enumerate(v):
+                    x, p = normalise_row(x); fixed.append(x); problems += [f"{k}[{i}]: {q}" for q in p]
+                obj[k] = fixed
+    return obj, problems
 
 _T = {"string": str, "number": (int, float), "integer": int, "boolean": bool, "object": dict, "array": list, "null": type(None)}
 
@@ -44,7 +83,9 @@ def validate(obj, schema, where="$"):
     return e
 
 def read_jsonl(path):
-    """-> (rows, problems). A line that is not a JSON object is a problem, not a crash."""
+    """-> (rows, problems). A line that is not a JSON object is a problem, not a crash. Rows come back normalised
+    (normalise_row): a row stored under the key's older name reads as ROW_KEY; a row with both keys disagreeing is a
+    problem."""
     rows, problems = [], []
     with open(path, encoding="utf-8") as f:
         for n, line in enumerate(f, 1):
@@ -52,6 +93,7 @@ def read_jsonl(path):
             try: o = json.loads(line)
             except json.JSONDecodeError as x: problems.append(f"line {n}: not JSON ({x.msg})"); continue
             if not isinstance(o, dict): problems.append(f"line {n}: not a JSON object"); continue
+            o, p = normalise_row(o); problems += [f"line {n}: {q}" for q in p]
             rows.append((n, o))
     return rows, problems
 
@@ -71,4 +113,29 @@ def _self_test():
     assert len(validate({"kpi": "", "status": "maybe", "x": 1}, s)) == 3
     assert validate({"kpi": "AUM", "status": "not_found", "value": True}, s) != []
     assert validate({"kpi": "AUM", "status": "not_found", "page": 0}, s) != []
-    return 6
+    old = LEGACY_ROW_KEYS[0]
+    # a new row is untouched
+    new_row = {ROW_KEY: "example-hfl", "kpi": "AUM"}
+    assert normalise_row(new_row) == (new_row, [])
+    # an old row reads as the new key, in the same position, other fields untouched
+    got, p = normalise_row({"a": 1, old: "example-hfl", "kpi": "AUM"})
+    assert p == [] and list(got) == ["a", ROW_KEY, "kpi"] and got[ROW_KEY] == "example-hfl", got
+    assert row_entity({old: "x"}) == "x" and row_entity({ROW_KEY: "y", old: "x"}) == "y" and row_entity({}) is None
+    # a mixed row that agrees drops the older key; one that disagrees is a problem
+    assert normalise_row({ROW_KEY: "x", old: "x", "k": 1}) == ({ROW_KEY: "x", "k": 1}, [])
+    got, p = normalise_row({old: "a", ROW_KEY: "b"})
+    assert got == {ROW_KEY: "b"} and len(p) == 1, (got, p)
+    # documents: top level and rows inside lists
+    got, p = normalise_doc({old: "x", "data_rows": [{old: "x", "v": 1}, {ROW_KEY: "x"}], "tags": ["a"]})
+    assert p == [] and got == {ROW_KEY: "x", "data_rows": [{ROW_KEY: "x", "v": 1}, {ROW_KEY: "x"}], "tags": ["a"]}, got
+    # read_jsonl: old, new and mixed rows in one file
+    import os, tempfile
+    fd, path = tempfile.mkstemp(suffix=".jsonl")
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps({old: "x", "n": 1}) + "\n" + json.dumps({ROW_KEY: "x", "n": 2}) + "\n"
+                + json.dumps({ROW_KEY: "x", old: "x", "n": 3}) + "\n" + json.dumps({ROW_KEY: "x", old: "z", "n": 4}) + "\n")
+    try: rows, problems = read_jsonl(path)
+    finally: os.unlink(path)
+    assert [o for _, o in rows] == [{ROW_KEY: "x", "n": i} for i in (1, 2, 3, 4)], rows
+    assert len(problems) == 1 and problems[0].startswith("line 4:"), problems
+    return 14

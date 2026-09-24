@@ -5,7 +5,7 @@
 
 Input JSON:
   {
-    "customer_id": "example-housing-finance", "source_path": "Companies/.../filings/lodr/....pdf",
+    "primary_context_entity": "example-housing-finance", "source_path": "Companies/.../filings/lodr/....pdf",
     "tag": "reg33_results", "filing_period": "Q2 FY26",
     "basis": "standalone", "bases_in_filing": "both",
     "unit": "lakh",                      the unit read from THIS table's header (locate_results_sections.py)
@@ -13,6 +13,7 @@ Input JSON:
     "columns": [...],                    the "columns" array from parse_results_columns.py (all columns of the table)
     "rows": [["1", "Interest income", "12,345.67", ...], ...]      body rows as extracted, same width as the header
   }
+primary_context_entity is the company's company_id (an input under the key's older name is read the same way).
 When the table puts standalone and consolidated side by side, only the columns whose basis equals "basis" are taken.
 
 Output: {"extract": <document for results-extract.schema.json, without disclosures>, "unmatched_rows": [...],
@@ -26,7 +27,7 @@ Values are parsed with finlib.numbers and converted with finlib.units. Per-share
 """
 import os, sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import argparse, datetime, json, re
-from finlib import numbers, units
+from finlib import numbers, schema, units
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TABLE_PATH = os.path.join(HERE, "reference", "results_line_synonyms.json")
@@ -140,7 +141,7 @@ def extract(doc, table=None, now=None):
     dq = [c for c in data_cols if c["role"] == "discrete_quarter"]
     keep = ("index", "header", "period", "kind", "role", "discrete_quarter", "audit_status", "restated", "basis")
     extract_doc = {
-        "customer_id": doc.get("customer_id"), "source_path": doc.get("source_path"), "tag": doc.get("tag"),
+        schema.ROW_KEY: schema.row_entity(doc), "source_path": doc.get("source_path"), "tag": doc.get("tag"),
         "filing_period": doc.get("filing_period"), "basis": basis, "bases_in_filing": doc.get("bases_in_filing"),
         "unit_reported": unit, "unit": "crore", "discrete_quarter_status": "present" if dq else "absent",
         "columns": [{k: c[k] for k in keep if k in c} for c in data_cols], "line_items": items,
@@ -189,7 +190,7 @@ def _example_doc():
         ["", "Gain on sale of office premises", "5.00", "-", "-", "5.00", "-", "-"],
         ["12", "A row the extractor split badly", "1.00", "2.00"],
     ]
-    return {"customer_id": "example-housing-finance", "tag": "reg33_results", "filing_period": "Q2 FY26", "basis": "standalone", "bases_in_filing": "both",
+    return {schema.ROW_KEY: "example-housing-finance", "tag": "reg33_results", "filing_period": "Q2 FY26", "basis": "standalone", "bases_in_filing": "both",
             "source_path": "Companies/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-financial-results.pdf",
             "unit": "lakh", "page": 4, "columns": cols, "rows": rows}
 
@@ -211,6 +212,11 @@ def _self_test():
     assert len(out["misaligned_rows"]) == 1 and out["misaligned_rows"][0]["cells"] == 4; n += 1                    # shifted row is not read
     assert x["discrete_quarter_status"] == "present" and x["not_found"] == [] and x["unit"] == "crore" and x["unit_reported"] == "lakh"; n += 1
     assert [c["discrete_quarter"] for c in x["columns"]] == [True, True, True, False, False, False]; n += 1
+    assert x[schema.ROW_KEY] == "example-housing-finance" and schema.LEGACY_ROW_KEYS[0] not in x; n += 1
+    # an input under the key's older name gives the same extract, written under the new key
+    old_in = {(schema.LEGACY_ROW_KEYS[0] if k == schema.ROW_KEY else k): v for k, v in _example_doc().items()}
+    x_old = extract(old_in)["extract"]
+    assert x_old[schema.ROW_KEY] == "example-housing-finance" and schema.LEGACY_ROW_KEYS[0] not in x_old; n += 1
     # side-by-side table: only the requested basis is taken; units in millions
     import parse_results_columns as prc
     cols = prc.parse({"header_rows": [["Particulars", "Standalone", None, "Consolidated", None], ["", "Quarter ended 30.06.2025", "Quarter ended 30.06.2024",

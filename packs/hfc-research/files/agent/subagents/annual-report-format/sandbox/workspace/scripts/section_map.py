@@ -489,7 +489,8 @@ def finish(sections, others, table, segments, inconsistencies, page_count, meta)
             s["method"] = "none"
         out.append(s)
     out.sort(key=lambda s: (s["pdf_page"] is None, s["pdf_page"] or 0, s["level"] != "top", s["key"]))
-    result = dict(meta)
+    from finlib import schema
+    result = dict(schema.normalise_row(dict(meta))[0])      # the company id is recorded under schema.ROW_KEY
     result.update({"schema_version": 1, "page_count": page_count, "offsets": segments,
                    "offset_inconsistencies": inconsistencies, "layout": describe_layout(sections),
                    "sections": out, "other_entries": others})
@@ -802,10 +803,15 @@ def _cases():
         from finlib import schema
         entries = parse_toc_lines(TOC_SINGLE, table)["entries"]
         m = build_map(entries, "contents", table, seg["segments"], seg["inconsistencies"], 360,
-                      {"customer_id": "example-housing-finance", "fy": "FY26", "source_file": "FY26_annual-report.pdf",
+                      {schema.ROW_KEY: "example-housing-finance", "fy": "FY26", "source_file": "FY26_annual-report.pdf",
                        "content_type": "text", "method_summary": "contents"})
         problems = schema.validate(m, C.load_schema("section-map.schema.json"))
         assert problems == [], problems[:5]
+        # a caller passing the key's older name still gets a map keyed schema.ROW_KEY
+        m = build_map(entries, "contents", table, seg["segments"], seg["inconsistencies"], 360,
+                      {schema.LEGACY_ROW_KEYS[0]: "example-housing-finance", "fy": "FY26", "source_file": None, "content_type": "text", "method_summary": "contents"})
+        assert m[schema.ROW_KEY] == "example-housing-finance" and schema.LEGACY_ROW_KEYS[0] not in m
+        assert schema.validate(m, C.load_schema("section-map.schema.json")) == []
 
     def whole_pdf_path_with_a_stub_reader():
         """map_pdf end to end with a stand-in for pdfplumber: 60 synthetic pages, roman front matter, no bookmarks."""
@@ -834,7 +840,7 @@ def _cases():
             d = tempfile.mkdtemp(); path = os.path.join(d, "FY26_annual-report.pdf")
             with open(path, "wb") as f:
                 f.write(b"%PDF-1.7\n")
-            m = map_pdf(path, {"customer_id": "example-housing-finance", "fy": "FY26", "content_type": "text"})
+            m = map_pdf(path, {"primary_context_entity": "example-housing-finance", "fy": "FY26", "content_type": "text"})
         finally:
             pdfdoc.outline = saved_outline
             if saved is None: del sys.modules["pdfplumber"]
@@ -865,7 +871,8 @@ def main():
     ap = argparse.ArgumentParser(description="Build an annual report's section map: outline, then contents page, then heading search.",
                                  epilog="Example: section_map.py /workspace/in/FY26_annual-report.pdf --company-id example-housing-finance --fy FY26 --out /workspace/out/map.json")
     ap.add_argument("pdf", nargs="?", help="the annual report PDF")
-    ap.add_argument("--company-id", "--customer-id", dest="company_id", help="the company's id, recorded in the map")
+    ap.add_argument("--company-id", dest="company_id", help="the company's id, recorded in the map")
+    ap.add_argument("--customer-id", dest="company_id", help=argparse.SUPPRESS)   # older name of --company-id, still accepted
     ap.add_argument("--fy", help="financial year of the report, e.g. FY26")
     ap.add_argument("--content-type", choices=["text", "mixed", "scanned"], help="what detect_content_type.py reported, recorded in the map")
     ap.add_argument("--out", help="also write the map to this file")
@@ -877,7 +884,7 @@ def main():
     args = ap.parse_args()
     if args.self_test:
         C.run_self_test(_cases())
-    meta = {"customer_id": args.company_id, "fy": args.fy, "content_type": args.content_type}
+    meta = {"primary_context_entity": args.company_id, "fy": args.fy, "content_type": args.content_type}
     if args.fy:
         from finlib import periods
         p = periods.normalise(args.fy)

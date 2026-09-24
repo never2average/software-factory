@@ -1,0 +1,27 @@
+[
+  {
+    "section": "^root/(investor-presentations|annual-report-format) :: ",
+    "phrase": "customer[ _-]?(mix|profile|app)|product_customer_mix|salaried customers|split of customers",
+    "why": "Housing-finance borrower terminology as investor decks and annual reports print it (an HFC's customer mix: salaried vs self-employed borrowers; the deck's 'Product and customer mix' slide). It names the HFC's borrowers, not the base product's account, and the model must match it in the document."
+  },
+  {
+    "section": "^root/annual-report-format :: file :: skills/rbi-hfc-directions-disclosures/",
+    "phrase": "customer complaints",
+    "why": "The RBI Master Direction disclosure heading 'Customer complaints', quoted as the annual report prints it: the model must find that heading in the notes."
+  },
+  {
+    "section": "^root/(lodr-filings|investor-presentations|annual-report-format|hfc-kpi-extraction) :: file :: sandbox/workspace/(scripts/finlib/schema\\.py|schemas/)",
+    "phrase": "COMPANY_FOLDERS = \\(\"Companies\", \"Customers\"\\)|\\^\\(Companies\\|Customers\\)/",
+    "why": "A path is accepted under the display folder (Companies/, what the tools answer with) or the folder the base store keeps (Customers/, what storage and older rows carry). Both name the same folder; the store's folder is base code, not the pack's to rename."
+  },
+  {
+    "section": "^root/(lodr-filings|annual-report-format|hfc-kpi-extraction) :: file :: sandbox/workspace/scripts/(filing_name|section_map|build_kpi_workbook)\\.py",
+    "phrase": "help=argparse\\.SUPPRESS",
+    "why": "A hidden command-line alias (--customer-id / --customer), kept so an older call still works. It is suppressed from --help; --company-id is the only documented flag."
+  },
+  {
+    "section": "^root/(lodr-filings|investor-presentations|annual-report-format|hfc-kpi-extraction) :: file :: sandbox/workspace/scripts/finlib/schema\\.py",
+    "phrase": "LEGACY_ROW_KEYS = \\(\"customer_id\",\\)",
+    "why": "The row key's older name, in the one place readers learn it: rows written before migrations/0001_primary_context_entity.py still read as primary_context_entity, and a row carrying both keys with different values is refused. Writers never emit it. Drop this entry (and the constant) once the migration has been applied to every live data room."
+  }
+]

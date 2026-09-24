@@ -60,13 +60,20 @@ def validate_rows(rows, problems=None, loan_book_tol_pct=1.0, expect_complete=Fa
     E = lambda code, n, msg: errors.append({"code": code, "line": n, "message": msg})
     F = lambda code, n, msg: flags.append({"code": code, "line": n, "message": msg})
     good = []
+    # rows stored under the key's older name read as the new key; both keys disagreeing is an error
+    normed = []
+    for n, o in rows:
+        o, kp = schema.normalise_row(o); normed.append((n, o))
+        for p in kp: E("E-SCHEMA", n, p)
+    rows = normed
+    if existing: existing = [(n, schema.normalise_row(o)[0]) for n, o in existing]
     for n, o in rows:
         sp = schema.validate(o, sch)
         for p in sp: E("E-SCHEMA", n, p)
         if any(("kpi" in p and "not one of" in p) or "missing required" in p or "expected" in p for p in sp): continue
         e = cat.BY_KEY.get(o.get("kpi"))
         if e is None: continue
-        who = f"{o.get('customer_id')} {o.get('period')} {o['kpi']}"
+        who = f"{o.get(schema.ROW_KEY)} {o.get('period')} {o['kpi']}"
         if o.get("category") != e["category"]: E("E-CATALOG", n, f"{who}: category {o.get('category')!r}, catalog says {e['category']!r}")
         if o.get("unit") != e["unit"]:
             E("E-CATALOG", n, f"{who}: unit {o.get('unit')!r}, catalog says {e['unit']!r}" + (" (every amount is reported in ₹ crore; convert with convert_units.py)" if e["unit"] == cat.UNIT_CRORE else ""))
@@ -110,7 +117,7 @@ def validate_rows(rows, problems=None, loan_book_tol_pct=1.0, expect_complete=Fa
     # duplicates, then keep the latest per cell for the cross-row rules
     cells = {}
     for n, o in good:
-        key = (o["customer_id"], o["period"], o["kpi"])
+        key = (o[schema.ROW_KEY], o["period"], o["kpi"])
         if key in cells:
             pn, po = cells[key]
             if po["extracted_at"] == o["extracted_at"]: E("E-DUP", n, f"{' '.join(key)}: duplicate of line {pn} with the same extracted_at")
@@ -118,7 +125,7 @@ def validate_rows(rows, problems=None, loan_book_tol_pct=1.0, expect_complete=Fa
             if o["extracted_at"] < po["extracted_at"]: continue
         cells[key] = (n, o)
     if existing:
-        seen = {(o.get("customer_id"), o.get("period"), o.get("kpi")) for _, o in existing}
+        seen = {(o.get(schema.ROW_KEY), o.get("period"), o.get("kpi")) for _, o in existing}
         for key, (n, _) in cells.items():
             if key in seen: F("F-DUP", n, f"{' '.join(key)}: already present in the data room's kpis.jsonl; appending supersedes it (the workbook uses the latest extracted_at)")
 
@@ -155,7 +162,7 @@ def validate_rows(rows, problems=None, loan_book_tol_pct=1.0, expect_complete=Fa
     for _, o in good: by_status[o.get("status")] = by_status.get(o.get("status"), 0) + 1
     return {"valid": not errors, "rows": len(rows), "companies": sorted({c for c, _ in groups}), "periods": sorted({p for _, p in groups}, key=_pkey),
             "by_status": by_status, "errors": errors, "flags": flags,
-            "review_cells": [{"customer_id": o["customer_id"], "period": o["period"], "kpi": o["kpi"], "status": o["status"], "footnote": o.get("footnote", "")}
+            "review_cells": [{schema.ROW_KEY: o[schema.ROW_KEY], "period": o["period"], "kpi": o["kpi"], "status": o["status"], "footnote": o.get("footnote", "")}
                              for _, o in sorted(cells.values(), key=lambda x: x[0]) if o.get("status") in ("needs_review", "carried_forward")]}
 
 
@@ -164,7 +171,7 @@ def _self_test():
     DOC_QR, DOC_IP = "Companies/example-hfl/filings/lodr/q2fy26-results.pdf", "Companies/example-hfl/filings/presentations/q2fy26-ip.pdf"
     def row(kpi, value, **kw):
         e = cat.BY_KEY[kpi]
-        r = {"customer_id": "example-hfl", "extracted_at": "2026-09-18T10:00:00Z", "kpi": kpi, "category": e["category"], "value": value, "unit": e["unit"],
+        r = {schema.ROW_KEY: "example-hfl", "extracted_at": "2026-09-18T10:00:00Z", "kpi": kpi, "category": e["category"], "value": value, "unit": e["unit"],
              "period": "Q2 FY26", "basis": "standalone", "source": "computed" if e["source_pref"] == "computed" else e["source_pref"],
              "document": DOC_IP if e["source_pref"] == "IP" else DOC_QR, "page_or_slide": 4, "status": "ok", "footnote": ""}
         r.update(kw); return r
@@ -229,12 +236,22 @@ def _self_test():
     expect("not_found without footnote flagged", swap("buy_out_volume", footnote=""), [], ["F-FOOTNOTE"])
     expect("extra field", swap("aum", confidence=0.9), ["E-SCHEMA"])
     expect("completeness", clean, [], ["F-MISSING"], expect_complete=True)
+    # rows under the key's older name, alone, mixed with new rows and in --existing; both keys disagreeing
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    as_old = lambda r: {(OLD if k == schema.ROW_KEY else k): v for k, v in r.items()}
+    rep = expect("old rows", [as_old(r) for r in clean], [], [])
+    if rep["companies"] != ["example-hfl"]: fails.append(f"old rows: companies {rep['companies']}")
+    expect("old and new rows mixed", [as_old(r) for r in clean[:10]] + clean[10:], [], [])
+    expect("old rows in --existing still flag re-filing", clean, [], ["F-DUP"], existing=[(1, as_old(row("aum", 9990.0)))])
+    expect("old and new row for one cell are duplicates", clean + [as_old(clean[0])], ["E-DUP"])
+    expect("both keys, same value", swap("aum", **{OLD: "example-hfl"}), [], [])
+    expect("both keys, different values", swap("aum", **{OLD: "another-hfc"}), ["E-SCHEMA"])
     # file path: bad JSON line is a problem, not a crash
     d = tempfile.mkdtemp(); p = os.path.join(d, "k.jsonl")
     with open(p, "w", encoding="utf-8") as f: f.write(json.dumps(clean[0], ensure_ascii=False) + "\n{not json\n[1,2]\n\n")
     rows, problems = schema.read_jsonl(p); rep = validate_rows(rows, problems)
     if rep["valid"] or len(rep["errors"]) != 2: fails.append(f"bad lines: {rep['errors']}")
-    return fails, 43
+    return fails, 49
 
 
 def main():

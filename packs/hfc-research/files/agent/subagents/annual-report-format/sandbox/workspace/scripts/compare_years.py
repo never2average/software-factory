@@ -90,7 +90,7 @@ def compare(rows, fy, prior, basis=None, section=None, tolerance=0.005):
 
 def _cases():
     def r(fy, report, label, norm, value, **kw):
-        o = {"customer_id": "example-housing-finance", "fy": fy, "report_fy": report, "section": "standalone_financial_statements",
+        o = {"primary_context_entity": "example-housing-finance", "fy": fy, "report_fy": report, "section": "standalone_financial_statements",
              "statement": "balance_sheet", "basis": "standalone", "label": label, "normalised_label": norm, "value": value, "unit": "crore",
              "printed_page": "164", "pdf_page": 172}
         o.update(kw); return o

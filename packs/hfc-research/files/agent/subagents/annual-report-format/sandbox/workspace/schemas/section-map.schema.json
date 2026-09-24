@@ -5,7 +5,7 @@
   "type": "object",
   "required": [
     "schema_version",
-    "customer_id",
+    "primary_context_entity",
     "fy",
     "page_count",
     "offsets",
@@ -17,9 +17,10 @@
     "schema_version": {
       "const": 1
     },
-    "customer_id": {
+    "primary_context_entity": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9-]*$"
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "the company's company_id: the entity this row is about"
     },
     "fy": {
       "type": "string",

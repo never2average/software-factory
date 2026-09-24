@@ -69,7 +69,7 @@ Speaker turns start with `Name:` at the beginning of a line.
 
 ## What to write
 
-Rows per `/workspace/schemas/guidance-row.schema.json`: `customer_id`, `period`, `topic`, `statement`,
+Rows per `/workspace/schemas/guidance-row.schema.json`: `primary_context_entity`, `period`, `topic`, `statement`,
 `speaker`, `page`, `change_vs_previous`, `extracted_at`, plus `subtopic`, `value_low`, `value_high`,
 `value_unit`, `horizon`, `previous_period`, `previous_statement`, `note` where they apply.
 
@@ -92,8 +92,8 @@ estimate; say in the reply that a lowered credit cost is a better outlook), and
 `capital_raise` **withdrawn**.
 
 ```json
-{"customer_id":"example-hfl","period":"Q2FY26","topic":"aum_growth","statement":"For the full year we expect AUM growth of 20% to 22%.","speaker":"Asha Rao, MD & CEO","page":3,"change_vs_previous":"raised","extracted_at":"2025-11-12T09:00:00Z","value_low":20,"value_high":22,"value_unit":"percent","horizon":"FY26","previous_period":"Q1FY26","previous_statement":"We expect AUM growth of 18% to 20% for FY26."}
-{"customer_id":"example-hfl","period":"Q2FY26","topic":"capital_raise","statement":"We would not like to comment on the timing of any capital raise at this point.","speaker":"Asha Rao, MD & CEO","page":9,"change_vs_previous":"withdrawn","extracted_at":"2025-11-12T09:00:00Z","previous_period":"Q1FY26","previous_statement":"We will look at a capital raise at an appropriate time.","note":"Asked by Rohan Mehta (Example Securities) for amount and timing; management declined."}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","topic":"aum_growth","statement":"For the full year we expect AUM growth of 20% to 22%.","speaker":"Asha Rao, MD & CEO","page":3,"change_vs_previous":"raised","extracted_at":"2025-11-12T09:00:00Z","value_low":20,"value_high":22,"value_unit":"percent","horizon":"FY26","previous_period":"Q1FY26","previous_statement":"We expect AUM growth of 18% to 20% for FY26."}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","topic":"capital_raise","statement":"We would not like to comment on the timing of any capital raise at this point.","speaker":"Asha Rao, MD & CEO","page":9,"change_vs_previous":"withdrawn","extracted_at":"2025-11-12T09:00:00Z","previous_period":"Q1FY26","previous_statement":"We will look at a capital raise at an appropriate time.","note":"Asked by Rohan Mehta (Example Securities) for amount and timing; management declined."}
 ```
 
 Guidance table in the reply:
