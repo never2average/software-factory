@@ -84,7 +84,7 @@ results (text PDF, pages 2-3 images), fetched from the company's IR page.
 Row:
 
 ```json
-{"customer_id": "example-housing-finance", "filed_on": "2025-10-24", "tag": "reg33_results", "period": "Q2 FY26", "basis": "both",
+{"primary_context_entity": "example-housing-finance", "filed_on": "2025-10-24", "tag": "reg33_results", "period": "Q2 FY26", "basis": "both",
  "title": "Outcome of Board Meeting - Unaudited Financial Results for the quarter ended September 30, 2025",
  "path": "Companies/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-outcome-board-meeting-unaudited-financial-results.pdf",
  "source_url": "https://www.example-hfl.invalid/investors/results/q2fy26.pdf", "source": "company_ir",

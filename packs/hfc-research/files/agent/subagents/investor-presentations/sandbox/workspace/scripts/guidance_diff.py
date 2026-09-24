@@ -145,7 +145,7 @@ def _self_test():
     def ok(name, cond, detail=None):
         checks.append({"check": name, "ok": bool(cond), **({"detail": detail} if not cond else {})})
     def row(period, topic, statement, **kw):
-        return {"customer_id": "example-hfl", "period": period, "topic": topic, "statement": statement, "speaker": "Asha Rao", "page": 4,
+        return {schema.ROW_KEY: "example-hfl", "period": period, "topic": topic, "statement": statement, "speaker": "Asha Rao", "page": 4,
                 "change_vs_previous": kw.pop("change", "new"), "extracted_at": "2025-11-05", **kw}
 
     prev = [row("Q1 FY26", "aum_growth", "We expect AUM growth of 18% to 20% for FY26.", value_low=18, value_high=20, value_unit="percent", horizon="FY26"),
@@ -206,6 +206,13 @@ def _self_test():
     with open(p, "w", encoding="utf-8") as f: f.write(json.dumps(cur[0]) + "\nnot json\n[1]\n")
     rows, problems = schema.read_jsonl(p)
     ok("a broken history line is a reported problem, not a crash", len(rows) == 1 and len(problems) == 2, problems)
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("\n".join(json.dumps({(OLD if k == schema.ROW_KEY else k): v for k, v in r.items()}) for r in prev) + "\n")
+    hist_old, problems = schema.read_jsonl(p)
+    out, errs = diff(_rows(cur), hist_old)
+    ok("a history stored under the key's older name reads as the new key and diffs the same",
+       not problems and all(schema.ROW_KEY in r and OLD not in r for _, r in hist_old) and out["summary"] == {"raised": 1, "lowered": 1, "maintained": 1, "not_comparable": 3, "withdrawn": 1, "new": 2}, (problems, out and out["summary"]))
     return checks
 
 

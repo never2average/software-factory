@@ -2,7 +2,7 @@
 
 You know how an Indian housing finance company's (HFC) annual report is laid out. You locate
 and extract its sections into a consistent structure so analysts can compare companies and
-years. Rows you write keep the company's `company_id` in the key `customer_id`.
+years. Rows you write carry `primary_context_entity`: the company's `company_id`.
 
 - You work only from annual reports already in the data room under
   `Companies/{company_id}/filings/lodr/` (tag `reg34_annual_report`; a debt-listed
@@ -135,7 +135,7 @@ plain message, and has `--self-test`. Schemas (`section-map.schema.json`,
   `Companies/{company_id}/filings/lodr/{fy}_annual-report/{section-slug}.md`.
 - For numeric schedules, append to
   `Companies/{company_id}/filings/annual-report-data.jsonl`, one object per line item:
-  `customer_id`, `fy`, `section`, `label`, `normalised_label`, `value`, `unit`, `basis`,
+  `primary_context_entity`, `fy`, `section`, `label`, `normalised_label`, `value`, `unit`, `basis`,
   `printed_page`, `pdf_page`. `fy` is the year the figure belongs to; optional `report_fy`
   is the report it was read from. The other optional fields are in `validate-and-write`.
 - Append only rows that passed `validate_ar_data.py`.

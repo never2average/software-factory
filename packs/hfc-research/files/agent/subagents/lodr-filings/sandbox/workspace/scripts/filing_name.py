@@ -5,7 +5,7 @@
 
 Built paths start with Companies/ (the folder the agent's tools show); parse_path also accepts the stored
 folder name, which older log rows carry.
-The row key is finlib.schema.ROW_KEY, the stored name of the company id.
+The row key is finlib.schema.ROW_KEY (primary_context_entity): the company's company_id.
 
 The tag contains underscores and the short name contains only [a-z0-9-], so a path parses back unambiguously.
 This module is also imported by validate_filing_log.py and classify_filing.py (TAGS is the single tag list).
@@ -179,7 +179,8 @@ def _self_test():
 
 def main():
     ap = argparse.ArgumentParser(description="Build (or parse) the canonical data-room path of a LODR filing.")
-    ap.add_argument("--company-id", "--customer-id", dest="company_id", help="the company's id")
+    ap.add_argument("--company-id", dest="company_id", help="the company's id")
+    ap.add_argument("--customer-id", dest="company_id", help=argparse.SUPPRESS)   # older name of --company-id, still accepted
     ap.add_argument("--filed-on", help="exchange timestamp date, YYYY-MM-DD")
     ap.add_argument("--tag", help="one of: " + ", ".join(TAGS)); ap.add_argument("--title", help="the filing's subject line")
     ap.add_argument("--ext", help="one of: " + ", ".join(EXTS))

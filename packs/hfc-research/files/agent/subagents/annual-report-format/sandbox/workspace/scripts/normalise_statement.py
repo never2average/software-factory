@@ -2,7 +2,7 @@
 """Statement rows -> the company's label, a normalised label, and values in Rs crore.
 
 Input (file or - for stdin):
-  {"customer_id": "example-housing-finance", "report_fy": "FY26", "section": "standalone_financial_statements",
+  {"primary_context_entity": "example-housing-finance", "report_fy": "FY26", "section": "standalone_financial_statements",
    "statement": "balance_sheet",            balance_sheet | profit_and_loss | cash_flow | changes_in_equity | loans_note | borrowings_note
    "basis": "standalone",                   standalone | consolidated   (required: never assumed)
    "unit_header": "(Rs. in Lakhs)",         the unit line printed above the table; or give "unit": "lakh" outright
@@ -71,7 +71,7 @@ def _side_of(label, table):
 
 
 def normalise(doc, table=None):
-    from finlib import numbers, units, periods
+    from finlib import numbers, units, periods, schema
     table = table or C.load_reference("statement-labels.json")
     problems = []
     statement, basis = doc.get("statement"), doc.get("basis")
@@ -139,7 +139,7 @@ def normalise(doc, table=None):
         for c in cells:
             if c["value"] is None:
                 continue
-            d = {"customer_id": doc.get("customer_id"), "fy": c["fy"], "report_fy": doc.get("report_fy"), "section": doc.get("section"),
+            d = {schema.ROW_KEY: schema.row_entity(doc), "fy": c["fy"], "report_fy": doc.get("report_fy"), "section": doc.get("section"),
                  "statement": statement, "label": row["label"], "normalised_label": norm, "value": c["value"], "unit": c["unit"],
                  "basis": basis, "printed_page": None if row["printed_page"] is None else str(row["printed_page"]), "pdf_page": row["pdf_page"]}
             if not per_share and unit != "crore":
@@ -173,7 +173,7 @@ def normalise(doc, table=None):
 
 def _cases():
     table = C.load_reference("statement-labels.json")
-    BS = {"customer_id": "example-housing-finance", "report_fy": "FY26", "section": "standalone_financial_statements",
+    BS = {"primary_context_entity": "example-housing-finance", "report_fy": "FY26", "section": "standalone_financial_statements",
           "statement": "balance_sheet", "basis": "standalone", "unit_header": "(₹ in Lakhs)", "printed_page": "164", "pdf_page": 172,
           "columns": [{"label": "As at March 31, 2026"}, {"label": "As at March 31, 2025", "restated": True}],
           "rows": [{"label": "ASSETS", "values": ["", ""]}, {"label": "Financial assets", "values": ["", ""]},
@@ -215,6 +215,10 @@ def _cases():
         s = C.load_schema("annual-report-data-row.schema.json")
         bad = [p for d in r["data_rows"] for p in schema.validate(d, s)]
         assert bad == [], bad[:3]
+        # an input under the key's older name writes rows under the new key
+        OLD = schema.LEGACY_ROW_KEYS[0]
+        r, _ = normalise({(OLD if k == schema.ROW_KEY else k): v for k, v in BS.items()}, table)
+        assert r["data_rows"] and all(d[schema.ROW_KEY] == "example-housing-finance" and OLD not in d for d in r["data_rows"])
 
     def profit_and_loss_eps_not_converted():
         doc = {"statement": "profit_and_loss", "basis": "standalone", "unit": "million", "columns": [{"fy": "FY26"}],

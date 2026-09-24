@@ -94,10 +94,10 @@ def validate(path, existing=None, today=None):
         warnings += [f"existing log {p}" for p in old_problems]
         for n, o in old:
             seen_path.setdefault(o.get("path"), f"existing line {n}")
-            seen_doc.setdefault((o.get("customer_id"), o.get("filed_on"), o.get("tag"), o.get("period"), _norm_title(o.get("title"))), f"existing line {n}")
+            seen_doc.setdefault((o.get(schema.ROW_KEY), o.get("filed_on"), o.get("tag"), o.get("period"), _norm_title(o.get("title"))), f"existing line {n}")
     for n, o in rows:
         errors += [f"line {n}: {m}" for m in check_row(o, today)]
-        key = (o.get("customer_id"), o.get("filed_on"), o.get("tag"), o.get("period"), _norm_title(o.get("title")))
+        key = (o.get(schema.ROW_KEY), o.get("filed_on"), o.get("tag"), o.get("period"), _norm_title(o.get("title")))
         if o.get("path") in seen_path:
             errors.append(f"line {n}: duplicate path, already at {seen_path[o.get('path')]}: {o.get('path')}")
         elif key in seen_doc:
@@ -110,12 +110,12 @@ def validate(path, existing=None, today=None):
 
 def _self_test():
     today = datetime.date(2026, 9, 18); n = 0
-    good = {"customer_id": "example-housing-finance", "filed_on": "2025-10-24", "tag": "reg33_results", "period": "Q2 FY26", "basis": "both",
+    good = {schema.ROW_KEY: "example-housing-finance", "filed_on": "2025-10-24", "tag": "reg33_results", "period": "Q2 FY26", "basis": "both",
             "title": "Outcome of Board Meeting - Unaudited Financial Results for the quarter ended September 30, 2025",
             "path": "Companies/example-housing-finance/filings/lodr/2025-10-24_reg33_results_q2-fy26-outcome-board-meeting-unaudited-financial-results.pdf",
             "source_url": "https://www.example-exchange.invalid/announcements/abc.pdf", "source": "bse", "also_covers": ["reg30_event", "reg52_results"], "content": "mixed",
             "summary": "Standalone and consolidated results for Q2 FY26 with limited review reports. Reg 52(4) ratios appended at p.11.", "logged_at": "2025-10-25T04:30:00Z"}
-    event = {"customer_id": "example-housing-finance", "filed_on": "2026-05-02", "tag": "reg30_event", "title": "Credit rating reaffirmed",
+    event = {schema.ROW_KEY: "example-housing-finance", "filed_on": "2026-05-02", "tag": "reg30_event", "title": "Credit rating reaffirmed",
              "path": "Companies/example-housing-finance/filings/lodr/2026-05-02_reg30_event_credit-rating-reaffirmed.md", "source_url": "https://www.example-exchange.invalid/x",
              "source": "nse", "summary": "Rating reaffirmed at the same level with a stable outlook.", "logged_at": "2026-05-03T10:00:00+05:30"}
     d = tempfile.mkdtemp()
@@ -142,7 +142,18 @@ def _self_test():
     n += bad({"tag": "reg33"}, "is not one of")
     n += bad({"tag": "reg52_results"}, "path says tag = 'reg33_results'")
     n += bad({"filed_on": "2025-10-25"}, "path says filed_on")
-    n += bad({"customer_id": "another-hfc"}, "path says company_id")
+    n += bad({schema.ROW_KEY: "another-hfc"}, "path says company_id")
+    # rows stored under the key's older name: read as the new key; both keys disagreeing is an error
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    old_row = {(OLD if k == schema.ROW_KEY else k): v for k, v in good.items()}
+    r = run([old_row]); assert r["valid"], r["errors"]; n += 1
+    r = run([old_row], existing=[good]); assert any("duplicate path" in x for x in r["errors"]), r["errors"]; n += 1
+    second_path = {**good, "path": good["path"].replace("outcome-board-meeting-unaudited-financial-results", "results")}
+    r = run([second_path], existing=[old_row])
+    assert any("same filing" in x for x in r["errors"]), r["errors"]; n += 1
+    r = run([{**good, OLD: good[schema.ROW_KEY]}]); assert r["valid"], r["errors"]; n += 1
+    r = run([{**good, OLD: "another-hfc"}]); assert not r["valid"] and any("disagree" in x for x in r["errors"]), r["errors"]; n += 1
+    r = run([{**old_row, OLD: "another-hfc"}]); assert not r["valid"] and any("path says company_id" in x for x in r["errors"]), r["errors"]; n += 1
     n += bad({"path": "Companies/example-housing-finance/filings/lodr/results q2.pdf"}, "does not match")
     n += bad({}, "missing required 'period'", drop=("period",))
     n += bad({}, "missing required 'basis'", drop=("basis",))

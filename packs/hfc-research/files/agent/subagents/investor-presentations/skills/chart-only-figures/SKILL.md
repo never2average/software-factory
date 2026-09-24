@@ -75,7 +75,7 @@ Slide 11 "On-book / off-book AUM" is a stacked bar with only totals labelled (12
 for Q2 FY26 reaches from about 10,900 to 12,345 on an axis with gridlines every 2,000:
 
 ```json
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"off_book_aum","value":1450,"unit":"crore","document":"…/2025-11-04_Q2FY26_investor-presentation.pdf","slide":11,"approximate":true,"from_parent":false,"note":"Read off the stacked bar against gridlines of 2,000; the segment has no data label. Total 12,345 is labelled.","extracted_at":"2025-11-05T10:00:00Z"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"off_book_aum","value":1450,"unit":"crore","document":"…/2025-11-04_Q2FY26_investor-presentation.pdf","slide":11,"approximate":true,"from_parent":false,"note":"Read off the stacked bar against gridlines of 2,000; the segment has no data label. Total 12,345 is labelled.","extracted_at":"2025-11-05T10:00:00Z"}
 ```
 
 Reply: "Off-book AUM: about ₹ 1,450 crore (approximate, read off the chart on slide 11)."

@@ -45,6 +45,7 @@ def build(rows, company=None, names=None):
     """rows: [obj] (already valid) -> workbook spec"""
     names = names or {}
     latest = {}
+    rows = [schema.normalise_row(o)[0] for o in rows]     # rows under the key's older name read as the new key
     for o in rows:
         if company and o[ROW_KEY] != company: continue
         key = (o[ROW_KEY], o["period"], o["kpi"])
@@ -162,16 +163,34 @@ def _self_test():
     out = run(p)
     eq("invalid input builds nothing", (out["ok"], out["errors"][0]["code"]), (False, "E-NNPA"))
     eq("unknown company", run(p, company="nobody")["ok"], False)
-    return fails, 19
+    # rows stored under the key's older name, and old and new mixed, build the same workbook
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    as_old = lambda r: {(OLD if k == ROW_KEY else k): v for k, v in r.items()}
+    eq("old rows build the same workbook", build([as_old(r) for r in rows], names={"example-hfl": "Example Housing Finance Ltd: [Standalone]/KPIs"}), spec)
+    eq("old and new rows mixed", build([as_old(r) for r in rows[:4]] + rows[4:], names={"example-hfl": "Example Housing Finance Ltd: [Standalone]/KPIs"}), spec)
+    with open(p, "w", encoding="utf-8") as f: f.write("\n".join(json.dumps(as_old(r), ensure_ascii=False) for r in rows) + "\n")
+    eq("run on a file of old rows, one company", run(p, company="sample-home-loans")["ok"], True)
+    ap = _parser()
+    hidden = [f for act in ap._actions if act.help == argparse.SUPPRESS for f in act.option_strings]
+    shown = ap.format_help()
+    eq("--company-id documented, the older flags hidden", ("--company-id" in shown, len(hidden), [f for f in hidden if f + " " in shown]), (True, 2, []))
+    eq("the older flags still accepted", [ap.parse_args([f, "x"]).company for f in ["--company-id"] + hidden], ["x"] * 3)
+    return fails, 25
+
+
+def _parser():
+    ap = argparse.ArgumentParser(description="kpis.jsonl -> workbook spec JSON (one sheet per company, KPIs as rows by category, quarters as columns, Footnotes and Citations sheets) and, with --xlsx, the .xlsx.")
+    ap.add_argument("path", nargs="?", help="kpis.jsonl with every row to show (history + the new batch)")
+    ap.add_argument("--company-id", dest="company", help="build for this company_id only")
+    ap.add_argument("--company", "--customer", dest="company", help=argparse.SUPPRESS)   # older names of --company-id, still accepted
+    ap.add_argument("--name", action="append", default=[], metavar="COMPANY_ID=Display Name", help="sheet title for a company (repeatable); with --company-id a bare name is accepted")
+    ap.add_argument("--xlsx", help="write the workbook here (needs openpyxl, installed in the sandbox)")
+    ap.add_argument("--self-test", action="store_true")
+    return ap
 
 
 def main():
-    ap = argparse.ArgumentParser(description="kpis.jsonl -> workbook spec JSON (one sheet per company, KPIs as rows by category, quarters as columns, Footnotes and Citations sheets) and, with --xlsx, the .xlsx.")
-    ap.add_argument("path", nargs="?", help="kpis.jsonl with every row to show (history + the new batch)")
-    ap.add_argument("--company", "--customer", dest="company", help="build for this company_id only")
-    ap.add_argument("--name", action="append", default=[], metavar="COMPANY_ID=Display Name", help="sheet title for a company (repeatable); with --company a bare name is accepted")
-    ap.add_argument("--xlsx", help="write the workbook here (needs openpyxl, installed in the sandbox)")
-    ap.add_argument("--self-test", action="store_true")
+    ap = _parser()
     a = ap.parse_args()
     if a.self_test:
         fails, n = _self_test()

@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "customer_id",
+    "primary_context_entity",
     "source_path",
     "as_on",
     "period",
@@ -15,9 +15,10 @@
     "extracted_at"
   ],
   "properties": {
-    "customer_id": {
+    "primary_context_entity": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "the company's company_id: the entity this row is about"
     },
     "source_path": {
       "type": "string",

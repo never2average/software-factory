@@ -27,8 +27,9 @@ BANDS = (26.0, 50.0, 75.0)
 
 
 def validate(doc):
+    doc, errors = schema.normalise_row(doc)          # an extract stored under the key's older name reads as the new key
     with open(SCHEMA_PATH, encoding="utf-8") as f:
-        errors = list(schema.validate(doc, json.load(f)))
+        errors += list(schema.validate(doc, json.load(f)))
     if errors:
         return {"valid": False, "errors": errors, "warnings": []}
     warnings = []
@@ -78,7 +79,7 @@ def validate(doc):
 
 
 def compare(cur, prev):
-    if cur["customer_id"] != prev["customer_id"]:
+    if schema.row_entity(cur) != schema.row_entity(prev):
         raise ValueError("the two files are for different companies")
     want = periods.previous_quarter(cur["period"])
     if prev["period"] != want:
@@ -106,7 +107,7 @@ def compare(cur, prev):
 
 def _example(period="Q2 FY26", as_on="2025-09-30", promoter=48_000_000, pledged=4_800_000):
     total = 100_000_000; public = total - promoter - 1_000_000
-    return {"customer_id": "example-housing-finance", "source_path": "Companies/example-housing-finance/filings/lodr/2025-10-15_reg31_shareholding_shareholding-pattern.pdf",
+    return {schema.ROW_KEY: "example-housing-finance", "source_path": "Companies/example-housing-finance/filings/lodr/2025-10-15_reg31_shareholding_shareholding-pattern.pdf",
             "as_on": as_on, "period": period, "total_shares": total,
             "categories": {"promoter_and_promoter_group": {"holders": 3, "shares": promoter, "pct": round(promoter / total * 100, 2)},
                            "public": {"holders": 85_000, "shares": public, "pct": round(public / total * 100, 2)},
@@ -150,6 +151,18 @@ def _self_test():
         raise AssertionError("compared against a non-adjacent quarter")
     nd = copy.deepcopy(prev); nd["promoter_encumbrance"] = {"status": "not_disclosed"}
     assert validate(nd)["valid"] and compare(good, nd)["pledged_shares_change"] is None; n += 1
+    # an extract stored under the key's older name: valid, and comparable with a new one; both keys disagreeing is an error
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    old = {(OLD if k == schema.ROW_KEY else k): v for k, v in prev.items()}
+    assert validate(old)["valid"] and compare(good, old)["promoter_band_crossed"] == [50.0]; n += 1
+    assert validate({**good, OLD: good[schema.ROW_KEY]})["valid"]; n += 1
+    r = validate({**good, OLD: "another-hfc"}); assert not r["valid"] and any("disagree" in x for x in r["errors"]), r; n += 1
+    try:
+        compare(good, {**old, OLD: "another-hfc"})
+    except ValueError as x:
+        assert "different companies" in str(x); n += 1
+    else:
+        raise AssertionError("compared two companies")
     return n
 
 

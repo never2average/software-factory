@@ -26,7 +26,7 @@ Section slugs: `corporate-information`, `directors-report`, `management-discussi
 
 One JSON object per line item, checked by `validate_ar_data.py` against `/workspace/schemas/annual-report-data-row.schema.json`.
 
-- Required: `customer_id`, `fy`, `section`, `label`, `normalised_label`, `value`, `unit`, `basis`, `printed_page`,
+- Required: `primary_context_entity`, `fy`, `section`, `label`, `normalised_label`, `value`, `unit`, `basis`, `printed_page`,
   `pdf_page`.
 - Optional: `report_fy`, `statement`, `dimension`, `original_value`, `original_unit`, `note_ref`, `restated`, `note`,
   `stitched_pdf_pages`, `source_file`.

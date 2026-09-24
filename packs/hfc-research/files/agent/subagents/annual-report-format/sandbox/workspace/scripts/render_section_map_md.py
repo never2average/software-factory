@@ -33,7 +33,8 @@ def render(m, table=None):
         t = titles.get(e["key"], key) if e else key
         return f"{t} ({key.split('_')[0]})" if e and e.get("contextual") else t
 
-    L = [f"# Annual report map: {m['customer_id']} {m['fy']}", ""]
+    from finlib import schema
+    L = [f"# Annual report map: {schema.row_entity(m)} {m['fy']}", ""]
     L += [f"- Source file: `{m.get('source_file') or 'not recorded'}`",
           f"- Pages in the PDF: {m['page_count']}",
           f"- Text layer: {m.get('content_type') or 'not checked'}"
@@ -103,14 +104,16 @@ def extract(markdown):
     m = re.search(re.escape(BEGIN) + r"\s*```json\s*(.*?)\s*```\s*" + re.escape(END), markdown, re.S)
     if not m:
         return None, "no machine-readable map block in the file (it was not written by this script); rebuild the map"
+    from finlib import schema
     try:
-        return json.loads(m.group(1)), None
+        return schema.normalise_row(json.loads(m.group(1)))[0], None      # a map written under the key's older name reads as the new key
     except json.JSONDecodeError as x:
         return None, f"the map block is not valid JSON ({x.msg}); rebuild the map"
 
 
 def dataroom_path(m):
-    return f"Companies/{m['customer_id']}/filings/lodr/{m['fy']}_annual-report-map.md"
+    from finlib import schema
+    return f"Companies/{schema.row_entity(m)}/filings/lodr/{m['fy']}_annual-report-map.md"
 
 
 def _cases():
@@ -130,6 +133,17 @@ def _cases():
         assert err is None and back == m
         assert dataroom_path(m) == "Companies/example-housing-finance/filings/lodr/FY26_annual-report-map.md"
 
+    def older_key_reads_back():
+        from finlib import schema
+        OLD = schema.LEGACY_ROW_KEYS[0]
+        m = V._good_map()
+        old = {(OLD if k == schema.ROW_KEY else k): v for k, v in m.items()}
+        assert V.validate(old)[0] == [] and render(old).startswith("# Annual report map: example-housing-finance FY26")
+        assert dataroom_path(old) == dataroom_path(m)
+        back, err = extract(render(old))
+        assert err is None and back == m and OLD not in back, (err, list(back)[:3])
+        assert any("disagree" in e for e in V.validate({**m, OLD: "another-hfc"})[0])
+
     def spreads_rule_text():
         m = V._good_map()
         m["offsets"] = [{"style": "arabic", "pages_per_pdf_page": 2, "b": -2, "offset": None, "from_pdf_page": 2, "to_pdf_page": 40,
@@ -145,7 +159,7 @@ def _cases():
         assert extract("# A map typed by hand\n")[0] is None
         assert "not valid JSON" in extract(f"{BEGIN}\n```json\n{{oops\n```\n{END}")[1]
 
-    return [("render and read back", good_render_and_round_trip), ("spread offsets are explained", spreads_rule_text),
+    return [("render and read back", good_render_and_round_trip), ("a map under the key's older name", older_key_reads_back), ("spread offsets are explained", spreads_rule_text),
             ("table cells are escaped", pipes_escaped), ("extract failures are reported", extract_failures)]
 
 

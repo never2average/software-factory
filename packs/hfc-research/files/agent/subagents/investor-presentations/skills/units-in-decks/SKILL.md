@@ -63,7 +63,7 @@ Example Housing Finance Ltd presents in millions. Slide 4: "(₹ in million) AUM
 disbursements `1050.0`; branches `215, unit count`.
 
 ```json
-{"customer_id":"example-hfl","period":"Q2FY26","metric":"aum","value":12345,"unit":"crore","document":"…/2025-11-04_Q2FY26_investor-presentation.pdf","slide":4,"approximate":false,"from_parent":false,"note":"","extracted_at":"2025-11-05T10:00:00Z","source_value":123450,"source_unit":"million"}
+{"primary_context_entity":"example-hfl","period":"Q2FY26","metric":"aum","value":12345,"unit":"crore","document":"…/2025-11-04_Q2FY26_investor-presentation.pdf","slide":4,"approximate":false,"from_parent":false,"note":"","extracted_at":"2025-11-05T10:00:00Z","source_value":123450,"source_unit":"million"}
 ```
 
 Slide 22 "Borrowings, INR bn (US$ mn)": "Total borrowings 98.5 (US$ 1,180 mn)". The index gives

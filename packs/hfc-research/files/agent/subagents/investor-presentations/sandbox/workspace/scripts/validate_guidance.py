@@ -39,6 +39,13 @@ def validate(rows, problems, table, sch, history=None, pages=None):
     warnings = []
     E = lambda n, rule, msg: errors.append({"line": n, "rule": rule, "message": msg})
     W = lambda n, rule, msg: warnings.append({"line": n, "rule": rule, "message": msg})
+    # rows stored under the key's older name read as the new key; both keys disagreeing is an error
+    normed = []
+    for n, r in rows:
+        r, kp = schema.normalise_row(r); normed.append((n, r))
+        for p in kp: E(n, "schema", p)
+    rows = normed
+    if history is not None: history = [(hn, schema.normalise_row(hr)[0]) for hn, hr in history]
     lo, hi = table["statement_length"]["min"], table["statement_length"]["max"]
     seen_stmt, seen_key = {}, {}
     for n, r in rows:
@@ -119,7 +126,7 @@ def _self_test():
     def ok(name, cond, detail=None):
         checks.append({"check": name, "ok": bool(cond), **({"detail": detail} if not cond else {})})
     def row(topic, statement, change="new", period="Q2FY26", **kw):
-        base = {"customer_id": "example-hfl", "period": period, "topic": topic, "statement": statement, "speaker": "Asha Rao, MD & CEO", "page": 4,
+        base = {schema.ROW_KEY: "example-hfl", "period": period, "topic": topic, "statement": statement, "speaker": "Asha Rao, MD & CEO", "page": 4,
                 "change_vs_previous": change, "extracted_at": "2025-11-06"}
         base.update(kw); return base
     def run(objs, **kw):
@@ -181,6 +188,19 @@ def _self_test():
     ok("--transcript: a paraphrase is refused", e == ["verbatim"], ed)
     e, _, ed, _ = run([row("branch_additions", "We will add branches in the north.", page=3)], pages=pages)
     ok("--transcript: a sentence running across a page break is accepted", e == [], ed)
+
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    as_old = lambda r: {(OLD if k == schema.ROW_KEY else k): v for k, v in r.items()}
+    e, w, ed, wd = run([as_old(r) for r in good])
+    ok("rows under the key's older name pass", e == [] and w == [], (ed, wd))
+    e, w, ed, wd = run([as_old(good[0])] + good[1:])
+    ok("old and new rows mixed pass", e == [] and w == [], (ed, wd))
+    e, _, ed, _ = run([row("aum_growth", "For the full year we expect AUM growth of 20% to 22%.", "raised"), good[1]], history=[(n, as_old(r)) for n, r in hist])
+    ok("--previous rows under the older key are the same baseline", e == [], ed)
+    e, _, ed, _ = run([{**good[2], OLD: "example-hfl"}])
+    ok("both keys with the same value pass", e == [], ed)
+    e, _, ed, _ = run([{**good[2], OLD: "another-hfc"}])
+    ok("both keys with different values is an error", e == ["schema"] and "disagree" in ed[0]["message"], ed)
 
     d = tempfile.mkdtemp(); p = os.path.join(d, "g.jsonl")
     with open(p, "w", encoding="utf-8") as f: f.write(json.dumps(good[2]) + "\n{oops\n")

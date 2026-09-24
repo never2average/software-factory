@@ -1,5 +1,5 @@
 {
-  "$comment": "hfc-research pack: equity and credit research on Indian housing finance companies. The model reads the profile's words (list_companies, company_id, Companies/); storage keeps customer_id and Customers/ and is translated at the boundary (needs fde-agent #55). The base persona is off: agent/instructions/50-pack-hfc-research.md says who the agent is.",
+  "$comment": "hfc-research pack: equity and credit research on Indian housing finance companies. The model reads the profile's words (list_companies, company_id, Companies/); the base store keeps its own id and the Customers/ folder, translated at the boundary (needs fde-agent #55). The pack's own rows name their company in primary_context_entity (migrations/0001 renamed the older key). The base persona is off: agent/instructions/50-pack-hfc-research.md says who the agent is.",
   "product": {
     "tagline": "Research workspace for Indian housing finance companies.",
     "description": "{product} — a research workspace for analysts covering Indian housing finance companies: an agent that fetches SEBI LODR filings and investor presentations, reads them, and builds cited KPI tables."

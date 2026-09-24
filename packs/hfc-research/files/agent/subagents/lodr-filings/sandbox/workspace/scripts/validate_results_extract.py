@@ -45,7 +45,8 @@ def validate(doc):
         sch = json.load(f)
     with open(SYN_PATH, encoding="utf-8") as f:
         syn = json.load(f)
-    errors, warnings = list(schema.validate(doc, sch)), []
+    doc, errors = schema.normalise_row(doc)          # an extract stored under the key's older name reads as the new key
+    errors, warnings = errors + list(schema.validate(doc, sch)), []
     if errors and not isinstance(doc, dict):
         return {"valid": False, "errors": errors, "warnings": warnings}
     known = {e["item"]: e for e in syn["items"]}
@@ -227,6 +228,12 @@ def _self_test():
     for it in d["line_items"]: it["values"] = [v for v in it["values"] if v["period"] in ("H1 FY26", "H1 FY25", "FY25")]
     r = validate(d); assert r["valid"] and any("derive the quarter" in w for w in r["warnings"]), r["errors"]; n += 1
     assert not validate([])["valid"]; n += 1
+    # an extract stored under the key's older name is valid; both keys disagreeing is an error
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    old = {(OLD if k == schema.ROW_KEY else k): v for k, v in copy.deepcopy(base).items()}
+    r = validate(old); assert r["valid"], r["errors"]; n += 1
+    r = validate({**copy.deepcopy(base), OLD: base[schema.ROW_KEY]}); assert r["valid"], r["errors"]; n += 1
+    r = validate({**copy.deepcopy(base), OLD: "another-hfc"}); assert not r["valid"] and any("disagree" in x for x in r["errors"]), r["errors"]; n += 1
     return n
 
 

@@ -49,7 +49,7 @@ the document and report the difference.
    python3 /workspace/scripts/normalise_statement.py /workspace/out/standalone-pnl.rows.json > /workspace/out/standalone-pnl.norm.json
    ```
 
-   Input fields: `customer_id`, `report_fy`, `section`, `statement`, `basis`, `unit_header` (the line as printed),
+   Input fields: `primary_context_entity`, `report_fy`, `section`, `statement`, `basis`, `unit_header` (the line as printed),
    `columns` (one per value column, with `fy` or the column head as `label`, and `restated` where marked),
    `printed_page`, `pdf_page`, `rows`. Rows from `stitch_tables.py` can be passed as they are.
 5. Read the script's lists before going on:
@@ -98,7 +98,7 @@ EQUITY heading rows and labels them `derivative_financial_instruments_assets` an
 One data row, as appended:
 
 ```json
-{"customer_id": "example-housing-finance", "fy": "FY26", "report_fy": "FY26", "section": "standalone_financial_statements", "statement": "balance_sheet", "label": "(e) Loans", "normalised_label": "loan_book", "value": 12345.678, "unit": "crore", "original_value": 1234567.8, "original_unit": "lakh", "basis": "standalone", "printed_page": "164", "pdf_page": 172, "note_ref": "7"}
+{"primary_context_entity": "example-housing-finance", "fy": "FY26", "report_fy": "FY26", "section": "standalone_financial_statements", "statement": "balance_sheet", "label": "(e) Loans", "normalised_label": "loan_book", "value": 12345.678, "unit": "crore", "original_value": 1234567.8, "original_unit": "lakh", "basis": "standalone", "printed_page": "164", "pdf_page": 172, "note_ref": "7"}
 ```
 
 The label table is [references/statement-labels.json](references/statement-labels.json) (the scripts read the same

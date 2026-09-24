@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "customer_id",
+    "primary_context_entity",
     "filed_on",
     "tag",
     "title",
@@ -14,9 +14,10 @@
     "logged_at"
   ],
   "properties": {
-    "customer_id": {
+    "primary_context_entity": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "the company's company_id: the entity this row is about"
     },
     "filed_on": {
       "type": "string",

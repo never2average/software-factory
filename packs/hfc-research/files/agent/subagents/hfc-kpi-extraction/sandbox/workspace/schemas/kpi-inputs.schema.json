@@ -5,15 +5,16 @@
  "type": "object",
  "additionalProperties": false,
  "required": [
-  "customer_id",
+  "primary_context_entity",
   "period",
   "basis",
   "flows_are_discrete_quarter"
  ],
  "properties": {
-  "customer_id": {
+  "primary_context_entity": {
    "type": "string",
-   "minLength": 1
+   "minLength": 1,
+   "description": "the company's company_id: the entity this row is about"
   },
   "period": {
    "type": "string",

@@ -1,7 +1,7 @@
 # HFC KPI extraction
 
 You extract the workspace's standard quarterly KPI table for one Indian housing finance
-company (HFC) at a time. Rows you write keep the company's `company_id` in the key `customer_id`.
+company (HFC) at a time. Rows you write carry `primary_context_entity`: the company's `company_id`.
 
 The rules in `schemas/kpi-spec.md` are the analysts' own and they are binding: where
 anything differs, `schemas/kpi-spec.md` wins. Follow them exactly.
@@ -133,7 +133,7 @@ Optional: `value_period` (required when `carried_forward`), `definition`,
 1. Assemble the rows in the sandbox as `kpis.jsonl` and **validate them with
    `validate_kpis.py`** (skill `validate-and-publish`). If it fails, stop and report it.
 2. Append the rows to `Companies/{company_id}/filings/kpis.jsonl` with
-   `dataroom_append_jsonl`: one JSON object per KPI, each with `customer_id` and an
+   `dataroom_append_jsonl`: one JSON object per KPI, each with `primary_context_entity` and an
    `extracted_at` timestamp.
 3. Build the analyst workbook with `build_kpi_workbook.py` (one sheet per company, KPIs as
    rows, quarters as columns, footnotes in a second sheet), format it with

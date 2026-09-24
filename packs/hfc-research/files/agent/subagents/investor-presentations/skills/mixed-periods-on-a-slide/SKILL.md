@@ -76,7 +76,7 @@ Q3 FY26 deck, appendix shows only "Loans assigned, 9M FY26: 520". `ip-metrics.js
 (H1 310). `derive_quarter(3, 520.0, 310.0)` = 210:
 
 ```json
-{"customer_id":"example-hfl","period":"Q3FY26","metric":"sell_down_volume","value":210,"unit":"crore","document":"…/2026-02-03_Q3FY26_investor-presentation.pdf","slide":40,"approximate":false,"from_parent":false,"note":"Derived: 9M FY26 520 (slide 40) less H1 FY26 310 (Q1 130 + Q2 180 from the Q1 and Q2 decks, ip-metrics.jsonl). The deck gives no discrete Q3 figure.","extracted_at":"2026-02-04T09:00:00Z","status":"derived"}
+{"primary_context_entity":"example-hfl","period":"Q3FY26","metric":"sell_down_volume","value":210,"unit":"crore","document":"…/2026-02-03_Q3FY26_investor-presentation.pdf","slide":40,"approximate":false,"from_parent":false,"note":"Derived: 9M FY26 520 (slide 40) less H1 FY26 310 (Q1 130 + Q2 180 from the Q1 and Q2 decks, ip-metrics.jsonl). The deck gives no discrete Q3 figure.","extracted_at":"2026-02-04T09:00:00Z","status":"derived"}
 ```
 
 ## Failure modes and what to report

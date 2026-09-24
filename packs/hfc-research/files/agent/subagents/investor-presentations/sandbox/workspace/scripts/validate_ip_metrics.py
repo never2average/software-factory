@@ -32,7 +32,7 @@ from iplib import emit, fail, load_table, load_schema, find_phrases, norm_period
 
 MONEY_UNITS = ("crore", "lakh", "million", "billion", "thousand", "rupee")
 PRODUCT_MIX = ("aum_mix_individual_housing", "aum_mix_lap", "aum_mix_construction_finance", "aum_mix_affordable", "aum_mix_other")
-CUSTOMER_MIX = ("aum_mix_salaried", "aum_mix_self_employed")
+BORROWER_MIX = ("aum_mix_salaried", "aum_mix_self_employed")
 UNIT_FOR_CLASS = {"count": ("count",), "amount": ("crore",), "percent": ("percent",), "percent_or_amount": ("percent", "crore")}
 
 
@@ -42,6 +42,13 @@ def validate(rows, problems, table, sch, existing=None, require_core=False):
     warnings = []
     E = lambda n, rule, msg: errors.append({"line": n, "rule": rule, "message": msg})
     W = lambda n, rule, msg: warnings.append({"line": n, "rule": rule, "message": msg})
+    # rows stored under the key's older name read as the new key; both keys disagreeing is an error
+    normed = []
+    for n, r in rows:
+        r, kp = schema.normalise_row(r); normed.append((n, r))
+        for p in kp: E(n, "schema", p)
+    rows = normed
+    existing = [(en, schema.normalise_row(er)[0]) for en, er in existing or []]
     excl = table["excluded"]["restructured_book"]["phrases"]
     seen, by_period = {}, {}
     for n, r in rows:
@@ -112,7 +119,7 @@ def validate(rows, problems, table, sch, existing=None, require_core=False):
         if r.get("carried_from_period") is not None and status != "not_disclosed":
             E(n, "carry_forward", "carried_* fields belong only on a not_disclosed row; this quarter's value field never holds a carried value")
         # duplicates
-        key = (r.get("customer_id"), per["period"] if per else r.get("period"), metric, r.get("basis"), r.get("period_basis"))
+        key = (r.get(schema.ROW_KEY), per["period"] if per else r.get("period"), metric, r.get("basis"), r.get("period_basis"))
         if key in seen:
             pn, pv = seen[key]
             if pv == value: W(n, "duplicate", f"same row as line {pn} ({metric} {key[1]}); keep one")
@@ -121,16 +128,16 @@ def validate(rows, problems, table, sch, existing=None, require_core=False):
             seen[key] = (n, value)
         for en, er in existing or []:
             ep = norm_period(er.get("period")) if isinstance(er.get("period"), str) else None
-            if (er.get("customer_id"), ep, er.get("metric"), er.get("basis"), er.get("period_basis")) == key:
+            if (er.get(schema.ROW_KEY), ep, er.get("metric"), er.get("basis"), er.get("period_basis")) == key:
                 if er.get("value") == value: E(n, "duplicate", f"already in the data room file (line {en}); appending it again would double the row")
                 else: E(n, "duplicate", f"the data room file already has {metric} {key[1]} = {er.get('value')} (line {en}); this row says {value}. Report the difference; do not append a second value silently")
                 break
         if per and status in ("reported", "derived", "nil"):
-            by_period.setdefault((r.get("customer_id"), per["period"]), {}).setdefault(metric, []).append((n, r))
+            by_period.setdefault((r.get(schema.ROW_KEY), per["period"]), {}).setdefault(metric, []).append((n, r))
         elif per:
-            by_period.setdefault((r.get("customer_id"), per["period"]), {}).setdefault(metric, [])
+            by_period.setdefault((r.get(schema.ROW_KEY), per["period"]), {}).setdefault(metric, [])
 
-    for (cust, period), m in by_period.items():
+    for (company, period), m in by_period.items():
         val = lambda k: next((r["value"] for _, r in m.get(k, []) if isinstance(r.get("value"), (int, float)) and r.get("unit") == "crore"), None)
         aum, book, off, sd = val("aum"), val("loan_book"), val("off_book_aum"), val("sell_down_volume")
         if aum is not None and book is not None:
@@ -141,7 +148,7 @@ def validate(rows, problems, table, sch, existing=None, require_core=False):
                 W(m["aum"][0][0], "aum_loan_book", f"{period}: AUM ({aum:g}) is below the loan book ({book:g}); AUM includes on-book loans. Check whether 'loan book' is gross and AUM net, or the definitions differ, and note it")
             elif off is not None and abs(book + off - aum) > max(1.0, aum * 0.01):
                 W(m["off_book_aum"][0][0], "aum_loan_book", f"{period}: loan book {book:g} + off-book {off:g} = {book + off:g}, not AUM {aum:g}; record the company's AUM definition")
-        for group, name in ((PRODUCT_MIX, "product mix"), (CUSTOMER_MIX, "customer mix")):
+        for group, name in ((PRODUCT_MIX, "product mix"), (BORROWER_MIX, "customer mix")):
             sums = {}
             for k in group:
                 for n, r in m.get(k, []):
@@ -153,9 +160,9 @@ def validate(rows, problems, table, sch, existing=None, require_core=False):
         have = set(m)
         missing = [k for k in table["core_metrics"] if k not in have]
         if missing:
-            msg = f"{cust} {period}: no row for core metric(s) {missing}. hfc-kpi-extraction needs a row for each, a not_disclosed (or no_off_book) row when the deck does not give it"
+            msg = f"{company} {period}: no row for core metric(s) {missing}. hfc-kpi-extraction needs a row for each, a not_disclosed (or no_off_book) row when the deck does not give it"
             (E if require_core else W)(None, "core", msg)
-    if len({r.get("customer_id") for _, r in rows}) > 1:
+    if len({r.get(schema.ROW_KEY) for _, r in rows}) > 1:
         W(None, "schema", "rows for more than one company in one file; each company has its own ip-metrics.jsonl")
     return errors, warnings
 
@@ -167,7 +174,7 @@ def _self_test():
         checks.append({"check": name, "ok": bool(cond), **({"detail": detail} if not cond else {})})
     DOC = "Companies/example-hfl/filings/presentations/2025-11-04_Q2FY26_investor-presentation.pdf"
     def row(metric, value, unit, slide=5, **kw):
-        return {"customer_id": "example-hfl", "period": "Q2FY26", "metric": metric, "value": value, "unit": unit, "document": DOC, "slide": slide,
+        return {schema.ROW_KEY: "example-hfl", "period": "Q2FY26", "metric": metric, "value": value, "unit": unit, "document": DOC, "slide": slide,
                 "approximate": False, "from_parent": False, "note": "", "extracted_at": "2025-11-05T10:00:00Z", **kw}
     def run(objs, **kw):
         e, w = validate(list(enumerate(objs, 1)), [], table, sch, **kw)
@@ -255,6 +262,19 @@ def _self_test():
     ok("missing core metrics: warning by default, error with --require-core", "core" in w and "core" in run([row("branches", 215, "count")], require_core=True)[0], (ed, wd))
     _, w, _, wd = run([row("cost_to_income", 38.0, "percent")])
     ok("unknown metric key warns (that ratio belongs to hfc-kpi-extraction)", "unit" in w, wd)
+
+    OLD = schema.LEGACY_ROW_KEYS[0]
+    as_old = lambda r: {(OLD if k == schema.ROW_KEY else k): v for k, v in r.items()}
+    e, w, ed, wd = run([as_old(r) for r in good], require_core=True)
+    ok("rows under the key's older name: the complete batch still passes", e == [] and w == [], (ed, wd))
+    e, w, ed, wd = run([as_old(r) for r in good[:6]] + good[6:], require_core=True)
+    ok("old and new rows mixed in one file are one company", e == [] and w == [], (ed, wd))
+    e, _, ed, _ = run([row("aum", 12345.0, "crore", 5)], existing=[(7, as_old(row("aum", 12345.0, "crore", 5)))])
+    ok("--existing rows under the older key still catch a re-filed row", e == ["duplicate"], ed)
+    e, _, ed, _ = run([{**row("aum", 12345.0, "crore", 5), OLD: "example-hfl"}])
+    ok("a row carrying both keys with the same value passes", e == [], ed)
+    e, _, ed, _ = run([{**row("aum", 12345.0, "crore", 5), OLD: "another-hfc"}])
+    ok("a row carrying both keys with different values is an error", e == ["schema"] and "disagree" in ed[0]["message"], ed)
 
     d = tempfile.mkdtemp(); p = os.path.join(d, "m.jsonl")
     with open(p, "w", encoding="utf-8") as f: f.write(json.dumps(good[0]) + "\n{broken\n\n")

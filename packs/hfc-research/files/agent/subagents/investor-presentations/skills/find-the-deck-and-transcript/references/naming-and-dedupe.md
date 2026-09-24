@@ -11,7 +11,7 @@ Companies/{company_id}/filings/presentations/{YYYY-MM-DD}_{period}_concall-trans
 
 | Part | Rule |
 |---|---|
-| `customer_id` | the covered company's `company_id` from `get_company`, even when the document is the parent's |
+| `primary_context_entity` | the covered company's `company_id` from `get_company`, even when the document is the parent's |
 | `YYYY-MM-DD` | the date printed on the document or its covering letter; if none, the exchange's dissemination date; never today's date |
 | `period` | `Q1FY26` .. `Q4FY26`. A Q4 deck that is titled "FY26" is still filed as `Q4FY26` |
 | `parent-slug` | lower case, hyphens, the parent's short name: `example-finance` |
