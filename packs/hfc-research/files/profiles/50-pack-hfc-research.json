@@ -539,5 +539,43 @@
         }
       ]
     }
+  },
+  "account_fields": {
+    "hidden": [
+      "aeOwner",
+      "arr",
+      "arrCurrency",
+      "seats",
+      "accountRegion",
+      "contractStatus",
+      "renewalForecast",
+      "renewalRiskReason",
+      "expansionPotentialArr",
+      "valueRealizationStage",
+      "targetAnnualValue",
+      "realizedAnnualValue",
+      "successCriteria",
+      "valuePeriodStart",
+      "valuePeriodEnd",
+      "valueEvidenceStatus",
+      "valueEvidenceUrl",
+      "lastBusinessReviewDate",
+      "nextBusinessReviewDate",
+      "contractStart",
+      "renewalDate",
+      "technicalOwnerEmail",
+      "executiveSponsorEmail",
+      "platform",
+      "solutions",
+      "tickets"
+    ],
+    "custom_fields": [
+      {
+        "key": "notes",
+        "label": "Notes",
+        "type": "long_text",
+        "help": "Analyst notes on this company. Add to them with custom_append; don't resend the whole note."
+      }
+    ]
   }
 }
