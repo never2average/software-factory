@@ -20,6 +20,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb, type Db } from "./db/index.ts";
 import { customers, orgMembers, orgs } from "./db/schema.ts";
 import { inheritedScope } from "./session-scope.ts";
+import { isServicePrincipal, serviceScopeOf, type AuthLike } from "./service-scope.ts";
 
 export const DEFAULT_ORG = "org-onfinance";
 export const DEFAULT_DOMAIN = "onfinance.in";
@@ -40,7 +41,7 @@ function isolatedOrgFor(email?: string, hd?: string): string {
 }
 
 /** The minimal shape we read off an eve tool/session context. */
-export interface SessionAuthLike {
+export interface SessionAuthLike extends AuthLike {
   readonly attributes?: Readonly<Record<string, string | readonly string[]>>;
   readonly subject?: string;
   readonly principalId?: string;
@@ -206,6 +207,18 @@ export async function orgDisplayName(orgId: string): Promise<string> {
   }
 }
 
+/** Does this workspace exist? `orgs` is the control plane and carries no RLS. Fails closed. */
+async function workspaceExists(orgId: string): Promise<boolean> {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    const [row] = await db.select({ orgId: orgs.orgId }).from(orgs).where(eq(orgs.orgId, orgId)).limit(1);
+    return Boolean(row);
+  } catch {
+    return false;
+  }
+}
+
 export async function orgForSession(ctx: SessionCtxLike | undefined): Promise<string> {
   const { email, hd, org } = callerFromCtx(ctx);
   /**
@@ -217,6 +230,26 @@ export async function orgForSession(ctx: SessionCtxLike | undefined): Promise<st
   if (!email && !org && ctx?.session?.parent) {
     const inherited = await inheritedScope(ctx.session.parent);
     if (inherited) return inherited.orgId;
+  }
+  /**
+   * A SERVICE session (a schedule rule, a front-end workflow/app/cron step) has no person to resolve from, so it
+   * names the workspace it acts for — see service-scope.ts for who may, and why nobody else can. Honoured only
+   * when the workspace exists; anything else falls through to the isolated, empty workspace, as before.
+   */
+  if (!email) {
+    const principal = ctx?.session?.auth?.current ?? ctx?.session?.auth?.initiator ?? null;
+    const named = serviceScopeOf(principal);
+    if (named && (await workspaceExists(named))) return named;
+    /**
+     * A CONTINUATION by the same trusted service (an approval answered with only `inputResponses`) does not pass
+     * through eve.ts `onMessage`, so it arrives without the attribute. It is still that session: use the workspace
+     * the session RECORDED when it started (runtime-context → recordSessionScope). Only for a trusted service
+     * principal, and only its own session's row — the id is eve's, never the model's or the request's.
+     */
+    if (!named && isServicePrincipal(principal) && ctx?.session?.id) {
+      const recorded = await inheritedScope({ sessionId: ctx.session.id });
+      if (recorded) return recorded.orgId;
+    }
   }
   /**
    * A token that NAMES its workspace wins — once membership is confirmed.

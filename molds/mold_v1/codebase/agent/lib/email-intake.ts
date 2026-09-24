@@ -92,7 +92,11 @@ export interface EmailIntakeResult {
  * email Message-ID). Fully deterministic — no model in the loop.
  */
 export async function runEmailIntake(
-  opts: { sinceDays?: number; max?: number } = {},
+  /**
+   * `orgId`: the caller's workspace. The inbox is the deployment's, but only that workspace's customers can match
+   * and only its records receive a ticket; mail from any other workspace's customer reads as unmatched.
+   */
+  opts: { sinceDays?: number; max?: number; orgId?: string | null } = {},
 ): Promise<EmailIntakeResult> {
   const cfg = imapConfig();
   if (!cfg) return { read: 0, skipped: 0, staged: [], unmatched: [], note: "IMAP is not configured." };
@@ -140,7 +144,7 @@ export async function runEmailIntake(
       skipped++;
       continue;
     }
-    const m = await matchCustomerByEmail(sender);
+    const m = await matchCustomerByEmail(sender, opts.orgId);
     if (!m.matched) {
       unmatched.push({ sender, subject: e.subject });
       continue;
@@ -161,7 +165,7 @@ export async function runEmailIntake(
       externalId: e.messageId,
       reportedByEmail: isEmail(sender) ? sender : undefined,
       customerContactEmail: isEmail(sender) ? sender : undefined,
-    });
+    }, opts.orgId);
     staged.push({
       ticketId: r.ticketId,
       customerId: m.customerId,

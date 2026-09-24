@@ -9,6 +9,7 @@ import {
 import { CONTEXT_BUDGETS, renderContextBlock } from "../lib/prompt-context.ts";
 import { renderDeploymentBriefing } from "../lib/deployment-briefing.ts";
 import { recordSessionScope } from "../lib/session-scope.ts";
+import { serviceScopeOf } from "../lib/service-scope.ts";
 
 export default defineDynamic({
   events: {
@@ -28,7 +29,9 @@ export default defineDynamic({
         const orgId = await orgForSession(ctx);
         // Awaited, and before anything else: a subagent delegated to in THIS turn resolves its workspace from
         // this row (agent/lib/session-scope.ts), so it has to exist before the model's first step.
-        await recordSessionScope(ctx.session?.id, orgId, callerFromCtx(ctx).email);
+        const { email: callerEmail } = callerFromCtx(ctx);
+        const named = serviceScopeOf(ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null);
+        await recordSessionScope(ctx.session?.id, orgId, callerEmail, { service: !callerEmail && named === orgId });
         const workspaceName = await orgDisplayName(orgId);
         identityBlock = `## Your workspace\n\nYou work for **${workspaceName}**. Use this name — not any other company's — when you refer to the team you support. Everything you read and write belongs to this workspace alone.`;
         // What THIS DEPLOYMENT is for (profiles/*.json): its vocabulary, which parts of the product it uses, and the

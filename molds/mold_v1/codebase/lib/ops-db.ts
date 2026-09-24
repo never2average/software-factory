@@ -14,6 +14,7 @@ import { sql, ne } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@/agent/lib/db/schema";
+import { installQueryErrorRedaction } from "@/agent/lib/db/query-errors";
 import { orgs } from "@/agent/lib/db/schema";
 
 export type Db = PostgresJsDatabase<typeof schema>;
@@ -38,6 +39,8 @@ export function getOpsDb(): Db | null {
     // `max: 5` keeps the pool small for serverless; `prepare: false` keeps
     // the client compatible with transaction-mode poolers (pgBouncer et al).
     const client = postgres(url, { max: 5, prepare: false });
+    // A failed query's error never carries its values (agent/lib/db/query-errors.ts).
+    installQueryErrorRedaction();
     cached = { url, client, db: drizzle(client, { schema }) };
   }
   return cached.db;

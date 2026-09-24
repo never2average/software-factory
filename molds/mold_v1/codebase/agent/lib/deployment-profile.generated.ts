@@ -42,6 +42,11 @@ export interface DeploymentProfile {
   persona: { base: boolean };
   /** Base specialists the deployment does not use: moved out of agent/subagents/ at generation time. */
   specialists: { exclude: string[] };
+  /**
+   * hidden: fields of the account record the model never reads or writes (its tools' parameters and results).
+   * custom_fields: the deployment's OWN fields on the account record, by key in the customers table's `custom` column.
+   */
+  account_fields: { hidden: string[]; custom_fields: CustomFieldSpec[] };
 }
 
 export interface DomainFieldSpec {
@@ -86,6 +91,8 @@ export interface CustomFieldSpec {
   show_in_list?: boolean;
 }
 export type DomainArea = "deployments" | "implementations";
+/** A record that can carry custom fields: the two redefinable areas and the account record itself. */
+export type CustomFieldArea = DomainArea | "account";
 /** What a form needs to know about a field: read from agent/lib/customer-schema.ts and agent/lib/db/schema.ts. */
 export interface DomainFieldMeta { type: "enum" | "number" | "text" | "list"; values?: string[]; column: boolean; required: boolean }
 
@@ -293,6 +300,10 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
   },
   "specialists": {
     "exclude": []
+  },
+  "account_fields": {
+    "hidden": [],
+    "custom_fields": []
   }
 };
 

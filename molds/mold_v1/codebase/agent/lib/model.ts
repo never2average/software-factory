@@ -148,13 +148,28 @@ export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
  * gateway Claude models run with thinking OFF and emit no reasoning at all,
  * which is the "model supports it but nothing streams" symptom.
  *
- * Only meaningful on the gateway (Claude). GLM 5.2 on Workers AI doesn't take
- * this knob — it already thinks by default (streams `reasoning_content`), so we
- * leave it unset there to avoid a provider error. Tune or disable with
+ * On the gateway (Claude) it defaults to "medium"; tune or disable with
  * GATEWAY_REASONING_EFFORT ("none"/"off" turns it off).
+ *
+ * On Workers AI it is UNSET unless CLOUDFLARE_REASONING_EFFORT names a level,
+ * so the default deployment's requests are unchanged. The knob exists because
+ * the provider DOES take it, contrary to what this comment used to say about
+ * GLM 5.2. Measured on 2026-09-24 against `@cf/zai-org/glm-5.3` (three runs
+ * each, same planning prompt, `max_tokens` 4096): unset ≈ 380–570 completion
+ * tokens with 1.4–2.3 k characters of reasoning; `reasoning_effort: "low"` ≈
+ * 70–120 tokens and under 200 characters; "medium" ≈ unset; "none" is ignored.
+ * `@cf/moonshotai/kimi-k2.6` accepts the field and is unaffected by it. The
+ * orchestrator's runaway first step on onfinance_hfc (8,192 tokens of reasoning
+ * and no answer) is what a deployment on GLM 5.3 would set this to "low" for —
+ * after checking its answers hold up, which is a per-deployment judgement.
+ * The empty-response ladder lowers it on its own retry regardless
+ * (agent/lib/empty-model-response.ts, `raisedRecoveryReasoning`).
  */
 export function agentReasoning(): ReasoningEffort | undefined {
-  if (providerChoice !== "gateway") return undefined;
+  if (providerChoice !== "gateway") {
+    const c = process.env.CLOUDFLARE_REASONING_EFFORT?.trim().toLowerCase();
+    return c === "minimal" || c === "low" || c === "medium" || c === "high" || c === "xhigh" ? c : undefined;
+  }
   const v = process.env.GATEWAY_REASONING_EFFORT?.trim().toLowerCase();
   if (v === "none" || v === "off") return undefined;
   if (v === "minimal" || v === "low" || v === "medium" || v === "high" || v === "xhigh") return v;

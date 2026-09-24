@@ -49,6 +49,7 @@ import { buildNotifyTargetLine, resolveNotifyRecipients } from "#lib/system-cron
 import { isSystemCronActive } from "#lib/system-cron-store.js";
 import { getDb } from "#lib/db/index.js";
 import { orgs } from "#lib/db/schema.js";
+import { withServiceScope } from "#lib/service-scope.js";
 
 /**
  * Which of these claimed rules belong to a SUSPENDED workspace — the dispatcher
@@ -110,7 +111,9 @@ async function runClaim(
       await receive(slack, {
         message,
         target: { channelId },
-        auth: appAuth,
+        // The rule's workspace rides on the session's auth: an app principal has no person to resolve a
+        // workspace from, and without it every tool in this turn resolved to an empty one (service-scope.ts).
+        auth: withServiceScope(appAuth, claim.orgId),
       });
       await completeRule(claim, { ranAt });
       await recordRun({

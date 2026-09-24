@@ -164,7 +164,7 @@ export async function refreshApp(
           // Read your own inputs — see lib/workflow-data.ts.
           data: workflowDataFor(orgId),
           delegate: makeDurableDelegate(
-            makeDelegate(bearer, undefined, control.signal, { workflow: `app refresh: ${app.name}`, runId }),
+            makeDelegate(bearer, undefined, control.signal, { workflow: `app refresh: ${app.name}`, runId }, app.orgId),
             journal,
             3,
             control.signal,
@@ -196,7 +196,7 @@ export async function refreshApp(
     // under the 300s route maxDuration.
     const prompt = app.prompt?.trim();
     if (!prompt) throw new Error("No prompt is set for this app.");
-    const delegate = makeDelegate(bearer, 250_000);
+    const delegate = makeDelegate(bearer, 250_000, undefined, undefined, app.orgId);
     let sessionId: string | null = null;
     const text = await delegate(
       `${prompt}\n\n${DASHBOARD_CONTRACT}`,

@@ -1,6 +1,7 @@
 import { eveChannel } from "eve/channels/eve";
 import { jwtEcdsa, localDev, oidc, vercelOidc, vercelSubject } from "eve/channels/auth";
 import { compatEnv } from "../lib/compat-env.ts";
+import { FRONTEND_SUBJECT as SERVICE_FRONTEND_SUBJECT, sessionAuthForRequest } from "../lib/service-scope.ts";
 
 // Google sign-in (free). The web chat attaches the signed-in user's Google ID
 // token as a bearer; this verifier accepts it only when it was minted for our
@@ -104,6 +105,8 @@ const FRONTEND_SUBJECT = vercelSubject({
   projectName: "fde-agent",
   environment: "production",
 });
+// The one subject allowed to NAME a workspace (agent/lib/service-scope.ts) must be exactly the one admitted here.
+if (FRONTEND_SUBJECT !== SERVICE_FRONTEND_SUBJECT) throw new Error("eve.ts FRONTEND_SUBJECT and service-scope.ts disagree.");
 
 // The web chat is deployed as a separate project (a Next.js app) that calls this
 // agent's API cross-origin, so browsers need CORS. WEB_ORIGIN is that app's URL.
@@ -127,6 +130,12 @@ export default eveChannel({
     methods: ["GET", "POST"],
     credentials: false,
   },
+  // WHICH WORKSPACE A SERVICE CALL ACTS FOR. The front-end's workflow, app and cron steps call in with its Vercel
+  // OIDC token, which names no person and no workspace, so every tool in those turns resolved to an empty
+  // workspace. The front-end names it in a header (lib/workflow-delegate.ts); it becomes the session's
+  // `workspace_scope` attribute ONLY on a service principal, and is stripped from everyone else
+  // (agent/lib/service-scope.ts).
+  onMessage: ({ eve }) => ({ auth: sessionAuthForRequest(eve.caller, eve.request.headers) }),
   // Let the web chat attach files (PDFs, spreadsheets, images, docs) up to 20MB.
   uploadPolicy: {
     maxBytes: 20 * 1024 * 1024,

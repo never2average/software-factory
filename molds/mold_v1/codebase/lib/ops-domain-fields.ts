@@ -7,7 +7,7 @@
  * validated against the zod enum it has in agent/lib/customer-schema.ts. No column is renamed or added.
  */
 import { z } from "zod";
-import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type DomainArea } from "@/lib/deployment-profile.generated";
+import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type CustomFieldArea, type DomainArea } from "@/lib/deployment-profile.generated";
 import { customFieldsOf, displayCustom, validateCustom, type CustomValues } from "@/agent/lib/custom-fields";
 
 /** Optional zod entries for every writable column the route does not already declare. "" and null clear a value. */
@@ -59,14 +59,14 @@ export const customBodySchema = z.record(z.string(), z.unknown()).nullable().opt
  * `existing` = the stored row when there is one: its values are kept unless the body changes them.
  * `undefined` = write nothing: the body sent no `custom` and there is nothing to enforce.
  */
-export function customForWrite(area: DomainArea, custom: unknown, existing: { custom?: unknown } | null | undefined): { custom?: CustomValues; error?: string } {
+export function customForWrite(area: CustomFieldArea, custom: unknown, existing: { custom?: unknown } | null | undefined): { custom?: CustomValues; error?: string } {
   if (existing ? custom == null : custom == null && customFieldsOf(area).length === 0) return {};
   const result = validateCustom(area, custom, existing ? { mode: "update", existing: existing.custom } : { mode: "create" });
   return result.ok ? { custom: result.values } : { error: result.errors.join(" ") };
 }
 
 /** Activity-feed entries for the custom fields a write changed: the field's label, the values as people read them. */
-export function customFieldChanges(area: DomainArea, before: unknown, after: unknown): { label: string; before: string | null; after: string | null }[] {
+export function customFieldChanges(area: CustomFieldArea, before: unknown, after: unknown): { label: string; before: string | null; after: string | null }[] {
   const b = (before ?? {}) as Record<string, unknown>;
   const a = (after ?? {}) as Record<string, unknown>;
   return customFieldsOf(area).map((f) => ({ label: f.label, before: displayCustom(f, b[f.key]) || null, after: displayCustom(f, a[f.key]) || null }));

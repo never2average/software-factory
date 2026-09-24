@@ -124,7 +124,7 @@ A field entry takes:
 | `short_label` | For a table column, a sort option or a chip, where `label` is too long. Falls back to `label`. |
 | `placeholder`, `help` | The input's placeholder; a line of help under it. |
 | `options` | `{ "<enum value>": "<display label>" }`. The selects, the board's columns and every badge show the label; the value is what is submitted and stored. Two values cannot share a label (the label must map back to one value). A value you leave out keeps its default label, or shows as itself. |
-| `hidden` | `true`: not used in this deployment. No form field, no column, no detail row, and the model is told not to ask about it. |
+| `hidden` | `true`: not used in this deployment. No form field, no column, no detail row, the model is told not to ask about it, and (without a `fixed` value) it is not a parameter of the record tools nor in the records they return (see `account_fields`). |
 | `fixed` | Only on a hidden field: the value the forms submit for it. **Required when the hidden field is required** (`region`, `environment`, `deployedVersion`, `releaseStatus`, `healthStatus`, `deploymentId`; `implementationStage`, `implementationProgressPct`, `implementationRiskLevel`, `blockerOwner`), and it must be a valid value: one of the enum's values, a number, or a non-empty string. |
 
 **Defaults are exact.** The old UI used several words for one field ("Release status" on the form, "Release" as a
@@ -188,7 +188,9 @@ object and whether this is a create or an update, and returns the values to stor
 The rules are the same everywhere: an undeclared key is **refused**, never dropped silently; an update is a
 **partial change** merged onto what is stored (send only the keys you are changing; `null` or `""` clears one);
 a stored key the profile no longer declares is carried through untouched, because narrowing a profile must not
-delete what people entered. Reads return the values: `custom` on every item of `GET /api/ops/deployments` and
+delete what people entered, but `null` / `""` for such a stored key clears it (any other value for it is still
+refused). A refusal names a pick list's choices in quotes (`must be one of: "Buy", "Hold".`), so they reach the
+model as written under a relabel. Reads return the values: `custom` on every item of `GET /api/ops/deployments` and
 `GET /api/ops/implementations` (so `deployment_list` / `implementation_list`), and on the records
 `get_customer` returns (left out when empty, so the default deployment's records read exactly as before).
 
@@ -254,6 +256,89 @@ cannot be cleared.*
 | Key | Meaning | Default |
 |---|---|---|
 | `specialists.exclude` | Base specialists (directory names under `agent/subagents/`) the deployment does not use. They leave the model's roster (eve makes every directory under `agent/subagents/` a tool the model can delegate to, and has no switch to hide one), the persona's roster and every prompt's list of names, the subagent registry, the UI lists and the workflow author's list. Nothing is moved: the directories stay tracked, so a git checkout of a stamped build regenerates the same tree. `scripts/gen-subagent-meta.mjs` leaves them out of the registry; the provisioned workflow library drops any workflow that delegates to one (`agent/lib/workflow-library-view.ts`); and `npm run build:eve` / `dev:eve` run eve through `scripts/eve-build.mjs`, which hides their directories from eve for the length of that one command and restores them however it ends (a run killed mid-build is restored by the next run, or by `node scripts/eve-build.mjs --restore`). Run `eve build` directly and they are back in the roster. A name that is not a subagent fails the build. | `[]` |
+
+### `account_fields`
+
+| Key | Meaning | Default |
+|---|---|---|
+| `account_fields.hidden` | Fields of the account record itself (the `customerSchema` keys in `agent/lib/customer-schema.ts`: `arr`, `seats`, `aeOwner`, `renewalDate`, `contractStatus`, … and the nested parts `platform`, `solutions`, `tickets`) this deployment does not use. They are removed from what the **model** reads and writes: `upsert_customer`'s parameters, and every record `get_customer`, `list_customers` and `upsert_customer` return; a hidden nested part is also dropped from those tools' descriptions. A hidden key the model sends anyway is not written. Storage, the API, the CLI, the MCP server and the forms are unchanged. `id` and `name` cannot be hidden, nor `custom` (it holds `custom_fields`, below); an unknown key fails the build. | `[]` |
+| `account_fields.custom_fields` | The deployment's OWN fields on the account record itself: a research desk's notes on a company, a field team's permit number on a site. Same spec, types and rules as [Custom fields](#custom-fields) on the areas; see [Own fields on the account record](#own-fields-on-the-account-record). | `[]` |
+
+The two redefinable areas hide their own fields with `domains.<area>.fields.<key>.hidden` (above), and the record
+tools apply those the same way: a hidden `deployments[]` / `implementation` field WITHOUT a `fixed` value is not a
+parameter and is not in a returned record, and when the model rewrites a row (a patch replaces `deployments[]` and
+`implementation` wholesale) the stored value of each hidden field it could not see is carried over. A hidden field
+WITH a `fixed` value stays a parameter, because the briefing tells the model to write that value.
+
+### Own fields on the account record
+
+`account_fields.custom_fields` declares fields the account record never had, exactly as `domains.<area>.custom_fields`
+does for the areas: the same entry (`key`, `label`, `type`, `required`, `options`, `help`, `show_in_list`), the
+same eight types (`long_text` is the multi-line one: up to 20,000 characters, line breaks kept, shown as a
+textarea; `text` is one line of at most 500), the same generator rules and the same validator. The values live, by
+key, in one `custom` jsonb column on the `customers` table (migration `drizzle/0019_account_custom_fields.sql`),
+so declaring or changing fields never needs a migration.
+
+A pack that wants company notes on the company record puts this in its `profiles/NN-pack-<id>.json`:
+
+```json
+{
+  "account_fields": {
+    "custom_fields": [
+      { "key": "notes", "label": "Notes", "type": "long_text", "help": "What we know about the company: filings read, calls held, open questions." }
+    ]
+  }
+}
+```
+
+(An overlay states only what it changes: `account_fields.hidden` keeps whatever the pack's profile already says.)
+
+What differs from the areas:
+
+- **The key** may not be any account field or `customers` column in any spelling (`health_reason`, `arr`,
+  `customer_name`, `org_id`, `deployments`, `custom`…), hidden or not: a hidden built-in field is still a real one.
+- **The column is NULLABLE** (the areas' is `NOT NULL DEFAULT '{}'`): NULL is "no own values", so the migration
+  rewrote no existing row, and an account whose values are all cleared goes back to NULL.
+- **The model** gets `custom` as an `upsert_customer` parameter **only when the profile declares account fields**;
+  with none declared the tool's schema is exactly what it was before (the default surface is held byte-identical
+  by `check:agent-vocabulary`). `get_customer` and `upsert_customer` return every value (left out when there are
+  none); `list_customers` carries only the fields marked `show_in_list`, so a long note on each account does not
+  make one list call cost what reading every account does. The per-turn block names them:
+  `` - Own fields of each customer, by key in its `custom` (read with `get_customer`, write with `upsert_customer`;
+  send only changed keys; null clears; other keys are refused; add to a long text with `custom_append` instead of resending it (replace one: null in `custom` plus the new text in `custom_append`); `list_customers` carries none of them): `notes`="Notes" (long_text). ``
+- **Under a relabel** the keys, labels, choices and every stored value pass through verbatim, both ways: a note
+  that says "Customers/acme" or "deployment" is user data, and reaches the model and storage as written.
+- **With `account_fields.hidden`**: hiding built-in fields and declaring own ones combine as expected. A hidden key
+  the model sends is dropped while its `custom` is written, and a stored hidden value survives either write.
+- **Long notes** (`long_text`) are never resent whole just to add to them. `upsert_customer` takes
+  `custom_append: { "<key>": "<text>" }` (offered to the model only when the account declares a long-text field):
+  the text is trimmed and added after the stored text and a blank line, and the total must still fit 20,000
+  characters, checked when the text is read and again at write time, on the value the database is about to commit
+  (so two appends at once cannot push it past the limit; the later one is refused with a sentence and nothing is
+  written). To REPLACE a long note in one call, send `null` for its key in `custom` together with the new text in
+  `custom_append`: one SQL write, so there is no moment (and no second approval) at which the old text is gone and
+  the new one not there. Any other combination of one key in both is refused. And the model may not cut a
+  long-text value of 500 characters or more to under half its length by rewriting it in `custom`: that is refused
+  with a sentence naming the one-call replacement. The guard compares with the stored value only, so a model can
+  still step a note down in several approved writes (1,000 → 500 → 250 …); each is a separate write the person
+  approves, which is the point of the guard (a note cut short without anyone deciding to), so that is accepted.
+  The guard is on the model's path only (the account's fields and the areas', where the replacement is clear
+  first, then write); the API and the forms, which people drive, are not guarded.
+- **Text values** may not contain a NUL character (`\u0000`): Postgres cannot store one, so it is refused with a
+  sentence rather than failing in the database.
+- **Concurrent writes do not lose values.** An existing account's `custom` is changed only by the keys a write
+  names, merged in SQL onto what is stored at write time
+  (`custom = (coalesce(custom, '{}') || set, appends concatenated) - cleared keys`, NULL when that leaves nothing;
+  `agent/lib/custom-merge-sql.ts`); a write that does not name `custom` leaves the column out of its update. Before
+  this, the agent's upsert wrote back the whole value it had read, and a note saved in between was lost.
+- **The Ops API**: `POST /api/ops/customers` (the MCP tool `customer_create`) takes `custom`: validated, merged onto
+  what is stored on an update (in SQL, as above), a 400 with the sentences when refused. It does not take
+  `custom_append`. `GET /api/ops/customers` (`customer_list`)
+  returns the `show_in_list` values under `custom`. The hosted MCP endpoint names the declared fields in
+  `customer_create`'s `custom` input; the stdio package describes it generically.
+- **The UI**: the base has no account form or account detail card (accounts are created by the agent, the API or
+  the MCP tool, and appear in pickers), so the fields are not shown in the web app yet. Not covered either: the
+  data-room workbook (`Master.xlsx`) and the account report.
 
 ## Merge rules
 

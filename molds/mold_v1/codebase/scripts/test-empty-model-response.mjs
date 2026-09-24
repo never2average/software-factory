@@ -40,7 +40,7 @@ import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import {
-  EMPTY_RESPONSE_NUDGE,
+  NUDGE_NO_TOOL_RESULTS,
   LAST_RESORT_SENTENCE,
   SAME_MODEL_RETRIES,
   buildNudgedParams,
@@ -281,7 +281,7 @@ console.log("\nWhat happens after an empty answer:");
   {
     const original = params({});
     const nudged = buildNudgedParams(original);
-    check("the nudge is appended as a trailing user note", JSON.stringify(nudged.prompt.at(-1)).includes(EMPTY_RESPONSE_NUDGE));
+    check("the nudge is appended as a trailing user note", JSON.stringify(nudged.prompt.at(-1)).includes(NUDGE_NO_TOOL_RESULTS));
     check("…on a copy, so nothing the person never said enters the conversation", original.prompt.length === 2);
     check("…and every other call setting is carried over unchanged", nudged.tools === original.tools);
   }
@@ -313,12 +313,12 @@ console.log("\nThe streamed chat survives it:");
   check("the same model was asked exactly twice (first + one retry)", calls + log.reissues.length === 2);
   check(
     "the retry is NOT an identical request — it carries the nudge eve only ever used after the turn died",
-    log.reissues.length === 1 && JSON.stringify(log.reissues[0].prompt).includes(EMPTY_RESPONSE_NUDGE),
+    log.reissues.length === 1 && JSON.stringify(log.reissues[0].prompt).includes(NUDGE_NO_TOOL_RESULTS),
   );
-  check("…which is never written into the conversation itself", !JSON.stringify(firstParams).includes(EMPTY_RESPONSE_NUDGE));
+  check("…which is never written into the conversation itself", !JSON.stringify(firstParams).includes(NUDGE_NO_TOOL_RESULTS));
   check(
     "the fallback model is NOT told its previous reply was empty — it has not replied yet",
-    log.fallbackParams.length === 1 && !JSON.stringify(log.fallbackParams[0].prompt).includes(EMPTY_RESPONSE_NUDGE),
+    log.fallbackParams.length === 1 && !JSON.stringify(log.fallbackParams[0].prompt).includes(NUDGE_NO_TOOL_RESULTS),
   );
   check("the other role's model was asked once", log.fallbackCalls === 1);
   check("three empties were recorded, not one", log.records.length === 3);
@@ -441,7 +441,7 @@ console.log("\nThe non-streamed path behaves the same:");
     "the same ladder runs: one nudged retry, then the other model",
     calls === 1 && log.reissues.length === 1 && log.fallbackCalls === 1,
   );
-  check("…and the retry carries the nudge here too", JSON.stringify(log.reissues[0].prompt).includes(EMPTY_RESPONSE_NUDGE));
+  check("…and the retry carries the nudge here too", JSON.stringify(log.reissues[0].prompt).includes(NUDGE_NO_TOOL_RESULTS));
   check("the answer comes back", result.content[0].text === "the specialist finished it");
   check("both empties are recorded as generate-path", log.records.every((r) => r.path === "generate"));
 }
@@ -500,6 +500,12 @@ console.log("\nThe record:");
   check("no tool description or argument reaches the record", !serialized.includes(CANARY_TOOL));
   check("no message content of any kind is stored", !/content/i.test(JSON.stringify(record)));
   check("the detail fits the 400 characters the telemetry route accepts", detail.length <= 400);
+  check(
+    "a withheld answer (not empty, but claiming a write no tool made) files under its own kind and says so",
+    kindForRecord({ ...record, rejected: "unbacked-claim" }) === "model-unbacked-claim" &&
+      /rejected=unbacked-claim/.test(formatEmptyResponseDetail({ ...record, rejected: "unbacked-claim" })),
+  );
+  check("an empty one carries no rejection on its row", record.rejected === null && !/rejected=/.test(detail));
   check("the sentence opens with something a human can act on", sentence.startsWith("Model returned an empty response"));
 }
 
@@ -515,7 +521,7 @@ console.log("\nThe telemetry lands where an operator reads it:");
     kind: z.enum(CHAT_TELEMETRY_KINDS),
     detail: z.string().max(400).optional(),
   });
-  for (const kind of ["model-empty", "model-empty-gave-up"]) {
+  for (const kind of ["model-empty", "model-empty-gave-up", "model-unbacked-claim"]) {
     check(`"${kind}" is a kind the route records rather than silently drops`, schema.safeParse({ kind }).success);
     check(`"${kind}" reads as a sentence`, chatTelemetrySentence(kind).length > 20);
   }
@@ -562,6 +568,28 @@ console.log("\nThe wiring:");
     model.indexOf("createOutputBudget({") < model.indexOf("createEmptyResponseRecovery({"),
   );
   check("…and the fallback is the other configured role", /agentModelId\(other\)/.test(model));
+  {
+    // No tool on the read-only allow-list may carry an approval policy: approval is how this codebase marks a
+    // tool that changes something, so the two lists must never overlap.
+    const { READ_ONLY_BASE_TOOLS } = await import("../agent/lib/read-only-tools.ts");
+    const { readdirSync } = await import("node:fs");
+    const gated = [];
+    for (const f of readdirSync(new URL("../agent/lib/", import.meta.url)).filter((n) => n.endsWith(".ts"))) {
+      const text = src(`agent/lib/${f}`);
+      for (const m of text.matchAll(/modelFacing\(\s*"([a-z_]+)"/g)) {
+        const next = text.indexOf("modelFacing(", (m.index ?? 0) + 12);
+        if (/approval:/.test(text.slice(m.index, next < 0 ? undefined : next))) gated.push(m[1]);
+      }
+    }
+    check(
+      `no approval-gated tool is on the read-only allow-list (gated: ${gated.length})`,
+      gated.length > 10 && READ_ONLY_BASE_TOOLS.every((n) => !gated.includes(n)),
+    );
+  }
+  check(
+    "the guard's evidence is an explicit READ-ONLY allow-list, not a registry filled at tool load",
+    /from "\.\/read-only-tools\.ts"/.test(src("agent/lib/empty-model-response.ts")) && !/registerWriteTool/.test(src("agent/lib/model-facing/tools/model-facing.ts")),
+  );
   check("…which is null when both roles are the same model", /if \(id === agentModelId\(role\)\) return null/.test(model));
 
   // THE HYPOTHESIS, SETTLED AND THEN CORRECTED. These three checks used to assert
@@ -646,6 +674,10 @@ console.log("\nThe real provider path, against a model that answers empty:");
     check(
       `…and the reissue after a "length" finish asks for more room than the call that ran out (saw: ${caps.join(", ")})`,
       caps.length >= 2 && caps[1] > caps[0],
+    );
+    check(
+      `…and asks it to think less: the reissue carries reasoning_effort "low", the first call nothing (saw: ${requests.map((r) => r.reasoning_effort ?? "absent").join(", ")})`,
+      requests[0].reasoning_effort === undefined && requests[1]?.reasoning_effort === "low",
     );
     check(
       "…and the model server can emit the capped failure when asked, so the shape is testable",

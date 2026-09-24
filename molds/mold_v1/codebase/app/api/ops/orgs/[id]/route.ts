@@ -88,6 +88,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       .from(orgs)
       .where(eq(orgs.googleHostedDomain, domain))
       .limit(1);
+    // ownership-guard-ok: `orgs` carries no row-level security, so this read sees every workspace's row.
     if (claimed && claimed.orgId !== id) {
       return NextResponse.json({ error: `Domain '${domain}' already belongs to '${claimed.name}'.` }, { status: 409 });
     }

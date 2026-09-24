@@ -256,6 +256,70 @@ const service = classify(
   { offends: (src) => /getDb\s*\(/.test(src) },
 );
 
+/* ---- surface 4: ownership guards that pass on an invisible row ------------ */
+
+/**
+ * A GUARD THAT ASKS A QUESTION RLS CANNOT ANSWER.
+ *
+ * getCustomer(id, orgId) read the record across every workspace, then read the
+ * owner in the CALLER's scope and returned null only `if (row?.orgId && row.orgId
+ * !== orgId)`. Under the fail-closed policy that scoped read cannot see another
+ * workspace's row, so `row` was undefined, the guard was false, and the other
+ * workspace's record went out. lib/org-context.ts `customerInOrg` was the same
+ * idea written the other way round: `row ? row.orgId === orgId : true` on the bare
+ * handle, which sees no row, so it admitted every id. Both LOOK like a check and
+ * both read "I could not see it" as "it is fine".
+ *
+ * The right shape is the read itself inside the caller's scope: then absence IS
+ * the answer. So these fail outright, with no baseline:
+ *
+ *   `x?.orgId &&` / `x?.org_id !==` …   an optional-chained ownership guard;
+ *   `x ? x.orgId … : true`              a guard that admits a row it did not see;
+ *   `orgForCustomer(` in a model tool   the workspace taken from a model-supplied
+ *                                       id instead of the caller's session.
+ *
+ * A guard over a table WITHOUT row-level security (orgs, the control plane) sees
+ * every row and is sound; mark it `ownership-guard-ok: <reason>` on the line or
+ * one of the two above.
+ */
+const GUARD_SHAPES = [
+  [/\?\.org_?[iI]d\s*(?:&&|!==?|===?)/, "optional-chained ownership guard (a row RLS hid reads as undefined and passes)"],
+  [/&&\s*\(?\s*\w+\.org_?[iI]d\b[^;\n]*!==/, "`x && x.orgId !== …` guard (a row RLS hid is falsy and passes)"],
+  [/\?\s*\(?\s*\w+\.org_?[iI]d\b[^;\n]*:\s*true\b/, "`row ? row.orgId … : true` guard (admits a row it could not see)"],
+];
+const guardFiles = [
+  ...(existsSync("agent") ? walk("agent") : []),
+  ...(existsSync("lib") ? walk("lib") : []),
+  ...(existsSync("app") ? walk("app") : []),
+  ...(existsSync("services/task-workflow/lib") ? walk("services/task-workflow/lib") : []),
+  ...(existsSync("services/task-workflow/app") ? walk("services/task-workflow/app") : []),
+].filter((f) => !f.includes("node_modules") && !f.endsWith(".generated.ts"));
+const guardHits = [];
+for (const f of guardFiles) {
+  const lines = readFileSync(f, "utf8").split("\n");
+  const isTool = lines.some((l) => /\bmodelFacing\(/.test(l));
+  lines.forEach((line, i) => {
+    const code = line.replace(/\/\/.*$/, "");
+    if (/^\s*(\*|\/\*)/.test(line)) return; // doc comments describe the shape; they do not run it
+    const excused = [line, lines[i - 1] ?? "", lines[i - 2] ?? ""].some((l) => /ownership-guard-ok:\s*\S/.test(l));
+    if (excused) return;
+    for (const [re, why] of GUARD_SHAPES) if (re.test(code)) guardHits.push(`${f}:${i + 1}  ${why}`);
+    if (isTool && /\borgForCustomerI?d?\(/.test(code)) {
+      guardHits.push(`${f}:${i + 1}  a model tool takes its workspace from a customer id (use orgForSession(ctx))`);
+    }
+  });
+}
+console.log(`ownership guards: ${guardFiles.length} files scanned · unsound guards: ${guardHits.length}`);
+if (guardHits.length) {
+  console.error(
+    `\n✗ ${guardHits.length} ownership guard(s) that pass when row-level security hides the row:\n` +
+      guardHits.map((h) => `  ${h}`).join("\n") +
+      `\n  Read inside the caller's scope (withOrgDb / withOrgRls) and treat absence as the answer, or add` +
+      `\n  \`ownership-guard-ok: <reason>\` when the table carries no row-level security.`,
+  );
+  process.exitCode = 1;
+}
+
 /* ---- report -------------------------------------------------------------- */
 
 const line = (label, r, extra) =>
@@ -335,7 +399,7 @@ for (const [what, now, was, helper] of surfaces) {
     );
   }
 }
-if (failed) process.exit(1);
+if (failed || process.exitCode === 1) process.exit(1);
 
 const gained = surfaces.filter(([, now, was]) => now < was);
 if (gained.length) {

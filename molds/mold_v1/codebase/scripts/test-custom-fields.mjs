@@ -72,7 +72,7 @@ assert.equal(create({ rating: "Strong buy", target_price: "lots", publish_date: 
 // --- each type -----------------------------------------------------------------------------------------------------
 
 const one = (key, value) => create({ rating: "Hold", [key]: value });
-refused(one("rating", "Strong buy"), /"Rating" \(rating\) must be one of: Buy, Add, Hold, Reduce, Sell\./);
+refused(one("rating", "Strong buy"), /"Rating" \(rating\) must be one of: "Buy", "Add", "Hold", "Reduce", "Sell"\./);
 refused(one("period", "two\nlines"), /single line of text/);
 refused(one("period", "x".repeat(501)), /too long/);
 assert.equal(one("period", 2026).values.period, "2026", "a number sent for a text field is kept as text");
@@ -159,6 +159,103 @@ const rows = customerToDbRows({ id: "acme", name: "Acme", deployments: [{ deploy
 assert.deepEqual(rows.deployments.map((d) => d.custom), [{}, { rating: "Buy" }]);
 assert.deepEqual(rows.implementation.custom, {});
 
+// --- the account record's own fields (account_fields.custom_fields): the same validator, the same write path -----------
+
+const ACCOUNT = [
+  { key: "notes", label: "Notes", type: "long_text" },
+  { key: "house_view", label: "House view", type: "pick_list", options: ["Positive", "Neutral", "Negative"], show_in_list: true },
+];
+const SITE_ACCOUNT = [{ key: "permit_number", label: "Permit number", type: "text", required: true }];
+if (customFieldsOf("account").length === 0) {
+  refused(validateCustom("account", { notes: "x" }, { mode: "update", existing: {} }), /no custom field "notes" here: this deployment's profile declares none/);
+}
+// The text a person writes is stored as written: line breaks, a folder name, the base product's words.
+const NOTE = "Filed under Customers/hdfc/filings/Q1.pdf.\nAsked about the deployment of the rights-issue money; customer_id is not ours to change.";
+assert.deepEqual(validateCustom("account", { notes: NOTE, house_view: "positive" }, { mode: "create", fields: ACCOUNT }).values, { notes: NOTE.trim(), house_view: "Positive" });
+refused(validateCustom("account", { note: "x" }, { mode: "create", fields: ACCOUNT }), /There is no custom field "note" here\. The custom fields are: `notes` \("Notes", long text\)/);
+refused(validateCustom("account", { notes: 12, house_view: "Bullish" }, { mode: "create", fields: ACCOUNT }), /"House view" \(house_view\) must be one of: "Positive", "Neutral", "Negative"\./);
+refused(validateCustom("account", { notes: ["a"] }, { mode: "create", fields: ACCOUNT }), /"Notes" \(notes\) must be a single text value/);
+refused(validateCustom("account", { notes: "x".repeat(20001) }, { mode: "create", fields: ACCOUNT }), /too long/);
+
+const accountDeclared = { account: ACCOUNT, deployments: REPORT, implementations: VISIT };
+const company = { id: "hdfc", name: "HDFC", healthReason: "stable", custom: { notes: "old note", house_view: "Neutral" } };
+// A patch MERGES over the account, and so does its `custom`: a key it does not name is kept, null clears one.
+out = applyCustomFields({ id: "hdfc", custom: { house_view: "negative" } }, company, accountDeclared);
+assert.deepEqual(out.custom, { notes: "old note", house_view: "Negative" });
+out = applyCustomFields({ id: "hdfc", custom: { notes: null } }, company, accountDeclared);
+assert.deepEqual(out.custom, { house_view: "Neutral" });
+out = applyCustomFields({ id: "hdfc", healthReason: "watch" }, company, accountDeclared);
+assert.deepEqual(out.custom, company.custom, "a patch that does not mention custom keeps the stored values");
+assert.throws(() => applyCustomFields({ id: "hdfc", custom: { rating: "Buy" } }, company, accountDeclared), /Custom fields were not accepted, so nothing was written\. hdfc: There is no custom field "rating" here/);
+assert.throws(() => applyCustomFields({ id: "hdfc", custom: { house_view: 3 } }, company, accountDeclared), /hdfc: "House view" \(house_view\) must be one of/);
+// A NEW account is a create: a required own field is required; an existing one that predates it can still be edited.
+assert.throws(() => applyCustomFields({ id: "site-9", name: "Site 9" }, null, { account: SITE_ACCOUNT }), /site-9: "Permit number" \(permit_number\) is required\./);
+assert.deepEqual(applyCustomFields({ id: "site-9", custom: { permit_number: "P-77" } }, null, { account: SITE_ACCOUNT }).custom, { permit_number: "P-77" });
+assert.deepEqual(applyCustomFields({ id: "site-8", tier: "A" }, { id: "site-8", name: "Site 8" }, { account: SITE_ACCOUNT }), { id: "site-8", tier: "A" }, "an account that predates the field is edited without it");
+// Nothing declared at the account: an untouched patch passes through byte-identical, an invented key is refused.
+assert.deepEqual(applyCustomFields({ id: "acme", tier: "A" }, null, { account: [] }), { id: "acme", tier: "A" });
+assert.throws(() => applyCustomFields({ id: "acme", custom: { notes: "x" } }, null, { account: [] }), /acme: There is no custom field "notes" here: this deployment's profile declares none/);
+// The stored column is NULLABLE: no own values is NULL (never {}), values are stored as validated.
+assert.equal(customerToDbRows({ id: "acme", name: "Acme" }).customer.custom, null);
+assert.equal(customerToDbRows({ id: "acme", name: "Acme", custom: {} }).customer.custom, null);
+assert.deepEqual(customerToDbRows({ id: "acme", name: "Acme", custom: { notes: NOTE, gone: null } }).customer.custom, { notes: NOTE });
+
+// --- review of #57 --------------------------------------------------------------------------------------------------
+
+// (4) A key the profile no longer declares can be CLEARED where it is stored; any other use of it is still refused.
+assert.deepEqual(update({ legacy_score: null }, { ...stored, legacy_score: 7 }).values, stored, "null clears a stored, no-longer-declared key");
+assert.deepEqual(update({ legacy_score: "" }, { ...stored, legacy_score: 7 }).values, stored, '"" too');
+refused(update({ legacy_score: 5 }, { ...stored, legacy_score: 7 }), /no custom field "legacy_score"/);
+refused(update({ never_stored: null }, stored), /no custom field "never_stored"/);
+refused(validateCustom("deployments", { legacy_score: null }, { mode: "create", fields: REPORT }), /no custom field "legacy_score"/);
+
+// (5) The model may not cut a long note by more than half in one rewrite (it appends, or clears first) …
+const { applyCustomFieldsWithDelta } = await import("../agent/lib/system-of-record.ts");
+const { customDelta, validateAppend, SHRINK_GUARD_MIN } = await import("../agent/lib/custom-fields.ts");
+const LONG = "Paragraph. ".repeat(100).trim(); // 1,099 characters
+const noted = { id: "hdfc", name: "HDFC", custom: { notes: LONG, house_view: "Neutral" } };
+assert.throws(() => applyCustomFields({ id: "hdfc", custom: { notes: "Paragraph. Short now." } }, noted, accountDeclared), /"Notes" \(notes\) would shrink from 1,099 to 21 characters, so it was not replaced\. To add to it, send only the new text in `custom_append`; to really replace it, send null for it in `custom` together with the new text in `custom_append`, in this one call\./);
+assert.equal(applyCustomFields({ id: "hdfc", custom: { notes: LONG.slice(0, 600) } }, noted, accountDeclared).custom.notes.length, 600, "half or more is an edit, not a cut");
+assert.deepEqual(applyCustomFields({ id: "hdfc", custom: { notes: null } }, noted, accountDeclared).custom, { house_view: "Neutral" }, "an explicit clear is allowed");
+assert.equal(applyCustomFields({ id: "hdfc", custom: { notes: "Fresh." } }, { ...noted, custom: { notes: "x".repeat(SHRINK_GUARD_MIN - 1) } }, accountDeclared).custom.notes, "Fresh.", "a short value is not guarded");
+assert.throws(() => applyCustomFields({ id: "hdfc", deployments: [dep({ custom: { thesis: "cut" } })] }, { ...existing, deployments: [dep({ custom: { rating: "Hold", thesis: LONG } })] }, declared), /"Thesis in brief" \(thesis\) would shrink .* To really replace it, clear it first \(null\) and then send the new text\./, "the areas' long text too, without the append hint");
+assert.deepEqual(validateCustom("account", { notes: "cut" }, { mode: "update", existing: noted.custom, fields: ACCOUNT }).values.notes, "cut", "people (the API, the forms) are not guarded: only the model's path");
+// … and adds to one with `custom_append`, which never resends the note.
+let res = applyCustomFieldsWithDelta({ id: "hdfc", custom_append: { notes: "  Met the CFO.  " } }, noted, accountDeclared);
+assert.equal(res.patch.custom.notes, `${LONG}\n\nMet the CFO.`, "appended after a blank line, trimmed");
+assert.ok(!("custom_append" in res.patch), "never part of the stored record");
+assert.deepEqual(res.accountDelta, { set: {}, clear: [], append: { notes: "Met the CFO." } }, "the addition, for SQL to append to what is stored then");
+res = applyCustomFieldsWithDelta({ id: "new-co", name: "New", custom_append: { notes: "First." } }, null, accountDeclared);
+assert.equal(res.patch.custom.notes, "First.", "an append to nothing is the text");
+assert.throws(() => applyCustomFields({ id: "hdfc", custom_append: { house_view: "more" } }, noted, accountDeclared), /`custom_append` adds to a long-text field, and "house_view" is not one\. The long-text fields are: `notes`/);
+assert.throws(() => applyCustomFields({ id: "hdfc", custom: { notes: "x" }, custom_append: { notes: "y" } }, { ...noted, custom: { notes: "a" } }, accountDeclared), /"Notes" \(notes\) is in both `custom` and `custom_append`\. To add to it, send it only in `custom_append`; to replace it, send null for it in `custom` together with the new text in `custom_append`\./);
+assert.throws(() => applyCustomFields({ id: "hdfc", custom_append: { notes: "y".repeat(19000) } }, noted, accountDeclared), /would be too long after the addition/);
+assert.throws(() => applyCustomFields({ id: "hdfc", custom_append: { notes: "" } }, noted, accountDeclared), /takes the text to add, a non-empty string/);
+refused(validateAppend({ notes: "x" }, { fields: [], values: {} }), /this record declares none/);
+
+// Second review of #57 (2): null in `custom` + text in `custom_append` for one key is a REPLACEMENT in one write:
+// the new text alone, SET in SQL (never cleared then appended), past the shrink guard, even for a required field.
+res = applyCustomFieldsWithDelta({ id: "hdfc", custom: { notes: null, house_view: "positive" }, custom_append: { notes: " Short now. " } }, noted, accountDeclared);
+assert.deepEqual(res.patch.custom, { notes: "Short now.", house_view: "Positive" });
+assert.deepEqual(res.accountDelta, { set: { house_view: "Positive", notes: "Short now." }, clear: [], append: {} });
+const REQUIRED_NOTES = [{ key: "notes", label: "Notes", type: "long_text", required: true }];
+assert.equal(applyCustomFields({ id: "hdfc", custom: { notes: "" }, custom_append: { notes: "Replaced." } }, noted, { account: REQUIRED_NOTES }).custom.notes, "Replaced.", "a required note can be replaced, never left empty");
+assert.throws(() => applyCustomFields({ id: "hdfc", custom: { notes: null }, custom_append: { notes: "y".repeat(20001) } }, noted, accountDeclared), /would be too long/);
+// (3) NUL cannot be stored in Postgres text or jsonb: refused in a sentence, for every text type and for an append.
+for (const [key, value] of [["period", "Q2\u0000"], ["thesis", "a\u0000b"], ["source_link", "https://x.in/\u0000"], ["reviewer", "a\u0000@b.in"], ["rating", "Buy\u0000"], ["publish_date", "2026-07-31\u0000"]]) {
+  refused(one(key, value), /contains a NUL character \(\\u0000\), which cannot be stored\. Remove it and send the value again\./);
+}
+assert.throws(() => applyCustomFields({ id: "hdfc", custom_append: { notes: "x\u0000" } }, noted, accountDeclared), /"Notes" \(notes\) contains a NUL character/);
+
+// (2) What a write CHANGES, so SQL merges it at write time instead of writing back the whole column read earlier.
+res = applyCustomFieldsWithDelta({ id: "hdfc", custom: { house_view: "positive", notes: null } }, noted, accountDeclared);
+assert.deepEqual(res.accountDelta, { set: { house_view: "Positive" }, clear: ["notes"], append: {} });
+assert.equal(applyCustomFieldsWithDelta({ id: "hdfc", healthReason: "watch" }, noted, accountDeclared).accountDelta, undefined, "a patch that does not name custom changes none of it");
+assert.equal(customDelta({}, {}), undefined);
+const { customForNewRow } = await import("../agent/lib/custom-merge-sql.ts");
+assert.deepEqual(customForNewRow({ set: { a: 1 }, clear: ["b"], append: { notes: "x" } }), { a: 1, notes: "x" });
+assert.equal(customForNewRow({ set: {}, clear: ["a"], append: {} }), null);
+
 // --- the MCP tools: `custom` on both write tools, named from the profile when the host knows it ---------------------
 
 const { createTools } = await import("../setup/fde-tools.mjs");
@@ -180,6 +277,14 @@ assert.ok(hosted.implementation_upsert.inputSchema.properties.custom.description
 let sent = null;
 await toolsOf({ api: async (method, path, body) => ((sent = { method, path, body }), { item: { id: "x" } }) }).deployment_upsert.handler({ customerId: "hdfc", deploymentId: "d1", custom: { rating: "Buy" } });
 assert.deepEqual(sent, { method: "POST", path: "/api/ops/deployments", body: { customerId: "hdfc", deploymentId: "d1", custom: { rating: "Buy" } } });
+// …and customer_create, for the account record's own fields.
+assert.equal(generic.customer_create.inputSchema.properties.custom.type, "object");
+assert.ok(!generic.customer_create.inputSchema.required.includes("custom"));
+assert.ok(generic.customer_list.description.includes("`custom`"), "customer_list says its items carry custom");
+assert.ok(toolsOf({ customFields: { deployments: [], implementations: [], account: ACCOUNT } }).customer_create.inputSchema.properties.custom.description.includes('notes ("Notes", long text); house_view ("House view", one of Positive | Neutral | Negative)'));
+assert.ok(toolsOf({ customFields: { deployments: [], implementations: [], account: [] } }).customer_create.inputSchema.properties.custom.description.includes("declares none"));
+await toolsOf({ api: async (method, path, body) => ((sent = { method, path, body }), { item: { id: "x" } }) }).customer_create.handler({ customerId: "hdfc", customerName: "HDFC", custom: { notes: NOTE } });
+assert.deepEqual(sent.body.custom, { notes: NOTE }, "passed to the Ops API untouched");
 
 // --- the migration: one jsonb column per table, no policy touched -----------------------------------------------------
 
@@ -206,6 +311,25 @@ assert.deepEqual(statements, [
 assert.ok(!/POLICY|ROW LEVEL SECURITY|GRANT|DROP/i.test(statements.join("\n")), "adding a column leaves org_isolation exactly as it is");
 const schema = readFileSync(join(ROOT, "agent/lib/db/schema.ts"), "utf8");
 assert.equal((schema.match(/custom: jsonb\("custom"\)\.\$type<Record<string, string \| number>>\(\)\.notNull\(\)\.default\(\{\}\)/g) ?? []).length, 2, "schema.ts declares the same column on both tables");
+
+// --- the account migration: one NULLABLE jsonb column on customers, additive, no policy touched ------------------------
+
+const accountEntry = journal.find((e) => e.tag === "0019_account_custom_fields");
+assert.ok(accountEntry, "0019 is in the journal");
+assert.equal(journal[accountEntry.idx]?.tag, accountEntry.tag, "…at its own index");
+assert.ok(accountEntry.when > journal[accountEntry.idx - 1].when, "…later than the one before it");
+const accountStatements = readFileSync(join(ROOT, "drizzle/0019_account_custom_fields.sql"), "utf8").split("--> statement-breakpoint").map((s) => s.replace(/^--.*$/gm, "").trim()).filter(Boolean);
+assert.deepEqual(accountStatements, [`ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "custom" jsonb;`], "nullable, no default: a catalogue-only change that rewrites no row");
+assert.match(schema, /custom: jsonb\("custom"\)\.\$type<Record<string, string \| number>>\(\),\n  \},\n  \(t\) => \[\n    index\("customers_fde_owner_idx"\)/, "schema.ts declares the same nullable column on customers");
+// The Ops API's customer write validates `custom` with the same validator, and its list returns the listed ones.
+const customersRoute = readFileSync(join(ROOT, "app/api/ops/customers/route.ts"), "utf8");
+assert.match(customersRoute, /customForWrite\("account", customInput, existing \?\? null\)/);
+assert.match(customersRoute, /custom: customBodySchema/);
+// (2) …and writes only what the body changes, merged in SQL: never the value it read back whole.
+assert.match(customersRoute, /custom: customMergeSql\(customers\.custom, delta\)/);
+assert.ok(!/custom: Object\.keys\(checked\.custom\)/.test(customersRoute), "the ops POST no longer writes back the merged value it read");
+const sorSource = readFileSync(join(ROOT, "agent/lib/system-of-record.ts"), "utf8");
+assert.match(sorSource, /custom: _custom, \.\.\.customerSet/, "the agent's upsert leaves custom out of its SET unless the patch names it");
 
 // --- the ratchet: whoever writes the two tables goes through the validator ---------------------------------------------
 

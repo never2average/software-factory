@@ -50,11 +50,38 @@ import {
   tickets as ticketsTable,
 } from "./db/schema.ts";
 import { getDataroomStore } from "./dataroom-store.ts";
-import { orgForCustomer } from "./org-context.ts";
-import { asCustomValues, customFieldsOf, validateCustom } from "./custom-fields.ts";
-import type { CustomFieldSpec } from "./deployment-profile.generated.ts";
+import { DEFAULT_ORG } from "./org-context.ts";
+import { LONG_TEXT_LIMIT, asCustomValues, customDelta, customFieldsOf, replacedKeys, validateAppend, validateCustom, type CustomDelta, type CustomValues } from "./custom-fields.ts";
+import { customMergeSql } from "./custom-merge-sql.ts";
+import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
 
 export type FollowUp = Ticket;
+
+/**
+ * The workspace a by-id call acts in. A caller that knows its workspace (every model tool: orgForSession) names
+ * it, and then an id from another workspace is simply not found — row-level security is the check.
+ *
+ * Only a SYSTEM path with no caller at all (`orgId` undefined: a seed script, a sync with no session) falls back to
+ * the workspace that owns the customer, found by asking each workspace in its own scope. It used to ask
+ * orgForCustomer, which reads on the bare handle; under the fail-closed policy that sees no row and answers the
+ * default workspace for every id, so a system write to any other workspace's account was "Unknown customer".
+ * A caller that passes an EMPTY workspace is refused rather than given the owner's: an empty answer from
+ * orgForSession must never widen into "whoever owns this id". No model tool reaches the fallback
+ * (scripts/test-cross-workspace.mjs holds that every tool passes orgForSession).
+ */
+async function scopeFor(customerId: string, orgId?: string | null): Promise<string> {
+  if (orgId) return orgId;
+  if (orgId !== undefined) throw new Error(`No workspace was given for customer ${customerId}, so nothing was read or changed.`);
+  const [owner] = await acrossOrgDbs((tx) =>
+    tx
+      .select({ orgId: customersTable.orgId })
+      .from(customersTable)
+      .where(eq(customersTable.customerId, customerId))
+      .limit(1),
+  );
+  // Absent everywhere: any scope reads it as absent, so the caller's own "Unknown customer" follows.
+  return owner?.orgId ?? DEFAULT_ORG;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Fallback store — bundled seed JSON, in memory (pre-Postgres behavior)      */
@@ -144,10 +171,14 @@ export function customerToDbRows(customer: Customer): {
     implementation,
     tickets,
     interactions,
+    custom,
     ...scalar
   } = customer;
+  // customers.custom is NULLABLE (0019): no own values is NULL, never {}, so a record nobody gave one reads back
+  // exactly as it did before the column existed.
+  const accountCustom = asCustomValues(custom);
   return {
-    customer: fullRow(customersTable, { customerId: id, customerName: name, ...scalar }),
+    customer: fullRow(customersTable, { customerId: id, customerName: name, ...scalar, custom: Object.keys(accountCustom).length ? accountCustom : null }),
     platform: platform ? fullRow(platformTable, { customerId: id, ...platform }) : null,
     // `custom` is NOT NULL, so an absent one is {} rather than fullRow's null.
     deployments: (deployments ?? []).map((d) => fullRow(deploymentsTable, { customerId: id, ...d, custom: asCustomValues(d.custom) })),
@@ -201,12 +232,15 @@ tx.select().from(interactionsTable).where(eq(interactionsTable.customerId, id)))
     ]);
   const row = customerRows[0];
   if (!row) return null;
-  const { customerId, customerName, ...scalar } = row;
+  const { customerId, customerName, custom, ...scalar } = row;
   const candidate: Record<string, unknown> = {
     id: customerId,
     name: customerName,
     ...stripNulls(scalar),
   };
+  // The account's own fields (account_fields.custom_fields): left off when there are none, as on the nested rows.
+  const accountCustom = asCustomValues(custom);
+  if (Object.keys(accountCustom).length) candidate.custom = accountCustom;
   if (platformRows[0]) candidate.platform = rowToEntity(platformRows[0]);
   if (implementationRows[0]) candidate.implementation = rowToEntity(implementationRows[0]);
   if (deploymentRows.length > 0) candidate.deployments = deploymentRows.map(rowToEntity);
@@ -244,6 +278,13 @@ export async function writeCustomerToPostgres(
   db: Db,
   customer: Customer,
   orgId?: string | null,
+  /**
+   * The account's own fields (customers.custom). An existing row's column is changed ONLY through `accountCustom`,
+   * a delta merged in SQL onto what is stored at write time (agent/lib/custom-merge-sql.ts); without one the
+   * column is left out of the update entirely. Writing back the whole value read before the write lost a note
+   * written in between (39 of 40 rounds against a real Postgres). A NEW row is inserted with `customer.custom`.
+   */
+  opts: { accountCustom?: CustomDelta } = {},
 ): Promise<void> {
   const valid = customerSchema.parse(customer);
   const rows = customerToDbRows(valid);
@@ -264,11 +305,23 @@ export async function writeCustomerToPostgres(
      * which is all withOrgDb does anyway.
      */
     if (orgId) await tx.execute(sql`select set_config('app.org_id', ${orgId}, true)`);
-    const { customerId: _pk, ...customerSet } = rows.customer as Record<string, unknown>;
-    await tx
+    const { customerId: _pk, custom: _custom, ...customerSet } = rows.customer as Record<string, unknown>;
+    if (opts.accountCustom) customerSet.custom = customMergeSql(customersTable.custom, opts.accountCustom);
+    const [written] = await tx
       .insert(customersTable)
       .values(rows.customer)
-      .onConflictDoUpdate({ target: customersTable.customerId, set: customerSet });
+      .onConflictDoUpdate({ target: customersTable.customerId, set: customerSet })
+      .returning({ custom: customersTable.custom });
+    // The length cap, at WRITE time. Each append was checked against the text as it was READ; two appends at once
+    // (18,000 stored + 1,500 + 1,500) each pass that check and together exceed it, after which every later append
+    // is refused. The row is locked by this statement until commit, so what it returns is what would be stored:
+    // over the cap, throw, and the transaction rolls back with nothing written.
+    for (const key of Object.keys(opts.accountCustom?.append ?? {})) {
+      const after = (written?.custom as Record<string, unknown> | null | undefined)?.[key];
+      if (typeof after === "string" && after.length > LONG_TEXT_LIMIT) {
+        throw new Error(`Custom fields were not accepted, so nothing was written. ${valid.id}: the own field "${key}" would be ${after.length.toLocaleString("en-US")} characters with this addition, over the ${LONG_TEXT_LIMIT.toLocaleString("en-US")}-character limit (text was added to it since it was read). Replace it with a shorter version (null for it in \`custom\` together with the new text in \`custom_append\`), then add to it again.`);
+      }
+    }
     // Replace-all for the nested domains: `valid` carries the full state, so
     // delete + insert keeps the tables an exact mirror of the entity.
     await tx.delete(platformTable).where(eq(platformTable.customerId, valid.id));
@@ -305,9 +358,19 @@ export async function listCustomers(orgId?: string | null): Promise<
       | "technicalOwnerEmail"
     > & {
       openTickets: number;
+      /** The account's own fields the profile shows in lists (`show_in_list`); absent when it has none. */
+      custom?: CustomValues;
     }
   >
 > {
+  // A list carries only the own fields a profile marks show_in_list: a long note on every account would make one
+  // list call cost what reading each of them does. get_customer returns them all.
+  const listed = new Set(customFieldsOf("account").filter((f) => f.show_in_list).map((f) => f.key));
+  const listCustom = (stored: unknown): { custom?: CustomValues } => {
+    if (!listed.size) return {};
+    const values = Object.fromEntries(Object.entries(asCustomValues(stored)).filter(([k]) => listed.has(k)));
+    return Object.keys(values).length ? { custom: values } : {};
+  };
   const db = getDb();
   if (db) {
     // Workspace scope: filter to the caller's org when one is given (fail-safe:
@@ -338,6 +401,7 @@ tx
           companyDomain: customersTable.companyDomain,
           businessOwnerEmail: customersTable.businessOwnerEmail,
           technicalOwnerEmail: customersTable.technicalOwnerEmail,
+          custom: customersTable.custom,
         })
         .from(customersTable)
         .where(orgFilter)
@@ -365,6 +429,7 @@ tx
       businessOwnerEmail: row.businessOwnerEmail ?? undefined,
       technicalOwnerEmail: row.technicalOwnerEmail ?? undefined,
       openTickets: openByCustomer.get(row.id) ?? 0,
+      ...listCustom(row.custom),
     }));
   }
   const { customers } = await readStore();
@@ -379,34 +444,26 @@ tx
     businessOwnerEmail: c.businessOwnerEmail,
     technicalOwnerEmail: c.technicalOwnerEmail,
     openTickets: (c.tickets ?? []).filter((t) => isOpenTicket(t.ticketStatus)).length,
+    ...listCustom(c.custom),
   }));
 }
 
 export async function getCustomer(id: string, orgId?: string | null): Promise<Customer | null> {
   const db = getDb();
   if (db) {
-    const found = await dbGetCustomer(db, id);
     // Workspace scope. Reading by id is the way around a filtered list: knowing
     // (or guessing) an id from another tenant would otherwise return the whole
     // record. Absent from your workspace reads as absent, not as forbidden —
     // a 403 confirms the id exists somewhere, which is itself a leak.
-    if (found && orgId) {
-      const [row] = await (orgId ? withOrgDb(orgId, (tx) =>
-        tx
-          .select({ orgId: customersTable.orgId })
-          .from(customersTable)
-          .where(eq(customersTable.customerId, id))
-          .limit(1),
-      ) : acrossOrgDbs((tx) =>
-        tx
-          .select({ orgId: customersTable.orgId })
-          .from(customersTable)
-          .where(eq(customersTable.customerId, id))
-          .limit(1),
-      ));
-      if (row?.orgId && row.orgId !== orgId) return null;
-    }
-    return found;
+    //
+    // The read ITSELF runs in the caller's scope, so row-level security is the
+    // check. It used to read across every workspace and then ask, in the
+    // caller's scope, which workspace owned the row; under the fail-closed
+    // policy that second read cannot see another workspace's row, came back
+    // empty, and `row?.orgId && …` let the other workspace's record through.
+    // No orgId (seed scripts, tests, the JSON fallback) keeps the old
+    // "find it wherever it lives" contract.
+    return await dbGetCustomer(db, id, orgId);
   }
   const { customers } = await readStore();
   return customers.find((c) => c.id === id) ?? null;
@@ -414,28 +471,72 @@ export async function getCustomer(id: string, orgId?: string | null): Promise<Cu
 
 /**
  * The profile's custom fields on the records a patch carries (agent/lib/custom-fields.ts), before anything is
- * written. A patch REPLACES `deployments[]` and `implementation` wholesale, but `custom` follows the rule every
+ * written: the account's own (`custom`, account_fields.custom_fields) and each area row's. A patch REPLACES
+ * `deployments[]` and `implementation` wholesale and merges over the account, but `custom` follows the rule every
  * write path shares: a record that already exists keeps the custom values the patch does not mention, a new one
  * must carry the required ones, an undeclared key is refused. Throws the plain sentences; the model reads them.
  */
 export function applyCustomFields(
   patch: CustomerPatch,
   existing: Customer | null,
-  /** The areas' declared fields; this build's profile unless a test passes another's. */
-  declared: Record<"deployments" | "implementations", CustomFieldSpec[]> = { deployments: customFieldsOf("deployments"), implementations: customFieldsOf("implementations") },
+  /** The declared fields per record; this build's profile unless a test passes another's (a missing one = none). */
+  declared?: Partial<Record<CustomFieldArea, CustomFieldSpec[]>>,
 ): CustomerPatch {
+  return applyCustomFieldsWithDelta(patch, existing, declared).patch;
+}
+
+/**
+ * applyCustomFields, plus what the patch CHANGES in the account's `custom` (`accountDelta`, undefined when it
+ * names none of it), which writeCustomerToPostgres merges in SQL at write time rather than writing back the whole
+ * column read earlier. `custom_append` (long-text additions, the model's way to add to a long note without
+ * resending it) is resolved here: into the returned patch's `custom` (what the record reads after the write)
+ * and into the delta's `append`, and is never part of the stored record. A model rewriting a long_text value
+ * whole may not cut it below half its length (validateCustom's shrinkGuard): it appends, or clears first.
+ */
+export function applyCustomFieldsWithDelta(
+  patch: CustomerPatch,
+  existing: Customer | null,
+  declared: Partial<Record<CustomFieldArea, CustomFieldSpec[]>> = { account: customFieldsOf("account"), deployments: customFieldsOf("deployments"), implementations: customFieldsOf("implementations") },
+): { patch: CustomerPatch; accountDelta?: CustomDelta } {
   const errors: string[] = [];
-  const check = (area: "deployments" | "implementations", what: string, custom: unknown, prev: { custom?: unknown } | undefined) => {
+  let accountDelta: CustomDelta | undefined;
+  const check = (area: CustomFieldArea, what: string, custom: unknown, prev: { custom?: unknown } | undefined, append?: unknown) => {
+    const fields = declared[area] ?? [];
     // Nothing declared and nothing sent: the record is written exactly as it was before custom fields existed.
-    if (custom === undefined && !prev?.custom && declared[area].length === 0) return undefined;
-    const result = validateCustom(area, custom, prev ? { mode: "update", existing: prev.custom, fields: declared[area] } : { mode: "create", fields: declared[area] });
+    if (custom === undefined && append === undefined && !prev?.custom && fields.length === 0) return undefined;
+    // A REPLACEMENT (null in `custom` + text in `custom_append` for one long-text key) is one write of the new
+    // text: the key is taken out of `custom` (so a required field is not "cleared") and out of the stored values
+    // (so the text is not appended to the old one), and the delta SETs it instead of appending.
+    const replacing = area === "account" ? replacedKeys(custom, append) : [];
+    const checked = replacing.length ? Object.fromEntries(Object.entries(custom as Record<string, unknown>).filter(([k]) => !replacing.includes(k))) : custom;
+    const result = validateCustom(area, checked, prev ? { mode: "update", existing: prev.custom, fields, shrinkGuard: { append: area === "account" } } : { mode: "create", fields });
+    if (result.ok && area === "account") {
+      const base = Object.fromEntries(Object.entries(result.values).filter(([k]) => !replacing.includes(k)));
+      const added = validateAppend(append, { fields, values: base, also: checked });
+      if (!added.ok) {
+        errors.push(...added.errors.map((e) => `${what}: ${e}`));
+        return undefined;
+      }
+      const appendOnly = Object.fromEntries(Object.entries(added.append).filter(([k]) => !replacing.includes(k)));
+      accountDelta = customDelta(checked, result.values, appendOnly);
+      if (replacing.length) {
+        accountDelta ??= { set: {}, clear: [], append: {} };
+        for (const k of replacing) accountDelta.set[k] = added.append[k];
+      }
+      result.values = added.values;
+    }
     // No values and none stored before: leave `custom` off, so a record nobody gave an own value to reads back as
     // it was written whether or not the profile declares fields (an explicit clear of stored values still writes {}).
     if (result.ok) return Object.keys(result.values).length === 0 && !prev?.custom ? undefined : result.values;
     errors.push(...result.errors.map((e) => `${what}: ${e}`));
     return undefined;
   };
-  const out = { ...patch };
+  const { custom_append: append, ...rest } = patch;
+  const out: CustomerPatch = { ...rest };
+  // The account record itself. `prev` is the stored account, so its values survive a patch that does not name them.
+  const account = check("account", patch.id, patch.custom, existing ?? undefined, append);
+  if (account !== undefined) out.custom = account;
+  else if (patch.custom !== undefined) delete out.custom;
   if (patch.deployments) {
     out.deployments = patch.deployments.map((d) => {
       const custom = check("deployments", d.deploymentId, d.custom, existing?.deployments?.find((p) => p.deploymentId === d.deploymentId));
@@ -447,7 +548,16 @@ export function applyCustomFields(
     if (custom !== undefined) out.implementation = { ...patch.implementation, custom };
   }
   if (errors.length) throw new Error(`Custom fields were not accepted, so nothing was written. ${errors.join(" ")}`);
-  return out;
+  return { patch: out, accountDelta };
+}
+
+/** An account whose own values were all cleared has no `custom`, as one that never had any (customers.custom is NULL). */
+function withoutEmptyCustom(customer: Customer): Customer {
+  if (customer.custom && Object.keys(customer.custom).length === 0) {
+    const { custom: _empty, ...rest } = customer;
+    return rest;
+  }
+  return customer;
 }
 
 export async function upsertCustomer(
@@ -457,24 +567,29 @@ export async function upsertCustomer(
   const parsedPatch = customerPatchSchema.parse(patch);
   const db = getDb();
   if (db) {
-    const existing = await dbGetCustomer(db, parsedPatch.id);
+    // The record being patched is read in the CALLER's workspace. Read across all of them, another workspace's
+    // record was merged into this patch and written under the caller's scope; the database refused the write,
+    // and the refusal text carried every merged value back to the model.
+    const existing = await dbGetCustomer(db, parsedPatch.id, orgId);
     const validPatch = applyCustomFields(parsedPatch, existing);
-    const merged = existing
+    const merged = withoutEmptyCustom(existing
       ? customerSchema.parse({ ...existing, ...validPatch })
-      : customerSchema.parse({ name: validPatch.id, ...validPatch });
-    await writeCustomerToPostgres(db, merged, orgId);
+      : customerSchema.parse({ name: validPatch.id, ...validPatch }));
+    // Only what the patch changed in `custom`, merged in SQL: never the whole column as read above.
+    const { accountDelta } = applyCustomFieldsWithDelta(parsedPatch, existing);
+    await writeCustomerToPostgres(db, merged, orgId, { accountCustom: accountDelta });
     return merged;
   }
   const store = await readStore();
   const idx = store.customers.findIndex((c) => c.id === parsedPatch.id);
   const validPatch = applyCustomFields(parsedPatch, idx === -1 ? null : store.customers[idx]);
   if (idx === -1) {
-    const created = customerSchema.parse({ name: validPatch.id, ...validPatch });
+    const created = withoutEmptyCustom(customerSchema.parse({ name: validPatch.id, ...validPatch }));
     store.customers.push(created);
     await writeStore(store);
     return created;
   }
-  const merged = customerSchema.parse({ ...store.customers[idx], ...validPatch });
+  const merged = withoutEmptyCustom(customerSchema.parse({ ...store.customers[idx], ...validPatch }));
   store.customers[idx] = merged;
   await writeStore(store);
   return merged;
@@ -483,11 +598,14 @@ export async function upsertCustomer(
 export async function recordInteraction(
   customerId: string,
   interaction: Interaction,
+  /** The caller's workspace; an id outside it is "Unknown customer". Omitted only by system paths. */
+  orgId?: string | null,
 ): Promise<Customer> {
   const db = getDb();
   if (db) {
     const valid = interactionSchema.parse(interaction);
-    const exists = await withOrgDb(await orgForCustomer(customerId), (tx) =>
+    const scope = await scopeFor(customerId, orgId);
+    const exists = await withOrgDb(scope, (tx) =>
       tx
         .select({ customerId: customersTable.customerId })
         .from(customersTable)
@@ -495,13 +613,15 @@ export async function recordInteraction(
         .limit(1),
     );
     if (exists.length === 0) throw new Error(`Unknown customer: ${customerId}`);
-    await withOrgDb(await orgForCustomer(customerId), (tx) =>
+    await withOrgDb(scope, (tx) =>
       tx
         .insert(interactionsTable)
-        .values(fullRow(interactionsTable, { customerId, ...valid })),
+        // The workspace is stamped: fullRow writes an explicit NULL for every column it is not given, and a
+        // NULL org_id is refused by the policy's WITH CHECK (42501), so no interaction could be logged at all.
+        .values(fullRow(interactionsTable, { customerId, ...valid, orgId: scope })),
     );
-    await appendInteractionArtifact(customerId, valid);
-    const customer = await dbGetCustomer(db, customerId);
+    await appendInteractionArtifacts(customerId, [valid], scope);
+    const customer = await dbGetCustomer(db, customerId, scope);
     if (!customer) throw new Error(`Unknown customer: ${customerId}`);
     return customer;
   }
@@ -523,12 +643,15 @@ export async function recordInteraction(
 export async function recordInteractions(
   customerId: string,
   interactions: readonly Interaction[],
+  /** The caller's workspace; an id outside it is "Unknown customer". Omitted only by system paths. */
+  orgId?: string | null,
 ): Promise<Customer> {
   if (interactions.length === 0) throw new Error("recordInteractions: no interactions given");
   const valid = interactions.map((i) => interactionSchema.parse(i));
   const db = getDb();
   if (db) {
-    const exists = await withOrgDb(await orgForCustomer(customerId), (tx) =>
+    const scope = await scopeFor(customerId, orgId);
+    const exists = await withOrgDb(scope, (tx) =>
       tx
         .select({ customerId: customersTable.customerId })
         .from(customersTable)
@@ -536,13 +659,13 @@ export async function recordInteractions(
         .limit(1),
     );
     if (exists.length === 0) throw new Error(`Unknown customer: ${customerId}`);
-    await withOrgDb(await orgForCustomer(customerId), (tx) =>
+    await withOrgDb(scope, (tx) =>
       tx
         .insert(interactionsTable)
-        .values(valid.map((v) => fullRow(interactionsTable, { customerId, ...v }))),
+        .values(valid.map((v) => fullRow(interactionsTable, { customerId, ...v, orgId: scope }))),
     );
-    await appendInteractionArtifacts(customerId, valid);
-    const customer = await dbGetCustomer(db, customerId);
+    await appendInteractionArtifacts(customerId, valid, scope);
+    const customer = await dbGetCustomer(db, customerId, scope);
     if (!customer) throw new Error(`Unknown customer: ${customerId}`);
     return customer;
   }
@@ -708,10 +831,13 @@ export async function reassignOwner(
   customerId: string,
   newOwnerEmail: string,
   ownerName?: string,
+  /** The caller's workspace; an id outside it is "Unknown customer". Omitted only by system paths. */
+  orgId?: string | null,
 ): Promise<{ customerId: string; previousOwner: string | null; newOwner: string }> {
   const db = getDb();
   if (!db) throw new Error("reassignOwner requires a database");
-  const rows = await withOrgDb(await orgForCustomer(customerId), (tx) =>
+  const staffOrg = await scopeFor(customerId, orgId);
+  const rows = await withOrgDb(staffOrg, (tx) =>
     tx
       .select({ fdeOwner: customersTable.fdeOwner })
       .from(customersTable)
@@ -720,16 +846,15 @@ export async function reassignOwner(
   );
   if (rows.length === 0) throw new Error(`Unknown customer: ${customerId}`);
   const previousOwner = rows[0].fdeOwner ?? null;
-  await withOrgDb(await orgForCustomer(customerId), (tx) =>
+  await withOrgDb(staffOrg, (tx) =>
     tx
       .update(customersTable)
       .set({ fdeOwner: newOwnerEmail })
       .where(eq(customersTable.customerId, customerId)),
   );
   // The customer owns the workspace answer here — a staff row belongs to the
-  // same workspace as the account it staffs. Resolved once, used for both the
-  // scope and the row (an await cannot sit inside the sync callback).
-  const staffOrg = await orgForCustomer(customerId);
+  // same workspace as the account it staffs. Resolved once above, used for both
+  // the scope and the row (an await cannot sit inside the sync callback).
   /**
    * `employer_org` is who the new owner WORKS FOR, and it was hardcoded to one
    * company. Every workspace on the platform therefore stamped that company's
@@ -788,10 +913,13 @@ export interface NewTicketInput {
  */
 export async function createTicket(
   input: NewTicketInput,
+  /** The caller's workspace; an id outside it is "Unknown customer". Omitted only by system paths. */
+  orgId?: string | null,
 ): Promise<{ ticketId: string; created: boolean }> {
   const db = getDb();
   if (!db) throw new Error("createTicket requires a database");
-  const exists = await withOrgDb(await orgForCustomer(input.customerId), (tx) =>
+  const scope = await scopeFor(input.customerId, orgId);
+  const exists = await withOrgDb(scope, (tx) =>
     tx
       .select({ id: customersTable.customerId })
       .from(customersTable)
@@ -802,7 +930,7 @@ export async function createTicket(
   if (input.externalId) {
     // Narrowing does not survive into the callback — capture it first.
     const externalId = input.externalId;
-    const dup = await withOrgDb(await orgForCustomer(input.customerId), (tx) =>
+    const dup = await withOrgDb(scope, (tx) =>
       tx
         .select({ ticketId: ticketsTable.ticketId })
         .from(ticketsTable)
@@ -832,8 +960,9 @@ export async function createTicket(
     externalId: input.externalId,
     externalSystem: input.externalSystem ?? (input.externalId ? "email" : undefined),
   });
-  await withOrgDb(await orgForCustomer(input.customerId), (tx) =>
-    tx.insert(ticketsTable).values(fullRow(ticketsTable, { customerId: input.customerId, ...ticket })),
+  await withOrgDb(scope, (tx) =>
+    // Stamped for the same reason as the interaction rows: an explicit NULL org_id is refused (42501).
+    tx.insert(ticketsTable).values(fullRow(ticketsTable, { customerId: input.customerId, ...ticket, orgId: scope })),
   );
   return { ticketId: input.ticketId, created: true };
 }
@@ -854,10 +983,11 @@ async function appendInteractionArtifact(
 async function appendInteractionArtifacts(
   customerId: string,
   interactions: readonly Interaction[],
+  orgId?: string | null,
 ): Promise<void> {
   if (interactions.length === 0) return;
   try {
-    await getDataroomStore(await orgForCustomer(customerId)).appendJsonl(
+    await getDataroomStore(await scopeFor(customerId, orgId)).appendJsonl(
       `Customers/${customerId}/interactions.jsonl`,
       interactions.length === 1 ? interactions[0] : [...interactions],
       interactionSchema,
@@ -870,12 +1000,15 @@ async function appendInteractionArtifacts(
 /** List open follow-ups across all customers, or scoped to one. */
 export async function listFollowUps(
   customerId?: string,
+  /** The caller's workspace. Omitted, it spans every workspace (the digest crons). */
+  orgId?: string | null,
 ): Promise<Array<Ticket & { customerId: string; customerName: string }>> {
   const db = getDb();
   if (db) {
     const filters = [notInArray(ticketsTable.ticketStatus, CLOSED_TICKET_STATUSES)];
     if (customerId) filters.push(eq(ticketsTable.customerId, customerId));
-    const rows = await acrossOrgDbs((tx) =>
+    const run = <T>(fn: (tx: Db) => Promise<T[]>): Promise<T[]> => (orgId ? withOrgDb(orgId, fn) : acrossOrgDbs(fn));
+    const rows = await run((tx) =>
       tx
         .select({ ticket: ticketsTable, customerName: customersTable.customerName })
         .from(ticketsTable)
@@ -901,10 +1034,12 @@ export async function listFollowUps(
 export async function resolveFollowUp(
   customerId: string,
   followUpId: string,
+  /** The caller's workspace; a ticket outside it is "not found". Omitted only by system paths. */
+  orgId?: string | null,
 ): Promise<Ticket> {
   const db = getDb();
   if (db) {
-    const updated = await withOrgDb(await orgForCustomer(customerId), (tx) =>
+    const updated = await withOrgDb(await scopeFor(customerId, orgId), (tx) =>
       tx
         .update(ticketsTable)
         .set({ ticketStatus: "Resolved" satisfies Ticket["ticketStatus"] })
@@ -936,11 +1071,13 @@ export async function setTicketStatus(
   customerId: string,
   ticketId: string,
   ticketStatus: Ticket["ticketStatus"],
+  /** The caller's workspace; a ticket outside it is "not found". Omitted only by system paths. */
+  orgId?: string | null,
 ): Promise<Ticket> {
   const now = new Date().toISOString();
   const db = getDb();
   if (db) {
-    const updated = await withOrgDb(await orgForCustomer(customerId), (tx) =>
+    const updated = await withOrgDb(await scopeFor(customerId, orgId), (tx) =>
       tx
         .update(ticketsTable)
         .set({ ticketStatus, lastActivityDate: now })
@@ -1015,7 +1152,11 @@ export type CustomerMatch =
  * non-freemail sender, an exact match on company_domain. Returns {matched:false}
  * when nothing lines up — the caller must NOT guess past that.
  */
-export async function matchCustomerByEmail(sender: string): Promise<CustomerMatch> {
+export async function matchCustomerByEmail(
+  sender: string,
+  /** The caller's workspace: only its customers can match. Omitted, every workspace's can (a system inbox). */
+  orgId?: string | null,
+): Promise<CustomerMatch> {
   const raw = (sender ?? "").trim().toLowerCase();
   // Accept a raw address or a "Name <addr>" header form.
   const bare = (raw.match(/<([^>]+)>/)?.[1] ?? raw).trim();
@@ -1025,7 +1166,8 @@ export async function matchCustomerByEmail(sender: string): Promise<CustomerMatc
 
   const db = getDb();
   if (db) {
-    const [byContact] = await acrossOrgDbs((tx) =>
+    const run = <T>(fn: (tx: Db) => Promise<T[]>): Promise<T[]> => (orgId ? withOrgDb(orgId, fn) : acrossOrgDbs(fn));
+    const [byContact] = await run((tx) =>
       tx
         .select({ id: customersTable.customerId, name: customersTable.customerName, fdeOwner: customersTable.fdeOwner })
         .from(customersTable)
@@ -1042,7 +1184,7 @@ export async function matchCustomerByEmail(sender: string): Promise<CustomerMatc
       return { matched: true, customerId: byContact.id, customerName: byContact.name, fdeOwner: byContact.fdeOwner ?? undefined, matchedOn: "contact" };
     }
     if (!FREEMAIL_DOMAINS.has(domain)) {
-      const [byDomain] = await acrossOrgDbs((tx) =>
+      const [byDomain] = await run((tx) =>
         tx
           .select({ id: customersTable.customerId, name: customersTable.customerName, fdeOwner: customersTable.fdeOwner })
           .from(customersTable)

@@ -104,5 +104,10 @@
   "specialists": {
     "$comment": "exclude: base specialists (directory names under agent/subagents/) this deployment does not use. Nothing is moved: their directories stay; they are left out of the subagent registry, every prompt's roster and list of names, the provisioned workflow library, and the eve build (scripts/eve-build.mjs hides them from eve only while it builds).",
     "exclude": []
+  },
+  "account_fields": {
+    "$comment": "hidden: fields of the account record itself (the customer row: arr, seats, aeOwner, renewalDate, platform, tickets, …) this deployment does not use. They are removed from what the MODEL reads and writes: the record tools' parameters and every record they return. Storage, the API, the CLI and the forms are unchanged, and a value already stored is kept when the model writes the record. Keys are customerSchema keys in agent/lib/customer-schema.ts; id and name cannot be hidden. The two redefinable areas hide their own fields under domains.<area>.fields.<key>.hidden. custom_fields: the deployment's OWN fields on the account record (a company's notes, a site's permit number), with the same spec as domains.<area>.custom_fields (key, label, type, required, options, help, show_in_list). Their values live by key in the customers table's custom jsonb column and every write is validated by agent/lib/custom-fields.ts. None by default.",
+    "hidden": [],
+    "custom_fields": []
   }
 }

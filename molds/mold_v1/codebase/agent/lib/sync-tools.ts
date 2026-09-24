@@ -17,7 +17,7 @@ import { once } from "eve/tools/approval";
 import { z } from "zod";
 import { jsonObjectSchema } from "#lib/dataroom-schema.js";
 import { getDataroomStore } from "#lib/dataroom-store.js";
-import { orgForCustomer, orgForSession } from "#lib/org-context.js";
+import { orgForSession } from "#lib/org-context.js";
 import {
   ingestSource,
   SYNC_SOURCE_FOLDERS,
@@ -85,6 +85,8 @@ export const syncPullTool = modelFacing("sync_pull", defineTool({
     return await ingestSource({
       ...input,
       recordedByEmail: emailOrUndefined(callerEmail(ctx)),
+      // The caller's workspace, never the customer id's owner: a model-supplied id must not pick the data room.
+      orgId: await orgForSession(ctx),
     });
   },
 }));
@@ -105,7 +107,9 @@ export const listSyncsTool = modelFacing("list_syncs", defineTool({
     const prefix = [domain, "syncs", source ? folder : undefined, customerId]
       .filter((seg): seg is string => Boolean(seg))
       .join("/");
-    const org = customerId ? await orgForCustomer(customerId) : await orgForSession(ctx);
+    // Always the caller's workspace. Resolving it from a model-supplied customer id listed another workspace's
+    // data room for that workspace's customer.
+    const org = await orgForSession(ctx);
     return { prefix, paths: await getDataroomStore(org).list(prefix) };
   },
 }));

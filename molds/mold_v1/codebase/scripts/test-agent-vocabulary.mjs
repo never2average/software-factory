@@ -172,6 +172,14 @@ async function phaseUnits() {
 
   // --- Review of PR #55: product words are translated, USER DATA never is (in either direction). ------------
   console.log("\nReview probes (pure):");
+  await check("R13 a pick list's choices in a refusal are the profile's own words: the relabelled message keeps them (review of #57)", async () => {
+    const { validateCustom } = await imp("agent/lib/custom-fields.ts");
+    // Choices that happen to be the base product's words: user data, which the model must send back as written.
+    const kind = { key: "kind", label: "Kind", type: "pick_list", options: ["Customer", "Deployment", "Implementation"] };
+    const refusal = validateCustom("account", { kind: "Other" }, { mode: "create", fields: [kind] }).errors[0];
+    const spoken = v.speakMessageWith(voc, `Custom fields were not accepted, so nothing was written. acme: ${refusal}`);
+    assert.ok(spoken.includes('must be one of: "Customer", "Deployment", "Implementation".'), spoken);
+  });
   await check("R1c custom fields: a profile's own keys and options are never translated (results, briefing)", () => {
     const prof = structuredClone(fixtureProfile());
     prof.domains.deployments.custom_fields = [{ key: "customer_tier", label: "Tier", type: "pick_list", options: ["Customer A", "Other"] }];
@@ -274,6 +282,106 @@ async function phaseStamped() {
     assert.equal(stored.deployments[0].region, "customer-vpc");
     assert.ok(!("analystOwner" in stored) && !("coverageReports" in stored));
   });
+  // R11: fields the profile hides (account_fields.hidden, domains.<area>.fields.<key>.hidden) are not offered to the
+  // model and not shown to it; storage, and every caller that is not the model, keep them.
+  const params = upsert.upsert_company.inputSchema ?? {};
+  const props = params.properties ?? {};
+  await check("R11 hidden account fields are not upsert_company parameters (arr, seats, aeOwner, renewalDate, platform, tickets…)", () => {
+    for (const k of ["arr", "arrCurrency", "seats", "aeOwner", "contractStatus", "renewalForecast", "renewalDate", "expansionPotentialArr", "successCriteria", "platform", "tickets", "solutions"]) assert.ok(!(k in props), `${k} is still offered: ${Object.keys(props).join(",")}`);
+    for (const k of ["id", "name", "analystOwner", "coverageReports", "portfolioEntry", "healthReason"]) assert.ok(k in props, `${k} went missing`);
+  });
+  await check("R11 a hidden nested field is not a parameter; a hidden field with a fixed value still is", () => {
+    const item = props.coverageReports?.items?.properties ?? {};
+    assert.ok(!("buildSha" in item) && !("cost30dUsd" in item), Object.keys(item).join(","));
+    assert.ok("region" in item && "environment" in item && "coverageReportId" in item, Object.keys(item).join(","));
+    assert.ok(!("securityReviewStatus" in (props.portfolioEntry?.properties ?? {})));
+  });
+  const reads = await imp("agent/lib/read-only-tools.ts");
+  await check("the empty-response guard knows the read-only tools by both names, and no write tool is among them", () => {
+    assert.ok(reads.isReadOnlyTool("get_company") && reads.isReadOnlyTool("get_customer") && reads.isReadOnlyTool("list_companies"));
+    for (const w of ["upsert_company", "upsert_customer", "remember", "bash", "record_interaction", "mcp_call", "dataroom_write", "dataroom_fetch_to_sandbox", "customer-context"]) assert.ok(!reads.isReadOnlyTool(w), w);
+  });
+  const sorForHidden = await imp("agent/lib/system-of-record.ts");
+  await sorForHidden.upsertCustomer({
+    id: "hidden-co", name: "Hidden Co", arr: 5, seats: 9,
+    deployments: [{ deploymentId: "r1", environment: "prod", region: "ap-south-1", deployedVersion: "Q1", releaseStatus: "deployed", healthStatus: "healthy", buildSha: "abc1234" }],
+  });
+  const getForHidden = await resolve(tools.getCustomerTool);
+  const shown = await getForHidden.get_company.execute({ id: "hidden-co" }, ctx);
+  await check("R11 get_company does not show hidden fields, at either level", () => {
+    assert.ok(shown.company && !("arr" in shown.company) && !("seats" in shown.company), JSON.stringify(shown));
+    assert.equal(shown.company.coverageReports?.[0]?.coverageReportId, "r1", JSON.stringify(shown));
+    assert.ok(!("buildSha" in shown.company.coverageReports[0]), JSON.stringify(shown.company.coverageReports[0]));
+  });
+  await upsert.upsert_company.execute({
+    id: "hidden-co",
+    coverageReports: [{ coverageReportId: "r1", environment: "prod", region: "ap-south-1", deployedVersion: "Q2", releaseStatus: "deployed", healthStatus: "healthy" }],
+  }, ctx);
+  const kept = await sorForHidden.getCustomer("hidden-co");
+  await check("R11 storage keeps hidden values: the account's, and a nested row's the model rewrote without seeing them", () => {
+    assert.equal(kept.arr, 5);
+    assert.equal(kept.seats, 9);
+    assert.equal(kept.deployments[0].deployedVersion, "Q2");
+    assert.equal(kept.deployments[0].buildSha, "abc1234");
+  });
+  const hiddenOut = await upsert.upsert_company.execute({ id: "hidden-co", arr: 99 }, ctx);
+  await check("R11 a hidden field the model sends anyway is not written, and the write's result does not show it", async () => {
+    assert.equal((await sorForHidden.getCustomer("hidden-co")).arr, 5);
+    assert.ok(!("arr" in (hiddenOut.company ?? {})), JSON.stringify(hiddenOut));
+  });
+
+  // R12: the account record's OWN fields (account_fields.custom_fields: `notes`, `house_view` in the fixture). Offered
+  // as `custom` beside the hidden fields' absence, stored and read back VERBATIM (user data: a note that says
+  // "Customers/…" or "deployment" is not the product's words), merged per key, and refused when undeclared.
+  const NOTE = "Read Customers/acme/filings/q1.pdf and Deployments/acme/v1 again.\nThe deployment of capital into affordable housing is the customer_id question; FDE owner: n/a; list_customers said 3 customers.";
+  await check("R12 the account's own fields are an upsert_company parameter (`custom`), hidden account fields still are not", () => {
+    assert.ok("custom" in props, Object.keys(props).join(","));
+    assert.ok(!("arr" in props) && !("seats" in props));
+  });
+  await upsert.upsert_company.execute({ id: "notes-co", name: "Notes Co", custom: { notes: NOTE, house_view: "neutral" } }, ctx);
+  const sorNotes = await imp("agent/lib/system-of-record.ts");
+  await check("R12 stored verbatim under the declared keys (a pick is stored as the profile spells it)", async () => {
+    assert.deepEqual((await sorNotes.getCustomer("notes-co")).custom, { notes: NOTE, house_view: "Neutral" });
+  });
+  const getNotes = (await resolve(tools.getCustomerTool)).get_company;
+  const notesRead = await getNotes.execute({ id: "notes-co" }, ctx);
+  await check("R12 get_company returns `custom` exactly as stored: keys and values untranslated", () => {
+    assert.deepEqual(notesRead.company.custom, { notes: NOTE, house_view: "Neutral" }, JSON.stringify(notesRead));
+  });
+  const listNotes = (await resolve(tools.listCustomersTool)).list_companies;
+  const listedCo = (await listNotes.execute({}, ctx)).companies.find((c) => c.id === "notes-co");
+  await check("R12 list_companies carries only the show_in_list own fields (not a long note)", () => assert.deepEqual(listedCo.custom, { house_view: "Neutral" }, JSON.stringify(listedCo)));
+  await upsert.upsert_company.execute({ id: "notes-co", custom: { house_view: "Positive" } }, ctx);
+  await check("R12 a partial `custom` merges: the note it did not mention is kept", async () => {
+    assert.deepEqual((await sorNotes.getCustomer("notes-co")).custom, { notes: NOTE, house_view: "Positive" });
+  });
+  await check("R12 an undeclared key is refused and nothing is written", async () => {
+    await assert.rejects(upsert.upsert_company.execute({ id: "notes-co", healthReason: "changed", custom: { rating: "Buy" } }, ctx), /Custom fields were not accepted, so nothing was written\. notes-co: There is no custom field "rating" here\. The custom fields are: `notes` \("Notes", long text\); `house_view`/);
+    const after = await sorNotes.getCustomer("notes-co");
+    assert.notEqual(after.healthReason, "changed");
+    assert.deepEqual(after.custom, { notes: NOTE, house_view: "Positive" });
+  });
+  await check("R12 a wrong type is refused", async () => {
+    await assert.rejects(upsert.upsert_company.execute({ id: "notes-co", custom: { house_view: "Bullish" } }, ctx), /"House view" \(house_view\) must be one of: "Positive", "Neutral", "Negative"\./);
+    await assert.rejects(upsert.upsert_company.execute({ id: "notes-co", custom: { notes: { text: "x" } } }, ctx));
+  });
+  await upsert.upsert_company.execute({ id: "hidden-co", arr: 1234, custom: { notes: "Met the CFO." } }, ctx);
+  await check("R12 hidden + custom: an own field is written beside a hidden one the model sent, which is not; stored hidden values survive", async () => {
+    const both = await sorNotes.getCustomer("hidden-co");
+    assert.equal(both.arr, 5);
+    assert.equal(both.seats, 9);
+    assert.deepEqual(both.custom, { notes: "Met the CFO." });
+  });
+  await check("R12 `custom_append` is offered for the long-text notes, so a long note is never resent whole", () => assert.ok("custom_append" in props, Object.keys(props).join(",")));
+  await upsert.upsert_company.execute({ id: "notes-co", custom_append: { notes: "Customers/acme: follow-up call booked." } }, ctx);
+  await check("R12 an append lands after the stored note, verbatim", async () => {
+    assert.equal((await sorNotes.getCustomer("notes-co")).custom.notes, `${NOTE}\n\nCustomers/acme: follow-up call booked.`);
+  });
+  await upsert.upsert_company.execute({ id: "notes-co", custom: { notes: null, house_view: null } }, ctx);
+  await check("R12 null clears; a record with no own values left has no `custom` at all", async () => {
+    assert.ok(!("custom" in (await sorNotes.getCustomer("notes-co"))));
+  });
+
   const store = (await imp("agent/lib/dataroom-store.ts")).getDataroomStore();
   await store.write("Deployments/stamp-co/v1/platform/organization.json", "{}\n");
   const read = await dataroom.dataroomReadTool.execute({ path: "Coverage-reports/stamp-co/v1/platform/organization.json" }, ctx);

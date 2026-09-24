@@ -538,5 +538,40 @@
       "data-migration",
       "customer-context"
     ]
+  },
+  "account_fields": {
+    "$comment": "What the hfc-research pack is asked to hide at the account level: the SaaS commercial and customer-success fields a research workspace has no use for. Removed from the record tools the model is given; stored values are untouched. custom_fields: the company notes the operator asked to keep ON the company record (and a listed pick list, to cover show_in_list).",
+    "hidden": [
+      "aeOwner",
+      "arr",
+      "arrCurrency",
+      "seats",
+      "accountRegion",
+      "contractStatus",
+      "renewalForecast",
+      "renewalRiskReason",
+      "expansionPotentialArr",
+      "valueRealizationStage",
+      "targetAnnualValue",
+      "realizedAnnualValue",
+      "successCriteria",
+      "valuePeriodStart",
+      "valuePeriodEnd",
+      "valueEvidenceStatus",
+      "valueEvidenceUrl",
+      "lastBusinessReviewDate",
+      "nextBusinessReviewDate",
+      "contractStart",
+      "renewalDate",
+      "technicalOwnerEmail",
+      "executiveSponsorEmail",
+      "platform",
+      "solutions",
+      "tickets"
+    ],
+    "custom_fields": [
+      { "key": "notes", "label": "Notes", "type": "long_text", "help": "What the desk knows about the company: filings read, calls held, open questions." },
+      { "key": "house_view", "label": "House view", "type": "pick_list", "options": ["Positive", "Neutral", "Negative"], "show_in_list": true }
+    ]
   }
 }

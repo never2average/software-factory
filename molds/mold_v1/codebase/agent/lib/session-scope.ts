@@ -30,8 +30,20 @@ function remember(sessionId: string, scope: SessionScope) {
 }
 
 /** Best-effort and never throws: failing to record must not fail the turn that called it. */
-export async function recordSessionScope(sessionId: string | undefined, orgId: string, email: string | undefined): Promise<void> {
-  if (!sessionId || !orgId || !email) return; // only a turn with a real person behind it defines a scope
+export async function recordSessionScope(
+  sessionId: string | undefined,
+  orgId: string,
+  email: string | undefined,
+  /**
+   * `service`: the scope was NAMED by a service session (a schedule rule, a front-end workflow step — see
+   * service-scope.ts), which has no person behind it. Recorded too, or a specialist it delegates to would inherit
+   * nothing and fall back to the isolated, empty workspace.
+   */
+  opts: { service?: boolean } = {},
+): Promise<void> {
+  // Only a turn with a real person, or a service that named its workspace, defines a scope.
+  if (!sessionId || !orgId || (!email && !opts.service)) return;
+  const principal = email ? email.toLowerCase() : null;
   const known = cache.get(sessionId);
   if (known && known.orgId === orgId) return;
   try {
@@ -39,13 +51,13 @@ export async function recordSessionScope(sessionId: string | undefined, orgId: s
     await withOrgDb(orgId, (tx) =>
       tx
         .insert(agentSessionScopes)
-        .values({ sessionId, orgId, principalEmail: email.toLowerCase() })
+        .values({ sessionId, orgId, principalEmail: principal })
         .onConflictDoUpdate({
           target: agentSessionScopes.sessionId,
-          set: { orgId, principalEmail: email.toLowerCase(), updatedAt: new Date() },
+          set: { orgId, principalEmail: principal, updatedAt: new Date() },
         }),
     );
-    remember(sessionId, { orgId, email: email.toLowerCase() });
+    remember(sessionId, { orgId, email: principal });
   } catch (error) {
     console.error(`[session-scope] could not record the workspace of session ${sessionId}:`, error);
   }

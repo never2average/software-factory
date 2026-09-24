@@ -275,7 +275,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             // This run's args win over the workflow's standing scope: a
             // team-wide workflow run for one account is the common case.
             customerId: customerFromArgs(coerced.args) ?? workflow.customerId ?? undefined,
-          }),
+          }, org.orgId),
           journal,
           3,
           control.signal,

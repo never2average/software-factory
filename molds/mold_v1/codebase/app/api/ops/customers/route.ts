@@ -6,6 +6,9 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isEmptyStore } from "@/lib/pg-error";
 import { recordOpsAudit } from "@/lib/ops-audit";
+import { customBodySchema, customForWrite } from "@/lib/ops-domain-fields";
+import { asCustomValues, customDelta, customFieldsOf, type CustomValues } from "@/agent/lib/custom-fields";
+import { customForNewRow, customMergeSql } from "@/agent/lib/custom-merge-sql";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +36,16 @@ export interface CustomerOption {
   openTickets: number;
   lastTouchDate: string | null;
   lastTouch: string | null;
+  /** The account's own fields the profile shows in lists (`account_fields.custom_fields`, show_in_list). Absent when none. */
+  custom?: CustomValues;
+}
+
+/** Only the own fields a profile marks show_in_list: a list is fetched on every picker open, a long note is not for it. */
+function listedCustom(stored: unknown): { custom?: CustomValues } {
+  const listed = new Set(customFieldsOf("account").filter((f) => f.show_in_list).map((f) => f.key));
+  if (!listed.size) return {};
+  const values = Object.fromEntries(Object.entries(asCustomValues(stored)).filter(([k]) => listed.has(k)));
+  return Object.keys(values).length ? { custom: values } : {};
 }
 
 export async function GET(request: NextRequest) {
@@ -54,6 +67,7 @@ export async function GET(request: NextRequest) {
           healthScore: customers.healthScore,
           healthReason: customers.healthReason,
           fdeOwner: customers.fdeOwner,
+          custom: customers.custom,
         })
         .from(customers)
         .where(eq(customers.orgId, ctx.orgId))
@@ -94,10 +108,11 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const out: CustomerOption[] = rows.map((r) => {
+    const out: CustomerOption[] = rows.map(({ custom, ...r }) => {
       const lt = lastTouchByCustomer.get(r.id);
       return {
         ...r,
+        ...listedCustom(custom),
         openTickets: openByCustomer.get(r.id) ?? 0,
         lastTouchDate: lt?.date ?? null,
         lastTouch: lt?.text ?? null,
@@ -170,6 +185,10 @@ const upsertCustomerSchema = z.object({
   fdeOwner: z.string().max(200).nullable().optional(),
   businessOwnerEmail: z.string().max(200).nullable().optional(),
   technicalOwnerEmail: z.string().max(200).nullable().optional(),
+  // The profile's own fields on the account (`account_fields.custom_fields`): only shape-checked here; which keys
+  // exist and what each accepts is decided by agent/lib/custom-fields.ts in customForWrite below. Partial on an
+  // update: the stored keys it does not mention are kept, null clears one.
+  custom: customBodySchema,
   actor: z.string().min(1).default("web"),
 });
 
@@ -182,24 +201,32 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
-  const { actor, ...fields } = parsed.data;
+  const { actor, custom: customInput, ...rest } = parsed.data;
   try {
     return await withOrgRls(ctx.orgId, async (tx) => {
       const [existing] = await tx
-        .select({ id: customers.customerId })
+        .select({ id: customers.customerId, custom: customers.custom })
         .from(customers)
-        .where(eq(customers.customerId, fields.customerId))
+        .where(eq(customers.customerId, rest.customerId))
         .limit(1);
+      // An undeclared key or a wrong type is a 400 with the sentences, and nothing is written.
+      const checked = customForWrite("account", customInput, existing ?? null);
+      if (checked.error) return NextResponse.json({ error: `Custom fields were not accepted, so nothing was written. ${checked.error}` }, { status: 400 });
+      // Only the keys the body names, merged in SQL onto what is stored at write time. The value checked above was
+      // read before this statement: writing it back whole would lose a note another writer saved in between.
+      // customers.custom is NULLABLE: no own values is NULL, as the agent's write path stores it.
+      const delta = checked.custom === undefined ? undefined : customDelta(customInput, checked.custom);
       const [row] = await tx
         .insert(customers)
-        .values({ ...fields, orgId: ctx.orgId })
+        .values({ ...rest, ...(delta ? { custom: customForNewRow(delta) } : {}), orgId: ctx.orgId })
         .onConflictDoUpdate({
           target: customers.customerId,
           // Only overwrite what was actually sent; a partial update must not
           // blank the fields it didn't mention.
-          set: Object.fromEntries(
-            Object.entries(fields).filter(([k, v]) => k !== "customerId" && v !== undefined),
-          ),
+          set: {
+            ...Object.fromEntries(Object.entries(rest).filter(([k, v]) => k !== "customerId" && v !== undefined)),
+            ...(delta ? { custom: customMergeSql(customers.custom, delta) } : {}),
+          },
         })
         .returning();
       await recordOpsAudit(tx, {

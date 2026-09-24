@@ -279,12 +279,14 @@ ${metaItem("Connectors", p.enabledConnectors)}
 export async function renderAccountReport(opts: {
   customerId: string;
   now: Date | string;
+  /** The caller's workspace: a customer outside it is "Unknown customer". */
+  orgId?: string | null;
 }): Promise<string> {
-  const customer = await getCustomer(opts.customerId);
+  const customer = await getCustomer(opts.customerId, opts.orgId);
   if (!customer) throw new Error(`Unknown customer: ${opts.customerId}`);
 
   // Reuse the alerts ranking (overdue-first) scoped to this customer.
-  const digest = await computeStandupDigest({ now: opts.now, topPerCustomer: 1000 });
+  const digest = await computeStandupDigest({ now: opts.now, topPerCustomer: 1000, orgId: opts.orgId });
   const section = digest.sections.find((s) => s.customerId === opts.customerId);
   const alerts = section ? section.topFollowUps : [];
 
@@ -323,11 +325,15 @@ ${metaItem("FDE Owner", customer.fdeOwner)}
  * name, tier, lifecycle, status, FDE owner, open-ticket count, and overdue
  * count (from the alerts engine), plus a totals line.
  */
-export async function renderDataroomSummary(opts: { now: Date | string }): Promise<string> {
+export async function renderDataroomSummary(opts: {
+  now: Date | string;
+  /** The caller's workspace: the index lists its customers only. */
+  orgId?: string | null;
+}): Promise<string> {
   const [customers, digest, followUps] = await Promise.all([
-    listCustomers(),
-    computeStandupDigest({ now: opts.now }),
-    listFollowUps(),
+    listCustomers(opts.orgId),
+    computeStandupDigest({ now: opts.now, orgId: opts.orgId }),
+    listFollowUps(undefined, opts.orgId),
   ]);
   const overdueByCustomer = new Map<string, number>();
   for (const s of digest.sections) overdueByCustomer.set(s.customerId, s.overdueCount);

@@ -16,7 +16,7 @@ export default defineAgent({
   model: agentModel("orchestrator"),
   modelContextWindowTokens: modelContextWindowTokens("orchestrator"),
   // Stream extended-thinking (reasoning) tokens on the gateway Claude models.
-  // No-op under Zen/Kimi (agentReasoning returns undefined there). See model.ts.
+  // On Workers AI only when CLOUDFLARE_REASONING_EFFORT names a level. See model.ts.
   reasoning: agentReasoning(),
   // NOTE: eve 0.25 dropped limits.maxSubagentDepth (0.20 had it as
   // orchestrator -> specialist -> one more fan-out); depth is framework-managed

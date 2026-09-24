@@ -76,6 +76,8 @@ export async function accessFor(
     loadMember(db, threadId, email),
     resolveOrgForIdentity(email),
   ]);
+  // ownership-guard-ok: `thread` comes from a sweep of every workspace (loadThread), so a real thread is never
+  // hidden here; an absent one is refused by resolveAccess.
   if (thread && (thread.orgId ?? DEFAULT_ORG) !== org.orgId) return null;
   return resolveAccess(db, thread, member, threadId, email);
 }

@@ -26,10 +26,12 @@ const deps: McpDeps = {
   verifyAuth: (authorization) => verifyOpsAuth(authorization),
   // dm.md is traced into the function by next.config.ts (outputFileTracingIncludes).
   readSpec: () => readFile(join(process.cwd(), "dm.md"), "utf8"),
-  // The fields this deployment's profile adds to the two record areas: the write tools' `custom` input names them.
+  // The fields this deployment's profile adds to the two record areas and to the account record: the write tools'
+  // `custom` input names them.
   customFields: {
     deployments: DEPLOYMENT_PROFILE.domains.deployments.custom_fields,
     implementations: DEPLOYMENT_PROFILE.domains.implementations.custom_fields,
+    account: DEPLOYMENT_PROFILE.account_fields.custom_fields,
   },
   webOrigin: process.env.WEB_ORIGIN?.trim() || null,
   internalOrigin: process.env.MCP_INTERNAL_ORIGIN?.trim() || null,

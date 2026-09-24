@@ -38,8 +38,8 @@ export const TICKET_CATEGORY_ROUTING: Record<TicketCategory, string> = {
 const percentSchema = z.number().min(0).max(100);
 const urlOrEmptySchema = z.string().url().or(z.literal(""));
 /**
- * The deployment profile's own fields on a deployment / implementation record, by field key (the `custom` jsonb
- * column). Only the SHAPE is checked here; which keys exist and what each accepts is the profile's, and
+ * The deployment profile's own fields on a deployment / implementation / account record, by field key (the
+ * `custom` jsonb column). Only the SHAPE is checked here; which keys exist and what each accepts is the profile's, and
  * system-of-record.ts runs agent/lib/custom-fields.ts on every write. null clears a key on an update.
  */
 const customValuesSchema = z
@@ -496,6 +496,9 @@ export const customerSchema = z.object({
   implementation: implementationSchema.optional(),
   tickets: z.array(ticketSchema).optional(),
   interactions: z.array(interactionSchema).optional(),
+  // The profile's own fields on the account record itself (`account_fields.custom_fields`), in customers.custom.
+  // The record tools offer it to the model only when the profile declares some (agent/lib/tools.ts).
+  custom: customValuesSchema.optional(),
 });
 
 /* -------------------------------------------------------------------------- */
@@ -576,6 +579,14 @@ export const customerStoreSchema = z.object({
 
 export const customerPatchSchema = customerSchema.partial().extend({
   id: z.string().min(1),
+  // Write-only: text ADDED to the end of the account's long-text own fields (account_fields.custom_fields), so a
+  // long note is never resent whole. Resolved by applyCustomFieldsWithDelta (system-of-record.ts), appended in SQL
+  // to what is stored at write time; never stored under this key. Offered to the model only when the profile
+  // declares a long-text account field (agent/lib/tools.ts).
+  custom_append: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe("Text to ADD to the end of a long-text own field of this record, by field key: the stored text is kept and this follows it after a blank line. Use it to add to a long note instead of resending the whole note in `custom`. To REPLACE a long note in one call, send null for its key in `custom` together with the new text here."),
 });
 
 export const internalStaffAssignmentSchema = z.object({

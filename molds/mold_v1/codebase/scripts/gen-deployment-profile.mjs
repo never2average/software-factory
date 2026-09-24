@@ -108,6 +108,35 @@ const CUSTOM_FIELD_KEYS = ["key", "label", "type", "required", "options", "help"
 const CUSTOM_FIELD_TYPES = ["text", "long_text", "number", "percent", "date", "email", "link", "pick_list"];
 const snake = (k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 const FIELD_SPEC_KEYS = ["label", "short_label", "help", "placeholder", "hidden", "fixed", "options"];
+/**
+ * A list of custom_fields (the deployment's OWN fields on a record: `domains.<area>.custom_fields` and
+ * `account_fields.custom_fields`). The same rules wherever a list is declared; `builtIn` is every key the record
+ * already has, in any spelling, so an own field can never shadow a real one.
+ */
+function checkCustomFields(at, list, builtInKeys, table, relabelAt) {
+  if (!Array.isArray(list)) fail(`${at}.custom_fields must be a list of fields (an empty list when the record has none)`);
+  const builtIn = new Set([...builtInKeys].flatMap((k) => [k, snake(k), k.toLowerCase()]));
+  const seenKeys = new Set(); const seenLabels = new Map();
+  list.forEach((f, i) => {
+    const here = `${at}.custom_fields[${i}]`;
+    if (!isObj(f)) fail(`${here} must be an object with a key, a label and a type`);
+    for (const k of Object.keys(f)) if (!CUSTOM_FIELD_KEYS.includes(k)) fail(`${here}.${k}: unknown key (a custom field takes ${CUSTOM_FIELD_KEYS.join(", ")})`);
+    if (typeof f.key !== "string" || !/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(f.key) || f.key.length > 40) fail(`${here}.key must be snake_case: lowercase letters, digits and single underscores, starting with a letter, at most 40 characters (for example "target_price")`);
+    if (builtIn.has(f.key)) fail(`${here}.key: "${f.key}" is already a built-in field of the ${table} table. ${relabelAt ? `Relabel that one under ${relabelAt}, or pick another key` : "Pick another key"}`);
+    if (seenKeys.has(f.key)) fail(`${here}.key: "${f.key}" is declared twice in ${at}.custom_fields; a key names one field`);
+    seenKeys.add(f.key);
+    if (typeof f.label !== "string" || !f.label.trim()) fail(`${here}.label must be a non-empty string (what a person reads for "${f.key}")`);
+    if (seenLabels.has(f.label.trim().toLowerCase())) fail(`${here}.label: "${f.label}" is also the label of "${seenLabels.get(f.label.trim().toLowerCase())}"; two fields with one label cannot be told apart`);
+    seenLabels.set(f.label.trim().toLowerCase(), f.key);
+    if (!CUSTOM_FIELD_TYPES.includes(f.type)) fail(`${here}.type: ${JSON.stringify(f.type)} is not a field type. Use one of ${CUSTOM_FIELD_TYPES.join(", ")}`);
+    for (const k of ["required", "show_in_list"]) if (k in f && typeof f[k] !== "boolean") fail(`${here}.${k} must be true or false`);
+    if ("help" in f && (typeof f.help !== "string" || !f.help.trim())) fail(`${here}.help must be a non-empty string`);
+    if (f.type === "pick_list") {
+      if (!Array.isArray(f.options) || !f.options.length || f.options.some((o) => typeof o !== "string" || !o.trim())) fail(`${here}.options: a pick_list needs a non-empty list of choices, each a non-empty string`);
+      if (new Set(f.options.map((o) => o.trim().toLowerCase())).size !== f.options.length) fail(`${here}.options lists the same choice twice`);
+    } else if ("options" in f) fail(`${here}.options: only a pick_list has options ("${f.key}" is ${f.type})`);
+  });
+}
 const domainFields = {};
 for (const [area, [zodName, table]] of Object.entries(AREAS)) {
   const z = zodFields(zodName); const db = dbColumns(table);
@@ -165,33 +194,31 @@ for (const area of Object.keys(AREAS)) {
   } else if (d.kinds.length) fail(`${at}.kind_field must name the field that carries the kinds`);
   // custom_fields: the deployment's OWN fields on the area, stored by key in the table's `custom` column and
   // validated on every write by agent/lib/custom-fields.ts. No built-in column is involved, so none may be shadowed.
-  if (!Array.isArray(d.custom_fields)) fail(`${at}.custom_fields must be a list of fields (an empty list when the area has none)`);
-  const builtIn = new Set([...Object.keys(known), ...SYSTEM_KEYS].flatMap((k) => [k, snake(k), k.toLowerCase()]));
-  const seenKeys = new Set(); const seenLabels = new Map();
-  d.custom_fields.forEach((f, i) => {
-    const here = `${at}.custom_fields[${i}]`;
-    if (!isObj(f)) fail(`${here} must be an object with a key, a label and a type`);
-    for (const k of Object.keys(f)) if (!CUSTOM_FIELD_KEYS.includes(k)) fail(`${here}.${k}: unknown key (a custom field takes ${CUSTOM_FIELD_KEYS.join(", ")})`);
-    if (typeof f.key !== "string" || !/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(f.key) || f.key.length > 40) fail(`${here}.key must be snake_case: lowercase letters, digits and single underscores, starting with a letter, at most 40 characters (for example "target_price")`);
-    if (builtIn.has(f.key)) fail(`${here}.key: "${f.key}" is already a built-in field of the ${AREAS[area][1]} table. Relabel that one under ${at}.fields, or pick another key`);
-    if (seenKeys.has(f.key)) fail(`${here}.key: "${f.key}" is declared twice in ${at}.custom_fields; a key names one field`);
-    seenKeys.add(f.key);
-    if (typeof f.label !== "string" || !f.label.trim()) fail(`${here}.label must be a non-empty string (what a person reads for "${f.key}")`);
-    if (seenLabels.has(f.label.trim().toLowerCase())) fail(`${here}.label: "${f.label}" is also the label of "${seenLabels.get(f.label.trim().toLowerCase())}"; two fields with one label cannot be told apart`);
-    seenLabels.set(f.label.trim().toLowerCase(), f.key);
-    if (!CUSTOM_FIELD_TYPES.includes(f.type)) fail(`${here}.type: ${JSON.stringify(f.type)} is not a field type. Use one of ${CUSTOM_FIELD_TYPES.join(", ")}`);
-    for (const k of ["required", "show_in_list"]) if (k in f && typeof f[k] !== "boolean") fail(`${here}.${k} must be true or false`);
-    if ("help" in f && (typeof f.help !== "string" || !f.help.trim())) fail(`${here}.help must be a non-empty string`);
-    if (f.type === "pick_list") {
-      if (!Array.isArray(f.options) || !f.options.length || f.options.some((o) => typeof o !== "string" || !o.trim())) fail(`${here}.options: a pick_list needs a non-empty list of choices, each a non-empty string`);
-      if (new Set(f.options.map((o) => o.trim().toLowerCase())).size !== f.options.length) fail(`${here}.options lists the same choice twice`);
-    } else if ("options" in f) fail(`${here}.options: only a pick_list has options ("${f.key}" is ${f.type})`);
-  });
+  checkCustomFields(at, d.custom_fields, new Set([...Object.keys(known), ...SYSTEM_KEYS]), AREAS[area][1], `${at}.fields`);
   if (area === "implementations") {
     if (d.group_by !== null && (!known[d.group_by]?.column || known[d.group_by].type !== "text")) fail(`${at}.group_by: "${d.group_by}" must be a free-text column of the implementation table`);
     if (d.group_by !== null && d.fields[d.group_by]?.hidden) fail(`${at}.group_by: "${d.group_by}" is hidden`);
     for (const n of ["singular", "plural"]) if (typeof d.group_label?.[n] !== "string" || !d.group_label[n].trim()) fail(`${at}.group_label.${n} must be a non-empty string`);
   }
+}
+
+// --- account_fields: fields of the account record itself the MODEL never reads or writes -------------------------
+{
+  const account = zodFields("customerSchema");
+  const hidden = profile.account_fields?.hidden;
+  if (!Array.isArray(hidden) || hidden.some((k) => typeof k !== "string")) fail("account_fields.hidden must be a list of field keys (empty to hide none)");
+  for (const key of hidden) {
+    if (!(key in account)) fail(`account_fields.hidden: "${key}" is not a field of customerSchema (agent/lib/customer-schema.ts). Known: ${Object.keys(account).join(", ")}`);
+    if (key === "id" || key === "name") fail(`account_fields.hidden: "${key}" cannot be hidden; every record is found and named by it`);
+  }
+  if (new Set(hidden).size !== hidden.length) fail("account_fields.hidden lists a field twice");
+  // `custom` is where account_fields.custom_fields live, not a field of its own: a deployment that wants no own
+  // fields declares none, and one that hides an own field simply does not declare it.
+  if (hidden.includes("custom")) fail('account_fields.hidden: "custom" cannot be hidden; it holds account_fields.custom_fields. Declare no custom fields to have none');
+  // custom_fields: the deployment's OWN fields on the account record, stored by key in customers.custom. Never a
+  // customerSchema key or a customers column in any spelling, hidden or not: a hidden built-in field is still a
+  // real one, and an own field under its name would be two values for one word.
+  checkCustomFields("account_fields", profile.account_fields.custom_fields, new Set([...Object.keys(account), ...Object.keys(dbColumns("customers")), "customerId", "customerName", "orgId", "custom"]), "customers", null);
 }
 
 if (profile.agent.briefing !== null && (typeof profile.agent.briefing !== "string" || profile.agent.briefing.split(/\s+/).length > 400)) fail("agent.briefing must be null or a string of at most 400 words (it is sent on every turn)");
@@ -272,6 +299,11 @@ export interface DeploymentProfile {
   persona: { base: boolean };
   /** Base specialists the deployment does not use: moved out of agent/subagents/ at generation time. */
   specialists: { exclude: string[] };
+  /**
+   * hidden: fields of the account record the model never reads or writes (its tools' parameters and results).
+   * custom_fields: the deployment's OWN fields on the account record, by key in the customers table's \`custom\` column.
+   */
+  account_fields: { hidden: string[]; custom_fields: CustomFieldSpec[] };
 }
 
 export interface DomainFieldSpec {
@@ -316,6 +348,8 @@ export interface CustomFieldSpec {
   show_in_list?: boolean;
 }
 export type DomainArea = "deployments" | "implementations";
+/** A record that can carry custom fields: the two redefinable areas and the account record itself. */
+export type CustomFieldArea = DomainArea | "account";
 /** What a form needs to know about a field: read from agent/lib/customer-schema.ts and agent/lib/db/schema.ts. */
 export interface DomainFieldMeta { type: "enum" | "number" | "text" | "list"; values?: string[]; column: boolean; required: boolean }
 

@@ -311,7 +311,7 @@ async function entityAliases(orgId = DEFAULT_ORG): Promise<Map<string, string[]>
     .map((word) => WORD_EXPANSIONS[word] ?? word)
     .join(" ");
   try {
-    for (const customer of await listCustomers()) {
+    for (const customer of await listCustomers(orgId)) {
       add("customer", customer.id, customer.id);
       add("customer", customer.id, customer.name);
     }

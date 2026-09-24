@@ -17,7 +17,7 @@
 import "server-only";
 
 import { and, asc, eq, ne, sql } from "drizzle-orm";
-import { getOpsDb, type Db } from "@/lib/ops-db";
+import { getOpsDb, withOrgRls, type Db } from "@/lib/ops-db";
 import { customers, orgMembers, orgs } from "@/agent/lib/db/schema";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 
@@ -206,45 +206,32 @@ export function isOrgAdmin(role: OrgRole): boolean {
 
 /**
  * Guard for CUSTOMER-scoped routes (deployments/implementations/tickets): does
- * this customer belong to the caller's workspace? Customer-scoped tables have no
- * org_id of their own — they inherit it through `customers.org_id`. Returns true
- * when the customer is in `orgId` (fail-safe: when tenancy isn't live, every
- * customer is in the default org, so a default-org caller always passes).
+ * this customer belong to the caller's workspace? Customer-scoped tables inherit
+ * their workspace through `customers.org_id`.
+ *
+ * Asked INSIDE the caller's scope, so row-level security is the answer: visible
+ * means yours, invisible means not (unknown and another workspace's read the
+ * same, which is the point — absent, not forbidden). It used to read on the bare
+ * handle and answer `true` for a row it could not see ("unknown → let the route
+ * 404"); under the fail-closed policy that handle sees NO row, so the guard
+ * passed every id from every workspace. The routes stayed safe only because
+ * their own reads and writes run in the caller's scope too.
  */
 export async function customerInOrg(orgId: string, customerId: string): Promise<boolean> {
   const db = getOpsDb();
   if (!db || !(await tenancyEnabled(db))) return orgId === DEFAULT_ORG;
   try {
-    const [row] = await db
-      .select({ orgId: customers.orgId })
-      .from(customers)
-      .where(eq(customers.customerId, customerId))
-      .limit(1);
-    // Unknown customer → let the route's own 404 handle it (don't false-deny).
-    return row ? (row.orgId ?? DEFAULT_ORG) === orgId : true;
+    const [row] = await withOrgRls(orgId, (tx) =>
+      tx
+        .select({ orgId: customers.orgId })
+        .from(customers)
+        .where(and(eq(customers.customerId, customerId), eq(customers.orgId, orgId)))
+        .limit(1),
+    );
+    return Boolean(row);
   } catch {
-    return true;
-  }
-}
-
-/**
- * The org that OWNS a customer (front-end twin of the agent's `orgForCustomer`).
- * The RIGHT key-derivation salt for that customer's per-workspace encrypted
- * secrets, so the front-end encrypts and the agent decrypts with the same key.
- * Fail-safe → DEFAULT_ORG.
- */
-export async function orgForCustomerId(customerId: string): Promise<string> {
-  const db = getOpsDb();
-  if (!db || !(await tenancyEnabled(db))) return DEFAULT_ORG;
-  try {
-    const [row] = await db
-      .select({ orgId: customers.orgId })
-      .from(customers)
-      .where(eq(customers.customerId, customerId))
-      .limit(1);
-    return row?.orgId ?? DEFAULT_ORG;
-  } catch {
-    return DEFAULT_ORG;
+    // Fail closed: a guard that cannot answer does not admit.
+    return false;
   }
 }
 

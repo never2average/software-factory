@@ -44,7 +44,7 @@ function smallModel() {
  * caller's credentials) if that provider errors, so this can never regress to
  * broken — only to slower.
  */
-async function generate(prompt: string, bearer: string): Promise<string> {
+async function generate(prompt: string, bearer: string, orgId: string): Promise<string> {
   const model = smallModel();
   if (model) {
     try {
@@ -54,7 +54,7 @@ async function generate(prompt: string, bearer: string): Promise<string> {
       /* provider/model unavailable — fall through to the agent */
     }
   }
-  const delegate = makeDelegate(bearer);
+  const delegate = makeDelegate(bearer, undefined, undefined, undefined, orgId);
   return (await delegate(prompt)).trim();
 }
 
@@ -163,7 +163,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ email:
     }
   }
   try {
-    const summary = await generate(buildPrompt(email, parsed.data), bearer);
+    const summary = await generate(buildPrompt(email, parsed.data), bearer, org.orgId);
     if (!summary) {
       return NextResponse.json({ error: "The model returned nothing." }, { status: 502 });
     }

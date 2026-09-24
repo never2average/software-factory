@@ -29,6 +29,7 @@ import {
 } from "#lib/workbook-spec.js";
 import { publishArtifact } from "#lib/artifact.js";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
+import { orgForSession } from "#lib/org-context.js";
 
 /**
  * The verified caller's email from the session auth, never from the model.
@@ -73,17 +74,20 @@ export const renderAccountReportTool = modelFacing("render_account_report", defi
     // The tool boundary is where the clock is read; the libs stay pure.
     const now = new Date().toISOString();
     const effectiveScope = scope ?? "account";
+    // Both reports read the system of record in the CALLER's workspace. Unscoped, an account report rendered any
+    // workspace's customer by id and the data-room index listed every workspace's customers.
+    const orgId = await orgForSession(ctx);
 
     let html: string;
     let filename: string;
     if (effectiveScope === "dataroom") {
-      html = await renderDataroomSummary({ now });
+      html = await renderDataroomSummary({ now, orgId });
       filename = `dataroom-summary-${now.slice(0, 10)}.html`;
     } else {
       if (!customerId) {
         throw new Error("render_account_report requires `customerId` unless scope is 'dataroom'.");
       }
-      html = await renderAccountReport({ customerId, now });
+      html = await renderAccountReport({ customerId, now, orgId });
       filename = `${customerId}-account-report-${now.slice(0, 10)}.html`;
     }
 
@@ -110,17 +114,20 @@ export const buildWorkbookSpecTool = modelFacing("build_workbook_spec", defineTo
       .optional()
       .describe("One domain workbook; omit for all seven."),
   }),
-  async execute({ customerId, domain }) {
+  async execute({ customerId, domain }, ctx) {
     const now = new Date().toISOString();
+    // The workbook is read in the caller's workspace; another workspace's customer id is "Unknown customer".
+    const orgId = await orgForSession(ctx);
     const specs = domain
       ? [
           await buildDomainWorkbookSpec({
             customerId,
             domain: domain as (typeof WORKBOOK_DOMAINS)[number],
             now,
+            orgId,
           }),
         ]
-      : await buildCustomerWorkbookSpecs({ customerId, now });
+      : await buildCustomerWorkbookSpecs({ customerId, now, orgId });
     return { customerId, workbooks: specs };
   },
 }), { spokenOutput: ["name", "columns"] });

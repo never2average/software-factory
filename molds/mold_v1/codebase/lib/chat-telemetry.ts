@@ -109,6 +109,16 @@ export const CHAT_TELEMETRY_SENTENCES = {
    * fallback is not the escape hatch it was built to be.
    */
   "model-empty-gave-up": "Model returned only empty responses; the person was told rather than left waiting",
+  /**
+   * A RECOVERED answer (after an empty step) said a write had happened on a turn
+   * where no tool had run since the person's message, so it was withheld.
+   *
+   * Measured on onfinance_hfc on 2026-09-24: the retry wrote "notes updated …
+   * set via `upsert_company` … went through the usual approval gate" with no
+   * tool call anywhere in the turn. `agent/lib/empty-model-response.ts` now
+   * refuses to deliver that as a success; each row is one it caught.
+   */
+  "model-unbacked-claim": "Recovered answer claimed a change no tool had made; it was withheld",
 } as const satisfies Record<string, string>;
 
 export type ChatTelemetryKind = keyof typeof CHAT_TELEMETRY_SENTENCES;

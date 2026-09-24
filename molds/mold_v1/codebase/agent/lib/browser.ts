@@ -22,7 +22,6 @@ import { acrossOrgDbs, getDb, type Db, withOrgDb } from "./db/index.ts";
 import { browserAllowlist, browserContexts, browserCredentials, browserSessions } from "./db/schema.ts";
 import { openBrowserCapability, sealBrowserCapability } from "./browser-capability-crypto.ts";
 import { decryptSecret, hasSecretsKey } from "./secret-crypto.ts";
-import { orgForCustomer } from "./org-context.ts";
 
 export type BrowserProvider = "browserbase" | "local";
 
@@ -811,19 +810,19 @@ async function getStoredCredential(
   const db = getDb();
   if (!db) return null;
   const host = hostOf(siteOrigin);
-  // Resolve the workspace FIRST and constrain the lookup by it. The decryption
-  // key is derived from the org, so a cross-workspace row could never be read
-  // anyway — but failing to find it is the honest outcome, rather than fetching
-  // another tenant's ciphertext and failing to decrypt.
-  const org = await orgForCustomer(customerId);
-  if (org !== orgId) return null;
+  // The lookup runs in the session's workspace and is constrained by it, so a
+  // credential another workspace stored is simply not found (row-level security
+  // is the check). It used to ask first which workspace owned the customer, on
+  // the bare handle: under the fail-closed policy that read sees nothing and
+  // answered the default workspace for every customer, so no other workspace
+  // could ever use a credential it had stored.
   const [row] = await withOrgDb(orgId, (tx) =>
     tx
       .select()
       .from(browserCredentials)
       .where(
         and(
-          eq(browserCredentials.orgId, org),
+          eq(browserCredentials.orgId, orgId),
           eq(browserCredentials.customerId, customerId),
           eq(browserCredentials.siteOrigin, host),
         ),

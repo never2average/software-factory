@@ -273,6 +273,11 @@ const bad = (overlay, pattern) => {
 bad({ domains: { deployments: { fields: { releaseStatuss: { label: "Status" } } } } }, /domains\.deployments\.fields\.releaseStatuss: unknown field key/);
 bad({ domains: { deployments: { fields: { releaseStatus: { options: { published: "Published" } } } } } }, /options\."published": not a value of releaseStatus \(deployed, in-progress/);
 bad({ domains: { deployments: { fields: { region: { hidden: true } } } } }, /region is required, so hiding it needs a "fixed" value/);
+// account_fields.hidden: real customerSchema keys only, never the id or the name.
+bad({ account_fields: { hidden: ["arrr"] } }, /account_fields\.hidden: "arrr" is not a field of customerSchema/);
+bad({ account_fields: { hidden: ["name"] } }, /account_fields\.hidden: "name" cannot be hidden/);
+bad({ account_fields: { hidden: "arr" } }, /account_fields\.hidden must be a list/);
+assert.equal(generate({ account_fields: { hidden: ["arr", "seats", "platform", "tickets"] } }).status, 0, "hiding real account fields generates");
 bad({ domains: { deployments: { fields: { region: { hidden: true, fixed: "mumbai" } } } } }, /fixed: "mumbai" is not a valid value for region/);
 bad({ domains: { deployments: { fields: { region: { fixed: "ap-south-1" } } } } }, /only a hidden field takes a fixed value/);
 bad({ domains: { deployments: { fields: { notes: { options: { a: "b" } } } } } }, /notes is not an enum field/);
@@ -307,6 +312,46 @@ const site = generate(cf([{ key: "inspection_date", label: "Inspection date", ty
 assert.equal(site.status, 0, site.stderr);
 assert.deepEqual(JSON.parse(site.stdout).domains.implementations.custom_fields.map((f) => f.key), ["inspection_date", "permit_link"]);
 assert.deepEqual(JSON.parse(site.stdout).domains.deployments.custom_fields, []);
+
+// account_fields.custom_fields: the account record's OWN fields, with the areas' spec and the same rules.
+const acf = (field, hidden = []) => ({ account_fields: { hidden, custom_fields: Array.isArray(field) ? field : [field] } });
+bad({ account_fields: { custom_fields: { notes: {} } } }, /account_fields\.custom_fields must be a list of fields/);
+bad(acf({ key: "companyNotes", label: "Notes", type: "long_text" }), /account_fields\.custom_fields\[0\]\.key must be snake_case/);
+// Never a built-in account field, in either spelling, and never one the table has but the schema does not name.
+bad(acf({ key: "health_reason", label: "Why", type: "text" }), /account_fields\.custom_fields\[0\]\.key: "health_reason" is already a built-in field of the customers table/);
+bad(acf({ key: "arr", label: "ARR", type: "number" }), /"arr" is already a built-in field of the customers table/);
+bad(acf({ key: "customer_name", label: "Name", type: "text" }), /"customer_name" is already a built-in field/);
+bad(acf({ key: "org_id", label: "Org", type: "text" }), /"org_id" is already a built-in field/);
+bad(acf({ key: "custom", label: "Custom", type: "text" }), /"custom" is already a built-in field/);
+bad(acf({ key: "deployments", label: "Reports", type: "text" }), /"deployments" is already a built-in field/);
+bad(acf([{ key: "notes", label: "Notes", type: "long_text" }, { key: "notes", label: "More", type: "text" }]), /account_fields\.custom_fields\[1\]\.key: "notes" is declared twice/);
+bad(acf([{ key: "notes", label: "Notes", type: "long_text" }, { key: "memo", label: "notes", type: "text" }]), /"notes" is also the label of "notes"/);
+bad(acf({ key: "notes", label: "Notes", type: "rich_text" }), /account_fields\.custom_fields\[0\]\.type: "rich_text" is not a field type/);
+bad(acf({ key: "notes", label: "Notes", type: "pick_list" }), /a pick_list needs a non-empty list of choices/);
+bad(acf({ key: "notes", label: "Notes", type: "long_text", options: ["a"] }), /only a pick_list has options/);
+bad(acf({ key: "notes", label: "Notes", type: "long_text", show_in_list: "no" }), /show_in_list must be true or false/);
+bad(acf({ key: "notes", label: "Notes", type: "long_text", colour: "red" }), /account_fields\.custom_fields\[0\]\.colour: unknown key/);
+// hidden + custom: `custom` is the container, not a field to hide; a HIDDEN built-in is still built in, so an own
+// field cannot take its name; hiding built-ins and declaring own fields together is the ordinary case.
+bad(acf({ key: "notes", label: "Notes", type: "long_text" }, ["custom"]), /account_fields\.hidden: "custom" cannot be hidden; it holds account_fields\.custom_fields/);
+bad(acf({ key: "health_reason", label: "Why", type: "text" }, ["healthReason"]), /"health_reason" is already a built-in field of the customers table/);
+const notes = generate(acf([{ key: "notes", label: "Notes", type: "long_text", help: "What we know about the company." }, { key: "rating_view", label: "House view", type: "pick_list", options: ["Positive", "Neutral", "Negative"], show_in_list: true }], ["arr", "seats", "healthReason"]));
+assert.equal(notes.status, 0, notes.stderr);
+assert.deepEqual(JSON.parse(notes.stdout).account_fields, { hidden: ["arr", "seats", "healthReason"], custom_fields: [{ key: "notes", label: "Notes", type: "long_text", help: "What we know about the company." }, { key: "rating_view", label: "House view", type: "pick_list", options: ["Positive", "Neutral", "Negative"], show_in_list: true }] }, "kept exactly as written");
+assert.deepEqual(DEPLOYMENT_PROFILE.account_fields.custom_fields, [], "the default profile declares no account fields");
+
+// The briefing names the account's own fields: where they live, each key with its label and type, and that the
+// list tool does not carry an unlisted one (so the model reads the record for it). Nothing when none are declared.
+const withNotes = structuredClone(DEPLOYMENT_PROFILE);
+withNotes.account_fields.custom_fields = [{ key: "notes", label: "Notes", type: "long_text" }, { key: "house_view", label: "House view", type: "pick_list", options: ["Positive", "Negative"], show_in_list: true }];
+const notesBlock = renderDeploymentBriefing(withNotes);
+assert.ok(notesBlock.startsWith("## This deployment"), "own account fields alone are enough to brief");
+assert.ok(notesBlock.includes("- Own fields of each customer, by key in its `custom` (read with `get_customer`, write with `upsert_customer`; send only changed keys; null clears; other keys are refused; add to a long text with `custom_append` instead of resending it (replace one: null in `custom` plus the new text in `custom_append`); `list_customers` carries only `house_view`): `notes`=\"Notes\" (long_text), `house_view`=\"House view\" (Positive|Negative)."), notesBlock);
+const { renderAccountFieldsBriefing } = await import("../agent/lib/deployment-briefing.ts");
+assert.deepEqual(renderAccountFieldsBriefing(DEPLOYMENT_PROFILE), [], "the default says nothing about account fields");
+const pickOnly = structuredClone(withNotes);
+pickOnly.account_fields.custom_fields = [withNotes.account_fields.custom_fields[1]];
+assert.ok(!renderDeploymentBriefing(pickOnly).includes("custom_append"), "no long text, no append to mention");
 
 bad({ domains: { deployments: { colour: "red" } } }, /domains\.deployments\.colour: unknown key/);
 bad({ domains: { releases: {} } }, /domains\.releases: unknown key/);

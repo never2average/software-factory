@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { browserCredentials } from "@/agent/lib/db/schema";
+import { browserCredentials, customers } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { encryptSecret, hasSecretsKey } from "@/lib/secret-crypto";
-import { orgForCustomerId } from "@/lib/org-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -88,8 +87,17 @@ export async function POST(request: NextRequest) {
   const siteOrigin = normHost(parsed.data.siteOrigin);
   // Seal with the CUSTOMER's workspace key (HKDF), so only that workspace's
   // derived key decrypts it. The agent's browser_login uses the same salt.
-  const customerOrg = await orgForCustomerId(parsed.data.customerId);
-  if (customerOrg !== ctx.orgId) {
+  // Is the customer in THIS workspace? Asked in the workspace's own scope, so row-level security answers it. It
+  // was asked on the bare handle (orgForCustomerId), which under the fail-closed policy sees no row and answers
+  // the default workspace for every id: the default workspace passed for any id, every other one for none.
+  const [owned] = await withOrgRls(ctx.orgId, (tx) =>
+    tx
+      .select({ id: customers.customerId })
+      .from(customers)
+      .where(and(eq(customers.customerId, parsed.data.customerId), eq(customers.orgId, ctx.orgId)))
+      .limit(1),
+  );
+  if (!owned) {
     return NextResponse.json({ error: "Customer is not in this workspace." }, { status: 404 });
   }
   const sealed = encryptSecret(parsed.data.password, ctx.orgId);

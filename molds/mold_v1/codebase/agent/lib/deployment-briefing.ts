@@ -35,6 +35,31 @@ const AREA_IDENTIFIERS: Record<DomainArea, { was: string; record: string; folder
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 /**
+ * One own field, terse on purpose (this is paid for on every turn): `key`="Label" (type or choices; required).
+ * Keys, labels and choices are the profile's own and are stored as written: never translated (`own` marks them
+ * verbatim under a relabel).
+ */
+function briefCustomField(f: CustomFieldSpec, own: (t: string) => string): string {
+  return `\`${own(f.key)}\`="${own(f.label)}" (${f.type === "pick_list" ? own((f.options ?? []).join("|")) : f.type === "date" ? "yyyy-mm-dd" : f.type === "percent" ? "percent 0-100" : f.type === "link" ? "http(s)-link" : f.type}${f.required ? "; required" : ""})`;
+}
+
+/**
+ * The account record's OWN fields (`account_fields.custom_fields`): where they live on the record the model reads
+ * and writes, and what each accepts. Nothing when the profile declares none. Written with base identifiers, like
+ * everything here; the relabelled block is spoken as a whole.
+ */
+export function renderAccountFieldsBriefing(profile: Pick<DeploymentProfile, "account_fields" | "vocabulary">, v?: Vocabulary): string[] {
+  const fields = profile.account_fields?.custom_fields ?? [];
+  if (!fields.length) return [];
+  const own = (t: string) => (v?.relabelled ? verbatimWith(v, t) : t);
+  const listed = fields.filter((f) => f.show_in_list).map((f) => `\`${own(f.key)}\``);
+  const account = own(profile.vocabulary.account.singular);
+  return [
+    `- Own fields of each ${account}, by key in its \`custom\` (read with \`get_customer\`, write with \`upsert_customer\`; send only changed keys; null clears; other keys are refused; ${fields.some((f) => f.type === "long_text") ? "add to a long text with \`custom_append\` instead of resending it (replace one: null in \`custom\` plus the new text in \`custom_append\`); " : ""}\`list_customers\` carries ${listed.length ? `only ${listed.join(", ")}` : "none of them"}): ${fields.map((f) => briefCustomField(f, own)).join(", ")}.`,
+  ];
+}
+
+/**
  * One redefined area, tersely: what it MEANS here, how its fields and enum values are shown to people, what is
  * not used (and what to write there anyway), and that the identifiers stay. Nothing for an area left at default.
  */
@@ -80,10 +105,7 @@ export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfil
   // The deployment's OWN fields: not columns, so the model has to be told where they go and what each accepts.
   if (spec.custom_fields.length) {
     const at = area === "deployments" ? "deployments[].custom" : "implementation.custom";
-    // Terse on purpose (this is paid for on every turn): `key`="Label" (type or choices; required).
-    // Keys and choices are the profile's own and are stored as written: never translated (verbatim under a relabel).
-    const brief = (f: CustomFieldSpec) => `\`${own(f.key)}\`="${own(f.label)}" (${f.type === "pick_list" ? own((f.options ?? []).join("|")) : f.type === "date" ? "yyyy-mm-dd" : f.type === "percent" ? "percent 0-100" : f.type === "link" ? "http(s)-link" : f.type}${f.required ? "; required" : ""})`;
-    lines.push(`  - Own fields, by key in \`${at}\` (send only changed keys; null clears; other keys are refused): ${spec.custom_fields.map(brief).join(", ")}.`);
+    lines.push(`  - Own fields, by key in \`${at}\` (send only changed keys; null clears; other keys are refused): ${spec.custom_fields.map((f) => briefCustomField(f, own)).join(", ")}.`);
   }
   const hidden = fields.filter(([, f]) => f.hidden);
   if (hidden.length) {
@@ -121,6 +143,7 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE): string |
   if (relabelled.length > 0) {
     lines.push(`- People see these data-room folders under other names: ${relabelled.map(([k, d]) => `\`${k}/\` is shown as "${d.label}"`).join("; ")}. Paths you read and write keep the folder's real name.`);
   }
+  lines.push(...renderAccountFieldsBriefing(profile));
   for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains));
   const body = [lines.join("\n"), agent.briefing?.trim() ?? ""].filter(Boolean).join("\n\n");
   return body ? `## This deployment\n\n${body}` : null;
@@ -152,6 +175,7 @@ function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary): st
   if (folders.length > 0) {
     lines.push(`- Data-room folders by name: ${folders.map(([k, d]) => `\`${k}/\` holds ${own(d.label)}`).join("; ")}. Read and write them by exactly these paths.`);
   }
+  lines.push(...renderAccountFieldsBriefing(profile, v));
   for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, v));
   // agent.briefing is the profile's own text, in its own words: passed verbatim.
   const body = [lines.join("\n"), agent.briefing?.trim() ? own(agent.briefing.trim()) : ""].filter(Boolean).join("\n\n");

@@ -168,6 +168,24 @@ jobs:
         if: always()
         run: npm run test:chat-access
 
+      # ONE WORKSPACE CANNOT REACH ANOTHER'S RECORD BY ID. get_customer returned another workspace's whole record:
+      # getCustomer read across every workspace, then asked in the caller's scope who owned the row, and under the
+      # fail-closed policy that second read saw nothing and `row?.orgId && …` let it through. Every by-id tool now
+      # passes the caller's workspace, and this holds the WIRING (no tool may omit it or take its workspace from a
+      # customer id), that a failed query's error never carries its values to the model or an API response, and that
+      # check:tenancy fails on each shape of the guard. The database half is in the isolation job below.
+      - name: Cross-workspace reads by id (wiring, error text, ratchet)
+        if: always()
+        run: npm run test:cross-workspace
+
+      # WHO MAY NAME A WORKSPACE. A service session names the workspace it acts for; eve's vercelOidc also admits
+      # every token of the agent's OWN project in any environment (a preview of any branch, a developer's env pull),
+      # so trusting "any Vercel token" let those pick any tenant. This signs the reviewer's token matrix locally and
+      # runs it through the REAL verifier: only the front-end's production token may name one.
+      - name: Service tokens that may name a workspace (real vercelOidc, locally signed)
+        if: always()
+        run: npm run test:service-scope-oidc
+
       # The other BEHAVIOURAL chat test — it executes the real module rather than
       # grepping source, which is how every other chat regression got past CI.
       # It also holds the pure half of the adversarial review of #37: a gap in
@@ -279,6 +297,17 @@ jobs:
         if: always()
         run: npm run test:empty-model-response
 
+      # A RECOVERY MUST NOT INVITE A FABRICATION. onfinance_hfc, 2026-09-24: the
+      # first step spent its whole budget reasoning and came back empty with NO
+      # tool results in the prompt; the retry was told "answer from the tool
+      # results already above, do not re-run tools", and wrote "notes updated …
+      # set via upsert_company" with no tool call anywhere. Replays that sequence:
+      # the nudge says only what is true and never forbids tools, and a recovered
+      # answer claiming a write no tool made is not delivered.
+      - name: Recovery honesty (no false nudge, no unbacked "done")
+        if: always()
+        run: npm run test:recovery-honesty
+
       # THE OUTPUT BUDGET — what that `cap=` field went on to name. The live row of
       # 2026-09-23 reads `finish=length out=1500 out_thinking=1500` on
       # `path=generate`: the VISION call's own `maxOutputTokens: 1_500`, sized for
@@ -350,7 +379,7 @@ jobs:
         if: always()
         run: npm run test:deployment-profile
 
-      # A profile's OWN fields on the two record areas: the one validator every write path shares, the agent's
+      # A profile's OWN fields on the two record areas and the account record: the one validator every write path shares, the agent's
       # write path, the MCP tool inputs, the migration, and a ratchet that a new writer of the two tables
       # cannot skip the validator.
       - name: Profile custom fields (validator, write paths, migration)
@@ -444,6 +473,17 @@ jobs:
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           node scripts/test-chat-access-db.mjs
 
+      # THE CROSS-WORKSPACE READ, against the production policy: for every by-id reader and writer the model can
+      # reach, workspace B asking for workspace A's id gets nothing and A's record is unchanged, the owner still
+      # gets it, and a refused write's error carries none of the row's values. Flips every org_isolation policy to
+      # fail-closed and restores it, like the step above.
+      - name: Cross-workspace reads by id, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:cross-workspace-db
+
       # THE RUN HISTORY, which is two database facts and nothing else. That a
       # parent writing a row for a child that never started cannot produce a
       # SECOND row is the unique index on run_key doing its job, and an index
@@ -457,6 +497,19 @@ jobs:
         run: |
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:run-history-db
+
+      # THE ACCOUNT RECORD'S OWN FIELDS (account_fields.custom_fields). Two database facts: that
+      # drizzle/0019_account_custom_fields.sql applies to a customers table that already holds rows (the live
+      # shape: the step drops the column push created, writes a legacy row, applies the file twice) without
+      # touching a row or the table's row-level security; and that a note written through the agent's write path
+      # comes back verbatim, as app_rw under RLS, and not from another workspace's scope; and that concurrent writes
+      # lose nothing (an upsert racing a scoped UPDATE of custom, 40 rounds; two appends and a pick at once).
+      - name: Account custom fields, migration and round trip against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:account-custom-fields-db
 
 # NOT RUN HERE, deliberately:
 #

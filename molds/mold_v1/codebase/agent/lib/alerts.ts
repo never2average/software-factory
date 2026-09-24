@@ -182,8 +182,8 @@ function toAlert(
   };
 }
 
-async function buildAlerts(now: Date | string, dueSoonDays: number): Promise<FollowUpAlert[]> {
-  const followUps = await listFollowUps();
+async function buildAlerts(now: Date | string, dueSoonDays: number, orgId?: string | null): Promise<FollowUpAlert[]> {
+  const followUps = await listFollowUps(undefined, orgId);
   const nowT = nowMs(now);
   return followUps.map((t) => toAlert(t, nowT, dueSoonDays)).sort(compareAlerts);
 }
@@ -206,13 +206,15 @@ export async function computeStandupDigest(opts: {
   now: Date | string;
   dueSoonDays?: number;
   topPerCustomer?: number;
+  /** The caller's workspace. Omitted, the digest spans every workspace. */
+  orgId?: string | null;
 }): Promise<StandupDigest> {
   const dueSoonDays = opts.dueSoonDays ?? 3;
   const topPerCustomer = opts.topPerCustomer ?? 3;
 
   const [alerts, customers] = await Promise.all([
-    buildAlerts(opts.now, dueSoonDays),
-    listCustomers(),
+    buildAlerts(opts.now, dueSoonDays, opts.orgId),
+    listCustomers(opts.orgId),
   ]);
 
   // Customer metadata (status / fdeOwner) from the customers listing.

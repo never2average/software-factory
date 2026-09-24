@@ -37,6 +37,8 @@ import { searchExa } from "#lib/exa.js";
 import { publishArtifact } from "#lib/artifact.js";
 import { UNASSIGNED_OWNER_EMAIL as UNASSIGNED_TRIAGE_OWNER } from "./unassigned.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
+import { HIDDEN_FIELDS } from "./agent-vocabulary.ts";
+import { customFieldsOf } from "./custom-fields.ts";
 
 /**
  * The verified caller's email from the session auth, never from the model.
@@ -142,10 +144,23 @@ async function scopeToOrg<T extends { customerId?: string; id?: string }>(
   ctx: Parameters<typeof orgForSession>[0],
 ): Promise<T[]> {
   const org = await orgForSession(ctx);
-  if (!org) return rows;
+  if (!org) return [];
   const mine = new Set((await listCustomers(org)).map((c) => c.id));
   return rows.filter((r) => mine.has(r.customerId ?? r.id ?? ""));
 }
+
+/**
+ * The model's description of a record tool, without the nested parts the profile hides (`account_fields.hidden`):
+ * the model is not told about a part it can neither read nor write. Passed to modelFacing as `modelDescription`;
+ * the tool's own `description` stays a string literal, because scripts/gen-subagent-meta.mjs reads it from source
+ * for the UI. Undefined when nothing is hidden, so the default deployment is unchanged.
+ */
+const shownParts = (parts: [key: string, words: string][]) => {
+  const kept = parts.filter(([key]) => !HIDDEN_FIELDS.account.has(key)).map(([, words]) => words);
+  return kept.length > 1 ? `${kept.slice(0, -1).join(", ")}, and ${kept.at(-1)}` : kept.join("");
+};
+const RECORD_PARTS = ["platform", "deployments", "solutions", "implementation", "tickets", "interactions"];
+const hidesParts = RECORD_PARTS.some((k) => HIDDEN_FIELDS.account.has(k));
 
 export const listCustomersTool = modelFacing("list_customers", defineTool({
   description:
@@ -154,7 +169,7 @@ export const listCustomersTool = modelFacing("list_customers", defineTool({
   async execute(_input, ctx) {
     return { customers: await listCustomers(await orgForSession(ctx)) };
   },
-}));
+}), { recordOutput: ["customers"] });
 
 export const getCustomerTool = modelFacing("get_customer", defineTool({
   description:
@@ -167,13 +182,34 @@ export const getCustomerTool = modelFacing("get_customer", defineTool({
     if (!customer) return { found: false as const, id };
     return { found: true as const, customer };
   },
-}));
+}), {
+  recordOutput: ["customer"],
+  modelDescription: hidesParts
+    ? `Get the full record for one customer: ${shownParts([["platform", "platform config"], ["deployments", "deployments"], ["solutions", "solutions"], ["implementation", "implementation"], ["tickets", "tickets"], ["interactions", "recent interactions"]])}.`
+    : undefined,
+});
+
+/**
+ * The account's own fields (`custom`, account_fields.custom_fields) are a parameter only when the profile declares
+ * some: a deployment that declares none offers exactly the schema it did before the column existed (the default
+ * model surface is held byte-identical by check:agent-vocabulary). The cast keeps the tool's input type the full
+ * patch; at run time the narrower schema strips a `custom` the model was never offered.
+ */
+const accountFields = customFieldsOf("account");
+// `custom_append` (add to a long note without resending it) likewise only when a long-text account field exists.
+const upsertCustomerInput = (
+  accountFields.some((f) => f.type === "long_text")
+    ? customerPatchSchema
+    : accountFields.length > 0
+      ? customerPatchSchema.omit({ custom_append: true })
+      : customerPatchSchema.omit({ custom: true, custom_append: true })
+) as typeof customerPatchSchema;
 
 export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
   description:
     "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only provided fields are changed; nested domains (platform, deployments, solutions, implementation, tickets, interactions) are upserted alongside the customer row. Gated on approval since this mutates the team's source of truth.",
   approval: once(),
-  inputSchema: customerPatchSchema,
+  inputSchema: upsertCustomerInput,
   async execute(patch, ctx) {
     /**
      * Stamp the WORKSPACE. Without it the row is written with a null org_id and
@@ -183,7 +219,14 @@ export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
      */
     return { customer: await upsertCustomer(patch, await orgForSession(ctx)) };
   },
-}));
+}), {
+  // A profile's hidden fields are not offered to the model, and a stored hidden value survives its rewrite.
+  recordInput: { existing: async (id, ctx) => getCustomer(id, await orgForSession(ctx as Parameters<typeof orgForSession>[0])) },
+  recordOutput: ["customer"],
+  modelDescription: hidesParts
+    ? `Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only provided fields are changed; nested domains (${RECORD_PARTS.filter((k) => !HIDDEN_FIELDS.account.has(k)).join(", ")}) are upserted alongside the customer row. Gated on approval since this mutates the team's source of truth.`
+    : undefined,
+});
 
 /** The per-interaction fields shared by the single and batch record tools. */
 const interactionInputShape = {
@@ -230,6 +273,7 @@ export const recordInteractionTool = modelFacing("record_interaction", defineToo
     const customer = await recordInteraction(
       customerId,
       toInteractionRow(interaction, emailOrUndefined(callerEmail(ctx))),
+      await orgForSession(ctx),
     );
     return { ok: true, interactions: customer.interactions?.slice(0, 3) };
   },
@@ -250,6 +294,7 @@ export const recordInteractionsTool = modelFacing("record_interactions", defineT
     const customer = await recordInteractions(
       customerId,
       interactions.map((i) => toInteractionRow(i, email)),
+      await orgForSession(ctx),
     );
     return { ok: true, count: interactions.length, interactions: customer.interactions?.slice(0, 3) };
   },
@@ -406,7 +451,8 @@ export const reassignOwnerTool = modelFacing("reassign_owner", defineTool({
     ownerName: z.string().optional(),
   }),
   async execute({ customerId, newOwnerEmail, ownerName }, ctx) {
-    const result = await reassignOwner(customerId, newOwnerEmail, ownerName);
+    const org = await orgForSession(ctx);
+    const result = await reassignOwner(customerId, newOwnerEmail, ownerName, org);
     await recordInteraction(
       customerId,
       toInteractionRow(
@@ -418,6 +464,7 @@ export const reassignOwnerTool = modelFacing("reassign_owner", defineTool({
         },
         emailOrUndefined(callerEmail(ctx)),
       ),
+      org,
     );
     return { ok: true, ...result };
   },
@@ -442,9 +489,9 @@ export const createTicketTool = modelFacing("create_ticket", defineTool({
     customerContactEmail: z.string().email().optional(),
     externalId: z.string().optional().describe("Dedup key, e.g. the email Message-ID."),
   }),
-  async execute({ customerId, ...rest }) {
+  async execute({ customerId, ...rest }, ctx) {
     const ticketId = `TCK-${nanoid(8)}`;
-    const result = await createTicket({ ticketId, customerId, ...rest });
+    const result = await createTicket({ ticketId, customerId, ...rest }, await orgForSession(ctx));
     return { ok: true, ...result };
   },
 }));
@@ -459,8 +506,8 @@ export const runEmailIntakeTool = modelFacing("run_email_intake", defineTool({
     sinceDays: z.number().int().min(1).max(30).optional().describe("How many days back to read (default 2)."),
     max: z.number().int().min(1).max(50).optional().describe("Max messages to process (default 20)."),
   }),
-  async execute({ sinceDays, max }) {
-    return await runEmailIntake({ sinceDays, max });
+  async execute({ sinceDays, max }, ctx) {
+    return await runEmailIntake({ sinceDays, max, orgId: await orgForSession(ctx) });
   },
 }));
 
@@ -470,8 +517,8 @@ export const matchCustomerByEmailTool = modelFacing("match_customer_by_email", d
   inputSchema: z.object({
     sender: z.string().min(3).describe("The sender's email address (a raw address or a 'Name <addr>' header form)."),
   }),
-  async execute({ sender }) {
-    return await matchCustomerByEmail(sender);
+  async execute({ sender }, ctx) {
+    return await matchCustomerByEmail(sender, await orgForSession(ctx));
   },
 }));
 
@@ -492,7 +539,7 @@ export const createTriageTicketTool = modelFacing("create_triage_ticket", define
     customerContactEmail: z.string().email().optional(),
     externalId: z.string().optional().describe("Dedup key, e.g. the email Message-ID."),
   }),
-  async execute({ customerId, ticketOwnerEmail, ...rest }) {
+  async execute({ customerId, ticketOwnerEmail, ...rest }, ctx) {
     const ticketId = `TCK-${nanoid(8)}`;
     const result = await createTicket({
       ticketId,
@@ -500,7 +547,7 @@ export const createTriageTicketTool = modelFacing("create_triage_ticket", define
       ...rest,
       ticketOwnerEmail: ticketOwnerEmail ?? UNASSIGNED_TRIAGE_OWNER,
       ticketStatus: "Needs Triage",
-    });
+    }, await orgForSession(ctx));
     return { ok: true, ...result };
   },
 }));
@@ -517,8 +564,8 @@ export const promoteTicketTool = modelFacing("promote_ticket", defineTool({
       .optional()
       .describe("Target status; defaults to Open."),
   }),
-  async execute({ customerId, ticketId, toStatus }) {
-    return { ticket: await setTicketStatus(customerId, ticketId, toStatus ?? "Open") };
+  async execute({ customerId, ticketId, toStatus }, ctx) {
+    return { ticket: await setTicketStatus(customerId, ticketId, toStatus ?? "Open", await orgForSession(ctx)) };
   },
 }));
 
@@ -547,7 +594,7 @@ export const listFollowupsTool = modelFacing("list_followups", defineTool({
     customerId: z.string().optional().describe("Optional: scope to a single customer."),
   }),
   async execute({ customerId }, ctx) {
-    return { followUps: await scopeToOrg(await listFollowUps(customerId), ctx) };
+    return { followUps: await scopeToOrg(await listFollowUps(customerId, await orgForSession(ctx)), ctx) };
   },
 }));
 
@@ -558,8 +605,8 @@ export const resolveFollowupTool = modelFacing("resolve_followup", defineTool({
     customerId: z.string().min(1),
     followUpId: z.string().min(1),
   }),
-  async execute({ customerId, followUpId }) {
-    return { resolved: await resolveFollowUp(customerId, followUpId) };
+  async execute({ customerId, followUpId }, ctx) {
+    return { resolved: await resolveFollowUp(customerId, followUpId, await orgForSession(ctx)) };
   },
 }));
 

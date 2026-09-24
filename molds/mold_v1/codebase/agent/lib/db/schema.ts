@@ -84,6 +84,10 @@ export const customers = pgTable(
     contractStart: text("contract_start"),
     renewalDate: text("renewal_date"),
     industrySegment: text("industry_segment"),
+    // The deployment profile's own fields on the account record (`account_fields.custom_fields`), keyed by field
+    // key; agent/lib/custom-fields.ts validates every write. NULLABLE, unlike deployments.custom: NULL is "no own
+    // values", so the column was added without touching a single existing row (drizzle/0019_account_custom_fields.sql).
+    custom: jsonb("custom").$type<Record<string, string | number>>(),
   },
   (t) => [
     index("customers_fde_owner_idx").on(t.fdeOwner),

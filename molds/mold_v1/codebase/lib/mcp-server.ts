@@ -51,8 +51,8 @@ export interface McpDeps {
   verifyAuth: (authorization: string | null) => Promise<McpIdentity | null>;
   /** Text of dm.md, for dataroom_structure. */
   readSpec: () => Promise<string>;
-  /** The profile's custom_fields per record area, so the write tools can name them. Absent = described generically. */
-  customFields?: { deployments: unknown[]; implementations: unknown[] };
+  /** The profile's custom_fields per record (the two areas, the account), so the write tools can name them. Absent = described generically. */
+  customFields?: { deployments: unknown[]; implementations: unknown[]; account?: unknown[] };
   /** Injected for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
   /** Extra addresses this deployment answers on (WEB_ORIGIN), for the Origin check and links. */

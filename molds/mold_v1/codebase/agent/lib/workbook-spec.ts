@@ -715,9 +715,11 @@ export async function buildDomainWorkbookSpec(opts: {
   customerId: string;
   domain: WorkbookDomain;
   now: Date | string;
+  /** The caller's workspace: a customer outside it is "Unknown customer". */
+  orgId?: string | null;
 }): Promise<WorkbookSpec> {
   void opts.now; // reserved: digest is derived purely from stored rows
-  const customer = await getCustomer(opts.customerId);
+  const customer = await getCustomer(opts.customerId, opts.orgId);
   if (!customer) throw new Error(`Unknown customer: ${opts.customerId}`);
   return {
     workbook: `${opts.domain}/Master.xlsx`,
@@ -733,9 +735,11 @@ export async function buildDomainWorkbookSpec(opts: {
 export async function buildCustomerWorkbookSpecs(opts: {
   customerId: string;
   now: Date | string;
+  /** The caller's workspace: a customer outside it is "Unknown customer". */
+  orgId?: string | null;
 }): Promise<WorkbookSpec[]> {
   void opts.now; // reserved
-  const customer = await getCustomer(opts.customerId);
+  const customer = await getCustomer(opts.customerId, opts.orgId);
   if (!customer) throw new Error(`Unknown customer: ${opts.customerId}`);
   return WORKBOOK_DOMAINS.map((domain) => ({
     workbook: `${domain}/Master.xlsx`,

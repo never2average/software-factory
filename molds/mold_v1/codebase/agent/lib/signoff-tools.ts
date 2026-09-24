@@ -26,7 +26,7 @@ import { once } from "eve/tools/approval";
 import { z } from "zod";
 import { getDataroomStore } from "#lib/dataroom-store.js";
 import { writeVersioned } from "#lib/dataroom-versions.js";
-import { orgForCustomer } from "#lib/org-context.js";
+import { orgForSession } from "#lib/org-context.js";
 import {
   deploymentSignoffRecordSchema,
   infrastructureComponentSchema,
@@ -231,7 +231,8 @@ export const recordSignoffTool = modelFacing("record_signoff", defineTool({
     // Versioned: a signoff file is re-written each time a party moves, and the
     // previous decision is exactly what an audit asks for afterwards.
     await writeVersioned({
-      orgId: await orgForCustomer(customerId),
+      // The caller's workspace. A model-supplied customer id must not choose whose data room is written.
+      orgId: await orgForSession(ctx),
       path: documentPath,
       content: renderSignoffMarkdown(record),
       actor: callerEmail(ctx) ?? "agent",
@@ -270,8 +271,9 @@ export const getSignoffStatusTool = modelFacing("get_signoff_status", defineTool
       .optional()
       .describe("Omit to report every component that has signoff records."),
   }),
-  async execute({ customerId, platformVersionId, component }) {
-    const store = getDataroomStore(await orgForCustomer(customerId));
+  async execute({ customerId, platformVersionId, component }, ctx) {
+    // The caller's workspace. Resolved from the customer id, another workspace's signoff chain was readable by id.
+    const store = getDataroomStore(await orgForSession(ctx));
     const prefix = `Deployments/${customerId}/${platformVersionId}/infrastructure`;
     const paths = await store.list(prefix);
 

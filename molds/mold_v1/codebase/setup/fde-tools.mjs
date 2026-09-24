@@ -18,9 +18,10 @@
  *   opsUrl / webOrigin        THIS deployment's address. Never a default: a host
  *                             that does not know its address must not guess one.
  *   readSpec()                the text of dm.md
- *   customFields              optional { deployments: [...], implementations: [...] }: the fields this
- *                             deployment's profile declares on the two record areas (custom_fields). The
- *                             hosted endpoint knows them; the package does not and describes `custom` generically
+ *   customFields              optional { deployments: [...], implementations: [...], account?: [...] }: the
+ *                             fields this deployment's profile declares on the two record areas and on the
+ *                             account record (custom_fields). The hosted endpoint knows them; the package
+ *                             does not and describes `custom` generically
  *   blobStore()               optional direct blob store (package, inside the repo)
  *   parseClaudeTranscript /   optional transcript redactor; the session tools are
  *   sessionToSyncItem         withheld without it rather than advertised and failing
@@ -86,7 +87,8 @@ export function compatEnv(env, name, onLegacy) {
 export function createTools(ctx) {
   const api = ctx.api;
   /**
-   * The `custom` input of the two record-area write tools: this deployment's OWN fields, by key. The Ops API
+   * The `custom` input of the record write tools (the two areas', and customer_create's for the account record
+   * itself): this deployment's OWN fields, by key. The Ops API
    * validates it (agent/lib/custom-fields.ts) and answers an unknown key with the list of real ones, so a host
    * that cannot name the fields up front still leads the caller to them in one round trip.
    */
@@ -494,6 +496,7 @@ const TOOLS = [
         fdeOwner: { type: "string" },
         businessOwnerEmail: { type: "string" },
         technicalOwnerEmail: { type: "string" },
+        custom: customInput("account", "customer_create's answer (the stored record)"),
       },
       required: ["customerId", "customerName"],
     },
@@ -501,7 +504,7 @@ const TOOLS = [
   },
   {
     name: "customer_list",
-    description: "Existing customers with their tier, stage, status, owner and open-ticket count. Check here before creating one — the id you need may already exist.",
+    description: "Existing customers with their tier, stage, status, owner and open-ticket count, plus `custom`: the values of this deployment's own account fields that it shows in lists. Check here before creating one — the id you need may already exist.",
     inputSchema: { type: "object", properties: {} },
     // NOTE the key: this route answers { customers }, not { items } like the
     // others. Reading .items returned undefined and the tool printed the literal

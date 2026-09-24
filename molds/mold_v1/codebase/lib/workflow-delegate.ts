@@ -16,6 +16,8 @@
  * never do anything the operator who started it could not do themselves.
  */
 import "server-only";
+// Relative, with its extension: this file is also loaded by the offline tests under plain node.
+import { SERVICE_SCOPE_HEADER } from "../agent/lib/service-scope.ts";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
 
@@ -155,6 +157,13 @@ export function makeDelegate(
   signal?: AbortSignal,
   /** Identity of the run these steps belong to; prepended to every prompt. */
   context?: StepContext,
+  /**
+   * The workspace these steps act for (the run's, the app's, the schedule's). Sent as a header, never in the
+   * prompt: on the front-end's service token it becomes the session's workspace (agent/lib/service-scope.ts);
+   * without it a service step resolved to an empty workspace and every by-id tool found nothing. Ignored on a
+   * person's token, whose own membership decides.
+   */
+  orgId?: string | null,
 ): StepDelegate {
   return async function delegate(
     prompt: string,
@@ -171,7 +180,11 @@ export function makeDelegate(
 
     const started = await fetch(`${AGENT_URL}/eve/v1/session`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${bearer}`,
+        ...(orgId ? { [SERVICE_SCOPE_HEADER]: orgId } : {}),
+      },
       body: JSON.stringify({ message: composeStepMessage(prompt, subagent, stepContext) }),
       signal: requestSignal(effectiveTimeout, signal),
     });

@@ -29,6 +29,7 @@
  */
 import { defineDynamic, defineTool } from "eve/tools";
 import {
+  HIDDEN_FIELDS,
   VOCABULARY_RELABELLED,
   inputFromModel,
   outputForModel,
@@ -38,8 +39,13 @@ import {
   speakFieldValue,
   speakIdentifier,
   speakMessage,
+  patchTouchesHiddenWith,
+  pruneRecordSchemaWith,
+  pruneRecordWith,
+  restoreHiddenWith,
   type SchemaMap,
 } from "../../agent-vocabulary.ts";
+import { isPostgresError, redactQueryError } from "../../db/query-errors.ts";
 
 export interface ModelFacingOptions {
   /** Input keys whose value is passed through untouched, however deep (a remote tool's arguments). */
@@ -58,6 +64,20 @@ export interface ModelFacingOptions {
   opaqueOutput?: string[] | "*";
   /** Result keys whose string values are names the tool generates (sheet names, column headers): spoken as code. */
   spokenOutput?: string[];
+  /**
+   * The input IS an account-record patch (upsert_customer). Fields the profile hides (agent-vocabulary:
+   * HiddenFields) are left out of its parameters, and `existing` reads the stored record so a hidden nested value
+   * the model could not see is carried over when it rewrites `deployments[]` or `implementation`.
+   */
+  recordInput?: { existing: (id: string, ctx: unknown) => Promise<unknown> };
+  /** Top-level result keys holding one account record or a list of them: their hidden fields are dropped. */
+  recordOutput?: string[];
+  /**
+   * The description the MODEL reads, when it must differ from the tool's own (a record tool under a profile that
+   * hides nested parts). The tool's `description` stays a string literal: scripts/gen-subagent-meta.mjs reads it
+   * from source for the UI, and a computed one is read there as null.
+   */
+  modelDescription?: string;
 }
 
 interface BaseTool {
@@ -75,6 +95,8 @@ interface Entry {
   argsIn: Set<string>;
   opaqueOut: Set<string> | "*";
   spokenOut: Set<string>;
+  recordIn: ModelFacingOptions["recordInput"];
+  recordOut: Set<string>;
 }
 
 const BASES = new Map<string, Entry>();
@@ -97,6 +119,15 @@ async function runModelFacing(baseName: string, input: unknown, ctx: unknown): P
   const entry = BASES.get(baseName);
   if (!entry) throw new Error(`no tool registered as ${baseName}`);
   let baseInput = inputFromModel(input, entry.map, { opaque: entry.opaqueIn, paths: entry.pathIn, argsKeys: entry.argsIn });
+  if (entry.recordIn && HIDDEN_FIELDS.any) {
+    // A hidden field is not the model's to write, even when it names one it was never offered: dropped, the same
+    // cut as a record it reads. Then the stored hidden values of any nested row it rewrote are put back.
+    baseInput = pruneRecordWith(HIDDEN_FIELDS, baseInput);
+    const id = (baseInput as { id?: unknown }).id;
+    if (patchTouchesHiddenWith(HIDDEN_FIELDS, baseInput) && typeof id === "string" && id) {
+      baseInput = restoreHiddenWith(HIDDEN_FIELDS, baseInput, await entry.recordIn.existing(id, ctx));
+    }
+  }
   const schema = entry.tool.inputSchema as { safeParse?: (x: unknown) => { success: boolean; data?: unknown; error?: { issues?: { path: PropertyKey[]; message: string }[] } } } | undefined;
   if (schema && typeof schema.safeParse === "function") {
     const parsed = schema.safeParse(baseInput);
@@ -120,6 +151,15 @@ async function runModelFacing(baseName: string, input: unknown, ctx: unknown): P
     // The tool's own words, spoken WITHOUT the ids, names and keys they embed (agent-vocabulary: speakMessage).
     throw new Error(speakMessage(messageOf(error)));
   }
+  if (entry.recordOut.size && HIDDEN_FIELDS.any && result && typeof result === "object" && !Array.isArray(result)) {
+    const pruned: Record<string, unknown> = { ...(result as Record<string, unknown>) };
+    for (const key of entry.recordOut) {
+      const value = pruned[key];
+      if (Array.isArray(value)) pruned[key] = value.map((r) => pruneRecordWith(HIDDEN_FIELDS, r));
+      else if (value && typeof value === "object") pruned[key] = pruneRecordWith(HIDDEN_FIELDS, value);
+    }
+    result = pruned;
+  }
   if (entry.opaqueOut === "*") {
     if (result && typeof result === "object" && !Array.isArray(result) && typeof (result as { error?: unknown }).error === "string") {
       return { ...(result as Record<string, unknown>), error: speakMessage((result as { error: string }).error) };
@@ -134,10 +174,56 @@ async function runModelFacing(baseName: string, input: unknown, ctx: unknown): P
  * profile. The return type is the base tool's so every re-export and every direct caller type-checks as before;
  * under a relabelling profile the value may be a dynamic definition, which eve accepts wherever a tool goes.
  */
+/**
+ * Does this error come from the database? A SQLSTATE anywhere on its cause chain, or drizzle's own wrapper text.
+ * The database layer already rethrows these as plain sentences (db/query-errors.ts); this is the second fence, for
+ * a driver error that reached a tool some other way.
+ */
+function isDatabaseError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur: unknown = error;
+  while (cur && typeof cur === "object" && !seen.has(cur)) {
+    seen.add(cur);
+    const c = cur as { code?: unknown; message?: unknown; cause?: unknown; name?: unknown };
+    if (c.name === "DatabaseQueryError") return false; // already a plain sentence
+    // A real SQLSTATE (it has a digit) or the driver's own error class. EPERM / EPIPE / EBUSY are five capitals
+    // too, and treating them as database errors hid a file or network failure behind "the database".
+    if (isPostgresError(cur)) return true;
+    if (typeof c.message === "string" && c.message.startsWith("Failed query:")) return true;
+    cur = c.cause;
+  }
+  return false;
+}
+
+/**
+ * Every tool's thrown error is handed to the model verbatim and drawn in the chat, so a database error must reach it
+ * as a sentence, never as the statement and its values. Wrapped in place: `defineTool` returns the very object it
+ * was given, and every one of the agent's tools passes through here.
+ */
+function guardToolErrors(base: BaseTool): void {
+  const execute = base.execute as unknown as (input: unknown, ctx: unknown) => Promise<unknown>;
+  if (typeof execute !== "function" || (execute as { __dbGuarded?: boolean }).__dbGuarded) return;
+  const guarded = async (input: unknown, ctx: unknown) => {
+    try {
+      return await execute(input, ctx);
+    } catch (error) {
+      throw isDatabaseError(error) ? redactQueryError(error) : error;
+    }
+  };
+  (guarded as { __dbGuarded?: boolean }).__dbGuarded = true;
+  base.execute = guarded as unknown as BaseTool["execute"];
+}
+
 export function modelFacing<T>(baseName: string, tool: T, options: ModelFacingOptions = {}): T {
-  if (!VOCABULARY_RELABELLED) return tool;
+  guardToolErrors(tool as unknown as BaseTool);
+  // A record tool under a profile that hides fields is wrapped even without a relabel: the model must not be
+  // offered, or shown, a field the deployment does not use. Every other tool, and every tool under the default
+  // profile, is returned unwrapped (its errors are still guarded in place above).
+  const hides = HIDDEN_FIELDS.any && Boolean(options.recordInput || options.recordOutput?.length);
+  if (!VOCABULARY_RELABELLED && !hides) return tool;
   const base = tool as unknown as BaseTool;
-  const { schema, map } = schemaForModel(jsonSchemaOf(base.inputSchema));
+  const baseSchema = jsonSchemaOf(base.inputSchema);
+  const { schema, map } = schemaForModel(options.recordInput ? pruneRecordSchemaWith(HIDDEN_FIELDS, baseSchema) : baseSchema);
   BASES.set(baseName, {
     tool: base,
     map,
@@ -146,9 +232,11 @@ export function modelFacing<T>(baseName: string, tool: T, options: ModelFacingOp
     argsIn: new Set(options.argsInput ?? []),
     opaqueOut: options.opaqueOutput === "*" ? "*" : new Set(options.opaqueOutput ?? []),
     spokenOut: new Set(options.spokenOutput ?? []),
+    recordIn: options.recordInput,
+    recordOut: new Set(options.recordOutput ?? []),
   });
   const name = registerModelToolName(baseName);
-  const description = speak(base.description ?? "");
+  const description = speak(options.modelDescription ?? base.description ?? "");
   // `as never`: a translated JSON Schema object and the base tool's own approval policy, whose types eve cannot
   // relate to each other. Casts stay on the property VALUES: eve's transform needs the arguments of
   // `defineDynamic(...)` and `defineTool(...)` to be plain object literals.

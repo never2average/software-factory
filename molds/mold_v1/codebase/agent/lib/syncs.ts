@@ -170,6 +170,11 @@ export interface IngestInput {
   normalize?: boolean;
   /** Verified caller stamp, passed by the E2 tool. */
   recordedByEmail?: string;
+  /**
+   * The caller's workspace (the tool passes orgForSession). The landing zone and any normalized interaction go in
+   * THIS workspace, and a customer id from another one is "Unknown customer". Omitted only by system paths.
+   */
+  orgId?: string | null;
 }
 
 export interface IngestResult {
@@ -485,7 +490,7 @@ export async function ingestSource(input: IngestInput): Promise<IngestResult> {
   }
 
   // 2. Wrap each item in a RawSyncRecord and land them in one durable append.
-  const store = getDataroomStore(customerId ? await orgForCustomer(customerId) : undefined);
+  const store = getDataroomStore(input.orgId || (customerId ? await orgForCustomer(customerId) : undefined));
   const wrapped = output.items.map((item) => {
     const syncId = `SYNC-${nanoid(10)}`;
     const record: RawSyncRecord = {
@@ -529,7 +534,7 @@ export async function ingestSource(input: IngestInput): Promise<IngestResult> {
           recordedAt: new Date().toISOString(),
           recordedByEmail: stampEmail,
         });
-        await recordInteraction(customerId, interaction);
+        await recordInteraction(customerId, interaction, input.orgId);
         normalized++;
       } catch (error) {
         normReason = errMessage(error);

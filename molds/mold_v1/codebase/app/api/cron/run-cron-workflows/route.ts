@@ -181,7 +181,7 @@ export async function GET(request: NextRequest) {
         const outcome = await runWorkflowScript(js, {
           // Read your own inputs — see lib/workflow-data.ts.
           data: workflowDataFor(fireOrg),
-          delegate: makeDurableDelegate(makeDelegate(bearer, undefined, control.signal), journal, 3, control.signal),
+          delegate: makeDurableDelegate(makeDelegate(bearer, undefined, control.signal, undefined, fireOrg), journal, 3, control.signal),
           args: null,
           signal: control.signal,
         });

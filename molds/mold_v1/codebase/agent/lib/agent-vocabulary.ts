@@ -788,3 +788,136 @@ export function registerModelToolName(base: string): string {
   MODEL_NAMES.set(base, name);
   return name;
 }
+
+// ------------------------------------------------------------------------------------ fields a profile hides
+
+/**
+ * FIELDS A PROFILE HIDES ARE NOT PART OF WHAT THE MODEL READS OR WRITES.
+ *
+ * A profile hides fields in three places: `account_fields.hidden` (the account record itself — `arr`, `seats`,
+ * `aeOwner`, `renewalDate`, `platform`, `tickets`, …) and `domains.<area>.fields.<key>.hidden` for the two
+ * redefinable areas (`deployments[]`, `implementation`). Until this, hiding reached the forms and a line of the
+ * per-turn briefing ("Not used here: …") and nothing else: on onfinance_hfc (2026-09-24) the model's
+ * `upsert_company` still offered `arr`, `arrCurrency`, `seats`, `aeOwner`, `contractStatus`, `renewalForecast`,
+ * `renewalDate`, `expansionPotentialArr`, `successCriteria`, `platform`, `tickets`… to a research agent asked to
+ * set a note, and its reasoning spent thousands of tokens weighing which of them a note might go in.
+ *
+ * So the record tools (`modelFacing(..., { recordInput, recordOutput })`) now drop them from the parameter schema
+ * and from every record in their results. What is kept: a hidden field with a `fixed` value stays in the schema,
+ * because the briefing tells the model to write that value and the base schema may require it. Nothing about
+ * storage, the API, the CLI or the forms changes, and a value already stored in a hidden nested field is carried
+ * over when the model rewrites the row (`restoreHiddenWith`), because a patch replaces `deployments[]` and
+ * `implementation` wholesale and the model can no longer see the value to send it back.
+ *
+ * Keyed by BASE field names; applied before the vocabulary translation on the way out and after it on the way in.
+ */
+export interface HiddenFields {
+  /** Account-record keys the model never reads or writes. */
+  account: ReadonlySet<string>;
+  /** Hidden `deployments[]` keys without a fixed value. */
+  deployments: ReadonlySet<string>;
+  /** Hidden `implementation` keys without a fixed value. */
+  implementation: ReadonlySet<string>;
+  /** Anything hidden at all. False under the default profile, which keeps every tool untouched. */
+  any: boolean;
+}
+
+type HidingProfile = { account_fields?: { hidden?: readonly string[] }; domains: DeploymentProfile["domains"] };
+
+export function hiddenFieldsOf(profile: HidingProfile): HiddenFields {
+  const area = (fields: Record<string, { hidden?: boolean; fixed?: unknown }> | undefined) =>
+    new Set(Object.entries(fields ?? {}).filter(([, f]) => f?.hidden && f.fixed === undefined).map(([k]) => k));
+  const account = new Set((profile.account_fields?.hidden ?? []).filter((k) => k !== "id" && k !== "name"));
+  const deployments = area(profile.domains.deployments?.fields);
+  const implementation = area(profile.domains.implementations?.fields);
+  return { account, deployments, implementation, any: account.size + deployments.size + implementation.size > 0 };
+}
+
+export const HIDDEN_FIELDS: HiddenFields = hiddenFieldsOf(DEPLOYMENT_PROFILE as HidingProfile);
+
+/** The object-shaped variants of a JSON Schema node: itself, and any anyOf/oneOf/allOf branch with properties. */
+function objectVariants(node: unknown): Record<string, unknown>[] {
+  if (!isRecord(node)) return [];
+  const out: Record<string, unknown>[] = isRecord(node.properties) ? [node] : [];
+  for (const k of ["anyOf", "oneOf", "allOf"]) if (Array.isArray(node[k])) for (const b of node[k] as unknown[]) out.push(...objectVariants(b));
+  return out;
+}
+
+function dropProperties(node: unknown, keys: ReadonlySet<string>): void {
+  if (!keys.size) return;
+  for (const obj of objectVariants(node)) {
+    const props = obj.properties as Record<string, unknown>;
+    const required = Array.isArray(obj.required) ? (obj.required as unknown[]) : [];
+    for (const k of keys) {
+      // A key the base schema REQUIRES stays: without it every write would fail validation. The generator makes a
+      // hidden required column carry a fixed value, and fixed fields are never in `keys`.
+      if (!(k in props) || required.includes(k)) continue;
+      delete props[k];
+    }
+  }
+}
+
+/** A record tool's input JSON Schema (base words) without the fields the profile hides. */
+export function pruneRecordSchemaWith(h: HiddenFields, schema: unknown): unknown {
+  if (!h.any || !isRecord(schema)) return schema;
+  const out = structuredClone(schema);
+  dropProperties(out, h.account);
+  for (const root of objectVariants(out)) {
+    const props = root.properties as Record<string, unknown>;
+    // `deployments` is an array; an optional one may arrive wrapped in anyOf/oneOf branches.
+    const dep = props.deployments;
+    const arrays = isRecord(dep) ? [dep, ...(["anyOf", "oneOf"] as const).flatMap((k) => (Array.isArray(dep[k]) ? (dep[k] as unknown[]) : []))] : [];
+    for (const a of arrays) if (isRecord(a)) dropProperties(a.items, h.deployments);
+    dropProperties(props.implementation, h.implementation);
+  }
+  return out;
+}
+
+/** One record as the model reads it (and a patch as the model may write it): the hidden fields gone, everything else untouched. */
+export function pruneRecordWith(h: HiddenFields, record: unknown): unknown {
+  if (!h.any || !isRecord(record)) return record;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(record)) if (!h.account.has(k)) out[k] = v;
+  if (Array.isArray(out.deployments) && h.deployments.size) {
+    out.deployments = (out.deployments as unknown[]).map((d) => (isRecord(d) ? Object.fromEntries(Object.entries(d).filter(([k]) => !h.deployments.has(k))) : d));
+  }
+  if (isRecord(out.implementation) && h.implementation.size) {
+    out.implementation = Object.fromEntries(Object.entries(out.implementation).filter(([k]) => !h.implementation.has(k)));
+  }
+  return out;
+}
+
+/** Does this (base-words) patch rewrite a nested row whose hidden values the model could not send back? */
+export function patchTouchesHiddenWith(h: HiddenFields, patch: unknown): boolean {
+  if (!isRecord(patch)) return false;
+  return (h.deployments.size > 0 && Array.isArray(patch.deployments)) || (h.implementation.size > 0 && isRecord(patch.implementation));
+}
+
+/**
+ * The model's patch with every hidden nested value it could not see put back from the stored record: a
+ * `deployments[]` row matched by `deploymentId`, the one `implementation`. A key the model did send (it cannot,
+ * through the schema, but a model may still write one) is left as sent. The account level needs nothing: a patch
+ * merges over the stored record, so a key the model never sends keeps its value.
+ *
+ * KNOWN LIMIT: a `deployments[]` row is matched only by `deploymentId`. A row the model sends under a new id
+ * (or without one) starts with no hidden values, exactly as a brand-new row would; a renamed id loses the old
+ * row's hidden values with the old row. Fine while hidden fields are ones a deployment does not use at all.
+ */
+export function restoreHiddenWith(h: HiddenFields, patch: unknown, existing: unknown): unknown {
+  if (!h.any || !isRecord(patch) || !isRecord(existing)) return patch;
+  const out: Record<string, unknown> = { ...patch };
+  const fill = (row: Record<string, unknown>, prev: unknown, keys: ReadonlySet<string>) => {
+    if (!isRecord(prev)) return row;
+    const next = { ...row };
+    for (const k of keys) if (next[k] === undefined && prev[k] !== undefined && prev[k] !== null) next[k] = prev[k];
+    return next;
+  };
+  if (Array.isArray(out.deployments) && h.deployments.size) {
+    const before = Array.isArray(existing.deployments) ? (existing.deployments as unknown[]).filter(isRecord) : [];
+    out.deployments = (out.deployments as unknown[]).map((d) =>
+      isRecord(d) ? fill(d, before.find((p) => p.deploymentId !== undefined && p.deploymentId === d.deploymentId), h.deployments) : d,
+    );
+  }
+  if (isRecord(out.implementation) && h.implementation.size) out.implementation = fill(out.implementation, existing.implementation, h.implementation);
+  return out;
+}
