@@ -39,6 +39,7 @@ import { callerFromCtx, orgForSession, type SessionCtxLike } from "#lib/org-cont
 import { storeForSession } from "./dataroom-session.ts";
 
 import { inheritedScope } from "./session-scope.ts";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 /** Re-throw as a model-readable message when the store rejects a path. */
 function pathErrorMessage(error: unknown): string | null {
   if (error instanceof DataroomPathError) return error.message;
@@ -68,7 +69,7 @@ async function actorFor(ctx: SessionCtxLike | undefined): Promise<string> {
  * The URL is presigned, GET-only and short-lived, so putting it in a sandbox
  * command exposes that one object for a few minutes and nothing else.
  */
-export const dataroomFetchToSandboxTool = defineTool({
+export const dataroomFetchToSandboxTool = modelFacing("dataroom_fetch_to_sandbox", defineTool({
   description:
     "Get a data-room file into your bash sandbox so you can PARSE it (spreadsheets, PDFs, images, archives — anything that is not plain text). Returns a short-lived download URL plus the exact curl command to run. Use this instead of dataroom_read whenever the file is binary: dataroom_read decodes as text and will hand you mangled bytes for an .xlsx. Typical flow: call this, run the command in bash, then parse the local file (openpyxl is installed).",
   inputSchema: z.object({
@@ -110,9 +111,9 @@ export const dataroomFetchToSandboxTool = defineTool({
       throw error;
     }
   },
-});
+}), { pathInput: ["path"] });
 
-export const dataroomReadTool = defineTool({
+export const dataroomReadTool = modelFacing("dataroom_read", defineTool({
   description:
     "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.",
   inputSchema: z.object({
@@ -138,9 +139,9 @@ export const dataroomReadTool = defineTool({
       throw error;
     }
   },
-});
+}), { pathInput: ["path"], opaqueOutput: ["content", "records"] });
 
-export const dataroomListTool = defineTool({
+export const dataroomListTool = modelFacing("dataroom_list", defineTool({
   description:
     "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.",
   inputSchema: z.object({
@@ -160,9 +161,9 @@ export const dataroomListTool = defineTool({
       throw error;
     }
   },
-});
+}), { pathInput: ["prefix"] });
 
-export const dataroomWriteTool = defineTool({
+export const dataroomWriteTool = modelFacing("dataroom_write", defineTool({
   description:
     "Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.md, config/contract JSON, etc.) at its canonical path. Binary workbooks (.xlsx) are built in the sandbox and published, not text-written here. The store overwrites IN PLACE, so open a changeset with backfill_start and pass its `changesetId` here whenever you are writing more than two or three files — that is what makes the batch revertible. Gated on approval since it mutates the team's shared document store.",
   approval: once(),
@@ -201,7 +202,7 @@ export const dataroomWriteTool = defineTool({
       throw error;
     }
   },
-});
+}), { pathInput: ["path"], opaqueInput: ["content"] });
 
 /**
  * Pick a per-record zod schema by the .jsonl path so appended records are
@@ -224,7 +225,7 @@ function schemaForJsonlPath(path: string): ZodType | undefined {
   return undefined;
 }
 
-export const dataroomAppendJsonlTool = defineTool({
+export const dataroomAppendJsonlTool = modelFacing("dataroom_append_jsonl", defineTool({
   description:
     "Durably append one record (or an array of records) to a `.jsonl` artifact in the dm.md data room (interactions, tickets, eval dataset/benchmark/output/trace streams), creating it on demand. Records are validated against their dm.md contract when the path has one. Gated on approval since it mutates the team's shared streams.",
   approval: once(),
@@ -244,7 +245,7 @@ export const dataroomAppendJsonlTool = defineTool({
       throw error;
     }
   },
-});
+}), { pathInput: ["path"], opaqueInput: ["records"] });
 
 // ---------------------------------------------------------------------------
 // Changesets — a backfill as one revertible act (see #lib/dataroom-versions.ts)
@@ -253,7 +254,7 @@ export const dataroomAppendJsonlTool = defineTool({
 const NO_VERSIONING =
   "version control is unavailable here (no database configured); writes still land but cannot be reverted as a batch.";
 
-export const backfillStartTool = defineTool({
+export const backfillStartTool = modelFacing("backfill_start", defineTool({
   description:
     "Open a CHANGESET before a bulk write, then pass its id as `changesetId` on every dataroom_write in the batch. This is what makes a backfill reviewable and revertible as ONE act instead of forty separate overwrites — the data room writes IN PLACE, so without a changeset the previous content of each file is simply gone. Always use this when you are about to write more than two or three files. Call backfill_finish when done.",
   inputSchema: z.object({
@@ -280,9 +281,9 @@ export const backfillStartTool = defineTool({
       next: "Pass changesetId on every dataroom_write in this batch, then call backfill_finish.",
     };
   },
-});
+}));
 
-export const backfillFinishTool = defineTool({
+export const backfillFinishTool = modelFacing("backfill_finish", defineTool({
   description:
     "Close a changeset opened with backfill_start, once every write in the batch has landed. Until it is closed it stays 'open' and is not offered for revert. Reports how many files the batch touched.",
   inputSchema: z.object({
@@ -293,4 +294,4 @@ export const backfillFinishTool = defineTool({
     const { files } = await commitChangeset(await orgForSession(ctx), changesetId);
     return { committed: true as const, changesetId, files };
   },
-});
+}));

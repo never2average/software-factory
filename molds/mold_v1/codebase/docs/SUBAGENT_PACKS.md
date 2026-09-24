@@ -18,7 +18,7 @@ A pack is a directory tree that mirrors the codebase root and only **adds** file
 
 ## The one rule
 
-**A pack never modifies an existing file.** Not `agent/instructions.md`, not
+**A pack never modifies an existing file.** Not the root prompt (`agent/prompt-*.md`), not
 `agent/lib/dataroom-store.ts`, not `dm.md`, not a list in `app/_components/`, not
 `package.json`, not `AGENTS.md`. Everything the base app needs to know about a pack's
 subagents it discovers:
@@ -28,7 +28,7 @@ subagents it discovers:
 | the subagent as a delegation target | `agent/subagents/<key>/agent.ts` | eve discovers the directory and gives the root a tool named `<key>` |
 | its key, display name and summary in every UI list, label and provisioned row | the directory, plus optional `subagent.json` | `scripts/gen-subagent-meta.mjs` writes `app/_components/subagent-meta.generated.ts` and `agent/lib/subagent-registry.generated.ts`; every consumer reads those |
 | permission to write its data-room folders | `subagent.json` `"dataroomPaths"` | the generator appends them to `DATAROOM_PATH_TEMPLATES` |
-| when the root should delegate to it | `agent/instructions/NN-pack-<name>.md` | eve loads `agent/instructions.md` first, then every `.md`/`.ts` in `agent/instructions/` in filename order |
+| when the root should delegate to it | `agent/instructions/NN-pack-<name>.md` | eve loads the root `agent/instructions.ts` first, then every `.md`/`.ts` in `agent/instructions/` in filename order |
 | shared sandbox helpers | `scripts/subagent-shared/<family>/` with `targets.json` | `npm run sync:subagent-shared` copies the family into each target's sandbox seed |
 
 The two `*.generated.ts` files and the synced copies under
@@ -138,6 +138,33 @@ subagent that may lose the tool must say in its `instructions.md` what it does w
 A pack that reaches outside the deployment in some other way (its own HTTP tool) documents
 that in its `docs/<PACK>.md` and gives it a flag a deployment can turn off; the flag is
 read at build time, like the others.
+
+## A pack whose profile relabels the domains
+
+When the pack's profile gives the domains words of their own (customers are "companies", deployments are
+"Coverage reports"; see [`DEPLOYMENT_PROFILE.md`](DEPLOYMENT_PROFILE.md), "How the agent sees it"), the model
+is given the base tools, fields and folders under those words: `get_company` / `upsert_company`, `company_id`,
+`Companies/{company_id}/…`, `coverageReports[]`. The base product's own prompts are translated for it. The
+pack's text is the pack's, and must use the same words, or its specialists will be told to call
+`get_customer` and write under `Customers/`, which the model is not given:
+
+- **Write the pack's prompts, skills, rulebooks and sandbox README text in the profile's words.** The pack
+  ships its profile, so it knows them. `npm run check:agent-vocabulary -- --dump <file>` (with the pack
+  applied and `AGENT_VOCABULARY_FIXTURE` pointing at its profile) writes out everything the model reads.
+  `npm run check:agent-vocabulary -- --pack <packs/id> --allow <allow.json>` renders the pack applied to this
+  checkout under its own profile and fails on any base word, the pack's own text included; the allow-list is
+  for words the pack must keep, each with a `why` (its own stored row keys, a regulator's heading).
+- **Or author `prompt.md` beside an `instructions.ts`** that returns
+  `defineInstructions({ markdown: speakPrompt(SUBAGENT_PROMPTS["<key>"]) })` (the base specialists' form;
+  `speakPrompt` from `#lib/agent-vocabulary.js`, `SUBAGENT_PROMPTS` from `#lib/prompts.generated.js`), and
+  run `node scripts/gen-prompts.mjs` after applying the pack. `check:subagents` accepts this in place of
+  `instructions.md`.
+- **Paths a sandbox script computes may stay as stored** (`Customers/<id>/filings/…`): a data-room tool
+  accepts a stored path as well as a display one, and answers with the display one.
+- **Data inside stored files is not translated.** A `.jsonl` row keeps the keys it is written with, so a
+  schema and its validator keep theirs.
+- **Exclude the base specialists the vertical does not use** (`specialists.exclude`), and set
+  `persona.base: false` when the pack's `agent/instructions/50-pack-*.md` says who the agent is.
 
 ## The workspace standard
 

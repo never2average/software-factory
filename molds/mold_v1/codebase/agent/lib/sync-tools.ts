@@ -23,6 +23,7 @@ import {
   SYNC_SOURCE_FOLDERS,
   type SyncDomain,
 } from "#lib/syncs.js";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 // The five dm.md domains that carry a `syncs/**` landing subtree.
 const syncDomainSchema = z.enum(["Customers", "Platform", "Deployments", "Tickets", "People"]);
@@ -53,7 +54,7 @@ function emailOrUndefined(value: string | undefined): string | undefined {
   return value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : undefined;
 }
 
-export const syncPullTool = defineTool({
+export const syncPullTool = modelFacing("sync_pull", defineTool({
   description:
     "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: Customers {manual_entry, email, slack, granola}; Platform {manual_entry, github, aws, slack, miro}; Deployments {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; Tickets {manual_entry, call, email, slack}; People {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.",
   approval: once(),
@@ -86,9 +87,9 @@ export const syncPullTool = defineTool({
       recordedByEmail: emailOrUndefined(callerEmail(ctx)),
     });
   },
-});
+}));
 
-export const listSyncsTool = defineTool({
+export const listSyncsTool = modelFacing("list_syncs", defineTool({
   description:
     "List the landed sync .jsonl streams in the data room under a (domain, source?, customer?) prefix. Read-only. Each returned path is one domain/source/customer/day raw stream produced by sync_pull.",
   inputSchema: z.object({
@@ -107,4 +108,4 @@ export const listSyncsTool = defineTool({
     const org = customerId ? await orgForCustomer(customerId) : await orgForSession(ctx);
     return { prefix, paths: await getDataroomStore(org).list(prefix) };
   },
-});
+}));

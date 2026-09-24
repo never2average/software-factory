@@ -269,7 +269,12 @@ def check_subagent(root, key, timeout=60, reg=None, grammar=None):
     p = lambda *parts: os.path.join(sub, *parts)
 
     # 1. required files
+    # The prompt is instructions.md, or prompt.md spoken in the deployment's words by instructions.ts
+    # (agent/lib/agent-vocabulary.ts: speakPrompt; the base specialists' form).
+    spoken_prompt = os.path.isfile(p("prompt.md")) and os.path.isfile(p("instructions.ts"))
     for f in REQUIRED_FILES:
+        if f == "instructions.md" and spoken_prompt:
+            continue
         r.check(os.path.isfile(p(f)), "missing %s" % f)
     r.check(not os.path.exists(p("sandbox.ts")),
             "top-level sandbox.ts present: eve only seeds sandbox/workspace/** with the folder layout, move it to sandbox/sandbox.ts")
@@ -288,7 +293,8 @@ def check_subagent(root, key, timeout=60, reg=None, grammar=None):
         found = re.findall(r"WORKFLOW\s*=\s*[\"']([^\"']+)[\"']", src)
         r.check(found == [key], "hooks/usage.ts has WORKFLOW = %s, not \"%s\"" % (found or "nothing", key))
 
-    instructions = read(p("instructions.md")) if os.path.isfile(p("instructions.md")) else ""
+    instructions = read(p("instructions.md")) if os.path.isfile(p("instructions.md")) else \
+        read(p("prompt.md")) if spoken_prompt else ""
     scripts_dir = p("sandbox/workspace/scripts")
     schemas_dir = p("sandbox/workspace/schemas")
     scripts = sorted(n for n in os.listdir(scripts_dir) if n.endswith(".py") and os.path.isfile(os.path.join(scripts_dir, n))) \
@@ -408,12 +414,30 @@ def default_keys(root):
     return sorted(k for k in os.listdir(base) if os.path.isdir(os.path.join(base, k, "sandbox", "workspace")))
 
 
+def excluded_specialists(root):
+    """profiles/*.json `specialists.exclude` (a later file's list replaces an earlier one's), as
+    scripts/lib/profile-specialists.mjs reads it: those directories stay, and are left out of the registry."""
+    d = os.environ.get("PROFILES_DIR") or os.path.join(root, "profiles")
+    exclude = []
+    if os.path.isdir(d):
+        for f in sorted(n for n in os.listdir(d) if re.match(r"^\d{2}-[a-z0-9-]+\.json$", n)):
+            try:
+                lst = (json.loads(read(os.path.join(d, f))).get("specialists") or {}).get("exclude")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(lst, list):
+                exclude = [k for k in lst if isinstance(k, str)]
+    return set(exclude)
+
+
 def declared_keys(root):
-    """What the generator discovers: a directory is a subagent only if it has agent.ts."""
+    """What the generator discovers: a directory is a subagent only if it has agent.ts, and the profile does not
+    exclude it."""
     base = os.path.join(root, "agent/subagents")
     if not os.path.isdir(base):
         return []
-    return sorted(k for k in os.listdir(base) if os.path.isfile(os.path.join(base, k, "agent.ts")))
+    excluded = excluded_specialists(root)
+    return sorted(k for k in os.listdir(base) if os.path.isfile(os.path.join(base, k, "agent.ts")) and k not in excluded)
 
 
 def check_registry(root, reg=None, grammar=None, skip=()):
@@ -451,7 +475,8 @@ def check_registry(root, reg=None, grammar=None, skip=()):
         if not r.check(targets is not None, problem or ""):
             continue
         for key in targets:
-            r.check(key in declared, "%s/%s/targets.json names \"%s\", which is not a subagent under agent/subagents/" % (SHARED_DIR, family, key))
+            r.check(os.path.isfile(os.path.join(root, "agent/subagents", key, "agent.ts")),
+                    "%s/%s/targets.json names \"%s\", which is not a subagent under agent/subagents/" % (SHARED_DIR, family, key))
     for key in declared:
         check_usage_hook(r, root, key)
     check_delegation_recorder(r, root)

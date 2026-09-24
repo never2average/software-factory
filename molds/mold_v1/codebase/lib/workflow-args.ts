@@ -10,6 +10,7 @@
  * that does not line up fails immediately rather than at the end of a run that
  * spent tokens.
  */
+import { speakIdentifier } from "../agent/lib/agent-vocabulary.ts";
 
 /** Keys a script reads off `args`, or null when it reads them dynamically. */
 export function argKeysRead(script: string): Set<string> | null {
@@ -28,6 +29,34 @@ export function argKeysRead(script: string): Set<string> | null {
   for (const m of code.matchAll(/\bargs\s*(?:&&\s*args\s*)?\.\s*([A-Za-z_$][\w$]*)/g)) keys.add(m[1]);
   for (const m of code.matchAll(/\bargs\s*\[\s*["']([^"']+)["']\s*\]/g)) keys.add(m[1]);
   return keys;
+}
+
+/**
+ * A payload's keys as THIS script reads them, under a deployment profile that relabels the domains.
+ *
+ * The agent's model is taught the deployment's words (`companyId`, agent/lib/agent-vocabulary.ts) and writes its
+ * `args` in them. A library workflow reads the base key (`args.customerId`); a workflow written in this deployment
+ * reads what its author was taught (`args.companyId`). So a key is renamed to a base key only when the script
+ * reads that base key AND does not read the key as sent — never unconditionally. Everything else, values
+ * included, is passed through untouched, and validateWorkflowArgs then judges the result. Identity under the
+ * default profile, for a dynamic script, and for anything that is not a plain object.
+ */
+export function alignWorkflowArgs(script: string, args: unknown): unknown {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return args;
+  const read = argKeysRead(script);
+  if (!read) return args;
+  const asTaught = new Map<string, string>();
+  for (const base of read) {
+    const spoken = speakIdentifier(base);
+    if (spoken !== base && !read.has(spoken)) asTaught.set(spoken, base);
+  }
+  if (!asTaught.size) return args;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+    const base = read.has(k) ? undefined : asTaught.get(k);
+    out[base !== undefined && !(base in (args as Record<string, unknown>)) ? base : k] = v;
+  }
+  return out;
 }
 
 export interface ArgsProblem {

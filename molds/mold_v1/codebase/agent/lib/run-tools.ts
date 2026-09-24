@@ -17,6 +17,7 @@ import { defineTool } from "eve/tools";
 import { once } from "eve/tools/approval";
 import { z } from "zod";
 import { orgForSession, type SessionCtxLike } from "./org-context.ts";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 /** The front-end that owns the run routes + the sandbox runtime. */
 const WEB_ORIGIN = process.env.WEB_ORIGIN?.trim() || "https://fde-agent.vercel.app";
@@ -51,11 +52,15 @@ async function triggerRun(
     signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) throw new Error((data.error as string) ?? `The run failed (${res.status}).`);
+  if (!res.ok) {
+    // The route lists the keys the script reads (`expects`): say them, so a refusal can be corrected in one step.
+    const expects = Array.isArray(data.expects) && data.expects.length ? ` It reads: ${(data.expects as string[]).join(", ")}.` : "";
+    throw new Error(((data.error as string) ?? `The run failed (${res.status}).`) + expects);
+  }
   return data;
 }
 
-export const triggerWorkflowTool = defineTool({
+export const triggerWorkflowTool = modelFacing("trigger_workflow", defineTool({
   description:
     "RUN a saved workflow NOW, durably, and return its result. Use this whenever someone wants to EXECUTE or VALIDATE a workflow on demand — 'run the QBR workflow', 'trigger route-incident', 'show me the workflow working before we turn it on'. Pass the workflow NAME exactly as it appears in the Workflows list. A run delegates to subagents and SPENDS TOKENS, so it is gated on approval. Returns the runId (openable as a chat) plus the workflow's return value; if it hits the wall clock it reports timedOut and keeps running durably.",
   approval: once(),
@@ -90,9 +95,9 @@ export const triggerWorkflowTool = defineTool({
       result: data.result,
     };
   },
-});
+}), { opaqueInput: ["args"], opaqueOutput: ["result"] });
 
-export const runAppTool = defineTool({
+export const runAppTool = modelFacing("run_app", defineTool({
   description:
     "REFRESH an App NOW — regenerate its living document (running its workflow or prompt) on demand, instead of waiting for the app's cadence or a human clicking refresh in the Apps tab. Use when someone wants to see or validate an app's current output now. Pass the app NAME or slug (from list_apps). A refresh SPENDS TOKENS (it runs the app's source), so it is gated on approval. Returns whether it refreshed; read the fresh document in the Apps tab.",
   approval: once(),
@@ -108,4 +113,4 @@ export const runAppTool = defineTool({
     );
     return { refreshed: data.ok === true, app: data.app, error: data.error };
   },
-});
+}));

@@ -96,5 +96,13 @@
   },
   "agent": {
     "briefing": null
+  },
+  "persona": {
+    "$comment": "base: the root agent's built-in persona (the forward-deployed engineering orchestrator, its specialist roster, the system-of-record and stand-up sections). false drops it: the root prompt keeps only its neutral rules, and a pack's agent/instructions/50-pack-*.md supplies who the agent is.",
+    "base": true
+  },
+  "specialists": {
+    "$comment": "exclude: base specialists (directory names under agent/subagents/) this deployment does not use. Nothing is moved: their directories stay; they are left out of the subagent registry, every prompt's roster and list of names, the provisioned workflow library, and the eve build (scripts/eve-build.mjs hides them from eve only while it builds).",
+    "exclude": []
   }
 }

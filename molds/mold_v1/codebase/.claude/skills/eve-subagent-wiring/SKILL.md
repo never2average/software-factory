@@ -112,7 +112,8 @@ subagent's `instructions.md` output contract.
 
 The root agent sees each subagent's `agent.ts` description as a tool description. What a
 description cannot carry is order and boundaries between siblings. Do **not** edit
-`agent/instructions.md` for that. eve combines `agent/instructions.md` first, then every
+the root prompt (`agent/prompt-*.md`, rendered by `agent/instructions.ts`) for that. eve combines
+the root `agent/instructions.{md,ts}` first, then every
 `.md` and `.ts` entry of `agent/instructions/` *"in alphabetical order by filename"*
 (`node_modules/eve/docs/instructions.mdx`, "Split instructions across a directory"). So add
 a file:
@@ -219,9 +220,10 @@ None of these is required for a subagent to work, show up and be accounted for.
 | `AGENTS.md` "Capability flags" | the named `web_search` sites | if a subagent shipped **in the base app** declares `web_search`; a pack documents its own |
 | `.env.example` | a new environment variable | a new capability flag or secret, by name only |
 
-`agent/subagents/workflow-author/instructions.md:28` names seven built-in subagents in
+`agent/subagents/workflow-author/prompt.md:28` names seven built-in subagents in
 prose. Leave it: `instructions/10-declared-subagents.ts` appends the full discovered list
-after it and says it supersedes the shorter one.
+after it and says it supersedes the shorter one (and a profile's `specialists.exclude` drops an
+excluded name from both).
 
 ## Renaming or removing a subagent
 

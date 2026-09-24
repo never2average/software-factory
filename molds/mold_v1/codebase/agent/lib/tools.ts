@@ -36,6 +36,7 @@ import { getOnCall, pageOnCall } from "#lib/pagerduty.js";
 import { searchExa } from "#lib/exa.js";
 import { publishArtifact } from "#lib/artifact.js";
 import { UNASSIGNED_OWNER_EMAIL as UNASSIGNED_TRIAGE_OWNER } from "./unassigned.ts";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 /**
  * The verified caller's email from the session auth, never from the model.
@@ -65,7 +66,7 @@ function emailOrUndefined(value: string | undefined): string | undefined {
   return value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : undefined;
 }
 
-export const publishArtifactTool = defineTool({
+export const publishArtifactTool = modelFacing("publish_artifact", defineTool({
   description:
     "Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link (not a public URL — the blob is stored privately and the link expires). For TEXT artifacts (HTML report/dashboard, Markdown, CSV, SVG, JSON, plain text) pass `content`. For BINARY/OFFICE artifacts (.xlsx, .docx, .pptx, .pdf, images) GENERATE the file in the bash sandbox first (e.g. python openpyxl / python-docx / python-pptx / reportlab) and pass its sandbox `path` instead. Returns a signed https URL to hand back as a deliverable.",
   inputSchema: z.object({
@@ -113,9 +114,9 @@ export const publishArtifactTool = defineTool({
       note: "Private signed link — expires at expiresAt.",
     };
   },
-});
+}), { opaqueInput: ["content"] });
 
-export const webSearchTool = defineTool({
+export const webSearchTool = modelFacing("web_search", defineTool({
   description:
     "Search the web with Exa for current, external information — company/customer research, industry news, docs, competitors, anything not in the system of record. Returns titles, URLs, dates, and text snippets.",
   inputSchema: z.object({
@@ -125,7 +126,7 @@ export const webSearchTool = defineTool({
   async execute({ query, numResults }) {
     return await searchExa(query, numResults ?? 6);
   },
-});
+}), { opaqueOutput: "*" });
 
 /**
  * Keep only the rows belonging to the caller's workspace.
@@ -146,16 +147,16 @@ async function scopeToOrg<T extends { customerId?: string; id?: string }>(
   return rows.filter((r) => mine.has(r.customerId ?? r.id ?? ""));
 }
 
-export const listCustomersTool = defineTool({
+export const listCustomersTool = modelFacing("list_customers", defineTool({
   description:
     "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     return { customers: await listCustomers(await orgForSession(ctx)) };
   },
-});
+}));
 
-export const getCustomerTool = defineTool({
+export const getCustomerTool = modelFacing("get_customer", defineTool({
   description:
     "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions.",
   inputSchema: z.object({
@@ -166,9 +167,9 @@ export const getCustomerTool = defineTool({
     if (!customer) return { found: false as const, id };
     return { found: true as const, customer };
   },
-});
+}));
 
-export const upsertCustomerTool = defineTool({
+export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
   description:
     "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only provided fields are changed; nested domains (platform, deployments, solutions, implementation, tickets, interactions) are upserted alongside the customer row. Gated on approval since this mutates the team's source of truth.",
   approval: once(),
@@ -182,7 +183,7 @@ export const upsertCustomerTool = defineTool({
      */
     return { customer: await upsertCustomer(patch, await orgForSession(ctx)) };
   },
-});
+}));
 
 /** The per-interaction fields shared by the single and batch record tools. */
 const interactionInputShape = {
@@ -218,7 +219,7 @@ function toInteractionRow(input: InteractionInput, recordedByEmail: string | und
   };
 }
 
-export const recordInteractionTool = defineTool({
+export const recordInteractionTool = modelFacing("record_interaction", defineTool({
   description:
     "Append ONE interaction (meeting, email, call, Slack thread) to a customer's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.",
   inputSchema: z.object({
@@ -232,9 +233,9 @@ export const recordInteractionTool = defineTool({
     );
     return { ok: true, interactions: customer.interactions?.slice(0, 3) };
   },
-});
+}));
 
-export const recordInteractionsTool = defineTool({
+export const recordInteractionsTool = modelFacing("record_interactions", defineTool({
   description:
     "Append MANY interactions to a single customer's history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same customer — e.g. backfilling a history or logging a batch of meetings/emails.",
   inputSchema: z.object({
@@ -252,9 +253,9 @@ export const recordInteractionsTool = defineTool({
     );
     return { ok: true, count: interactions.length, interactions: customer.interactions?.slice(0, 3) };
   },
-});
+}));
 
-export const listStaleCustomersTool = defineTool({
+export const listStaleCustomersTool = modelFacing("list_stale_customers", defineTool({
   description:
     "List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, FDE owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.",
   inputSchema: z.object({
@@ -269,9 +270,9 @@ export const listStaleCustomersTool = defineTool({
   async execute({ days }, ctx) {
     return { staleCustomers: await scopeToOrg(await listStaleCustomers(days ?? 7), ctx) };
   },
-});
+}));
 
-export const readCustomerSlasTool = defineTool({
+export const readCustomerSlasTool = modelFacing("read_customer_slas", defineTool({
   description:
     "Read EVERY customer's SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-customer urgency/breach filters from each customer's own commitments instead of one global rule, and (b) check whether that customer's Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Customers in `missing` have no sla.json — fall back to the platform default.",
   inputSchema: z.object({}),
@@ -318,9 +319,9 @@ export const readCustomerSlasTool = defineTool({
       total: customers.length,
     };
   },
-});
+}));
 
-export const pageOncallTool = defineTool({
+export const pageOncallTool = modelFacing("page_oncall", defineTool({
   description:
     "Page the current on-call via PagerDuty for a genuine incident — an SLA breach, P0/P1 production issue, or outage. Idempotent on dedupKey (pass the ticket id, so re-paging updates the same incident, never duplicates). Use action:'resolve' with the same dedupKey to close it. No-op with a clear message when PagerDuty isn't configured. Gated on approval since it pages a human.",
   approval: once(),
@@ -335,18 +336,18 @@ export const pageOncallTool = defineTool({
   async execute(input) {
     return await pageOnCall(input);
   },
-});
+}));
 
-export const getOncallTool = defineTool({
+export const getOncallTool = modelFacing("get_oncall", defineTool({
   description:
     "Read who is currently on-call in PagerDuty (escalation policy, level, user, schedule). Use it to name the responder in a digest or before paging. Read-only; empty when PagerDuty read access isn't configured.",
   inputSchema: z.object({}),
   async execute() {
     return await getOnCall();
   },
-});
+}));
 
-export const listFdesTool = defineTool({
+export const listFdesTool = modelFacing("list_fdes", defineTool({
   description:
     "List the FDE (forward-deployed engineer) roster with live load. Reads every People/{id}/identity.json marked kind:'internal-fde' and joins the accounts each owns (customers.fde_owner) plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.",
   inputSchema: z.object({}),
@@ -393,9 +394,9 @@ export const listFdesTool = defineTool({
       .map((c) => ({ customerId: c.id, owner: c.fdeOwner }));
     return { roster, count: roster.length, unassigned, danglingOwners };
   },
-});
+}), { spokenOutput: ["kind"] });
 
-export const reassignOwnerTool = defineTool({
+export const reassignOwnerTool = modelFacing("reassign_owner", defineTool({
   description:
     "Reassign a customer's durable FDE owner (updates customers.fde_owner + the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership.",
   approval: once(),
@@ -420,9 +421,9 @@ export const reassignOwnerTool = defineTool({
     );
     return { ok: true, ...result };
   },
-});
+}));
 
-export const createTicketTool = defineTool({
+export const createTicketTool = modelFacing("create_ticket", defineTool({
   description:
     "Create a ticket in the system of record for a customer — e.g. a customer doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the customer's fde_owner. Gated on approval since it writes to the shared tickets store.",
   approval: once(),
@@ -446,12 +447,12 @@ export const createTicketTool = defineTool({
     const result = await createTicket({ ticketId, customerId, ...rest });
     return { ok: true, ...result };
   },
-});
+}));
 
 /** Placeholder owner for a draft when none is resolved — a human assigns the
  *  real FDE when promoting the draft, so intake never fails on owner lookup. */
 
-export const runEmailIntakeTool = defineTool({
+export const runEmailIntakeTool = modelFacing("run_email_intake", defineTool({
   description:
     "Run the FULL email intake in one deterministic step: read unread inbox mail (last `sinceDays` days), match each sender to a customer, and stage a Needs-Triage DRAFT ticket for every matched customer email (skips automated/no-reply; dedups by Message-ID). Returns { read, skipped, staged:[{ticketId,customerId,customerName,subject}], unmatched:[{sender,subject}] }. This IS the whole intake — do NOT also call email_list_inbox / match_customer_by_email / create_triage_ticket; just call this once and report its result.",
   inputSchema: z.object({
@@ -461,9 +462,9 @@ export const runEmailIntakeTool = defineTool({
   async execute({ sinceDays, max }) {
     return await runEmailIntake({ sinceDays, max });
   },
-});
+}));
 
-export const matchCustomerByEmailTool = defineTool({
+export const matchCustomerByEmailTool = modelFacing("match_customer_by_email", defineTool({
   description:
     "Deterministically match an inbound email sender to a customer — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on a customer's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.",
   inputSchema: z.object({
@@ -472,9 +473,9 @@ export const matchCustomerByEmailTool = defineTool({
   async execute({ sender }) {
     return await matchCustomerByEmail(sender);
   },
-});
+}));
 
-export const createTriageTicketTool = defineTool({
+export const createTriageTicketTool = modelFacing("create_triage_ticket", defineTool({
   description:
     "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the FDE owner and a human will assign it on approval.",
   inputSchema: z.object({
@@ -502,9 +503,9 @@ export const createTriageTicketTool = defineTool({
     });
     return { ok: true, ...result };
   },
-});
+}));
 
-export const promoteTicketTool = defineTool({
+export const promoteTicketTool = modelFacing("promote_ticket", defineTool({
   description:
     "Approve a draft ticket out of the triage queue: move a 'Needs Triage' ticket to an active status ('Open' by default). This is the human approval step for email-intake drafts — to discard one instead, resolve it. Gated on approval since it turns a proposal into a live ticket.",
   approval: once(),
@@ -519,27 +520,27 @@ export const promoteTicketTool = defineTool({
   async execute({ customerId, ticketId, toStatus }) {
     return { ticket: await setTicketStatus(customerId, ticketId, toStatus ?? "Open") };
   },
-});
+}));
 
-export const listTriageTicketsTool = defineTool({
+export const listTriageTicketsTool = modelFacing("list_triage_tickets", defineTool({
   description:
     "List the triage queue — draft tickets awaiting approval (status 'Needs Triage') across all customers, e.g. those staged by email intake. Each carries the customer, summary, description, priority, owner, and source. Use this to review what to promote (approve) or resolve (discard).",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     return { triageTickets: await scopeToOrg(await listTriageTickets(), ctx) };
   },
-});
+}));
 
-export const listUrgentTicketsTool = defineTool({
+export const listUrgentTicketsTool = modelFacing("list_urgent_tickets", defineTool({
   description:
     "List OPEN, URGENT tickets across all customers from the tickets store — P0-Critical/P1-High priority, SLA at-risk/breached, or past their due date — ranked most-urgent first. Each ticket carries urgencyRank, customer, summary, DESCRIPTION (the reported metric signal — uptime/accuracy/throughput incidents live here), next step, openedAt, and ageHours (the measured TAT, for reconciling against a TAT SLA commitment), plus due date. Use this to prioritize whoever most needs a change and to reconcile SLA breaches from ticket data.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     return { urgentTickets: await scopeToOrg(await listUrgentTickets(), ctx) };
   },
-});
+}));
 
-export const listFollowupsTool = defineTool({
+export const listFollowupsTool = modelFacing("list_followups", defineTool({
   description:
     "List open customer tickets/follow-ups across all customers (or one), sorted by the caller. Use this to prep the daily stand-up.",
   inputSchema: z.object({
@@ -548,9 +549,9 @@ export const listFollowupsTool = defineTool({
   async execute({ customerId }, ctx) {
     return { followUps: await scopeToOrg(await listFollowUps(customerId), ctx) };
   },
-});
+}));
 
-export const resolveFollowupTool = defineTool({
+export const resolveFollowupTool = modelFacing("resolve_followup", defineTool({
   description: "Mark a customer follow-up as done in the system of record.",
   approval: once(),
   inputSchema: z.object({
@@ -560,9 +561,9 @@ export const resolveFollowupTool = defineTool({
   async execute({ customerId, followUpId }) {
     return { resolved: await resolveFollowUp(customerId, followUpId) };
   },
-});
+}));
 
-export const emailListInboxTool = defineTool({
+export const emailListInboxTool = modelFacing("email_list_inbox", defineTool({
   description:
     "List/search the inbox over IMAP. Filter by sender, subject, unread-only, and recency. Returns uid, from, to, subject, date, and messageId (use messageId as inReplyTo when drafting a reply).",
   inputSchema: z.object({
@@ -581,9 +582,9 @@ export const emailListInboxTool = defineTool({
   async execute({ max, ...filters }) {
     return { emails: await listInbox({ ...filters, max: max ?? 10 }) };
   },
-});
+}), { opaqueOutput: "*" });
 
-export const emailCreateDraftTool = defineTool({
+export const emailCreateDraftTool = modelFacing("email_create_draft", defineTool({
   description:
     "Create an email DRAFT via IMAP (appended to the Drafts mailbox). This never sends — the draft lands in Drafts for a human to review and send from their mail client. Pass inReplyTo (a message's messageId) to draft a threaded reply.",
   inputSchema: z.object({
@@ -601,9 +602,9 @@ export const emailCreateDraftTool = defineTool({
     const draft = await createDraft(input);
     return { created: true as const, mailbox: draft.mailbox, uid: draft.uid };
   },
-});
+}));
 
-export const granolaSearchNotesTool = defineTool({
+export const granolaSearchNotesTool = modelFacing("granola_search_notes", defineTool({
   description:
     "Search Granola meeting notes by keyword to pull recent customer-call context and action items.",
   inputSchema: z.object({
@@ -613,4 +614,4 @@ export const granolaSearchNotesTool = defineTool({
   async execute({ query, limit }) {
     return await searchGranolaNotes(query, limit);
   },
-});
+}), { opaqueOutput: "*" });

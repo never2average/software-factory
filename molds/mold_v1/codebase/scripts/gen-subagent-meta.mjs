@@ -8,14 +8,21 @@
 // See docs/SUBAGENT_PACKS.md. Re-run after changing any subagent:  npm run build:subagent-meta
 import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { excludedSpecialists } from "./lib/profile-specialists.mjs";
+import { restoreHidden } from "./eve-build.mjs";
+
+// A build that died while it had excluded specialists hidden (scripts/eve-build.mjs) left them out of the tree:
+// put them back before discovering anything.
+restoreHidden();
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const SUB = join(ROOT, "agent/subagents");
 
 /** First `description: "..."` string in a source text (handles the prettier
- *  line break after the key and escaped quotes inside). */
+ *  line break after the key, escaped quotes inside, and the `speak("...")` a
+ *  base specialist wraps its description in — see agent/lib/agent-vocabulary.ts). */
 function extractDescription(src) {
-  const m = src.match(/description:\s*\n?\s*"((?:[^"\\]|\\.)*)"/);
+  const m = src.match(/description:\s*\n?\s*(?:speak\(\s*)?"((?:[^"\\]|\\.)*)"/);
   return m ? JSON.parse(`"${m[1]}"`) : null;
 }
 
@@ -83,10 +90,15 @@ function templateProblem(t) {
 
 const meta = {};
 const extraTemplates = [];
+// A profile's specialists.exclude: the directory stays, the specialist is left out of everything generated from
+// here (UI lists, labels, the workflow author's list, data-room templates) and out of the eve build
+// (scripts/eve-build.mjs). The default profile excludes nothing.
+const EXCLUDED = new Set(excludedSpecialists(ROOT));
 for (const name of readdirSync(SUB).sort()) {
   const dir = join(SUB, name);
   // A directory is a subagent only if it declares one; stray folders are not registered.
   if (!existsSync(join(dir, "agent.ts"))) continue;
+  if (EXCLUDED.has(name)) continue;
   let decl = {};
   if (existsSync(join(dir, "subagent.json"))) {
     try {

@@ -13,6 +13,7 @@ import { getDb, withOrgDb } from "./db/index.ts";
 import { todos } from "./db/schema.ts";
 import { orgForSession } from "./org-context.ts";
 import { taskWorkflowRequest } from "./task-workflow-service.ts";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 function callerEmail(ctx: {
   session: {
@@ -39,7 +40,7 @@ function requireDb() {
 const containerType = z.enum(["deployment", "implementation"]);
 const linkType = z.enum(["ticket", "customer", "app", "cron", "workflow", "chat"]);
 
-export const upsertTodoTool = defineTool({
+export const upsertTodoTool = modelFacing("upsert_todo", defineTool({
   description:
     "Create OR update a TODO — the FDE team's internal checklist item (NOT a customer ticket; use create_ticket for those). Omit `id` to create; pass `id` to update just the fields you provide. A todo can be filed under a Deployment or Implementation (the 'epic' — set container*), linked to a related object (a ticket/customer/app/cron/workflow/chat — set link*), assigned, prioritised, and given a due date. Use this for 'remind me to X', 'add a todo to Y', or to mark one done.",
   approval: once(),
@@ -92,9 +93,9 @@ export const upsertTodoTool = defineTool({
     );
     return { created: true as const, todo: { id: item.id, title: item.title } };
   },
-});
+}));
 
-export const listTodosTool = defineTool({
+export const listTodosTool = modelFacing("list_todos", defineTool({
   description:
     "List the team's TODOs (the internal checklist), newest first. By default only OPEN, non-archived items; pass includeDone to also show completed ones.",
   inputSchema: z.object({
@@ -127,9 +128,9 @@ export const listTodosTool = defineTool({
       }));
     return { todos: items };
   },
-});
+}));
 
-export const hideTodoTool = defineTool({
+export const hideTodoTool = modelFacing("hide_todo", defineTool({
   description:
     "Hide a TODO — archives it (soft delete; recoverable), removing it from the list. Use list_todos to get the id.",
   approval: once(),
@@ -143,11 +144,11 @@ export const hideTodoTool = defineTool({
     );
     return { hidden: true as const, id: item.id, title: item.title };
   },
-});
+}));
 
 import { cycles } from "./db/schema.ts";
 
-export const listCyclesTool = defineTool({
+export const listCyclesTool = modelFacing("list_cycles", defineTool({
   description:
     "List the team's cycles (sprints) — for filing todos into with upsert_todo. Returns id, name, and window.",
   inputSchema: z.object({}),
@@ -172,9 +173,9 @@ export const listCyclesTool = defineTool({
       })),
     };
   },
-});
+}));
 
-export const upsertCycleTool = defineTool({
+export const upsertCycleTool = modelFacing("upsert_cycle", defineTool({
   description:
     "Create OR update a cycle (sprint) — a time-boxed window that groups todos. Omit `id` to create; pass `id` to update. Then file todos into it with upsert_todo (cycleId).",
   approval: once(),
@@ -208,4 +209,4 @@ export const upsertCycleTool = defineTool({
     );
     return { created: true as const, cycle: { id: c.id, name: c.name } };
   },
-});
+}));

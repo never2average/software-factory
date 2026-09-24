@@ -8,6 +8,11 @@
 import { SUBAGENT_KEYS } from "./subagent-meta.generated.ts";
 
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
+// Under a profile that relabels the domains the agent's tools are called in its words (`get_company`) and their
+// results carry its keys (`companies`, `analystOwner`): recognise both, by the BASE name (agent-vocabulary.ts).
+import { baseNameAmong, fieldOf } from "../../agent/lib/agent-vocabulary.ts";
+
+const RECORD_TOOLS = ["list_customers", "get_customer", "list_followups", "trigger_workflow", "run_app"] as const;
 export interface SubagentRun {
   callId: string;
   name: string;
@@ -248,8 +253,9 @@ function describeEvent(inner: StreamEvent): string | null {
   }
 }
 
-function applyToolResult(state: Insights, tool: string, out: Record<string, unknown>): Insights {
+function applyToolResult(state: Insights, modelTool: string, out: Record<string, unknown>): Insights {
   let next = state;
+  const tool = baseNameAmong(modelTool, RECORD_TOOLS);
   const addPerson = (name?: unknown, role?: string, account?: string) => {
     if (typeof name !== "string" || name.length === 0) return;
     for (const person of splitPeople(name)) {
@@ -260,8 +266,10 @@ function applyToolResult(state: Insights, tool: string, out: Record<string, unkn
     }
   };
 
-  if (tool === "list_customers" && Array.isArray(out.customers)) {
-    for (const c of out.customers as Array<Record<string, unknown>>) {
+  const listed = fieldOf(out, "customers");
+  const fetched = fieldOf(out, "customer");
+  if (tool === "list_customers" && Array.isArray(listed)) {
+    for (const c of listed as Array<Record<string, unknown>>) {
       if (typeof c.id === "string") {
         next = {
           ...next,
@@ -277,8 +285,8 @@ function applyToolResult(state: Insights, tool: string, out: Record<string, unkn
         // context. People come from FOCUSED lookups (get_customer) instead.
       }
     }
-  } else if (tool === "get_customer" && out.customer) {
-    const c = out.customer as Record<string, unknown>;
+  } else if (tool === "get_customer" && fetched) {
+    const c = fetched as Record<string, unknown>;
     if (typeof c.id === "string") {
       next = {
         ...next,
@@ -291,7 +299,7 @@ function applyToolResult(state: Insights, tool: string, out: Record<string, unkn
       // The owner's label is the deployment's word ("FDE owner" by default, "Covering analyst" on a research
       // deployment): it is shown next to a person's name and email, where the old product's word read as a
       // status the person had not earned yet.
-      addPerson(c.fdeOwner, DEPLOYMENT_PROFILE.vocabulary.owner, String(c.name ?? c.id));
+      addPerson(fieldOf(c, "fdeOwner"), DEPLOYMENT_PROFILE.vocabulary.owner, String(c.name ?? c.id));
       if (Array.isArray(c.tickets)) {
         for (const ticket of c.tickets as Array<Record<string, unknown>>) {
           if (typeof ticket.ticketId === "string") {
@@ -318,7 +326,7 @@ function applyToolResult(state: Insights, tool: string, out: Record<string, unkn
             id: ticket.ticketId,
             label: String(ticket.summary ?? ticket.ticketId),
             sub:
-              [ticket.customerName, ticket.ticketDueDate, ticket.ticketPriority]
+              [fieldOf(ticket, "customerName"), ticket.ticketDueDate, ticket.ticketPriority]
                 .filter(Boolean)
                 .join(" · ") || undefined,
           }),

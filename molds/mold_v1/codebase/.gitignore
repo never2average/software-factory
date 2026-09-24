@@ -38,3 +38,6 @@ __pycache__/
 # pdf.js runtime data (wasm decoders, cmaps, fonts) copied from node_modules by
 # scripts/copy-pdfjs-assets.mjs on prebuild/predev.
 public/pdfjs/
+
+# scripts/eve-build.mjs: a deployment profile's excluded specialists, hidden from eve only while it builds.
+.eve-build-hidden/

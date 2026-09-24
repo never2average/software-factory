@@ -320,6 +320,22 @@ jobs:
         if: always()
         run: npm run check:wire-names
 
+      # The same bug one layer further in: what the eve agent's MODEL reads. A research deployment whose profile
+      # calls customers "Companies" had an agent reasoning "Customers/ is shown as Companies… companies under
+      # Customers/{customer_id}/", because its prompt, its tools (list_customers, customer_id), its folders and
+      # its per-turn briefing all spoke the base product's words. This renders the whole model-facing surface
+      # (prompts, briefing, every tool's name/description/parameters, the roster and every specialist's prompt,
+      # real tool results) under a copy of that profile and fails on any base word; and holds the DEFAULT
+      # profile's surface byte-identical to the snapshot taken before the vocabulary work.
+      - name: Agent vocabulary comes from the deployment profile (model-facing surface)
+        if: always()
+        run: npm run check:agent-vocabulary
+
+      # …and that what the model WRITES in the profile's words lands in storage exactly where it always did.
+      - name: Agent vocabulary round-trips to unchanged storage (behavioural)
+        if: always()
+        run: npm run test:agent-vocabulary
+
       # And the migration those names rest on, which is invisible in a diff: an
       # assistant that learned the old tool name is still answered, a deployment
       # still set with FDE_* still reads it (once, loudly), and an analyst signed in

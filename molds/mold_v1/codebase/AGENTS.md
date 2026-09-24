@@ -49,7 +49,12 @@ What a deployment is *for* (the product name, what a "customer" and an "FDE" are
 which data-room domains show and under what label, the starter tree, the chat's opening
 lines, a short per-turn briefing for the model) is a **deployment profile**: JSON files
 added under `profiles/`, never an edit to a component. See
-[`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md).
+[`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md). When a profile relabels the
+domains, the agent's model reads only its words: tool names, parameters, results, paths,
+prompts and the roster are translated at the tool boundary (`agent/lib/agent-vocabulary.ts`),
+storage never moves, and `npm run check:agent-vocabulary` proves both halves. Every tool is
+exported through `modelFacing(...)`; the root prompt is `agent/prompt-*.md`, rendered by
+`agent/instructions.ts`, and a base specialist's is its `prompt.md`.
 
 Each deployment publishes **its own npm package for coding agents**, built from its build of
 this codebase by `npm run build:agent-cli` (address, product name, skills from

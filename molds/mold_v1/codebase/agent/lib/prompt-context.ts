@@ -6,6 +6,7 @@
  * records this application adds to Eve's system instructions.
  */
 import type { ModelMessage } from "ai";
+import { outputForModel, speak } from "./agent-vocabulary.ts";
 
 export const STABLE_PROMPT_BOUNDARY = "<!-- stable-prompt-end -->";
 export const ORGANIZATION_POLICY_MARKER = "<!-- organization-policy -->";
@@ -196,7 +197,7 @@ export function renderContextBlock(input: {
     `<volatile-context name="${input.name}" trust="untrusted">`,
     `## ${input.name}`,
     "",
-    input.guidance,
+    speak(input.guidance),
     "",
   ].join("\n");
   const suffix = "\n</volatile-context>";
@@ -206,7 +207,8 @@ export function renderContextBlock(input: {
   let used = prefix.length + suffix.length;
   for (const entry of input.entries.filter((candidate) => isContextVisible(candidate, input.viewer)).slice(0, input.maxItems)) {
     const remaining = maxChars - used - (lines.length > 0 ? 1 : 0);
-    const line = serializeEnvelope(entry, remaining);
+    // The records in the deployment's words (keys, stored enum values, paths, memory scopes); identity by default.
+    const line = serializeEnvelope({ ...entry, data: outputForModel(entry.data) }, remaining);
     if (!line) continue;
     lines.push(line);
     used += line.length + (lines.length > 1 ? 1 : 0);

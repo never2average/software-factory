@@ -241,7 +241,19 @@ cannot be cleared.*
 
 | Key | Meaning | Default |
 |---|---|---|
-| `agent.briefing` | Free text the model receives on every turn, inside the "This deployment" block (below). At most 400 words: it is paid for on every turn. | `null` |
+| `agent.briefing` | Free text the model receives on every turn, inside the "This deployment" block (below; "This workspace" when the profile relabels). At most 400 words: it is paid for on every turn. Under a relabelling profile it is spoken in the profile's words like everything else the model reads, but write it in them to begin with. | `null` |
+
+### `persona`
+
+| Key | Meaning | Default |
+|---|---|---|
+| `persona.base` | Keep the base product's persona in the root prompt: the forward-deployed engineering orchestrator, its specialist roster, the customer spreadsheet, the daily stand-up (`agent/prompt-persona.md`). `false` drops it: the root prompt keeps only its neutral rules (`agent/prompt-core.md`, opened by `agent/prompt-neutral.md`), and the pack's `agent/instructions/50-pack-*.md` says who the agent is and what the work is. | `true` |
+
+### `specialists`
+
+| Key | Meaning | Default |
+|---|---|---|
+| `specialists.exclude` | Base specialists (directory names under `agent/subagents/`) the deployment does not use. They leave the model's roster (eve makes every directory under `agent/subagents/` a tool the model can delegate to, and has no switch to hide one), the persona's roster and every prompt's list of names, the subagent registry, the UI lists and the workflow author's list. Nothing is moved: the directories stay tracked, so a git checkout of a stamped build regenerates the same tree. `scripts/gen-subagent-meta.mjs` leaves them out of the registry; the provisioned workflow library drops any workflow that delegates to one (`agent/lib/workflow-library-view.ts`); and `npm run build:eve` / `dev:eve` run eve through `scripts/eve-build.mjs`, which hides their directories from eve for the length of that one command and restores them however it ends (a run killed mid-build is restored by the next run, or by `node scripts/eve-build.mjs --restore`). Run `eve build` directly and they are back in the roster. A name that is not a subagent fails the build. | `[]` |
 
 ## Merge rules
 
@@ -283,9 +295,10 @@ Conventional numbering:
 
 ## What a profile deliberately does NOT change
 
-Identifiers. Code, stored data, other systems and the model's tools key on these, and a
-deployment that renamed them would stop being able to read its own data or take an
-upstream update:
+Identifiers **in storage and on the wire to other programs**. Code, stored data, the API, the MCP
+server and the coding-agent CLI key on these, and a deployment that renamed them would stop being able
+to read its own data or take an upstream update. (What the eve agent's MODEL reads is translated at the
+tool boundary instead: see "How the agent sees it" below.)
 
 - **Data-room folder names and path templates**: `Customers/`, `Platform/`,
   `Deployments/`, `Solutions/`, `Implementation/`, `Tickets/`, `People/`, `Uploads/`,
@@ -295,8 +308,9 @@ upstream update:
   `customer_name`, `fde_owner`… They are data, and the agent reads them by name.
 - **Database tables and fields**, and the JSON keys of every API payload.
 - **API routes** (`/api/ops/*`, `/api/dataroom`…).
-- **Tool, skill and subagent names**: `list_customers`, `get_customer`,
-  `onboard-customer`, `onboard-self`…
+- **Tool, skill and subagent names, as code and the MCP server know them**: `list_customers`,
+  `get_customer`, `onboard-customer`, `onboard-self`… (the eve agent's model is given the
+  relabelled names; the base names keep working for every other caller)
 - **The session issuer and audience**: `"delivered"` / `"delivered-app"`
   (`lib/auth-session.ts`; pinned by `scripts/check-gates.mjs`). Renaming the product does
   not re-issue anybody's session.
@@ -307,40 +321,96 @@ upstream update:
   by `lib/mcp-connect.ts` — see `docs/MCP.md`.)
 - **Icon and colours**: `app/icon.svg` and `app/globals.css` are a branding step's
   concern, not the profile's.
-- **The static system prompt** (`agent/instructions.md`, `agent/instructions/*`). It is
-  cached and shared; the profile speaks to the model through the per-turn block below.
+- **Memory scopes in storage**: a relabelled deployment's model writes `company:{id}`; it is
+  stored as the `customer` kind (the `memory_scope` column is a Postgres enum) and read back
+  as `company:{id}`, and older `customer:{id}` rows read as the same scope.
 
 ## How the agent sees it
 
-`agent/lib/deployment-briefing.ts` renders the profile as a short **"## This
-deployment"** block, and `agent/instructions/runtime-context.ts` appends it on every turn
-**after** the stable prompt, so the cached prompt is identical for every deployment.
+Under the default profile: exactly as before this existed. The root prompt is rendered at eve build
+time by `agent/instructions.ts` from `agent/prompt-core.md` and `agent/prompt-persona.md`, and is the
+former `agent/instructions.md` byte for byte; every tool, parameter, description and result is the
+same object; `check:agent-vocabulary` holds the whole default surface to a snapshot.
 
-The block states vocabulary as a *reading rule*, because the identifiers do not move:
+Under a profile that **relabels** (the account, the member, either record area or a data-room folder
+has a word of its own), the model reads only the profile's words, everywhere
+(`agent/lib/agent-vocabulary.ts`, translating at the boundary so storage never moves):
 
-- if `vocabulary.account` is not "customer": a "customer" is called a **company**; say
-  "company" to people; `list_customers`, `customer_id` and `Customers/` all refer to
-  companies;
-- if `vocabulary.member` is not "FDE": who the model works for, and how to read "FDE" and
-  "FDE owner" in its instructions;
-- hidden domains: this deployment does not use them; do not offer, plan or write work
-  under them unless a person explicitly asks;
-- relabelled domains: what people see each folder called, and that paths keep the real
-  name;
-- a redefined area (`domains`): what the area MEANS here and what to call it; that reads still go through
-  `get_customer` (`deployments[]` / `implementation`) and writes through `upsert_customer`, under the same
-  `Deployments/` / `Implementation/` folders and the same TODO `containerType`; what a group is; which field
-  carries the kinds and what they are; the relabelled fields (`` `deployedVersion`="Period / basis" ``); the enum
-  display words with their values (`"Published" is deployed`), leaving out words that only differ from the value
-  in case; and the unused fields, with the fixed values to write in the required ones. Up to eight unused fields
-  are named; beyond that the block names four and states the rule ("use only the fields named above"), because
-  a list of 37 field names would be paid for on every turn. Its own fields (`custom_fields`): where they are
-  written (`deployments[].custom` / `implementation.custom`), and each key with its label, type, choices and
-  whether it is required. An area left at its defaults adds nothing;
-- then `agent.briefing`, verbatim.
+| What the model reads | Base | Relabelled (the hfc-research profile) |
+|---|---|---|
+| tool names | `list_customers`, `get_customer`, `upsert_customer`, `list_fdes`, `read_customer_slas` | `list_companies`, `get_company`, `upsert_company`, `list_analysts`, `read_company_slas` |
+| parameters and result keys | `customerId`, `customer_id`, `fdeOwner`, `deployments[].deploymentId`, `implementation.rolloutId` | `companyId`, `company_id`, `analystOwner`, `coverageReports[].coverageReportId`, `portfolioEntry.portfolioId` |
+| enum values | `Waiting on Customer`, `customer-vpc`, TODO `containerType` `deployment` | `Waiting on Company`, `company-vpc`, `coverageReport` |
+| data-room paths (in and out) | `Customers/acme/…`, `Deployments/…`, `Implementation/…` | `Companies/acme/…`, `Coverage-reports/…`, `Portfolios/…` (the label as a folder name) |
+| memory scopes | `customer:{id}` | `company:{id}` |
+| descriptions, prompts, the per-turn block | "customer", "FDE owner", "deployment" | "company", "covering analyst", "coverage report" |
 
-For the default profile the function returns **`null`** and nothing is appended: the
-default deployment's prompt is exactly what it was.
+**The rule: the product's words are translated, user data never is — in either direction.** Product words are
+tool names, parameter and result keys, the value of a field whose schema declares it an enum, the folder at the
+head of a path in a data-room path field, a memory scope's prefix, and the text a tool itself writes to the
+model (a top-level `error` / `next`, spoken so that every id, name and quoted value in it stays as it is). Every
+other string — record names, notes, reasons, ids, memory values, file contents, a workflow's args values and
+its return value, a profile's own custom-field keys and choices, the profile's own labels and briefing — passes
+through exactly as written or stored. A sandbox path (publish_artifact's `path`, read_image's `sandboxPath`) is
+the model's own scratch space and is never translated: under a relabel the model lays sandbox files out in the
+words it was taught (`/workspace/dataroom/Companies/…`), and only a data-room path field is mapped to storage.
+
+How each surface gets there:
+
+- **Tools.** Every tool is exported as `modelFacing("<file slug>", defineTool({...}))`
+  (`agent/lib/model-facing/tools/model-facing.ts`). By default that returns the tool itself. Relabelled,
+  it returns a tool whose description and JSON Schema are spoken in the profile's words, whose input is
+  translated back (parameter names, enum values, a display folder at the head of a path) and validated by
+  the base zod schema before the base tool runs, and whose result is translated out (keys, stored enum
+  values, paths, memory scopes, the tool's own messages; file content and external pages are left as
+  stored). A tool whose name changes is a `defineDynamic` resolver, the only kind eve names by its own key,
+  so the base name is never offered to the model. It resolves on every turn (`turn.started`), so a session begun
+  before the relabel was deployed still gets it. A free-form `args` object (trigger_workflow) has its keys mapped
+  back to the product keys the model was taught (`companyId` → `customerId`), so a library workflow reading
+  `args.customerId` runs, and its refusal names keys the way the model wrote them. The CLI, the API and the MCP server never go through
+  these objects and keep the base names.
+- **The root prompt.** `persona.base: false` replaces the persona with a neutral opening; everything left is
+  spoken in the profile's words; excluded specialists leave the roster.
+- **Each base specialist's prompt** is its `prompt.md`, spoken by its `instructions.ts`
+  (`speakPrompt`), and its `agent.ts` description is wrapped in `speak(...)`. The prompts are compiled into
+  `agent/lib/prompts.generated.ts` by `npm run build:prompts` (part of `build:generated`).
+- **The per-turn block** (`agent/lib/deployment-briefing.ts`, appended by
+  `agent/instructions/runtime-context.ts`) states the deployment's words and fields, written with the base
+  identifiers and spoken through the same translation the tools use, so the two cannot disagree. It never
+  names a base identifier: the old "the identifiers do not change: `list_customers`, `customer_id`,
+  `Customers/` refer to companies" taught the model a second vocabulary, and it reasoned in that one.
+- **Context blocks** (memory recall, schedules, roster) are translated like tool results: keys and memory scope
+  prefixes, never the saved values.
+- **The workflow library** a workspace is provisioned with (`agent/lib/workflow-library-view.ts`): workflows that
+  delegate to an excluded specialist are not provisioned; the others' descriptions, steps and prompt literals
+  are spoken, their code (`args.customerId`, specialist names) is not.
+- **The web app** reads a transcript by base names (`baseNameAmong`, `fieldOf`), so the Insights rail and the
+  tool labels work with either vocabulary.
+
+The block, for a relabelling profile:
+
+- the account's word and the tools, field and folder that carry it (`list_companies`, `company_id`,
+  `Companies/`);
+- who the model works for, and the owner's label;
+- hidden domains: this workspace does not use them; do not offer, plan or write work under them unless a
+  person explicitly asks;
+- the data-room folders by name;
+- a redefined area (`domains`): what it means here, where it is read and written (`get_company`
+  (`coverageReports[]`), `upsert_company`, `Coverage-reports/`, TODO `containerType` `coverageReport`), what a
+  group is, which field carries the kinds, the relabelled fields, the enum display words with the values the
+  model's tools use ("Published" is `deployed`), its own fields, and the unused fields (up to eight
+  named, then the rule);
+- then `agent.briefing`.
+
+A profile that only hides domains or redefines fields without renaming anything keeps the base identifiers,
+and its block still says so ("Identifiers stay: read with `get_customer` …"). For the default profile the
+function returns **`null`** and nothing is appended.
+
+What the translation does not reach, by design: the contents of stored files (a `.jsonl` row keeps the keys
+it was written with; `dataroom_read` returns it as stored), pages from the web, remote MCP tools' answers, and
+a kept specialist's NAME (the model delegates by directory name: exclude a base specialist whose name carries
+a relabelled word; the generator warns about one). A pack's own prompts, skills and sandbox files are the
+pack's words: write them in the profile's (see [`SUBAGENT_PACKS.md`](SUBAGENT_PACKS.md)).
 
 ## How a subagent pack ships one
 
@@ -530,6 +600,8 @@ company. The list keys such rows on customer + id and sends the real id to the A
 ```bash
 npm run build:deployment-profile   # merge + validate + write both generated files
 npm run test:deployment-profile    # merge rules, domains (defaults exact, example validates, bad profiles fail), the briefing; offline
+npm run check:agent-vocabulary     # the model-facing surface under a relabelling fixture has no base word; the default's is unchanged
+npm run test:agent-vocabulary      # what the model writes in the profile's words lands in unchanged storage; specialists.exclude moves and restores
 npm run test:custom-fields         # the custom-field validator, the agent's write path, the MCP inputs, the migration; offline
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
 npm run check:generated            # fails if a generated file is stale

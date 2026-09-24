@@ -717,7 +717,8 @@ check(
 // ---------------------------------------------------------------------------
 console.log("\nThe agent knows when to reach for it:");
 
-const instructions = readFileSync(join(ROOT, "agent/instructions.md"), "utf8");
+// The root prompt as the model gets it: rendered from the profile (agent/instructions.ts).
+const instructions = (await import("../agent/lib/root-instructions.ts")).renderRootInstructions();
 check("the instructions name read_image", instructions.includes("read_image"));
 check("...and say the thing that is not obvious: an empty text extraction means a SCAN", /SCAN/.test(instructions));
 check(

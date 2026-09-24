@@ -43,7 +43,8 @@ check("PyPDF2 is not relied on (it is the unmaintained name pypdf replaced)", !p
 // agent needs is that a missing module is recoverable AT RUNTIME. It was absent: the only mention of
 // installing lived inside the "producing a deliverable" section, so an agent READING an uploaded file
 // never reached it, gave up after two import errors, and the turn died.
-const instr = readFileSync(new URL("../agent/instructions.md", import.meta.url), "utf8");
+// The root prompt as the model gets it: rendered from the profile (agent/instructions.ts).
+const instr = (await import("../agent/lib/root-instructions.ts")).renderRootInstructions();
 check("the agent is told a missing library never ends a task", /missing library never ends a task/i.test(instr));
 check("...with a command that works whether or not the image manages python packages",
   /break-system-packages/.test(instr) && /--user/.test(instr));

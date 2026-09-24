@@ -25,6 +25,7 @@ import {
   rememberMemory,
 } from "./memory-store.ts";
 import { orgForSession } from "./org-context.ts";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 /**
  * The memory author comes from the verified session auth, never from the
@@ -46,7 +47,7 @@ function memoryAuthor(ctx: {
   return caller?.principalId ?? "unknown";
 }
 
-export const rememberTool = defineTool({
+export const rememberTool = modelFacing("remember", defineTool({
   description:
     "Save one durable fact to the team's SHARED long-term memory so it is recalled in future sessions — by you and by every teammate (Postgres `memories` table when configured; in-process fallback otherwise). Scope it: 'team' (recalled on every turn for everyone), 'customer:{id}' (recalled whenever that customer comes up, e.g. 'customer:acme-bank'), or 'person:{email-or-slug}' (recalled whenever that person comes up). Saving an existing (scope, key) updates the value in place. Never save secrets, passwords, or one-time codes.",
   inputSchema: z.object({
@@ -80,9 +81,9 @@ export const rememberTool = defineTool({
     });
     return { saved: true as const, memory };
   },
-});
+}));
 
-export const listMemoriesTool = defineTool({
+export const listMemoriesTool = modelFacing("list_memories", defineTool({
   description:
     "List the team's shared long-term memories (saved by anyone on the team via `remember`), optionally filtered to one scope ('team', 'customer:{id}', or 'person:{id}'). Newest-updated first.",
   inputSchema: z.object({
@@ -93,9 +94,9 @@ export const listMemoriesTool = defineTool({
   async execute({ scope }, ctx) {
     return { memories: await listMemories(scope, await orgForSession(ctx)) };
   },
-});
+}));
 
-export const forgetTool = defineTool({
+export const forgetTool = modelFacing("forget", defineTool({
   description:
     "Delete one memory from the team's shared long-term memory by scope + key. This removes it for every teammate, so it is gated on approval.",
   approval: once(),
@@ -106,4 +107,4 @@ export const forgetTool = defineTool({
   async execute({ scope, key }, ctx) {
     return { deleted: await forgetMemory(scope, key, await orgForSession(ctx)) };
   },
-});
+}));

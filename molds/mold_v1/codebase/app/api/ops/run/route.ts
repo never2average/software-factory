@@ -15,7 +15,8 @@ import {
 } from "@/lib/workflow-journal";
 import { runWorkflowScript } from "@/lib/workflow-runtime";
 import { workflowDataFor } from "@/lib/workflow-data";
-import { coerceWorkflowArgs, validateWorkflowArgs } from "@/lib/workflow-args";
+import { alignWorkflowArgs, coerceWorkflowArgs, validateWorkflowArgs } from "@/lib/workflow-args";
+import { workflowAvailability } from "@/lib/workflow-availability";
 import { stripTypes } from "@/lib/workflow-ts";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 
@@ -134,6 +135,8 @@ export async function POST(request: NextRequest) {
     );
     if (!wf) return NextResponse.json({ error: `Workflow "${target}" not found.` }, { status: 404 });
     if (!wf.enabled) return NextResponse.json({ error: "This workflow is paused." }, { status: 409 });
+    const availability = workflowAvailability(wf);
+    if (!availability.available) return NextResponse.json({ error: availability.reason }, { status: 409 });
     const script = wf.script?.trim();
     if (!script) return NextResponse.json({ error: "This workflow has no script yet." }, { status: 409 });
     const analysis = analyzeWorkflowScript(script);
@@ -156,6 +159,8 @@ export async function POST(request: NextRequest) {
      */
     const coerced = coerceWorkflowArgs(parsed.data.args);
     if (coerced.error) return NextResponse.json({ error: coerced.error }, { status: 400 });
+    // Keys the model wrote in the deployment's words go to the base key only where THIS script reads the base key.
+    coerced.args = alignWorkflowArgs(script, coerced.args);
     const argsProblem = validateWorkflowArgs(script, coerced.args);
     if (argsProblem) {
       return NextResponse.json(

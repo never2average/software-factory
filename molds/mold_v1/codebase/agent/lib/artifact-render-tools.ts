@@ -28,6 +28,7 @@ import {
   buildDomainWorkbookSpec,
 } from "#lib/workbook-spec.js";
 import { publishArtifact } from "#lib/artifact.js";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 /**
  * The verified caller's email from the session auth, never from the model.
@@ -57,7 +58,7 @@ function emailOrUndefined(value: string | undefined): string | undefined {
   return value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : undefined;
 }
 
-export const renderAccountReportTool = defineTool({
+export const renderAccountReportTool = modelFacing("render_account_report", defineTool({
   description:
     "Render a deterministic, self-contained HTML account report for one customer straight from the system of record (header, ranked open follow-ups, recent interactions, deployments, platform summary) and PUBLISH it via the private signed-link artifact path. Pass scope:'dataroom' for the all-customers data-room index instead. Returns the signed url + expiresAt.",
   inputSchema: z.object({
@@ -97,9 +98,9 @@ export const renderAccountReportTool = defineTool({
       note: "Private signed link — expires at expiresAt.",
     };
   },
-});
+}));
 
-export const buildWorkbookSpecTool = defineTool({
+export const buildWorkbookSpecTool = modelFacing("build_workbook_spec", defineTool({
   description:
     "Build the DETERMINISTIC workbook spec(s) for a customer per docs/data-model.md: for each <Domain>/Master.xlsx the exact sheet names, column headers, and data rows from the system of record (Tickets carries Tickets + Interactions + derived Interaction Digest; People carries Internal Staff + Customer Stakeholders). Returns JSON to serialize verbatim to .xlsx in the bash sandbox with openpyxl (one sheet per SheetSpec, columns as row 1), then publish via publish_artifact with the sandbox path. Do NOT invent or reorder columns.",
   inputSchema: z.object({
@@ -122,4 +123,4 @@ export const buildWorkbookSpecTool = defineTool({
       : await buildCustomerWorkbookSpecs({ customerId, now });
     return { customerId, workbooks: specs };
   },
-});
+}), { spokenOutput: ["name", "columns"] });

@@ -18,7 +18,8 @@ import {
 } from "@/lib/workflow-journal";
 import { stripTypes } from "@/lib/workflow-ts";
 import { analyzeWorkflowScript } from "@/lib/workflow-validate";
-import { coerceWorkflowArgs, validateWorkflowArgs } from "@/lib/workflow-args";
+import { alignWorkflowArgs, coerceWorkflowArgs, validateWorkflowArgs } from "@/lib/workflow-args";
+import { workflowAvailability } from "@/lib/workflow-availability";
 import { orgContextForRequest } from "@/lib/org-context";
 import { mintSessionToken } from "@/lib/auth-session";
 import { verifyOpsAuth } from "@/lib/ops-auth";
@@ -100,6 +101,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!script) {
     return NextResponse.json({ error: "This workflow has no script yet." }, { status: 409 });
   }
+  const availability = workflowAvailability({ name: workflow.name, script });
+  if (!availability.available) return NextResponse.json({ error: availability.reason }, { status: 409 });
 
   // Refuse a script the validator rejects, even though the sandbox would also
   // deny it — an operator should never watch a run start and then die on
@@ -121,6 +124,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
    */
   const coerced = coerceWorkflowArgs(parsed.data.args);
   if (coerced.error) return NextResponse.json({ error: coerced.error }, { status: 400 });
+  coerced.args = alignWorkflowArgs(script, coerced.args);
   const argsProblem = validateWorkflowArgs(script, coerced.args);
   if (argsProblem) {
     return NextResponse.json(

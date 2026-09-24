@@ -36,6 +36,7 @@ import {
   type DeploymentSignoffRecord,
   type SignoffRole,
 } from "#lib/dataroom-schema.js";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 // ---------------------------------------------------------------------------
 // Verified caller (replicated locally to keep agent/lib/tools.ts untouched)
@@ -155,7 +156,7 @@ function parseSignoffFrontMatter(text: string): Record<string, unknown> {
 // record_signoff
 // ---------------------------------------------------------------------------
 
-export const recordSignoffTool = defineTool({
+export const recordSignoffTool = modelFacing("record_signoff", defineTool({
   description:
     "Record an authoritative deployment signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deployments/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision.",
   approval: once(),
@@ -237,7 +238,7 @@ export const recordSignoffTool = defineTool({
     });
     return { recorded: true as const, path: documentPath, status };
   },
-});
+}));
 
 // ---------------------------------------------------------------------------
 // get_signoff_status
@@ -259,7 +260,7 @@ interface ComponentReport {
   parties: Record<SignoffRole, PartyReport>;
 }
 
-export const getSignoffStatusTool = defineTool({
+export const getSignoffStatusTool = modelFacing("get_signoff_status", defineTool({
   description:
     "Read the deployment signoff chain for a deployment and report each party's status per infrastructure component, plus whether each component's four-party chain is complete (every party approved or waived). Parties with no record report as not_requested. Omit component to report every component that has signoff records.",
   inputSchema: z.object({
@@ -320,4 +321,4 @@ export const getSignoffStatusTool = defineTool({
 
     return { customerId, platformVersionId, components };
   },
-});
+}));

@@ -48,7 +48,7 @@ contradict each other):**
   `${label}.xlsx` after the tab label (e.g. `People.xlsx`, `Customers.xlsx`).
   Canonical target: `<Domain>/Master.xlsx`, with the people sheets in
   `People/Master.xlsx`.
-- `agent/subagents/research/instructions.md` currently builds six
+- `agent/subagents/research/prompt.md` currently builds six
   `<customer>-<Section>.xlsx` files and packs Internal Staff / Customer
   Stakeholders into the Customers workbook. Canonical target: seven
   `Master.xlsx` workbooks with people sheets in `People/Master.xlsx`.

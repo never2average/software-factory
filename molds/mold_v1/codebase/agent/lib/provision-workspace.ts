@@ -33,7 +33,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { recipes, workflows } from "./db/schema.ts";
 import { SUBAGENT_KEYS, SUBAGENT_SUMMARIES } from "./subagent-registry.generated.ts";
-import { WORKFLOW_LIBRARY } from "./workflow-library.generated.ts";
+import { deploymentWorkflowLibrary } from "./workflow-library-view.ts";
 
 /**
  * The built-in recipe catalog, seeded PER WORKSPACE (`recipes.org_id` is NOT
@@ -113,7 +113,9 @@ export async function provisionWorkspace(
   let created = 0;
   let skipped = 0;
 
-  for (const wf of WORKFLOW_LIBRARY) {
+  // The library as this deployment's profile has it: no workflow that needs an excluded specialist, and every
+  // prompt in the profile's words (agent/lib/workflow-library-view.ts). The whole library by default.
+  for (const wf of deploymentWorkflowLibrary()) {
     // Scoped by org: the same workflow name legitimately exists in every
     // workspace, so an unscoped existence check would seed only the first one.
     const existing = await (db as any)

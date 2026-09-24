@@ -19,6 +19,11 @@
  *   - `person:{id}`     recalled when that person is named in a turn
  *                       (id = an email or slug, e.g. `sam@acmebank.com`)
  *
+ * A deployment whose profile renames customers (agent/lib/agent-vocabulary.ts) has the model write
+ * `company:{id}`: the same scope under the deployment's word. It is accepted everywhere a scope is, stored as
+ * the `customer` kind (the `memory_scope` column is a Postgres enum; storage does not move), and shown back to
+ * the model as `company:{id}` — so both spellings, and every row written before the profile, read as one.
+ *
  * A memory is keyed by (scope, key): remembering the same key in the same
  * scope updates the value in place (version bumps), so facts stay current.
  */
@@ -30,13 +35,19 @@ import { getDb, withOrgDb } from "./db/index.ts";
 import { memories as memoriesTable } from "./db/schema.ts";
 import { DEFAULT_ORG } from "./org-context.ts";
 import { listCustomers } from "./system-of-record.ts";
+import { MEMORY_ACCOUNT_PREFIX } from "./agent-vocabulary.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Scope strings                                                              */
 /* -------------------------------------------------------------------------- */
 
-/** `team`, `customer:{id}`, or `person:{id}` — no whitespace, one colon. */
-export const MEMORY_SCOPE_PATTERN = /^(team|customer:[^\s:]+|person:[^\s:]+)$/;
+/**
+ * `team`, `customer:{id}`, or `person:{id}` — no whitespace, one colon. Under a profile that renames customers,
+ * the deployment's own prefix (`company:{id}`) as well.
+ */
+export const MEMORY_SCOPE_PATTERN = MEMORY_ACCOUNT_PREFIX === "customer"
+  ? /^(team|customer:[^\s:]+|person:[^\s:]+)$/
+  : new RegExp(`^(team|customer:[^\\s:]+|${MEMORY_ACCOUNT_PREFIX}:[^\\s:]+|person:[^\\s:]+)$`);
 
 export const memoryScopeStringSchema = z
   .string()
@@ -56,8 +67,9 @@ export interface ParsedMemoryScope {
 export function parseMemoryScope(scope: string): ParsedMemoryScope {
   const valid = memoryScopeStringSchema.parse(scope);
   if (valid === "team") return { kind: "team", entityId: null };
-  const [kind, entityId] = valid.split(":", 2) as [MemoryScopeKind, string];
-  return { kind, entityId };
+  const [kind, entityId] = valid.split(":", 2) as [string, string];
+  // The deployment's word for a customer is the customer kind, stored as it always was.
+  return { kind: kind === MEMORY_ACCOUNT_PREFIX ? "customer" : (kind as MemoryScopeKind), entityId };
 }
 
 export function formatMemoryScope(kind: MemoryScopeKind, entityId: string | null): string {

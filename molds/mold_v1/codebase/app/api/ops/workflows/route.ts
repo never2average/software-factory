@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { workflowAvailability } from "@/lib/workflow-availability";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { workflows } from "@/agent/lib/db/schema";
@@ -39,7 +40,8 @@ export async function GET(request: NextRequest) {
     const items = await withOrgRls(ctx.orgId, (tx) =>
       tx.select().from(workflows).where(eq(workflows.orgId, ctx.orgId)).orderBy(desc(workflows.createdAt)),
     );
-    return NextResponse.json({ items });
+    // Each row with what this deployment can do with it (lib/workflow-availability.ts): derived, never stored.
+    return NextResponse.json({ items: items.map((w) => ({ ...w, availability: workflowAvailability(w) })) });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

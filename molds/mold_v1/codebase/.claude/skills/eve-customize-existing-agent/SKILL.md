@@ -19,7 +19,7 @@ release, and hides the preference from the operator who owns it.
 
 A second question for code changes: **whose file is it?** A subagent that came from a pack
 (`docs/SUBAGENT_PACKS.md`) is changed in the pack and re-applied. A vertical never edits a
-base file: it adds files. If you find yourself editing `agent/instructions.md`,
+base file: it adds files. If you find yourself editing `agent/prompt-*.md` (the root prompt),
 `agent/lib/dataroom-store.ts` or a list in `app/_components/` to serve one vertical, stop
 and use the additive lever in the table.
 

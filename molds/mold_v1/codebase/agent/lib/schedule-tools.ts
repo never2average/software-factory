@@ -24,6 +24,7 @@ import {
   updateScheduleRule,
 } from "./schedule-store.ts";
 import { orgForSession } from "./org-context.ts";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 /**
  * The rule author comes from the verified session auth, never from the model:
@@ -45,7 +46,7 @@ function callerEmail(ctx: {
   return caller?.principalId ?? "unknown";
 }
 
-export const createScheduleTool = defineTool({
+export const createScheduleTool = modelFacing("create_schedule", defineTool({
   description:
     "Create a durable, DB-maintained schedule rule that runs a prompt on a cadence (or once). It persists in the Postgres `schedule_rules` table and is executed by the dynamic-schedule dispatcher — so this is how you add a recurring cron WITHOUT a deploy. Set `cron` for anchored times (e.g. '0 9 * * 1-5' = weekdays 09:00 UTC) OR `everyMinutes` for a fixed interval (null + no cron = run once). Scope it to a customer with `customerId`, or leave it team-wide. `channelId` overrides the delivery channel; omit it to post to the team channel.",
   approval: once(),
@@ -99,9 +100,9 @@ export const createScheduleTool = defineTool({
     });
     return { created: true as const, rule };
   },
-});
+}));
 
-export const listSchedulesTool = defineTool({
+export const listSchedulesTool = modelFacing("list_schedules", defineTool({
   description:
     "List durable schedule rules, optionally filtered to one customer or by enabled state. Ordered by next run time, soonest first.",
   inputSchema: z.object({
@@ -114,9 +115,9 @@ export const listSchedulesTool = defineTool({
   async execute({ customerId, enabled }, ctx) {
     return { rules: await listScheduleRules(await orgForSession(ctx), { customerId, enabled }) };
   },
-});
+}));
 
-export const updateScheduleTool = defineTool({
+export const updateScheduleTool = modelFacing("update_schedule", defineTool({
   description:
     "Update a durable schedule rule by id: change its name, prompt, Slack channel, recurrence (`everyMinutes`), next run time, or enable/disable it. Only the provided fields change.",
   approval: once(),
@@ -151,9 +152,9 @@ export const updateScheduleTool = defineTool({
     });
     return { updated: true as const, rule };
   },
-});
+}));
 
-export const deleteScheduleTool = defineTool({
+export const deleteScheduleTool = modelFacing("delete_schedule", defineTool({
   description:
     "Delete a durable schedule rule by id. This stops it for the whole team, so it is gated on approval.",
   approval: once(),
@@ -163,4 +164,4 @@ export const deleteScheduleTool = defineTool({
   async execute({ id }, ctx) {
     return { deleted: await deleteScheduleRule(await orgForSession(ctx), id) };
   },
-});
+}));

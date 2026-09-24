@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { workflowAvailability } from "./workflow-availability.ts";
 import { appVersions, apps, workflows } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "./ops-db";
 import { makeDelegate } from "./workflow-delegate";
@@ -129,6 +130,8 @@ export async function refreshApp(
           .limit(1),
       );
       if (!wf?.script) throw new Error(`Workflow "${name}" has no script.`);
+      const availability = workflowAvailability(wf);
+      if (!availability.available) throw new Error(availability.reason);
       const { js, error } = stripTypes(wf.script);
       if (error) throw new Error(error);
 

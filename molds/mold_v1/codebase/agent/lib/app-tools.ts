@@ -20,6 +20,7 @@ import { getDb, withOrgDb } from "./db/index.ts";
 import { apps } from "./db/schema.ts";
 import { orgForSession } from "./org-context.ts";
 import { cronMatches } from "./cron-match.ts";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 /** The author comes from the verified session auth, never from the model. */
 function callerEmail(ctx: {
@@ -62,7 +63,7 @@ function assertCron(expr: string | null | undefined): string | null {
   return v;
 }
 
-export const createAppTool = defineTool({
+export const createAppTool = modelFacing("create_app", defineTool({
   description:
     "Create an APP — a living Markdown document that is REGENERATED on a cadence and rendered read-only in the Ops Center's Apps tab. Use this when someone wants a standing report/dashboard that stays current (e.g. 'a daily at-risk accounts digest'), rather than a one-off answer. Content comes from either a PROMPT (one agent call each refresh; simplest) or a WORKFLOW (a saved workflow script whose return value is the document). Set `refreshCron` (5-field UTC) to refresh automatically; omit it for manual-only. This creates the DEFINITION — the first document appears after the first refresh.",
   approval: once(),
@@ -135,9 +136,9 @@ export const createAppTool = defineTool({
         : "No cadence set — refresh it from the Apps tab to generate the first document.",
     };
   },
-});
+}));
 
-export const listAppsTool = defineTool({
+export const listAppsTool = modelFacing("list_apps", defineTool({
   description:
     "List the APPS (living Markdown documents regenerated on a cadence) with their source, cadence, and when each was last refreshed. Use before updating one, or to tell someone what standing reports already exist.",
   inputSchema: z.object({}),
@@ -164,9 +165,9 @@ export const listAppsTool = defineTool({
       })),
     };
   },
-});
+}));
 
-export const updateAppTool = defineTool({
+export const updateAppTool = modelFacing("update_app", defineTool({
   description:
     "Update an APP's definition — its prompt/workflow, refresh cadence, customer scope, or paused state. Only the fields you pass change. Use `list_apps` first to get the id. This does NOT regenerate the document; the next refresh does.",
   approval: once(),
@@ -207,4 +208,4 @@ export const updateAppTool = defineTool({
       app: { id: app.id, name: app.name, refreshCron: app.refreshCron, enabled: app.enabled },
     };
   },
-});
+}));

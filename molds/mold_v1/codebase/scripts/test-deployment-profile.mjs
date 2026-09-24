@@ -61,13 +61,15 @@ research.agent.briefing = "This workspace researches housing finance companies."
 
 const block = renderDeploymentBriefing(research);
 assert.ok(block, "a changed profile renders a block");
-assert.ok(block.startsWith("## This deployment"));
+assert.ok(block.startsWith("## This workspace"));
 for (const word of ["company", "companies", "analyst", "analysts", "lead analyst", "Tickets", "Companies", "housing finance"]) {
   assert.ok(block.includes(word), `briefing mentions "${word}"`);
 }
-// Vocabulary is a reading rule: the identifiers are named so the model maps words, not renames things.
-assert.ok(block.includes("`list_customers`"), "tool identifier is kept");
-assert.ok(block.includes("`Customers/`"), "data-room path token is kept");
+// A relabelled deployment's model is GIVEN the tools, fields and folders in its words (agent/lib/agent-vocabulary.ts),
+// so the block names those and never the base product's: a second vocabulary is one the model reasons in.
+assert.ok(block.includes("`list_companies`") && block.includes("`company_id`"), "the tool and field the model actually has");
+assert.ok(block.includes("`Companies/`"), "the folder the model actually reads and writes");
+assert.doesNotMatch(block, /customer|\bFDE/i, "no base word in a relabelled deployment's block");
 assert.equal(renderDeploymentBriefing(DEPLOYMENT_PROFILE), null, "rendering another profile does not touch the default");
 
 // A briefing alone is enough to render a block.
@@ -222,13 +224,15 @@ const researchBlock = renderDeploymentBriefing(example);
 for (const word of ["Portfolio", "Portfolios", "Coverage report", "Coverage reports", "Report id", "Report type", "Quarterly results update", "Filings completeness"]) {
   assert.ok(researchBlock.includes(word), `briefing mentions "${word}"`);
 }
-for (const id of ["`get_customer`", "`upsert_customer`", "`deployments[]`", "`implementation`", "`Deployments/`", "`Implementation/`", "`deploymentId`", "`rolloutId`", "`runtime`", "`releaseStatus`", "`implementationStage`"]) {
-  assert.ok(researchBlock.includes(id), `briefing keeps the identifier ${id}`);
+// …by the names the model's tools use for them (the profile relabels every one), never the base names.
+for (const id of ["`get_company`", "`upsert_company`", "`coverageReports[]`", "`portfolioEntry`", "`Coverage-reports/`", "`Portfolios/`", "`coverageReportId`", "`portfolioId`", "`runtime`", "`releaseStatus`", "`portfolioEntryStage`", "containerType `coverageReport`", "containerType `portfolioEntry`"]) {
+  assert.ok(researchBlock.includes(id), `briefing names ${id}`);
 }
-assert.ok(researchBlock.includes('"Published" is deployed'), "display word -> stored value");
-assert.ok(researchBlock.includes('"Restated" is rolled-back'));
-assert.ok(researchBlock.includes('"KPI table built" is UAT'));
-assert.ok(researchBlock.includes('"Us" is Provider'));
+assert.doesNotMatch(researchBlock, /customer|deployments?\b|\bimplementation|rollout|\bFDE/i, "no base word in a relabelled deployment's block");
+assert.ok(researchBlock.includes('"Published" is `deployed`'), "display word -> stored value");
+assert.ok(researchBlock.includes('"Restated" is `rolled-back`'));
+assert.ok(researchBlock.includes('"KPI table built" is `UAT`'));
+assert.ok(researchBlock.includes('"Us" is `Provider`'));
 assert.ok(researchBlock.includes('`region`="ap-south-1"') && researchBlock.includes('`environment`="prod"'), "the model is told what to write in the hidden required fields");
 assert.ok(researchBlock.includes("securityReviewStatus") && researchBlock.includes("use only the fields named above"), "unused fields: a few names, then the rule (a list of 37 names is paid for on every turn)");
 assert.ok(!researchBlock.includes('"Failed" is failed'), "a display word that is the value is not repeated");
@@ -236,7 +240,7 @@ assert.ok(!researchBlock.includes('"Failed" is failed'), "a display word that is
 assert.deepEqual(reports.customFields.map((f) => f.key), ["rating", "target_price", "data_completeness", "publish_date", "source_link", "thesis"]);
 assert.deepEqual(reports.listCustomFields.map((f) => f.key), ["rating", "target_price", "data_completeness"]);
 assert.deepEqual(portfolios.customFields.map((f) => [f.key, f.type]), [["benchmark", "text"], ["next_rebalance", "date"]]);
-assert.ok(researchBlock.includes("`deployments[].custom`") && researchBlock.includes("`implementation.custom`"), "where the custom values are written");
+assert.ok(researchBlock.includes("`coverageReports[].custom`") && researchBlock.includes("`portfolioEntry.custom`"), "where the custom values are written");
 assert.ok(researchBlock.includes('`rating`="Rating" (Buy|Add|Hold|Reduce|Sell; required)'), "a pick list names its choices, and that it is required");
 assert.ok(researchBlock.includes('`data_completeness`="Data completeness" (percent 0-100)'));
 assert.ok(researchBlock.includes('`publish_date`="Publish date" (yyyy-mm-dd)') && researchBlock.includes('`source_link`="Source filing" (http(s)-link)'));

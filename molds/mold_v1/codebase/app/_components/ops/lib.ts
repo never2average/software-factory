@@ -148,6 +148,12 @@ export interface ApiWorkflow {
   /** The recipient LIST (supersedes notifyEmail above). */
   notifyEmails: string[] | null;
   enabled: boolean;
+  /**
+   * What THIS deployment can do with the row (lib/workflow-availability.ts), derived by GET /api/ops/workflows and
+   * never stored: a base-library original that needs a specialist the profile excludes is not available; an edited
+   * or authored one that needs one is runnable and reported.
+   */
+  availability?: { available: boolean; reason?: string; needsExcluded?: string[] };
   createdBy: string;
   createdAt: string;
   updatedAt: string;

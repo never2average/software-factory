@@ -38,6 +38,10 @@ export interface DeploymentProfile {
   domains: { deployments: DomainSpec; implementations: DomainSpec & { group_by: string | null; group_label: { singular: string; plural: string } } };
   /** Sent to the model on every turn, after the stable prompt. null = nothing extra. */
   agent: { briefing: string | null };
+  /** base: keep the base product's orchestrator persona in the root prompt (agent/lib/root-instructions.ts). */
+  persona: { base: boolean };
+  /** Base specialists the deployment does not use: moved out of agent/subagents/ at generation time. */
+  specialists: { exclude: string[] };
 }
 
 export interface DomainFieldSpec {
@@ -283,6 +287,12 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
   },
   "agent": {
     "briefing": null
+  },
+  "persona": {
+    "base": true
+  },
+  "specialists": {
+    "exclude": []
   }
 };
 

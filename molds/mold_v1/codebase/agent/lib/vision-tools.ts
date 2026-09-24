@@ -46,6 +46,7 @@ import { LAST_RESORT_SENTENCE } from "./empty-model-response.ts";
 import { storeForSession } from "./dataroom-session.ts";
 import { agentModel, agentModelId, modelOutputBudgetTokens } from "./model.ts";
 import type { SessionCtxLike } from "./org-context.ts";
+import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 /**
  * BOUNDS. Every one of these turns a turn that would hang into a sentence the
@@ -270,7 +271,7 @@ async function renderPdfPages(
   }
 }
 
-export const readImageTool = defineTool({
+export const readImageTool = modelFacing("read_image", defineTool({
   description:
     "READ AN IMAGE with a vision model and get text back — you cannot see images yourself. Give it a data-room path (`path`) OR a path in your bash sandbox (`sandboxPath`), plus the `question` you want answered about it. Works on png/jpeg/gif/webp AND on pdfs: for a pdf, pass `page` (1-based) and it renders that page to an image first. USE IT FOR SCANNED PDFs — when pdfplumber/pypdf return no text, the document is a scan, not an empty file, and this is how you read it. It never takes image data: pass the reference to the file, never base64.",
   inputSchema: z.object({
@@ -487,4 +488,4 @@ export const readImageTool = defineTool({
         : {}),
     };
   },
-});
+}), { pathInput: ["path"], opaqueOutput: "*" });

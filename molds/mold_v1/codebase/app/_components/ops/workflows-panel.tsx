@@ -105,6 +105,10 @@ import { SURFACE, TYPE } from "./tokens";
 
 
 import { SUBAGENT_KEYS } from "../subagent-meta.generated";
+import { withheldLibraryNote } from "@/lib/workflow-availability";
+
+/** Why this workspace has fewer (or none) of the base library's workflows — said, not left as an empty list. */
+const LIBRARY_NOTE = withheldLibraryNote();
 /* ------------------- Workflow instructions: ⌘K inline editor -------------- */
 
 /**
@@ -1541,6 +1545,11 @@ export function WorkflowsPanel({
               }}
             />
             <Banners loadError={error} actionError={actionError} noun="workflow" />
+            {LIBRARY_NOTE ? (
+              <p className={cn("rounded-md border border-border/60 px-3 py-2 text-muted-foreground", TYPE.meta)} role="note">
+                {LIBRARY_NOTE}
+              </p>
+            ) : null}
           </>
         }
         table={
@@ -1587,7 +1596,7 @@ export function WorkflowsPanel({
                       <ListRow
                         key={w.id}
                         selected={isSel}
-                        dimmed={!w.enabled}
+                        dimmed={!w.enabled || w.availability?.available === false}
                         onSelect={() => setSelectedId(w.id)}
                       >
                         <NameCell selected={isSel}>
@@ -1602,7 +1611,16 @@ export function WorkflowsPanel({
                             >
                               {w.name}
                             </DeepLink>
-                            <StatusDot status={w.enabled ? "active" : "paused"} />
+                            <StatusDot status={w.enabled && w.availability?.available !== false ? "active" : "paused"} />
+                            {w.availability?.available === false ? (
+                              <span title={w.availability.reason}>
+                                <Chip>not in this workspace</Chip>
+                              </span>
+                            ) : w.availability?.needsExcluded?.length ? (
+                              <span title={`Edited or written here, and delegates to ${w.availability.needsExcluded.join(", ")}, which this workspace does not use: that step will fail.`}>
+                                <Chip>needs {w.availability.needsExcluded.join(", ")}</Chip>
+                              </span>
+                            ) : null}
                           </span>
                         </NameCell>
                         {compact ? null : (

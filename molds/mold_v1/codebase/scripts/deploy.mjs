@@ -106,7 +106,9 @@ const TARGETS = {
         }),
       );
       try {
-        sh("npx", ["eve", "build"], { env: { ...this.env, VERCEL: "1" } });
+        // Through the wrapper, never bare `eve build`: it leaves out the specialists the profile excludes
+        // (scripts/eve-build.mjs), which a bare build would put back in the model's roster.
+        sh("node", ["scripts/eve-build.mjs", "build"], { env: { ...this.env, VERCEL: "1" } });
         raiseStreamFunctionLimit();
         return sh("vercel", ["deploy", "--prebuilt", "--prod"], { env: this.env });
       } catch (error) {

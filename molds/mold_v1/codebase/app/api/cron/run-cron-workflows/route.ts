@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { workflowAvailability } from "@/lib/workflow-availability";
 import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import {
   automationRuns,
@@ -133,6 +134,12 @@ export async function GET(request: NextRequest) {
       .limit(1),
     );
     if (!wf?.script) continue;
+    // A base-library workflow that needs a specialist this deployment excludes (lib/workflow-availability.ts).
+    const availability = workflowAvailability(wf);
+    if (!availability.available) {
+      outcomes.push({ cron: fire.automationId, status: "unavailable" });
+      continue;
+    }
 
     // Claim this fire atomically so two ticks never double-run it.
     const runId = `wfr_${crypto.randomUUID()}`;

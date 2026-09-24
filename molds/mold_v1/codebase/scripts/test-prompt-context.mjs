@@ -5,7 +5,8 @@ import { readdir, readFile } from "node:fs/promises";
 const prompt = await import("../agent/lib/prompt-context.ts");
 const modeResolver = (await import("../agent/instructions/00-mode.ts")).default;
 
-const stable = await readFile(new URL("../agent/instructions.md", import.meta.url), "utf8");
+// The root prompt is rendered from the profile at build time (agent/instructions.ts); this is the same render.
+const stable = (await import("../agent/lib/root-instructions.ts")).renderRootInstructions();
 const occurrences = (text, needle) => text.split(needle).length - 1;
 const ctx = (kind, principal = null) => ({
   channel: { kind },
@@ -28,7 +29,9 @@ assert.doesNotMatch(stable, /\{\{[^}]+\}\}|<%[^%]+%>|\$\{[^}]+\}/, "stable promp
 const subagentRoot = new URL("../agent/subagents/", import.meta.url);
 for (const dirent of await readdir(subagentRoot, { withFileTypes: true })) {
   if (!dirent.isDirectory()) continue;
-  const instructionsUrl = new URL(`${dirent.name}/instructions.md`, subagentRoot);
+  // A base specialist authors prompt.md and speaks it through instructions.ts; a pack's may author instructions.md.
+  const hasPromptSource = await readFile(new URL(`${dirent.name}/prompt.md`, subagentRoot), "utf8").then(() => true, () => false);
+  const instructionsUrl = new URL(`${dirent.name}/${hasPromptSource ? "prompt.md" : "instructions.md"}`, subagentRoot);
   const modeUrl = new URL(`${dirent.name}/instructions/00-mode.ts`, subagentRoot);
   const [subagentInstructions, subagentMode] = await Promise.all([
     readFile(instructionsUrl, "utf8"),
