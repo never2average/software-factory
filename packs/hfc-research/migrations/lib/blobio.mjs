@@ -59,9 +59,16 @@ async function putAll(items) {
     }
     const body = Buffer.from(it.b64, "base64");
     await put(it.pathname, body, { token, access: "private", addRandomSuffix: false, allowOverwrite: true, contentType: it.contentType ?? undefined });
-    const back = await head(it.pathname, { token });
-    const { body: got } = await download(back.url);
-    if (sha(got) !== sha(body)) throw new Error(`read-back of ${it.pathname} differs from what was written`);
+    // An overwrite can be served from the CDN's cached copy for a while: read back
+    // past the cache, and give it a few tries before calling the write bad.
+    let same = false;
+    for (let i = 0; i < 6 && !same; i++) {
+      if (i) await new Promise((r) => setTimeout(r, 5000));
+      const back = await head(it.pathname, { token });
+      const { body: got } = await download(`${back.url}${back.url.includes("?") ? "&" : "?"}readback=${Date.now()}`);
+      same = sha(got) === sha(body);
+    }
+    if (!same) throw new Error(`read-back of ${it.pathname} differs from what was written`);
     written.push(it.pathname);
   }
   return { written, skipped };
