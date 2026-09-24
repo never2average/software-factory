@@ -568,6 +568,14 @@
       "platform",
       "solutions",
       "tickets"
+    ],
+    "custom_fields": [
+      {
+        "key": "notes",
+        "label": "Notes",
+        "type": "long_text",
+        "help": "Analyst notes on this company. Add to them with custom_append; don't resend the whole note."
+      }
     ]
   }
 }
