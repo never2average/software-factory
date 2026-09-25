@@ -189,7 +189,8 @@ const modelIds = (env) =>
   );
 
 const defaults = await modelIds({ CLOUDFLARE_MODEL: "", CLOUDFLARE_MODEL_VISION: "" });
-check("the default vision model is a Workers AI model known to read images", defaults.vision === "@cf/moonshotai/kimi-k2.6");
+const VISION_MODEL = "@cf/zai-org/glm-5.3-flash";
+check(`the default vision model is GLM 5.3 Flash (saw ${defaults.vision})`, defaults.vision === VISION_MODEL);
 
 const overridden = await modelIds({ CLOUDFLARE_MODEL_VISION: "@cf/meta/llama-4-scout" });
 check("CLOUDFLARE_MODEL_VISION overrides it, like every other role", overridden.vision === "@cf/meta/llama-4-scout");
@@ -202,7 +203,7 @@ check("CLOUDFLARE_MODEL_VISION overrides it, like every other role", overridden.
 const fleet = await modelIds({ CLOUDFLARE_MODEL: "@cf/zai-org/glm-5.3", CLOUDFLARE_MODEL_VISION: "" });
 check("the fleet variable moves the orchestrator", fleet.orchestrator === "@cf/zai-org/glm-5.3");
 check("...and the specialist", fleet.specialist === "@cf/zai-org/glm-5.3");
-check("...and does NOT drag the vision role onto a text-only model", fleet.vision === "@cf/moonshotai/kimi-k2.6");
+check("...and does NOT drag the vision role onto a text-only model", fleet.vision === VISION_MODEL);
 
 // ---------------------------------------------------------------------------
 // 3. No vision model configured -> the tool is ABSENT, not present and failing
@@ -361,8 +362,8 @@ await useModelScript("vision");
   check("a sandbox image is read", result.read === true);
   check("exactly ONE image part arrived at the provider", / images=1 /.test(result.answer));
   check("...as image/png, not as text", /types=image\/png/.test(result.answer));
-  check("...on the VISION model, not the orchestrator's", /model=@cf\/moonshotai\/kimi-k2\.6/.test(result.answer));
-  check("the tool reports which model answered", result.model === "@cf/moonshotai/kimi-k2.6");
+  check("...on the VISION model, not the orchestrator's", result.answer.includes(`model=${VISION_MODEL} `));
+  check("the tool reports which model answered", result.model === VISION_MODEL);
   check("and where it read from", result.source.kind === "sandbox" && result.source.path === "/workspace/page.png");
 
   /**
@@ -381,6 +382,11 @@ await useModelScript("vision");
    * was wrong last time.
    */
   const [request] = await recordedRequests();
+  check(`the wire request names the vision model (saw model=${request?.model})`, request?.model === VISION_MODEL);
+  check(
+    `...and asks it for reasoning "low", not the provider's default of max (saw reasoning_effort=${request?.reasoning_effort ?? "absent"})`,
+    request?.reasoning_effort === "low",
+  );
   check(
     `the vision call asks for the vision ROLE's budget, not the 1,500 that burned itself out thinking (saw max_tokens=${request?.max_tokens ?? "absent"})`,
     request?.max_tokens === visionBudget,
@@ -389,7 +395,75 @@ await useModelScript("vision");
 }
 
 // ---------------------------------------------------------------------------
-// 6. The Kimi failure, contained
+// 5b. The reasoning level: sent only where it is known to be taken, and survivable
+// ---------------------------------------------------------------------------
+console.log("\nThe vision reasoning level, at the wire:");
+
+/** One read of a small sandbox png under a given env, returning the tool result and what reached the wire. */
+async function readUnder(env, script = "vision") {
+  const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    await useModelScript(script);
+    const root = join(WORK, `sb-reasoning-${Math.random().toString(36).slice(2)}`);
+    const sandbox = fakeSandbox(root);
+    await sandbox.writeBinaryFile({ path: "/workspace/page.png", content: png(400) });
+    const result = await readImageTool.execute({ question: "read it", sandboxPath: "/workspace/page.png" }, ctxWith(sandbox));
+    return { result, requests: await recordedRequests() };
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+const effortsOf = (requests) => requests.map((r) => r.reasoning_effort ?? "absent").join(", ");
+
+{
+  const { result, requests } = await readUnder({ CLOUDFLARE_MODEL_VISION: "@cf/meta/llama-4-scout" });
+  check("a vision model NOT on the reasoning allow-list is still read", result.read === true && requests[0]?.model === "@cf/meta/llama-4-scout");
+  check(
+    `...and is sent NO reasoning field, so an unprobed model cannot 400 on it (saw: ${effortsOf(requests)})`,
+    requests.length === 1 && !("reasoning_effort" in requests[0]) && !("reasoning" in requests[0]),
+  );
+}
+{
+  const { requests } = await readUnder({ MODEL_REASONING_VISION: "high" });
+  check(`MODEL_REASONING_VISION=high is what reaches the wire (saw: ${effortsOf(requests)})`, requests[0]?.reasoning_effort === "high");
+}
+{
+  const { requests } = await readUnder({ MODEL_REASONING_VISION: "off" });
+  check(`MODEL_REASONING_VISION=off sends no field (saw: ${effortsOf(requests)})`, requests.length === 1 && !("reasoning_effort" in requests[0]));
+}
+{
+  const { requests } = await readUnder({ MODEL_REASONING_VISION: "" });
+  check(`an EMPTY MODEL_REASONING_VISION means the default "low", not off (saw: ${effortsOf(requests)})`, requests[0]?.reasoning_effort === "low");
+}
+{
+  const { result, requests } = await readUnder({}, "vision-refuses-reasoning");
+  check("a provider that answers 4xx naming the reasoning field does not cost the read", result.read === true && /VISION-READ/.test(result.answer));
+  check(
+    `...because the call is made once more WITHOUT the field (saw: ${effortsOf(requests)})`,
+    requests.length === 2 && requests[0].reasoning_effort === "low" && !("reasoning_effort" in requests[1]),
+  );
+  check("...on the same vision model both times", requests.every((r) => r.model === VISION_MODEL));
+}
+{
+  // Not on the list, refusing: nothing was sent, so there is nothing to retry and one call is made.
+  const { result, requests } = await readUnder({ CLOUDFLARE_MODEL_VISION: "@cf/meta/llama-4-scout" }, "vision-refuses-reasoning");
+  check("a model off the list is never sent the field, so a refusing provider never refuses it", result.read === true && requests.length === 1);
+}
+check(
+  "GLM 5.3 Flash is on the reasoning allow-list the empty-response recovery shares",
+  (await import("../agent/lib/empty-model-response.ts")).RECOVERY_REASONING_MODELS.has(VISION_MODEL),
+);
+await useModelScript("vision");
+
+// ---------------------------------------------------------------------------
+// 6. The empty-response failure (first seen on Kimi K2.6), contained
 // ---------------------------------------------------------------------------
 console.log("\nAn empty completion is one refusal, not a dead turn:");
 
@@ -400,7 +474,7 @@ await useModelScript("vision-empty");
   await sandbox.writeBinaryFile({ path: "/workspace/page.png", content: png(400) });
   const result = await readImageTool.execute({ question: "read it", sandboxPath: "/workspace/page.png" }, ctxWith(sandbox));
   check("an empty model response does not throw out of the tool", result.read === false);
-  check("...it comes back as a sentence naming the model", /returned no text/.test(result.error) && result.error.includes("kimi"));
+  check("...it comes back as a sentence naming the model", /returned no text/.test(result.error) && result.error.includes(VISION_MODEL));
 
   /**
    * THE RECOVERY'S LAST RESORT MUST NOT BECOME AN OBSERVATION.
@@ -429,7 +503,7 @@ await useModelScript("vision-empty");
   const models = [...new Set((await recordedRequests()).map((request) => request.model))];
   check(
     `every provider call for an image stayed on the vision model (saw: ${models.join(", ")})`,
-    models.length === 1 && models[0] === "@cf/moonshotai/kimi-k2.6",
+    models.length === 1 && models[0] === VISION_MODEL,
   );
   check("...and it really did retry rather than give up on the first empty", (await recordedRequests()).length >= 2);
 }

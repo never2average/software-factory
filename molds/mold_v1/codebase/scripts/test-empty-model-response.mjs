@@ -49,6 +49,8 @@ import {
   formatEmptyResponseDetail,
   kindForRecord,
   planRecovery,
+  raisedRecoveryReasoning,
+  refusedReasoningField,
   summarizeGenerateResult,
 } from "../agent/lib/empty-model-response.ts";
 import { CHAT_TELEMETRY_KINDS, chatSessionTag, chatTelemetrySentence } from "../lib/chat-telemetry.ts";
@@ -687,6 +689,21 @@ console.log("\nThe real provider path, against a model that answers empty:");
   } finally {
     server.kill("SIGKILL");
   }
+}
+
+/* ── the reasoning allow-list, per model ─────────────────────────────────── */
+{
+  const ranOut = summarizeGenerateResult(emptyGenerate());
+  const reasonOf = (modelId) => raisedRecoveryReasoning({ prompt: [] }, ranOut, modelId);
+  check('GLM 5.3 Flash (the vision default) is on the reasoning allow-list: a retry asks it for "low"', reasonOf("@cf/zai-org/glm-5.3-flash") === "low");
+  check('…as GLM 5.3 and Kimi K2.6 already were', reasonOf("@cf/zai-org/glm-5.3") === "low" && reasonOf("@cf/moonshotai/kimi-k2.6") === "low");
+  check("a model not on the list is never sent the field", reasonOf("@cf/zai-org/glm-5.2") === null && reasonOf("@cf/meta/llama-4-scout") === null);
+  check(
+    "a 4xx naming the reasoning field reads as a refusal of it; a 5xx or an unrelated 4xx does not",
+    refusedReasoningField({ statusCode: 400, responseBody: "Unsupported parameter: 'reasoning_effort'" }) &&
+      !refusedReasoningField({ statusCode: 500, responseBody: "reasoning_effort" }) &&
+      !refusedReasoningField({ statusCode: 400, responseBody: "max_tokens too large" }),
+  );
 }
 
 console.log(`\n${passed} checks passed.`);

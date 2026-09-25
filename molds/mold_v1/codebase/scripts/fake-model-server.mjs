@@ -21,8 +21,13 @@
  *   vision-empty       the same call, answered EMPTY — reusing `empty-always`'s shape
  *                      below rather than inventing a second one, so `read_image` is
  *                      shown surviving the MEASURED failure and not an approximation
- *                      of it. Kimi K2.6 is both this repo's vision model and the model
- *                      that produced that failure, so the two are the same event.
+ *                      of it. Kimi K2.6, this repo's vision model until 2026-09-25, is
+ *                      the model that produced that failure.
+ *   vision-refuses-reasoning
+ *                      `vision`, except a request carrying `reasoning_effort` is answered
+ *                      400 with a body naming the field — a provider that does not take
+ *                      it. Shows `read_image` retrying once WITHOUT the field rather than
+ *                      losing the capability.
  *   empty-always       EVERY completion comes back with no content at all —
  *                      `finish_reason: "length"`, `content: null`, and the whole
  *                      completion budget spent on reasoning. This is the live
@@ -106,7 +111,7 @@ function imagePartsIn(messages) {
 }
 
 function decide(messages, payload = {}) {
-  if (SCRIPT === "vision" || SCRIPT === "vision-empty") {
+  if (SCRIPT === "vision" || SCRIPT === "vision-empty" || SCRIPT === "vision-refuses-reasoning") {
     // `{ empty: true }` — the same shape `empty-always` returns, so `completion()`
     // and `sseChunks()` need no case of their own for this. The branch that used to
     // be here returned `{ text: "" }`, which the truthiness test below reads as "no
@@ -276,6 +281,13 @@ const server = createServer((req, res) => {
       return;
     }
     REQUESTS.push(payload);
+    if (SCRIPT === "vision-refuses-reasoning" && payload.reasoning_effort !== undefined) {
+      // The shape an OpenAI-compatible endpoint gives an unsupported parameter.
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "Unsupported parameter: 'reasoning_effort' is not supported with this model.", type: "invalid_request_error" } }));
+      console.error("[fake-model] ROOT   -> 400 (reasoning_effort refused)");
+      return;
+    }
     const messages = payload.messages ?? [];
     const decision = decide(messages, payload);
     LOG.push({ child: isChild(messages), decision });

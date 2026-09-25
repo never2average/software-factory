@@ -13,6 +13,10 @@
  * returns nothing costs ONE tool result the agent can act on instead of killing
  * the turn.
  *
+ * WHICH VLM. `@cf/zai-org/glm-5.3-flash` by default (agent/lib/model.ts,
+ * DEFAULT_VISION_MODEL; CLOUDFLARE_MODEL_VISION overrides it), asked for
+ * reasoning "low" (MODEL_REASONING_VISION) — see the call site below.
+ *
  * WHAT IT DOES NOT TAKE: bytes. The input is a REFERENCE to something already in
  * the system — a data-room path or a path in the caller's own sandbox — and never
  * a base64 payload from the model. A model-supplied payload would have to be
@@ -42,9 +46,9 @@ import { z } from "zod";
 // access-control rule no test can execute is a comment. model.ts and dataroom-versions.ts
 // already import this way.
 import { DataroomPathError } from "./dataroom-store.ts";
-import { LAST_RESORT_SENTENCE } from "./empty-model-response.ts";
+import { LAST_RESORT_SENTENCE, RECOVERY_REASONING_MODELS, refusedReasoningField } from "./empty-model-response.ts";
 import { storeForSession } from "./dataroom-session.ts";
-import { agentModel, agentModelId, modelOutputBudgetTokens } from "./model.ts";
+import { agentModel, agentModelId, modelOutputBudgetTokens, visionReasoning } from "./model.ts";
 import type { SessionCtxLike } from "./org-context.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
@@ -411,40 +415,65 @@ export const readImageTool = modelFacing("read_image", defineTool({
     }
 
     const model = agentModelId("vision");
-    let text: string;
-    try {
-      const response = await generateText({
+    /**
+     * REASONING "LOW" BY DEFAULT (MODEL_REASONING_VISION), ONLY WHERE IT IS KNOWN
+     * TO BE TAKEN. The default vision model, GLM 5.3 Flash, reasons at "max"
+     * unless told otherwise, and a reasoning model pays for its thinking out of
+     * the output budget before it writes the answer — the 2026-09-23 row above.
+     * Reading a page is transcription, so it asks for little thinking. Sent only
+     * to a model on RECOVERY_REASONING_MODELS: an operator who points
+     * CLOUDFLARE_MODEL_VISION at an unprobed model gets no field rather than a
+     * possible 400, and a gateway id is never on that list.
+     */
+    const effort = visionReasoning();
+    const reasoning = effort !== undefined && RECOVERY_REASONING_MODELS.has(model) ? effort : undefined;
+    const messages = [
+      {
+        role: "user" as const,
+        content: [
+          {
+            type: "text" as const,
+            text: `${question}\n\nRead only what is in the image${images.length > 1 ? "s" : ""}. Quote figures and labels exactly as printed. If something is illegible, say so rather than guessing.`,
+          },
+          // A `file` part, not the deprecated `image` part: the AI SDK warns on every
+          // `image` part and will drop it, and a deprecation warning per image read is
+          // noise that trains people to ignore warnings. The openai-compatible provider
+          // turns this into the `image_url` data URI the Workers AI endpoint expects.
+          ...images.map((image) => ({ type: "file" as const, data: image.data, mediaType: image.mediaType })),
+        ],
+      },
+    ];
+    const ask = (withReasoning: typeof reasoning) =>
+      generateText({
         model: agentModel("vision"),
         maxOutputTokens: modelOutputBudgetTokens("vision"),
+        ...(withReasoning === undefined ? {} : { reasoning: withReasoning }),
         // An explicit deadline. Without one a provider that accepts the request and
         // never answers holds the turn open until the platform kills it, and the
         // person sees a spinner rather than a sentence.
         abortSignal: AbortSignal.timeout(VISION_TIMEOUT_MS),
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `${question}\n\nRead only what is in the image${images.length > 1 ? "s" : ""}. Quote figures and labels exactly as printed. If something is illegible, say so rather than guessing.`,
-              },
-              // A `file` part, not the deprecated `image` part: the AI SDK warns on every
-              // `image` part and will drop it, and a deprecation warning per image read is
-              // noise that trains people to ignore warnings. The openai-compatible provider
-              // turns this into the `image_url` data URI the Workers AI endpoint expects.
-              ...images.map((image) => ({ type: "file" as const, data: image.data, mediaType: image.mediaType })),
-            ],
-          },
-        ],
+        messages,
       });
+    let text: string;
+    try {
+      let response: Awaited<ReturnType<typeof ask>>;
+      try {
+        response = await ask(reasoning);
+      } catch (error) {
+        // The allow-list's belt, as in the empty-response recovery: a 4xx that names
+        // the reasoning field gets the same call once more without it, so a model
+        // that stops taking the field costs one extra request, not the capability.
+        if (reasoning === undefined || !refusedReasoningField(error)) throw error;
+        response = await ask(undefined);
+      }
       text = response.text?.trim() ?? "";
     } catch (error) {
       return fail(`the vision model (${model}) could not be reached: ${(error as Error).message}`);
     }
 
-    // THE KIMI FAILURE, contained. An empty completion from this model is the
-    // defect that took the orchestrator down ("Empty model response" →
-    // MODEL_CALL_FAILED → the turn dies with nothing delivered). Here the same
+    // THE EMPTY-RESPONSE FAILURE, contained. An empty completion (first seen from
+    // Kimi K2.6, this tool's previous default) is the defect that took the
+    // orchestrator down ("Empty model response" → MODEL_CALL_FAILED → the turn dies with nothing delivered). Here the same
     // event is one tool result saying so, and the agent still has its turn, its
     // context and every other way of reading the document.
     //

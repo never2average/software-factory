@@ -20,9 +20,12 @@
  *   CLOUDFLARE_API_TOKEN    a Workers AI API token (Account > AI > Workers AI read/run)
  *   CLOUDFLARE_MODEL        default "@cf/zai-org/glm-5.2" (the whole fleet, unless a role is set below)
  *   CLOUDFLARE_MODEL_ORCHESTRATOR / CLOUDFLARE_MODEL_SPECIALIST   optional per-role models
- *   CLOUDFLARE_MODEL_VISION default "@cf/moonshotai/kimi-k2.6" — the VLM behind the `read_image`
+ *   CLOUDFLARE_MODEL_VISION default "@cf/zai-org/glm-5.3-flash" — the VLM behind the `read_image`
  *                           TOOL, called once per image instead of on every turn. "off"/"none"/
  *                           "false" removes the tool entirely (see visionModelConfigured).
+ *   MODEL_REASONING_VISION  default "low" — the reasoning effort `read_image` asks the vision model
+ *                           for (minimal|low|medium|high|xhigh; "off"/"none" sends none). Sent only
+ *                           to a model on RECOVERY_REASONING_MODELS (see visionReasoning).
  *   CLOUDFLARE_BASE_URL     default "https://api.cloudflare.com/client/v4/accounts/${id}/ai/v1"
  *   CLOUDFLARE_CONTEXT_WINDOW default 262144   (GLM 5.2 on Workers AI)
  *   MODEL_MAX_OUTPUT_TOKENS_ORCHESTRATOR / _SPECIALIST / _VISION
@@ -102,7 +105,7 @@ const cloudflare = createOpenAICompatible({
 export function modelContextWindowTokens(role: AgentRole = "orchestrator"): number | undefined {
   if (providerChoice !== "cloudflare") return undefined;
   // Per role, because the two roles may now run different models with very different windows
-  // (GLM 5.3 is 1.31M, Kimi K2.6 is 262k). An explicit override wins; then the known window of the role's
+  // (GLM 5.3 and GLM 5.3 Flash are 1.31M, Kimi K2.6 is 262k). An explicit override wins; then the known window of the role's
   // model; then the conservative 262,144 every Workers AI model this app has used supports.
   const override =
     envTrim(process.env[`CLOUDFLARE_CONTEXT_WINDOW_${role.toUpperCase()}`]) ?? envTrim(process.env.CLOUDFLARE_CONTEXT_WINDOW);
@@ -177,6 +180,30 @@ export function agentReasoning(): ReasoningEffort | undefined {
 }
 
 /**
+ * The reasoning effort `read_image` asks the vision model for, or undefined for
+ * "send none". MODEL_REASONING_VISION, default "low".
+ *
+ * Unprefixed like MODEL_MAX_OUTPUT_TOKENS_VISION: it is a property of the role's
+ * job (read a page, quote what is printed), not of a provider. EMPTY means unset,
+ * i.e. the default — a Vercel Sensitive variable pulls down as an empty string and
+ * must not change behaviour. "off"/"none"/"false"/"disabled" sends no field.
+ * Anything unrecognised falls back to the default rather than to "none", loudly.
+ *
+ * This is the level ASKED FOR; whether it reaches the wire is the caller's
+ * decision per model (agent/lib/vision-tools.ts sends it only to a model on
+ * RECOVERY_REASONING_MODELS, and drops it if the provider refuses the field).
+ */
+export const DEFAULT_VISION_REASONING: ReasoningEffort = "low";
+export function visionReasoning(): ReasoningEffort | undefined {
+  const v = process.env.MODEL_REASONING_VISION?.trim().toLowerCase();
+  if (!v) return DEFAULT_VISION_REASONING;
+  if (v === "off" || v === "none" || v === "false" || v === "disabled") return undefined;
+  if (v === "minimal" || v === "low" || v === "medium" || v === "high" || v === "xhigh") return v;
+  console.warn(`[model] MODEL_REASONING_VISION="${v}" is not minimal|low|medium|high|xhigh|off — using "${DEFAULT_VISION_REASONING}"`);
+  return DEFAULT_VISION_REASONING;
+}
+
+/**
  * The model ID a role runs on, as a plain string — what a usage row records so
  * the read side can price it later (`lib/inference-pricing.ts`). Kept beside
  * `agentModel` so the two can never name different models.
@@ -184,13 +211,16 @@ export function agentReasoning(): ReasoningEffort | undefined {
 /**
  * The Workers AI vision model `read_image` uses when nothing names one.
  *
- * Kimi K2.6 is the model this account has actually been observed reading images
- * with — it was the orchestrator for exactly that reason. Its failure mode is an
- * EMPTY response on long text-heavy turns, which is survivable as one tool call
- * (the tool reports it and the agent tries something else) and fatal as the
- * orchestrator (the turn dies with nothing delivered).
+ * GLM 5.3 Flash (operator decision, 2026-09-25): it reads images, it takes a
+ * reasoning level (low/high/max, default max), and it costs $0.15/M in and
+ * $0.50/M out against Kimi K2.6's $0.95/$4. It is sent reasoning "low" by
+ * default (see `visionReasoning`): a page description is transcription, not
+ * deliberation, and at the provider's default of max the output budget is spent
+ * thinking first — the exact `finish=length out_thinking=1500` failure recorded
+ * in agent/lib/vision-tools.ts. It needs Workers Paid, which an account running
+ * `@cf/zai-org/glm-5.3` already has. CLOUDFLARE_MODEL_VISION still overrides it.
  */
-export const DEFAULT_VISION_MODEL = "@cf/moonshotai/kimi-k2.6";
+export const DEFAULT_VISION_MODEL = "@cf/zai-org/glm-5.3-flash";
 /** Gateway-mode default: Sonnet reads images and is allowed on the free tier (Opus is not). */
 const DEFAULT_GATEWAY_VISION_MODEL = "anthropic/claude-sonnet-5";
 

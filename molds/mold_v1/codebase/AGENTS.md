@@ -80,7 +80,7 @@ sending a document image to an inference provider):
 |---|---|
 | `ENABLE_WEB_SEARCH` | removes `web_search` (Exa) |
 | `ENABLE_BROWSER` | removes the browser subagent's 8 tools |
-| `ENABLE_VISION` | removes `read_image` (the vision-language model behind a tool call). `CLOUDFLARE_MODEL_VISION=off` removes it the same way, for an account with no vision model |
+| `ENABLE_VISION` | removes `read_image` (the vision-language model behind a tool call). `CLOUDFLARE_MODEL_VISION=off` removes it the same way, for an account with no vision model. The vision model defaults to `@cf/zai-org/glm-5.3-flash`, asked for reasoning `MODEL_REASONING_VISION` (default `low`) |
 
 Both default **on**, so a deployment that sets neither is unchanged.
 

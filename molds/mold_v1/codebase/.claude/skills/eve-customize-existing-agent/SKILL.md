@@ -108,6 +108,10 @@ modelContextWindowTokens: modelContextWindowTokens(),
 - The role matters only in gateway mode: `GATEWAY_MODEL_ORCHESTRATOR` and
   `GATEWAY_MODEL_SPECIALIST`. Use `"orchestrator"` for a subagent whose hard part is
   reading and judging documents; a cheap routing-only subagent can use `"specialist"`.
+- A third role, `"vision"`, is not an agent: it is the model behind the `read_image` tool
+  (`CLOUDFLARE_MODEL_VISION`, default `@cf/zai-org/glm-5.3-flash`, asked for reasoning
+  `MODEL_REASONING_VISION`, default `low`). It never falls back to the fleet model, which
+  is text-only. Never pass it to an `agent.ts`.
 - `modelContextWindowTokens()` is required for the Cloudflare provider: eve cannot look up
   the window of a custom OpenAI-compatible model, and needs it to know when to compact.
 - Never write a model id into an `agent.ts`. A hardcoded id bypasses the provider switch

@@ -520,8 +520,18 @@ export function withOutputBudget(params: ModelCallParams, budget: number | null)
  * and an older note in model.ts says GLM 5.2 errors on it — so a model not on
  * this list is never sent it: a 400 there would turn a recoverable empty
  * response into a failed turn. Add a model here only after probing it.
+ *
+ * GLM 5.3 Flash (`@cf/zai-org/glm-5.3-flash`, the default vision model since
+ * 2026-09-25) is on it because Cloudflare documents its reasoning levels
+ * (low/high/max, default max). The same list gates the reasoning level
+ * `read_image` sends (agent/lib/vision-tools.ts), and that call keeps the same
+ * belt: a 4xx naming the field is retried once without it.
  */
-export const RECOVERY_REASONING_MODELS: ReadonlySet<string> = new Set(["@cf/zai-org/glm-5.3", "@cf/moonshotai/kimi-k2.6"]);
+export const RECOVERY_REASONING_MODELS: ReadonlySet<string> = new Set([
+  "@cf/zai-org/glm-5.3",
+  "@cf/zai-org/glm-5.3-flash",
+  "@cf/moonshotai/kimi-k2.6",
+]);
 
 export function raisedRecoveryReasoning(params: ModelCallParams, outcome: ModelCallOutcome, modelId?: string): "low" | null {
   if (!ranOutOfBudget(outcome)) return null;
