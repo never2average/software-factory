@@ -13,12 +13,10 @@
  * upserts it into the in-memory store.
  *
  * IMPORTANT — must be called BEFORE importing anything that reads the store,
- * and it moves the process to a temp directory first. `writeStore()`
- * best-effort persists to `<cwd>/data/customers.json`, so seeding from the repo
- * root would write the fixture straight into the tracked file this whole
- * problem came from. From a temp cwd that write lands somewhere harmless (or
- * fails silently, which is the documented behaviour on read-only filesystems),
- * and the in-memory copy — the thing under test — is correct either way.
+ * and it moves the process to a temp directory first. `writeStore()` used to
+ * best-effort persist to `<cwd>/data/customers.json`, the tracked file the
+ * client bundle imported; it is in memory only now (mold_v1-120), and the temp
+ * cwd stays as a belt for any other write a test path makes.
  */
 import { mkdtempSync } from "node:fs";
 import { readFile } from "node:fs/promises";

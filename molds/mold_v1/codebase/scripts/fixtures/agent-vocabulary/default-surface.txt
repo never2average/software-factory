@@ -9577,8 +9577,8 @@ couldn't verify rather than stating it as fact.
 
 ## The nine sheets: fixed columns and grain
 
-Every sheet keys on **`customer_id`** — the SAME slug as `data/customers.json`'s
-`id` (e.g. `acme-bank`, `northwind-cap`). Build each sheet with exactly these
+Every sheet keys on **`customer_id`** — the SAME slug as the customer's `id` in
+the system of record (what `list_customers` / `get_customer` return). Build each sheet with exactly these
 columns (headers in row 1). Respect each sheet's GRAIN — do not collapse a
 multi-use-case or multi-environment customer into one row. These nine sheets are
 packaged into the seven domain workbooks (`<Domain>/Master.xlsx`) — see "The seven

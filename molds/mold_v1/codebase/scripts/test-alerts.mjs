@@ -1,8 +1,9 @@
 /**
  * Fallback-path test for the deterministic alerts / digest engine
- * (agent/lib/alerts.ts). Runs with NO database URL, so the system of record
- * reads from the bundled seed JSON (data/customers.json) in memory — no
- * Postgres connection is ever attempted. Every assertion is pinned to a known
+ * (agent/lib/alerts.ts). Runs with NO database URL and DEMO_SAMPLE_DATA=1, so
+ * the system of record's in-memory fallback starts from the demo sample
+ * (data/sample/customers.json, agent/lib/sample-data.ts) — no Postgres
+ * connection is ever attempted. Every assertion is pinned to a known
  * `now`, exercising the pure (store, now) -> alerts contract.
  *
  * Usage:
@@ -13,6 +14,8 @@ import assert from "node:assert/strict";
 // Force the fallback path: no DB URL.
 delete process.env.DATABASE_URL;
 delete process.env.POSTGRES_URL;
+// The fallback starts empty unless a local demo asks for the sample records; this test pins them.
+process.env.DEMO_SAMPLE_DATA = "1";
 
 const { getDb } = await import("../agent/lib/db/index.ts");
 const { computeStandupDigest, computeOverdueAlerts, computeSlaBreaches } = await import(
@@ -49,7 +52,7 @@ assert.equal(acme.openCount, 3, "acme has 3 open follow-ups");
 assert.equal(acme.overdueCount, 1);
 assert.equal(acme.dueSoonCount, 1);
 assert.equal(acme.status, "On Track", "customer status is surfaced on the section");
-assert.equal(acme.fdeOwner, "priyesh@onfinance.in");
+assert.equal(acme.fdeOwner, "alex.rivera@example.com");
 // Rule 3 ranking within a customer: overdue < due_soon < on_track.
 assert.deepEqual(
   idsOf(acme.topFollowUps),

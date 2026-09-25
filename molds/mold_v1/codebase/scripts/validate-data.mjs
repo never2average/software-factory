@@ -4,8 +4,8 @@ import {
   peopleStoreSchema,
 } from "../agent/lib/customer-schema.ts";
 
-const customersPath = new URL("../data/customers.json", import.meta.url);
-const peoplePath = new URL("../data/people.json", import.meta.url);
+const customersPath = new URL("../data/sample/customers.json", import.meta.url);
+const peoplePath = new URL("../data/sample/people.json", import.meta.url);
 
 const customerStore = customerStoreSchema.parse(JSON.parse(readFileSync(customersPath, "utf8")));
 const peopleStore = peopleStoreSchema.parse(JSON.parse(readFileSync(peoplePath, "utf8")));

@@ -21,11 +21,11 @@ import type { ApiCycle } from "@/app/_components/ops/lib";
 const iso = (n: number) => new Date(2026, 6, 8 + n).toISOString();
 const CYCLES: { cycle: ApiCycle; stats: { total: number; done: number; committed: number; doneDates: string[] } }[] = [
   {
-    cycle: { id: "1", name: "Sprint 12", startsAt: iso(0), endsAt: iso(14), state: "active", goal: "Ship SBI COS to UAT", capacity: 10, lead: "priyesh@onfinance.in", createdBy: "priyesh@onfinance.in", archivedAt: null, createdAt: iso(0), updatedAt: iso(0) },
+    cycle: { id: "1", name: "Sprint 12", startsAt: iso(0), endsAt: iso(14), state: "active", goal: "Ship SBI COS to UAT", capacity: 10, lead: "priya@example.com", createdBy: "priya@example.com", archivedAt: null, createdAt: iso(0), updatedAt: iso(0) },
     stats: { total: 10, done: 4, committed: 10, doneDates: [iso(2), iso(3), iso(5), iso(6)] },
   },
   {
-    cycle: { id: "2", name: "Sprint 13", startsAt: iso(14), endsAt: iso(28), state: "planning", goal: null, capacity: null, lead: null, createdBy: "arjun@onfinance.in", archivedAt: null, createdAt: iso(14), updatedAt: iso(14) },
+    cycle: { id: "2", name: "Sprint 13", startsAt: iso(14), endsAt: iso(28), state: "planning", goal: null, capacity: null, lead: null, createdBy: "arjun@example.com", archivedAt: null, createdAt: iso(14), updatedAt: iso(14) },
     stats: { total: 5, done: 0, committed: 5, doneDates: [] },
   },
 ];
@@ -34,21 +34,21 @@ const TASKS: { col: string; items: TaskCardData[] }[] = [
   {
     col: "Open",
     items: [
-      { title: "Wire the RBI circular scraper into the COS data layer", priority: "high", assignee: "paartha@onfinance.in", cycleLabel: "Sprint 12", due: { text: "in 2d", overdue: false } },
-      { title: "Draft SLA reconciliation note for bare-metal deployments", priority: "normal", assignee: "priyesh@onfinance.in", containerType: "deployment", containerLabel: "sbi/prod" },
+      { title: "Wire the RBI circular scraper into the COS data layer", priority: "high", assignee: "paartha@example.com", cycleLabel: "Sprint 12", due: { text: "in 2d", overdue: false } },
+      { title: "Draft SLA reconciliation note for bare-metal deployments", priority: "normal", assignee: "priya@example.com", containerType: "deployment", containerLabel: "sbi/prod" },
       { title: "Follow up on audit-trail ticket", priority: "low", cycleLabel: "Backlog" },
     ],
   },
   {
     col: "In progress",
     items: [
-      { title: "Config specialist: SAML SSO + data-residency guardrails", priority: "high", assignee: "arjun@onfinance.in", containerType: "implementation", containerLabel: "SBI COS", due: { text: "yesterday", overdue: true } },
-      { title: "Stand up the eval suite before UAT", priority: "normal", assignee: "priyesh@onfinance.in" },
+      { title: "Config specialist: SAML SSO + data-residency guardrails", priority: "high", assignee: "arjun@example.com", containerType: "implementation", containerLabel: "SBI COS", due: { text: "yesterday", overdue: true } },
+      { title: "Stand up the eval suite before UAT", priority: "normal", assignee: "priya@example.com" },
     ],
   },
   {
     col: "Done",
-    items: [{ title: "Get customer record fully populated", priority: "normal", done: true, assignee: "paartha@onfinance.in", due: { text: "3d ago", overdue: false } }],
+    items: [{ title: "Get customer record fully populated", priority: "normal", done: true, assignee: "paartha@example.com", due: { text: "3d ago", overdue: false } }],
   },
 ];
 
@@ -62,16 +62,16 @@ const bd = (committed: number, doneOffsets: number[]) => ({
 });
 
 const IMPLS: ImplCardData[] = [
-  { title: "Regulatory circular co-pilot", customer: "SBI", risk: "high", owner: "paartha@onfinance.in", blocker: true, due: { text: "due in 12 days", overdue: false }, burndown: bd(10, [2, 3, 5, 6]) },
-  { title: "Credit-memo drafting agent", customer: "ICICI HFC", risk: "medium", owner: "arjun@onfinance.in", due: { text: "due in 4 days", overdue: false }, burndown: bd(8, [1, 2, 3, 4, 6, 8]) },
-  { title: "KYC exception triage", customer: "CUB", risk: "low", owner: "priyesh@onfinance.in", due: { text: "due in 30 days", overdue: false }, burndown: bd(6, [4]) },
-  { title: "Portfolio commentary generator", customer: "MLP USA", risk: "low", owner: "priyesh@onfinance.in", due: { text: "2 days overdue", overdue: true }, burndown: bd(5, [1, 2, 3, 4, 5]) },
+  { title: "Regulatory circular co-pilot", customer: "SBI", risk: "high", owner: "paartha@example.com", blocker: true, due: { text: "due in 12 days", overdue: false }, burndown: bd(10, [2, 3, 5, 6]) },
+  { title: "Credit-memo drafting agent", customer: "ICICI HFC", risk: "medium", owner: "arjun@example.com", due: { text: "due in 4 days", overdue: false }, burndown: bd(8, [1, 2, 3, 4, 6, 8]) },
+  { title: "KYC exception triage", customer: "CUB", risk: "low", owner: "priya@example.com", due: { text: "due in 30 days", overdue: false }, burndown: bd(6, [4]) },
+  { title: "Portfolio commentary generator", customer: "MLP USA", risk: "low", owner: "priya@example.com", due: { text: "2 days overdue", overdue: true }, burndown: bd(5, [1, 2, 3, 4, 5]) },
 ];
 
 const DEPLOYS: DeployCardData[] = [
-  { customer: "SBI", env: "prod", version: "2.3.1", health: "healthy", status: "live", owner: "paartha@onfinance.in", uptime: 99.94, errorRate: 0.12 },
-  { customer: "ICICI HFC", env: "staging", version: "2.4.0-rc2", health: "degraded", status: "in_progress", owner: "arjun@onfinance.in", uptime: 98.7, errorRate: 1.4 },
-  { customer: "CUB", env: "prod", version: "1.9.0", health: "down", status: "pending-approval", owner: "priyesh@onfinance.in", uptime: 91.2, errorRate: 4.8 },
+  { customer: "SBI", env: "prod", version: "2.3.1", health: "healthy", status: "live", owner: "paartha@example.com", uptime: 99.94, errorRate: 0.12 },
+  { customer: "ICICI HFC", env: "staging", version: "2.4.0-rc2", health: "degraded", status: "in_progress", owner: "arjun@example.com", uptime: 98.7, errorRate: 1.4 },
+  { customer: "CUB", env: "prod", version: "1.9.0", health: "down", status: "pending-approval", owner: "priya@example.com", uptime: 91.2, errorRate: 4.8 },
 ];
 
 function Column({ title, children }: { readonly title: string; readonly children: React.ReactNode }) {

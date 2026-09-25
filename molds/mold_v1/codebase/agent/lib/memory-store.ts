@@ -30,7 +30,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or } from "drizzle-orm";
 import { z } from "zod";
-import peopleSeed from "../../data/people.json" with { type: "json" };
+import { samplePeople } from "./sample-data.ts";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { memories as memoriesTable } from "./db/schema.ts";
 import { DEFAULT_ORG } from "./org-context.ts";
@@ -282,9 +282,10 @@ export interface TurnMemories {
  * Lowercased aliases for an entity id so a memory saved under
  * `customer:acme-bank` is recalled when the turn says "Acme Bank", and one
  * under `person:sam@acmebank.com` when the turn says "Sam Cole". Customer
- * aliases come from the system of record (Postgres or seed fallback); person
- * aliases from the bundled `data/people.json`. The raw entity id always
- * matches, so memories about people outside the seed still recall by id.
+ * aliases come from the system of record (Postgres or the no-database
+ * fallback); person aliases from the sample people, which exist only in a local
+ * demo (DEMO_SAMPLE_DATA=1, ./sample-data.ts). The raw entity id always
+ * matches, so memories about any person still recall by id.
  */
 async function entityAliases(orgId = DEFAULT_ORG): Promise<Map<string, string[]>> {
   const aliases = new Map<string, string[]>();
@@ -331,9 +332,10 @@ async function entityAliases(orgId = DEFAULT_ORG): Promise<Map<string, string[]>
       add(kind, entityId, displayName);
     }
   }
+  const peopleSeed = samplePeople();
   const people = [
-    ...(peopleSeed.internalStaffAssignments ?? []),
-    ...(peopleSeed.customerStakeholders ?? []),
+    ...peopleSeed.internalStaffAssignments,
+    ...peopleSeed.customerStakeholders,
   ] as { email: string; name: string }[];
   for (const person of people) {
     add("person", person.email, person.email);

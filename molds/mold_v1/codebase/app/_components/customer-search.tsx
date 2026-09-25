@@ -12,13 +12,13 @@ import {
 import { cn } from "@/lib/utils";
 import { DEPLOYMENT_PROFILE, fillProfileText } from "@/lib/deployment-profile.generated";
 import { CustomerMark } from "./customer-mark";
-import { getCustomerSummary, type CustomerContextSummary } from "./dataroom";
+import type { CustomerContextSummary } from "./dataroom";
+import { W, an } from "@/lib/ui-words";
 
 /**
- * A customer in the context selector. Carries the summary fields inline (from the
- * live /api/ops/customers feed) so the row can render tier/stage/status/health
- * without the bundled JSON. Fields are optional so the bundled {id,name} seed
- * still type-checks; when they're absent we fall back to getCustomerSummary.
+ * A customer in the context selector, as the live /api/ops/customers feed answers
+ * it: the summary fields ride along so the row can render tier/stage/status/health.
+ * There is no other source: the picker never falls back to a bundled list.
  */
 export interface CustomerListItem {
   id: string;
@@ -46,6 +46,12 @@ function progressColor(value: string | null | undefined): string {
   if (/prospect|lead/.test(v)) return "text-slate-400";
   return "text-muted-foreground";
 }
+
+/**
+ * Where the workspace's list stands. `loading` until /api/ops/customers answers; `error` when it could not be read,
+ * which is NOT an empty workspace and is never shown as one.
+ */
+export type CustomerListStatus = "loading" | "ready" | "error";
 
 /** Build a summary from the item's live fields; null if it carries none. */
 function liveSummary(c: CustomerListItem): CustomerContextSummary | undefined {
@@ -75,6 +81,8 @@ export function CustomerSearchDialog({
   open,
   onOpenChange,
   customers,
+  status = "ready",
+  onRetry,
   selected,
   onToggle,
   onClear,
@@ -82,6 +90,9 @@ export function CustomerSearchDialog({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly customers: CustomerListItem[];
+  readonly status?: CustomerListStatus;
+  /** Reads the list again after a failed read. */
+  readonly onRetry?: () => void;
   readonly selected: string[];
   readonly onToggle: (customer: string) => void;
   readonly onClear: () => void;
@@ -99,7 +110,33 @@ export function CustomerSearchDialog({
     >
       <CommandInput placeholder={fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.placeholder)} />
       <CommandList className="max-h-[70vh]">
-        <CommandEmpty>{fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.empty)}</CommandEmpty>
+        {/* The list is the workspace's own, and only that: while it loads, if it could not be read, or when the
+            workspace has none, the picker says which, and there is nothing to pick. */}
+        {status === "loading" ? (
+          <p data-testid="account-picker-loading" className="px-3 py-6 text-center text-muted-foreground text-sm">
+            Loading {W.accounts}…
+          </p>
+        ) : status === "error" ? (
+          <div data-testid="account-picker-error" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-muted-foreground text-sm">
+            <span>The {W.account} list could not be loaded.</span>
+            {onRetry ? (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-md border border-border px-2.5 py-1 text-foreground text-xs hover:bg-muted"
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : customers.length === 0 ? (
+          <div data-testid="account-picker-empty" className="flex flex-col items-center gap-1 px-3 py-6 text-center text-muted-foreground text-sm">
+            <span className="font-medium text-foreground">No {W.accounts} yet</span>
+            <span>Once {an(W.account)} {W.account} is added to this workspace, you can pick it here.</span>
+          </div>
+        ) : (
+          <CommandEmpty>{fillProfileText(DEPLOYMENT_PROFILE.chat.account_search.empty)}</CommandEmpty>
+        )}
         <CommandGroup>
           {selected.length > 0 ? (
             <CommandItem
@@ -113,9 +150,8 @@ export function CustomerSearchDialog({
           ) : null}
           {customers.map((c) => {
             const isSelected = selected.includes(c.name);
-            // Prefer the live summary carried on the item; fall back to the
-            // bundled JSON for the seed rows that don't carry one.
-            const s = liveSummary(c) ?? getCustomerSummary(c.id);
+            // The summary the live feed carries on the item; none when it carries none.
+            const s = liveSummary(c);
             // ONE leading item, with an icon: the progress (status) if we have
             // it, else the lifecycle stage — not both. The AI summary follows.
             const stageOrProgress = s?.status ?? s?.lifecycleStage ?? null;

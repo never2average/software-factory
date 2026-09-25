@@ -8,8 +8,8 @@
  * stay in the data-room store (`agent/lib/dataroom-store.ts`).
  *
  * Conventions:
- * - Every customer-scoped table keys on `customer_id` (the slug from
- *   `data/customers.json`, e.g. `acme-bank`) with an FK to `customers`.
+ * - Every customer-scoped table keys on `customer_id` (the account's slug,
+ *   e.g. `acme-bank`) with an FK to `customers`.
  * - Zod enums are stored as `text` — the Zod schemas remain the validation
  *   contract at the application boundary; Postgres stores the literal value.
  * - Date/timestamp strings in the Zod contract are loose ISO strings, so they

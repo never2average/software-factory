@@ -35,7 +35,7 @@ import {
 } from "./customer-schema.ts";
 import { readFileSync } from "node:fs";
 import { compatEnv } from "./compat-env.ts";
-import peopleSeedJson from "../../data/people.json" with { type: "json" };
+import { samplePeople } from "./sample-data.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Public types                                                               */
@@ -80,22 +80,18 @@ export interface WorkbookSpec {
 /* -------------------------------------------------------------------------- */
 
 /**
- * The bundled people seed, with a TEST-ONLY override.
+ * The no-database fallback's people, with a TEST-ONLY override.
  *
- * data/people.json ships empty on purpose — c7b929c removed the dummy staff and
- * stakeholders that were leaking into the product. But this is a static import,
- * so unlike the customer store there is no upsert path a test can seed through,
- * and the workbook People sheets became untestable: the assertions covering
- * them have been failing since that commit.
- *
- * WORKSPACE_PEOPLE_SEED (once FDE_PEOPLE_SEED) lets a test point at its own fixture. It is read once, at
- * module load, and is never set in production — the default is exactly the
- * bundled (empty) seed, so this changes no shipped behaviour.
+ * None by default: the sample staff and stakeholders (data/sample/people.json)
+ * are read only in a local demo (DEMO_SAMPLE_DATA=1, ./sample-data.ts). There
+ * is no upsert path for people a test can seed through, so
+ * WORKSPACE_PEOPLE_SEED (once FDE_PEOPLE_SEED) lets a test point at its own
+ * fixture. It is read once, at module load, and is never set in production.
  */
 const peopleSeed = peopleStoreSchema.parse(
   compatEnv("WORKSPACE_PEOPLE_SEED")
     ? JSON.parse(readFileSync(compatEnv("WORKSPACE_PEOPLE_SEED") as string, "utf8"))
-    : peopleSeedJson,
+    : samplePeople(),
 );
 
 /* -------------------------------------------------------------------------- */

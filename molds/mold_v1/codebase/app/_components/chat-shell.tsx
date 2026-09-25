@@ -6,8 +6,8 @@ import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/brows
 import { AgentChat, type AgentEvents, type AgentSession } from "./agent-chat";
 import { ChatSidebar } from "./chat-sidebar";
 import { ChatSearchDialog } from "./chat-search";
-import { CUSTOMERS, Dataroom, type DataroomTab } from "./dataroom";
-import type { CustomerListItem } from "./customer-search";
+import { Dataroom, type DataroomTab } from "./dataroom";
+import type { CustomerListItem, CustomerListStatus } from "./customer-search";
 import { OpsCenter, type OpsSection } from "./ops-center";
 import { activeOrg, opsFetch } from "./ops/lib";
 import {
@@ -355,13 +355,21 @@ function ChatShimmer() {
 
 export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: ChatShellProps) {
   const [sessions, setSessions] = useState<StoredSession[]>([]);
-  // Customer list for the per-chat context selector. Fetched from the system of
-  // record (Postgres) at runtime via /api/ops/customers — NOT the bundled
-  // data/customers.json (empty in this deployment). The feed carries each
-  // customer's summary (tier/stage/status/health/owner + last touch) inline so
-  // the selector renders a real one-line summary. Seed with the bundled CUSTOMERS
-  // so there's something before the fetch resolves.
-  const [customerOptions, setCustomerOptions] = useState<CustomerListItem[]>(CUSTOMERS);
+  // Customer list for the per-chat context selector: the workspace's own, from the
+  // system of record via /api/ops/customers, and nothing else. It starts EMPTY and
+  // loading. It used to start from a bundled sample list and keep it whenever the
+  // workspace had none, so an empty workspace offered invented accounts forever and
+  // a chat could be grounded on an id that does not exist (mold_v1-120). The feed
+  // carries each account's summary (tier/stage/status/health/owner + last touch)
+  // inline so the selector renders a real one-line summary.
+  const [customerOptions, setCustomerOptions] = useState<CustomerListItem[]>([]);
+  const [customersStatus, setCustomersStatus] = useState<CustomerListStatus>("loading");
+  /** Bumped by the picker's Retry: reads the list again. */
+  const [customersReload, setCustomersReload] = useState(0);
+  const retryCustomers = useCallback(() => {
+    setCustomersStatus("loading");
+    setCustomersReload((n) => n + 1);
+  }, []);
   // Live customer id set for the persist-time metadata snapshot (read from the
   // deps-[] persist callback via a ref). Approximate is fine.
   const customerIdSetRef = useRef<ReadonlySet<string>>(new Set());
@@ -433,23 +441,27 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     setDataroomOpen(true);
   }, []);
 
-  // Load the real customer list (system of record) for the context selector.
+  // Load the workspace's customer list (system of record) for the context selector.
+  // An empty answer IS the answer (the picker shows its empty state); a failed read
+  // is said as one, never shown as an empty workspace.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch("/api/ops/customers", { headers: getAuthHeaders() });
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { customers?: CustomerListItem[] };
-        if (!cancelled && data.customers?.length) setCustomerOptions(data.customers);
+        if (cancelled) return;
+        setCustomerOptions(Array.isArray(data.customers) ? data.customers : []);
+        setCustomersStatus("ready");
       } catch {
-        /* keep the bundled fallback */
+        if (!cancelled) setCustomersStatus("error");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, customersReload]);
 
   // What the mounted AgentChat is: a stable key + the session it seeds from.
   /**
@@ -2295,6 +2307,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         selectedCustomers={activeCustomers}
         onCustomersChange={changeCustomers}
         customers={customerOptions}
+        customersStatus={customersStatus}
+        onRetryCustomers={retryCustomers}
         readOnly={Boolean(readOnlyOwner)}
         readOnlyOwner={readOnlyOwner}
         relayThreadId={relayThreadId}

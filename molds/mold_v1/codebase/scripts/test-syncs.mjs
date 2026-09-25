@@ -23,6 +23,11 @@ import { register } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// The JSON-fallback system of record starts empty unless a local demo asks for the sample accounts; this test
+// ingests against the sample's `acme-bank` (agent/lib/sample-data.ts). Inherited by both phase processes.
+process.env.DEMO_SAMPLE_DATA = "1";
+process.env.DEMO_SAMPLE_DATA_DIR = fileURLToPath(new URL("../data/sample/", import.meta.url));
+
 // agent/lib/syncs.ts (E1) uses eve's `#lib/*.js` subpath imports, but Node's
 // type-stripping doesn't rewrite a `.js` specifier to its sibling `.ts` file.
 // Register a resolve hook that retries `.js` → `.ts` on resolution failure, then
@@ -49,8 +54,8 @@ const TODAY = new Date().toISOString().slice(0, 10);
 const LANDING_PATH = `Customers/syncs/manual_entry/acme-bank/${TODAY}.jsonl`;
 const INTERACTIONS_PATH = "Customers/acme-bank/interactions.jsonl";
 
-// The two manual_entry items driven end-to-end (dm.md JSON-fallback seed
-// customer id `acme-bank` exists in data/customers.json).
+// The two manual_entry items driven end-to-end (the demo sample's customer id
+// `acme-bank`, data/sample/customers.json, loaded by DEMO_SAMPLE_DATA above).
 const ITEMS = [
   { note: "Kickoff recap", date: "2026-07-09" },
   { note: "Sent SOW", type: "email" },

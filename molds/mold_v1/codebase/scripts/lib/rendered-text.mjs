@@ -50,11 +50,33 @@ export const PAGE_SPECS = [
   { path: "/workspace?tab=audit", ready: "Every change made in this workspace" },
   { path: "/workspace?tab=dataroom", ready: "Every document, dataset, and artifact the agent works from." },
   { path: "/onboard", ready: "css:body" },
+  // The states a workspace sees before (or without) records, in the profile's words: the data room and the chat's
+  // account picker with no records, while they load, and when they could not be read.
+  { name: "data room, empty workspace", path: "/?dataroom=customers", ready: "css:[data-testid=dataroom-empty]", mocks: { "/api/ops/workbook": { customers: [], people: { internalStaffAssignments: [], customerStakeholders: [] } } } },
+  { name: "data room, loading", path: "/?dataroom=customers", ready: "css:[data-testid=dataroom-loading]", mocks: { "/api/ops/workbook": { $delayMs: 8000, $body: {} } } },
+  { name: "data room, could not be read", path: "/?dataroom=customers", ready: "css:[data-testid=dataroom-error]", mocks: { "/api/ops/workbook": { $status: 503, $body: { error: "unavailable" } } } },
+  { name: "data room, one table could not be read", path: "/?dataroom=deployments", ready: "css:[data-testid=dataroom-unavailable]", mocks: { "/api/ops/workbook": { customers: [{ id: "acme", name: "Acme Housing" }], people: {}, unavailable: ["deployments"] } } },
+  { name: "account picker, empty workspace", path: "/", ready: "css:textarea", mocks: { "/api/ops/customers": { customers: [], items: [] } }, then: [{ click: "css:[data-testid=account-picker]", expect: "css:[data-testid=account-picker-empty]" }] },
+  { name: "account picker, loading", path: "/", ready: "css:textarea", mocks: { "/api/ops/customers": { $delayMs: 8000, $body: { customers: [] } } }, then: [{ click: "css:[data-testid=account-picker]", expect: "css:[data-testid=account-picker-loading]" }] },
+  { name: "account picker, could not be read", path: "/", ready: "css:textarea", mocks: { "/api/ops/customers": { $status: 503, $body: { error: "unavailable" } } }, then: [{ click: "css:[data-testid=account-picker]", expect: "css:[data-testid=account-picker-error]" }] },
 ];
 export const PAGES = PAGE_SPECS.map((p) => p.path);
 
 /** What the app shows when a page crashed. Seeing it fails the pass. */
 const ERROR_SCREENS = [/This page couldn.t load/i, /Application error/i, /Unhandled Runtime Error/i, /Something went wrong/i];
+
+/**
+ * The fields a profile can hide in the data room, by where they live (BASE keys): the account's scalar fields, and the
+ * two redefinable areas' fields. The mock gives each a marked value (`HIDDEN-FIELD-<key>`), so the rendered pass can
+ * tell a hidden field that leaked from one that was dropped.
+ */
+export const HIDEABLE = {
+  account: ["aeOwner", "arr", "arrCurrency", "seats", "accountRegion", "contractStatus", "renewalForecast", "renewalRiskReason", "expansionPotentialArr", "valueRealizationStage", "targetAnnualValue", "realizedAnnualValue", "successCriteria", "valuePeriodStart", "valuePeriodEnd", "valueEvidenceStatus", "valueEvidenceUrl", "lastBusinessReviewDate", "nextBusinessReviewDate", "contractStart", "renewalDate", "technicalOwnerEmail", "executiveSponsorEmail"],
+  deployments: ["region", "environment", "cloudProvider", "deploymentStrategy", "buildSha", "uptime30dPct", "errorRate30dPct", "latencyP95Ms", "cost30dUsd", "rollbackVersion", "dashboardUrl", "runbookUrl"],
+  implementation: ["securityReviewStatus", "privacyReviewStatus", "billingReadinessStatus", "runbookStatus", "supportOwnerEmail", "launchDecision"],
+};
+export const HIDDEN_MARK = "HIDDEN-FIELD-";
+const hiddenMarks = (keys) => Object.fromEntries(keys.map((k) => [k, `${HIDDEN_MARK}${k}`]));
 
 const now = () => new Date().toISOString();
 const at = (d) => new Date(Date.now() - d * 86_400_000).toISOString();
@@ -81,6 +103,26 @@ export const MOCKS = () => ({
   "/api/ops/apps": { items: [{ id: "a1", slug: "coverage-digest", name: "Coverage digest", description: "A weekly digest", sourceKind: "prompt", workflow: null, prompt: "Write the digest", subagent: null, customerId: null, refreshCron: null, contentMd: "# Digest\n\nAll quiet.", contentUpdatedAt: at(1), lastRunId: null, lastSessionId: null, lastError: null, lastRefreshAt: at(1), enabled: true, createdBy: "reviewer@example.com", createdAt: at(4), updatedAt: at(1) }] },
   "/api/ops/inbox": { threads: [{ threadKey: "k1", source: "email", subject: "Q2 results call", preview: "Notes from the call", participants: ["ir@acme.example"], customerId: null, messageCount: 1, unread: true, firstAt: at(1), lastAt: at(1), messages: [{ id: "m1", from: "ir@acme.example", preview: "Notes from the call", body: "Notes from the call", occurredAt: at(1) }] }] },
   "/api/dataroom": { paths: [] },
+  // The workspace's own records, which every Master.xlsx preview is built from (the client bundles none). Every field a
+  // profile may HIDE carries a value marked HIDDEN-FIELD-<key>: the data room must drop it even when an answer carries
+  // it, and check-ui-vocabulary fails on any marker (or the column) of a field the rendered profile hides. The own
+  // (custom) fields are those a profile may declare; the ones it lists show as columns in its labels.
+  "/api/ops/workbook": {
+    customers: [{
+      id: "acme", name: "Acme Housing", tier: "Enterprise", status: "On Track", lifecycleStage: "Live", fdeOwner: "reviewer@example.com",
+      ...hiddenMarks(HIDEABLE.account),
+      custom: { house_view: "Positive", notes: "Filings read through Q2." },
+      platform: { tenantId: "t1" }, solutions: [],
+      deployments: [{ deploymentId: "d1", deployedVersion: "Q2 FY26", releaseStatus: "deployed", lastDeployAt: at(3), ...hiddenMarks(HIDEABLE.deployments), custom: { rating: "Buy", target_price: 1234, kpi_completeness: 80, aum_cr: 5000 } }],
+      implementation: { rolloutId: "r1", implementationStage: "UAT", ...hiddenMarks(HIDEABLE.implementation), custom: { coverage_priority: "Core", next_review: "2026-10-01" } },
+      tickets: [{ ticketId: "T-1", summary: "Chase the Q2 filing", ticketStatus: "Open", ticketPriority: "P2-Medium" }],
+      interactions: [{ interactionId: "i1", interactionAt: at(2), interactionType: "call", summary: "Q2 results call" }],
+    }],
+    people: {
+      internalStaffAssignments: [{ customer_id: "acme", staffRole: "solution_engineer", name: "Reviewer", title: "Analyst", employerOrg: "Research", email: "reviewer@example.com" }],
+      customerStakeholders: [{ customer_id: "acme", stakeholderRole: "champion", name: "Ira Mehta", title: "Head of Investor Relations", employerOrg: "Acme Housing", email: "ir@acme.example" }],
+    },
+  },
   "/api/ops/me/workspaces": { memberships: [{ orgId: "o1", name: "Research", orgName: "Research", role: "owner", slug: "research" }], invites: [], active: "o1" },
   "/api/ops/orgs": { items: [{ orgId: "o1", id: "o1", name: "Research", branding: {} }] },
   "/api/ops/summary": { total: 0, sections: [] },
@@ -131,9 +173,13 @@ export async function renderedText({ dir, root, specs = PAGE_SPECS }) {
     await ctx.addInitScript((t) => { localStorage.setItem("workspace-google-token", t); }, jwt);
     const base_mocks = MOCKS();
     let mocks = base_mocks;
-    await ctx.route(/\/api\//, (route) => {
+    await ctx.route(/\/api\//, async (route) => {
       const u = new URL(route.request().url());
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mocks[u.pathname] ?? { items: [], ok: true }) });
+      const answer = mocks[u.pathname] ?? { items: [], ok: true };
+      // `{ $status, $body, $delayMs }` answers with that status, after that delay: a failed read, a slow one.
+      const shaped = answer && typeof answer === "object" && ("$status" in answer || "$delayMs" in answer);
+      if (shaped && answer.$delayMs) await new Promise((r) => setTimeout(r, answer.$delayMs));
+      await route.fulfill({ status: shaped ? (answer.$status ?? 200) : 200, contentType: "application/json", body: JSON.stringify(shaped ? (answer.$body ?? {}) : answer) }).catch(() => {});
     });
     const page = await ctx.newPage();
     page.setDefaultTimeout(10_000);
@@ -149,7 +195,7 @@ export async function renderedText({ dir, root, specs = PAGE_SPECS }) {
       const started = Date.now();
       pageErrors = [];
       const seen = new Set();
-      const add = (t) => { for (const l of String(t ?? "").split("\n")) { const x = l.trim(); if (x && !seen.has(x)) { seen.add(x); if (!spec.canary) out.push({ page: p, text: x }); } } };
+      const add = (t) => { for (const l of String(t ?? "").split("\n")) { const x = l.trim(); if (x && !seen.has(x)) { seen.add(x); if (!spec.canary) out.push({ page: p, ...(spec.name ? { name: spec.name } : {}), text: x }); } } };
       const read = async () => {
         const texts = await page.evaluate(() => {
           const o = [document.body.innerText];
@@ -173,11 +219,14 @@ export async function renderedText({ dir, root, specs = PAGE_SPECS }) {
         }
         await read();
         for (const step of spec.then ?? []) {
+          // `mocks`: what the API answers from this step on (a list that failed, then loads on Retry).
+          if (step.mocks) mocks = { ...mocks, ...step.mocks };
           await locate(step.click).click({ timeout: 10_000 });
           await locate(step.expect).waitFor({ state: "visible", timeout: 10_000 });
           await page.waitForTimeout(300);
           await read();
-          await page.keyboard.press("Escape").catch(() => {});
+          // `keepOpen`: the next step clicks inside what this one opened.
+          if (!step.keepOpen) await page.keyboard.press("Escape").catch(() => {});
         }
       } catch (e) {
         failures.push({ spec, why: `did not render (${String(e?.message ?? e).split("\n")[0]})` });
@@ -188,7 +237,7 @@ export async function renderedText({ dir, root, specs = PAGE_SPECS }) {
       if (pageErrors.length) failures.push({ spec, why: `page error — ${pageErrors[0]}` });
       if (process.env.UI_VOCABULARY_TIMING) console.error(`rendered ${p}: ${Date.now() - started} ms`);
     }
-    return { lines: out, failures: failures.map((f) => ({ page: f.spec.path, canary: f.spec.canary === true, why: f.why })) };
+    return { lines: out, failures: failures.map((f) => ({ page: f.spec.path, ...(f.spec.name ? { name: f.spec.name } : {}), canary: f.spec.canary === true, why: f.why })) };
   } finally {
     await browser?.close().catch(() => {});
     server.kill("SIGTERM");

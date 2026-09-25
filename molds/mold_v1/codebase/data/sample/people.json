@@ -1,22 +1,22 @@
 {
-  "_comment": "SYNTHETIC people seed for the no-database fallback path, paired with data/customers.json. scripts/validate-data.mjs enforces that every fdeOwner and ticketOwnerEmail is same-customer internal staff, so an account here must have its owner listed here too. No real people.",
+  "_comment": "SYNTHETIC people for a LOCAL DEMO only, paired with data/sample/customers.json. No real people: every email is @example.com or a .example domain. Read by agent/lib/sample-data.ts only with DEMO_SAMPLE_DATA=1. scripts/validate-data.mjs enforces that every fdeOwner and ticketOwnerEmail is same-customer internal staff, so an account here must have its owner listed here too.",
   "internalStaffAssignments": [
     {
       "customer_id": "acme-bank",
       "staffRole": "solution_engineer",
-      "name": "Priyesh Srivastava",
+      "name": "Alex Rivera",
       "title": "Forward-Deployed Engineer",
-      "employerOrg": "OnFinance",
-      "email": "priyesh@onfinance.in",
+      "employerOrg": "Example Co",
+      "email": "alex.rivera@example.com",
       "lastContact": "2026-07-09"
     },
     {
       "customer_id": "northwind-cap",
       "staffRole": "solution_engineer",
-      "name": "Priyesh Srivastava",
+      "name": "Alex Rivera",
       "title": "Forward-Deployed Engineer",
-      "employerOrg": "OnFinance",
-      "email": "priyesh@onfinance.in",
+      "employerOrg": "Example Co",
+      "email": "alex.rivera@example.com",
       "lastContact": "2026-07-09"
     }
   ],

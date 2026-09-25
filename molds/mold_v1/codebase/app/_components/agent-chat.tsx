@@ -336,15 +336,10 @@ import type { ChatMeta } from "./chat-shell";
 import { Cockpit } from "./cockpit";
 import type { OpsSection } from "./ops-center";
 import { ErrorBoundary } from "./error-boundary";
-import { CustomerSearchDialog, type CustomerListItem } from "./customer-search";
+import { CustomerSearchDialog, type CustomerListItem, type CustomerListStatus } from "./customer-search";
 import { CustomerMark } from "./customer-mark";
 import { DEPLOYMENT_PROFILE, fillProfileText } from "@/lib/deployment-profile.generated";
-import {
-  STALLED_CUSTOMERS,
-  URGENT_TICKETS,
-  type BadgeTone,
-  type DataItem,
-} from "./dataroom";
+import type { BadgeTone, DataItem } from "./dataroom";
 import { deriveInsights } from "./insights";
 import { ArtifactPanel, artifactFromHref, readableArtifactName } from "./artifact-view";
 import { ShareThreadButton, type SharePayload } from "./share-thread";
@@ -435,6 +430,10 @@ interface AgentChatProps {
   readonly selectedCustomers: string[];
   readonly onCustomersChange: (customers: string[]) => void;
   readonly customers: CustomerListItem[];
+  /** Where the workspace's list stands: the picker says "loading" or "could not be loaded" rather than "none". */
+  readonly customersStatus?: CustomerListStatus;
+  /** Reads the workspace's list again (the picker's Retry after a failed read). */
+  readonly onRetryCustomers?: () => void;
   /** A shared thread opened by a non-owner: the transcript is live but the
    *  composer is replaced by a view-only notice (multiplayer Phase 1). */
   readonly readOnly?: boolean;
@@ -644,6 +643,8 @@ export function AgentChat({
   selectedCustomers,
   onCustomersChange,
   customers,
+  customersStatus = "ready",
+  onRetryCustomers,
   readOnly,
   readOnlyOwner,
   relayThreadId,
@@ -3723,6 +3724,8 @@ export function AgentChat({
             selected={selectedCustomers}
             inferred={inferredCustomers}
             customers={customers}
+            status={customersStatus}
+            onRetry={onRetryCustomers}
             onChange={onCustomersChange}
             locked={!isEmpty}
           />
@@ -4859,9 +4862,13 @@ function CustomerSelect({
   selected,
   inferred = [],
   customers,
+  status,
+  onRetry,
   onChange,
   locked,
 }: {
+  readonly status: CustomerListStatus;
+  readonly onRetry?: () => void;
   readonly selected: string[];
   /** Customer(s) inferred from the conversation, shown read-only when nothing
    *  was manually selected — distinguished from a locked manual pick. */
@@ -4952,6 +4959,7 @@ function CustomerSelect({
     <>
       <button
         type="button"
+        data-testid="account-picker"
         onClick={() => setOpen(true)}
         className={cn(
           "flex items-center gap-1.5 rounded-full border py-1 text-xs transition-colors",
@@ -4981,6 +4989,8 @@ function CustomerSelect({
         open={open}
         onOpenChange={setOpen}
         customers={customers}
+        status={status}
+        onRetry={onRetry}
         selected={selected}
         onToggle={toggle}
         onClear={() => onChange([])}

@@ -25,7 +25,7 @@ const slug = z
   .min(1)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "must be a folder-safe slug");
 
-/** `data/customers.json` customer id, e.g. "acme-bank". */
+/** The system of record's customer id (`customers.customer_id`), e.g. "acme-bank". */
 export const customerIdSchema = slug;
 
 /**

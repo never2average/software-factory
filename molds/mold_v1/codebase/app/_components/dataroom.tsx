@@ -34,10 +34,10 @@ import { cn } from "@/lib/utils";
 import { PdfView } from "./pdf-view";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { jsonForPeople, speakKey } from "@/lib/ui-keys";
-import { W } from "@/lib/ui-words";
+import { W, an } from "@/lib/ui-words";
+import { listedOwnFields, sameKey, workbookHidden, type WorkbookTable, type WorkbookTableInfo } from "@/lib/workbook-fields";
+import type { CustomFieldSpec } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
-import customersData from "@/data/customers.json";
-import peopleData from "@/data/people.json";
 
 interface Ticket {
   ticketId: string;
@@ -164,6 +164,8 @@ interface Platform {
   lastHealthCheckAt?: string;
 }
 interface Deployment {
+  /** The profile's own fields this area lists (show_in_list), as the workbook route sends them. */
+  custom?: Record<string, unknown>;
   deploymentId?: string;
   environment?: string;
   region?: string;
@@ -294,6 +296,7 @@ interface Solution {
   lastReviewedDate?: string;
 }
 interface Implementation {
+  custom?: Record<string, unknown>;
   rolloutId?: string;
   launchScopeSolutionIds?: string[];
   implementationStage?: string;
@@ -346,6 +349,7 @@ interface Implementation {
   implementationLastUpdatedAt?: string;
 }
 interface Customer {
+  custom?: Record<string, unknown>;
   id: string;
   name?: string;
   tier?: string;
@@ -392,14 +396,6 @@ interface Customer {
   interactions?: Interaction[];
 }
 
-const customers = (customersData as unknown as { customers: Customer[] }).customers ?? [];
-
-/** Customer list for the per-chat context selector. */
-export const CUSTOMERS: { id: string; name: string }[] = customers.map((c) => ({
-  id: c.id,
-  name: c.name ?? c.id,
-}));
-
 export type BadgeTone = "high" | "medium" | "low" | "muted";
 export interface DataItem {
   customer: string; // header, shown with a logo
@@ -431,60 +427,43 @@ interface CustomerStakeholder {
   email?: string;
   lastContact?: string;
 }
-interface PeopleRow {
-  customer_id?: string;
-  personType: "internal_staff" | "customer_stakeholder";
-  staffRole?: string;
-  stakeholderRole?: string;
-  name: string;
-  title?: string;
-  employerOrg?: string;
-  email?: string;
-  lastContact?: string;
-}
-const peopleSeed = peopleData as {
-  internalStaffAssignments?: InternalStaffAssignment[];
-  customerStakeholders?: CustomerStakeholder[];
-};
-const PEOPLE: PeopleRow[] = [
-  ...(peopleSeed.internalStaffAssignments ?? []).map((p) => ({
-    ...p,
-    personType: "internal_staff" as const,
-  })),
-  ...(peopleSeed.customerStakeholders ?? []).map((p) => ({
-    ...p,
-    personType: "customer_stakeholder" as const,
-  })),
-];
 
-function daysSince(date?: string): number | null {
-  if (!date) return null;
-  const t = Date.parse(date);
-  return Number.isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+/**
+ * THE WORKSPACE'S OWN RECORDS, as GET /api/ops/workbook answers them: every Master.xlsx preview is built from this.
+ *
+ * They used to be built at module scope from the bundled data/customers.json and data/people.json, so every
+ * workspace showed the same two invented accounts, and a People sheet with a real person's email on them, whatever
+ * it actually held (factory task mold_v1-120). Nothing in the client imports a record any more; a workspace with
+ * none sees the empty state. `npm run check:no-sample-data` holds both, in the built bundle and on the page.
+ */
+export interface WorkbookData {
+  customers: Customer[];
+  people: { internalStaffAssignments: InternalStaffAssignment[]; customerStakeholders: CustomerStakeholder[] };
+  /** Per table: how many rows came, and whether the route's cap cut it. */
+  tables: Partial<Record<WorkbookTable, WorkbookTableInfo>>;
+  /** Tables that could not be read. Their sheets say so; they are never shown as empty. */
+  unavailable: WorkbookTable[];
 }
-
-function isOpenTicket(status?: string): boolean {
-  return status !== "Resolved" && status !== "Closed" && status !== "Won't Fix";
+/** An answer from the workbook API, read defensively: anything missing is an empty list, never an invented row. */
+function asWorkbook(data: unknown): WorkbookData {
+  const d = (data ?? {}) as {
+    customers?: unknown;
+    people?: { internalStaffAssignments?: unknown; customerStakeholders?: unknown };
+    tables?: unknown;
+    unavailable?: unknown;
+  };
+  const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+  return {
+    customers: list<Customer>(d.customers).filter((c) => c && typeof c.id === "string"),
+    people: {
+      internalStaffAssignments: list<InternalStaffAssignment>(d.people?.internalStaffAssignments),
+      customerStakeholders: list<CustomerStakeholder>(d.people?.customerStakeholders),
+    },
+    tables: d.tables && typeof d.tables === "object" ? (d.tables as WorkbookData["tables"]) : {},
+    unavailable: list<WorkbookTable>(d.unavailable),
+  };
 }
-
-function priorityTone(priority?: string, dueDate?: string): BadgeTone {
-  const overdue = daysSince(dueDate);
-  if ((overdue != null && overdue > 0) || priority === "P0-Critical" || priority === "P1-High") {
-    return "high";
-  }
-  return priority === "P2-Medium" ? "medium" : "low";
-}
-
-function customerLead(
-  customerId: string,
-): { name: string; role?: string; org?: string; email?: string } | undefined {
-  const person = PEOPLE.find(
-    (p) => p.customer_id === customerId && p.personType === "customer_stakeholder",
-  );
-  return person
-    ? { name: person.name, role: person.title, org: person.employerOrg, email: person.email }
-    : undefined;
-}
+type WorkbookState = { status: "loading" } | { status: "ready"; data: WorkbookData } | { status: "error"; message: string };
 
 /** A compact "what's happening" summary for the customer-context picker. */
 export interface CustomerContextSummary {
@@ -500,27 +479,6 @@ export interface CustomerContextSummary {
   openTickets: number;
   lastTouchDate?: string;
   lastTouch?: string;
-}
-
-export function getCustomerSummary(id: string): CustomerContextSummary | undefined {
-  const c = customers.find((x) => x.id === id);
-  if (!c) return undefined;
-  const last = (c.interactions ?? [])
-    .slice()
-    .sort((a, b) => String(a.interactionAt ?? "").localeCompare(String(b.interactionAt ?? "")))
-    .at(-1);
-  return {
-    tier: c.tier,
-    lifecycleStage: c.lifecycleStage,
-    status: c.status,
-    healthScore: c.healthScore,
-    healthReason: c.healthReason,
-    fdeOwner: c.fdeOwner,
-    lead: customerLead(c.id),
-    openTickets: (c.tickets ?? []).filter((t) => isOpenTicket(t.ticketStatus)).length,
-    lastTouchDate: last?.interactionAt?.slice(0, 10),
-    lastTouch: last?.summary ?? last?.note,
-  };
 }
 
 /**
@@ -553,76 +511,6 @@ function hashLabel(label: string): number {
 export function ticketCategoryTone(category: string): string {
   return CATEGORY_PALETTE[hashLabel(category) % CATEGORY_PALETTE.length];
 }
-/** Compact labels so the category fits the small card badge. */
-const TICKET_CATEGORY_SHORT: Record<string, string> = {
-  "Feature Request": "Feature",
-  "Bug Report": "Bug",
-  "Data Migration Request": "Migration",
-  "Configuration Change Request": "Config Change",
-  "Workflow Customization Request": "Workflow",
-};
-
-/** Open follow-ups, oldest (most aged) first. */
-export const URGENT_TICKETS: DataItem[] = customers
-  .flatMap((c) =>
-    (c.tickets ?? [])
-      .filter((t) => isOpenTicket(t.ticketStatus))
-      .map((t) => ({ id: c.id, name: c.name ?? c.id, ticket: t })),
-  )
-  .filter((x) => x.ticket.summary)
-  .sort((a, b) =>
-    String(a.ticket.ticketOpenedDate ?? "~").localeCompare(String(b.ticket.ticketOpenedDate ?? "~")),
-  )
-  .map(({ id, name, ticket }) => {
-    const category = ticket.ticketCategory;
-    const age = daysSince(ticket.ticketOpenedDate);
-    return {
-      customer: name,
-      summary: ticket.summary as string,
-      action: "Investigate the issue",
-      badge: category ? (TICKET_CATEGORY_SHORT[category] ?? category) : "Ticket",
-      badgeClass: category ? ticketCategoryTone(category) : undefined,
-      badgeTone: priorityTone(ticket.ticketPriority, ticket.ticketDueDate),
-      meta: age != null ? `${age}d old` : "new",
-      spoc: customerLead(id),
-      prompt: `Investigate the open ticket for ${name}: "${ticket.summary}". Pull the latest context (system of record, meeting notes, email), diagnose what's needed, and draft the follow-up ready to send.`,
-    } satisfies DataItem;
-  });
-
-/** Customers ordered by how long since the last interaction (stalest first). */
-export const STALLED_CUSTOMERS: DataItem[] = customers
-  .map((c) => {
-    const last = (c.interactions ?? [])
-      .slice()
-      .sort((a, b) => String(a.interactionAt ?? "").localeCompare(String(b.interactionAt ?? "")))
-      .at(-1);
-    return { id: c.id, name: c.name ?? c.id, date: last?.interactionAt, note: last?.summary ?? last?.note };
-  })
-  .sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")))
-  .map(({ id, name, date, note }) => {
-    const idle = daysSince(date);
-    return {
-      customer: name,
-      summary: note
-        ? `Last touch ${date}. ${note}`
-        : date
-          ? `No update since ${date}.`
-          : "No interactions logged.",
-      action: "Summarize status & draft a check-in",
-      badge: idle != null ? `${idle}d idle` : "no touch",
-      badgeTone: idle != null && idle > 30 ? "high" : idle != null && idle > 14 ? "medium" : "muted",
-      spoc: customerLead(id),
-      prompt: `We haven't touched base with ${name} in a while${date ? ` (last interaction ${date})` : ""}. Summarize their current status and draft a check-in ready to send.`,
-    } satisfies DataItem;
-  });
-
-const tickets = customers.flatMap((c) =>
-  (c.tickets ?? []).map((ticket) => ({ customerId: c.id, customer: c.name ?? c.id, ...ticket })),
-);
-const interactions = customers.flatMap((c) =>
-  (c.interactions ?? []).map((interaction) => ({ customerId: c.id, customer: c.name ?? c.id, ...interaction })),
-);
-
 export type DataroomTab =
   | "customers"
   | "platform"
@@ -677,7 +565,10 @@ export const DATAROOM_SECTIONS: { key: DataroomTab; label: string; description?:
 
 interface Sheet {
   name: string;
+  /** The stored column names (spoken through the profile's words when shown). */
   head: string[];
+  /** The profile's own listed fields, shown after `head` in the profile's labels as they are. */
+  own?: string[];
   rows: (React.ReactNode | string | undefined)[][];
 }
 
@@ -686,7 +577,9 @@ function joinList(values?: string[]): string | undefined {
 }
 
 function formatPercent(value?: number): string | undefined {
-  return value == null ? undefined : `${value.toFixed(2)}%`;
+  if (value == null) return undefined;
+  // A stored value that is not a number is shown as it is, never allowed to take the whole data room down.
+  return typeof value === "number" ? `${value.toFixed(2)}%` : String(value);
 }
 
 const SECTION_SHEET: Record<DataroomTab, string> = {
@@ -702,782 +595,792 @@ const SECTION_SHEET: Record<DataroomTab, string> = {
   "customer-stakeholders": `${W.Account} Stakeholders`,
 };
 
-/** One workbook, one sheet per canonical schema in fixed data-model order. */
-const DATA_ROOM_WORKBOOK: Sheet[] = [
-  {
-    name: "Customers",
-    head: [
-      "customer_id",
-      "customer_name",
-      "tier",
-      "lifecycle_stage",
-      "status",
-      "health_score",
-      "fde_owner",
-      "ae_owner",
-      "arr",
-      "arr_currency",
-      "seats",
-      "external_account_id",
-      "legal_entity_name",
-      "account_region",
-      "contract_status",
-      "renewal_forecast",
-      "renewal_risk_reason",
-      "expansion_potential_arr",
-      "health_reason",
-      "company_domain",
-      "vertical",
-      "regulatory_profile",
-      "business_owner_email",
-      "technical_owner_email",
-      "executive_sponsor_email",
-      "value_realization_stage",
-      "target_annual_value",
-      "realized_annual_value",
-      "success_criteria",
-      "value_period_start",
-      "value_period_end",
-      "value_evidence_status",
-      "value_evidence_url",
-      "last_business_review_date",
-      "next_business_review_date",
-      "contract_start",
-      "renewal_date",
-      "industry_segment",
-    ],
-    rows: customers.map((c) => [
-      c.id,
-      c.name,
-      c.tier,
-      c.lifecycleStage,
-      c.status,
-      c.healthScore != null ? String(c.healthScore) : undefined,
-      c.fdeOwner,
-      c.aeOwner,
-      c.arr != null ? String(c.arr) : undefined,
-      c.arrCurrency,
-      c.seats != null ? String(c.seats) : undefined,
-      c.externalAccountId,
-      c.legalEntityName,
-      c.accountRegion,
-      c.contractStatus,
-      c.renewalForecast,
-      c.renewalRiskReason,
-      c.expansionPotentialArr != null ? String(c.expansionPotentialArr) : undefined,
-      c.healthReason,
-      c.companyDomain,
-      c.vertical,
-      c.regulatoryProfile,
-      c.businessOwnerEmail,
-      c.technicalOwnerEmail,
-      c.executiveSponsorEmail,
-      c.valueRealizationStage,
-      c.targetAnnualValue != null ? String(c.targetAnnualValue) : undefined,
-      c.realizedAnnualValue != null ? String(c.realizedAnnualValue) : undefined,
-      c.successCriteria,
-      c.valuePeriodStart,
-      c.valuePeriodEnd,
-      c.valueEvidenceStatus,
-      c.valueEvidenceUrl,
-      c.lastBusinessReviewDate,
-      c.nextBusinessReviewDate,
-      c.contractStart,
-      c.renewalDate,
-      c.industrySegment,
-    ]),
-  },
-  {
-    name: "Platform",
-    head: [
-      "customer_id",
-      "tenant_id",
-      "platform_config_status",
-      "deployment_model",
-      "data_residency_constraint",
-      "auth_mode",
-      "data_classification",
-      "pii_handling",
-      "audit_logging_enabled",
-      "retention_days",
-      "ai_governance_status",
-      "model_policy_id",
-      "allowed_model_providers",
-      "model_data_use_policy",
-      "inference_region",
-      "cross_border_processing_allowed",
-      "guardrail_policy",
-      "guardrail_policy_version",
-      "guardrail_enforcement_mode",
-      "prompt_logging_mode",
-      "customer_managed_key_enabled",
-      "kms_key_ref",
-      "scim_provisioning_enabled",
-      "rbac_policy",
-      "audit_log_sink",
-      "observability_enabled",
-      "primary_model",
-      "fallback_model",
-      "minimum_eval_score_pct",
-      "last_governance_review_at",
-      "monthly_spend_limit_usd",
-      "enabled_connectors",
-      "feature_flags",
-      "primary_use_case",
-      "last_health_check_at",
-    ],
-    rows: customers.map((c) => [
-      c.id,
-      c.platform?.tenantId,
-      c.platform?.platformConfigStatus,
-      c.platform?.deploymentModel,
-      c.platform?.dataResidencyConstraint,
-      c.platform?.authMode,
-      c.platform?.dataClassification,
-      c.platform?.piiHandling,
-      c.platform?.auditLoggingEnabled != null ? String(c.platform.auditLoggingEnabled) : undefined,
-      c.platform?.retentionDays != null ? String(c.platform.retentionDays) : undefined,
-      c.platform?.aiGovernanceStatus,
-      c.platform?.modelPolicyId,
-      joinList(c.platform?.allowedModelProviders),
-      c.platform?.modelDataUsePolicy,
-      c.platform?.inferenceRegion,
-      c.platform?.crossBorderProcessingAllowed != null ? String(c.platform.crossBorderProcessingAllowed) : undefined,
-      c.platform?.guardrailPolicy,
-      c.platform?.guardrailPolicyVersion,
-      c.platform?.guardrailEnforcementMode,
-      c.platform?.promptLoggingMode,
-      c.platform?.customerManagedKeyEnabled != null ? String(c.platform.customerManagedKeyEnabled) : undefined,
-      c.platform?.kmsKeyRef,
-      c.platform?.scimProvisioningEnabled != null ? String(c.platform.scimProvisioningEnabled) : undefined,
-      c.platform?.rbacPolicy,
-      c.platform?.auditLogSink,
-      c.platform?.observabilityEnabled != null ? String(c.platform.observabilityEnabled) : undefined,
-      c.platform?.primaryModel,
-      c.platform?.fallbackModel,
-      formatPercent(c.platform?.minimumEvalScorePct),
-      c.platform?.lastGovernanceReviewAt,
-      c.platform?.monthlySpendLimitUsd != null ? String(c.platform.monthlySpendLimitUsd) : undefined,
-      joinList(c.platform?.enabledConnectors),
-      joinList(c.platform?.featureFlags),
-      c.platform?.primaryUseCase,
-      c.platform?.lastHealthCheckAt,
-    ]),
-  },
-  {
-    name: "Deployments",
-    head: [
-      "customer_id",
-      "deployment_id",
-      "environment",
-      "region",
-      "cloud_provider",
-      "runtime",
-      "deployment_strategy",
-      "deployed_version",
-      "release_id",
-      "release_channel",
-      "build_sha",
-      "runtime_version",
-      "config_version",
-      "approved_by_email",
-      "approved_at",
-      "model_route_id",
-      "model_routing_mode",
-      "primary_model_ref",
-      "primary_model_version",
-      "fallback_model_ref",
-      "fallback_model_version",
-      "model_traffic_primary_pct",
-      "last_deploy_at",
-      "release_status",
-      "rollback_version",
-      "rollback_status",
-      "rollback_tested_at",
-      "health_status",
-      "uptime_30d_pct",
-      "error_rate_30d_pct",
-      "latency_p95_ms",
-      "latency_slo_ms",
-      "request_count_30d",
-      "llm_request_count_30d",
-      "input_tokens_30d",
-      "output_tokens_30d",
-      "cache_hit_rate_30d_pct",
-      "guardrail_block_rate_30d_pct",
-      "cost_30d_usd",
-      "cost_budget_30d_usd",
-      "projected_cost_30d_usd",
-      "capacity_limit_rpm",
-      "peak_rpm_30d",
-      "utilization_30d_pct",
-      "live_url",
-      "deploy_owner_email",
-      "last_incident_ref",
-      "active_incident_refs",
-      "incident_count_30d",
-      "dashboard_url",
-      "runbook_url",
-      "last_telemetry_at",
-      "notes",
-    ],
-    rows: customers.flatMap((c) =>
-      (c.deployments ?? []).map((d) => [
+/** One workbook, one sheet per canonical schema in fixed data-model order, from the workspace's own records. */
+function buildWorkbook(data: WorkbookData): Sheet[] {
+  const customers = data.customers;
+  const peopleSeed = data.people;
+  const tickets = customers.flatMap((c) =>
+    (c.tickets ?? []).map((ticket) => ({ customerId: c.id, customer: c.name ?? c.id, ...ticket })),
+  );
+  const interactions = customers.flatMap((c) =>
+    (c.interactions ?? []).map((interaction) => ({ customerId: c.id, customer: c.name ?? c.id, ...interaction })),
+  );
+  return [
+    {
+      name: "Customers",
+      head: [
+        "customer_id",
+        "customer_name",
+        "tier",
+        "lifecycle_stage",
+        "status",
+        "health_score",
+        "fde_owner",
+        "ae_owner",
+        "arr",
+        "arr_currency",
+        "seats",
+        "external_account_id",
+        "legal_entity_name",
+        "account_region",
+        "contract_status",
+        "renewal_forecast",
+        "renewal_risk_reason",
+        "expansion_potential_arr",
+        "health_reason",
+        "company_domain",
+        "vertical",
+        "regulatory_profile",
+        "business_owner_email",
+        "technical_owner_email",
+        "executive_sponsor_email",
+        "value_realization_stage",
+        "target_annual_value",
+        "realized_annual_value",
+        "success_criteria",
+        "value_period_start",
+        "value_period_end",
+        "value_evidence_status",
+        "value_evidence_url",
+        "last_business_review_date",
+        "next_business_review_date",
+        "contract_start",
+        "renewal_date",
+        "industry_segment",
+      ],
+      rows: customers.map((c) => [
         c.id,
-        d.deploymentId,
-        d.environment,
-        d.region,
-        d.cloudProvider,
-        d.runtime,
-        d.deploymentStrategy,
-        d.deployedVersion,
-        d.releaseId,
-        d.releaseChannel,
-        d.buildSha,
-        d.runtimeVersion,
-        d.configVersion,
-        d.approvedByEmail,
-        d.approvedAt,
-        d.modelRouteId,
-        d.modelRoutingMode,
-        d.primaryModelRef,
-        d.primaryModelVersion,
-        d.fallbackModelRef,
-        d.fallbackModelVersion,
-        formatPercent(d.modelTrafficPrimaryPct),
-        d.lastDeployAt,
-        d.releaseStatus,
-        d.rollbackVersion,
-        d.rollbackStatus,
-        d.rollbackTestedAt,
-        <Health key={`${c.id}:${d.environment}`} value={d.healthStatus} />,
-        formatPercent(d.uptime30dPct),
-        formatPercent(d.errorRate30dPct),
-        d.latencyP95Ms != null ? String(d.latencyP95Ms) : undefined,
-        d.latencySloMs != null ? String(d.latencySloMs) : undefined,
-        d.requestCount30d != null ? String(d.requestCount30d) : undefined,
-        d.llmRequestCount30d != null ? String(d.llmRequestCount30d) : undefined,
-        d.inputTokens30d != null ? String(d.inputTokens30d) : undefined,
-        d.outputTokens30d != null ? String(d.outputTokens30d) : undefined,
-        formatPercent(d.cacheHitRate30dPct),
-        formatPercent(d.guardrailBlockRate30dPct),
-        d.cost30dUsd != null ? String(d.cost30dUsd) : undefined,
-        d.costBudget30dUsd != null ? String(d.costBudget30dUsd) : undefined,
-        d.projectedCost30dUsd != null ? String(d.projectedCost30dUsd) : undefined,
-        d.capacityLimitRpm != null ? String(d.capacityLimitRpm) : undefined,
-        d.peakRpm30d != null ? String(d.peakRpm30d) : undefined,
-        formatPercent(d.utilization30dPct),
-        d.liveUrl,
-        d.deployOwnerEmail,
-        d.lastIncidentRef,
-        joinList(d.activeIncidentRefs),
-        d.incidentCount30d != null ? String(d.incidentCount30d) : undefined,
-        d.dashboardUrl,
-        d.runbookUrl,
-        d.lastTelemetryAt,
-        d.notes,
+        c.name,
+        c.tier,
+        c.lifecycleStage,
+        c.status,
+        c.healthScore != null ? String(c.healthScore) : undefined,
+        c.fdeOwner,
+        c.aeOwner,
+        c.arr != null ? String(c.arr) : undefined,
+        c.arrCurrency,
+        c.seats != null ? String(c.seats) : undefined,
+        c.externalAccountId,
+        c.legalEntityName,
+        c.accountRegion,
+        c.contractStatus,
+        c.renewalForecast,
+        c.renewalRiskReason,
+        c.expansionPotentialArr != null ? String(c.expansionPotentialArr) : undefined,
+        c.healthReason,
+        c.companyDomain,
+        c.vertical,
+        c.regulatoryProfile,
+        c.businessOwnerEmail,
+        c.technicalOwnerEmail,
+        c.executiveSponsorEmail,
+        c.valueRealizationStage,
+        c.targetAnnualValue != null ? String(c.targetAnnualValue) : undefined,
+        c.realizedAnnualValue != null ? String(c.realizedAnnualValue) : undefined,
+        c.successCriteria,
+        c.valuePeriodStart,
+        c.valuePeriodEnd,
+        c.valueEvidenceStatus,
+        c.valueEvidenceUrl,
+        c.lastBusinessReviewDate,
+        c.nextBusinessReviewDate,
+        c.contractStart,
+        c.renewalDate,
+        c.industrySegment,
       ]),
-    ),
-  },
-  {
-    name: "Solutions",
-    head: [
-      "solution_id",
-      "customer_id",
-      "use_case",
-      "workflow_id",
-      "workflow_name",
-      "business_process",
-      "business_unit",
-      "primary_user_role",
-      "workflow_owner_email",
-      "risk_owner_email",
-      "workflow_frequency",
-      "decision_impact",
-      "upstream_systems",
-      "downstream_systems",
-      "output_artifacts",
-      "sensitive_data_types",
-      "value_metric",
-      "value_metric_unit",
-      "value_metric_direction",
-      "measurement_source",
-      "measurement_window_days",
-      "baseline_metric_value",
-      "current_metric_value",
-      "target_metric_value",
-      "baseline_period_start",
-      "baseline_period_end",
-      "current_period_start",
-      "current_period_end",
-      "target_date",
-      "value_evidence_url",
-      "annualized_value_realized_usd",
-      "value_realization_confidence_pct",
-      "solution_value_realization_stage",
-      "modules_enabled",
-      "solution_status",
-      "solution_go_live_date",
-      "weekly_active_users",
-      "weekly_query_volume",
-      "automation_rate_pct",
-      "human_review_rate_pct",
-      "production_readiness_score",
-      "solution_eval_score_pct",
-      "eval_status",
-      "eval_suite_id",
-      "eval_dataset_version",
-      "last_eval_run_id",
-      "last_eval_run_at",
-      "eval_pass_rate_pct",
-      "eval_coverage_pct",
-      "task_success_rate_pct",
-      "answer_acceptance_rate_pct",
-      "groundedness_score_pct",
-      "citation_coverage_pct",
-      "hallucination_rate_pct",
-      "policy_violation_rate_pct",
-      "guardrail_intervention_rate_pct",
-      "customer_reported_defects_30d",
-      "safety_incident_count_30d",
-      "human_review_policy",
-      "review_sla_hours",
-      "review_sla_attainment_pct",
-      "review_backlog_count",
-      "readiness_status",
-      "readiness_gate_failures",
-      "model_risk_approval_status",
-      "runbook_url",
-      "solution_next_step",
-      "last_eval_run",
-      "value_delivered",
-      "expansion_opportunity",
-      "expansion_stage",
-      "expansion_potential_annual_value_usd",
-      "expansion_confidence_pct",
-      "solution_fde_owner",
-      "last_reviewed_date",
-    ],
-    rows: customers.flatMap((c) =>
-      (c.solutions ?? []).map((s) => [
-        s.solutionId,
+    },
+    {
+      name: "Platform",
+      head: [
+        "customer_id",
+        "tenant_id",
+        "platform_config_status",
+        "deployment_model",
+        "data_residency_constraint",
+        "auth_mode",
+        "data_classification",
+        "pii_handling",
+        "audit_logging_enabled",
+        "retention_days",
+        "ai_governance_status",
+        "model_policy_id",
+        "allowed_model_providers",
+        "model_data_use_policy",
+        "inference_region",
+        "cross_border_processing_allowed",
+        "guardrail_policy",
+        "guardrail_policy_version",
+        "guardrail_enforcement_mode",
+        "prompt_logging_mode",
+        "customer_managed_key_enabled",
+        "kms_key_ref",
+        "scim_provisioning_enabled",
+        "rbac_policy",
+        "audit_log_sink",
+        "observability_enabled",
+        "primary_model",
+        "fallback_model",
+        "minimum_eval_score_pct",
+        "last_governance_review_at",
+        "monthly_spend_limit_usd",
+        "enabled_connectors",
+        "feature_flags",
+        "primary_use_case",
+        "last_health_check_at",
+      ],
+      rows: customers.map((c) => [
         c.id,
-        s.useCase,
-        s.workflowId,
-        s.workflowName,
-        s.businessProcess,
-        s.businessUnit,
-        s.primaryUserRole,
-        s.workflowOwnerEmail,
-        s.riskOwnerEmail,
-        s.workflowFrequency,
-        s.decisionImpact,
-        joinList(s.upstreamSystems),
-        joinList(s.downstreamSystems),
-        joinList(s.outputArtifacts),
-        joinList(s.sensitiveDataTypes),
-        s.valueMetric,
-        s.valueMetricUnit,
-        s.valueMetricDirection,
-        s.measurementSource,
-        s.measurementWindowDays != null ? String(s.measurementWindowDays) : undefined,
-        s.baselineMetricValue != null ? String(s.baselineMetricValue) : undefined,
-        s.currentMetricValue != null ? String(s.currentMetricValue) : undefined,
-        s.targetMetricValue != null ? String(s.targetMetricValue) : undefined,
-        s.baselinePeriodStart,
-        s.baselinePeriodEnd,
-        s.currentPeriodStart,
-        s.currentPeriodEnd,
-        s.targetDate,
-        s.valueEvidenceUrl,
-        s.annualizedValueRealizedUsd != null ? String(s.annualizedValueRealizedUsd) : undefined,
-        formatPercent(s.valueRealizationConfidencePct),
-        s.solutionValueRealizationStage,
-        joinList(s.modulesEnabled),
-        s.solutionStatus,
-        s.solutionGoLiveDate,
-        s.weeklyActiveUsers != null ? String(s.weeklyActiveUsers) : undefined,
-        s.weeklyQueryVolume != null ? String(s.weeklyQueryVolume) : undefined,
-        formatPercent(s.automationRatePct),
-        formatPercent(s.humanReviewRatePct),
-        s.productionReadinessScore != null ? String(s.productionReadinessScore) : undefined,
-        s.solutionEvalScorePct != null ? `${s.solutionEvalScorePct}%` : undefined,
-        s.evalStatus,
-        s.evalSuiteId,
-        s.evalDatasetVersion,
-        s.lastEvalRunId,
-        s.lastEvalRunAt,
-        formatPercent(s.evalPassRatePct),
-        formatPercent(s.evalCoveragePct),
-        formatPercent(s.taskSuccessRatePct),
-        formatPercent(s.answerAcceptanceRatePct),
-        formatPercent(s.groundednessScorePct),
-        formatPercent(s.citationCoveragePct),
-        formatPercent(s.hallucinationRatePct),
-        formatPercent(s.policyViolationRatePct),
-        formatPercent(s.guardrailInterventionRatePct),
-        s.customerReportedDefects30d != null ? String(s.customerReportedDefects30d) : undefined,
-        s.safetyIncidentCount30d != null ? String(s.safetyIncidentCount30d) : undefined,
-        s.humanReviewPolicy,
-        s.reviewSlaHours != null ? String(s.reviewSlaHours) : undefined,
-        formatPercent(s.reviewSlaAttainmentPct),
-        s.reviewBacklogCount != null ? String(s.reviewBacklogCount) : undefined,
-        s.readinessStatus,
-        joinList(s.readinessGateFailures),
-        s.modelRiskApprovalStatus,
-        s.runbookUrl,
-        s.solutionNextStep,
-        s.lastEvalRun,
-        s.valueDelivered,
-        s.expansionOpportunity,
-        s.expansionStage,
-        s.expansionPotentialAnnualValueUsd != null ? String(s.expansionPotentialAnnualValueUsd) : undefined,
-        formatPercent(s.expansionConfidencePct),
-        s.solutionFdeOwner,
-        s.lastReviewedDate,
+        c.platform?.tenantId,
+        c.platform?.platformConfigStatus,
+        c.platform?.deploymentModel,
+        c.platform?.dataResidencyConstraint,
+        c.platform?.authMode,
+        c.platform?.dataClassification,
+        c.platform?.piiHandling,
+        c.platform?.auditLoggingEnabled != null ? String(c.platform.auditLoggingEnabled) : undefined,
+        c.platform?.retentionDays != null ? String(c.platform.retentionDays) : undefined,
+        c.platform?.aiGovernanceStatus,
+        c.platform?.modelPolicyId,
+        joinList(c.platform?.allowedModelProviders),
+        c.platform?.modelDataUsePolicy,
+        c.platform?.inferenceRegion,
+        c.platform?.crossBorderProcessingAllowed != null ? String(c.platform.crossBorderProcessingAllowed) : undefined,
+        c.platform?.guardrailPolicy,
+        c.platform?.guardrailPolicyVersion,
+        c.platform?.guardrailEnforcementMode,
+        c.platform?.promptLoggingMode,
+        c.platform?.customerManagedKeyEnabled != null ? String(c.platform.customerManagedKeyEnabled) : undefined,
+        c.platform?.kmsKeyRef,
+        c.platform?.scimProvisioningEnabled != null ? String(c.platform.scimProvisioningEnabled) : undefined,
+        c.platform?.rbacPolicy,
+        c.platform?.auditLogSink,
+        c.platform?.observabilityEnabled != null ? String(c.platform.observabilityEnabled) : undefined,
+        c.platform?.primaryModel,
+        c.platform?.fallbackModel,
+        formatPercent(c.platform?.minimumEvalScorePct),
+        c.platform?.lastGovernanceReviewAt,
+        c.platform?.monthlySpendLimitUsd != null ? String(c.platform.monthlySpendLimitUsd) : undefined,
+        joinList(c.platform?.enabledConnectors),
+        joinList(c.platform?.featureFlags),
+        c.platform?.primaryUseCase,
+        c.platform?.lastHealthCheckAt,
       ]),
-    ),
-  },
-  {
-    name: "Implementation",
-    head: [
-      "customer_id",
-      "rollout_id",
-      "launch_scope_solution_ids",
-      "implementation_stage",
-      "implementation_owner_email",
-      "rollout_governance_status",
-      "customer_launch_approver_email",
-      "provider_launch_approver_email",
-      "launch_decision",
-      "launch_decision_date",
-      "implementation_progress_pct",
-      "implementation_risk_level",
-      "data_readiness_pct",
-      "integration_readiness_pct",
-      "data_source_inventory_status",
-      "data_access_status",
-      "data_quality_status",
-      "connector_provisioning_status",
-      "integration_test_status",
-      "security_review_status",
-      "privacy_review_status",
-      "eval_acceptance_status",
-      "acceptance_evidence_link",
-      "uat_status",
-      "training_status",
-      "launch_criteria",
-      "launch_criteria_status",
-      "go_live_confidence_pct",
-      "target_go_live_date",
-      "actual_go_live_date",
-      "launch_window_start_at",
-      "launch_window_end_at",
-      "runbook_status",
-      "runbook_link",
-      "support_handoff_status",
-      "support_owner_email",
-      "support_channel_ref",
-      "billing_readiness_status",
-      "entitlement_provisioning_status",
-      "billing_start_date",
-      "current_milestone",
-      "current_milestone_due_date",
-      "blocker",
-      "blocker_owner",
-      "blocker_severity",
-      "blocked_since_date",
-      "risk_mitigation_plan",
-      "critical_blocker_ticket_ids",
-      "open_blocker_count",
-      "implementation_next_step",
-      "implementation_last_updated_at",
-    ],
-    rows: customers.map((c) => [
-      c.id,
-      c.implementation?.rolloutId,
-      joinList(c.implementation?.launchScopeSolutionIds),
-      c.implementation?.implementationStage,
-      c.implementation?.implementationOwnerEmail,
-      c.implementation?.rolloutGovernanceStatus,
-      c.implementation?.customerLaunchApproverEmail,
-      c.implementation?.providerLaunchApproverEmail,
-      c.implementation?.launchDecision,
-      c.implementation?.launchDecisionDate,
-      c.implementation?.implementationProgressPct != null
-        ? `${c.implementation.implementationProgressPct}%`
-        : undefined,
-      c.implementation?.implementationRiskLevel,
-      formatPercent(c.implementation?.dataReadinessPct),
-      formatPercent(c.implementation?.integrationReadinessPct),
-      c.implementation?.dataSourceInventoryStatus,
-      c.implementation?.dataAccessStatus,
-      c.implementation?.dataQualityStatus,
-      c.implementation?.connectorProvisioningStatus,
-      c.implementation?.integrationTestStatus,
-      c.implementation?.securityReviewStatus,
-      c.implementation?.privacyReviewStatus,
-      c.implementation?.evalAcceptanceStatus,
-      c.implementation?.acceptanceEvidenceLink,
-      c.implementation?.uatStatus,
-      c.implementation?.trainingStatus,
-      c.implementation?.launchCriteria,
-      c.implementation?.launchCriteriaStatus,
-      formatPercent(c.implementation?.goLiveConfidencePct),
-      c.implementation?.targetGoLiveDate,
-      c.implementation?.actualGoLiveDate,
-      c.implementation?.launchWindowStartAt,
-      c.implementation?.launchWindowEndAt,
-      c.implementation?.runbookStatus,
-      c.implementation?.runbookLink,
-      c.implementation?.supportHandoffStatus,
-      c.implementation?.supportOwnerEmail,
-      c.implementation?.supportChannelRef,
-      c.implementation?.billingReadinessStatus,
-      c.implementation?.entitlementProvisioningStatus,
-      c.implementation?.billingStartDate,
-      c.implementation?.currentMilestone,
-      c.implementation?.currentMilestoneDueDate,
-      c.implementation?.blocker,
-      c.implementation?.blockerOwner,
-      c.implementation?.blockerSeverity,
-      c.implementation?.blockedSinceDate,
-      c.implementation?.riskMitigationPlan,
-      joinList(c.implementation?.criticalBlockerTicketIds),
-      c.implementation?.openBlockerCount != null ? String(c.implementation.openBlockerCount) : undefined,
-      c.implementation?.implementationNextStep,
-      c.implementation?.implementationLastUpdatedAt,
-    ]),
-  },
-  {
-    name: "Tickets",
-    head: [
-      "ticket_id",
-      "customer_id",
-      "summary",
-      "description",
-      "affected_schema",
-      "affected_solution_id",
-      "affected_deployment_id",
-      "affected_environment",
-      "affected_workflow_id",
-      "affected_connector",
-      "affected_model",
-      "affected_data_source",
-      "related_ticket_ids",
-      "external_system",
-      "external_id",
-      "ticket_type",
-      "ticket_category",
-      "ticket_status",
-      "ticket_priority",
-      "severity",
-      "support_queue",
-      "owner_team",
-      "reported_by_email",
-      "customer_contact_email",
-      "ticket_opened_date",
-      "triaged_at",
-      "ticket_due_date",
-      "sla_due_at",
-      "first_response_due_at",
-      "first_responded_at",
-      "resolution_due_at",
-      "sla_status",
-      "escalated",
-      "escalated_at",
-      "escalation_level",
-      "escalation_reason",
-      "ticket_owner_email",
-      "source_channel",
-      "last_activity_date",
-      "source_link",
-      "escalation_owner_email",
-      "production_impact",
-      "customer_impact_level",
-      "customer_impact_summary",
-      "affected_user_count",
-      "issue_domain",
-      "model_issue_type",
-      "data_issue_type",
-      "integration_issue_type",
-      "root_cause_status",
-      "root_cause_category",
-      "root_cause_summary",
-      "detected_at",
-      "mitigated_at",
-      "remediation_summary",
-      "preventive_actions",
-      "postmortem_required",
-      "postmortem_status",
-      "postmortem_owner_email",
-      "postmortem_due_date",
-      "postmortem_url",
-      "tags",
-      "resolution_summary",
-      "resolved_at",
-      "ticket_next_step",
-    ],
-    rows: tickets.map((t) => [
-      t.ticketId,
-      t.customerId,
-      t.summary,
-      t.description,
-      t.affectedSchema,
-      t.affectedSolutionId,
-      t.affectedDeploymentId,
-      t.affectedEnvironment,
-      t.affectedWorkflowId,
-      t.affectedConnector,
-      t.affectedModel,
-      t.affectedDataSource,
-      joinList(t.relatedTicketIds),
-      t.externalSystem,
-      t.externalId,
-      t.ticketType,
-      <TicketCategory key={`${t.ticketId}:cat`} value={t.ticketCategory} />,
-      t.ticketStatus,
-      t.ticketPriority,
-      t.severity,
-      t.supportQueue,
-      t.ownerTeam,
-      t.reportedByEmail,
-      t.customerContactEmail,
-      t.ticketOpenedDate,
-      t.triagedAt,
-      t.ticketDueDate,
-      t.slaDueAt,
-      t.firstResponseDueAt,
-      t.firstRespondedAt,
-      t.resolutionDueAt,
-      t.slaStatus,
-      t.escalated != null ? String(t.escalated) : undefined,
-      t.escalatedAt,
-      t.escalationLevel,
-      t.escalationReason,
-      t.ticketOwnerEmail,
-      t.sourceChannel,
-      t.lastActivityDate,
-      t.sourceLink,
-      t.escalationOwnerEmail,
-      t.productionImpact != null ? String(t.productionImpact) : undefined,
-      t.customerImpactLevel,
-      t.customerImpactSummary,
-      t.affectedUserCount != null ? String(t.affectedUserCount) : undefined,
-      t.issueDomain,
-      t.modelIssueType,
-      t.dataIssueType,
-      t.integrationIssueType,
-      t.rootCauseStatus,
-      t.rootCauseCategory,
-      t.rootCauseSummary,
-      t.detectedAt,
-      t.mitigatedAt,
-      t.remediationSummary,
-      t.preventiveActions,
-      t.postmortemRequired != null ? String(t.postmortemRequired) : undefined,
-      t.postmortemStatus,
-      t.postmortemOwnerEmail,
-      t.postmortemDueDate,
-      t.postmortemUrl,
-      joinList(t.tags),
-      t.resolutionSummary,
-      t.resolvedAt,
-      t.ticketNextStep,
-    ]),
-  },
-  {
-    name: "Interactions",
-    head: [
-      "interaction_id",
-      "customer_id",
-      "interaction_at",
-      "interaction_type",
-      "source_system",
-      "source_id",
-      "source_link",
-      "summary",
-      "note",
-      "outcome",
-      "participant_emails",
-      "related_ticket_ids",
-      "related_solution_ids",
-      "related_deployment_ids",
-      "next_action",
-      "next_action_owner_email",
-      "next_action_due_date",
-      "sentiment",
-      "sensitivity",
-      "recorded_by_email",
-      "recorded_at",
-    ],
-    rows: interactions.map((i) => [
-      i.interactionId,
-      i.customerId,
-      i.interactionAt,
-      i.interactionType,
-      i.sourceSystem,
-      i.sourceId,
-      i.sourceLink,
-      i.summary,
-      i.note,
-      i.outcome,
-      joinList(i.participantEmails),
-      joinList(i.relatedTicketIds),
-      joinList(i.relatedSolutionIds),
-      joinList(i.relatedDeploymentIds),
-      i.nextAction,
-      i.nextActionOwnerEmail,
-      i.nextActionDueDate,
-      i.sentiment,
-      i.sensitivity,
-      i.recordedByEmail,
-      i.recordedAt,
-    ]),
-  },
-  {
-    name: "Internal Staff",
-    head: [
-      "customer_id",
-      "staff_role",
-      "name",
-      "title",
-      "employer_org",
-      "email",
-      "last_contact",
-    ],
-    rows: (peopleSeed.internalStaffAssignments ?? []).map((p) => [
-      p.customer_id,
-      p.staffRole,
-      p.name,
-      p.title,
-      p.employerOrg,
-      p.email,
-      p.lastContact,
-    ]),
-  },
-  {
-    name: SECTION_SHEET["customer-stakeholders"],
-    head: [
-      "customer_id",
-      "stakeholder_role",
-      "name",
-      "title",
-      "employer_org",
-      "email",
-      "last_contact",
-    ],
-    rows: (peopleSeed.customerStakeholders ?? []).map((p) => [
-      p.customer_id,
-      p.stakeholderRole,
-      p.name,
-      p.title,
-      p.employerOrg,
-      p.email,
-      p.lastContact,
-    ]),
-  },
-];
+    },
+    {
+      name: "Deployments",
+      head: [
+        "customer_id",
+        "deployment_id",
+        "environment",
+        "region",
+        "cloud_provider",
+        "runtime",
+        "deployment_strategy",
+        "deployed_version",
+        "release_id",
+        "release_channel",
+        "build_sha",
+        "runtime_version",
+        "config_version",
+        "approved_by_email",
+        "approved_at",
+        "model_route_id",
+        "model_routing_mode",
+        "primary_model_ref",
+        "primary_model_version",
+        "fallback_model_ref",
+        "fallback_model_version",
+        "model_traffic_primary_pct",
+        "last_deploy_at",
+        "release_status",
+        "rollback_version",
+        "rollback_status",
+        "rollback_tested_at",
+        "health_status",
+        "uptime_30d_pct",
+        "error_rate_30d_pct",
+        "latency_p95_ms",
+        "latency_slo_ms",
+        "request_count_30d",
+        "llm_request_count_30d",
+        "input_tokens_30d",
+        "output_tokens_30d",
+        "cache_hit_rate_30d_pct",
+        "guardrail_block_rate_30d_pct",
+        "cost_30d_usd",
+        "cost_budget_30d_usd",
+        "projected_cost_30d_usd",
+        "capacity_limit_rpm",
+        "peak_rpm_30d",
+        "utilization_30d_pct",
+        "live_url",
+        "deploy_owner_email",
+        "last_incident_ref",
+        "active_incident_refs",
+        "incident_count_30d",
+        "dashboard_url",
+        "runbook_url",
+        "last_telemetry_at",
+        "notes",
+      ],
+      rows: customers.flatMap((c) =>
+        (c.deployments ?? []).map((d) => [
+          c.id,
+          d.deploymentId,
+          d.environment,
+          d.region,
+          d.cloudProvider,
+          d.runtime,
+          d.deploymentStrategy,
+          d.deployedVersion,
+          d.releaseId,
+          d.releaseChannel,
+          d.buildSha,
+          d.runtimeVersion,
+          d.configVersion,
+          d.approvedByEmail,
+          d.approvedAt,
+          d.modelRouteId,
+          d.modelRoutingMode,
+          d.primaryModelRef,
+          d.primaryModelVersion,
+          d.fallbackModelRef,
+          d.fallbackModelVersion,
+          formatPercent(d.modelTrafficPrimaryPct),
+          d.lastDeployAt,
+          d.releaseStatus,
+          d.rollbackVersion,
+          d.rollbackStatus,
+          d.rollbackTestedAt,
+          <Health key={`${c.id}:${d.environment}`} value={d.healthStatus} />,
+          formatPercent(d.uptime30dPct),
+          formatPercent(d.errorRate30dPct),
+          d.latencyP95Ms != null ? String(d.latencyP95Ms) : undefined,
+          d.latencySloMs != null ? String(d.latencySloMs) : undefined,
+          d.requestCount30d != null ? String(d.requestCount30d) : undefined,
+          d.llmRequestCount30d != null ? String(d.llmRequestCount30d) : undefined,
+          d.inputTokens30d != null ? String(d.inputTokens30d) : undefined,
+          d.outputTokens30d != null ? String(d.outputTokens30d) : undefined,
+          formatPercent(d.cacheHitRate30dPct),
+          formatPercent(d.guardrailBlockRate30dPct),
+          d.cost30dUsd != null ? String(d.cost30dUsd) : undefined,
+          d.costBudget30dUsd != null ? String(d.costBudget30dUsd) : undefined,
+          d.projectedCost30dUsd != null ? String(d.projectedCost30dUsd) : undefined,
+          d.capacityLimitRpm != null ? String(d.capacityLimitRpm) : undefined,
+          d.peakRpm30d != null ? String(d.peakRpm30d) : undefined,
+          formatPercent(d.utilization30dPct),
+          d.liveUrl,
+          d.deployOwnerEmail,
+          d.lastIncidentRef,
+          joinList(d.activeIncidentRefs),
+          d.incidentCount30d != null ? String(d.incidentCount30d) : undefined,
+          d.dashboardUrl,
+          d.runbookUrl,
+          d.lastTelemetryAt,
+          d.notes,
+        ]),
+      ),
+    },
+    {
+      name: "Solutions",
+      head: [
+        "solution_id",
+        "customer_id",
+        "use_case",
+        "workflow_id",
+        "workflow_name",
+        "business_process",
+        "business_unit",
+        "primary_user_role",
+        "workflow_owner_email",
+        "risk_owner_email",
+        "workflow_frequency",
+        "decision_impact",
+        "upstream_systems",
+        "downstream_systems",
+        "output_artifacts",
+        "sensitive_data_types",
+        "value_metric",
+        "value_metric_unit",
+        "value_metric_direction",
+        "measurement_source",
+        "measurement_window_days",
+        "baseline_metric_value",
+        "current_metric_value",
+        "target_metric_value",
+        "baseline_period_start",
+        "baseline_period_end",
+        "current_period_start",
+        "current_period_end",
+        "target_date",
+        "value_evidence_url",
+        "annualized_value_realized_usd",
+        "value_realization_confidence_pct",
+        "solution_value_realization_stage",
+        "modules_enabled",
+        "solution_status",
+        "solution_go_live_date",
+        "weekly_active_users",
+        "weekly_query_volume",
+        "automation_rate_pct",
+        "human_review_rate_pct",
+        "production_readiness_score",
+        "solution_eval_score_pct",
+        "eval_status",
+        "eval_suite_id",
+        "eval_dataset_version",
+        "last_eval_run_id",
+        "last_eval_run_at",
+        "eval_pass_rate_pct",
+        "eval_coverage_pct",
+        "task_success_rate_pct",
+        "answer_acceptance_rate_pct",
+        "groundedness_score_pct",
+        "citation_coverage_pct",
+        "hallucination_rate_pct",
+        "policy_violation_rate_pct",
+        "guardrail_intervention_rate_pct",
+        "customer_reported_defects_30d",
+        "safety_incident_count_30d",
+        "human_review_policy",
+        "review_sla_hours",
+        "review_sla_attainment_pct",
+        "review_backlog_count",
+        "readiness_status",
+        "readiness_gate_failures",
+        "model_risk_approval_status",
+        "runbook_url",
+        "solution_next_step",
+        "last_eval_run",
+        "value_delivered",
+        "expansion_opportunity",
+        "expansion_stage",
+        "expansion_potential_annual_value_usd",
+        "expansion_confidence_pct",
+        "solution_fde_owner",
+        "last_reviewed_date",
+      ],
+      rows: customers.flatMap((c) =>
+        (c.solutions ?? []).map((s) => [
+          s.solutionId,
+          c.id,
+          s.useCase,
+          s.workflowId,
+          s.workflowName,
+          s.businessProcess,
+          s.businessUnit,
+          s.primaryUserRole,
+          s.workflowOwnerEmail,
+          s.riskOwnerEmail,
+          s.workflowFrequency,
+          s.decisionImpact,
+          joinList(s.upstreamSystems),
+          joinList(s.downstreamSystems),
+          joinList(s.outputArtifacts),
+          joinList(s.sensitiveDataTypes),
+          s.valueMetric,
+          s.valueMetricUnit,
+          s.valueMetricDirection,
+          s.measurementSource,
+          s.measurementWindowDays != null ? String(s.measurementWindowDays) : undefined,
+          s.baselineMetricValue != null ? String(s.baselineMetricValue) : undefined,
+          s.currentMetricValue != null ? String(s.currentMetricValue) : undefined,
+          s.targetMetricValue != null ? String(s.targetMetricValue) : undefined,
+          s.baselinePeriodStart,
+          s.baselinePeriodEnd,
+          s.currentPeriodStart,
+          s.currentPeriodEnd,
+          s.targetDate,
+          s.valueEvidenceUrl,
+          s.annualizedValueRealizedUsd != null ? String(s.annualizedValueRealizedUsd) : undefined,
+          formatPercent(s.valueRealizationConfidencePct),
+          s.solutionValueRealizationStage,
+          joinList(s.modulesEnabled),
+          s.solutionStatus,
+          s.solutionGoLiveDate,
+          s.weeklyActiveUsers != null ? String(s.weeklyActiveUsers) : undefined,
+          s.weeklyQueryVolume != null ? String(s.weeklyQueryVolume) : undefined,
+          formatPercent(s.automationRatePct),
+          formatPercent(s.humanReviewRatePct),
+          s.productionReadinessScore != null ? String(s.productionReadinessScore) : undefined,
+          s.solutionEvalScorePct != null ? `${s.solutionEvalScorePct}%` : undefined,
+          s.evalStatus,
+          s.evalSuiteId,
+          s.evalDatasetVersion,
+          s.lastEvalRunId,
+          s.lastEvalRunAt,
+          formatPercent(s.evalPassRatePct),
+          formatPercent(s.evalCoveragePct),
+          formatPercent(s.taskSuccessRatePct),
+          formatPercent(s.answerAcceptanceRatePct),
+          formatPercent(s.groundednessScorePct),
+          formatPercent(s.citationCoveragePct),
+          formatPercent(s.hallucinationRatePct),
+          formatPercent(s.policyViolationRatePct),
+          formatPercent(s.guardrailInterventionRatePct),
+          s.customerReportedDefects30d != null ? String(s.customerReportedDefects30d) : undefined,
+          s.safetyIncidentCount30d != null ? String(s.safetyIncidentCount30d) : undefined,
+          s.humanReviewPolicy,
+          s.reviewSlaHours != null ? String(s.reviewSlaHours) : undefined,
+          formatPercent(s.reviewSlaAttainmentPct),
+          s.reviewBacklogCount != null ? String(s.reviewBacklogCount) : undefined,
+          s.readinessStatus,
+          joinList(s.readinessGateFailures),
+          s.modelRiskApprovalStatus,
+          s.runbookUrl,
+          s.solutionNextStep,
+          s.lastEvalRun,
+          s.valueDelivered,
+          s.expansionOpportunity,
+          s.expansionStage,
+          s.expansionPotentialAnnualValueUsd != null ? String(s.expansionPotentialAnnualValueUsd) : undefined,
+          formatPercent(s.expansionConfidencePct),
+          s.solutionFdeOwner,
+          s.lastReviewedDate,
+        ]),
+      ),
+    },
+    {
+      name: "Implementation",
+      head: [
+        "customer_id",
+        "rollout_id",
+        "launch_scope_solution_ids",
+        "implementation_stage",
+        "implementation_owner_email",
+        "rollout_governance_status",
+        "customer_launch_approver_email",
+        "provider_launch_approver_email",
+        "launch_decision",
+        "launch_decision_date",
+        "implementation_progress_pct",
+        "implementation_risk_level",
+        "data_readiness_pct",
+        "integration_readiness_pct",
+        "data_source_inventory_status",
+        "data_access_status",
+        "data_quality_status",
+        "connector_provisioning_status",
+        "integration_test_status",
+        "security_review_status",
+        "privacy_review_status",
+        "eval_acceptance_status",
+        "acceptance_evidence_link",
+        "uat_status",
+        "training_status",
+        "launch_criteria",
+        "launch_criteria_status",
+        "go_live_confidence_pct",
+        "target_go_live_date",
+        "actual_go_live_date",
+        "launch_window_start_at",
+        "launch_window_end_at",
+        "runbook_status",
+        "runbook_link",
+        "support_handoff_status",
+        "support_owner_email",
+        "support_channel_ref",
+        "billing_readiness_status",
+        "entitlement_provisioning_status",
+        "billing_start_date",
+        "current_milestone",
+        "current_milestone_due_date",
+        "blocker",
+        "blocker_owner",
+        "blocker_severity",
+        "blocked_since_date",
+        "risk_mitigation_plan",
+        "critical_blocker_ticket_ids",
+        "open_blocker_count",
+        "implementation_next_step",
+        "implementation_last_updated_at",
+      ],
+      rows: customers.map((c) => [
+        c.id,
+        c.implementation?.rolloutId,
+        joinList(c.implementation?.launchScopeSolutionIds),
+        c.implementation?.implementationStage,
+        c.implementation?.implementationOwnerEmail,
+        c.implementation?.rolloutGovernanceStatus,
+        c.implementation?.customerLaunchApproverEmail,
+        c.implementation?.providerLaunchApproverEmail,
+        c.implementation?.launchDecision,
+        c.implementation?.launchDecisionDate,
+        c.implementation?.implementationProgressPct != null
+          ? `${c.implementation.implementationProgressPct}%`
+          : undefined,
+        c.implementation?.implementationRiskLevel,
+        formatPercent(c.implementation?.dataReadinessPct),
+        formatPercent(c.implementation?.integrationReadinessPct),
+        c.implementation?.dataSourceInventoryStatus,
+        c.implementation?.dataAccessStatus,
+        c.implementation?.dataQualityStatus,
+        c.implementation?.connectorProvisioningStatus,
+        c.implementation?.integrationTestStatus,
+        c.implementation?.securityReviewStatus,
+        c.implementation?.privacyReviewStatus,
+        c.implementation?.evalAcceptanceStatus,
+        c.implementation?.acceptanceEvidenceLink,
+        c.implementation?.uatStatus,
+        c.implementation?.trainingStatus,
+        c.implementation?.launchCriteria,
+        c.implementation?.launchCriteriaStatus,
+        formatPercent(c.implementation?.goLiveConfidencePct),
+        c.implementation?.targetGoLiveDate,
+        c.implementation?.actualGoLiveDate,
+        c.implementation?.launchWindowStartAt,
+        c.implementation?.launchWindowEndAt,
+        c.implementation?.runbookStatus,
+        c.implementation?.runbookLink,
+        c.implementation?.supportHandoffStatus,
+        c.implementation?.supportOwnerEmail,
+        c.implementation?.supportChannelRef,
+        c.implementation?.billingReadinessStatus,
+        c.implementation?.entitlementProvisioningStatus,
+        c.implementation?.billingStartDate,
+        c.implementation?.currentMilestone,
+        c.implementation?.currentMilestoneDueDate,
+        c.implementation?.blocker,
+        c.implementation?.blockerOwner,
+        c.implementation?.blockerSeverity,
+        c.implementation?.blockedSinceDate,
+        c.implementation?.riskMitigationPlan,
+        joinList(c.implementation?.criticalBlockerTicketIds),
+        c.implementation?.openBlockerCount != null ? String(c.implementation.openBlockerCount) : undefined,
+        c.implementation?.implementationNextStep,
+        c.implementation?.implementationLastUpdatedAt,
+      ]),
+    },
+    {
+      name: "Tickets",
+      head: [
+        "ticket_id",
+        "customer_id",
+        "summary",
+        "description",
+        "affected_schema",
+        "affected_solution_id",
+        "affected_deployment_id",
+        "affected_environment",
+        "affected_workflow_id",
+        "affected_connector",
+        "affected_model",
+        "affected_data_source",
+        "related_ticket_ids",
+        "external_system",
+        "external_id",
+        "ticket_type",
+        "ticket_category",
+        "ticket_status",
+        "ticket_priority",
+        "severity",
+        "support_queue",
+        "owner_team",
+        "reported_by_email",
+        "customer_contact_email",
+        "ticket_opened_date",
+        "triaged_at",
+        "ticket_due_date",
+        "sla_due_at",
+        "first_response_due_at",
+        "first_responded_at",
+        "resolution_due_at",
+        "sla_status",
+        "escalated",
+        "escalated_at",
+        "escalation_level",
+        "escalation_reason",
+        "ticket_owner_email",
+        "source_channel",
+        "last_activity_date",
+        "source_link",
+        "escalation_owner_email",
+        "production_impact",
+        "customer_impact_level",
+        "customer_impact_summary",
+        "affected_user_count",
+        "issue_domain",
+        "model_issue_type",
+        "data_issue_type",
+        "integration_issue_type",
+        "root_cause_status",
+        "root_cause_category",
+        "root_cause_summary",
+        "detected_at",
+        "mitigated_at",
+        "remediation_summary",
+        "preventive_actions",
+        "postmortem_required",
+        "postmortem_status",
+        "postmortem_owner_email",
+        "postmortem_due_date",
+        "postmortem_url",
+        "tags",
+        "resolution_summary",
+        "resolved_at",
+        "ticket_next_step",
+      ],
+      rows: tickets.map((t) => [
+        t.ticketId,
+        t.customerId,
+        t.summary,
+        t.description,
+        t.affectedSchema,
+        t.affectedSolutionId,
+        t.affectedDeploymentId,
+        t.affectedEnvironment,
+        t.affectedWorkflowId,
+        t.affectedConnector,
+        t.affectedModel,
+        t.affectedDataSource,
+        joinList(t.relatedTicketIds),
+        t.externalSystem,
+        t.externalId,
+        t.ticketType,
+        <TicketCategory key={`${t.ticketId}:cat`} value={t.ticketCategory} />,
+        t.ticketStatus,
+        t.ticketPriority,
+        t.severity,
+        t.supportQueue,
+        t.ownerTeam,
+        t.reportedByEmail,
+        t.customerContactEmail,
+        t.ticketOpenedDate,
+        t.triagedAt,
+        t.ticketDueDate,
+        t.slaDueAt,
+        t.firstResponseDueAt,
+        t.firstRespondedAt,
+        t.resolutionDueAt,
+        t.slaStatus,
+        t.escalated != null ? String(t.escalated) : undefined,
+        t.escalatedAt,
+        t.escalationLevel,
+        t.escalationReason,
+        t.ticketOwnerEmail,
+        t.sourceChannel,
+        t.lastActivityDate,
+        t.sourceLink,
+        t.escalationOwnerEmail,
+        t.productionImpact != null ? String(t.productionImpact) : undefined,
+        t.customerImpactLevel,
+        t.customerImpactSummary,
+        t.affectedUserCount != null ? String(t.affectedUserCount) : undefined,
+        t.issueDomain,
+        t.modelIssueType,
+        t.dataIssueType,
+        t.integrationIssueType,
+        t.rootCauseStatus,
+        t.rootCauseCategory,
+        t.rootCauseSummary,
+        t.detectedAt,
+        t.mitigatedAt,
+        t.remediationSummary,
+        t.preventiveActions,
+        t.postmortemRequired != null ? String(t.postmortemRequired) : undefined,
+        t.postmortemStatus,
+        t.postmortemOwnerEmail,
+        t.postmortemDueDate,
+        t.postmortemUrl,
+        joinList(t.tags),
+        t.resolutionSummary,
+        t.resolvedAt,
+        t.ticketNextStep,
+      ]),
+    },
+    {
+      name: "Interactions",
+      head: [
+        "interaction_id",
+        "customer_id",
+        "interaction_at",
+        "interaction_type",
+        "source_system",
+        "source_id",
+        "source_link",
+        "summary",
+        "note",
+        "outcome",
+        "participant_emails",
+        "related_ticket_ids",
+        "related_solution_ids",
+        "related_deployment_ids",
+        "next_action",
+        "next_action_owner_email",
+        "next_action_due_date",
+        "sentiment",
+        "sensitivity",
+        "recorded_by_email",
+        "recorded_at",
+      ],
+      rows: interactions.map((i) => [
+        i.interactionId,
+        i.customerId,
+        i.interactionAt,
+        i.interactionType,
+        i.sourceSystem,
+        i.sourceId,
+        i.sourceLink,
+        i.summary,
+        i.note,
+        i.outcome,
+        joinList(i.participantEmails),
+        joinList(i.relatedTicketIds),
+        joinList(i.relatedSolutionIds),
+        joinList(i.relatedDeploymentIds),
+        i.nextAction,
+        i.nextActionOwnerEmail,
+        i.nextActionDueDate,
+        i.sentiment,
+        i.sensitivity,
+        i.recordedByEmail,
+        i.recordedAt,
+      ]),
+    },
+    {
+      name: "Internal Staff",
+      head: [
+        "customer_id",
+        "staff_role",
+        "name",
+        "title",
+        "employer_org",
+        "email",
+        "last_contact",
+      ],
+      rows: (peopleSeed.internalStaffAssignments ?? []).map((p) => [
+        p.customer_id,
+        p.staffRole,
+        p.name,
+        p.title,
+        p.employerOrg,
+        p.email,
+        p.lastContact,
+      ]),
+    },
+    {
+      name: SECTION_SHEET["customer-stakeholders"],
+      head: [
+        "customer_id",
+        "stakeholder_role",
+        "name",
+        "title",
+        "employer_org",
+        "email",
+        "last_contact",
+      ],
+      rows: (peopleSeed.customerStakeholders ?? []).map((p) => [
+        p.customer_id,
+        p.stakeholderRole,
+        p.name,
+        p.title,
+        p.employerOrg,
+        p.email,
+        p.lastContact,
+      ]),
+    },
+  ];
+}
 
 // --- File-system model ------------------------------------------------------
 
@@ -1486,7 +1389,7 @@ interface FileItem {
   id: string;
   name: string;
   kind: FileKind;
-  sheets?: Sheet[]; // a single multi-sheet workbook (.xlsx)
+  sheetNames?: string[]; // a multi-sheet workbook (.xlsx): its sheets, filled from the workspace's records when open
   path?: string; // logical dm.md data-room path — content is fetched live from /api/dataroom
   live?: boolean; // true when the file actually exists in the Blob store
   meta?: string;
@@ -1599,7 +1502,8 @@ function interactionDigest(c: Customer): {
   };
 }
 
-const INTERACTION_DIGEST_SHEET: Sheet = {
+function interactionDigestSheet(customers: Customer[]): Sheet {
+  return {
   name: "Interaction Digest",
   head: [
     "customer_id",
@@ -1615,11 +1519,88 @@ const INTERACTION_DIGEST_SHEET: Sheet = {
     const d = interactionDigest(c);
     return [c.id, c.name, d.count, d.range, d.last, d.actions, d.sentiment, d.digest];
   }),
-};
+  };
+}
 
-const SHEET_BY_NAME: Record<string, Sheet> = Object.fromEntries(
-  [...DATA_ROOM_WORKBOOK, INTERACTION_DIGEST_SHEET].map((s) => [s.name, s]),
-);
+/** Every sheet of the workbook, by name, built from the workspace's records. */
+function sheetsByName(data: WorkbookData): Record<string, Sheet> {
+  const c = data.customers;
+  const shaped = [...buildWorkbook(data), interactionDigestSheet(c)]
+    .filter((s) => !HIDDEN_SHEETS.has(s.name))
+    .map((s) => withoutHidden(s, SHEET_HIDDEN[s.name]))
+    .map((s) =>
+      s.name === "Customers"
+        ? withOwnColumns(s, listedOwnFields("account"), c)
+        : s.name === "Deployments"
+          ? withOwnColumns(s, listedOwnFields("deployments"), c.flatMap((x) => x.deployments ?? []))
+          : s.name === "Implementation"
+            ? withOwnColumns(s, listedOwnFields("implementations"), c.map((x) => x.implementation))
+            : s,
+    );
+  return Object.fromEntries(shaped.map((s) => [s.name, s]));
+}
+
+/**
+ * WHAT THE PROFILE SHOWS (lib/workbook-fields.ts). A field it hides is never a column, even when an answer carries
+ * it; a nested part it hides (platform, solutions, tickets) is not a sheet; the own fields it lists are columns, in
+ * its labels. Under the hfc-research profile that is 26 hidden account fields gone and Rating / Target price / KPI
+ * table completeness on the coverage reports (check-ui-vocabulary's data-room pass holds it).
+ */
+const HIDDEN = workbookHidden();
+const SHEET_HIDDEN: Record<string, ReadonlySet<string>> = {
+  Customers: HIDDEN.account,
+  Deployments: HIDDEN.deployments,
+  Implementation: HIDDEN.implementation,
+};
+const TABLE_SHEET: Partial<Record<WorkbookTable, string>> = { platform: "Platform", solutions: "Solutions", tickets: "Tickets" };
+const HIDDEN_SHEETS = new Set([...HIDDEN.tables].map((t) => TABLE_SHEET[t]).filter((n): n is string => Boolean(n)));
+
+function withoutHidden(sheet: Sheet, hidden: ReadonlySet<string> | undefined): Sheet {
+  if (!hidden?.size) return sheet;
+  const keep = sheet.head.map((col) => ![...hidden].some((k) => sameKey(k, col)));
+  if (keep.every(Boolean)) return sheet;
+  return {
+    ...sheet,
+    head: sheet.head.filter((_, i) => keep[i]),
+    rows: sheet.rows.map((r) => r.filter((_, i) => keep[i])),
+  };
+}
+
+/** An own field's value as a cell: a percent reads as one; anything else as it is stored. */
+function ownCell(value: unknown, spec: CustomFieldSpec): string | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  if (spec.type === "percent" && typeof value === "number") return `${value}%`;
+  if (spec.type === "number" && typeof value === "number") return value.toLocaleString("en-US");
+  return String(value);
+}
+
+/** The listed own fields as columns after the stored ones; `owners[i]` is the record behind row i. */
+function withOwnColumns(sheet: Sheet, specs: CustomFieldSpec[], owners: ({ custom?: Record<string, unknown> } | undefined)[]): Sheet {
+  if (!specs.length) return sheet;
+  return {
+    ...sheet,
+    own: specs.map((f) => f.label),
+    rows: sheet.rows.map((r, i) => [...r, ...specs.map((f) => ownCell(owners[i]?.custom?.[f.key], f))]),
+  };
+}
+
+/**
+ * The tables each sheet is read from. A sheet one of whose tables could not be read says so instead of its rows; a
+ * sheet one of whose tables the route capped says it shows only part. The account-derived sheets depend on the
+ * accounts too: past the accounts' cap, the rest of the accounts' rows are not there either.
+ */
+const SHEET_TABLES: Record<string, WorkbookTable[]> = {
+  Customers: ["customers"],
+  Platform: ["platform", "customers"],
+  Deployments: ["deployments", "customers"],
+  Solutions: ["solutions", "customers"],
+  Implementation: ["implementation", "customers"],
+  Tickets: ["tickets", "customers"],
+  Interactions: ["interactions", "customers"],
+  "Interaction Digest": ["interactions", "customers"],
+  "Internal Staff": ["internal_staff"],
+  [SECTION_SHEET["customer-stakeholders"]]: ["customer_stakeholders"],
+};
 
 /** Which sheets live in each workbook. Keyed on the data-room tab. */
 const WORKBOOK_SHEETS: Record<DataroomTab, string[]> = {
@@ -1637,10 +1618,9 @@ const WORKBOOK_SHEETS: Record<DataroomTab, string[]> = {
   "customer-stakeholders": [SECTION_SHEET["customer-stakeholders"]],
 };
 
-function workbookSheets(section: DataroomTab): Sheet[] {
-  return (WORKBOOK_SHEETS[section] ?? [])
-    .map((name) => SHEET_BY_NAME[name])
-    .filter((s): s is Sheet => Boolean(s));
+/** The sheet names of one workbook: fixed by the data model, whatever the workspace holds. */
+function workbookSheetNames(section: DataroomTab): string[] {
+  return WORKBOOK_SHEETS[section] ?? [];
 }
 
 /** A Blob-backed dm.md file: `id` IS its logical data-room path; content is fetched live. */
@@ -1666,13 +1646,13 @@ function dir(
 
 /** `<Domain>/Master.xlsx`, carrying that domain's sheets. */
 function masterFile(domain: string, tab: DataroomTab): FileItem {
-  const sheets = workbookSheets(tab);
+  const sheetNames = workbookSheetNames(tab);
   return {
     id: `master:${domain}`,
     name: "Master.xlsx",
     kind: "sheet",
-    sheets,
-    meta: `${sheets.length} sheet${sheets.length === 1 ? "" : "s"}`,
+    sheetNames,
+    meta: `${sheetNames.length} sheet${sheetNames.length === 1 ? "" : "s"}`,
   };
 }
 
@@ -2048,11 +2028,43 @@ export function Dataroom({
   // per-path content cache for the open session.
   const [livePaths, setLivePaths] = useState<string[] | null>(null);
   const [fileBodies, setFileBodies] = useState<Record<string, FileBody>>({});
+  // The workspace's own records, which every Master.xlsx preview is built from (never a bundled sample).
+  const [workbook, setWorkbook] = useState<WorkbookState>({ status: "loading" });
+  /** Reads the workbook again (a failed read's Retry). */
+  const [reloadKey, setReloadKey] = useState(0);
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const domains = useMemo(() => mergeLiveDomains(livePaths), [livePaths]);
   const uploadsFolder = useMemo(() => buildUploadsFolder(livePaths, uploads), [livePaths, uploads]);
   const root = useMemo(() => buildDataroomRoot(domains, uploadsFolder), [domains, uploadsFolder]);
+
+  // On modal open: read the workspace's records for the Master.xlsx previews. A failed read is said, never shown
+  // as an empty workspace.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setWorkbook({ status: "loading" });
+    fetch("/api/ops/workbook", { headers: getAuthHeaders ? getAuthHeaders() : {} })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        if (cancelled) return;
+        if (!res.ok || data === null) {
+          setWorkbook({ status: "error", message: data?.error ?? `HTTP ${res.status}` });
+          return;
+        }
+        setWorkbook({ status: "ready", data: asWorkbook(data) });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setWorkbook({ status: "error", message: error instanceof Error ? error.message : "Network error" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, reloadKey]);
+  const sheetIndex = useMemo(
+    () => (workbook.status === "ready" ? sheetsByName(workbook.data) : null),
+    [workbook],
+  );
 
   // On modal open: reset the session caches and fetch the live path list.
   useEffect(() => {
@@ -2089,7 +2101,7 @@ export function Dataroom({
     const domain = TAB_DOMAIN_KEY[tab];
     setOpenId(`master:${domain}`);
     const targetSheet = (tab === initialTab ? initialSheet : undefined) ?? SECTION_SHEET[tab];
-    const idx = workbookSheets(DOMAIN_MASTER_TAB[domain]).findIndex((s) => s.name === targetSheet);
+    const idx = workbookSheetNames(DOMAIN_MASTER_TAB[domain]).filter((name) => !HIDDEN_SHEETS.has(name)).findIndex((name) => name === targetSheet);
     setSheetIdx(idx >= 0 ? idx : 0);
   }, [open, initialTab, initialSheet]);
 
@@ -2171,9 +2183,47 @@ export function Dataroom({
       });
   }, [open, fetchPath, livePaths, fileBodies]);
 
-  const activeSheet = openFile?.sheets?.length
-    ? Math.min(sheetIdx, openFile.sheets.length - 1)
-    : 0;
+  /** The open workbook's sheets: built from the workspace's records once they are read; headers only until then. A
+   *  sheet the profile hides (a nested part it does not use) is not one of them. */
+  const openSheets: Sheet[] | undefined = openFile?.sheetNames
+    ?.filter((name) => !HIDDEN_SHEETS.has(name))
+    .map((name) => sheetIndex?.[name] ?? { name, head: [], rows: [] });
+  const activeSheet = openSheets?.length ? Math.min(sheetIdx, openSheets.length - 1) : 0;
+  const activeTables = openSheets?.length ? (SHEET_TABLES[openSheets[activeSheet].name] ?? []) : [];
+  /** One of this sheet's tables could not be read: the sheet says so instead of rows (never "no records"). */
+  const sheetUnavailable = workbook.status === "ready" && activeTables.some((t) => workbook.data.unavailable.includes(t));
+  /** One of this sheet's tables was cut at the route's cap: the sheet says it shows only part. */
+  const sheetCapped =
+    workbook.status === "ready" && !sheetUnavailable
+      ? activeTables.map((t) => workbook.data.tables[t]).find((info) => info?.truncated)
+      : undefined;
+  /** What an empty sheet says. Never a sample record: loading, a failed read, or the workspace's own emptiness. */
+  const emptySheet: React.ReactNode =
+    workbook.status === "loading" ? (
+      <span data-testid="dataroom-loading">Loading {W.account} records…</span>
+    ) : workbook.status === "error" ? (
+      <span data-testid="dataroom-error" className="flex flex-col items-center gap-2">
+        <span>The {W.account} records could not be loaded ({workbook.message}).</span>
+        <button
+          type="button"
+          onClick={() => setReloadKey((k) => k + 1)}
+          className="rounded-md border border-border px-2.5 py-1 text-foreground text-xs hover:bg-muted"
+        >
+          Retry
+        </button>
+      </span>
+    ) : sheetUnavailable ? (
+      <span data-testid="dataroom-unavailable">
+        These records could not be loaded right now. The other sheets are not affected; close and reopen to try again.
+      </span>
+    ) : workbook.data.customers.length === 0 ? (
+      <span data-testid="dataroom-empty" className="flex flex-col items-center gap-1">
+        <span className="font-medium text-foreground">No {W.accounts} yet</span>
+        <span>Records appear here once {an(W.account)} {W.account} is added to this workspace.</span>
+      </span>
+    ) : (
+      "No records."
+    );
   const openAt = (id: string) => {
     setOpenId(id);
     setSheetIdx(0);
@@ -2334,16 +2384,23 @@ export function Dataroom({
 
           {/* Main — the open workbook sheet / file, full remaining width */}
           <div className="flex min-w-0 flex-1 flex-col bg-muted/10">
-            {openFile?.kind === "sheet" && openFile.sheets ? (
+            {openFile?.kind === "sheet" && openSheets?.length ? (
               <>
                 <div className="min-h-0 flex-1 overflow-auto p-3">
+                  {sheetCapped ? (
+                    <p data-testid="dataroom-truncated" className="mb-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-muted-foreground text-xs">
+                      Showing the first {sheetCapped.rows.toLocaleString("en-US")} of these records, most recent first. The rest
+                      are in the workspace but not shown here.
+                    </p>
+                  ) : null}
                   <Table
-                    head={openFile.sheets[activeSheet].head.map(speakKey)}
-                    rows={openFile.sheets[activeSheet].rows}
+                    head={[...openSheets[activeSheet].head.map(speakKey), ...(openSheets[activeSheet].own ?? [])]}
+                    rows={sheetUnavailable ? [] : openSheets[activeSheet].rows}
+                    empty={emptySheet}
                   />
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-border border-t bg-muted/40 px-2 py-1">
-                  {openFile.sheets.map((s, i) => (
+                  {openSheets.map((s, i) => (
                     <button
                       type="button"
                       key={s.name}
@@ -2760,9 +2817,12 @@ const SHEET_PAGE_SIZE_KEY = "dataroom-page-size";
 function Table({
   head,
   rows,
+  empty = "No records.",
 }: {
   readonly head: string[];
   readonly rows: (React.ReactNode | string | undefined)[][];
+  /** What the sheet says when it has no rows. */
+  readonly empty?: React.ReactNode;
 }) {
   // Sheets had NO pagination — a 60-account workbook rendered every row. Page
   // size is user-configurable and shared across all sheets (persisted).
@@ -2785,7 +2845,7 @@ function Table({
     }
   };
   if (rows.length === 0) {
-    return <p className="px-2 py-10 text-center text-muted-foreground text-sm">No records.</p>;
+    return <div className="px-2 py-10 text-center text-muted-foreground text-sm">{empty}</div>;
   }
   const pages = Math.max(1, Math.ceil(rows.length / pageSize));
   const current = Math.min(page, pages);
@@ -2884,7 +2944,8 @@ function Table({
 export const TOOL_META: Record<string, { color: string; synced: string[]; lastRefreshed: string }> = {
   "System of record": {
     color: "#64748b",
-    synced: ["customers.json", "people.json", "Workbook sheets"],
+    // What it holds, in the profile's words: the records themselves, never the name of a file.
+    synced: [W.Accounts, "People", "Workbook sheets"],
     lastRefreshed: "2026-07-10 09:12",
   },
   Salesforce: {

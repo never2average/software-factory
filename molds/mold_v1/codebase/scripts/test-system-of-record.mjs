@@ -13,9 +13,9 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-// Force the fallback path and isolate every best-effort disk write: no DB
-// URL, a scratch cwd (so the store's dev persistence cannot touch the real
-// data/customers.json), and a scratch data-room root.
+// Force the fallback path and isolate every disk write: no DB URL, a scratch
+// cwd, and a scratch data-room root. (The store no longer persists to disk at
+// all; the scratch cwd stays as a belt for anything else that writes.)
 delete process.env.DATABASE_URL;
 delete process.env.POSTGRES_URL;
 delete process.env.BLOB_READ_WRITE_TOKEN;

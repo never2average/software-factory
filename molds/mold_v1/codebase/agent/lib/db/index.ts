@@ -2,9 +2,9 @@
  * Lazily-initialized Postgres client + Drizzle instance.
  *
  * The system of record uses Postgres ONLY when DATABASE_URL (or POSTGRES_URL)
- * is set. Without a URL, `getDb()` returns null and callers fall back to the
- * bundled seed JSON (`data/customers.json` / `data/people.json`) — see
- * `agent/lib/system-of-record.ts`. Nothing connects at import time: the
+ * is set. Without a URL, `getDb()` returns null and callers fall back to an
+ * in-memory store, empty unless DEMO_SAMPLE_DATA=1 loads the sample records
+ * (`agent/lib/sample-data.ts`) — see `agent/lib/system-of-record.ts`. Nothing connects at import time: the
  * postgres.js client is only constructed on the first `getDb()` call that
  * finds a URL, and postgres.js itself defers TCP connections until the first
  * query.

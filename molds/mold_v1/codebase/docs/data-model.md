@@ -17,15 +17,25 @@ The seven canonical domains (top-level folders in `dm.md`) are:
 6. `Tickets`
 7. `People`
 
-Every customer-scoped sheet keys on `customer_id`, the slug from
-`data/customers.json` (`id`, for example `acme-bank`).
+Every customer-scoped sheet keys on `customer_id`, the account's slug in the
+system of record (`customers.customer_id`, for example `acme-bank`).
 
 Important boundary: customer accounts, internal OnFinance staff, and customer
-stakeholders are three different schemas. Customer accounts live in
-`data/customers.json` and the `Customers` sheet. Solution engineers and account
-executives live in `data/people.json.internalStaffAssignments` and the
-`Internal Staff` sheet. Customer users, champions, and decision makers live in
-`data/people.json.customerStakeholders` and the `Customer Stakeholders` sheet.
+stakeholders are three different schemas. Customer accounts live in the
+`customers` table and the `Customers` sheet. Solution engineers and account
+executives live in `internal_staff` (`internalStaffAssignments` in the source
+JSON) and the `Internal Staff` sheet. Customer users, champions, and decision
+makers live in `customer_stakeholders` (`customerStakeholders`) and the
+`Customer Stakeholders` sheet.
+
+The data room's `Master.xlsx` previews are built from the workspace's own
+records (`GET /api/ops/workbook`, row-level-security scoped); a workspace with
+none shows the empty state. No sample record is bundled into the product. The
+previews show what the deployment profile shows: no field it hides, its listed
+(`show_in_list`) own fields as columns in its labels, text cut to a preview, at
+most 5,000 rows per table (most recent first, and the sheet says so), and a
+table that could not be read is said on its sheet, never shown as empty
+(`lib/workbook-fields.ts`).
 
 ## Workbook naming: `<Domain>/Master.xlsx`
 
@@ -58,7 +68,14 @@ drift only, scheduled to converge on this spec in a later iteration.
 
 ## Source JSON types
 
-### `data/customers.json`
+The shapes below are the system of record's JSON contract. The only files in
+this shape are the invented demo sample, `data/sample/customers.json` and
+`data/sample/people.json`: nothing imports them, and the no-database fallback
+reads them only when the process runs with `DEMO_SAMPLE_DATA=1`
+(`agent/lib/sample-data.ts`). `npm run check:no-sample-data` fails if any of
+their names or emails reaches the production client build.
+
+### `customers.json`
 
 - `customers[]`: one row per customer account.
 - `customers[].platform`: one row per customer platform configuration.
@@ -68,12 +85,12 @@ drift only, scheduled to converge on this spec in a later iteration.
 - `customers[].tickets[]`: one row per actionable ticket, follow-up, or incident.
 - `customers[].interactions[]`: one row per customer touchpoint/event.
 
-### `data/people.json`
+### `people.json`
 
 - `internalStaffAssignments[]`: one row per OnFinance staff assignment to a customer.
 - `customerStakeholders[]`: one row per external stakeholder at the customer organization.
 
-Do not include `customer_name` or fuzzy `customer` text in `data/people.json`.
+Do not include `customer_name` or fuzzy `customer` text in `people.json`.
 Join through `customer_id`.
 
 ## The nine sheets and how they map into the seven domain workbooks
@@ -535,6 +552,6 @@ Allowed `stakeholder_role`: `key_user`, `decision_maker`, `champion`.
 ## Validation
 
 The canonical Zod contract lives in `agent/lib/customer-schema.ts`. Run
-`npm run validate:schema` after changing `data/customers.json`,
-`data/people.json`, or workbook headers. The validator checks JSON shape plus
+`npm run validate:schema` after changing `data/sample/customers.json`,
+`data/sample/people.json`, or workbook headers. The validator checks JSON shape plus
 the cross-sheet relationships above.

@@ -17,8 +17,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * The customer list backing the per-chat context selector. Reads the system of
- * record (Postgres) at runtime — NOT the bundled `data/customers.json`, which is
- * only a dev fallback and is intentionally empty in this deployment.
+ * record (Postgres) at runtime. No bundled list exists: the sample records
+ * (data/sample/) are a local demo's, read only by the server with DEMO_SAMPLE_DATA=1.
  *
  * Returns each customer WITH the summary the selector renders (tier, stage,
  * status, health, owner) plus an open-ticket count and the last interaction, so
@@ -50,7 +50,14 @@ function listedCustom(stored: unknown): { custom?: CustomValues } {
   return Object.keys(values).length ? { custom: values } : {};
 }
 
+/** One workspace's accounts: never cached by a browser or a proxy (every answer, errors included). */
 export async function GET(request: NextRequest) {
+  const res = await listCustomers(request);
+  res.headers.set("Cache-Control", "private, no-store");
+  return res;
+}
+
+async function listCustomers(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getOpsDb();

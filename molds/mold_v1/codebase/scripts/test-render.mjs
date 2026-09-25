@@ -1,7 +1,7 @@
 /**
  * Fallback-path test for the deterministic HTML report renderers
  * (agent/lib/render-html.ts). Runs with NO database URL, so the system of record
- * reads from the bundled seed JSON (data/customers.json) in memory — no Postgres
+ * is the in-memory fallback, seeded from the test fixture — no Postgres
  * connection is ever attempted. Output is pinned to a known `now`, exercising the
  * pure (store, now) -> HTML contract.
  *
@@ -51,7 +51,7 @@ assert.ok(!report.includes("<script"), "report contains NO script tag (zero JS)"
 
 assert.ok(report.includes("Acme Bank"), "report names the customer");
 assert.ok(report.includes("TCK-1001"), "report lists the overdue ticket");
-assert.ok(report.includes("priyesh@onfinance.in"), "report surfaces the FDE owner");
+assert.ok(report.includes("priyesh@example.com"), "report surfaces the FDE owner");
 
 for (const heading of ["Open Follow-Ups", "Recent Interactions", "Deployments", "Platform"]) {
   assert.ok(report.includes(heading), `report has the '${heading}' section`);

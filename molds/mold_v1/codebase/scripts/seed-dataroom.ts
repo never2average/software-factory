@@ -1,4 +1,4 @@
-// Seed migration — decompose data/customers.json + data/people.json into the
+// Seed migration — decompose data/sample/customers.json + people.json (the demo sample) into the
 // dm.md data-room tree via the DataroomStore (local backend).
 //
 // dm.md at the repository root is the CANONICAL data model. This script does a
@@ -47,8 +47,8 @@ const PLATFORM_VERSION_ID = "v1";
 // Load + validate source JSON against the canonical Zod contract
 // ---------------------------------------------------------------------------
 
-const customersUrl = new URL("../data/customers.json", import.meta.url);
-const peopleUrl = new URL("../data/people.json", import.meta.url);
+const customersUrl = new URL("../data/sample/customers.json", import.meta.url);
+const peopleUrl = new URL("../data/sample/people.json", import.meta.url);
 
 const customerStore = customerStoreSchema.parse(
   JSON.parse(readFileSync(customersUrl, "utf8")),

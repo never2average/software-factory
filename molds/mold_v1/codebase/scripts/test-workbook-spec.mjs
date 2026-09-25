@@ -1,7 +1,7 @@
 /**
  * Fallback-path test for the deterministic workbook-spec builder
  * (agent/lib/workbook-spec.ts). Runs with NO database URL, so the system of
- * record reads from the bundled seed JSON (data/customers.json) in memory — no
+ * record is the in-memory fallback, seeded from the test fixture — no
  * Postgres connection is ever attempted. The spec is a pure function of the
  * store + people seed, so every assertion is exact.
  *
@@ -121,7 +121,7 @@ assert.deepEqual(
 );
 assert.equal(custRow[CUSTOMERS_COLUMNS.indexOf("health_score")], 92, "health_score cell is the NUMBER 92");
 assert.equal(typeof custRow[CUSTOMERS_COLUMNS.indexOf("health_score")], "number", "health_score stays a number");
-assert.equal(custRow[CUSTOMERS_COLUMNS.indexOf("fde_owner")], "priyesh@onfinance.in", "fde_owner cell");
+assert.equal(custRow[CUSTOMERS_COLUMNS.indexOf("fde_owner")], "priyesh@example.com", "fde_owner cell");
 
 // Tickets: ids in seed order.
 assert.deepEqual(
@@ -157,7 +157,7 @@ assert.deepEqual(deriveInteractionDigestRow(acme), dRow, "exported digest helper
 assert.equal(staffSheet.rows.length, 2, "two internal-staff rows for acme");
 assert.deepEqual(
   staffSheet.rows.map((r) => r[INTERNAL_STAFF_COLUMNS.indexOf("email")]).sort(),
-  ["priyesh@onfinance.in", "rohan@onfinance.in"],
+  ["priyesh@example.com", "rohan@example.com"],
   "acme internal staff emails",
 );
 for (const r of staffSheet.rows) assert.equal(r[0], "acme-bank", "staff row customer_id");

@@ -7,8 +7,8 @@
       "lifecycleStage": "Expansion",
       "status": "On Track",
       "healthScore": 92,
-      "fdeOwner": "priyesh@onfinance.in",
-      "aeOwner": "rohan@onfinance.in",
+      "fdeOwner": "priyesh@example.com",
+      "aeOwner": "rohan@example.com",
       "arr": 180000,
       "arrCurrency": "USD",
       "seats": 45,
@@ -98,7 +98,7 @@
           "buildSha": "a1b2c3d4e5f6",
           "runtimeVersion": "fde-runtime-2.8.0",
           "configVersion": "cfg-acme-2026-06-3",
-          "approvedByEmail": "priyesh@onfinance.in",
+          "approvedByEmail": "priyesh@example.com",
           "approvedAt": "2026-07-04T13:40:00Z",
           "modelRouteId": "MR-ACME-PROD",
           "modelRoutingMode": "fallback",
@@ -130,7 +130,7 @@
           "peakRpm30d": 1240,
           "utilization30dPct": 68.9,
           "liveUrl": "https://acme.onfinance.app",
-          "deployOwnerEmail": "priyesh@onfinance.in",
+          "deployOwnerEmail": "priyesh@example.com",
           "lastIncidentRef": "",
           "activeIncidentRefs": [],
           "incidentCount30d": 0,
@@ -229,7 +229,7 @@
           "expansionStage": "qualified",
           "expansionPotentialAnnualValueUsd": 90000,
           "expansionConfidencePct": 72,
-          "solutionFdeOwner": "priyesh@onfinance.in",
+          "solutionFdeOwner": "priyesh@example.com",
           "lastReviewedDate": "2026-07-03"
         }
       ],
@@ -239,10 +239,10 @@
           "SOL-1001"
         ],
         "implementationStage": "Steady State",
-        "implementationOwnerEmail": "priyesh@onfinance.in",
+        "implementationOwnerEmail": "priyesh@example.com",
         "rolloutGovernanceStatus": "Approved",
         "customerLaunchApproverEmail": "dana@acmebank.com",
-        "providerLaunchApproverEmail": "priyesh@onfinance.in",
+        "providerLaunchApproverEmail": "priyesh@example.com",
         "launchDecision": "Go",
         "launchDecisionDate": "2026-04-25",
         "implementationProgressPct": 100,
@@ -270,7 +270,7 @@
         "runbookStatus": "Approved",
         "runbookLink": "https://confluence.onfinance.local/acme/research-runbook",
         "supportHandoffStatus": "Complete",
-        "supportOwnerEmail": "priyesh@onfinance.in",
+        "supportOwnerEmail": "priyesh@example.com",
         "supportChannelRef": "slack://acme-bank-support",
         "billingReadinessStatus": "Ready",
         "entitlementProvisioningStatus": "Validated",
@@ -323,7 +323,7 @@
           "escalated": false,
           "escalatedAt": "",
           "escalationReason": "",
-          "ticketOwnerEmail": "priyesh@onfinance.in",
+          "ticketOwnerEmail": "priyesh@example.com",
           "sourceChannel": "Email",
           "lastActivityDate": "2026-07-05",
           "sourceLink": "",
@@ -373,7 +373,7 @@
           "customerContactEmail": "sam@acmebank.com",
           "ticketOpenedDate": "2026-07-01",
           "ticketDueDate": "2026-07-20",
-          "ticketOwnerEmail": "priyesh@onfinance.in",
+          "ticketOwnerEmail": "priyesh@example.com",
           "sourceChannel": "Slack",
           "lastActivityDate": "2026-07-06",
           "productionImpact": false,
@@ -403,7 +403,7 @@
           "customerContactEmail": "sam@acmebank.com",
           "ticketOpenedDate": "2026-06-28",
           "ticketDueDate": "2026-07-12",
-          "ticketOwnerEmail": "priyesh@onfinance.in",
+          "ticketOwnerEmail": "priyesh@example.com",
           "sourceChannel": "Meeting",
           "lastActivityDate": "2026-07-07",
           "productionImpact": true,
@@ -431,7 +431,7 @@
           "participantEmails": [
             "dana@acmebank.com",
             "sam@acmebank.com",
-            "priyesh@onfinance.in"
+            "priyesh@example.com"
           ],
           "relatedTicketIds": [
             "TCK-1001"
@@ -443,11 +443,11 @@
             "DEP-ACME-PROD"
           ],
           "nextAction": "Send guardrails-on-KYC expansion proposal.",
-          "nextActionOwnerEmail": "priyesh@onfinance.in",
+          "nextActionOwnerEmail": "priyesh@example.com",
           "nextActionDueDate": "2026-07-20",
           "sentiment": "positive",
           "sensitivity": "customer_shareable",
-          "recordedByEmail": "priyesh@onfinance.in",
+          "recordedByEmail": "priyesh@example.com",
           "recordedAt": "2026-07-03T18:00:00Z"
         }
       ]
@@ -459,8 +459,8 @@
       "lifecycleStage": "Onboarding",
       "status": "Blocked",
       "healthScore": 58,
-      "fdeOwner": "priyesh@onfinance.in",
-      "aeOwner": "lena@onfinance.in",
+      "fdeOwner": "priyesh@example.com",
+      "aeOwner": "lena@example.com",
       "arr": 64000,
       "arrCurrency": "USD",
       "seats": 18,
@@ -547,7 +547,7 @@
           "buildSha": "b8c9d0e1f2a3",
           "runtimeVersion": "fde-runtime-2.8.0",
           "configVersion": "cfg-nw-2026-07-0-rc1",
-          "approvedByEmail": "priyesh@onfinance.in",
+          "approvedByEmail": "priyesh@example.com",
           "approvedAt": "2026-07-06T08:50:00Z",
           "modelRouteId": "MR-NW-STAGING",
           "modelRoutingMode": "primary_only",
@@ -579,7 +579,7 @@
           "peakRpm30d": 220,
           "utilization30dPct": 73.3,
           "liveUrl": "https://northwind.preview.onfinance.app",
-          "deployOwnerEmail": "priyesh@onfinance.in",
+          "deployOwnerEmail": "priyesh@example.com",
           "lastIncidentRef": "TCK-2031",
           "activeIncidentRefs": [
             "TCK-2031"
@@ -682,7 +682,7 @@
           "expansionStage": "none",
           "expansionPotentialAnnualValueUsd": 0,
           "expansionConfidencePct": 0,
-          "solutionFdeOwner": "priyesh@onfinance.in",
+          "solutionFdeOwner": "priyesh@example.com",
           "lastReviewedDate": "2026-07-06"
         }
       ],
@@ -692,10 +692,10 @@
           "SOL-2001"
         ],
         "implementationStage": "Integration",
-        "implementationOwnerEmail": "priyesh@onfinance.in",
+        "implementationOwnerEmail": "priyesh@example.com",
         "rolloutGovernanceStatus": "In Review",
         "customerLaunchApproverEmail": "priya@northwind.com",
-        "providerLaunchApproverEmail": "priyesh@onfinance.in",
+        "providerLaunchApproverEmail": "priyesh@example.com",
         "launchDecision": "Deferred",
         "launchDecisionDate": "2026-07-06",
         "implementationProgressPct": 55,
@@ -723,7 +723,7 @@
         "runbookStatus": "Draft",
         "runbookLink": "",
         "supportHandoffStatus": "Scheduled",
-        "supportOwnerEmail": "priyesh@onfinance.in",
+        "supportOwnerEmail": "priyesh@example.com",
         "supportChannelRef": "slack://northwind-support",
         "billingReadinessStatus": "Blocked",
         "entitlementProvisioningStatus": "Provisioned",
@@ -779,11 +779,11 @@
           "escalatedAt": "2026-07-06T14:00:00Z",
           "escalationLevel": "L2",
           "escalationReason": "Launch blocker with customer/vendor dependency and failed integration test.",
-          "ticketOwnerEmail": "priyesh@onfinance.in",
+          "ticketOwnerEmail": "priyesh@example.com",
           "sourceChannel": "Slack",
           "lastActivityDate": "2026-07-07",
           "sourceLink": "https://onfinance.slack.com/archives/C123/p1720000000",
-          "escalationOwnerEmail": "priyesh@onfinance.in",
+          "escalationOwnerEmail": "priyesh@example.com",
           "productionImpact": false,
           "customerImpactLevel": "high",
           "customerImpactSummary": "Pilot launch is blocked; production users are not live yet.",
@@ -801,7 +801,7 @@
           "preventiveActions": "Add schema drift detection before migration normalization.",
           "postmortemRequired": true,
           "postmortemStatus": "pending",
-          "postmortemOwnerEmail": "priyesh@onfinance.in",
+          "postmortemOwnerEmail": "priyesh@example.com",
           "postmortemDueDate": "2026-07-15",
           "postmortemUrl": "",
           "tags": [
@@ -832,7 +832,7 @@
           "customerContactEmail": "alex@northwind.com",
           "ticketOpenedDate": "2026-07-02",
           "ticketDueDate": "2026-07-14",
-          "ticketOwnerEmail": "priyesh@onfinance.in",
+          "ticketOwnerEmail": "priyesh@example.com",
           "sourceChannel": "Email",
           "lastActivityDate": "2026-07-07",
           "relatedTicketIds": [
@@ -863,7 +863,7 @@
           "participantEmails": [
             "alex@northwind.com",
             "priya@northwind.com",
-            "priyesh@onfinance.in"
+            "priyesh@example.com"
           ],
           "relatedTicketIds": [
             "TCK-2031"
@@ -875,11 +875,11 @@
             "DEP-NW-STAGING"
           ],
           "nextAction": "Reproduce connector failure with latest export sample.",
-          "nextActionOwnerEmail": "priyesh@onfinance.in",
+          "nextActionOwnerEmail": "priyesh@example.com",
           "nextActionDueDate": "2026-07-10",
           "sentiment": "negative",
           "sensitivity": "customer_shareable",
-          "recordedByEmail": "priyesh@onfinance.in",
+          "recordedByEmail": "priyesh@example.com",
           "recordedAt": "2026-07-06T12:00:00Z"
         }
       ]

@@ -62,7 +62,7 @@ import { createRequire } from "node:module";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { clientLiterals } from "./lib/client-literals.mjs";
-import { CANARY, PAGE_SPECS, PAGES, renderedText } from "./lib/rendered-text.mjs";
+import { CANARY, HIDDEN_MARK, PAGE_SPECS, PAGES, renderedText } from "./lib/rendered-text.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const argAfter = (flag) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : null);
@@ -303,6 +303,46 @@ async function enumLabels(dir) {
   return out;
 }
 
+/* ------------------------------------------------------------------------ 5b. data room fields */
+
+/**
+ * The rendered data room against the profile's field rules. The workbook mock (scripts/lib/rendered-text.mjs) gives
+ * every hideable field a value marked HIDDEN-FIELD-<key>. A HIDDEN field (account_fields.hidden; an area's
+ * `fields.<key>.hidden`) must show neither its marked value nor its column on any data-room page; an own field the
+ * profile lists (`custom_fields[].show_in_list`) must show as a column, in its label, on its area's sheet.
+ */
+async function dataroomFields(copy, seen) {
+  const { DEPLOYMENT_PROFILE: P } = await import(pathToFileURL(join(copy, "lib/deployment-profile.generated.ts")).href);
+  const norm = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, "");
+  const hiddenOf = (fields) => Object.entries(fields ?? {}).filter(([, f]) => f?.hidden).map(([k]) => k);
+  const hidden = [
+    ...(P.account_fields?.hidden ?? []).filter((k) => !["platform", "solutions", "tickets", "id", "name"].includes(k)),
+    ...hiddenOf(P.domains.deployments?.fields),
+    ...hiddenOf(P.domains.implementations?.fields),
+  ];
+  const room = seen.filter((l) => l.page.startsWith("/?dataroom="));
+  const cells = (page) => new Set(room.filter((l) => l.page === page).flatMap((l) => l.text.split("\t")).map((c) => c.trim()));
+  const problems = [];
+  for (const k of hidden) {
+    const leak = room.find((l) => l.text.includes(`${HIDDEN_MARK}${k}`));
+    if (leak) problems.push(`hidden field "${k}" shows its value on ${leak.page}`);
+    for (const page of new Set(room.map((l) => l.page))) {
+      if ([...cells(page)].some((c) => norm(c) === norm(k))) problems.push(`hidden field "${k}" shows as a column on ${page}`);
+    }
+  }
+  const AREA_PAGE = { account: "/?dataroom=customers", deployments: "/?dataroom=deployments", implementations: "/?dataroom=implementation" };
+  let listed = 0;
+  for (const [area, page] of Object.entries(AREA_PAGE)) {
+    const specs = (area === "account" ? P.account_fields?.custom_fields : P.domains[area]?.custom_fields) ?? [];
+    for (const f of specs.filter((x) => x.show_in_list)) {
+      if (!PAGES.includes(page) || !room.some((l) => l.page === page)) continue;
+      listed++;
+      if (!cells(page).has(f.label)) problems.push(`listed own field "${f.key}" (${area}) does not show as a column "${f.label}" on ${page}`);
+    }
+  }
+  return { problems, hidden: hidden.length, listed };
+}
+
 /* ---------------------------------------------------------------------------- 3. prerendered pages */
 
 function prerenderedText(dir) {
@@ -451,6 +491,16 @@ try {
       const secs = Math.round((Date.now() - started) / 1000);
       if (!report(`${label}, RENDERED PAGES (the visible DOM of ${PAGES.length} pages and tabs)`, shown, (b) => `"${b.words.join('", "')}" in ${JSON.stringify(b.text.slice(0, 160))}`) && !unread.length) {
         console.log(`check-ui-vocabulary: ${label} — rendered pages: ${seen.length} visible lines across ${PAGES.length} pages and tabs (details and dialogs opened, canary caught, ${secs}s) carry no base word`);
+      }
+      // 5b. The data room shows what the profile SHOWS: no field it hides (account_fields.hidden, an area's hidden
+      //     fields), as a column or a value, and every own field it lists (show_in_list) as a column in its label.
+      const fields = await dataroomFields(copy, seen);
+      if (fields.problems.length) {
+        failed = true;
+        console.error(`\ncheck-ui-vocabulary: ${label}, DATA ROOM FIELDS — the Master.xlsx previews do not follow the profile's fields:`);
+        for (const p of fields.problems) console.error(`  ${p}`);
+      } else {
+        console.log(`check-ui-vocabulary: ${label} — data room: none of ${fields.hidden} hidden fields shows (column or value), and ${fields.listed} listed own fields show as columns`);
       }
     } else console.log("check-ui-vocabulary: --no-render: the rendered-DOM pass was skipped");
   }

@@ -375,6 +375,24 @@ jobs:
         if: always()
         run: npm run check:ui-vocabulary
 
+      # No invented record reaches a person (factory task mold_v1-120). Every live workspace showed two bundled
+      # sample accounts ("Acme Bank", "Northwind Capital") in the data room's Master.xlsx previews, with a real
+      # person's email on the People sheet, and the chat's company picker offered them whenever the workspace had
+      # none. This scans the production build the Build step left in .next/ for the sample records' names and
+      # emails (and any @onfinance.in address), then renders the data room and the picker with the ops API faked:
+      # an empty workspace shows the empty state, a workspace with records shows those, a loading or failed list
+      # says so. Needs no secret.
+      - name: No sample data in the product (built bundle, rendered data room and picker)
+        if: always()
+        run: npm run check:no-sample-data
+
+      # …and the rules that need no build: the no-database fallback is empty unless DEMO_SAMPLE_DATA=1 and never
+      # writes to disk, seed:postgres refuses without DEMO_SAMPLE_DATA=1 or --sample (before connecting), and nothing
+      # the model or a connector card reads names the sample file or its ids.
+      - name: Sample data stays a local demo's (fallback, seed gate, prompts)
+        if: always()
+        run: npm run test:sample-data
+
       # …and what the scans cannot read: keys in JSON a person copies or views, ops API errors, the base library
       # rows a workspace does not run (still listed and adoptable, naming no excluded specialist), a visible enum
       # value with no profile label, and the profile generator while an eve build moves specialists aside.
@@ -465,7 +483,7 @@ jobs:
   # trade than the thing it verifies. This needs no secrets and works on forks.
   isolation:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -562,6 +580,20 @@ jobs:
       # Runs the route's own write path (lib/chat-sessions-mirror.ts) as app_rw
       # under RLS, plus: one chat's oversize markers never fail the batch, and
       # the list works on either side of migration 0020.
+      # The data room's records as GET /api/ops/workbook serves them, over HTTP from `next start`, as app_rw under
+      # RLS: only the own fields the profile lists and text cut to a preview (a 2 MB note went out on every open),
+      # one unreadable table named `unavailable` instead of blanking the workspace, no hidden field, a capped table
+      # flagged and holding the most recent rows, Cache-Control: private, no-store. Built under the relabelling
+      # (hfc-research) profile, so its 26 hidden account fields are what is asserted absent.
+      - name: Data room workbook route, against a fail-closed Postgres (relabelling profile build)
+        if: always()
+        run: |
+          cp scripts/fixtures/agent-vocabulary/50-relabelled.json profiles/
+          npm run build
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:workbook-route-db
+
       - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
         if: always()
         run: |

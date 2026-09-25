@@ -7,10 +7,11 @@
  * structured entity: customers, platform, deployments, solutions,
  * implementation, tickets, interactions).
  *
- * FALLBACK: when no Postgres URL is set (dev / CI / tests), the store falls
- * back to the bundled seed JSON (`data/customers.json`) held in memory —
- * exactly the pre-Postgres behavior, so the agent works end-to-end with no
- * external credentials. Seed a real database with `npm run seed:postgres`.
+ * FALLBACK: when no Postgres URL is set (dev / CI / tests), the store is held
+ * in memory for the life of the process. It starts EMPTY, or from the sample
+ * records in data/sample/customers.json when the process runs with
+ * DEMO_SAMPLE_DATA=1 (a local demo; see ./sample-data.ts). Nothing is ever
+ * written to disk. Seed a real database with `npm run seed:postgres`.
  *
  * Document artifacts (context.md, agreements, helm/terraform, eval jsonl,
  * signoffs) are NOT stored here — they live in the data-room store
@@ -18,11 +19,9 @@
  * interaction into `Customers/{id}/interactions.jsonl` for the document view,
  * best-effort; Postgres (or the JSON fallback) remains the record.
  */
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import { and, eq, getTableColumns, ilike, notInArray, or, sql } from "drizzle-orm";
 import type { Table } from "drizzle-orm";
-import seed from "../../data/customers.json" with { type: "json" };
+import { sampleCustomerStore } from "./sample-data.ts";
 import {
   customerPatchSchema,
   customerReadSchema,
@@ -84,30 +83,28 @@ async function scopeFor(customerId: string, orgId?: string | null): Promise<stri
 }
 
 /* -------------------------------------------------------------------------- */
-/* Fallback store — bundled seed JSON, in memory (pre-Postgres behavior)      */
+/* Fallback store — in memory, empty unless DEMO_SAMPLE_DATA asks for samples */
 /* -------------------------------------------------------------------------- */
 
-const DATA_PATH = path.join(process.cwd(), "data", "customers.json");
-
-// The seed is bundled via a static import so the agent always has data at
-// runtime even without a database — on serverless the working directory has no
-// `data/` folder, so an fs.readFile would throw. Writes mutate this in-memory
-// copy (and best-effort persist to disk in local dev); serverless filesystems
-// are read-only/ephemeral.
-let memoryStore: CustomerStore = customerStoreSchema.parse(JSON.parse(JSON.stringify(seed)));
+// Empty by default; the sample accounts only when the process was started with
+// DEMO_SAMPLE_DATA=1 (./sample-data.ts). The seed used to be a static import of
+// data/customers.json, which put two invented accounts in every build.
+let memoryStore: CustomerStore = customerStoreSchema.parse(sampleCustomerStore());
 
 async function readStore(): Promise<CustomerStore> {
   return memoryStore;
 }
 
+/**
+ * In memory ONLY. This used to also write the store back to
+ * `<cwd>/data/customers.json`, which in a local run is the tracked file the
+ * client bundle imported: a local run's records ("Surface Probe Co") then
+ * shipped to every workspace in the next build. Nothing read the file back, so
+ * the write persisted nothing anyone used; the in-memory copy is the fallback's
+ * record for the life of the process.
+ */
 async function writeStore(store: CustomerStore): Promise<void> {
   memoryStore = customerStoreSchema.parse(store);
-  try {
-    await fs.writeFile(DATA_PATH, JSON.stringify(store, null, 2) + "\n", "utf8");
-  } catch {
-    // Read-only/ephemeral serverless FS — the in-memory copy is the source of
-    // truth for the life of this instance.
-  }
 }
 
 /* -------------------------------------------------------------------------- */

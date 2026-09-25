@@ -76,18 +76,13 @@
   },
   {
     "source": ".*",
-    "literal": "^(CUSTOMERS|STALLED_CUSTOMERS|getCustomerSummary|CustomerMark|CustomerSelect|DEPLOYMENT_PROFILE|DEFAULT_DOMAINS)$",
+    "literal": "^(CustomerMark|CustomerSelect|DEPLOYMENT_PROFILE|DEFAULT_DOMAINS)$",
     "why": "A module export's or component's name, kept by the bundler in its module map. Never rendered."
   },
   {
     "source": "^app/_components/dataroom\\.tsx$",
     "literal": "^((dom|master):(customers|deployments|implementation)|(customers|deployments)/syncs(/[a-z0-9_]+)*|customer_stakeholder)$",
     "why": "A data-room tree node's id (a folder's id is its stored path) or a stored person type. The tree renders the node's name and its domain's profile label, never the id."
-  },
-  {
-    "source": "^app/_components/dataroom\\.tsx$",
-    "literal": "^customers\\.json$",
-    "why": "The name of the system of record's real fallback file (data/customers.json), listed on the System of record connector card. A file's name is storage, and a person who opens it finds it under that name."
   },
   {
     "source": "^agent/lib/agent-vocabulary\\.ts$",
@@ -108,12 +103,6 @@
     "source": "^(agent/)?lib/deployment-profile\\.generated\\.ts$",
     "literal": "^Customers/README\\.md$",
     "why": "A seed file's STORED path (dataroom.seed[].path): the folder in storage is Customers/. The data room shows it under the domain's label."
-  },
-  {
-    "source": "^page:/\\?dataroom=people$",
-    "literal": "Forward-Deployed Engineer",
-    "rendered": true,
-    "why": "A row of the bundled sample people (data/people.json) rendered in the People Master.xlsx preview: sample DATA, not product text. Removing the bundled sample data from every workspace is factory task mold_v1-120 (out of scope for this PR); drop this entry with it."
   },
   {
     "source": "^lib/ui-keys\\.ts$",
