@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { chatThreadMembers } from "@/agent/lib/db/schema";
@@ -6,6 +7,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordActivity } from "@/lib/ops-activity";
 import { accessFor, callerEmail } from "@/lib/chat-threads";
 import { notifyInvite } from "@/lib/platform-notify";
+import { displayTitle } from "@/lib/chat-attachments";
 import { ensureWorkspaceInvite } from "@/lib/org-invites";
 import { CONSUMER_DOMAINS } from "@/lib/ops-auth";
 
@@ -123,7 +125,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       to: invitee,
       inviter: caller,
       role: parsed.data.role,
-      title: access.thread.title,
+      title: displayTitle(access.thread.title, "a chat"),
       threadUrl: access.thread.eveSessionId
         ? `${new URL(request.url).origin}/?chatSession=${encodeURIComponent(access.thread.eveSessionId)}`
         : undefined,
@@ -133,7 +135,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       { status: 201 },
     );
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -162,6 +164,6 @@ export async function GET(request: NextRequest, ctx: Ctx) {
       })),
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

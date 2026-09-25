@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { chatThreads, chatTurnAuthors } from "@/agent/lib/db/schema";
@@ -238,6 +239,6 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
     return NextResponse.json({ ok: true, sessionId: parked.sessionId, parked: Boolean(parked.token) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

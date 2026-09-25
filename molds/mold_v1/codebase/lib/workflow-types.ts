@@ -5,10 +5,21 @@
  * A workflow governs one entity (tasks or implementations). It is a set of
  * STAGES; each stage defines what it is, HOW to assign work into it, and its
  * outgoing TRANSITIONS (which next stages, and how/when to migrate there).
- * Shared + dependency-free so both the front end and the agent import it.
+ * Shared, and pure (its only import is the profile's words, lib/ui-words.ts), so both the front end and the
+ * agent can import it.
  */
+import { W } from "./ui-words.ts";
 
 export type WorkflowEntity = "task" | "implementation";
+
+/** What a person reads for each entity a workflow governs: the profile's words for the record area. */
+export const ENTITY_NOUNS: Record<WorkflowEntity, { singular: string; plural: string }> = {
+  task: { singular: "task", plural: "tasks" },
+  implementation: { singular: W.implementation, plural: W.implementations },
+};
+/** An entity's noun; a value this build does not know is shown as it is. */
+export const entityNoun = (entity: string, form: "singular" | "plural" = "singular"): string =>
+  ENTITY_NOUNS[entity as WorkflowEntity]?.[form] ?? (form === "plural" ? `${entity}s` : entity);
 
 /** How a person is assigned when an item enters a stage. */
 /**
@@ -73,7 +84,7 @@ export const ASSIGN_LABELS: Record<AssignRule["type"], string> = {
   role: "By role",
   person: "Fixed person",
   team: "Round-robin a team",
-  customer_owner: "The customer's owner",
+  customer_owner: `The ${W.account}'s owner`,
   least_loaded: "Least-loaded person",
   prompt: "By a prompt (agent decides)",
 };
@@ -103,7 +114,7 @@ function assignBase(a: AssignRule): string {
     case "team":
       return `round-robin the ${a.value} team`;
     case "customer_owner":
-      return "assign the customer's owner";
+      return `assign the ${W.account}'s owner`;
     case "least_loaded":
       return a.value ? `least-loaded in ${a.value}` : "least-loaded person";
     case "prompt":

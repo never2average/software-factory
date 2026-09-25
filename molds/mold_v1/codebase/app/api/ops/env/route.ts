@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { runtimeEnvPresence } from "@/agent/lib/db/schema";
 import { getOpsDb } from "@/lib/ops-db";
 
@@ -18,6 +19,6 @@ export async function GET() {
     const items = await db.select().from(runtimeEnvPresence);
     return NextResponse.json({ items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

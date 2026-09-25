@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, asc, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest, ctx: Ctx) {
     );
     return NextResponse.json({ item: publicThread(access.thread, access.role, members) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -86,7 +87,7 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     );
     return NextResponse.json({ item: publicThread(row, access.role) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -142,6 +143,6 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

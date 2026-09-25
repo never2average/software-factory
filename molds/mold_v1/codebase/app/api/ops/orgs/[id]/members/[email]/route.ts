@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { orgMembers } from "@/agent/lib/db/schema";
@@ -64,7 +65,7 @@ export async function PATCH(
     });
     return NextResponse.json({ item: row });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -99,6 +100,6 @@ export async function DELETE(
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

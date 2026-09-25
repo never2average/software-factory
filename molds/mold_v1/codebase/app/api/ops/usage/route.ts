@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { chatTurnUsage } from "@/agent/lib/db/schema";
 import { estimateCostUsd } from "@/lib/inference-pricing";
@@ -125,6 +126,6 @@ export async function GET(request: NextRequest) {
       by_day: [...byDay].map(([date, t]) => ({ date, ...t })),
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

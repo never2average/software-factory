@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
@@ -181,7 +182,7 @@ export async function POST(request: NextRequest) {
       { status: existing ? 200 : 201 },
     );
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -239,6 +240,6 @@ export async function GET(request: NextRequest) {
     ];
     return NextResponse.json({ items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

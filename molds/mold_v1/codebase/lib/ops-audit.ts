@@ -13,6 +13,7 @@ import "server-only";
 
 import { automationAudit } from "@/agent/lib/db/schema";
 import { withOrgRls, type Db } from "@/lib/ops-db";
+import { W } from "@/lib/ui-words";
 
 export type OpsAutomationType =
   | "schedule"
@@ -117,7 +118,7 @@ function sentenceFor(field: string, before: unknown, after: unknown): string {
     case "channelId":
       return `Slack channel changed ${show(before, "none")} → ${show(after, "none")}`;
     case "customerId":
-      return `Customer scope changed ${show(before, "team-wide")} → ${show(after, "team-wide")}`;
+      return `${W.Account} scope changed ${show(before, "team-wide")} → ${show(after, "team-wide")}`;
     case "cron":
       return `Cron expression changed ${show(before, "none")} → ${show(after, "none")}`;
     case "notifyEmail":

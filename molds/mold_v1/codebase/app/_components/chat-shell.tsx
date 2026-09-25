@@ -20,8 +20,10 @@ import {
   createEventDeduper,
   dedupeEvents,
   type TranscriptSnapshot,
+  snapshotWriteNeeded,
 } from "@/lib/chat-snapshot";
 import { withFreshestToken } from "@/lib/chat-session-cursor";
+import { MARKERS_MAX_BYTES_CLIENT, capMarkers, isPersistedMarker } from "@/lib/chat-turn-state";
 import { createPersistWriter } from "@/lib/chat-persist";
 import { cn } from "@/lib/utils";
 
@@ -86,6 +88,11 @@ export interface StoredSession {
   toolCounts?: { artifacts: number; emails: number; subagents?: number };
   /** Teammates invited to this thread (non-owner members), from the DB mirror. */
   invitees?: string[];
+  /**
+   * The chat's persisted markers as the SERVER mirror has them (a Stop, an
+   * answered question) — for a device that has no local copy of the events.
+   */
+  markers?: unknown[];
 }
 
 /** Metadata row from GET /api/ops/chat-sessions (the durable per-user mirror). */
@@ -102,7 +109,17 @@ interface DbChatSession {
   derivedCustomers?: string[];
   toolCounts?: { artifacts: number; emails: number; subagents?: number };
   invitees?: string[];
+  clientMarkers?: unknown[];
   updatedAt?: number;
+}
+
+/**
+ * Every persisted marker a chat has — this browser's copy and the server
+ * mirror's, deduplicated — for EVERY open path. A Stop recorded on one device
+ * then holds on all of them, snapshot or no snapshot.
+ */
+function markersOf(s: Pick<StoredSession, "events" | "markers">): unknown[] {
+  return dedupeEvents([...((s.events ?? []) as unknown[]).filter(isPersistedMarker), ...(s.markers ?? [])]);
 }
 
 /**
@@ -597,6 +614,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
                 updatedAt: it.updatedAt ?? cached?.updatedAt ?? now,
                 derivedCustomers: it.derivedCustomers ?? cached?.derivedCustomers,
                 toolCounts: it.toolCounts ?? cached?.toolCounts,
+                markers: it.clientMarkers ?? cached?.markers,
                 invitees: it.invitees,
               };
             });
@@ -712,6 +730,9 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         continuationToken: s.session?.continuationToken ?? null,
         derivedCustomers: s.derivedCustomers ?? null,
         toolCounts: s.toolCounts ?? null,
+        // Capped by BYTES (stops kept first, answer text trimmed): one chat's
+        // markers must never be what gets the whole list sync refused.
+        clientMarkers: capMarkers(markersOf(s), MARKERS_MAX_BYTES_CLIENT),
         archived: Boolean(s.archived),
         updatedAt: s.updatedAt,
       }));
@@ -864,6 +885,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
    * every single open — a megabyte of transcript uploaded to learn nothing.
    */
   const snapshotIndexRef = useRef<Map<string, number>>(new Map());
+  /** How many client markers the stored snapshot of each session carries. */
+  const snapshotMarkersRef = useRef<Map<string, number>>(new Map());
 
   const fetchSnapshot = useCallback(
     async (sessionId: string): Promise<TranscriptSnapshot | null> => {
@@ -878,6 +901,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         const { snapshot } = (await res.json()) as { snapshot?: TranscriptSnapshot | null };
         if (!snapshotUsable(snapshot, { eveSessionId: sessionId })) return null;
         snapshotIndexRef.current.set(sessionId, snapshot.eventIndex);
+        snapshotMarkersRef.current.set(sessionId, snapshot.clientEvents.length);
         return snapshot;
       } catch {
         return null;
@@ -904,11 +928,23 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         events: input.events,
       });
       if (!snapshot) return;
-      const known = snapshotIndexRef.current.get(snapshot.eveSessionId) ?? -1;
-      // Never rewrite the same position, and never move a thread's transcript
-      // backwards — a truncated read must not overwrite a complete one.
-      if (snapshot.eventIndex <= known) return;
+      const knownIndex = snapshotIndexRef.current.get(snapshot.eveSessionId);
+      // Never move a thread's transcript backwards — a truncated read must not
+      // overwrite a complete one — but DO rewrite the same position when it
+      // gained markers (a Stop that produced no server event: see
+      // `snapshotWriteNeeded`).
+      if (
+        !snapshotWriteNeeded(
+          snapshot,
+          knownIndex === undefined
+            ? undefined
+            : { eventIndex: knownIndex, markers: snapshotMarkersRef.current.get(snapshot.eveSessionId) ?? 0 },
+        )
+      ) {
+        return;
+      }
       snapshotIndexRef.current.set(snapshot.eveSessionId, snapshot.eventIndex);
+      snapshotMarkersRef.current.set(snapshot.eveSessionId, snapshot.clientEvents.length);
       void fetch("/api/ops/chat-snapshots", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -1701,9 +1737,10 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
          */
         const cached = await fetchSnapshot(sessionId);
         if (cached) {
-          const localMarkers = ((s.events ?? []) as unknown[]).filter((e) =>
-            (e as { type?: string }).type?.startsWith("client."),
-          );
+          const localMarkers = dedupeEvents([
+            ...((s.events ?? []) as unknown[]).filter((e) => (e as { type?: string }).type?.startsWith("client.")),
+            ...(s.markers ?? []),
+          ]);
           const mountNow = mountFromSnapshot(cached, [], localMarkers);
           /**
            * The resume handle is NOT stored in the cache — it already has an
@@ -1812,12 +1849,11 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           setOpeningChat(false);
         }
         if (fresh) {
-          // The server stream has no client-side `client.input.responded` events,
-          // so carry the answered-input markers from the stored snapshot forward —
-          // otherwise questions/approvals answered earlier revert to pending.
-          const answered = ((s.events ?? []) as unknown[]).filter(
-            (e) => (e as { type?: string }).type === "client.input.responded",
-          );
+          // The server stream has no client-side markers, so carry the ones this
+          // browser persisted forward — answered inputs (`client.input.responded`)
+          // and Stops (`client.turn.stopped`) — otherwise questions answered or
+          // stopped earlier revert to live, and a stopped specialist to "Running".
+          const answered = markersOf(s);
           // Dedupe the merge so the streamIndex matches the mounted length exactly
           // (a stale/off index is what re-streams already-present events into
           // duplicates).
@@ -1863,7 +1899,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         }
       }
       setInitialSession(s.session);
-      setInitialEvents(dedupeEvents(s.events) as AgentEvents);
+      setInitialEvents(dedupeEvents([...((s.events ?? []) as unknown[]), ...(s.markers ?? [])]) as AgentEvents);
       setMountKey(s.id);
     },
     [replaySession, persist, fetchSnapshot, storeSnapshot, getAuthHeaders],
@@ -1983,7 +2019,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       setRelayThreadId(canSend ? thread.id : undefined);
       setSharedReopen(thread);
       const answered = ((thread.clientEvents ?? []) as unknown[]).filter(
-        (e) => (e as { type?: string }).type === "client.input.responded",
+        isPersistedMarker,
       );
       const events = fresh ? dedupeEvents([...(fresh.events as unknown[]), ...answered]) : answered;
       setInitialEvents(events as AgentEvents);
@@ -2266,6 +2302,9 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           if (sharedReopen) void openSharedThread(sharedReopen);
         }}
         sharedThreadId={sharedReopen?.id}
+        // No identity yet: nothing is kept (never under an "anon" scope another
+        // person could later read).
+        storageScope={email ? `${email}:${activeOrg() ?? "default"}` : undefined}
       />
         {openingChat ? <ChatShimmer /> : null}
       </div>

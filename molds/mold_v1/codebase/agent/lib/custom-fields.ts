@@ -14,6 +14,10 @@
  */
 import { DEPLOYMENT_PROFILE, type CustomFieldArea, type CustomFieldSpec, type CustomFieldType } from "./deployment-profile.generated.ts";
 
+/** The product install, as a person reads it: "deployment", or "workspace" once the profile renames the deployment
+ *  record area (then "deployment" means that record). The rule lib/ui-words.ts `W.install` and speak() follow. */
+const INSTALL = DEPLOYMENT_PROFILE.domains.deployments.label.singular.trim().toLowerCase() === "deployment" ? "deployment" : "workspace";
+
 export type CustomValue = string | number;
 export type CustomValues = Record<string, CustomValue>;
 export type CustomResult = { ok: true; values: CustomValues } | { ok: false; errors: string[] };
@@ -122,7 +126,7 @@ export function validateCustom(
       continue;
     }
     if (!f) {
-      errors.push(fields.length ? `There is no custom field "${key}" here. The custom fields are: ${fields.map(describeCustomField).join("; ")}.` : `There is no custom field "${key}" here: this deployment's profile declares none for this kind of record.`);
+      errors.push(fields.length ? `There is no custom field "${key}" here. The custom fields are: ${fields.map(describeCustomField).join("; ")}.` : `There is no custom field "${key}" here: this ${INSTALL}'s profile declares none for this kind of record.`);
       continue;
     }
     if (isBlank(raw)) {

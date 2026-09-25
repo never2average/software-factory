@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
+import { W } from "@/lib/ui-words";
 import {
   EMPTY_VALUE,
   InlineField,
@@ -105,10 +106,7 @@ import { SURFACE, TYPE } from "./tokens";
 
 
 import { SUBAGENT_KEYS } from "../subagent-meta.generated";
-import { withheldLibraryNote } from "@/lib/workflow-availability";
 
-/** Why this workspace has fewer (or none) of the base library's workflows — said, not left as an empty list. */
-const LIBRARY_NOTE = withheldLibraryNote();
 /* ------------------- Workflow instructions: ⌘K inline editor -------------- */
 
 /**
@@ -147,6 +145,12 @@ function highlightLine(line: string): React.ReactNode[] {
   return out;
 }
 
+/** "1 specialist" / "2 specialists": how many a workflow delegates to that this deployment does not have. */
+const missingSpecialists = (n: number) => `${n} specialist${n === 1 ? "" : "s"}`;
+
+/** The declared eve subagents — the only names an override can actually reach. */
+const SUBAGENT_IDS = new Set<string>(SUBAGENT_KEYS);
+
 /**
  * The workflow's SCRIPT editor: a full-area code surface whose tab names the
  * script, with one menu holding every action on it — run, edit, restore a
@@ -160,7 +164,7 @@ function highlightLine(line: string): React.ReactNode[] {
  * own credentials — a run can never do what the person who started it could not.
  */
 /** What a new workflow starts as: the smallest script that actually does work. */
-const STARTER_SCRIPT = `export const meta = {
+const BASE_STARTER_SCRIPT = `export const meta = {
   name: "triage",
   description: "Triage open tickets and draft a reply for the worst one.",
 };
@@ -180,8 +184,26 @@ log("drafted a reply");
 return { worst, reply };
 `;
 
-/** The declared eve subagents — the only names an override can actually reach. */
-const SUBAGENT_IDS = new Set<string>(SUBAGENT_KEYS);
+/**
+ * The starter above delegates to two base specialists. A deployment whose profile excludes either starts from one
+ * step that delegates to a specialist it HAS: a new workflow must never name one this deployment does not use.
+ */
+const STARTER_SCRIPT =
+  SUBAGENT_IDS.has("customer-context") && SUBAGENT_IDS.has("follow-ups")
+    ? BASE_STARTER_SCRIPT
+    : `export const meta = {
+  name: "first-step",
+  description: "Ask one specialist for one thing and return its answer.",
+};
+
+phase("Ask");
+const answer = await agent(
+  "In three bullet points: what can you do in this workspace?",${SUBAGENT_KEYS[0] ? `\n  { subagent: ${JSON.stringify(SUBAGENT_KEYS[0])} },` : ""}
+);
+
+log("asked");
+return { answer };
+`;
 
 function slugOf(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "-");
@@ -1303,11 +1325,11 @@ function WorkflowWizard({
               placeholder="What this workflow does when the orchestrator delegates to it."
             />
           </Field>
-          <Field label="Customer ID" hint="Optional — scope the workflow to one account.">
+          <Field label={`${W.Account} ID`} hint="Optional — scope the workflow to one account.">
             <OpsInput
               value={customerId}
               onChange={(e) => setCustomerId(e.target.value)}
-              placeholder="customer-id"
+              placeholder={W.accountIdExample}
             />
           </Field>
           <NotifyEmailField recipients={notifyEmails} onRecipients={setNotifyEmails} />
@@ -1329,7 +1351,7 @@ function WorkflowWizard({
             { label: "Name", value: reviewText(name.trim()) },
             { label: "Trigger", value: reviewText(trigger) },
             { label: "Description", value: reviewText(description.trim()) },
-            { label: "Customer", value: reviewText(customerId.trim() || null) },
+            { label: W.Account, value: reviewText(customerId.trim() || null) },
             { label: "Notify", value: reviewText(notifyEmails.join(", ") || null) },
             {
               label: "Steps",
@@ -1361,7 +1383,10 @@ export function WorkflowsPanel({
   readonly initialSelectedId?: string;
   readonly onInitialConsumed?: () => void;
 }) {
-  const { items, error, refetch, loading } = useOpsList<ApiWorkflow>("/api/ops/workflows");
+  const { items, extra, error, refetch, loading } = useOpsList<ApiWorkflow>("/api/ops/workflows");
+  // Why this workspace has fewer (or none) of the base library's workflows — said, not left as an empty list.
+  // Computed by GET /api/ops/workflows (lib/workflow-availability.ts), so the library's text stays on the server.
+  const LIBRARY_NOTE = typeof extra.libraryNote === "string" ? extra.libraryNote : null;
   const [search, setSearch] = useState("");
   const [panel, setPanel] = useState<PanelState>({ mode: "closed" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1574,7 +1599,7 @@ export function WorkflowsPanel({
                       <Th icon={ZapIcon} label="Trigger" />
                       <Th icon={TextIcon} label="Description" />
                       <Th icon={ListOrderedIcon} label="Steps" />
-                      <Th icon={Building2Icon} label="Customer" />
+                      <Th icon={Building2Icon} label={W.Account} />
                     </>
                   )}
                   <Th label="Actions" align="right" />
@@ -1617,8 +1642,10 @@ export function WorkflowsPanel({
                                 <Chip>not in this workspace</Chip>
                               </span>
                             ) : w.availability?.needsExcluded?.length ? (
-                              <span title={`Edited or written here, and delegates to ${w.availability.needsExcluded.join(", ")}, which this workspace does not use: that step will fail.`}>
-                                <Chip>needs {w.availability.needsExcluded.join(", ")}</Chip>
+                              // A count, never the directory names: an excluded specialist is not shown to a person, and
+                              // its name is the base product's word (`customer-context`, `deployment`).
+                              <span title={`Edited or written here, and delegates to ${missingSpecialists(w.availability.needsExcluded.length)} this workspace does not use: that step will fail.`}>
+                                <Chip>needs {missingSpecialists(w.availability.needsExcluded.length)}</Chip>
                               </span>
                             ) : null}
                           </span>

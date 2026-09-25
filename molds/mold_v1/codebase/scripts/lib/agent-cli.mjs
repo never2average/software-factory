@@ -362,11 +362,11 @@ export function safetyGate(files, { origin, allowHosts = [], allowEmails = [], f
 
 // ---------------------------------------------------------- the own-name gate
 
-/** The base product's role name: the "FDE" that check-vocabulary.mjs keeps out of UI text. */
+/** The base product's role name: the "FDE" that check-ui-vocabulary.mjs keeps out of UI text (with its other words). */
 export const BASE_PRODUCT_WORD = "fde";
 /**
  * "fde" as a WORD. `_` is excluded on both sides because this gate is about the NAME a person
- * meets — a file, a bin, a README line, a folder — and check-vocabulary.mjs draws the same line
+ * meets — a file, a bin, a README line, a folder — and check-ui-vocabulary.mjs draws the same line
  * ("identifiers are fine, text a person reads is not"). It used to mean `fde_status` and
  * `FDE_OPS_URL` were exempt outright; they are not any more. `wireNameGate` below covers
  * exactly that remainder — tool names, environment variables, storage keys — because those
@@ -382,7 +382,7 @@ const CONFIG_SEGMENT = /\.config["']?\s*[,/]\s*["']?([A-Za-z0-9._-]+)/g;
  * it creates in their home directory. Before this gate, `@onfinance/hfc-research` — bought by a
  * desk of housing-finance analysts — shipped fde-cli.mjs and four siblings, a README line
  * offering `fde-login` "under its older name", and wrote their credentials to
- * ~/.config/fde-mcp/. Every one of those is the same bug check-vocabulary.mjs exists for, one
+ * ~/.config/fde-mcp/. Every one of those is the same bug check-ui-vocabulary.mjs exists for, one
  * layer further out, and every one of them came back silently after being fixed by hand.
  *
  * `files` is the same [{ path, bytes, symlink? }] safetyGate takes. Skipped entirely for the
@@ -446,8 +446,8 @@ export function ownNameGate(files, { name }) {
 /**
  * An identifier "carries the base word" when one of its `_`- or `-`-separated
  * parts IS that word: `fde_status`, `FDE_OPS_URL`, `fde-google-token`. Not
- * `fdeOwner` and not `/api/fde…`, which is the line check-vocabulary.mjs draws
- * and which stays where it is — those are spellings nobody reads as a name.
+ * `fdeOwner` and not `/api/fde…`: those are spellings nobody reads as a name (check-ui-vocabulary.mjs allow-lists
+ * them in the UI bundle as keys and routes, with the reason).
  */
 export const identifierCarriesBaseWord = (id) =>
   String(id)

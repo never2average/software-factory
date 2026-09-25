@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { connectorSecrets, connectors } from "@/agent/lib/db/schema";
@@ -46,11 +47,6 @@ const patchConnectorSchema = z.strictObject({
 // DELETE may carry an optional JSON body naming the actor for the audit trail.
 const deleteBodySchema = z.strictObject({ actor: z.string().min(1).optional() });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues
-    .map((i) => `${i.path.join(".") || "body"}: ${i.message}`)
-    .join("; ");
-}
 
 const uuidSchema = z.uuid();
 
@@ -116,7 +112,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({ item });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -184,6 +180,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({ deleted: true, secretsRemoved: secretsRemoved.length });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

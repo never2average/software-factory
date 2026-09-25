@@ -236,9 +236,16 @@ check(
   "…and reads EVERY mirror row for the session, not only the caller's",
   /claimants\.size === 1 && claimants\.has\(me\)/.test(accessLib),
 );
+// The write itself lives in lib/chat-sessions-mirror.ts (shared with its database test); the route calls it.
+const sessionsMirror = src("lib/chat-sessions-mirror.ts");
 check(
   "the mirror write refuses a session someone else has already claimed",
-  /\.from\(chatSessions\)[\s\S]{0,200}inArray\(chatSessions\.eveSessionId, sessionIds\)/.test(sessionsRoute),
+  /writeMirrorRows\(inOrg/.test(sessionsRoute) &&
+    /\.from\(chatSessions\)[\s\S]{0,200}inArray\(chatSessions\.eveSessionId, sessionIds\)/.test(sessionsMirror),
+);
+check(
+  "…and a ROW someone else owns under that very id, whatever else the post says",
+  /\.from\(chatSessions\)\.where\(inArray\(chatSessions\.id, ids\)\)/.test(sessionsMirror) && /foreignIds\.has\(s\.id\)/.test(sessionsMirror),
 );
 check(
   "deleting a chat deletes its cached transcript SERVER-SIDE",

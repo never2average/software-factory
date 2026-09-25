@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage, errorText } from "@/lib/ops-errors";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 import { orgMembers, orgs, platformAdmins } from "@/agent/lib/db/schema";
@@ -105,7 +106,7 @@ export async function GET(request: NextRequest) {
       items: rows.map((o) => ({ orgId: o.orgId, name: o.name, role: roleOf.get(o.orgId) ?? "member", status: o.status, branding: o.branding ?? null })),
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -227,7 +228,7 @@ export async function POST(request: NextRequest) {
     try {
       provisioned = await withOrgRls(orgId, (tx) => provisionWorkspace(tx, orgId, identity.email));
     } catch (e) {
-      provisionError = e instanceof Error ? e.message : String(e);
+      provisionError = errorMessage(e);
       console.error("provisionWorkspace failed", { orgId, error: provisionError });
     }
     return NextResponse.json(
@@ -240,6 +241,6 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

@@ -52,7 +52,9 @@ added under `profiles/`, never an edit to a component. See
 [`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md). When a profile relabels the
 domains, the agent's model reads only its words: tool names, parameters, results, paths,
 prompts and the roster are translated at the tool boundary (`agent/lib/agent-vocabulary.ts`),
-storage never moves, and `npm run check:agent-vocabulary` proves both halves. Every tool is
+storage never moves, and `npm run check:agent-vocabulary` proves both halves. What a PERSON reads (the UI, the
+ops API's messages, the client bundle) takes the same words from `lib/ui-words.ts`, and
+`npm run check:ui-vocabulary` proves it. Every tool is
 exported through `modelFacing(...)`; the root prompt is `agent/prompt-*.md`, rendered by
 `agent/instructions.ts`, and a base specialist's is its `prompt.md`.
 

@@ -86,6 +86,7 @@ import {
   type RadioOption,
 } from "./primitives";
 import { SURFACE, TYPE } from "./tokens";
+import { W } from "@/lib/ui-words";
 
 /**
  * The Prompt cell — a cron's context column, and the whole reason to look at
@@ -199,7 +200,7 @@ function scheduleDetailSections(
           label="prompt"
           variant="multiline"
           value={s.prompt}
-          placeholder="Summarize open tickets for each active customer and flag anything at SLA risk."
+          placeholder={`Summarize open tickets for each active ${W.account} and flag anything at SLA risk.`}
           hint="What the agent runs each time the rule fires. ⌘⏎ or click away to save"
           onCommit={async (v) => {
             const t = v.trim();
@@ -225,7 +226,7 @@ function scheduleDetailSections(
     },
     {
       icon: Building2Icon,
-      label: "Customer",
+      label: W.Account,
       value: (
         <CustomerSelect
           value={s.customerId ?? null}
@@ -423,7 +424,7 @@ function ScheduleWizard({
               className="min-h-20"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Summarize open tickets for each active customer and flag anything at SLA risk."
+              placeholder={`Summarize open tickets for each active ${W.account} and flag anything at SLA risk.`}
             />
           </Field>
           <Field
@@ -440,7 +441,7 @@ function ScheduleWizard({
                 placeholder="C0123456789"
               />
             </Field>
-            <Field label="Customer" hint="Optional — scope to one account.">
+            <Field label={W.Account} hint="Optional — scope to one account.">
               <CustomerSelect
                 value={customerId || null}
                 onChange={(next) => setCustomerId(next ?? "")}
@@ -468,7 +469,7 @@ function ScheduleWizard({
             { label: "Workflow", value: reviewText(workflow) },
             { label: "Prompt", value: reviewText(prompt.trim()) },
             { label: "Channel", value: reviewText(channelId.trim() || null) },
-            { label: "Customer", value: reviewText(customerId.trim() || null) },
+            { label: W.Account, value: reviewText(customerId.trim() || null) },
             { label: "Notify", value: reviewText(notifyEmails.join(", ") || null) },
             { label: "Enabled", value: yesNo(enabled) },
           ]}

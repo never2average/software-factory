@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { customers, implementation, solutions } from "@/agent/lib/db/schema";
@@ -8,6 +9,7 @@ import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
 import { customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
 import { asCustomValues } from "@/agent/lib/custom-fields";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { an, W } from "@/lib/ui-words";
 
 /**
  * A profile may GROUP rows by rolloutId (a portfolio, a programme): many rows then share one rolloutId, so it
@@ -23,7 +25,7 @@ export const dynamic = "force-dynamic";
  *  same customer returns a friendly conflict. Stage/risk/progress default to a
  *  fresh rollout the operator refines in the detail panel. */
 const createSchema = z.object({
-  customerId: z.string().min(1, "Pick a customer."),
+  customerId: z.string().min(1, `Pick ${an(W.account)} ${W.account}.`),
   implementationStage: z.string().min(1).default("scoping"),
   implementationRiskLevel: z.string().min(1).default("low"),
   implementationProgressPct: z.number().min(0).max(100).default(0),
@@ -94,15 +96,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            `No customer with that id exists yet, so this record has nothing to attach to. ` +
-            `Create the customer first (POST /api/ops/customers, or customer_create from the CLI).`,
+            `No ${W.account} with that id exists yet, so this record has nothing to attach to. ` +
+            `Create the ${W.account} first (POST /api/ops/customers, or customer_create from the CLI).`,
         },
         { status: 409 },
       );
     }
     const conflict = isUniqueViolation(e);
     return NextResponse.json(
-      { error: conflict ? "This customer already has one." : msg },
+      { error: conflict ? `This ${W.account} already has one.` : errorText(msg) },
       { status: conflict ? 409 : 500 },
     );
   }
@@ -177,6 +179,6 @@ export async function GET(request: NextRequest) {
     }));
     return NextResponse.json({ items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq, gt, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { roomPresence } from "@/agent/lib/db/schema";
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json({ online: await roster(db, ctx.orgId, parsed.data.room, email) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -81,6 +82,6 @@ export async function GET(request: NextRequest) {
   try {
     return NextResponse.json({ online: await roster(db, ctx.orgId, room, identity.email.toLowerCase()) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

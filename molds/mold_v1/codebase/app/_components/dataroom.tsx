@@ -33,6 +33,8 @@ import {
 import { cn } from "@/lib/utils";
 import { PdfView } from "./pdf-view";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { jsonForPeople, speakKey } from "@/lib/ui-keys";
+import { W } from "@/lib/ui-words";
 import { domainView } from "@/lib/profile-domains";
 import customersData from "@/data/customers.json";
 import peopleData from "@/data/people.json";
@@ -649,7 +651,11 @@ function domainDisplay(domain: string): { label: string; visible: boolean; descr
 const SHEET_AREA: Record<string, "deployments" | "implementations"> = { Deployments: "deployments", Implementation: "implementations" };
 function sheetTitle(name: string): string {
   const area = SHEET_AREA[name];
-  return area ? domainView(area).name(name) : name;
+  if (area) return domainView(area).name(name);
+  // The account's own sheet reads as its domain's label ("Companies"). The stakeholders sheet is NAMED in the
+  // profile's word already (SECTION_SHEET).
+  if (name === SECTION_SHEET.customers) return domainDisplay(name).label;
+  return name;
 }
 
 const ALL_DATAROOM_SECTIONS: { key: DataroomTab; domain: string; icon: typeof Users }[] = [
@@ -693,7 +699,7 @@ const SECTION_SHEET: Record<DataroomTab, string> = {
   people: "Internal Staff",
   interactions: "Interactions",
   "internal-staff": "Internal Staff",
-  "customer-stakeholders": "Customer Stakeholders",
+  "customer-stakeholders": `${W.Account} Stakeholders`,
 };
 
 /** One workbook, one sheet per canonical schema in fixed data-model order. */
@@ -1451,7 +1457,7 @@ const DATA_ROOM_WORKBOOK: Sheet[] = [
     ]),
   },
   {
-    name: "Customer Stakeholders",
+    name: SECTION_SHEET["customer-stakeholders"],
     head: [
       "customer_id",
       "stakeholder_role",
@@ -1624,11 +1630,11 @@ const WORKBOOK_SHEETS: Record<DataroomTab, string[]> = {
   implementation: ["Implementation"],
   tickets: ["Tickets", "Interactions", "Interaction Digest"],
   // Personnel: OnFinance staff assignments + external customer stakeholders.
-  people: ["Internal Staff", "Customer Stakeholders"],
+  people: ["Internal Staff", SECTION_SHEET["customer-stakeholders"]],
   // Supporting tabs, if ever opened directly, resolve to a single-sheet book.
   interactions: ["Interactions"],
   "internal-staff": ["Internal Staff"],
-  "customer-stakeholders": ["Customer Stakeholders"],
+  "customer-stakeholders": [SECTION_SHEET["customer-stakeholders"]],
 };
 
 function workbookSheets(section: DataroomTab): Sheet[] {
@@ -2144,7 +2150,8 @@ export function Dataroom({
         } else if (Array.isArray(data.records)) {
           // .jsonl comes back as parsed records — re-serialize one per line
           // so the existing JsonlView renders them.
-          const content = data.records.map((record) => JSON.stringify(record)).join("\n");
+          // Keys in the profile's words (lib/ui-keys.ts); values exactly as stored.
+          const content = data.records.map((record) => jsonForPeople(record)).join("\n");
           setFileBodies((prev) => ({ ...prev, [path]: { status: "ready", content } }));
         } else {
           setFileBodies((prev) => ({
@@ -2331,7 +2338,7 @@ export function Dataroom({
               <>
                 <div className="min-h-0 flex-1 overflow-auto p-3">
                   <Table
-                    head={openFile.sheets[activeSheet].head}
+                    head={openFile.sheets[activeSheet].head.map(speakKey)}
                     rows={openFile.sheets[activeSheet].rows}
                   />
                 </div>
@@ -2897,7 +2904,7 @@ export const TOOL_META: Record<string, { color: string; synced: string[]; lastRe
   },
   Slack: {
     color: "#611f69",
-    synced: ["Customer channels", "Customer DMs", "Alerts"],
+    synced: [`${W.Account} channels`, `${W.Account} DMs`, "Alerts"],
     lastRefreshed: "2026-07-10 09:06",
   },
   Vercel: {

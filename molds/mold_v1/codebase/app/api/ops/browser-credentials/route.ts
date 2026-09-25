@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { browserCredentials, customers } from "@/agent/lib/db/schema";
@@ -6,6 +7,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { encryptSecret, hasSecretsKey } from "@/lib/secret-crypto";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +58,7 @@ export async function GET(request: NextRequest) {
       })),
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -98,7 +100,7 @@ export async function POST(request: NextRequest) {
       .limit(1),
   );
   if (!owned) {
-    return NextResponse.json({ error: "Customer is not in this workspace." }, { status: 404 });
+    return NextResponse.json({ error: `${W.Account} is not in this workspace.` }, { status: 404 });
   }
   const sealed = encryptSecret(parsed.data.password, ctx.orgId);
   try {
@@ -131,7 +133,7 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json({ item: { customerId: parsed.data.customerId, siteOrigin, username: parsed.data.username } }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -159,6 +161,6 @@ export async function DELETE(request: NextRequest) {
     );
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

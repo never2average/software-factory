@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
   comments,
@@ -12,6 +13,7 @@ import {
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isSafeDataroomPath, parseJsonlRecords, readDataroomFile } from "@/lib/dataroom-blob";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -186,7 +188,7 @@ export async function GET(request: NextRequest) {
       const [row] = await withOrgRls(ctx.orgId, (tx) =>
         tx.select().from(deployments).where(eq(deployments.deploymentId, id)).limit(1),
       );
-      if (!row) return NextResponse.json({ error: "Deployment not found" }, { status: 404 });
+      if (!row) return NextResponse.json({ error: `${W.Deployment} not found` }, { status: 404 });
       bundle.record = row as Record<string, unknown>;
       const customerId = customerIdParam ?? row.customerId;
       const [cust] = await withOrgRls(ctx.orgId, (tx) =>
@@ -222,7 +224,7 @@ export async function GET(request: NextRequest) {
         : await withOrgRls(ctx.orgId, (tx) =>
             tx.select().from(implementation).where(eq(implementation.rolloutId, id)).limit(1),
           );
-      if (!rec) return NextResponse.json({ error: "Implementation not found" }, { status: 404 });
+      if (!rec) return NextResponse.json({ error: `${W.Implementation} not found` }, { status: 404 });
       bundle.record = rec as Record<string, unknown>;
       const cid = rec.customerId;
       const [cust] = await withOrgRls(ctx.orgId, (tx) =>
@@ -247,6 +249,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(bundle);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

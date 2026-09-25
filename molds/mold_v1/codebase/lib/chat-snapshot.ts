@@ -463,3 +463,23 @@ export function snapshotAccess(input: {
   // lib/chat-session-access.ts), because minting a claim used to be a POST away.
   return { read: input.ownsMirrorRow, write: input.ownsMirrorRow };
 }
+
+/**
+ * SHOULD THIS SNAPSHOT BE WRITTEN? When the stream moved on — and ALSO when the
+ * stream did not move but the transcript gained client markers.
+ *
+ * A Stop on a specialist's question produces no server event at all (eve drops
+ * the delegation and says nothing), so a writer keyed on the stream index alone
+ * never saved the `client.turn.stopped` marker: the Stop was forgotten on every
+ * other device, the question came back live and the tile went back to
+ * "Running" (review, `stoponly`). The server accepts a rewrite at the same
+ * index (it only refuses to move BACKWARDS), so the marker is written at once.
+ */
+export function snapshotWriteNeeded(
+  next: { readonly eventIndex: number; readonly clientEvents: readonly unknown[] },
+  known: { readonly eventIndex: number; readonly markers: number } | undefined,
+): boolean {
+  if (!known) return true;
+  if (next.eventIndex > known.eventIndex) return true;
+  return next.eventIndex === known.eventIndex && next.clientEvents.length > known.markers;
+}

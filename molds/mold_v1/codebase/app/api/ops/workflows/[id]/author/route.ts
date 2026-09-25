@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { workflows } from "@/agent/lib/db/schema";
@@ -134,7 +135,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
+      { error: errorMessage(e) },
       { status: 502 },
     );
   }

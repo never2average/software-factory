@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 import {
   chatSessions,
@@ -11,6 +11,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { isEmptyStore } from "@/lib/pg-error";
+import { readMirrorRows, writeMirrorRows, type InOrg } from "@/lib/chat-sessions-mirror";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,14 +50,24 @@ export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "workspace unavailable" }, { status: 503 });
   try {
-    const rows = await withOrgRls(ctx.orgId, (tx) =>
-      tx
-        .select()
-        .from(chatSessions)
-        .where(and(eq(chatSessions.ownerEmail, email), eq(chatSessions.orgId, ctx.orgId), eq(chatSessions.archived, false)))
-        .orderBy(desc(chatSessions.updatedAt))
-        .limit(200),
-    );
+    // Named columns, and `client_markers` only once it exists (lib/chat-sessions-mirror):
+    // this route must work on either side of migration 0020.
+    const inOrg: InOrg = (fn) => withOrgRls(ctx.orgId, fn);
+    const rows = (await readMirrorRows(inOrg, { orgId: ctx.orgId, email })) as Array<{
+      id: string;
+      clientKey: string | null;
+      title: string | null;
+      preview: string | null;
+      messageCount: number | null;
+      customers: string[] | null;
+      forkedFrom: { id: string; title: string } | null;
+      eveSessionId: string | null;
+      continuationToken: string | null;
+      derivedCustomers: string[] | null;
+      toolCounts: { artifacts: number; emails: number } | null;
+      clientMarkers?: unknown[] | null;
+      updatedAt: Date | null;
+    }>;
 
     /**
      * Hide rows for threads somebody else owns.
@@ -130,6 +141,7 @@ export async function GET(request: NextRequest) {
         continuationToken: r.continuationToken ?? undefined,
         derivedCustomers: r.derivedCustomers ?? undefined,
         toolCounts: r.toolCounts ?? undefined,
+        clientMarkers: r.clientMarkers ?? undefined,
         invitees: (r.clientKey && inviteesByKey.get(r.clientKey)) || undefined,
         updatedAt: r.updatedAt ? r.updatedAt.getTime() : Date.now(),
       })),
@@ -153,6 +165,14 @@ const sessionSchema = z.object({
   continuationToken: z.string().nullable().optional(),
   derivedCustomers: z.array(z.string()).nullable().optional(),
   toolCounts: z.object({ artifacts: z.number(), emails: z.number() }).nullable().optional(),
+  /**
+   * The browser-made markers the chat must carry to every device (a Stop, an
+   * answered question — lib/chat-turn-state `isPersistedMarker`). Accepted as
+   * anything and CLEANED PER CHAT on write (`capMarkers`): only those two kinds,
+   * capped by bytes, merged so they only grow. Never validated strictly here —
+   * one chat's markers must never get the whole list sync refused.
+   */
+  clientMarkers: z.unknown().optional(),
   archived: z.boolean().optional(),
   updatedAt: z.number().optional(),
 });
@@ -168,106 +188,20 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ ok: false, error: "Invalid" }, { status: 400 });
   try {
     /**
-     * A thread somebody else owns is never one of your chats.
-     *
-     * The client has several mount paths and each one had to remember not to
-     * persist a shared thread; one of them forgot, and the result was another
-     * person's conversation sitting in the viewer's own sidebar — reproduced in
-     * incognito, so no amount of local pruning could reach it. Enforcing it
-     * here means no client path can get it wrong: if a chat_thread exists for
-     * this eve session and it belongs to someone else, the row is refused.
+     * A thread somebody else owns is never one of your chats — shared with you,
+     * mirrored by someone else under its eve session, or already a row under
+     * that id — and no write can change a row's owner or its eve session. The
+     * rules, and why, live with the code: lib/chat-sessions-mirror.ts.
      */
-    const sessionIds = parsed.data.sessions
-      .map((s) => s.eveSessionId)
-      .filter((id): id is string => Boolean(id));
-    const foreign = new Set<string>();
-    if (sessionIds.length) {
-      const owners = await withOrgRls(ctx.orgId, (tx) =>
-        tx
-          .select({ eveSessionId: chatThreads.eveSessionId, ownerEmail: chatThreads.ownerEmail })
-          .from(chatThreads)
-          .where(inArray(chatThreads.eveSessionId, sessionIds)),
-      );
-      for (const o of owners) {
-        if (o.ownerEmail.toLowerCase() !== email) foreign.add(o.eveSessionId);
-      }
-
-      /**
-       * NOR IS A SESSION SOMEBODY ELSE HAS ALREADY MIRRORED.
-       *
-       * The check above only knows about SHARED conversations, because a
-       * `chat_threads` row exists only once a thread has been shared. An
-       * ordinary private chat has no such row — so this route would happily
-       * write "I own eve session X" for any id a caller named, and
-       * `lib/chat-session-access.ts` then derived read AND write access to the
-       * cached transcript from exactly that row. A colleague who learned a
-       * session id (they appear in the audit feed, in logs, in links) could
-       * claim somebody's private conversation and then read, overwrite or
-       * delete the most complete copy of it this system stores, through
-       * /api/ops/chat-snapshots and /api/ops/chat-replay.
-       *
-       * One session, one owner: the first mirror row wins. The read rule
-       * independently refuses a session with more than one claimant, because
-       * rows minted before this check still exist.
-       */
-      const claimed = await withOrgRls(ctx.orgId, (tx) =>
-        tx
-          .select({
-            id: chatSessions.id,
-            eveSessionId: chatSessions.eveSessionId,
-            ownerEmail: chatSessions.ownerEmail,
-          })
-          .from(chatSessions)
-          .where(inArray(chatSessions.eveSessionId, sessionIds)),
-      );
-      for (const c of claimed) {
-        if (c.eveSessionId && c.ownerEmail.toLowerCase() !== email) foreign.add(c.eveSessionId);
-      }
-    }
-
-    let refused = 0;
-    for (const s of parsed.data.sessions) {
-      if (s.eveSessionId && foreign.has(s.eveSessionId)) {
-        refused += 1;
-        continue;
-      }
-      const values = {
-        id: s.id,
-        orgId: ctx.orgId,
-        ownerEmail: email,
-        clientKey: s.clientKey ?? null,
-        title: s.title ?? null,
-        preview: s.preview ?? null,
-        messageCount: s.messageCount ?? null,
-        customers: s.customers ?? null,
-        forkedFrom: s.forkedFrom ?? null,
-        eveSessionId: s.eveSessionId ?? null,
-        continuationToken: s.continuationToken ?? null,
-        derivedCustomers: s.derivedCustomers ?? null,
-        toolCounts: s.toolCounts ?? null,
-        archived: s.archived ?? false,
-        updatedAt: s.updatedAt ? new Date(s.updatedAt) : new Date(),
-      };
-      /**
-       * A thread belongs to the workspace it was STARTED in, permanently.
-       *
-       * orgId used to be in the update set, and the client mirrors its whole
-       * local thread list on every sync — so switching workspace re-stamped
-       * every existing conversation into the new one. The sidebar then showed
-       * one tenant's chats under another tenant's name, with the workspace
-       * header confidently disagreeing with the contents.
-       *
-       * Omitting orgId from the update is the whole fix: an insert sets it, an
-       * update can never move it.
-       */
-      const { orgId: _immutable, ...mutable } = values;
-      await withOrgRls(ctx.orgId, (tx) =>
-        tx
-          .insert(chatSessions)
-          .values(values)
-          .onConflictDoUpdate({ target: chatSessions.id, set: { ...mutable, ownerEmail: email } }),
-      );
-    }
+    const inOrg: InOrg = (fn) => withOrgRls(ctx.orgId, fn);
+    const { refused } = await writeMirrorRows(inOrg, {
+      orgId: ctx.orgId,
+      email,
+      sessions: parsed.data.sessions.map((s) => ({
+        ...s,
+        clientMarkers: Array.isArray(s.clientMarkers) ? s.clientMarkers : null,
+      })),
+    });
     return NextResponse.json({
       ok: true,
       count: parsed.data.sessions.length - refused,

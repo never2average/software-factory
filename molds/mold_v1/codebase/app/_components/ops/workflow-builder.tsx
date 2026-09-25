@@ -31,6 +31,7 @@ import {
   ASSIGN_LABELS,
   MIGRATE_LABELS,
   assignSummary,
+  entityNoun,
   migrateSummary,
   type AssignRule,
   type MigrateRule,
@@ -48,6 +49,7 @@ import {
 import { PaginatedTable, type Column } from "./paginated-table";
 import { errMessage, opsFetch } from "./lib";
 import { afterMenuClose } from "./after-menu-close";
+import { an, upperFirst, W } from "@/lib/ui-words";
 
 const uid = () => (globalThis.crypto?.randomUUID?.() ?? `s_${Math.random().toString(36).slice(2)}`).slice(0, 12);
 
@@ -69,10 +71,10 @@ const TEMPLATES: Record<WorkflowEntity, () => WorkflowStage[]> = {
   implementation: () =>
     linear(
       [
-        ["Scoping", "Requirements and success criteria agreed with the customer."],
-        ["Configuration", "Platform + solution configured for the customer."],
+        ["Scoping", `Requirements and success criteria agreed with the ${W.account}.`],
+        ["Configuration", `Platform + solution configured for the ${W.account}.`],
         ["Integration", "Connectors provisioned and the first sync is green."],
-        ["UAT", "Customer validating against the acceptance criteria."],
+        ["UAT", `${W.Account} validating against the acceptance criteria.`],
         ["Go-live", "Launched in production and handed to support."],
       ],
       [{ type: "customer_owner" }, { type: "role", value: "engineer" }, { type: "role", value: "engineer" }, { type: "customer_owner" }, { type: "none" }],
@@ -419,7 +421,7 @@ export function WorkflowBuilder() {
     setBusy(true);
     setError(null);
     try {
-      const name = entity === "implementation" ? "Implementation pipeline" : "Task workflow";
+      const name = entity === "implementation" ? `${W.Implementation} pipeline` : "Task workflow";
       const d = await opsFetch<{ item: WorkflowDefinition }>("/api/ops/workflow-definitions", {
         method: "POST",
         body: JSON.stringify({ name, entity, stages: TEMPLATES[entity]() }),
@@ -503,7 +505,7 @@ export function WorkflowBuilder() {
       key: "workflow",
       header: "Workflow",
       icon: WorkflowIcon,
-      text: (w) => `${w.name} ${w.entity}`,
+      text: (w) => `${w.name} ${entityNoun(w.entity)}`,
       cell: (w) => (
         <div className="flex items-center gap-2.5">
           {/* What it governs, as the row's own icon. A whole column to repeat
@@ -518,7 +520,7 @@ export function WorkflowBuilder() {
               </span>
             </TooltipTrigger>
             <TooltipContent side="right" className="capitalize">
-              Governs {w.entity}s
+              Governs {entityNoun(w.entity, "plural")}
             </TooltipContent>
           </Tooltip>
           <div className="min-w-0">
@@ -546,7 +548,7 @@ export function WorkflowBuilder() {
           <span className="text-2xs text-muted-foreground">nothing yet</span>
         ) : (
           <span className="text-xs tabular-nums">
-            {total} <span className="text-2xs text-muted-foreground">{w.entity}s</span>
+            {total} <span className="text-2xs text-muted-foreground">{entityNoun(w.entity, "plural")}</span>
           </span>
         );
       },
@@ -618,8 +620,8 @@ export function WorkflowBuilder() {
                 },
                 {
                   entity: "implementation" as const,
-                  title: "Implementation workflow",
-                  blurb: "A customer rollout pipeline — scoping, configuration, integration, UAT, go-live.",
+                  title: `${W.Implementation} workflow`,
+                  blurb: `${upperFirst(an(W.account))} ${W.account} ${W.rollout} pipeline — scoping, configuration, integration, UAT, go-live.`,
                 },
               ]
             ).map((o) => (
@@ -992,7 +994,7 @@ function StageCard({
                   disabled={!canEdit}
                   placeholder={
                     stage.assign.type === "prompt"
-                      ? "e.g. the senior engineer on that customer"
+                      ? `e.g. the senior engineer on that ${W.account}`
                       : stage.assign.type === "role"
                         ? "e.g. engineer"
                         : stage.assign.type === "person"

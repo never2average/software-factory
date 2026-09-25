@@ -60,6 +60,7 @@ import {
 } from "./primitives";
 import { TYPE } from "./tokens";
 import { Dashboard, parseDashboardSpec } from "./dashboard";
+import { W } from "@/lib/ui-words";
 
 type SourceKind = "workflow" | "prompt";
 
@@ -863,7 +864,7 @@ function AppCreateForm({
           ))}
         </OpsSelect>
       </Field>
-      <Field label="Customer">
+      <Field label={W.Account}>
         <CustomerSelect value={customerId} onChange={setCustomerId} />
       </Field>
 

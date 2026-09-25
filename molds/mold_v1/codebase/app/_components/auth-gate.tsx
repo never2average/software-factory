@@ -6,6 +6,7 @@ import { EmailSignIn } from "./email-sign-in";
 import { Spinner } from "@/components/ui/spinner";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
 import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
+import { clearAllPending } from "@/lib/chat-queue";
 
 // Minimal typing for the Google Identity Services client we load at runtime.
 declare global {
@@ -189,6 +190,13 @@ export function AuthGate() {
     // Both spellings: a sign-out that cleared only the new key would leave a live
     // token under the old one, and the next load would silently restore it.
     removeStored(TOKEN_KEY);
+    // Queued messages and owed deliveries are one person's (lib/chat-queue):
+    // on a shared machine they must not survive into the next sign-in.
+    try {
+      clearAllPending(window.localStorage, window.sessionStorage);
+    } catch {
+      /* no storage to clear */
+    }
   }, []);
 
   // Coming back from the redirect flow: Google puts the id_token in the URL

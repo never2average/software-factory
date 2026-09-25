@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { automationRuns, workflows } from "@/agent/lib/db/schema";
@@ -338,7 +339,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       durationMs,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = errorMessage(e);
     await finishWorkflowRun(lease, { status: "failed", error: message });
     await withOrgRls(org.orgId, (tx) =>
       tx

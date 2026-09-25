@@ -43,7 +43,24 @@ export const STORAGE_KEYS = {
   dismissedInputs: "workspace-dismissed-inputs",
   /** PREFIX. The real key is `${chats}:${email}:${orgId}` — see chat-shell.tsx. */
   chats: "workspace-chats",
+  /**
+   * PREFIX, in sessionStorage. THIS TAB's queue for a chat:
+   * `${chatPending}:${email}:${orgId}:${chatId}` (lib/chat-queue). Cleared on sign-out.
+   */
+  chatPending: "workspace-chat-pending",
+  /**
+   * PREFIX. What eve still owes a chat, one record per tab:
+   * `${chatOwed}:${email}:${orgId}:${chatId}:t:${tab}` (lib/chat-queue). Cleared on sign-out.
+   */
+  chatOwed: "workspace-chat-owed",
 } as const;
+
+/**
+ * Keys introduced AFTER the fde- → workspace- rename. They never had an old
+ * spelling, so they are exempt from the "every key has a legacy spelling" rule
+ * (scripts/test-wire-names.mjs) — by being listed here, not by the rule relaxing.
+ */
+export const STORAGE_KEYS_SINCE_RENAME: ReadonlySet<string> = new Set([STORAGE_KEYS.chatPending, STORAGE_KEYS.chatOwed]);
 
 /**
  * new key -> the key that held the same value before the rename.

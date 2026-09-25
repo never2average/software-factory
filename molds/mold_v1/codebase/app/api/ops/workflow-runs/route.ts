@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { workflowRunJournal, workflowRuns } from "@/agent/lib/db/schema";
@@ -92,6 +93,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ runs });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

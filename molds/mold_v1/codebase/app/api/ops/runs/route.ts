@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText, zodMessage as opsZodMessage } from "@/lib/ops-errors";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { automationRuns, workflowRunJournal } from "@/agent/lib/db/schema";
@@ -19,11 +20,8 @@ const querySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(100).default(10),
 });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues
-    .map((i) => `${i.path.join(".") || "query"}: ${i.message}`)
-    .join("; ");
-}
+// The issue list in the profile's words (lib/ops-errors.ts); "query" names a bad query string.
+const zodMessage = (error: z.ZodError): string => opsZodMessage(error, "query");
 
 export async function GET(request: NextRequest) {
   // This route read tenant data with NO workspace resolved at all.
@@ -71,6 +69,6 @@ export async function GET(request: NextRequest) {
     }));
     return NextResponse.json({ items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

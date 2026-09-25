@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { scriptForDisplay } from "@/lib/workflow-availability";
+import { errorText } from "@/lib/ops-errors";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { workflowInstructionVersions } from "@/agent/lib/db/schema";
@@ -50,8 +52,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
         .orderBy(desc(workflowInstructionVersions.createdAt))
         .limit(LIMIT),
     );
-    return NextResponse.json({ items });
+    // A script version that is a base library original reads in the profile's words, like the editor shows it.
+    return NextResponse.json({ items: kind === "script" ? items.map((v) => ({ ...v, content: scriptForDisplay(v.content) })) : items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

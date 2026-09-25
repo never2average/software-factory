@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { z } from "zod";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { changesetDiff, getChangeset, readSnapshot, revertChangeset } from "@/lib/dataroom-versions";
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     if (!found) return NextResponse.json({ error: "Changeset not found" }, { status: 404 });
     return NextResponse.json(found);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -86,6 +87,6 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
     return NextResponse.json(result);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

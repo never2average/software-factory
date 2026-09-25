@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, desc, eq } from "drizzle-orm";
 import { entityActivity } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -37,6 +38,6 @@ export async function GET(request: NextRequest) {
       items: rows.map((r) => ({ id: r.id, actor: r.actor, event: r.event, at: r.createdAt.toISOString() })),
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

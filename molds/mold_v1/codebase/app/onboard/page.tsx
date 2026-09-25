@@ -37,6 +37,7 @@ import {
 import { authToken } from "@/app/_components/ops/lib";
 import { mcpConnect } from "@/lib/mcp-connect";
 import { toLogoDataUrl } from "@/app/_components/org-mark";
+import { W } from "@/lib/ui-words";
 
 type Screen = "name" | "fork" | "invite" | "checks" | "sent";
 type Role = "owner" | "admin" | "engineer" | "member";
@@ -1143,7 +1144,7 @@ function ChecksScreen({ orgId, onInviteAgents }: { orgId: string; onInviteAgents
                     ? "flex size-6 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                     : "flex size-6 items-center justify-center rounded-full bg-muted text-muted-foreground"
                 }
-                title={c.unverifiable ? "Can't be verified in this deployment" : undefined}
+                title={c.unverifiable ? `Can't be verified in this ${W.install}` : undefined}
               >
                 {c.ok ? (
                   <CheckIcon className="size-3.5" />

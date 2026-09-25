@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { workflows } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -149,7 +150,7 @@ export async function GET(request: NextRequest) {
         workerId: s.workerId,
       });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = errorMessage(e);
       await finishWorkflowRun(s, { status: "failed", error: message });
       outcomes.push({ runId: s.runId, status: "failed", attempt: s.attempts, workerId: s.workerId });
     }

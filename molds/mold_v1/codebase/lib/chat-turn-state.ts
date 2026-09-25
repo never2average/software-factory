@@ -109,9 +109,17 @@ export function retryStormDetected(events: readonly TurnEvent[], minPrologues = 
  *    unrelated follow-up text until that is answered and resumes the OLD turn
  *    first (docs/tools/human-in-the-loop).
  *
- * In all three states a new message is HELD in the queue, never delivered.
+ *  - delivering: eve still HOLDS a message of ours that it has not started.
+ *    See `outstandingDeliveries` — eve answers 200 to a message sent while a
+ *    turn is running or a specialist is parked, buffers it silently, and runs
+ *    it as a turn of its own AFTER the next `session.waiting`. Sending more
+ *    into that buffer is how "unanswered messages" stacked up where nothing
+ *    could remove them.
+ *
+ * In every one of these states a new message is HELD in the queue, never
+ * delivered — and the queue is the one place a message can still be removed.
  */
-export type HoldReason = "streaming" | "detached" | "awaiting-input";
+export type HoldReason = "streaming" | "detached" | "awaiting-input" | "delivering";
 
 export interface SendGateInput {
   /** The eve store is reading a turn (`submitted` | `streaming`). */
@@ -132,6 +140,13 @@ export interface SendGateInput {
    * no local stream is attached, so the events cannot show it yet.
    */
   readonly remoteTurn?: boolean;
+  /**
+   * Messages this chat DELIVERED that the transcript has not yet seen arrive
+   * (`outstandingDeliveries(...).length`). While any exist eve is holding input
+   * of ours, so the session is not at rest even when the transcript's tail is a
+   * `session.waiting`.
+   */
+  readonly outstanding?: number;
 }
 
 export interface SendGate {
@@ -151,6 +166,7 @@ export function sendGate(input: SendGateInput): SendGate {
     return { hold: true, reason: "detached" };
   }
   if (input.pendingInputs > 0) return { hold: true, reason: "awaiting-input" };
+  if ((input.outstanding ?? 0) > 0) return { hold: true, reason: "delivering" };
   return { hold: false, reason: null };
 }
 
@@ -281,6 +297,8 @@ export function holdLabel(
           : "Still working — the earlier reply is continuing on the server. Queued messages send when it finishes.";
     case "awaiting-input":
       return "Queued — sends after you answer the request above";
+    case "delivering":
+      return "Queued — your earlier message is still waiting its turn on the server. Queued messages send after its reply.";
     default:
       return "Queued — sending after the current reply";
   }
@@ -406,7 +424,13 @@ export type AttachVerdict =
   /** eve is replaying a turn that cannot run (see retryStormDetected). Dead, not slow. */
   | "retry-storm"
   /** The stream would not open often enough that the poll is the better bet. */
-  | "open-failed";
+  | "open-failed"
+  /**
+   * The turn on the tail is over, but eve still holds a message we delivered
+   * (see `outstandingDeliveries`): its turn starts AFTER this boundary, and
+   * nothing else will read it.
+   */
+  | "buffered";
 
 export interface AttachInput {
   /** The session (or shared-thread) the reader would open. */
@@ -422,6 +446,8 @@ export interface AttachInput {
   /** Consecutive failures to open or read a stream for this turn. */
   readonly failures?: number;
   readonly maxFailures?: number;
+  /** Delivered messages not yet seen arriving — see `outstandingDeliveries`. */
+  readonly outstanding?: number;
 }
 
 export function attachDecision(input: AttachInput): {
@@ -438,13 +464,28 @@ export function attachDecision(input: AttachInput): {
   // store's reader advances its own cursor, and a second reader consuming the
   // same indices would double-apply every event it wins the race for.
   if (input.storeBusy) return { attach: false, reason: "store-busy" };
-  if (input.abandoned) return { attach: false, reason: "abandoned" };
+  // "Abandoned" is a verdict about the UNFINISHED turn (the cancel route said it
+  // is not running). It says nothing about a message delivered after it — a Stop
+  // releases the queue into exactly that state, and that reply must be read.
+  const buffered =
+    input.events !== undefined && (input.outstanding ?? 0) > 0 && !turnUnfinished(input.events);
+  if (input.abandoned && !buffered) return { attach: false, reason: "abandoned" };
   if (input.failures !== undefined && input.failures >= (input.maxFailures ?? 4)) {
     return { attach: false, reason: "open-failed" };
   }
   // Identity-only question (see the note above): everything turn-shaped passes.
   if (input.events === undefined) return { attach: true, reason: "live-turn" };
-  if (!turnUnfinished(input.events)) return { attach: false, reason: "terminal" };
+  if (!turnUnfinished(input.events)) {
+    // A boundary is the end of THIS turn, not of everything the session owes us.
+    // One delivery can produce several boundaries (a message eve buffered runs as
+    // its own turn after this one), and both readers stop at the first — eve's
+    // send-path reader and `readLiveTail` alike. Without this, the reply to a
+    // buffered message surfaced only when the NEXT send opened a stream at the
+    // stale cursor, read it, and stopped at ITS boundary: one reply behind, for
+    // the rest of the session.
+    if ((input.outstanding ?? 0) > 0) return { attach: true, reason: "buffered" };
+    return { attach: false, reason: "terminal" };
+  }
   // A stormed turn is DEAD and is already reported as such ("send it again").
   // Holding a stream open on it costs an ownership-gated database read per
   // reconnect and can never produce an event.
@@ -1248,4 +1289,537 @@ export function renderLoopScene(
   if (parts.some((p) => p.state === "approval-requested")) bits.push("approval");
   if (viewport) bits.push(`${viewport.width}x${viewport.height}`);
   return bits.join(" · ");
+}
+
+/**
+ * A MESSAGE THIS CHAT DELIVERED, and where the stream stood when it did.
+ *
+ * `at` is the ABSOLUTE stream index at the moment of delivery (see
+ * `serverEventCount` / `absoluteIndexBase`): the `message.received` that proves
+ * the delivery can only appear at or after it.
+ */
+export interface Delivery {
+  /** The text that was POSTed (the `message` eve echoes back in `message.received`). */
+  readonly text: string;
+  readonly at: number;
+  /** `Date.now()` at delivery — only for the escape hatch in `outstandingDeliveries`. */
+  readonly sentAt: number;
+  /** The eve session it went to. The caller drops deliveries of another session: no ack can come. */
+  readonly sessionId?: string | null;
+  /**
+   * "message" (default): acked by a `message.received` with its text.
+   * "answer": an input response — acked once the stream has moved past it
+   * (another tab answering a question this tab is showing is learned this way).
+   */
+  readonly kind?: "message" | "answer";
+  /** The queue item this delivery sent (lib/chat-queue) — never sent again by any tab. */
+  readonly itemId?: string;
+}
+
+/**
+ * How long a delivery may stay unseen before it stops holding anything.
+ *
+ * Only an escape hatch: a message eve buffered behind a specialist that is
+ * parked on a question can legitimately wait until the question is answered,
+ * but a gate that holds for ever because one `message.received` was never seen
+ * is the very "stuck" this exists to end. Stop clears deliveries at once.
+ */
+export const DELIVERY_MAX_AGE_MS = 15 * 60_000;
+
+const normalizeMessageText = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/**
+ * The texts a `message.received` can be matched on: eve's `data.message` (which
+ * for multi-part content is a SUMMARY with `[file: …]` lines, see eve's
+ * `summarizeUserContent`) and the plain join of its text parts.
+ */
+function receivedTexts(event: TurnEvent): readonly string[] {
+  const data = (event as { data?: { message?: unknown; parts?: readonly { type?: string; text?: string }[] } })
+    .data;
+  const out: string[] = [];
+  if (typeof data?.message === "string") out.push(normalizeMessageText(data.message));
+  const parts = Array.isArray(data?.parts) ? data.parts : [];
+  const joined = parts
+    .filter((p) => p?.type === "text" && typeof p.text === "string")
+    .map((p) => p.text)
+    .join("\n");
+  if (joined) out.push(normalizeMessageText(joined));
+  return out;
+}
+
+/**
+ * WHICH OF OUR MESSAGES HAS EVE NOT STARTED YET?
+ *
+ * THE DEFECT. "When I send a second message, only then does it load the second
+ * message" — and, when something is stuck, "the messages keep getting stacked
+ * and unanswered messages cannot be deleted". Both reproduced against the real
+ * eve runtime (scripts/fixtures/buffered-turns):
+ *
+ *  - eve answers `200 {ok:true}` to a message sent while a turn is RUNNING, or
+ *    while a delegated specialist is PARKED on a question, and emits NOTHING for
+ *    it. It is buffered, and runs as a turn of its own after the next
+ *    `session.waiting` — so ONE delivery (the answer that un-parks the
+ *    specialist, or the message that was running) produces TWO boundaries.
+ *  - both readers stop at the FIRST boundary: eve's send-path reader
+ *    (`ClientSession` in node_modules/eve/dist/src/client/session.js breaks on
+ *    `isCurrentTurnBoundaryEvent`) and this app's `readLiveTail`. And
+ *    `attachDecision` / `sendGate` read a `session.waiting` tail as "at rest".
+ *    So nothing read the buffered turn. The next send opened a stream at the
+ *    stale cursor, read THAT reply, and stopped at its boundary — one reply
+ *    behind for the rest of the session.
+ *
+ * The transcript alone cannot tell "at rest" from "a buffered turn is about to
+ * start": the boundary looks the same. What can tell them apart is what this
+ * chat SENT. A delivery is outstanding until a `message.received` carrying its
+ * text appears at or after the index it was sent at; matched in order, one
+ * `message.received` per delivery, so two identical messages need two.
+ *
+ * Deliveries older than `maxAgeMs` are dropped rather than held for ever.
+ */
+export function outstandingDeliveries(input: {
+  readonly deliveries: readonly Delivery[];
+  /** Server events of the transcript (client.* markers are skipped, as for the index). */
+  readonly events: readonly TurnEvent[];
+  /** The mount's absolute-index deficit — see `absoluteIndexBase`. */
+  readonly indexBase?: number;
+  readonly now?: number;
+  readonly maxAgeMs?: number;
+}): readonly Delivery[] {
+  if (input.deliveries.length === 0) return input.deliveries;
+  const base = input.indexBase ?? 0;
+  const received: { index: number; texts: readonly string[] }[] = [];
+  /** Where the session ENDED for good: nothing delivered before it will ever be acked. */
+  const ended: number[] = [];
+  /** Every session boundary — an answer is owed until the reply it resumed reaches one. */
+  const boundaries: number[] = [];
+  let index = base;
+  for (const event of input.events) {
+    if (event?.type?.startsWith("client.")) continue;
+    if (event?.type === "message.received") received.push({ index, texts: receivedTexts(event) });
+    if (event?.type === "session.completed" || event?.type === "session.failed") ended.push(index);
+    if (isSessionBoundary(event)) boundaries.push(index);
+    index += 1;
+  }
+  const used = new Set<number>();
+  const now = input.now ?? Date.now();
+  const maxAge = input.maxAgeMs ?? DELIVERY_MAX_AGE_MS;
+  const out: Delivery[] = [];
+  for (const d of [...input.deliveries].sort((a, b) => a.at - b.at)) {
+    // The session this was delivered to is over: eve will never run it.
+    if (ended.some((e) => e >= d.at)) continue;
+    if (d.kind === "answer") {
+      // Settled once the reply it RESUMED has reached a boundary. Not at the
+      // first event past it: a resumed reply has no `turn.started`, so the
+      // transcript reads "at rest" all the way through it, and dropping the
+      // reader at its first event left the rest to a replay after the end —
+      // no live text, and no Stop while it ran (review, `stopresumed`).
+      if (boundaries.some((b) => b >= d.at)) continue;
+      if (now - d.sentAt > maxAge) continue;
+      out.push(d);
+      continue;
+    }
+    const want = normalizeMessageText(d.text);
+    const hit = received.findIndex(
+      (r, i) => !used.has(i) && r.index >= d.at && (want === "" || r.texts.includes(want)),
+    );
+    if (hit >= 0) {
+      used.add(hit);
+      continue;
+    }
+    if (now - d.sentAt > maxAge) continue;
+    out.push(d);
+  }
+  return out.length === input.deliveries.length ? input.deliveries : out;
+}
+
+/**
+ * THE READER DOES NOT GIVE UP ON A TURN THAT IS STILL RUNNING.
+ *
+ * Live telemetry (onfinance_hfc, since 2026-09-20): "Chat stream ended mid-turn
+ * and stopped resuming" ×10 (last event message.appended ×5, reasoning.appended
+ * ×3, actions.requested ×2) against four reattaches, one of which carried a turn
+ * from index 1742 to 2114. A reader that fails `ATTACH_BUDGET` times used to be
+ * the END: `attachDecision` then answered "open-failed" for the rest of the
+ * turn, the poll's own resync budget ran out behind it, and the reply appeared
+ * only when the next send opened a stream — i.e. "only after I send another
+ * message".
+ *
+ * So a spent budget is a PAUSE, not a verdict: the component re-arms a fresh
+ * round after this delay for as long as the turn is unfinished (or a delivery is
+ * outstanding). Every open still costs an ownership-gated database read, so the
+ * rounds back off — 5s, 10s, 20s, 40s, then once a minute — which bounds a dead
+ * connection at one open a minute instead of zero reads for ever.
+ */
+export function attachRetryDelayMs(round: number): number {
+  const r = Math.max(0, Math.floor(round));
+  return Math.min(5_000 * 2 ** r, 60_000);
+}
+
+/**
+ * A LIVE SPECIALIST'S QUESTION CANNOT BE WAVED AWAY.
+ *
+ * "Dismiss — the run has moved past this" exists for a request whose run is
+ * over. A proxied request from a specialist that is still delegated is the
+ * opposite: eve buffers EVERY message behind that delegation until the question
+ * is answered (it emits nothing for them), so dismissing it opened the send gate
+ * onto a session that could only swallow what was typed. Reproduced in the real
+ * UI: dismiss, type, and each message sat under "Working…" with no reply and no
+ * way to remove it.
+ *
+ * Returns the dismissals that may count: every one, minus the live proxied
+ * requests (a proxied request retires on its own when the delegation settles —
+ * see `deadInputRequestIds`).
+ */
+export function effectiveDismissals(
+  dismissed: ReadonlySet<string>,
+  events: readonly TurnEvent[],
+): ReadonlySet<string> {
+  if (dismissed.size === 0) return dismissed;
+  const proxied = proxiedChildRequestIds(events);
+  if (proxied.size === 0) return dismissed;
+  const dead = deadInputRequestIds(events);
+  const live = [...proxied].filter((id) => !dead.has(id));
+  return withoutRequestIds(dismissed, live);
+}
+
+/**
+ * IS THERE A WAY OUT OF THIS HOLD?
+ *
+ * The composer shows Stop only while the eve STORE is reading, but most of the
+ * holds that feel stuck have the store idle: a detached turn, a turn parked on a
+ * question nobody means to answer, a message eve is still holding. Each of them
+ * gets a visible Stop that cancels server-side (eve's cancel is cooperative:
+ * `turn.cancelled` → `session.waiting`, or — for a parked specialist — the
+ * delegation is simply dropped and any buffered message then runs) and releases
+ * the queue.
+ *
+ * `awaiting-input` only when something is actually waiting behind it (a queued
+ * message): an ordinary question with an empty composer is not stuck.
+ */
+export function stopAvailable(input: {
+  readonly gate: SendGate;
+  readonly storeBusy: boolean;
+  readonly readOnly?: boolean;
+  readonly queued?: number;
+  /**
+   * The question on screen is a delegated SPECIALIST's. Its delegation may never
+   * settle (a dead child), and it cannot be dismissed — so Stop is the way out.
+   */
+  readonly specialistWaiting?: boolean;
+}): boolean {
+  if (input.readOnly || input.storeBusy || !input.gate.hold) return false;
+  if (input.gate.reason === "awaiting-input") return (input.queued ?? 0) > 0 || Boolean(input.specialistWaiting);
+  return input.gate.reason === "detached" || input.gate.reason === "delivering";
+}
+
+/**
+ * WHICH TURN A STOP IS AIMED AT — the one THIS TAB is showing, never "whatever
+ * is running", and never a guess.
+ *
+ * eve's cancel route takes a `turnId` and ignores a cancel for any other turn
+ * (measured against the real runtime: a mismatched id answers 202 and changes
+ * nothing; the matching one ends the turn, or drops a parked delegation). An
+ * untargeted cancel is session-wide, which is how a Stop pressed in a second tab
+ * — showing an old park — cancelled the newer turn the first tab had started.
+ *
+ *  - an unfinished turn on the tail: that turn;
+ *  - a reply that RESUMED after an answered question (events after the park's
+ *    `session.waiting`, no new `turn.started`): the parked turn — `resumed`,
+ *    because eve then emits no `turn.cancelled`;
+ *  - a park (a question just before the boundary): the parked turn;
+ *  - at rest: NOTHING. Real turn ids are not `last + 1` (a deferred message, a
+ *    resumed delegation and a retried step all break that), so a Stop at rest
+ *    only releases what this tab is holding and cancels nothing.
+ */
+export function stopTarget(events: readonly TurnEvent[]): {
+  readonly turnId?: string;
+  readonly resumed?: boolean;
+  readonly parked?: boolean;
+} {
+  let turnId: string | undefined;
+  let started = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as { type?: string; data?: { turnId?: unknown } };
+    if (e?.type !== "turn.started") continue;
+    started = i;
+    turnId = typeof e.data?.turnId === "string" ? e.data.turnId : undefined;
+    break;
+  }
+  if (started < 0 || !turnId) return {};
+  if (turnUnfinished(events)) return { turnId };
+  let boundary = -1;
+  for (let i = events.length - 1; i > started; i--) {
+    if (isSessionBoundary(events[i])) {
+      boundary = i;
+      break;
+    }
+  }
+  if (boundary < 0) return {};
+  const after = events.slice(boundary + 1).filter((e) => !e?.type?.startsWith("client."));
+  if (after.length > 0 && !after.some((e) => e?.type === "turn.started")) return { turnId, resumed: true };
+  const beforeBoundary = events.slice(Math.max(started, boundary - 4), boundary).map((e) => e?.type);
+  if (beforeBoundary.includes("input.requested")) return { turnId, parked: true };
+  return {};
+}
+
+/** Delegations dispatched and not settled: `subagent.called` with no subagent-result for its call. */
+export function liveDelegations(events: readonly TurnEvent[]): { callId: string; name: string }[] {
+  const live = new Map<string, string>();
+  for (const raw of events) {
+    const e = raw as { type?: string; data?: { callId?: unknown; name?: unknown; result?: { callId?: unknown; kind?: unknown } } };
+    if (e?.type === "subagent.called" && typeof e.data?.callId === "string") {
+      live.set(e.data.callId, typeof e.data.name === "string" ? e.data.name : "specialist");
+    } else if (e?.type === "action.result" && typeof e.data?.result?.callId === "string") {
+      live.delete(e.data.result.callId);
+    }
+  }
+  return [...live].map(([callId, name]) => ({ callId, name }));
+}
+
+/** The browser-only marker a Stop leaves in the transcript (persisted with it, like `client.input.responded`). */
+export const STOPPED_MARKER = "client.turn.stopped";
+
+/**
+ * The browser-made markers a transcript must CARRY across every open — a full
+ * replay and a shared-thread open included. The server stream has never heard
+ * of them, so an open that keeps only one kind loses the other: a Stop's marker
+ * dropped this way brought the specialist back as "Running" and the question
+ * back as live, holding the composer.
+ */
+export function isPersistedMarker(event: unknown): boolean {
+  const type = (event as { type?: unknown })?.type;
+  return type === "client.input.responded" || type === STOPPED_MARKER;
+}
+
+export function stoppedMarker(input: {
+  readonly requestIds: readonly string[];
+  readonly delegations: readonly { callId: string; name: string }[];
+  readonly at: number;
+  /** The turn the Stop ended — its reply gets the "Stopped." note. */
+  readonly turnId?: string;
+}): TurnEvent & {
+  data: { requestIds: string[]; delegations: { callId: string; name: string }[]; at: number; turnId?: string };
+} {
+  return {
+    type: STOPPED_MARKER,
+    data: {
+      requestIds: [...input.requestIds],
+      delegations: [...input.delegations],
+      at: input.at,
+      ...(input.turnId ? { turnId: input.turnId } : {}),
+    },
+  };
+}
+
+/**
+ * WHICH REPLIES WERE STOPPED, and by whom — turn id → the note shown under
+ * that reply. From eve's `turn.cancelled` and from this app's own Stop markers
+ * (eve reports neither a stopped resumed reply nor a dropped delegation). The
+ * note stays in the conversation's history; `mine` is the turns this tab
+ * stopped, so the others read "from another tab or device".
+ */
+export function stoppedTurnNotes(
+  events: readonly TurnEvent[],
+  mine: ReadonlySet<string> = new Set(),
+): ReadonlyMap<string, string> {
+  const notes = new Map<string, string>();
+  for (const raw of events) {
+    const e = raw as { type?: string; data?: { turnId?: unknown } };
+    const turnId = typeof e?.data?.turnId === "string" ? e.data.turnId : undefined;
+    if (!turnId) continue;
+    if (e.type === STOPPED_MARKER) {
+      // A Stop that discarded a specialist says so on that specialist's tile.
+      const discarded = (e.data as { delegations?: unknown[] } | undefined)?.delegations?.length ?? 0;
+      if (discarded === 0) notes.set(turnId, "Stopped.");
+      continue;
+    }
+    else if (e.type === "turn.cancelled" && !notes.has(turnId)) {
+      notes.set(turnId, mine.has(turnId) ? "Stopped." : "Stopped from another tab or device.");
+    }
+  }
+  return notes;
+}
+
+/**
+ * What Stop retired, read back from the transcript — so a reload still knows
+ * the question is not waiting and the specialist's tile is not "Running".
+ */
+export function stoppedFromEvents(events: readonly TurnEvent[]): {
+  readonly requestIds: ReadonlySet<string>;
+  readonly delegations: ReadonlyMap<string, string>;
+  /** requestId → the specialist(s) whose work the same Stop discarded, for the card's note. */
+  readonly requestNames: ReadonlyMap<string, string>;
+  /** The absolute stream index of the newest Stop (-1: none) — for the "Stopped." note. */
+  readonly latestAt: number;
+} {
+  let latestAt = -1;
+  const requestIds = new Set<string>();
+  const delegations = new Map<string, string>();
+  const requestNames = new Map<string, string>();
+  for (const raw of events) {
+    const e = raw as { type?: string; data?: { requestIds?: unknown; delegations?: unknown } };
+    if (e?.type !== STOPPED_MARKER) continue;
+    const at = (e.data as { at?: unknown } | undefined)?.at;
+    if (typeof at === "number") latestAt = Math.max(latestAt, at);
+    for (const id of Array.isArray(e.data?.requestIds) ? e.data.requestIds : []) if (typeof id === "string") requestIds.add(id);
+    const names: string[] = [];
+    for (const d of Array.isArray(e.data?.delegations) ? e.data.delegations : []) {
+      const dd = d as { callId?: unknown; name?: unknown };
+      if (typeof dd?.callId !== "string") continue;
+      const name = typeof dd.name === "string" ? dd.name : "specialist";
+      delegations.set(dd.callId, name);
+      names.push(name);
+    }
+    for (const id of Array.isArray(e.data?.requestIds) ? e.data.requestIds : []) {
+      if (typeof id === "string") requestNames.set(id, names.join(", ") || "specialist");
+    }
+  }
+  return { requestIds: requestIds.size ? requestIds : NO_REQUEST_IDS, delegations, requestNames, latestAt };
+}
+
+/**
+ * THE LIVE READER'S RE-ARMING HAS AN END.
+ *
+ * `attachRetryDelayMs` backs off to once a minute; without a ceiling a dead turn
+ * kept every open tab reconnecting once a minute for ever. After this many
+ * rounds (≈ ten minutes) the chat stops on its own and offers "Reconnect".
+ */
+export const ATTACH_MAX_ROUNDS = 13;
+export function attachRearmAllowed(round: number, hidden: boolean): boolean {
+  return !hidden && round < ATTACH_MAX_ROUNDS;
+}
+
+/**
+ * UN-ANSWER the requests whose answer the server REFUSED.
+ *
+ * eve's store records an answer in its own data the moment it is sent (the
+ * reducer's `respondToInputRequest`: state `approval-responded`, an
+ * `inputResponse`), and nothing takes it back when the POST is refused — so the
+ * card read "answered" while nothing was. This restores those parts to exactly
+ * what `input.requested` made them (`approval-requested`, no response), so the
+ * question is live and answerable again.
+ */
+export function withoutResponses<M extends { parts?: readonly unknown[] }>(
+  messages: readonly M[],
+  requestIds: ReadonlySet<string>,
+): readonly M[] {
+  if (requestIds.size === 0) return messages;
+  let changed = false;
+  const out = messages.map((m) => {
+    let touched = false;
+    const parts = (m.parts ?? []).map((p) => {
+      const part = p as {
+        state?: string;
+        approval?: unknown;
+        toolMetadata?: { eve?: { inputRequest?: { requestId?: string }; inputResponse?: unknown } & Record<string, unknown> };
+      };
+      const rid = part.toolMetadata?.eve?.inputRequest?.requestId;
+      if (!rid || !requestIds.has(rid) || !part.toolMetadata?.eve?.inputResponse) return p;
+      touched = true;
+      const { inputResponse: _gone, ...eve } = part.toolMetadata.eve;
+      void _gone;
+      return { ...part, state: "approval-requested", approval: { id: rid }, toolMetadata: { ...part.toolMetadata, eve } };
+    });
+    if (!touched) return m;
+    changed = true;
+    return { ...m, parts };
+  });
+  return changed ? out : messages;
+}
+
+/**
+ * Fold the answers THIS CHAT gave into the view — the same change eve's reducer
+ * makes for `client.input.responded` (state `approval-responded`, an
+ * `inputResponse`). Answers are posted by the app itself (so a refusal can be
+ * told from a later stream failure), which means the store never records them;
+ * without this a typed answer would vanish from the thread until a reload.
+ */
+export function withResponses<M extends { parts?: readonly unknown[] }>(
+  messages: readonly M[],
+  answers: Readonly<Record<string, { readonly requestId: string; readonly optionId?: string; readonly text?: string }>>,
+): readonly M[] {
+  if (Object.keys(answers).length === 0) return messages;
+  let changed = false;
+  const out = messages.map((m) => {
+    let touched = false;
+    const parts = (m.parts ?? []).map((p) => {
+      const part = p as {
+        toolMetadata?: { eve?: { inputRequest?: { requestId?: string }; inputResponse?: unknown } & Record<string, unknown> };
+      };
+      const rid = part.toolMetadata?.eve?.inputRequest?.requestId;
+      const answer = rid ? answers[rid] : undefined;
+      if (!rid || !answer || part.toolMetadata?.eve?.inputResponse) return p;
+      touched = true;
+      return {
+        ...part,
+        state: "approval-responded",
+        approval: { id: rid, ...(answer.text !== undefined ? { reason: answer.text } : {}) },
+        toolMetadata: { ...part.toolMetadata, eve: { ...part.toolMetadata!.eve, inputResponse: answer } },
+      };
+    });
+    if (!touched) return m;
+    changed = true;
+    return { ...m, parts };
+  });
+  return changed ? out : messages;
+}
+
+/**
+ * May an answer POST be tried again? Only eve's own retryable case
+ * (`isRetryableDeliveryFailure` in its client): a 500 "target session was not
+ * found", which is what answering just as the question parks can meet.
+ * Anything else is an answer — accepted, refused, or unknown — and is decided
+ * once.
+ */
+export function answerPostRetryable(status: number, body: string): boolean {
+  return status === 500 && /target session was not found/i.test(body);
+}
+
+/** What one chat's markers may weigh: sent by the browser, and accepted by the server. */
+export const MARKERS_MAX_BYTES_CLIENT = 16_000;
+export const MARKERS_MAX_BYTES_SERVER = 32_000;
+const ANSWER_TEXT_MAX = 300;
+
+/**
+ * ONE CHAT'S MARKERS, CAPPED BY BYTES — never a reason to refuse anything.
+ *
+ * Only the persisted kinds (`isPersistedMarker`) are kept. Stops come first:
+ * they are small and they are what keeps a stopped specialist "Stopped" on
+ * another device. An answer marker's typed text is trimmed (the answer already
+ * lives in eve's own transcript; the marker only has to say the question was
+ * answered). Then the newest are kept until the cap, in their original order.
+ * A single 33 KB answer used to get a whole chat-list sync rejected (400), and
+ * with it every other chat's title and archive state.
+ */
+export function capMarkers(markers: readonly unknown[], maxBytes: number): unknown[] {
+  const trimmed = markers.filter(isPersistedMarker).map((m) => {
+    const e = m as { type?: string; data?: { responses?: unknown } };
+    if (e.type !== "client.input.responded" || !Array.isArray(e.data?.responses)) return m;
+    return {
+      ...e,
+      data: {
+        ...e.data,
+        responses: e.data.responses.map((r) => {
+          const rr = r as { text?: unknown };
+          return typeof rr?.text === "string" && rr.text.length > ANSWER_TEXT_MAX
+            ? { ...rr, text: `${rr.text.slice(0, ANSWER_TEXT_MAX)}…` }
+            : r;
+        }),
+      },
+    };
+  });
+  const keep = new Set<number>();
+  let bytes = 2;
+  const take = (want: (m: unknown) => boolean) => {
+    for (let i = trimmed.length - 1; i >= 0; i--) {
+      if (keep.has(i) || !want(trimmed[i])) continue;
+      const size = JSON.stringify(trimmed[i]).length + 1;
+      if (bytes + size > maxBytes) continue;
+      bytes += size;
+      keep.add(i);
+    }
+  };
+  take((m) => (m as { type?: string }).type === STOPPED_MARKER);
+  take(() => true);
+  return trimmed.filter((_, i) => keep.has(i));
 }

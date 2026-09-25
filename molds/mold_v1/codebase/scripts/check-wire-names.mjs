@@ -3,7 +3,7 @@
  * THE WIRE-NAME GATE — the base product's role name stays out of the identifiers
  * a stamped deployment speaks to the outside world.
  *
- * `check:vocabulary` keeps the word "FDE" out of text a person READS in the app.
+ * `check:ui-vocabulary` keeps the base product's words out of text a person READS in the app.
  * PR #46's own-name gate keeps it out of a published package's file names, bins,
  * README and config folder. Both deliberately exempted identifiers containing
  * `_`, and that exemption is exactly what left `fde_status` — the single most
@@ -68,8 +68,7 @@ for (const key of tableValues("lib/browser-storage.ts", "STORAGE_KEYS")) {
 
 /* 2 and 3b. Every environment variable read, and every storage key touched.
  *
- * `wire-name-ok: <reason>` on the line is the one escape hatch, spelled the way
- * check-vocabulary.mjs spells its own. It exists for scripts/test-wire-names.mjs,
+ * `wire-name-ok: <reason>` on the line is the one escape hatch. It exists for scripts/test-wire-names.mjs,
  * which has to CONSTRUCT an offender of each kind to prove this gate catches one —
  * a gate whose failing case is never exercised is a gate that quietly stops working. */
 for (const file of walkSources()) {

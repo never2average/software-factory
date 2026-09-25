@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { automationRuns, orgs } from "@/agent/lib/db/schema";
 import { getOpsDb } from "@/lib/ops-db";
@@ -49,6 +50,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       limits: org?.limits ?? null,
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

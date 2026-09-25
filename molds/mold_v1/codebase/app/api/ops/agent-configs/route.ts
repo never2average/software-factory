@@ -1,4 +1,5 @@
 import { after, NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { agentConfigs } from "@/agent/lib/db/schema";
@@ -110,6 +111,6 @@ export async function PUT(request: NextRequest) {
     }
     return NextResponse.json({ item: { agentKey: row.agentKey, paused: row.paused, instructions: row.instructions ?? null } });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

@@ -40,48 +40,17 @@ function sentenceCase(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** Curated display names for the declared subagents; the fallback title-cases
- *  each hyphen-separated word so an unknown id still reads as a proper noun. */
+/** Curated display names where the title-cased key reads wrong. Every other declared subagent is named by
+ *  SUBAGENT_META (subagent.json "name", else the title-cased key) — generated in the deployment profile's words,
+ *  so a relabelled deployment never reads a base word in a specialist's name; an unknown id title-cases below. */
 const SUBAGENT_NAMES: Record<string, string> = {
-  browser: "Browser",
-  research: "Research",
-  configuration: "Configuration",
-  "customer-context": "Customer Context",
-  "data-migration": "Data Migration",
-  deployment: "Deployment",
-  evals: "Evals",
   "follow-ups": "Follow-ups",
-  "workflow-author": "Workflow Author",
 };
 
-/** What each declared subagent DOES — shown in the rail's info modal. */
-const SUBAGENT_DESCRIPTIONS: Record<string, string> = {
-  research:
-    "Builds an account's full context from scratch: company research (web + Granola), the customer's data-room domains (Platform, Deployments, Solutions, Implementation, Tickets, People), and publishes the domain workbooks.",
-  configuration:
-    "Owns how a customer's platform is configured — models, connections, feature flags, guardrails — plus solution contracts and recipes. Flags risky changes for human approval.",
-  "customer-context":
-    "Pulls a customer's full picture: record, interactions, tickets, health. The go-to for briefs, QBR prep, and status assessments.",
-  "data-migration":
-    "Plans and tracks data migrations: source analysis, mapping, volume, validation, and rollback approaches under Implementation/.",
-  deployment:
-    "Owns deployment infrastructure and the 4-party signoff chain: sizing across the eight infra domains, customizations, and go-live readiness.",
-  evals:
-    "Runs and interprets evaluation suites for agents and pipelines: datasets, benchmarks, regressions, and proposed fixes.",
-  "follow-ups":
-    "Works the ticket queue: files and triages tickets, nudges owners, escalates via PagerDuty, and tracks follow-through.",
-  "workflow-author":
-    "Writes and edits operator workflow scripts (the QuickJS agent()/phase() orchestrations) against the platform's validator.",
-};
-
-/** Info-modal copy for a subagent; generic fallback for unknown ids. */
+/** Info-modal copy for a subagent: what it declares (SUBAGENT_META, in the profile's words); generic fallback for
+ *  unknown ids. */
 export function subagentDescription(name: string): string {
-  return (
-    SUBAGENT_DESCRIPTIONS[name] ??
-    // A subagent added as a directory (or by a pack) has no curated copy here: use what it declares.
-    (SUBAGENT_META[name]?.summary || undefined) ??
-    "A delegated specialist agent with its own instructions, tools, and session."
-  );
+  return SUBAGENT_META[name]?.summary || "A delegated specialist agent with its own instructions, tools, and session.";
 }
 
 /** "customer-context" -> "Customer Context". Rail rows, detail headers, and the

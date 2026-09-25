@@ -65,6 +65,7 @@ import {
   type ButtonIntent,
   type OpsButtonSize,
 } from "./tokens";
+import { W } from "@/lib/ui-words";
 
 /* --------------------------------- Buttons -------------------------------- */
 
@@ -854,7 +855,7 @@ export function CustomerSelect({
         {items === null ? (
           <DropdownMenuItem disabled className={cn("gap-2", TYPE.body)}>
             <Spinner className="size-3" />
-            Loading customers…
+            Loading {W.accounts}…
           </DropdownMenuItem>
         ) : (
           (items ?? []).map((c) => (

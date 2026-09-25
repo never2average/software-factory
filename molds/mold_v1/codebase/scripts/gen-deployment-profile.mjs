@@ -227,7 +227,23 @@ if (profile.agent.briefing !== null && (typeof profile.agent.briefing !== "strin
 if (typeof profile.persona?.base !== "boolean") fail("persona.base must be true (keep the base product's orchestrator persona) or false (a pack's agent/instructions/50-pack-*.md supplies it)");
 const SUBAGENTS = join(ROOT, "agent/subagents");
 const present = (dir) => (existsSync(dir) ? readdirSync(dir).filter((n) => existsSync(join(dir, n, "agent.ts"))) : []);
-const knownSpecialists = new Set(present(SUBAGENTS));
+// A live eve build (scripts/eve-build.mjs) moves the excluded specialists aside while it runs: they are still
+// subagents. (gen-subagent-meta reads the merged profile through --print, and may run during a build.) The names a
+// build hides are in its lock (`hidden`) before a directory moves and until every one is back, so they are read
+// from there as well as from both folders; and because a directory can be between the two folders at the instant
+// they are listed, an excluded name that is found nowhere is looked for again, a few times, before it is refused.
+const HIDDEN_DIR = join(ROOT, ".eve-build-hidden");
+function specialistsNow() {
+  let locked = [];
+  try { locked = JSON.parse(readFileSync(join(HIDDEN_DIR, "lock.json"), "utf8")).hidden ?? []; } catch { /* no build running */ }
+  return new Set([...locked.filter((k) => typeof k === "string"), ...present(SUBAGENTS), ...present(join(HIDDEN_DIR, "subagents"))]);
+}
+let knownSpecialists = specialistsNow();
+const excludeList = Array.isArray(profile.specialists?.exclude) ? profile.specialists.exclude : [];
+for (let attempt = 0; attempt < 40 && excludeList.some((k) => !knownSpecialists.has(k)); attempt++) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  for (const k of specialistsNow()) knownSpecialists.add(k);
+}
 if (!Array.isArray(profile.specialists?.exclude)) fail("specialists.exclude must be a list of subagent directory names (empty to keep them all)");
 for (const [i, key] of profile.specialists.exclude.entries()) {
   if (typeof key !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(key)) fail(`specialists.exclude[${i}] must be a subagent directory name, e.g. "data-migration"`);

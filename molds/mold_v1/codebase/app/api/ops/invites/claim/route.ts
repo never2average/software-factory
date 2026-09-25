@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { orgInvites, orgMembers } from "@/agent/lib/db/schema";
@@ -85,6 +86,6 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ orgId: invite.orgId, role: invite.role });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

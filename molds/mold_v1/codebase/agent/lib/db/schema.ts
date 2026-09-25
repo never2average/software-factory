@@ -1700,6 +1700,10 @@ export const chatSessions = pgTable(
     continuationToken: text("continuation_token"),
     derivedCustomers: jsonb("derived_customers").$type<string[]>(),
     toolCounts: jsonb("tool_counts").$type<{ artifacts: number; emails: number }>(),
+    // Browser-made transcript markers that must follow the chat to every device
+    // (`client.turn.stopped`, `client.input.responded`): the eve stream has
+    // never heard of them, and a Stop on a parked question writes no event.
+    clientMarkers: jsonb("client_markers").$type<unknown[]>(),
     archived: boolean("archived").notNull().default(false),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

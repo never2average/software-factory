@@ -139,11 +139,20 @@ console.log("\nbrowser storage: an analyst who is signed in stays signed in");
   const session = makeStore({ "fde-invite-result": '{"kind":"ok"}' });
   globalThis.window = { localStorage: local, sessionStorage: session };
 
-  const { STORAGE_KEYS, LEGACY_STORAGE_KEYS, legacyKeyFor, readStored, writeStored, removeStored } =
+  const { STORAGE_KEYS, LEGACY_STORAGE_KEYS, STORAGE_KEYS_SINCE_RENAME, legacyKeyFor, readStored, writeStored, removeStored } =
     await import("../lib/browser-storage.ts");
 
   check("the token key no longer carries the base product's role word", !STORAGE_KEYS.token.split("-").includes("fde"));
-  check("every current key has a declared old spelling", Object.keys(STORAGE_KEYS).every((k) => LEGACY_STORAGE_KEYS[STORAGE_KEYS[k]]));
+  check(
+    "every current key has a declared old spelling (or is declared as introduced after the rename)",
+    Object.keys(STORAGE_KEYS).every(
+      (k) => LEGACY_STORAGE_KEYS[STORAGE_KEYS[k]] || STORAGE_KEYS_SINCE_RENAME?.has(STORAGE_KEYS[k]),
+    ),
+  );
+  check(
+    "a key declared as new really has no old spelling",
+    [...(STORAGE_KEYS_SINCE_RENAME ?? [])].every((k) => !LEGACY_STORAGE_KEYS[k] && !k.startsWith("fde-")),
+  );
 
   /* THE ONE THAT MATTERS. This value was written by yesterday's bundle. */
   check("a session stored under the old key is still found", readStored(STORAGE_KEYS.token) === "a-real-session");

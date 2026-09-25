@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { customers, deployments } from "@/agent/lib/db/schema";
@@ -8,6 +9,7 @@ import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
 import { customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
 import { asCustomValues } from "@/agent/lib/custom-fields";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { an, upperFirst, W } from "@/lib/ui-words";
 
 const ENV_HIDDEN = DEPLOYMENT_PROFILE.domains.deployments.fields.environment?.hidden === true;
 
@@ -18,8 +20,8 @@ export const dynamic = "force-dynamic";
  *  fields are required (they're NOT NULL); health/release default to sane
  *  values the operator refines in the detail panel. */
 const createSchema = z.object({
-  customerId: z.string().min(1, "Pick a customer."),
-  deploymentId: z.string().min(1, "A deployment id is required."),
+  customerId: z.string().min(1, `Pick ${an(W.account)} ${W.account}.`),
+  deploymentId: z.string().min(1, `${upperFirst(an(W.deployment))} ${W.deployment} id is required.`),
   environment: z.string().min(1, "An environment is required."),
   region: z.string().min(1, "A region is required."),
   deployedVersion: z.string().min(1, "A version is required."),
@@ -71,13 +73,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            `No customer with that id exists yet, so this deployment has nothing to attach to. ` +
-            `Create the customer first (POST /api/ops/customers, or customer_create from the CLI).`,
+            `No ${W.account} with that id exists yet, so this ${W.deployment} has nothing to attach to. ` +
+            `Create the ${W.account} first (POST /api/ops/customers, or customer_create from the CLI).`,
         },
         { status: 409 },
       );
     }
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: errorText(msg) }, { status: 500 });
   }
 }
 
@@ -125,6 +127,6 @@ export async function GET(request: NextRequest) {
     }));
     return NextResponse.json({ items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CircleAlertIcon, RocketIcon, UsersIcon } from "lucide-react";
 import { errMessage, opsFetch } from "./lib";
 import { useRoomPresence, type PresentPerson } from "./use-room-presence";
+import { W } from "@/lib/ui-words";
 
 /**
  * V1 go-live readiness board — watch the team get each customer's data room
@@ -233,14 +234,14 @@ export function ReadinessBoard() {
 
   if (error) return <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>;
   if (!impls) return <div className="py-16 text-center text-sm text-muted-foreground">Loading readiness…</div>;
-  if (impls.length === 0) return <div className="py-16 text-center text-sm text-muted-foreground">No implementations yet.</div>;
+  if (impls.length === 0) return <div className="py-16 text-center text-sm text-muted-foreground">No {W.implementations} yet.</div>;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-semibold text-sm">V1 go-live readiness</h2>
-          <p className="text-xs text-muted-foreground">Least-ready first. Presence shows who's helping each customer right now.</p>
+          <p className="text-xs text-muted-foreground">Least-ready first. Presence shows who's helping each {W.account} right now.</p>
         </div>
         {boardPresence.length > 0 && (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">

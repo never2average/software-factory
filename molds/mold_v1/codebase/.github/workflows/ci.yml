@@ -249,6 +249,28 @@ jobs:
         if: always()
         run: npm run test:chat-send-gate
 
+      # "When I send a second message, only then does it load the second message"
+      # and "if something is stuck, the messages keep getting stacked and
+      # unanswered messages cannot be deleted" — one defect, reproduced in the
+      # real UI against the real eve runtime. eve answers 200 to a message sent
+      # while a turn runs or a specialist is parked, buffers it silently, and runs
+      # it as its own turn AFTER the next session.waiting; every reader stopped at
+      # the first boundary, so that reply surfaced only on the next send. Runs
+      # eve's own store and stream over streams RECORDED from that runtime
+      # (scripts/fixtures/buffered-turns), plus the queue that now survives a
+      # reload, the visible Stop, and the reader that no longer gives up.
+      - name: Chat buffered turns, stuck queue, Stop (behavioural)
+        if: always()
+        run: npm run test:chat-buffered-turns
+
+      # "You're showing [the chat directives] many, many times. That should not
+      # ever be shown." One function (lib/chat-attachments displayText) over every
+      # form a directive was ever sent or stored in, and a gate over every site
+      # that displays or persists a chat title, preview or user message.
+      - name: Chat directives never displayed (behavioural + gate)
+        if: always()
+        run: npm run test:chat-directives
+
       # "When waiting for a tool call the agent pretends like things are done and
       # it shows the feedback, copy, and retry buttons normally seen at the end of
       # answers" — reported by the operator against a turn that read a 21-page pdf
@@ -333,10 +355,32 @@ jobs:
         if: always()
         run: npm run check:tenancy
 
-      # Words a person reads for "who works here" come from the deployment profile; a hardcoded "FDE" in UI text
-      # shows the default deployment's word on every other deployment.
-      - name: Vocabulary comes from the deployment profile
-        run: npm run check:vocabulary
+      # What a PERSON reads comes from the deployment profile. The gate before this looked for "FDE" in four source
+      # folders and skipped generated files, so a research deployment (companies / analysts / coverage reports)
+      # shipped a bundle saying "List the FDE (forward-deployed engineer) roster with live load" and "Customer DMs":
+      # the subagent roster and the whole workflow library reached the client as generated text. This builds the
+      # app under a relabelling profile and fails on any base word (customer, deployment, implementation, rollout,
+      # FDE) in the source text a person reads, in every string of the built client bundle (mapped back to its
+      # file; allow-listed only with a reason, scripts/fixtures/ui-vocabulary/allow.json) and in the prerendered
+      # pages; and holds the default profile's words to exactly the base words.
+      # Its last pass reads what a person SEES: `next start` of the relabelled build, Chromium over every page and
+      # tab (visible text, titles, placeholders, options, hover tooltips), signed in with a locally made token and
+      # the ops API faked, so it needs no secret. A code value joined into a sentence ("filed under a
+      # deployment/implementation") passed every static rule; the rendered DOM is where it shows.
+      - name: Chromium for the rendered-page pass
+        if: always()
+        run: npx playwright install --with-deps chromium
+
+      - name: UI vocabulary comes from the deployment profile (source, enum labels, built bundle, rendered pages)
+        if: always()
+        run: npm run check:ui-vocabulary
+
+      # …and what the scans cannot read: keys in JSON a person copies or views, ops API errors, the base library
+      # rows a workspace does not run (still listed and adoptable, naming no excluded specialist), a visible enum
+      # value with no profile label, and the profile generator while an eve build moves specialists aside.
+      - name: UI vocabulary, behavioural (keys, API errors, library rows, enum labels, concurrent build)
+        if: always()
+        run: npm run test:ui-vocabulary
 
       # The same bug one layer in, on the identifiers rather than the words: the
       # tool names a coding assistant is served, the environment variables a person
@@ -510,6 +554,20 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:account-custom-fields-db
+
+      # WHO OWNS A CHAT IN THE LIST MIRROR. The upsert conflicts on the row id
+      # (the eve session id) while ownership was checked only on eveSessionId,
+      # so a colleague in the same workspace who knew a session id could post
+      # {id} alone and take the row over: owner rewritten, eve session nulled.
+      # Runs the route's own write path (lib/chat-sessions-mirror.ts) as app_rw
+      # under RLS, plus: one chat's oversize markers never fail the batch, and
+      # the list works on either side of migration 0020.
+      - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:chat-sessions-mirror-db
 
 # NOT RUN HERE, deliberately:
 #

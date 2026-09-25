@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { chatThreadMembers } from "@/agent/lib/db/schema";
@@ -71,7 +72,7 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     }
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -104,6 +105,6 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
 });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

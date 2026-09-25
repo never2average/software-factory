@@ -15,6 +15,7 @@ import {
   UserIcon,
   Share2Icon,
 } from "lucide-react";
+import { displayTitle } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { CustomerMark } from "./customer-mark";
 import { OrgMark } from "./org-mark";
@@ -202,7 +203,7 @@ export function ChatSidebar({
                   {/* The title owns the full row; only on hover does it yield the
                       trailing space the archive/delete buttons overlay. */}
                   <span className="block w-full truncate pr-0 font-medium text-xs leading-tight transition-[padding] group-hover:pr-12 group-focus-within:pr-12">
-                    {s.title || "New chat"}
+                    {displayTitle(s.title, "New chat")}
                   </span>
                   <span className="flex min-w-0 w-full items-center gap-2 text-3xs text-muted-foreground">
                     {customers.length > 0 ? (
@@ -282,7 +283,7 @@ export function ChatSidebar({
                     >
                       <span className="flex w-full min-w-0 items-center gap-1.5">
                         <span className="min-w-0 flex-1 truncate font-medium text-xs leading-tight">
-                          {t.title || "Shared chat"}
+                          {displayTitle(t.title, "Shared chat")}
                         </span>
                         {/* Trailing, so titles start on the same left edge as
                             your own chats and the list still scans as one

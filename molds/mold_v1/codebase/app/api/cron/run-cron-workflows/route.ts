@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
 import { workflowAvailability } from "@/lib/workflow-availability";
 import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import {
@@ -200,7 +201,7 @@ export async function GET(request: NextRequest) {
         status: cancelled ? "cancelled" : result.ok ? "completed" : result.timedOut ? "running" : "failed",
       });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = errorMessage(e);
       if (lease) await finishWorkflowRun(lease, { status: "failed", error: message });
       outcomes.push({ cron: fire.automationId, runId, status: "failed" });
     }

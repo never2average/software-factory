@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, count, eq, isNotNull } from "drizzle-orm";
 import {
   connectorSecrets,
@@ -11,6 +12,7 @@ import {
 } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { canAccessOrg, orgContextForRequest, tenancyEnabled } from "@/lib/org-context";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -125,9 +127,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       },
       {
         id: "customer",
-        label: "Onboard the first customer",
+        label: `Onboard the first ${W.account}`,
         ok: custN > 0,
-        detail: `${custN} customer${custN === 1 ? "" : "s"}`,
+        detail: `${custN} ${custN === 1 ? W.account : W.accounts}`,
         deepLink: "/?dataroom=customers",
       },
     ];
@@ -147,7 +149,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     });
    });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 

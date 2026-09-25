@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { z } from "zod";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { commitChangeset, listChangesets, openChangeset } from "@/lib/dataroom-versions";
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
   try {
     return NextResponse.json({ items: await listChangesets(ctx.orgId) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -57,6 +58,6 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ id }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

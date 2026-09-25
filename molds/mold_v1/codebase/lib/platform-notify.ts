@@ -3,6 +3,7 @@ import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 
 import { renderBrandedEmail } from "./email-html";
 import { mcpConnect } from "./mcp-connect";
+import { W } from "@/lib/ui-words";
 /**
  * DETERMINISTIC platform notifications — plain, coded HTTP sends through the
  * ORGANISATION's own channel, NOT the individual user's account and NOT the
@@ -371,7 +372,7 @@ async function notifyViaSlack(email: string, text: string): Promise<boolean> {
  */
 export async function sendLoginCode(input: { to: string; code: string }): Promise<InviteDelivery> {
   if (!process.env.RESEND_API_KEY || !process.env.PLATFORM_NOTIFY_FROM) {
-    return { delivered: false, reason: "email delivery is not configured on this deployment" };
+    return { delivered: false, reason: `email delivery is not configured on this ${W.install}` };
   }
   const text = [
     `Your ${PRODUCT_NAME} sign-in code is ${input.code}`,

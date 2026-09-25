@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText, zodMessage } from "@/lib/ops-errors";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { connectorSecrets, connectors, runtimeEnvPresence } from "@/agent/lib/db/schema";
@@ -61,11 +62,6 @@ const createConnectorSchema = z.strictObject({
   authSecretName: z.string().regex(SECRET_NAME_RE).nullable().optional(),
 });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues
-    .map((i) => `${i.path.join(".") || "body"}: ${i.message}`)
-    .join("; ");
-}
 
 /**
  * A connector's REAL health, derived from the secrets the running agent holds —
@@ -145,7 +141,7 @@ export async function GET(request: NextRequest) {
     const items = rows.map((c) => ({ ...c, health: healthFor(c, present, storedBy.get(c.id)) }));
     return NextResponse.json({ items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -216,6 +212,6 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ item }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

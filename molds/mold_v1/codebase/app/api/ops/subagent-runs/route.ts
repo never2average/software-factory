@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { subagentRuns } from "@/agent/lib/db/schema";
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
     for (const r of rows) labels[r.runKey] = r.label;
     return NextResponse.json({ labels });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -79,6 +80,6 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json({ label: row?.label ?? label });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

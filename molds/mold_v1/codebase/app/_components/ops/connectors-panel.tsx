@@ -84,6 +84,7 @@ import {
   type RadioOption,
 } from "./primitives";
 import { CONTROL_DENSE, STATUS_META, SURFACE, TYPE } from "./tokens";
+import { an, domainLabel, W } from "@/lib/ui-words";
 
 const ACCESS_LABEL: Record<Access, string> = {
   read: "read",
@@ -192,7 +193,7 @@ function connectorDetailSections(
           label="notify condition"
           variant="multiline"
           value={c.notifyWhen ?? ""}
-          placeholder="e.g. the sync fails twice in a row, or a customer channel goes quiet for a week"
+          placeholder={`e.g. the sync fails twice in a row, or ${an(W.account)} ${W.account} channel goes quiet for a week`}
           hint="The condition, in your words. ⌘⏎ to save · esc to cancel"
           onCommit={(v) => patch({ notifyWhen: v.trim() || null })}
         />
@@ -730,14 +731,14 @@ function ConnectorWizard({
             <OpsInput
               value={detail}
               onChange={(e) => setDetail(e.target.value)}
-              placeholder="Customer channels & alerts via Vercel Connect"
+              placeholder={`${W.Account} channels & alerts via Vercel Connect`}
             />
           </Field>
           <Field label="Contexts" hint="Where the sync lands in the data room.">
             <OpsInput
               value={lands}
               onChange={(e) => setLands(e.target.value)}
-              placeholder="Customers/·/Tickets/·/People/syncs/slack"
+              placeholder={`${domainLabel("Customers")}/·/${domainLabel("Tickets")}/·/${domainLabel("People")}/syncs/slack`}
             />
           </Field>
           <Field label="Synced" hint="Which workflows this connector feeds.">
@@ -1089,7 +1090,7 @@ function CustomConnectorWizard({
             <OpsInput
               value={lands}
               onChange={(e) => setLands(e.target.value)}
-              placeholder="Customers/·/Tickets/"
+              placeholder={`${domainLabel("Customers")}/·/${domainLabel("Tickets")}/`}
             />
           </Field>
           <NotifyEmailField recipients={notifyEmails} onRecipients={setNotifyEmails} />

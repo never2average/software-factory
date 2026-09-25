@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { workflowAvailability } from "@/lib/workflow-availability";
+import { errorText, zodMessage } from "@/lib/ops-errors";
+import { withheldLibraryNote, workflowForList } from "@/lib/workflow-availability";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { workflows } from "@/agent/lib/db/schema";
@@ -26,11 +27,6 @@ const createWorkflowSchema = z.strictObject({
   createdBy: z.string().min(1).default("web"),
 });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues
-    .map((i) => `${i.path.join(".") || "body"}: ${i.message}`)
-    .join("; ");
-}
 
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
@@ -40,10 +36,14 @@ export async function GET(request: NextRequest) {
     const items = await withOrgRls(ctx.orgId, (tx) =>
       tx.select().from(workflows).where(eq(workflows.orgId, ctx.orgId)).orderBy(desc(workflows.createdAt)),
     );
-    // Each row with what this deployment can do with it (lib/workflow-availability.ts): derived, never stored.
-    return NextResponse.json({ items: items.map((w) => ({ ...w, availability: workflowAvailability(w) })) });
+    // Each row with what this deployment can do with it (lib/workflow-availability.ts): derived, never stored. A
+    // base library row that needs a specialist this deployment excludes is listed as "not in this workspace", in
+    // the profile's words and without naming the specialist, so a person can open it and adopt it. `libraryNote`
+    // says in one sentence why the library is smaller here; computed on the server, so the client bundle never
+    // carries the base library's text.
+    return NextResponse.json({ items: items.map((w) => workflowForList(w)), libraryNote: withheldLibraryNote() });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -78,6 +78,6 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ item }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

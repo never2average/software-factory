@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { orgs } from "@/agent/lib/db/schema";
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!row) return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
     return NextResponse.json({ item: row, role: ctx.role });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -100,6 +101,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!row) return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
     return NextResponse.json({ item: row });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

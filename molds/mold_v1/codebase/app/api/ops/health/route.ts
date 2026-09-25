@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
 import { del, head, put } from "@vercel/blob";
 import { sql } from "drizzle-orm";
 import { getOpsDb } from "@/lib/ops-db";
@@ -35,7 +36,7 @@ async function timed(fn: () => Promise<string>): Promise<Check> {
     const detail = await fn();
     return { ok: true, detail, ms: Date.now() - start };
   } catch (e) {
-    return { ok: false, detail: e instanceof Error ? e.message : String(e), ms: Date.now() - start };
+    return { ok: false, detail: errorMessage(e), ms: Date.now() - start };
   }
 }
 

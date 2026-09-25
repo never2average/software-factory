@@ -16,12 +16,14 @@ import {
 } from "lucide-react";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
+import { an, W } from "@/lib/ui-words";
 
-/** What a TODO is filed under — only the containers whose data-room domain this deployment shows. */
+/** What a TODO is filed under, as a person reads it — only the containers whose data-room domain this deployment
+ *  shows, in the profile's words ("deployment/implementation" by default). */
 const TODO_CONTAINERS = [
-  DEPLOYMENT_PROFILE.dataroom.domains.Deployments?.visible !== false ? "deployment" : null,
-  DEPLOYMENT_PROFILE.dataroom.domains.Implementation?.visible !== false ? "implementation" : null,
-].filter(Boolean);
+  DEPLOYMENT_PROFILE.dataroom.domains.Deployments?.visible !== false ? W.deployment : null,
+  DEPLOYMENT_PROFILE.dataroom.domains.Implementation?.visible !== false ? W.implementation : null,
+].filter((w): w is string => Boolean(w));
 
 /* -------------------------------- Sections ------------------------------- */
 
@@ -57,7 +59,7 @@ export const SECTION_META: Record<
     title: "TODOs",
     blurb:
       TODO_CONTAINERS.length > 0
-        ? `The team's internal action list — filed under a ${TODO_CONTAINERS.join("/")}, linked to work.`
+        ? `The team's internal action list — filed under ${an(TODO_CONTAINERS[0])} ${TODO_CONTAINERS.join("/")}, linked to work.`
         : "The team's internal action list — linked to work.",
   },
   connectors: {
@@ -543,10 +545,13 @@ export async function opsFetch<T>(path: string, init?: RequestInit): Promise<T> 
 export function useOpsList<T>(path: string) {
   const [items, setItems] = useState<T[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The rest of the list response, beside `items` (e.g. the workflows list's `libraryNote`). */
+  const [extra, setExtra] = useState<Record<string, unknown>>({});
   const refetch = useCallback(async () => {
     try {
-      const data = await opsFetch<{ items: T[] }>(path);
-      setItems(data.items);
+      const { items: list, ...rest } = await opsFetch<{ items: T[] } & Record<string, unknown>>(path);
+      setItems(list);
+      setExtra(rest);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -555,7 +560,7 @@ export function useOpsList<T>(path: string) {
   useEffect(() => {
     void refetch();
   }, [refetch]);
-  return { items, error, refetch, loading: items === null && error === null };
+  return { items, extra, error, refetch, loading: items === null && error === null };
 }
 
 export function errMessage(e: unknown): string {

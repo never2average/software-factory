@@ -10,6 +10,7 @@ import {
 } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -195,14 +196,14 @@ export async function GET(request: NextRequest) {
     },
     {
       key: "unhealthyDeployments",
-      label: "deployments not healthy",
+      label: `${W.deployments} not healthy`,
       count: unhealthy.length,
       href: "/ops/deployments",
       sample: unhealthy.slice(0, 3).map((r) => `${r.customerId}/${r.id} — ${r.health}`),
     },
     {
       key: "implementationsAtRisk",
-      label: "implementations at risk or blocked",
+      label: `${W.implementations} at risk or blocked`,
       count: atRisk.length,
       href: "/ops/implementations",
       sample: atRisk.slice(0, 3).map((r) => `${r.customerId} — ${r.blocker ?? `${r.risk} risk`} (${r.stage})`),

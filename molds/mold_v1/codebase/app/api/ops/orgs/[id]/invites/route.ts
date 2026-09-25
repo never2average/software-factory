@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage, errorText } from "@/lib/ops-errors";
 import { createHash, randomBytes } from "node:crypto";
 import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -68,7 +69,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     }));
     return NextResponse.json({ items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -216,7 +217,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         email: row.email,
         role: row.role,
         status: "failed",
-        reason: e instanceof Error ? e.message : String(e),
+        reason: errorMessage(e),
       });
     }
   }
@@ -273,6 +274,6 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     });
     return NextResponse.json({ ok: true, revoked: removed.length });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

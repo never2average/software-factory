@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { verifySessionToken } from "@/lib/auth-session";
 import { compatEnv } from "../agent/lib/compat-env";
 import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
+import { W } from "@/lib/ui-words";
 
 /**
  * Who is allowed to call the Ops API (`/api/ops/*`).
@@ -140,7 +141,7 @@ export function explainAuthFailure(reason: AuthFailure, email?: string): string 
     case "no-token":
       return "No sign-in token was sent. Sign in again.";
     case "no-audience-configured":
-      return "This deployment has no Google client configured, so no sign-in can be accepted.";
+      return `This ${W.install} has no Google client configured, so no sign-in can be accepted.`;
     case "email-unverified":
       return "That Google account's email address is not verified.";
     case "no-email":

@@ -20,6 +20,18 @@ import {
   type DomainFieldMeta,
   type DomainFieldSpec,
 } from "./deployment-profile.generated.ts";
+import { speak, speakCode, VOCABULARY_RELABELLED } from "../agent/lib/agent-vocabulary.ts";
+
+/**
+ * A choice's label when the profile gives it none: under a relabelling profile, a stored enum VALUE shown as it is
+ * would read the base product's word (`customer-vpc`, `customer_cloud`, blockerOwner `Customer`), so it is shown the
+ * way the model is told it (`company-vpc`, `Company`) and a built-in label is spoken. The value stored is unchanged.
+ * A label the profile gives is its own words and is never touched. The identity under the default profile.
+ */
+function said(value: string, label: string): string {
+  if (!VOCABULARY_RELABELLED) return label;
+  return label === value ? speakCode(value) : speak(label);
+}
 
 export type Domains = DeploymentProfile["domains"];
 export type DomainOption = { value: string; label: string };
@@ -93,14 +105,14 @@ export function domainView(area: DomainArea, domains: Domains = DEPLOYMENT_PROFI
     options: (key: string, legacy?: readonly DomainOption[]): DomainOption[] => {
       const o = field(key).options;
       if (o && (optionsRedefined(key) || !legacy)) return Object.entries(o).map(([value, label]) => ({ value, label }));
-      if (legacy) return [...legacy];
-      return (meta[key]?.values ?? []).map((value) => ({ value, label: value }));
+      if (legacy) return legacy.map((c) => ({ value: c.value, label: said(c.value, c.label) }));
+      return (meta[key]?.values ?? []).map((value) => ({ value, label: said(value, value) }));
     },
     /** A stored value, as a person reads it. `legacy` is how this spot rendered it before (default: the value). */
     display: (key: string, value: string | null | undefined, legacy?: string): string => {
       if (value == null || value === "") return legacy ?? "";
-      if (!optionsRedefined(key)) return legacy ?? value;
-      return field(key).options?.[value] ?? value;
+      if (!optionsRedefined(key)) return legacy ?? said(value, value);
+      return field(key).options?.[value] ?? said(value, value);
     },
     /** The reverse: what a person read or typed, as the value to store. Unknown text is returned as it came. */
     valueOf: (key: string, shown: string): string => {

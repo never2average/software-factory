@@ -399,3 +399,56 @@ export async function* readNdjson(
     }
   }
 }
+
+/**
+ * HAS THE STREAM MOVED PAST WHAT THIS TAB SHOWS?
+ *
+ * Opens the session's stream at the tab's own absolute index and waits a
+ * moment: anything at all arriving means another tab (or device) has moved the
+ * chat on, and a Stop aimed from this view would be aimed at a turn that is no
+ * longer the one on screen. Used to REFUSE and refresh instead.
+ */
+export async function streamHasMoved(open: StreamOpener, startIndex: number, windowMs = 1200): Promise<boolean> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), windowMs);
+  try {
+    for await (const _event of open(startIndex, ctrl.signal)) {
+      void _event;
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+    ctrl.abort();
+  }
+}
+
+/**
+ * The session's LAST event (`startIndex=-1`, eve's "reconnect and rewind"), or
+ * null when it cannot be read in time. A session boundary there means nothing
+ * is running server-side.
+ */
+export async function readTailEvent(input: {
+  readonly sessionId: string;
+  readonly headers: () => Record<string, string>;
+  readonly timeoutMs?: number;
+}): Promise<TurnEvent | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), input.timeoutMs ?? 4_000);
+  try {
+    const res = await fetch(`/eve/v1/session/${encodeURIComponent(input.sessionId)}/stream?startIndex=-1`, {
+      headers: input.headers(),
+      signal: ctrl.signal,
+    });
+    if (!res.ok || !res.body) return null;
+    for await (const event of readNdjson(res.body, ctrl.signal)) return event;
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    ctrl.abort();
+  }
+}

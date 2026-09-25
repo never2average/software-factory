@@ -218,7 +218,8 @@ async function phaseUnits() {
   });
   await check("C every run path refuses an unavailable workflow (run routes, cron, app refresh) and the list reports it", () => {
     for (const f of ["app/api/ops/run/route.ts", "app/api/ops/workflows/[id]/run/route.ts", "app/api/cron/run-cron-workflows/route.ts", "lib/app-refresh.ts", "app/api/ops/workflows/route.ts"]) {
-      assert.match(readFileSync(join(ROOT, f), "utf8"), /workflowAvailability\(/, f);
+      // The list route derives it per row through workflowForList (lib/workflow-availability.ts), which calls it.
+      assert.match(readFileSync(join(ROOT, f), "utf8"), /workflowAvailability\(|workflowForList\(/, f);
     }
   });
   await check("C/B no build config runs a bare `eve build` (it would put the excluded specialists back)", () => {
@@ -529,7 +530,10 @@ async function phaseStamped() {
     assert.ok(availMod, "lib/workflow-availability.ts missing");
     const a = availMod.workflowAvailability({ name: assign.name, script: assign.script });
     assert.equal(a.available, false);
-    assert.match(a.reason, /customer-context/);
+    assert.deepEqual(a.needsExcluded, ["customer-context"]);
+    // The reason is shown to a person: it never names an excluded specialist (check:ui-vocabulary).
+    assert.match(a.reason, /delegates to a specialist this workspace does not use/);
+    assert.doesNotMatch(a.reason, /customer-context/);
   });
   await check("C a library row a person EDITED is left runnable, and reported", () => {
     const a = availMod.workflowAvailability({ name: assign.name, script: assign.script + "\n// edited" });

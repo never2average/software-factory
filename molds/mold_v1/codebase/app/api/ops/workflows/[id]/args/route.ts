@@ -7,6 +7,7 @@ import { customers, workflows } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { argKeysRead, validateWorkflowArgs } from "@/lib/workflow-args";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -164,10 +165,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const prompt =
       `A workflow named "${workflow.name}" reads exactly these arguments: ${JSON.stringify(keyList)}.\n\n` +
       `Its script:\n${workflow.script.slice(0, 2500)}\n\n` +
-      `Customers in this workspace (id → name):\n` +
+      `${W.Accounts} in this workspace (id → name):\n` +
       roster.map((c) => `${c.id} → ${c.name}`).join("\n").slice(0, 2000) +
       `\n\nWhat the operator wants: ${intent || "(not stated)"}\n\n` +
-      `Return ONE JSON object using ONLY those exact keys. Use a real customer id from the list ` +
+      `Return ONE JSON object using ONLY those exact keys. Use a real ${W.account} id from the list ` +
       `where an id is wanted — never a display name. Use null for anything you cannot determine. ` +
       `Reply with the JSON object and nothing else.`;
     try {

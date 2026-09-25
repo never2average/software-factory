@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { cycles } from "@/agent/lib/db/schema";
@@ -62,7 +63,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     }
     return NextResponse.json({ item });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -82,6 +83,6 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     if (!item) return NextResponse.json({ error: "Cycle not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

@@ -18,6 +18,7 @@
 import "server-only";
 // Relative, with its extension: this file is also loaded by the offline tests under plain node.
 import { SERVICE_SCOPE_HEADER } from "../agent/lib/service-scope.ts";
+import { speak } from "../agent/lib/agent-vocabulary.ts";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
 
@@ -61,7 +62,7 @@ function identity(ctx?: StepContext): string {
   const bits: string[] = [];
   if (ctx.workflow) bits.push(`Workflow: ${ctx.workflow}${ctx.phase ? ` · phase "${ctx.phase}"` : ""}`);
   if (ctx.call) bits.push(`Step ${ctx.call}`);
-  if (ctx.customerId) bits.push(`Customer: ${ctx.customerId}`);
+  if (ctx.customerId) bits.push(`${speak("Customer")}: ${ctx.customerId}`);
   if (ctx.runId) bits.push(`Run: ${ctx.runId}`);
   return bits.length ? `[${bits.join(" · ")}]` : "";
 }
@@ -91,7 +92,7 @@ export function composeStepMessage(prompt: string, subagent?: string, ctx?: Step
   return [
     ...(id ? [id, ""] : []),
     `Delegate this task to the \`${subagent}\` subagent and let it do the work — do not carry it out yourself.`,
-    "Pass everything between the <task> markers to it VERBATIM, including the bracketed context line: that line is how it knows which run and customer this is for. Do not summarise or rewrite it.",
+    speak("Pass everything between the <task> markers to it VERBATIM, including the bracketed context line: that line is how it knows which run and customer this is for. Do not summarise or rewrite it."),
     "",
     "<task>",
     ...task,

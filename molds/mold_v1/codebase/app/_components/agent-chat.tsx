@@ -85,9 +85,68 @@ function modeDirective(mode: AgentMode): string | null {
       return null; // "build" (normal), "goal"/"loop" (harness outputSchema gate)
   }
 }
-/** Messages held for a chat, by chatKey — see the `queued` state. */
-type QueuedMessage = { text: string; files: AttachedFile[] };
-const heldQueues = new Map<string, QueuedMessage[]>();
+/** The text eve echoes back in `message.received` for this content (its text parts). */
+function deliveryText(content: UserContent): string {
+  if (typeof content === "string") return content;
+  return (content as readonly { type?: string; text?: string }[])
+    .filter((p) => p?.type === "text" && typeof p.text === "string")
+    .map((p) => p.text)
+    .join("\n");
+}
+
+/**
+ * What a chat still HOLDS (its queue) and is still OWED (deliveries eve has not
+ * started) — lib/chat-queue. In localStorage when the chat is the person's own
+ * (shared across their tabs, scoped like the chat cache); here, by chatKey,
+ * otherwise. Module scope for the same reason either way: a hand-back or a
+ * resync REMOUNTS the chat, and neither list may be lost to that.
+ */
+const memoryOwed = new Map<string, OwedRecord>();
+/** How long a 5xx/lost answer is watched for before the question comes back. */
+const ANSWER_VERIFY_MS = 60_000;
+/** How often an answer POST is tried when eve has not seen the park yet (see `answerPostRetryable`). */
+const ANSWER_RETRIES = 10;
+
+/** This tab's queue by chatKey — it must outlive a remount (a hand-back, a resync). */
+const heldQueues = new Map<string, QueueItem[]>();
+/** Files of queued items, by item id — only the tab that queued them has them. */
+const queuedFiles = new Map<string, AttachedFile[]>();
+/** This page load. A reload is a new tab as far as queued files are concerned: they are gone. */
+const TAB_ID =
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `tab-${Math.random().toString(36).slice(2)}`;
+/**
+ * This tab's identity across its own reloads (lib/chat-queue `markGone`): the
+ * ids of its earlier pages, which wrote themselves into the TAB's
+ * sessionStorage as they unloaded. A reloaded tab takes those pages' queue back,
+ * and knows their unacknowledged messages were its own ("your earlier
+ * message"); a COPY of a live tab has no such entry, so it asks.
+ */
+const SELF_IDS: ReadonlySet<string> = (() => {
+  if (typeof window === "undefined") return new Set([TAB_ID]);
+  try {
+    return new Set([TAB_ID, ...readGone(window.sessionStorage)]);
+  } catch {
+    return new Set([TAB_ID]);
+  }
+})();
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => markGone(window.sessionStorage, TAB_ID));
+  window.addEventListener("pageshow", (e) => {
+    if ((e as PageTransitionEvent).persisted) unmarkGone(window.sessionStorage, TAB_ID);
+  });
+}
+const newItemId = () =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `q-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+/** A Stop's note, by chatKey — it must outlive the remount a refresh or a hand-back causes. */
+const stopNotes = new Map<string, string>();
+/** Turn ids this tab asked to stop, by chatKey — so a cancelled turn can say who stopped it. */
+const stoppedHere = new Map<string, Set<string>>();
+/** Re-arm rounds of the live reader after its budget ran out, by `chatKey:turn`. */
+const attachRounds = new Map<string, number>();
 /** chatKey → ordinal of a turn the server reported as not running. */
 const abandonedTurns = new Map<string, number>();
 /**
@@ -167,6 +226,7 @@ function forgetFinishedTurns(chatKey: string, currentTurn: number): void {
     attachFailures,
     stallsReported,
     attachStarts,
+    attachRounds,
   ]) {
     for (const key of [...map.keys()]) {
       if (!key.startsWith(prefix)) continue;
@@ -198,15 +258,27 @@ const COMPACT_INSTRUCTION =
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  answerPostRetryable,
   appendTailEvent,
   attachDecision,
+  attachRearmAllowed,
+  liveDelegations,
+  stopTarget,
+  stoppedFromEvents,
+  stoppedMarker,
+  stoppedTurnNotes,
+  attachRetryDelayMs,
   composerRoute,
   deadInputRequestIds,
+  effectiveDismissals,
   handBackSession,
   holdLabel,
   isRenderLoopError,
+  isSessionBoundary,
   mergeAttachedEvents,
+  outstandingDeliveries,
   pendingInputRequestParts,
+  proxiedChildRequestIds,
   renderLoopScene,
   resyncDecision,
   retryStormDetected,
@@ -214,6 +286,7 @@ import {
   absoluteIndexBase,
   serverEventCount,
   shouldReportDetach,
+  stopAvailable,
   tailStillWriting,
   turnFinished,
   turnsStarted,
@@ -221,12 +294,41 @@ import {
   withoutRequestIds,
   withRequestIds,
   withSessionEpochs,
+  withoutResponses,
+  withResponses,
+  type Delivery,
   type IndexedEvent,
   type TurnEvent,
 } from "@/lib/chat-turn-state";
-import { eveSessionStream, readLiveTail, threadProxyStream } from "@/lib/chat-attach";
+import {
+  deliveryId,
+  filesLost,
+  isOwedKeyOf,
+  adoptQueue,
+  loadQueue,
+  nextSendable,
+  markGone,
+  readGone,
+  unmarkGone,
+  owedKey,
+  releasable,
+  queueKey,
+  readOwed,
+  saveQueue,
+  updateOwed,
+  type OwedRecord,
+  type PendingDelivery,
+  type QueueItem,
+  type QueueSettings,
+} from "@/lib/chat-queue";
+import { eveSessionStream, readLiveTail, readTailEvent, streamHasMoved, threadProxyStream } from "@/lib/chat-attach";
 import type { ChatTelemetryKind } from "@/lib/chat-telemetry";
-import { composeAttachmentMessage, wrapDirectives } from "@/lib/chat-attachments";
+import {
+  activeSettingLabels,
+  composeAttachmentMessage,
+  displayTitle,
+  wrapDirectives,
+} from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { AgentMessage, PendingApprovalCard } from "./agent-message";
 import { GOAL_OUTCOME_SCHEMA, asGoalOutcome, goalPreamble, type GoalOutcome } from "./goal-mode";
@@ -348,6 +450,12 @@ interface AgentChatProps {
   /** The server thread id when this mount is a SHARED thread (owner-view,
    *  participant, or viewer) — drives presence heartbeats + the avatar stack. */
   readonly sharedThreadId?: string;
+  /**
+   * `${email}:${orgId}` — the scope the chat cache is stored under. Where a
+   * chat's queue and owed deliveries are kept (lib/chat-queue); absent, they
+   * live in memory only.
+   */
+  readonly storageScope?: string;
 }
 
 type MsgList = readonly { role: string; parts?: readonly unknown[] }[];
@@ -363,13 +471,17 @@ function firstUserText(messages: MsgList) {
   return undefined;
 }
 
-/** Strip leading directive parentheticals (context / web-search) from a title. */
+/**
+ * The title as STORED: the first thing the person sent, untouched. Directives
+ * are removed where a title is SHOWN (`displayTitle` in the sidebar, the search
+ * and the fork banner) and nowhere else, so a display rule can never lose words
+ * from the stored copy.
+ */
 function cleanTitle(text?: string) {
-  if (!text) return text;
-  const cleaned = text.replace(/^(\((?:Context|Web search|Plan mode)[^)]*\)\s*)+/i, "").trim();
-  return cleaned || text;
+  return text?.trim() || undefined;
 }
 
+/** The preview as STORED: the last text, untouched (cleaned where shown — see `cleanTitle`). */
 function lastText(messages: MsgList) {
   for (let i = messages.length - 1; i >= 0; i--) {
     for (const p of messages[i].parts ?? []) {
@@ -537,6 +649,7 @@ export function AgentChat({
   relayThreadId,
   onRelaySent,
   sharedThreadId,
+  storageScope,
 }: AgentChatProps) {
   /**
    * A dropped stream must not look like a finished answer.
@@ -610,6 +723,9 @@ export function AgentChat({
     (events: readonly TurnEvent[]) => serverEventCount(events) + indexBase,
     [indexBase],
   );
+  /** Events the store has read, and errors it has raised — see `onEvent` below. */
+  const storeEventsSeenRef = useRef(0);
+  const storeErrorsRef = useRef(0);
   const agent = useEveAgent({
     reducer,
     headers: getAuthHeaders,
@@ -626,7 +742,13 @@ export function AgentChat({
      * 200 segments is a ceiling no real turn reaches.
      */
     maxReconnectAttempts: 200,
+    // Counted so a send can tell "the POST failed" (nothing read, an error)
+    // from "the POST landed and eve is holding it" (see `recordDelivery`).
+    onEvent: () => {
+      storeEventsSeenRef.current += 1;
+    },
     onError: (e) => {
+      storeErrorsRef.current += 1;
       const msg = e.message || "";
       /**
        * A missing continuation token is RECOVERABLE and must not be dressed up
@@ -791,7 +913,171 @@ export function AgentChat({
     projectionRef.current = { base: agent.data, applied: accepted, data };
     return data;
   }, [agent.data, agent.events, mergedEvents, reducer]);
-  const viewMessages = view.messages;
+  // The actual responses this session recorded, keyed by requestId. This is the
+  // durable source for persisting answered questions/approvals — the part's own
+  // `inputResponse` is missing whenever the answer went out via directDeliver.
+  const [answeredResponses, setAnsweredResponses] = useState<Record<string, AnsweredResponse>>({});
+  /** Requests whose answer the server refused — shown live again (see `answerRejected`). */
+  const [rejectedRequestIds, setRejectedRequestIds] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const viewMessages = useMemo(
+    () =>
+      withoutResponses(withResponses(view.messages, answeredResponses), rejectedRequestIds) as typeof view.messages,
+    [view.messages, answeredResponses, rejectedRequestIds],
+  );
+
+  /**
+   * MESSAGES EVE IS STILL HOLDING FOR US — see `outstandingDeliveries`.
+   *
+   * eve answers 200 to a message sent while a turn is running or a specialist
+   * is parked, emits nothing for it, and runs it as a turn of its own after the
+   * next `session.waiting`. Every reader stops at the first boundary, so that
+   * turn was read only when the NEXT send happened to open a stream — the reply
+   * one message behind. While a delivery is outstanding the chat keeps a reader
+   * on the stream past the boundary (`attachDecision` "buffered") and holds new
+   * messages in the queue (`sendGate` "delivering") instead of stacking more
+   * into eve's buffer, where nothing can remove them.
+   */
+  /*
+   * WHAT EVE OWES THIS CHAT, shared by the person's tabs (lib/chat-queue) — the
+   * only cross-tab state, because it decides what is ON SCREEN: a tab that knows
+   * eve still holds a message keeps reading past the boundary instead of falling
+   * a reply behind. Each tab writes only its own record. (The QUEUE is per tab —
+   * below.) Neither is used for a thread that is not the person's own: another
+   * person's text must never show up, or go out around the relay.
+   */
+  const ownsPending = Boolean(storageScope) && !readOnly && !relayThreadId && !sharedThreadId;
+  const pendingChatId = liveSessionIdRef.current ?? initialSession?.sessionId ?? chatKey;
+  const owedKeyNow = ownsPending && storageScope ? owedKey(storageScope, pendingChatId) : null;
+  const localStore = () => (typeof window === "undefined" ? null : window.localStorage);
+  const sessionStore = () => (typeof window === "undefined" ? null : window.sessionStorage);
+  const memoryOwedList = (rec: OwedRecord | undefined): PendingDelivery[] => {
+    if (!rec) return [];
+    const released = new Set(rec.released);
+    return rec.deliveries.map((d) => ({ ...d, tab: TAB_ID })).filter((d) => !released.has(deliveryId(d)));
+  };
+  const [owed, setOwed] = useState<readonly PendingDelivery[]>(() =>
+    owedKeyNow ? readOwed(localStore(), owedKeyNow) : memoryOwedList(memoryOwed.get(chatKey)),
+  );
+  const owedKeyRef = useRef(owedKeyNow);
+  /** Change THIS tab's record of what is owed — the only one it writes. */
+  const changeOwed = useCallback(
+    (change: (own: OwedRecord) => OwedRecord) => {
+      const key = owedKeyRef.current;
+      if (key) {
+        setOwed(updateOwed(localStore(), key, TAB_ID, change));
+        return;
+      }
+      const next = change(memoryOwed.get(chatKey) ?? { beat: Date.now(), deliveries: [], released: [] });
+      memoryOwed.set(chatKey, next);
+      setOwed(memoryOwedList(next));
+    },
+    [chatKey],
+  );
+  // A new chat got its session id: move this tab's record to the session's key.
+  useEffect(() => {
+    const prev = owedKeyRef.current;
+    owedKeyRef.current = owedKeyNow;
+    if (!owedKeyNow || !prev || prev === owedKeyNow) return;
+    const mine = readOwed(localStore(), prev).filter((d) => d.tab === TAB_ID);
+    if (mine.length === 0) return;
+    updateOwed(localStore(), prev, TAB_ID, () => ({ beat: Date.now(), deliveries: [], released: [] }));
+    setOwed(
+      updateOwed(localStore(), owedKeyNow, TAB_ID, (o) => ({
+        ...o,
+        deliveries: [...o.deliveries, ...mine.map(({ tab: _tab, ...d }) => d)],
+      })),
+    );
+  }, [owedKeyNow]);
+  // Another tab's delivery is owed here too.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onStorage = (e: StorageEvent) => {
+      const key = owedKeyRef.current;
+      if (key && isOwedKeyOf(key, e.key)) setOwed(readOwed(window.localStorage, key));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  /**
+   * A CLOCK FOR THE ESCAPE HATCH. `outstandingDeliveries` drops a delivery
+   * after `DELIVERY_MAX_AGE_MS`, but it is memoised — without a clock that
+   * moves, the age was never looked at again and the hatch never opened.
+   */
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (owed.length === 0) return;
+    const t = setInterval(() => setClock(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, [owed.length]);
+  // Only deliveries to the session on screen can be acked by it.
+  const currentSid = liveSessionIdRef.current;
+  const deliveries = useMemo(
+    () => owed.filter((d) => !d.sessionId || !currentSid || d.sessionId === currentSid),
+    [owed, currentSid],
+  );
+  const deliveriesRef = useRef(deliveries);
+  deliveriesRef.current = deliveries;
+  const outstanding = useMemo(
+    () =>
+      outstandingDeliveries({
+        deliveries,
+        events: mergedEvents as readonly TurnEvent[],
+        indexBase,
+        now: clock,
+      }),
+    [deliveries, mergedEvents, indexBase, clock],
+  );
+  // This tab's OWN earlier page counts as this tab (a reload is not another tab).
+  const owedFromOtherTab =
+    outstanding.length > 0 && outstanding.every((d) => !SELF_IDS.has((d as PendingDelivery).tab ?? ""));
+  // This tab's settled deliveries are forgotten a minute later — not at once,
+  // because another tab may not have read their turn yet (it holds until it has).
+  useEffect(() => {
+    const settled = deliveries.filter((d) => d.tab === TAB_ID && !outstanding.includes(d));
+    if (settled.length === 0) return;
+    const oldest = Math.min(...settled.map((d) => d.sentAt));
+    const t = setTimeout(
+      () => {
+        const cutoff = Date.now() - 60_000;
+        const gone = new Set(settled.filter((d) => d.sentAt <= cutoff).map((d) => d.sentAt));
+        if (gone.size) changeOwed((o) => ({ ...o, deliveries: o.deliveries.filter((d) => !gone.has(d.sentAt)) }));
+      },
+      Math.max(1_000, oldest + 61_000 - Date.now()),
+    );
+    return () => clearTimeout(t);
+  }, [deliveries, outstanding, changeOwed]);
+  const recordDelivery = (text: string, kind: "message" | "answer" = "message"): Delivery => {
+    const d: Delivery = {
+      text,
+      at: absoluteIndex(mergedEvents as readonly TurnEvent[]),
+      sentAt: Date.now(),
+      sessionId: liveSessionIdRef.current,
+      kind,
+    };
+    changeOwed((o) => ({ ...o, deliveries: [...o.deliveries, d] }));
+    return { ...d, tab: TAB_ID } as Delivery;
+  };
+  const forgetDelivery = (d: Delivery) =>
+    changeOwed((o) => ({ ...o, deliveries: o.deliveries.filter((x) => x.sentAt !== d.sentAt) }));
+  /**
+   * A STOP RELEASES specific deliveries — never "everything": this tab's own,
+   * and another tab's only if it was sent before this tab last saw the stream
+   * move (a newer one is that tab's business, and releasing it would put that
+   * tab one reply behind again). Released as a fact every tab applies.
+   */
+  const lastViewAtRef = useRef(Date.now());
+  useEffect(() => {
+    lastViewAtRef.current = Date.now();
+  }, [mergedEvents.length]);
+  const releaseDeliveries = (list: readonly Delivery[]) => {
+    const own = new Set(list.filter((d) => (d as PendingDelivery).tab === TAB_ID).map((d) => d.sentAt));
+    const others = list.filter((d) => (d as PendingDelivery).tab !== TAB_ID).map((d) => deliveryId(d as PendingDelivery));
+    changeOwed((o) => ({
+      ...o,
+      deliveries: o.deliveries.filter((d) => !own.has(d.sentAt)),
+      released: [...o.released, ...others],
+    }));
+  };
 
   /**
    * The two failures that arrive with no error attached.
@@ -957,7 +1243,16 @@ export function AgentChat({
   // `gate` is derived further down (it needs the open input requests); callbacks
   // declared above it read the latest verdict through this ref.
   const holdRef = useRef(false);
+  const gateReasonRef = useRef<ReturnType<typeof sendGate>["reason"]>(null);
   const [remoteTurn, setRemoteTurn] = useState(false);
+  /** Until when a reader lingers after a Stop — see `stopTurn`. */
+  const [lingerUntil, setLingerUntil] = useState(0);
+  const lingering = lingerUntil > Date.now();
+  useEffect(() => {
+    if (!lingerUntil) return;
+    const t = setTimeout(() => setLingerUntil(0), Math.max(0, lingerUntil - Date.now()));
+    return () => clearTimeout(t);
+  }, [lingerUntil]);
   /**
    * A live reader is open on this transcript's stream — see the reattach block
    * below. Declared up here because the resync/replay watcher, which is written
@@ -1056,10 +1351,6 @@ export function AgentChat({
       return next;
     });
   };
-  // The actual responses this session recorded, keyed by requestId. This is the
-  // durable source for persisting answered questions/approvals — the part's own
-  // `inputResponse` is missing whenever the answer went out via directDeliver.
-  const [answeredResponses, setAnsweredResponses] = useState<Record<string, AnsweredResponse>>({});
   // Requests whose run has DIED: the ONE unrecoverable failure is a crashed
   // child whose continuation token is spent, which the server rejects with a
   // 500 "Cannot deliver inputResponses". Only that signal expires a card — its
@@ -1067,9 +1358,27 @@ export function AgentChat({
   // (a transient 401/429/5xx, a momentary store error) leaves the approval
   // answerable: the re-park resurfaces it, so we must NOT expire on those. We
   // never mark an expired request answered (no inputResponse exists).
-  const [expiredRequestIds, setExpiredRequestIds] = useState<ReadonlySet<string>>(new Set());
+  const [expiredLocal, setExpiredRequestIds] = useState<ReadonlySet<string>>(new Set());
   const markExpired = (requestIds: readonly string[]) =>
     setExpiredRequestIds((prev) => withRequestIds(prev, requestIds));
+  /**
+   * WHAT A STOP RETIRED: questions it ended and specialists whose work it
+   * discarded. Kept as a `client.turn.stopped` marker in the transcript (see
+   * `stoppedMarker`), so it is persisted with the chat and a reload agrees —
+   * the question does not come back as live, and the tile does not go back to
+   * "Running".
+   */
+  const [stoppedMarkers, setStoppedMarkers] = useState<TurnEvent[]>([]);
+  const stopped = useMemo(
+    () => stoppedFromEvents([...(mergedEvents as readonly TurnEvent[]), ...stoppedMarkers]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mergedEvents.length, stoppedMarkers],
+  );
+  /** Retired either way: the run is gone (expired) or a Stop ended it. */
+  const expiredRequestIds = useMemo(
+    () => withRequestIds(expiredLocal, stopped.requestIds),
+    [expiredLocal, stopped.requestIds],
+  );
   // The spent-token signal: keying expiry on this specific message (not any
   // non-2xx / any thrown error) is what keeps a live, re-parking run's approval
   // answerable through a transient blip.
@@ -1177,6 +1486,9 @@ export function AgentChat({
       // Delivered AROUND the store: the turn now runs with no local stream on
       // it. Until a resync shows how it ended, the session is not idle.
       if (res.ok) setRemoteTurn(true);
+      // A message eve may hold behind whatever is running — see `deliveries`.
+      if (res.ok && payload.message !== undefined) recordDelivery(deliveryText(payload.message));
+      else if (res.ok && (payload.inputResponses?.length ?? 0) > 0) recordDelivery("", "answer");
       return res.ok;
     } catch {
       return false;
@@ -1207,6 +1519,22 @@ export function AgentChat({
     [mergedEvents.length],
   );
   /**
+   * The dismissals that may COUNT: a live specialist's question is not one of
+   * them (see `effectiveDismissals`). Dismissing it opened the send gate onto a
+   * session that buffers every message behind that delegation, which is how
+   * messages stacked up unanswered with nothing able to remove them.
+   */
+  const proxiedRequestIds = useMemo(
+    () => proxiedChildRequestIds(mergedEvents as readonly TurnEvent[]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mergedEvents.length],
+  );
+  const countedDismissals = useMemo(
+    () => effectiveDismissals(dismissedRequestIds, mergedEvents as readonly TurnEvent[]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dismissedRequestIds, mergedEvents.length],
+  );
+  /**
    * Every input request this turn is waiting on, answered-by-us or not.
    *
    * Deliberately does NOT exclude locally answered ones: the batch size is what
@@ -1224,7 +1552,7 @@ export function AgentChat({
         const eve = part.toolMetadata?.eve;
         const rid = eve?.inputRequest?.requestId;
         if (!rid || eve?.inputResponse) continue;
-        if (dismissedRequestIds.has(rid) || expiredRequestIds.has(rid)) continue;
+        if (countedDismissals.has(rid) || expiredRequestIds.has(rid)) continue;
         // A dead request can never be answered, so it must not count as a
         // SIBLING either: the batch waits for every open request to have an
         // answer before delivering, and one stale id in the batch swallowed a
@@ -1234,7 +1562,7 @@ export function AgentChat({
       }
     }
     return ids;
-  }, [viewMessages, dismissedRequestIds, expiredRequestIds, deadRequests]);
+  }, [viewMessages, countedDismissals, expiredRequestIds, deadRequests]);
   const openRequestsRef = useRef<string[]>([]);
   openRequestsRef.current = openRequestIds;
 
@@ -1268,12 +1596,61 @@ export function AgentChat({
    */
   const [uploading, setUploading] = useState(0);
 
+  /**
+   * AN ANSWER THE SERVER REFUSED IS NOT AN ANSWER. It used to stay recorded as
+   * owed — the composer then held on "waiting its turn" for an answer that
+   * would never arrive — with the card already marked answered. Now the
+   * delivery record goes, the question comes back, and the person is told in
+   * plain words. (A spent token still expires the card: see DEAD_TOKEN_SIGNAL.)
+   */
+  /** A 5xx/lost answer is being checked against the stream (see respondToInput). */
+  const [answerChecking, setAnswerChecking] = useState(false);
+  const [answerError, setAnswerError] = useState<{
+    readonly message: string;
+    readonly responses: readonly { requestId: string; optionId?: string; text?: string }[];
+    readonly label: string;
+  } | null>(null);
+  const answerRejected = (
+    requestIds: readonly string[],
+    responses: readonly { requestId: string; optionId?: string; text?: string }[],
+    why: "refused" | "unreachable",
+  ) => {
+    setRejectedRequestIds((prev) => withRequestIds(prev, requestIds));
+    setRespondedRequestIds((prev) => withoutRequestIds(prev, requestIds));
+    setAnsweredResponses((prev) => {
+      const next = { ...prev };
+      for (const id of requestIds) delete next[id];
+      return next;
+    });
+    setStreamError(null);
+    // What they answered, in their words — for the one-click retry.
+    const label = responses
+      .map((r) => {
+        if (r.text) return r.text;
+        const req = openInputRequests.find((q) => q.requestId === r.requestId) as
+          | { options?: readonly { id?: string; label?: string }[] }
+          | undefined;
+        return req?.options?.find((o) => o.id === r.optionId)?.label ?? r.optionId ?? "";
+      })
+      .filter(Boolean)
+      .join(", ");
+    setAnswerError({
+      message:
+        why === "refused"
+          ? "Your answer didn't go through — the server refused it. The question is still open above."
+          : "Your answer didn't reach the server. The question is still open above.",
+      responses,
+      label,
+    });
+  };
   const respondToInput = async (
     inputResponses: readonly { requestId: string; optionId?: string; text?: string }[],
   ) => {
     // A view-only member of a shared thread can never answer approvals/questions
     // — the owner/participants hold the turn.
     if (readOnly) return;
+    setAnswerError(null);
+    setRejectedRequestIds((prev) => withoutRequestIds(prev, inputResponses.map((r) => r.requestId)));
     setRespondedRequestIds((prev) => withRequestIds(prev, inputResponses.map((r) => r.requestId)));
     // Record the real responses so they persist as answered regardless of which
     // delivery path (store send vs directDeliver) actually carried them.
@@ -1332,81 +1709,93 @@ export function AgentChat({
       }
       return;
     }
-    const busy = agent.status === "submitted" || agent.status === "streaming";
-    if (!busy) {
-      // Same pre-empt as messages: a parked session whose store cursor lost its
-      // token would reject the answer — deliver it directly with the freshest
-      // token so the clarification/approval is never dropped.
-      if (
-        agent.session?.sessionId &&
-        !agent.session.continuationToken &&
-        (await directDeliver({ inputResponses }))
-      ) {
-        pendingAnswerRef.current = [];
-        return;
+    /**
+     * THE ANSWER IS POSTED BY THE APP, and judged by THAT POST's status alone.
+     *
+     * It used to go through the store's `send()`, which POSTs and then reads the
+     * stream, and swallows an error from either: a stream read that failed
+     * after eve had ACCEPTED the answer (a 401 a moment later) was taken for a
+     * refusal, and the consumed question came back as live (review,
+     * `consumed`). Now: accepted → the answer is owed, and the live reader
+     * (`attachDecision` "buffered") reads the reply it resumes — a later stream
+     * failure is a connection problem, handled as one; 4xx → refused, and the
+     * question comes back; a spent token → the run is gone, the card expires.
+     */
+    const storeReading = agent.status === "submitted" || agent.status === "streaming";
+    const answeredAt = absoluteIndex(mergedEvents as readonly TurnEvent[]);
+    let outcome = await postAnswer(inputResponses);
+    pendingAnswerRef.current = [];
+    /**
+     * A 5xx or a lost response is NOT a refusal: the answer may well have
+     * landed (the response went missing, not the request). Restoring the
+     * question at once invited a second answer on a spent token, which then
+     * expired the card while the reply was running.
+     *
+     * So it is treated as delivered — the reader stays on the stream and the
+     * card stays answered — while the stream is watched for up to a minute (a
+     * specialist resumed by the answer can take a while before the parent
+     * stream says anything). Only if nothing arrives is the question restored.
+     */
+    if (!outcome.ok && (outcome.status === 0 || outcome.status >= 500)) {
+      const sessionId = agent.session?.sessionId ?? liveSessionIdRef.current;
+      if (sessionId) {
+        const provisional = recordDelivery("", "answer");
+        if (!storeReading) setRemoteTurn(true);
+        setAnswerChecking(true);
+        const landed = await streamHasMoved(
+          eveSessionStream({ sessionId, headers: getAuthHeaders }),
+          answeredAt,
+          ANSWER_VERIFY_MS,
+        );
+        setAnswerChecking(false);
+        if (landed) return;
+        forgetDelivery(provisional);
+        setRemoteTurn(false);
       }
+    }
+    if (outcome.ok) {
+      recordDelivery("", "answer");
+      // Delivered around an idle store: nothing local is reading yet, so the
+      // session is not at rest until the reader has read what it resumes. (A
+      // store already reading gets the resumed events on its open stream.)
+      if (!storeReading) setRemoteTurn(true);
+      return;
+    }
+    if (outcome.body.includes(DEAD_TOKEN_SIGNAL)) {
+      markExpired(requestIds);
+      return;
+    }
+    answerRejected(requestIds, inputResponses, outcome.status >= 400 && outcome.status < 500 ? "refused" : "unreachable");
+  };
+  /** POST an answer to the parked session with the freshest resume token. Never throws. */
+  const postAnswer = async (
+    inputResponses: readonly { requestId: string; optionId?: string; text?: string }[],
+  ): Promise<{ ok: boolean; status: number; body: string }> => {
+    const sessionId = agent.session?.sessionId ?? liveSessionIdRef.current;
+    if (!sessionId) return { ok: false, status: 0, body: "no session" };
+    const continuationToken = freshestToken() ?? agent.session?.continuationToken ?? (await serverFreshestToken(sessionId));
+    if (!continuationToken) return { ok: false, status: 0, body: "no resume token" };
+    /**
+     * Retried like eve's own client (`postTurnWithRetry`): answering just as the
+     * question parks can meet a 500 "target session was not found" — the park
+     * is not visible yet — and a moment later the same POST succeeds.
+     */
+    let last = { ok: false, status: 0, body: "network" };
+    for (let attempt = 0; attempt < ANSWER_RETRIES; attempt++) {
       try {
-        await agent.send({ inputResponses });
-        pendingAnswerRef.current = [];
-      } catch (err) {
-        // Expire ONLY on the spent-token signal (the requesting run is gone).
-        // Any other store rejection leaves the answer retryable, so we keep the
-        // card's Yes/No instead of stripping a live approval.
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes(DEAD_TOKEN_SIGNAL)) {
-          markExpired(requestIds);
-        } else if (isMissingTokenError(msg)) {
-          // The store lost its resume token — deliver the answer directly with
-          // the freshest token from the stream so the preference isn't dropped.
-          await directDeliver({ inputResponses });
-        }
-        pendingAnswerRef.current = [];
+        const res = await fetch(`/eve/v1/session/${encodeURIComponent(sessionId)}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ inputResponses, continuationToken }),
+        });
+        last = { ok: res.ok, status: res.status, body: res.ok ? "" : await res.text().catch(() => "") };
+      } catch {
+        return { ok: false, status: 0, body: "network" };
       }
-      return;
+      if (!answerPostRetryable(last.status, last.body)) return last;
+      await new Promise((r) => setTimeout(r, Math.min(200 * (attempt + 1), 1_000)));
     }
-    const sessionId = agent.session?.sessionId;
-    // Latest session.waiting on the stream wins: with several queued approvals
-    // each answer consumes a token and the re-park mints a fresh one mid-stream,
-    // while agent.session only updates at turn end (it can hold a spent token).
-    let continuationToken: string | undefined;
-    for (let i = mergedEvents.length - 1; i >= 0; i--) {
-      const e = mergedEvents[i] as { type?: string; data?: { continuationToken?: string } };
-      if (e.type === "session.waiting" && typeof e.data?.continuationToken === "string") {
-        continuationToken = e.data.continuationToken;
-        break;
-      }
-    }
-    continuationToken ??= agent.session?.continuationToken;
-    // No token to POST with: leave the card answerable and clear the ref so a
-    // later unrelated store error can't misattribute back to this attempt.
-    if (!sessionId || !continuationToken) {
-      pendingAnswerRef.current = [];
-      return;
-    }
-    try {
-      // Fire-and-forget: execution is durable server-side, and the resumed
-      // turn's events arrive on the already-open parent stream.
-      const res = await fetch(`/eve/v1/session/${sessionId}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ inputResponses, continuationToken }),
-      });
-      if (res.ok) {
-        pendingAnswerRef.current = [];
-      } else {
-        // Expire ONLY when the body carries the spent-token signal — a crashed
-        // child's token is dead, so the Yes/No can never deliver. A transient
-        // non-ok (401 token rotation, 429, a blip 5xx) leaves the card
-        // answerable: the re-park resurfaces it and a re-click re-arms it.
-        const body = await res.text().catch(() => "");
-        if (body.includes(DEAD_TOKEN_SIGNAL)) markExpired(requestIds);
-        pendingAnswerRef.current = [];
-      }
-    } catch {
-      // The stream reconnect path will surface the park again — leave the card
-      // answerable and clear the ref (a later unrelated error must not expire it).
-      pendingAnswerRef.current = [];
-    }
+    return last;
   };
   // Case (c): the store surfaces the spent-token error on the render right after
   // an answer attempt — that answer's approvals belong to a run that has
@@ -1527,11 +1916,11 @@ export function AgentChat({
     () =>
       pendingInputRequestParts({
         messages: viewMessages as readonly { parts?: readonly unknown[] }[],
-        dismissed: dismissedRequestIds,
+        dismissed: countedDismissals,
         responded: respondedRequestIds,
         expired: expiredRequestIds,
       }) as Array<React.ComponentProps<typeof PendingApprovalCard>["part"]>,
-    [viewMessages, respondedRequestIds, expiredRequestIds, dismissedRequestIds],
+    [viewMessages, respondedRequestIds, expiredRequestIds, countedDismissals],
   );
 
   /**
@@ -1577,11 +1966,13 @@ export function AgentChat({
         pendingInputs: openInputRequests.length,
         abandoned: abandonedTurn !== null && abandonedTurn === startedTurns,
         remoteTurn,
+        outstanding: outstanding.length,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isBusy, eventCount, openInputRequests.length, abandonedTurn, startedTurns, remoteTurn],
+    [isBusy, eventCount, openInputRequests.length, abandonedTurn, startedTurns, remoteTurn, outstanding.length],
   );
   holdRef.current = gate.hold;
+  gateReasonRef.current = gate.reason;
   const detached = gate.reason === "detached";
   /**
    * IS THE ANSWER OVER — for the transcript, not for the composer.
@@ -1704,13 +2095,47 @@ export function AgentChat({
   // record the current state as the outcome. When a stop is requested mid-turn,
   // this flag defers the wrap-up message until the in-flight turn halts.
   const [goalStopping, setGoalStopping] = useState(false);
-  // Seeded from module scope: a resync REMOUNTS this component (that is the only
-  // way a replay reaches the store), and the held messages must outlive it.
-  const [queued, setQueued] = useState<QueuedMessage[]>(() => heldQueues.get(chatKey) ?? []);
+  /*
+   * THIS TAB'S QUEUE (lib/chat-queue): in sessionStorage, so it survives a
+   * reload of this tab and nothing else, and a removal is final. Never another
+   * tab's: a tab only ever sends what it queued itself.
+   */
+  const queueKeyNow = ownsPending && storageScope ? queueKey(storageScope, pendingChatId) : null;
+  const queueKeyRef = useRef(queueKeyNow);
+  const [queued, setQueued] = useState<QueueItem[]>(() => {
+    const held = heldQueues.get(chatKey);
+    if (held) return held;
+    if (!queueKeyNow || !storageScope) return [];
+    let stored = loadQueue(sessionStore(), queueKeyNow);
+    if (stored.items.length === 0) stored = loadQueue(sessionStore(), queueKey(storageScope, chatKey));
+    if (stored.owner === TAB_ID) return stored.items;
+    // Found on LOAD: only a queue this tab's own earlier page left (it wrote
+    // "gone" as it unloaded) is this tab's to send; a copy, or an old one, asks.
+    return adoptQueue({ stored, gone: SELF_IDS, now: Date.now() });
+  });
   useEffect(() => {
     if (queued.length > 0) heldQueues.set(chatKey, queued);
     else heldQueues.delete(chatKey);
-  }, [chatKey, queued]);
+    // A new chat's minted key becomes the session id: move the queue with it.
+    if (queueKeyRef.current && queueKeyRef.current !== queueKeyNow) saveQueue(sessionStore(), queueKeyRef.current, [], TAB_ID);
+    queueKeyRef.current = queueKeyNow;
+    saveQueue(sessionStore(), queueKeyNow, queued, TAB_ID);
+  }, [chatKey, queued, queueKeyNow]);
+  /** The settings a message is sent under — captured when it is queued. */
+  const currentSettings = (): QueueSettings => ({
+    mode,
+    webSearch,
+    browserUse,
+    customers: [...selectedCustomers],
+  });
+  const enqueue = (text: string, files: AttachedFile[]) => {
+    const id = newItemId();
+    if (files.length > 0) queuedFiles.set(id, files);
+    setQueued((prev) => [
+      ...prev,
+      { id, text, files: files.length, createdAt: Date.now(), settings: currentSettings() },
+    ]);
+  };
   // Relay send state for a shared thread this participant contributes to: the
   // optimistic message shown while the server relay runs, and any error.
   const [relayPending, setRelayPending] = useState<string | null>(null);
@@ -1875,6 +2300,8 @@ export function AgentChat({
   const respondedCount = responded.length;
   const respondedRef = useRef(responded);
   respondedRef.current = responded;
+  const stoppedMarkersRef = useRef(stoppedMarkers);
+  stoppedMarkersRef.current = stoppedMarkers;
   /**
    * WHY THE PERSIST IS ON A CLOCK AND NOT ON `preview`.
    *
@@ -1910,6 +2337,7 @@ export function AgentChat({
   const clientMarkers = () => [
     ...(mergedEvents as { type?: string }[]).filter((e) => e.type?.startsWith("client.")),
     ...respondedRef.current,
+    ...stoppedMarkersRef.current,
   ];
   useEffect(() => {
     if (sessionId && agent.session) {
@@ -1940,12 +2368,12 @@ export function AgentChat({
         // Fold in synthesized `client.input.responded` events so answered
         // questions/approvals stay answered across a reopen instead of reverting
         // to pending and hoisting to the tail.
-        [...mergedEvents, ...responded] as typeof mergedEvents,
+        [...mergedEvents, ...responded, ...stoppedMarkers] as typeof mergedEvents,
         chatKey,
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, title, messageCount, customersKey, status, respondedCount, persistTick]);
+  }, [sessionId, title, messageCount, customersKey, status, respondedCount, stoppedMarkers.length, persistTick]);
 
   // A snapshot for the Share dialog — the server thread row needs the current
   // session id, freshest resume token, and the client-side input-response
@@ -1970,13 +2398,13 @@ export function AgentChat({
 
   // Prefix a message with directives: customer context (first turn) + a
   // web-search opt-out when the toggle is off.
-  const withDirectives = (body: string, withContext: boolean) => {
+  const withDirectives = (body: string, withContext: boolean, s: QueueSettings = currentSettings()) => {
     if (!body) return body;
     const directives: string[] = [];
-    if (withContext && selectedCustomers.length > 0) {
-      directives.push(`(Context: this conversation is about ${selectedCustomers.join(", ")}.)`);
+    if (withContext && s.customers.length > 0) {
+      directives.push(`(Context: this conversation is about ${s.customers.join(", ")}.)`);
     }
-    for (const d of [searchDirective(webSearch), browserDirective(browserUse), modeDirective(mode)]) {
+    for (const d of [searchDirective(s.webSearch), browserDirective(s.browserUse), modeDirective(s.mode as AgentMode)]) {
       if (d) directives.push(d);
     }
     /**
@@ -2063,7 +2491,13 @@ export function AgentChat({
     return null;
   };
 
-  const sendMessage = async (raw: string, filesToSend: AttachedFile[]) => {
+  /**
+   * `settings`: a QUEUED message goes out under the settings it was queued with
+   * (mode, web search, browser, companies), not whatever the composer shows now.
+   */
+  const sendMessage = async (raw: string, filesToSend: AttachedFile[], settings?: QueueSettings) => {
+    const s = settings ?? currentSettings();
+    const mode = s.mode as AgentMode;
     // Goal / Loop: run in the harness. Frame the objective with the goal
     // preamble and attach the completion-gate schema — the harness injects a
     // `final_output` tool and won't end the turn until the model records an
@@ -2071,7 +2505,7 @@ export function AgentChat({
     const isGoal = mode === "goal" || mode === "loop";
     const body = isGoal ? goalPreamble(raw, mode) : raw;
     // Context only on the very first turn; web-search opt-out every turn.
-    const text = withDirectives(body, viewMessages.length === 0);
+    const text = withDirectives(body, viewMessages.length === 0, s);
     const outputSchema = isGoal ? (GOAL_OUTCOME_SCHEMA as unknown as object) : undefined;
     const parts: Array<
       | { type: "text"; text: string }
@@ -2118,13 +2552,26 @@ export function AgentChat({
     // If the store would CONTINUE a parked session but its cursor has no resume
     // token, it POSTs an empty continuationToken and eve rejects the whole turn.
     // Pre-empt that: deliver directly with the freshest token from the stream.
+    //
+    // And when the store has lost its cursor ENTIRELY while this chat still
+    // knows its session — a Stop aborts the store's read, and eve's
+    // `advanceSession` then drops the session id with the rest — `send()` would
+    // open a brand-new eve session: the reply lands in a conversation nobody is
+    // showing (measured in the review: "MSG-3" went to POST /eve/v1/session
+    // after a Stop and was never seen again). Deliver to the live session instead.
+    const cursorLost = !agent.session?.sessionId && Boolean(liveSessionIdRef.current) && viewMessages.length > 0;
     if (
-      agent.session?.sessionId &&
-      !agent.session.continuationToken &&
+      (cursorLost || (agent.session?.sessionId && !agent.session.continuationToken)) &&
       (await directDeliver({ message: content, outputSchema }))
     ) {
       return;
     }
+    // Recorded BEFORE the send: the store's reader can stop at a boundary that
+    // is not this message's (a turn still running, a specialist parked), and
+    // then this is the only record that eve still owes a reply to it.
+    const delivery = recordDelivery(messageText, "message");
+    const eventsBefore = storeEventsSeenRef.current;
+    const errorsBefore = storeErrorsRef.current;
     try {
       await agent.send(
         (outputSchema
@@ -2132,9 +2579,17 @@ export function AgentChat({
           : { message: content }) as Parameters<typeof agent.send>[0],
       );
     } catch (err) {
+      forgetDelivery(delivery);
       const msg = err instanceof Error ? err.message : String(err);
       if (isMissingTokenError(msg) && (await directDeliver({ message: content, outputSchema }))) return;
       throw err;
+    }
+    // The store swallows a failed POST (it resolves with an error set). Nothing
+    // read AND an error raised means the message never reached eve, so it is
+    // owed nothing. (A send ended by Stop reads nothing too, but raises no error:
+    // that message may well be held by eve, so it stays owed.)
+    if (storeEventsSeenRef.current === eventsBefore && storeErrorsRef.current !== errorsBefore) {
+      forgetDelivery(delivery);
     }
   };
 
@@ -2172,6 +2627,13 @@ export function AgentChat({
    * detach — and then the gate holds sends until the turn is known to be over.
    */
   const [stopping, setStopping] = useState(false);
+  /** What the last Stop found, said once above the composer (a refused Stop from a stale tab). */
+  const [stopNote, setStopNoteState] = useState<string | null>(() => stopNotes.get(chatKey) ?? null);
+  const setStopNote = (note: string | null) => {
+    if (note) stopNotes.set(chatKey, note);
+    else stopNotes.delete(chatKey);
+    setStopNoteState(note);
+  };
   const stopFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The transcript as it stands when a deferred callback finally runs. */
   const mergedEventsRef = useRef(mergedEvents);
@@ -2184,32 +2646,119 @@ export function AgentChat({
       return;
     }
     setStopping(true);
-    const wasTurn = turnsStarted(mergedEvents as { type?: string }[]);
-    void fetch(`/eve/v1/session/${encodeURIComponent(sid)}/cancel`, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...getAuthHeaders() },
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`cancel ${res.status}`);
-        const body = (await res.json().catch(() => ({}))) as { status?: string };
-        if (body.status === "no_active_turn") {
-          // Nothing is running under this id, yet the transcript never saw the
-          // turn end: it is dead (or ended unheard), not slow. Stop reading a
-          // stream that will say nothing, release the hold, pull the truth.
-          if (storeBusy) agent.stop();
-          setRemoteTurn(false);
-          abandonedTurns.set(chatKey, wasTurn);
-          setAbandonedTurn(wasTurn);
-          setStopping(false);
-          // The local cursor was reset by the detach; without the replay's
-          // cursor the next send would open a new, empty eve session.
-          void onResync?.(sid, clientMarkers()).catch(() => false);
-        }
-      })
-      .catch(() => {
-        if (storeBusy) agent.stop();
-        setStopping(false);
+    setStopNote(null);
+    const events = mergedEventsRef.current as readonly TurnEvent[];
+    const wasTurn = turnsStarted(events as { type?: string }[]);
+    /**
+     * WHAT THIS STOP MAY RELEASE (see `releaseDeliveries`): this tab's own
+     * deliveries, and another tab's only if it was sent before this tab last saw
+     * the stream move. Chosen NOW, released only once the Stop is known to be
+     * aimed at what is on screen — a refused Stop releases nothing.
+     */
+    const viewAt = lastViewAtRef.current;
+    const owedNow = deliveriesRef.current as readonly PendingDelivery[];
+    const toRelease = releasable(owedNow, SELF_IDS, viewAt);
+    // Another tab's message past the grace may go too — but only if the server
+    // shows the session AT REST: a message queued behind a long specialist run
+    // is waiting legitimately, and releasing it is a lie about what is on screen.
+    const withGrace = async (): Promise<PendingDelivery[]> => {
+      const more = releasable(owedNow, SELF_IDS, viewAt, Date.now(), { sessionAtRest: true }).filter(
+        (d) => !toRelease.includes(d),
+      );
+      if (more.length === 0) return toRelease;
+      const tail = await readTailEvent({ sessionId: sid, headers: getAuthHeaders });
+      return isSessionBoundary(tail ?? undefined) ? [...toRelease, ...more] : toRelease;
+    };
+    /** AIMED AT THE TURN ON SCREEN (`stopTarget`) — never session-wide, never a guess. */
+    const target = stopTarget(events);
+    /**
+     * STOPPING A TURN THAT IS WAITING ON A QUESTION, or a reply that resumed
+     * after one. eve drops a parked delegation and emits NOTHING, and a resumed
+     * reply ends without a `turn.cancelled` — so once the cancel is accepted the
+     * Stop is recorded here: a transcript marker (persisted, so a reload and
+     * another device agree) that retires the questions, settles the
+     * specialist's tile and says "Stopped."
+     */
+    const parkedOn = gateReasonRef.current === "awaiting-input" ? [...openRequestsRef.current] : [];
+    const delegations = parkedOn.length > 0 || target.resumed ? liveDelegations(events) : [];
+    if (!target.turnId) {
+      // NOTHING IS RUNNING. Cancel nothing (there is no turn on screen to aim
+      // at); release what this tab was holding so its queue can move. A store
+      // still waiting on a message eve never started stops waiting.
+      if (storeBusy) agent.stop();
+      releaseDeliveries(toRelease);
+      setRemoteTurn(false);
+      setStopping(false);
+      void withGrace().then((all) => {
+        if (all.length > toRelease.length) releaseDeliveries(all.filter((d) => !toRelease.includes(d)));
       });
+      report("stop", { sessionId: sid, detail: `${storeBusy ? "streaming" : (gateReasonRef.current ?? "held")} · at rest, nothing cancelled` });
+      return;
+    }
+    void (async () => {
+      /**
+       * A STALE VIEW STOPS NOTHING. If the stream has moved past what this tab
+       * shows (another tab answered, or started a newer turn), refuse, refresh,
+       * and say so — the person decides again from the real state. Only a view
+       * nothing is reading can be stale: a tab reading the turn live is showing
+       * the very turn it would stop.
+       */
+      if (!storeBusy && !attachLiveRef.current) {
+        const moved = await streamHasMoved(
+          eveSessionStream({ sessionId: sid, headers: getAuthHeaders }),
+          absoluteIndex(events),
+        );
+        if (moved) {
+          attachFailures.delete(attachKeyRef.current);
+          attachRounds.delete(attachKeyRef.current);
+          setAttachEpoch((n) => n + 1);
+          setStopping(false);
+          setStopNote("This chat moved on in another tab — it has been refreshed. Press Stop again if it is still running.");
+          return;
+        }
+      }
+      // Aimed and current: now release, and linger a reader briefly — if eve
+      // was holding a message behind the stopped turn, it runs next.
+      releaseDeliveries(await withGrace());
+      setLingerUntil(Date.now() + 20_000);
+      const mine = stoppedHere.get(chatKey) ?? new Set<string>();
+      mine.add(target.turnId as string);
+      stoppedHere.set(chatKey, mine);
+      const res = await fetch(`/eve/v1/session/${encodeURIComponent(sid)}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ turnId: target.turnId }),
+      });
+      if (!res.ok) throw new Error(`cancel ${res.status}`);
+      const body = (await res.json().catch(() => ({}))) as { status?: string };
+      // The turn we delivered around the store (an answer posted by the app)
+      // is the one just stopped: nothing will arrive to say it ended, so its
+      // hold must not outlive the Stop.
+      if (body.status === "accepted") setRemoteTurn(false);
+      if (body.status === "accepted" && (parkedOn.length > 0 || target.resumed || target.parked)) {
+        setStoppedMarkers((prev) => [
+          ...prev,
+          stoppedMarker({ requestIds: parkedOn, delegations, at: absoluteIndex(events), turnId: target.turnId }),
+        ]);
+        setStopping(false);
+      }
+      if (body.status === "no_active_turn") {
+        // Nothing is running under this id, yet the transcript never saw the
+        // turn end: it is dead (or ended unheard), not slow. Stop reading a
+        // stream that will say nothing, release the hold, pull the truth.
+        if (storeBusy) agent.stop();
+        setRemoteTurn(false);
+        abandonedTurns.set(chatKey, wasTurn);
+        setAbandonedTurn(wasTurn);
+        setStopping(false);
+        // The local cursor was reset by the detach; without the replay's
+        // cursor the next send would open a new, empty eve session.
+        void onResync?.(sid, clientMarkers()).catch(() => false);
+      }
+    })().catch(() => {
+      if (storeBusy) agent.stop();
+      setStopping(false);
+    });
     if (stopFallbackRef.current) clearTimeout(stopFallbackRef.current);
     stopFallbackRef.current = setTimeout(() => {
       if (storeBusy) {
@@ -2224,25 +2773,21 @@ export function AgentChat({
        *
        * On a DETACHED turn the cancel request goes out fine and eve really does
        * stop the turn — but `turn.cancelled` → `session.waiting` can only reach
-       * this transcript through the live reader or the poll, and when BOTH
-       * budgets are spent (four readers, four resyncs) neither will ever arrive.
-       * `turnUnfinished` then stays true for good: the composer holds on
-       * "Still working…", the queue never flushes, and pressing Stop again
-       * changes nothing — the complaint the operator has actually made.
-       *
-       * The turn the person asked to stop is exactly the turn the server was
-       * told to stop, so after the grace we record it as abandoned, which is
-       * the same state the `no_active_turn` answer produces: the gate releases,
-       * the reader stands down, and the replay picks up whatever really
-       * happened on the next open.
+       * this transcript through the live reader or the poll. The turn the person
+       * asked to stop is exactly the turn the server was told to stop, so after
+       * the grace we record it as abandoned, which is the same state the
+       * `no_active_turn` answer produces: the gate releases, the reader stands
+       * down, and the replay picks up whatever really happened on the next open.
        */
       if (turnUnfinished(mergedEventsRef.current as readonly TurnEvent[])) {
         abandonedTurns.set(chatKey, wasTurn);
         setAbandonedTurn(wasTurn);
       }
+      // Stop always releases the hold, whatever the stream says or does not say.
+      setRemoteTurn(false);
       setStopping(false);
     }, 12_000);
-    report("stop", { sessionId: sid, detail: storeBusy ? "streaming" : "detached" });
+    report("stop", { sessionId: sid, detail: `${storeBusy ? "streaming" : (gateReasonRef.current ?? "detached")} · ${target.turnId}` });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, chatKey, getAuthHeaders, report, onResync]);
   useEffect(() => {
@@ -2370,7 +2915,7 @@ export function AgentChat({
       return;
     }
     if (route === "queue") {
-      setQueued((prev) => [...prev, { text: raw, files: outgoing }]);
+      enqueue(raw, outgoing);
       return;
     }
     await sendMessage(raw, outgoing);
@@ -2413,22 +2958,42 @@ export function AgentChat({
       // running, reset the cursor, and sent this result to a new, empty
       // session), then queue: the flush effect delivers the result once the
       // cancellation settles on the stream.
-      setQueued((prev) => [...prev, { text: msg, files: [] }]);
+      enqueue(msg, []);
       stopTurn();
     } else {
       void sendMessage(msg, []);
     }
   };
 
-  // Flush any queued messages one at a time as soon as the SESSION is idle —
-  // not merely the store (see sendGate).
+  /**
+   * FLUSH THIS TAB'S QUEUE — one message at a time, as soon as the
+   * SESSION is idle (not merely the store, see sendGate).
+   *
+   * One at a time: `flushingRef` holds until the send (upload included) is
+   * done. Two queued sends used to race the upload of the first.
+   *
+   * Each item goes out with the settings it was queued under. An item whose
+   * attachment did not survive a reload waits for the person, without holding
+   * up the plain messages behind it.
+   */
+  const flushingRef = useRef(false);
+  const [flushTick, setFlushTick] = useState(0);
   useEffect(() => {
-    if (gate.hold || queued.length === 0 || readOnly) return;
-    const [next, ...rest] = queued;
-    setQueued(rest);
-    if (next.text.trim() || next.files.length > 0) void sendMessage(next.text, next.files);
+    if (gate.hold || readOnly || flushingRef.current || queued.length === 0) return;
+    const item = nextSendable(queued, new Set(queuedFiles.keys()));
+    if (!item) return;
+    const files = queuedFiles.get(item.id) ?? [];
+    queuedFiles.delete(item.id);
+    setQueued((prev) => prev.filter((q) => q.id !== item.id));
+    flushingRef.current = true;
+    const done = () => {
+      flushingRef.current = false;
+      setFlushTick((n) => n + 1);
+    };
+    if (item.text.trim() || files.length > 0) void sendMessage(item.text, files, item.settings).then(done, done);
+    else done();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gate.hold, queued]);
+  }, [gate.hold, queued, flushTick, readOnly]);
 
   /**
    * Watch a DETACHED turn until it settles, then pull the rest of it in.
@@ -2693,8 +3258,52 @@ export function AgentChat({
     abandoned: abandonedTurn !== null && abandonedTurn === startedTurns,
     failures: attachFailures.get(attachKey) ?? 0,
     maxFailures: ATTACH_BUDGET,
+    // A Stop leaves a reader lingering briefly (see stopTurn): anything eve was
+    // holding behind the stopped turn runs next and has to be read.
+    outstanding: outstanding.length + (lingering ? 1 : 0),
   });
   const shouldAttach = attachVerdict.attach;
+  /**
+   * A SPENT BUDGET IS A PAUSE, NOT THE END — see `attachRetryDelayMs`.
+   *
+   * "open-failed" used to hold for the rest of the turn: four readers, then
+   * nothing read it until the next send opened a stream ("the reply only
+   * appears after I send another message"). While the server still owes this
+   * transcript something — the turn is unfinished, or eve holds a message of
+   * ours — a fresh round is armed after a backoff. Never for a revoked share
+   * (403) or an expired sign-in (401): no retry can fix those, and a tab
+   * return or a new sign-in re-arms them already.
+   */
+  const stillOwed =
+    turnUnfinished(mergedEvents as readonly TurnEvent[]) || outstanding.length > 0;
+  const rearmable =
+    attachVerdict.reason === "open-failed" && stillOwed && !authExpired && !attachRevoked.has(attachKey);
+  /**
+   * …with an END. About ten minutes of rounds (`ATTACH_MAX_ROUNDS`), never
+   * while the tab is hidden (a tab return re-arms on its own), and then the
+   * person gets a "Reconnect" control instead of a tab that polls for ever.
+   */
+  const [rearmRounds, setRearmRounds] = useState(() => attachRounds.get(attachKey) ?? 0);
+  const reconnectOffered = rearmable && !attachRearmAllowed(rearmRounds, false);
+  useEffect(() => {
+    if (!rearmable) return;
+    const round = attachRounds.get(attachKey) ?? 0;
+    const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+    if (!attachRearmAllowed(round, hidden)) return;
+    const timer = setTimeout(() => {
+      attachRounds.set(attachKey, round + 1);
+      setRearmRounds(round + 1);
+      attachFailures.delete(attachKey);
+      setAttachEpoch((n) => n + 1);
+    }, attachRetryDelayMs(round));
+    return () => clearTimeout(timer);
+  }, [rearmable, attachKey, attachEpoch]);
+  const reconnect = () => {
+    attachRounds.delete(attachKey);
+    setRearmRounds(0);
+    attachFailures.delete(attachKey);
+    setAttachEpoch((n) => n + 1);
+  };
   useEffect(() => {
     if (!shouldAttach || !attachId) return;
     const ctrl = new AbortController();
@@ -2931,9 +3540,77 @@ export function AgentChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergedEvents.length, startedTurns, chatKey, agent.status, attachLive, lastEventType]);
 
+  /** What the next message will tell the model — shown beside the toggles, once. */
+  const settingLabels = activeSettingLabels({
+    webSearch,
+    browserUse,
+    mode,
+    customers: selectedCustomers,
+  });
+  /**
+   * STOPPED REPLIES — said under the reply, in EVERY tab, and by whom, where it
+   * stays in the conversation's history (see `stoppedTurnNotes`). eve's
+   * `turn.cancelled` alone left a half reply with nothing under it, and a Stop
+   * pressed in one tab ended a turn the other tab was watching in silence.
+   */
+  const stoppedNotes = useMemo(
+    () =>
+      stoppedTurnNotes(
+        [...(mergedEvents as readonly TurnEvent[]), ...stoppedMarkers],
+        stoppedHere.get(chatKey) ?? new Set(),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mergedEvents.length, stoppedMarkers, chatKey],
+  );
+  // A stopped turn that never produced a reply has nowhere to put its note: say
+  // it above the composer instead, until the next turn.
+  const cancelledNote = useMemo(() => {
+    for (let i = mergedEvents.length - 1; i >= 0; i--) {
+      const e = mergedEvents[i] as { type?: string; data?: { turnId?: string } };
+      if (e.type === "turn.started" || e.type === "turn.completed") return null;
+      if (e.type === "turn.cancelled") {
+        const id = e.data?.turnId ?? "";
+        // Only a reply with something ON SCREEN can carry the note under it.
+        const shown = viewMessages.some(
+          (m) =>
+            m.role === "assistant" &&
+            m.metadata?.turnId === id &&
+            (m.parts ?? []).some((p) => {
+              const part = p as { type?: string; text?: string };
+              return part.type === "dynamic-tool" || (part.type === "text" && Boolean(part.text?.trim()));
+            }),
+        );
+        return shown ? null : (stoppedNotes.get(id) ?? null);
+      }
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mergedEvents.length, viewMessages, stoppedNotes]);
+  /** A way out of a hold that feels stuck — see `stopAvailable`. */
+  // The question on screen is a delegated specialist's (it cannot be dismissed).
+  const specialistWaiting =
+    gate.reason === "awaiting-input" && liveDelegations(mergedEvents as readonly TurnEvent[]).length > 0;
+  const showStop = stopAvailable({
+    gate,
+    storeBusy: isBusy,
+    readOnly,
+    queued: queued.length,
+    specialistWaiting,
+  });
   const editQueued = (i: number, text: string) =>
     setQueued((prev) => prev.map((q, j) => (j === i ? { ...q, text } : q)));
-  const removeQueued = (i: number) => setQueued((prev) => prev.filter((_, j) => j !== i));
+  const removeQueued = (i: number) =>
+    setQueued((prev) => {
+      const gone = prev[i];
+      if (gone) queuedFiles.delete(gone.id);
+      return prev.filter((_, j) => j !== i);
+    });
+  /** The person's say-so for an item whose attachment did not survive a reload. */
+  const sendQueuedWithoutFiles = (i: number) =>
+    setQueued((prev) => prev.map((q, j) => (j === i ? { ...q, files: 0 } : q)));
+  /** The person's say-so for an inherited item (another tab's copy, or an old one). */
+  const sendInherited = (i: number) =>
+    setQueued((prev) => prev.map((q, j) => (j === i ? { ...q, inherited: false } : q)));
   const moveQueued = (i: number, dir: -1 | 1) =>
     setQueued((prev) => {
       const j = i + dir;
@@ -2956,6 +3633,8 @@ export function AgentChat({
         })
         .join("")
         .trim();
+      // Re-sent EXACTLY as it was sent: nothing is stripped from what goes to
+      // the model (a display rule must never be able to damage a message).
       if (text) void agent.send({ message: text });
       return;
     }
@@ -2977,7 +3656,9 @@ export function AgentChat({
     for (const d of [searchDirective(webSearch), browserDirective(browserUse), modeDirective(mode)]) {
       if (d) directives.push(d);
     }
-    const text = directives.length > 0 ? `${directives.join(" ")}\n\n${prompt}` : prompt;
+    // Wrapped like every other message (see `withDirectives`): the bare form is
+    // what put "(Context: …) (Web search is off …)" into chat titles.
+    const text = directives.length > 0 ? `${wrapDirectives(directives)}\n\n${prompt}` : prompt;
     agent.send({ message: text });
   };
 
@@ -3119,11 +3800,11 @@ export function AgentChat({
                 type="button"
                 onClick={() => onOpenThread?.(forkedFrom.id)}
                 className="mx-auto flex w-fit max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground"
-                title={`Back to: ${forkedFrom.title}`}
+                title={`Back to: ${displayTitle(forkedFrom.title, "Original chat")}`}
               >
                 <GitBranchIcon className="size-3.5 shrink-0" />
                 <span className="shrink-0">Forked from</span>
-                <span className="truncate font-medium text-foreground">{forkedFrom.title}</span>
+                <span className="truncate font-medium text-foreground">{displayTitle(forkedFrom.title, "Original chat")}</span>
               </button>
             ) : null}
             {viewMessages.map((message, index) => {
@@ -3154,6 +3835,14 @@ export function AgentChat({
                     isLast={index === viewMessages.length - 1}
                     isStreaming={liveStreaming && index === viewMessages.length - 1}
                     message={message}
+                    stoppedDelegations={stopped.delegations}
+                    stoppedNote={
+                      message.role === "assistant" &&
+                      turnId &&
+                      viewMessages[index + 1]?.metadata?.turnId !== turnId
+                        ? stoppedNotes.get(turnId)
+                        : undefined
+                    }
                     onFocusSubagent={(toolCallId) => {
                       setCockpitOpen(true);
                       setFocusSubagent(toolCallId);
@@ -3203,6 +3892,13 @@ export function AgentChat({
                   const requestId = (
                     p.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined
                   )?.requestId;
+                  // A specialist's question whose delegation has settled was answered
+                  // (here, in another tab, or in the Control Panel): the tile says how
+                  // it ended. It is not an "expired approval".
+                  if (requestId && deadRequests.has(requestId) && proxiedRequestIds.has(requestId)) return null;
+                  // Stopped: the specialist's tile already says so, in place — a second
+                  // copy hoisted below later replies would read as a new event.
+                  if (requestId && stopped.requestIds.has(requestId) && proxiedRequestIds.has(requestId)) return null;
                   return (
                     <PendingApprovalCard
                       key={p.toolCallId}
@@ -3212,8 +3908,16 @@ export function AgentChat({
                         requestId && (expiredRequestIds.has(requestId) || deadRequests.has(requestId)),
                       )}
                       part={p}
+                      stoppedName={requestId ? stopped.requestNames.get(requestId) : undefined}
                       onInputResponses={respondToInput}
-                      onDismiss={requestId ? () => dismissInput(requestId) : undefined}
+                      // No Dismiss on a live specialist's question: it cannot be
+                      // waved away (see `effectiveDismissals`) — answer it, or Stop.
+                      onDismiss={
+                        requestId &&
+                        effectiveDismissals(new Set([requestId]), mergedEvents as readonly TurnEvent[]).size > 0
+                          ? () => dismissInput(requestId)
+                          : undefined
+                      }
                     />
                   );
                 })}
@@ -3411,9 +4115,81 @@ export function AgentChat({
               </div>
             </div>
           ) : null}
-          {/* A turn is still alive with nothing local listening to it. Say so —
-              and offer the one honest way out, which is stopping THAT turn. */}
-          {detached && !readOnly ? (
+          {/* A turn is still alive with nothing local listening to it — or eve
+              is still holding a message of ours, or a question is holding
+              messages the person is trying to send. Say so, and offer the one
+              honest way out, which is stopping THAT turn (see `stopAvailable`). */}
+          {cancelledNote && !stopNote ? (
+            <p data-cancelled-note role="status" className="mb-2 px-1 text-muted-foreground text-xs">
+              {cancelledNote}
+            </p>
+          ) : null}
+          {/* eve's own rule: while a question is open, free text ANSWERS it. Said
+              plainly, so a message meant as a new request is not a surprise. */}
+          {gate.reason === "awaiting-input" &&
+          !readOnly &&
+          openInputRequests.some((r) => (r as { allowFreeform?: boolean }).allowFreeform !== false) ? (
+            <p data-answer-hint className="mb-1.5 px-1 text-muted-foreground text-xs">
+              Your next message will answer the question above.
+            </p>
+          ) : null}
+          {answerChecking ? (
+            <p data-answer-checking role="status" className="mb-2 px-1 text-muted-foreground text-xs">
+              Checking whether your answer reached the server…
+            </p>
+          ) : null}
+          {answerError ? (
+            <div
+              role="alert"
+              data-answer-error
+              className="mb-2 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-amber-700 text-xs dark:text-amber-400"
+            >
+              <span className="flex-1">{answerError.message}</span>
+              {answerError.label ? (
+                <button
+                  type="button"
+                  data-answer-retry
+                  onClick={() => void respondToInput(answerError.responses)}
+                  className="shrink-0 rounded px-1.5 py-0.5 font-medium hover:bg-amber-500/20"
+                >
+                  Send “{answerError.label.length > 40 ? `${answerError.label.slice(0, 40)}…` : answerError.label}” again
+                </button>
+              ) : null}
+              <button type="button" onClick={() => setAnswerError(null)} className="shrink-0 rounded px-1.5 py-0.5 hover:bg-amber-500/20">
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+          {stopNote ? (
+            <div
+              role="status"
+              data-stop-note
+              className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-muted-foreground text-xs"
+            >
+              <span className="flex-1">{stopNote}</span>
+              <button type="button" onClick={() => setStopNote(null)} className="shrink-0 rounded px-1.5 py-0.5 hover:bg-muted">
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+          {reconnectOffered && !readOnly ? (
+            <div
+              role="status"
+              className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-muted-foreground text-xs"
+            >
+              <span className="flex-1">
+                Stopped trying to reach the rest of this reply after ten minutes. Reconnect to look again.
+              </span>
+              <button
+                type="button"
+                onClick={reconnect}
+                className="shrink-0 rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
+              >
+                Reconnect
+              </button>
+            </div>
+          ) : null}
+          {showStop ? (
             <div
               role="status"
               className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-muted-foreground text-xs"
@@ -3427,6 +4203,14 @@ export function AgentChat({
                     "Your sign-in expired while this reply was running. Sign in again to pick it up — nothing is lost."
                   : stopping
                   ? "Stopping the earlier reply…"
+                  : gate.reason === "awaiting-input"
+                    ? specialistWaiting
+                      ? "A specialist is waiting on your answer above. Answer it, or stop it — its work is discarded and your queued messages send."
+                      : "Waiting for your answer above. Answer it, or stop this reply to send your queued messages."
+                  : gate.reason === "delivering"
+                    ? owedFromOtherTab
+                      ? "A message from another tab is waiting its turn on the server — its reply will appear here. Stop releases it after a minute."
+                      : "Your earlier message is waiting its turn on the server — its reply will appear here."
                   : specialistRunning
                     ? "Still working — a specialist is running. The rest of the reply will appear here when it finishes."
                     : attachLive
@@ -3449,20 +4233,20 @@ export function AgentChat({
           {queued.length > 0 ? (
             <div className="mb-2 flex flex-col gap-1">
               <p className="px-1 text-3xs text-muted-foreground" aria-live="polite">
-                {holdLabel(gate.reason, specialistRunning, attachLive, authExpired)}
+                {gate.reason === "delivering" && owedFromOtherTab
+                  ? "Queued — a message from another tab is still waiting its turn on the server. Queued messages send after its reply."
+                  : holdLabel(gate.reason, specialistRunning, attachLive, authExpired)}
               </p>
               {queued.map((q, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/40 px-1.5 py-1"
-                >
+                <div key={q.id} className="rounded-lg border border-border/60 bg-muted/40 px-1.5 py-1">
+                <div className="flex items-center gap-1">
                   <span className="w-4 shrink-0 text-center text-3xs text-muted-foreground">
                     {i + 1}
                   </span>
                   <input
                     value={q.text}
                     onChange={(e) => editQueued(i, e.target.value)}
-                    placeholder={q.files.length > 0 ? `${q.files.length} file(s)` : "empty"}
+                    placeholder={q.files > 0 ? `${q.files} file(s)` : "empty"}
                     className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
                   />
                   <button
@@ -3491,6 +4275,47 @@ export function AgentChat({
                   >
                     <XIcon className="size-3.5" />
                   </button>
+                </div>
+                {/* An attachment lives in the memory of the tab that queued it; a
+                    reload (or closing that tab) loses it. Said here, and the item
+                    waits for the person instead of going out without it. */}
+                {q.inherited ? (
+                  <p data-queue-note className="flex items-center gap-2 px-5 pt-0.5 text-3xs text-amber-700 dark:text-amber-400">
+                    <span className="flex-1">
+                      Waiting from another tab or an earlier visit — it will not be sent unless you say so.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => sendInherited(i)}
+                      className="shrink-0 rounded px-1 font-medium hover:bg-amber-500/10"
+                    >
+                      Send
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeQueued(i)}
+                      className="shrink-0 rounded px-1 font-medium hover:bg-amber-500/10"
+                    >
+                      Discard
+                    </button>
+                  </p>
+                ) : filesLost(q, new Set(queuedFiles.keys())) ? (
+                  <p data-queue-note className="flex items-center gap-2 px-5 pt-0.5 text-3xs text-amber-700 dark:text-amber-400">
+                    <span className="flex-1">
+                      {q.files === 1 ? "Attachment" : `${q.files} attachments`} not kept after reload — re-attach it, or send
+                      without it.
+                    </span>
+                    {q.text.trim() ? (
+                      <button
+                        type="button"
+                        onClick={() => sendQueuedWithoutFiles(i)}
+                        className="shrink-0 rounded px-1 font-medium hover:bg-amber-500/10"
+                      >
+                        Send without it
+                      </button>
+                    ) : null}
+                  </p>
+                ) : null}
                 </div>
               ))}
             </div>
@@ -3650,6 +4475,23 @@ export function AgentChat({
                     ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
+                {/* The settings every message carries to the model, shown ONCE,
+                    here, as state — never inside the messages or the sidebar
+                    (lib/chat-attachments displayText / activeSettingLabels). */}
+                {settingLabels.length > 0 ? (
+                  <span className="flex flex-wrap items-center gap-1" aria-label="Active settings">
+                    {settingLabels.map((label) => (
+                      <span
+                        key={label}
+                        data-setting-chip
+                        className="max-w-[14rem] truncate rounded-full border border-border bg-muted/50 px-2 py-0.5 text-3xs text-muted-foreground"
+                        title={label}
+                      >
+                        {label}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
               </>
             }
           />

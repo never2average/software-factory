@@ -197,8 +197,7 @@ const GENERIC_COMMANDS = defaultDeployment({ packageName: GENERIC_AGENT_PACKAGE,
 function rebrandBaseSkill(text) {
   let out = text.split(GENERIC_AGENT_PACKAGE).join(name);
   for (const role of Object.keys(commands)) out = out.split(`${name} ${GENERIC_COMMANDS[role]}`).join(`${name} ${commands[role]}`);
-  // "fde" as a word only, never inside an identifier: check-vocabulary.mjs draws the same
-  // line. There is no longer a wire identifier hiding behind it - the tool is workspace_status
+  // "fde" as a word only, never inside an identifier. There is no longer a wire identifier hiding behind it - the tool is workspace_status
   // and the variables are WORKSPACE_* (check:wire-names holds that), so this rewrite meets
   // only real prose now.
   return out.replace(/(?<![A-Za-z0-9_])fde(?![A-Za-z0-9_])/gi, own);

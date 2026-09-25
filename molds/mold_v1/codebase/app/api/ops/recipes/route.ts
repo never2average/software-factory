@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { asc, eq } from "drizzle-orm";
 import { recipes } from "@/agent/lib/db/schema";
 import { BUILTIN_RECIPES } from "@/agent/lib/provision-workspace";
@@ -42,6 +43,6 @@ export async function GET(request: NextRequest) {
     );
     return NextResponse.json({ items: rows.length ? rows : BUILTIN });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

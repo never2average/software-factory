@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage, errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { cronMatches } from "@/agent/lib/cron-match";
@@ -58,9 +59,6 @@ const patchSchema = z
 // DELETE may carry an optional JSON body naming the actor for the audit trail.
 const deleteBodySchema = z.strictObject({ actor: z.string().min(1).optional() });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ");
-}
 
 type RouteContext = { params: Promise<{ name: string }> };
 
@@ -102,7 +100,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         cronMatches(parsed.data.cron, new Date());
       } catch (e) {
         return NextResponse.json(
-          { error: e instanceof Error ? e.message : String(e) },
+          { error: errorMessage(e) },
           { status: 400 },
         );
       }
@@ -267,7 +265,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({ item });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -312,6 +310,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({ deleted: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

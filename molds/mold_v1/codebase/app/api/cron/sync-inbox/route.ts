@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
 import { orgs } from "@/agent/lib/db/schema";
 import { getOpsDb } from "@/lib/ops-db";
 import { ne } from "drizzle-orm";
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
     try {
       results[w.orgId] = await ingestEmail(w.orgId);
     } catch (e) {
-      results[w.orgId] = { error: e instanceof Error ? e.message : String(e) };
+      results[w.orgId] = { error: errorMessage(e) };
     }
   }
   return NextResponse.json({ workspaces: workspaces.length, results });

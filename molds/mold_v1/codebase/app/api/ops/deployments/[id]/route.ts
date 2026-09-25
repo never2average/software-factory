@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { deployments } from "@/agent/lib/db/schema";
@@ -6,6 +7,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordFieldChanges } from "@/lib/ops-activity";
 import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
 import { customBodySchema, customFieldChanges, customForWrite, profileFieldLabel, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,9 +40,6 @@ const patchSchema = z.strictObject({
 
 const stringOrNull = (v: unknown): string | null => (v == null ? null : String(v));
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ");
-}
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const octx = await orgContextForRequest(request);
@@ -60,7 +59,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   if (customInput != null) set.custom = customInput;
   if (Object.keys(set).length === 0) return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   if (!(await customerInOrg(octx.orgId, customerId))) {
-    return NextResponse.json({ error: "Not your workspace's customer." }, { status: 403 });
+    return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
   }
   try {
     const where = and(eq(deployments.deploymentId, id), eq(deployments.customerId, customerId));
@@ -75,7 +74,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const [item] = await withOrgRls(octx.orgId, (tx) =>
       tx.update(deployments).set(set).where(where).returning(),
     );
-    if (!item) return NextResponse.json({ error: "Deployment not found" }, { status: 404 });
+    if (!item) return NextResponse.json({ error: `${W.Deployment} not found` }, { status: 404 });
     if (before) {
       void recordFieldChanges(
         db,
@@ -93,7 +92,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -108,7 +107,7 @@ export async function DELETE(request: NextRequest, ctx: RouteContext) {
   const customerId = new URL(request.url).searchParams.get("customerId");
   if (!customerId) return NextResponse.json({ error: "customerId is required" }, { status: 400 });
   if (!(await customerInOrg(octx.orgId, customerId))) {
-    return NextResponse.json({ error: "Not your workspace's customer." }, { status: 403 });
+    return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
   }
   try {
     const [item] = await withOrgRls(octx.orgId, (tx) =>
@@ -117,9 +116,9 @@ export async function DELETE(request: NextRequest, ctx: RouteContext) {
         .where(and(eq(deployments.deploymentId, id), eq(deployments.customerId, customerId)))
         .returning(),
     );
-    if (!item) return NextResponse.json({ error: "Deployment not found" }, { status: 404 });
+    if (!item) return NextResponse.json({ error: `${W.Deployment} not found` }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

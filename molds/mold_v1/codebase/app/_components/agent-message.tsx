@@ -30,7 +30,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { extractAttachmentRefs, visibleText, type AttachmentRef } from "@/lib/chat-attachments";
+import { displayText, extractAttachmentRefs, visibleText, type AttachmentRef } from "@/lib/chat-attachments";
 import { partStillWriting } from "@/lib/chat-turn-state";
 import { isPreviewablePdfPath } from "@/lib/pdf-preview";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
@@ -142,7 +142,7 @@ function partRendersContent(
 ): boolean {
   // A subagent-proxied approval is suppressed entirely in the main thread (it
   // lives in the rail), so it renders nothing here.
-  if (isProxiedApproval?.(part)) return false;
+  if (isProxiedApproval?.(part)) return Boolean(answeredText(part));
   switch (part.type) {
     case "step-start":
       return false;
@@ -151,9 +151,9 @@ function partRendersContent(
       return Boolean(part.text?.trim());
     case "text":
       // User text keeps `[file: x]` attachment tokens (they survive
-      // stripDirectives), so an attachment-only message stays visible.
+      // displayText), so an attachment-only message stays visible.
       return role === "user"
-        ? Boolean(stripDirectives(part.text ?? "").trim())
+        ? Boolean(displayText(part.text))
         : Boolean((part.text ?? "").trim());
     case "authorization":
       return true;
@@ -185,6 +185,8 @@ export function AgentMessage({
   isStreaming,
   message,
   onFocusSubagent,
+  stoppedDelegations,
+  stoppedNote,
   onInputResponses,
   onRetry,
   turnActive,
@@ -203,6 +205,10 @@ export function AgentMessage({
   readonly message: EveMessage;
   /** Hand a delegation tool call off to the Control Panel rail. */
   readonly onFocusSubagent?: (toolCallId: string) => void;
+  /** Delegations a Stop discarded (call id → specialist): their tile reads "Stopped", not "Running". */
+  readonly stoppedDelegations?: ReadonlyMap<string, string>;
+  /** This reply was stopped — said under it, where it stays in the conversation's history. */
+  readonly stoppedNote?: string;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly onRetry?: () => void;
   /**
@@ -269,6 +275,7 @@ export function AgentMessage({
                   isProxiedApproval={isProxiedApproval}
                   messageStreaming={isStreaming}
                   onFocusSubagent={onFocusSubagent}
+                  stoppedDelegations={stoppedDelegations}
                   onInputResponses={onInputResponses}
                   part={segment.part}
                   role={message.role}
@@ -290,6 +297,11 @@ export function AgentMessage({
           )}
         </MessageContent>
       </Message>
+      {stoppedNote ? (
+        <p data-stopped-note role="note" className="-mt-2 mb-3 px-1 text-muted-foreground text-xs">
+          {stoppedNote}
+        </p>
+      ) : null}
       {/* Actions only at TRUE turn end: last message, no turn in flight — never
           mid-turn under an earlier assistant segment or an answered question. */}
       {isAssistant && isLast && !turnActive && !awaitingInput ? (
@@ -347,22 +359,6 @@ function MessageActions({ text, onRetry }: { readonly text: string; readonly onR
   );
 }
 
-/** Hide the injected context / web-search / plan-mode directives from displayed user text. */
-function stripDirectives(text: string) {
-  /**
-   * Legacy shape only. Directives are wrapped in an agent-only marker now, but
-   * messages sent before that still carry bare parentheses and eve replays them
-   * on reopen. "Browser use" is included because it was missing from this list
-   * for its whole life — which is how it ended up rendered in user messages —
-   * and the body match is lazy-to-the-last-bracket because the browser
-   * directive contains "(browser_open)" and `[^)]*` stopped at it.
-   */
-  // Structure, not bracket balancing: a directive run sits at the start and
-  // ends at the blank line. Any bracket-counting pattern trips on the
-  // "(browser_open)" nested inside the browser directive — which is how that
-  // whole sentence ended up rendered in users' own messages.
-  return text.replace(/^\((?:Context|Web search|Plan mode|Browser use)[\s\S]*?(?:\n\n|$)/i, "").trim();
-}
 
 /**
  * eve encodes user file attachments into the message text as `[file: name]`
@@ -376,6 +372,27 @@ function stripDirectives(text: string) {
  * up as soon as the chips had to be openable — the path was being stripped
  * here and was therefore unrecoverable one line later.
  */
+/** What the person answered a question with: their typed text, or the option they picked. */
+function answeredText(part: EveMessagePart): string {
+  const eve = (part as { toolMetadata?: { eve?: { inputRequest?: unknown; inputResponse?: unknown } } }).toolMetadata?.eve;
+  const response = eve?.inputResponse as { text?: string; optionId?: string } | undefined;
+  if (!response) return "";
+  if (response.text?.trim()) return response.text.trim();
+  const request = eve?.inputRequest as { options?: readonly { id?: string; label?: string }[] } | undefined;
+  return request?.options?.find((o) => o.id === response.optionId)?.label ?? "";
+}
+
+function YourAnswer({ text }: { readonly text: string }) {
+  return (
+    <div data-your-answer className="not-prose mb-4 flex w-full justify-end">
+      <div className="max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-sm">
+        <span className="mb-0.5 block text-3xs text-muted-foreground">Your answer</span>
+        {text}
+      </div>
+    </div>
+  );
+}
+
 function extractAttachments(text: string): { text: string; files: AttachmentRef[] } {
   return { text: visibleText(text), files: extractAttachmentRefs(text) };
 }
@@ -500,6 +517,7 @@ function AgentMessagePart({
   isProxiedApproval,
   messageStreaming,
   onFocusSubagent,
+  stoppedDelegations,
   onInputResponses,
   part,
   showCaret,
@@ -511,6 +529,7 @@ function AgentMessagePart({
   readonly messageStreaming: boolean;
   /** Hand a delegation tool call off to the Control Panel rail. */
   readonly onFocusSubagent?: (toolCallId: string) => void;
+  readonly stoppedDelegations?: ReadonlyMap<string, string>;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly part: EveMessagePart;
   readonly showCaret: boolean;
@@ -527,14 +546,22 @@ function AgentMessagePart({
   // A subagent-proxied approval never renders in the main thread — pending or
   // answered, it belongs to that subagent's rail (the parent-stream copy is
   // mis-positioned by the child's forwarded turn id).
-  if (isProxiedApproval?.(part)) return null;
+  if (isProxiedApproval?.(part)) {
+    // Unanswered, it lives at the conversation's tail. ANSWERED, what the person
+    // said stays here, in its place in the thread, as their own words — typed
+    // text used to answer a question otherwise vanished without a trace.
+    const said = answeredText(part);
+    return said ? <YourAnswer text={said} /> : null;
+  }
   switch (part.type) {
     case "step-start":
       return null;
     case "text": {
       const text = part.text ?? "";
       if (role === "user") {
-        const { text: display, files } = extractAttachments(stripDirectives(text));
+        // `extractAttachments` shows `visibleText` (lib/chat-attachments →
+        // displayText) and reads the paths from the raw text.
+        const { text: display, files } = extractAttachments(text);
         return (
           <>
             <AttachmentChips files={files} />
@@ -606,8 +633,13 @@ function AgentMessagePart({
         const summary = toolCallSummary(part.toolName, part.input);
         // Explicit handoff status so it's never ambiguous whether the subagent
         // is starting, running, waiting on you, done, or failed.
+        // A Stop discarded this delegation (eve emits nothing for it): settle the
+        // tile instead of leaving it "Running" for ever.
+        const stoppedAs = stoppedDelegations?.get(part.toolCallId);
         const delegationStatus: { label: string; className: string } =
-          part.state === "output-available"
+          stoppedAs !== undefined && part.state !== "output-available" && part.state !== "output-error"
+            ? { label: "Stopped", className: "bg-muted text-muted-foreground" }
+            : part.state === "output-available"
             ? { label: "Completed", className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" }
             : part.state === "output-error"
               ? { label: "Failed", className: "bg-red-500/10 text-red-600 dark:text-red-400" }
@@ -615,7 +647,7 @@ function AgentMessagePart({
                 ? { label: "Needs approval", className: "bg-amber-500/10 text-amber-600 dark:text-amber-400" }
                 : { label: "Running", className: "bg-primary/10 text-primary" };
         const delegationRunning =
-          part.state !== "output-available" && part.state !== "output-error";
+          stoppedAs === undefined && part.state !== "output-available" && part.state !== "output-error";
         return (
           <div className="not-prose mb-4 w-full overflow-hidden rounded-md border">
             <button
@@ -649,6 +681,11 @@ function AgentMessagePart({
                 {delegationStatus.label}
               </span>
             </button>
+            {stoppedAs !== undefined && delegationStatus.label === "Stopped" ? (
+              <p data-stopped-note className="border-border/60 border-t px-3 py-1.5 text-2xs text-muted-foreground">
+                Stopped. The {stoppedAs} work was discarded.
+              </p>
+            ) : null}
             {delegationRunning && !hasInputRequest ? (
               <p className="border-border/60 border-t px-3 py-1.5 text-2xs text-muted-foreground">
                 Working in the Control Panel — the main agent continues once it hands back.
@@ -928,6 +965,7 @@ function formatAuthorizationOutcome(outcome: NonNullable<EveAuthorizationPart["o
  *  Same markup as the in-place card; used when hoistPendingInput is on. */
 export function PendingApprovalCard({
   expired,
+  stoppedName,
   onInputResponses,
   onDismiss,
   part,
@@ -937,6 +975,8 @@ export function PendingApprovalCard({
    *  delivered. Render a muted note WITHOUT Yes/No — we never claim it was
    *  answered, because no response exists. */
   readonly expired?: boolean;
+  /** A Stop ended this question and discarded the named specialist's work. Says so plainly. */
+  readonly stoppedName?: string;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   /** Wave the card away without answering — the run moved past this question and
    *  the operator doesn't want to respond. Undefined ⇒ no dismiss affordance. */
@@ -944,6 +984,16 @@ export function PendingApprovalCard({
   readonly part: EveDynamicToolPart;
 }) {
   const hasInputRequest = Boolean(part.toolMetadata?.eve?.inputRequest);
+  if (stoppedName !== undefined) {
+    return (
+      <div
+        data-stopped-note
+        className="not-prose mb-4 w-full rounded-md border border-border/60 bg-muted/30 px-3 py-2.5 text-muted-foreground text-sm"
+      >
+        Stopped. The {stoppedName} work was discarded.
+      </div>
+    );
+  }
   if (expired) {
     return (
       <div className="not-prose mb-4 w-full space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2.5 opacity-80">
@@ -951,7 +1001,9 @@ export function PendingApprovalCard({
           {toolDisplayName(part.toolName)}
         </p>
         <p className="text-muted-foreground text-xs">
-          Approval expired — the run that requested it has stopped. Re-delegate to continue.
+          {(part.toolMetadata?.eve?.inputRequest as { display?: string } | undefined)?.display === "confirmation"
+            ? "Approval expired — the run that requested it has stopped. Re-delegate to continue."
+            : "Question expired — the run that asked it has stopped. Ask again to continue."}
         </p>
       </div>
     );

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage, errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { apps } from "@/agent/lib/db/schema";
@@ -35,9 +36,6 @@ const patchAppSchema = z.strictObject({
 
 const deleteBodySchema = z.strictObject({ actor: z.string().min(1).optional() });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ");
-}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -71,7 +69,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         cronMatches(patch.refreshCron, new Date());
       } catch (e) {
         return NextResponse.json(
-          { error: e instanceof Error ? e.message : String(e) },
+          { error: errorMessage(e) },
           { status: 400 },
         );
       }
@@ -100,7 +98,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({ item });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -138,6 +136,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

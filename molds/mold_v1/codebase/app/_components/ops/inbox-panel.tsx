@@ -21,6 +21,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import { errMessage, opsFetch } from "./lib";
 import { PaginatedTable, type Column } from "./paginated-table";
+import { W } from "@/lib/ui-words";
 
 /**
  * The Inbox: off-platform conversations, staged, grouped by thread, promoted
@@ -254,7 +255,7 @@ export function InboxPanel({ authorEmail }: { authorEmail?: string }) {
     },
     {
       key: "customer",
-      header: "Customer",
+      header: W.Account,
       text: (t) => t.customerId ?? "unmatched",
       // Unmatched is surfaced, not guessed — promotion needs a real customer,
       // and this is the column an operator scans to find the ones needing a
@@ -448,7 +449,7 @@ function contextFor(thread: InboxThread): string {
     "",
     `Subject:      ${thread.subject}`,
     `Source:       ${thread.source}`,
-    `Customer:     ${thread.customerId ?? "UNMATCHED — identify who this is if you can"}`,
+    `${`${W.Account}:`.padEnd(14)}${thread.customerId ?? "UNMATCHED — identify who this is if you can"}`,
     `Participants: ${thread.participants.join(", ")}`,
     `Messages:     ${thread.messageCount}`,
     "",
@@ -599,7 +600,7 @@ function PromoteForm({
         <Input
           value={customerId}
           onChange={(e) => setCustomerId(e.target.value)}
-          placeholder="Customer — acme-bank"
+          placeholder={`${W.Account} — acme-bank`}
         />
         <Input
           value={summary}

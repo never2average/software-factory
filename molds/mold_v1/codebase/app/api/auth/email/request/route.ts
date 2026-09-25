@@ -6,6 +6,7 @@ import { getOpsDb } from "@/lib/ops-db";
 import { emailSignInConfigured } from "@/lib/auth-session";
 import { hashLoginCode, mintLoginCode } from "@/lib/login-code";
 import { sendLoginCode } from "@/lib/platform-notify";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ const CODES_PER_HOUR = 5;
 export async function POST(request: NextRequest) {
   if (!emailSignInConfigured()) {
     return NextResponse.json(
-      { error: "Email sign-in is not configured on this deployment." },
+      { error: `Email sign-in is not configured on this ${W.install}.` },
       { status: 503 },
     );
   }

@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { customers, tickets, todos } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,7 +84,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       todos: related,
     });
   } catch (e) {
-    return NextResponse.json({ found: false, ticket: null, todos: [], error: String(e) }, { status: 500 });
+    return NextResponse.json({ found: false, ticket: null, todos: [], error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -99,9 +101,6 @@ const patchSchema = z.strictObject({
   ticketPriority: z.string().min(1).optional(),
 });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ");
-}
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const octx = await orgContextForRequest(request);
@@ -120,7 +119,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   const { customerId, ...set } = parsed.data;
   if (Object.keys(set).length === 0) return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   if (!(await customerInOrg(octx.orgId, customerId))) {
-    return NextResponse.json({ error: "Not your workspace's customer." }, { status: 403 });
+    return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
   }
   try {
     const [item] = await withOrgRls(octx.orgId, (tx) =>
@@ -133,6 +132,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (!item) return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

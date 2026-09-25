@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { inboxItems } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -129,6 +130,6 @@ export async function PATCH(request: NextRequest) {
     );
     return NextResponse.json({ ok: true, updated: updated.length });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

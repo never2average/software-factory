@@ -41,3 +41,6 @@ public/pdfjs/
 
 # scripts/eve-build.mjs: a deployment profile's excluded specialists, hidden from eve only while it builds.
 .eve-build-hidden/
+
+# scripts/check-ui-vocabulary.mjs builds a relabelled copy of the checkout here, and removes it.
+.ui-vocabulary/

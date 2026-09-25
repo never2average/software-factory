@@ -76,6 +76,8 @@ import { WorkflowBuilder } from "./workflow-builder";
 
 import { SUBAGENT_META } from "../subagent-meta.generated";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { an, W } from "@/lib/ui-words";
+import { jsonForPeople } from "@/lib/ui-keys";
 type Role = "owner" | "admin" | "engineer" | "member";
 type WorkspaceTab =
   | "dataroom"
@@ -572,13 +574,14 @@ const NOT_AN_OWNER =
     ? `Not the ${VOCAB.owner} on any account.`
     : `Not the ${VOCAB.owner.toLowerCase()} of any ${VOCAB.account.singular}.`;
 
-/** The specialist subagents the orchestrator delegates to: curated copy for the built-in ones, then every other
+/** The specialist subagents the orchestrator delegates to: curated copy for the built-in ones (in the profile's words,
+ *  lib/ui-words.ts; a specialist the profile excludes is not in SUBAGENT_META and is not listed), then every other
  *  declared subagent (discovered from agent/subagents/ by scripts/gen-subagent-meta.mjs) with what it declares. */
 const CURATED_SUBAGENTS: { key: string; name: string; description: string }[] = [
   { key: "research", name: "Research", description: "Investigates questions across the data room and the web, then returns synthesized findings." },
-  { key: "customer-context", name: "Customer context", description: "Assembles the full history and current state for a customer before work begins." },
-  { key: "configuration", name: "Configuration", description: "Sets up platform, solution, and agent configuration for a customer." },
-  { key: "deployment", name: "Deployment", description: "Runs rollouts, environments, and go-live steps." },
+  { key: "customer-context", name: `${W.Account} context`, description: `Assembles the full history and current state for ${an(W.account)} ${W.account} before work begins.` },
+  { key: "configuration", name: "Configuration", description: `Sets up platform, solution, and agent configuration for ${an(W.account)} ${W.account}.` },
+  { key: "deployment", name: W.Deployment, description: `Runs ${W.rollouts}, environments, and go-live steps.` },
   { key: "data-migration", name: "Data migration", description: "Moves and reshapes data into the system of record." },
   { key: "evals", name: "Evals", description: "Builds and runs evaluation suites against the solution." },
   { key: "workflow-author", name: "Workflow author", description: "Authors the durable workflow scripts the orchestrator runs on a cadence." },
@@ -1278,7 +1281,7 @@ function FilePreview({ path }: { path: string }) {
           setState({
             loading: false,
             note: `${d.records.length} record${d.records.length === 1 ? "" : "s"} — first ${Math.min(3, d.records.length)} shown`,
-            text: JSON.stringify(d.records.slice(0, 3), null, 2),
+            text: jsonForPeople(d.records.slice(0, 3), 2),
           });
         } else if (typeof d.content === "string") {
           const truncated = d.content.length > 6000;

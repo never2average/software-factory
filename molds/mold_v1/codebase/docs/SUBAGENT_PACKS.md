@@ -154,6 +154,10 @@ pack's text is the pack's, and must use the same words, or its specialists will 
   `npm run check:agent-vocabulary -- --pack <packs/id> --allow <allow.json>` renders the pack applied to this
   checkout under its own profile and fails on any base word, the pack's own text included; the allow-list is
   for words the pack must keep, each with a `why` (its own stored row keys, a regulator's heading).
+  `npm run check:ui-vocabulary -- --pack <packs/id> [--allow <allow.json>]` does the same for what a PERSON
+  reads: it builds the app with the pack applied and fails on any base word in the UI's text, the pack's
+  subagent roster (names, summaries, tool descriptions) and the client bundle; its allow-list entries are
+  `{ "source", "literal", "why" }`.
 - **Or author `prompt.md` beside an `instructions.ts`** that returns
   `defineInstructions({ markdown: speakPrompt(SUBAGENT_PROMPTS["<key>"]) })` (the base specialists' form;
   `speakPrompt` from `#lib/agent-vocabulary.js`, `SUBAGENT_PROMPTS` from `#lib/prompts.generated.js`), and

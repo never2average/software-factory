@@ -186,7 +186,7 @@ publish of a new deployment.
 
 ## The own-name gate
 
-The same idea as `npm run check:vocabulary`, one layer further out. That gate keeps the base
+The same idea as `npm run check:ui-vocabulary`, one layer further out. That gate keeps the base
 product's role name out of text a person reads in the app; this one keeps it out of the
 package they install. It runs on every build under a name other than the generic package's,
 and it fails the build (and removes the output) when the base product's role name appears in:

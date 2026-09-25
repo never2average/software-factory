@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq, isNull } from "drizzle-orm";
 import {
   customers,
@@ -239,6 +240,6 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ email: 
       todos: ownedTodos,
     });
   } catch (e) {
-    return NextResponse.json({ ...empty, error: String(e) }, { status: 500 });
+    return NextResponse.json({ ...empty, error: errorText(e) }, { status: 500 });
   }
 }

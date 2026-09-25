@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/command";
 import { BotIcon, FileTextIcon, Share2Icon, UserPlusIcon } from "lucide-react";
 import { startTransition, useEffect, useMemo, useState } from "react";
+import { displayTitle } from "@/lib/chat-attachments";
 import { CustomerMark } from "./customer-mark";
 import {
   type SharedThread,
@@ -81,13 +82,13 @@ export function ChatSearchDialog({
               return (
                 <CommandItem
                   key={s.id}
-                  value={`${s.title} ${custs.join(" ")} ${invitees.join(" ")} ${s.id}`}
+                  value={`${displayTitle(s.title, "")} ${custs.join(" ")} ${invitees.join(" ")} ${s.id}`}
                   onSelect={() => onSelect(s)}
                   className="flex flex-col items-start gap-1.5 rounded-lg px-3 py-2.5"
                 >
                   <div className="flex w-full items-center justify-between gap-3">
                     <span className="min-w-0 truncate font-medium text-sm">
-                      {s.title || "New chat"}
+                      {displayTitle(s.title, "New chat")}
                     </span>
                     <span className="shrink-0 text-2xs text-muted-foreground">
                       {formatRelativeTime(s.updatedAt)}
@@ -134,13 +135,13 @@ export function ChatSearchDialog({
             {sharedThreads.map((t) => (
               <CommandItem
                 key={t.id}
-                value={`${t.title} ${t.ownerEmail} shared ${t.id}`}
+                value={`${displayTitle(t.title, "")} ${t.ownerEmail} shared ${t.id}`}
                 onSelect={() => onSelectShared?.(t)}
                 className="flex flex-col items-start gap-1.5 rounded-lg px-3 py-2.5"
               >
                 <div className="flex w-full items-center justify-between gap-3">
                   <span className="min-w-0 truncate font-medium text-sm">
-                    {t.title || "Shared chat"}
+                    {displayTitle(t.title, "Shared chat")}
                   </span>
                   <span className="shrink-0 text-2xs text-muted-foreground">
                     {formatRelativeTime(Date.parse(t.updatedAt))}

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
+import { speak } from "@/agent/lib/agent-vocabulary";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText } from "ai";
 import { eq } from "drizzle-orm";
@@ -109,7 +111,8 @@ function buildPrompt(email: string, c: z.infer<typeof contextSchema>): string {
   const person = c.person?.name ?? email;
   const counts = c.counts ?? {};
   return [
-    `Write a short, specific briefing on ${person}'s role and work on the "${c.account}" account. It renders directly as a summary paragraph in an internal Control Panel (an FDE ops tool).`,
+    // The product's own words go through speak() (the model reads the profile's words); the names are data.
+    `Write a short, specific briefing on ${person}'s role and work on the "${c.account}" account. ${speak("It renders directly as a summary paragraph in an internal Control Panel (an FDE ops tool).")}`,
     "",
     "PERSON: " +
       `${person} (${email})${c.person?.title ? `, ${c.person.title}` : ""}${c.person?.org ? ` at ${c.person.org}` : ""}${c.person?.kind ? ` — ${c.person.kind}` : ""}`,
@@ -188,7 +191,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ email:
     return NextResponse.json({ summary });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : String(e) },
+      { error: errorMessage(e) },
       { status: 502 },
     );
   }

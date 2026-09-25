@@ -141,6 +141,13 @@
       "when": 1790600000000,
       "tag": "0019_account_custom_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790700000000,
+      "tag": "0020_chat_session_markers",
+      "breakpoints": true
     }
   ]
 }

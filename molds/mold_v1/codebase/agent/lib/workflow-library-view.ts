@@ -36,14 +36,20 @@ function speakLiterals(v: Vocabulary, script: string): string {
   });
 }
 
+/** One library workflow's name-free text in the profile's words: description, step names, script literals. */
+export function speakLibraryWorkflow<T extends { description?: string | null; steps?: readonly string[] | null; script?: string | null }>(v: Vocabulary, w: T): T {
+  if (!v.relabelled) return w;
+  return {
+    ...w,
+    ...(typeof w.description === "string" ? { description: speakPromptWith(v, w.description) } : {}),
+    ...(Array.isArray(w.steps) ? { steps: w.steps.map((s) => speakPromptWith(v, s)) } : {}),
+    ...(typeof w.script === "string" ? { script: speakLiterals(v, w.script) } : {}),
+  };
+}
+
 export function deploymentWorkflowLibrary(v: Vocabulary = VOCABULARY, library: readonly LibraryWorkflow[] = WORKFLOW_LIBRARY): LibraryWorkflow[] {
   if (!v.relabelled && !v.excludedSpecialists.length) return [...library];
   return library
     .filter((w) => !delegatesTo(w.script).some((k) => v.excludedSpecialists.includes(k)))
-    .map((w) => (v.relabelled ? {
-      ...w,
-      description: speakPromptWith(v, w.description),
-      steps: w.steps.map((s) => speakPromptWith(v, s)),
-      script: speakLiterals(v, w.script),
-    } : w));
+    .map((w) => speakLibraryWorkflow(v, w));
 }

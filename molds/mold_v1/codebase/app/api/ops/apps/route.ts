@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage, errorText, zodMessage } from "@/lib/ops-errors";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { apps } from "@/agent/lib/db/schema";
@@ -29,9 +30,6 @@ const createAppSchema = z.strictObject({
   createdBy: z.string().min(1).default("web"),
 });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ");
-}
 
 /** "Weekly QBR digest" → "weekly-qbr-digest" (url-safe, stable handle). */
 export function slugify(name: string): string {
@@ -54,7 +52,7 @@ export async function GET(request: NextRequest) {
     );
     return NextResponse.json({ items });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -89,7 +87,7 @@ export async function POST(request: NextRequest) {
       cronMatches(data.refreshCron, new Date());
     } catch (e) {
       return NextResponse.json(
-        { error: e instanceof Error ? e.message : String(e) },
+        { error: errorMessage(e) },
         { status: 400 },
       );
     }
@@ -111,6 +109,6 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ item }, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

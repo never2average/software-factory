@@ -79,6 +79,7 @@ import { CustomFieldControl, customFieldError } from "./custom-fields";
 import { displayCustom, validateCustom } from "@/agent/lib/custom-fields";
 import type { CustomFieldSpec, DomainArea } from "@/lib/deployment-profile.generated";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { bundleToMarkdown, exportJson, type ExportBundle } from "@/lib/record-export";
 import { domainView, groupRows, groupSlug, groupTitle, withProfileFields, type DomainFormField, type DomainView } from "@/lib/profile-domains";
 
 /**
@@ -1768,7 +1769,7 @@ const CONTAINER_KINDS = [
 const LINK_KINDS = [
   { value: "", label: "— none —" },
   { value: "ticket", label: "Ticket" },
-  { value: "customer", label: "Customer" },
+  { value: "customer", label: ACCOUNT_LABEL },
   { value: "app", label: "App" },
   { value: "cron", label: "Cron" },
   { value: "workflow", label: "Workflow" },
@@ -2065,65 +2066,8 @@ function PanelSection({ label, children }: { readonly label: string; readonly ch
   );
 }
 
-/** Humanise a camelCase key: parentId → "Parent Id". */
-function humanizeKey(k: string): string {
-  return k
-    .replace(/([A-Z])/g, " $1")
-    .replace(/^./, (c) => c.toUpperCase())
-    .trim();
-}
-
-/** A flat record → `**Field:** value` bullets, skipping empty values. */
-function fieldsToMarkdown(obj: Record<string, unknown>): string[] {
-  const out: string[] = [];
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === null || v === undefined || v === "") continue;
-    const val = typeof v === "object" ? JSON.stringify(v) : String(v);
-    out.push(`- **${humanizeKey(k)}:** ${val}`);
-  }
-  return out;
-}
-
-/** The enriched export bundle (from /api/ops/export) → readable Markdown: the
- *  record's own fields, then its resolved pointers (container / cycle / subtasks
- *  / comments), then the customer's data-room context. */
-function bundleToMarkdown(title: string, bundle: ExportBundle): string {
-  const lines = [`# ${title}`, ""];
-  lines.push(...fieldsToMarkdown(bundle.record ?? {}));
-  const resolved = bundle.resolved ?? {};
-  for (const [key, val] of Object.entries(resolved)) {
-    if (val === null || val === undefined || (Array.isArray(val) && val.length === 0)) continue;
-    lines.push("", `## ${humanizeKey(key)}`);
-    if (Array.isArray(val)) {
-      for (const item of val) {
-        lines.push(
-          typeof item === "object" && item
-            ? `- ${Object.entries(item as Record<string, unknown>).map(([k, v]) => `${humanizeKey(k)}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ")}`
-            : `- ${String(item)}`,
-        );
-      }
-    } else if (typeof val === "object") {
-      lines.push(...fieldsToMarkdown(val as Record<string, unknown>));
-    } else {
-      lines.push(String(val));
-    }
-  }
-  const dr = bundle.dataroom;
-  if (dr?.context || (dr?.files && Object.keys(dr.files).length)) {
-    lines.push("", `## Data-room context${dr.customerId ? ` — ${dr.customerId}` : ""}`);
-    if (dr.context) lines.push("", dr.context);
-    for (const [k, v] of Object.entries(dr.files ?? {})) {
-      lines.push("", `### ${humanizeKey(k)}`, "```json", JSON.stringify(v, null, 2), "```");
-    }
-  }
-  return lines.join("\n");
-}
-
-type ExportBundle = {
-  record?: Record<string, unknown>;
-  resolved?: Record<string, unknown>;
-  dataroom?: { customerId: string | null; context: string | null; files: Record<string, unknown> };
-};
+// The export's Markdown and JSON (Copy as …) are built by lib/record-export.ts: keys and code values in the profile's
+// words, data verbatim. GET /api/ops/export itself stays raw.
 
 /** The "…" overflow that sits in the SidePanel's action slot (left of the ✕):
  *  Share (copy deep-link), Copy as JSON / Markdown, and a destructive Delete.
@@ -2173,10 +2117,7 @@ function PanelActionsMenu({
       const qs = new URLSearchParams({ type: exportType, id: exportId });
       if (exportCustomerId) qs.set("customerId", exportCustomerId);
       const bundle = await opsFetch<ExportBundle>(`/api/ops/export?${qs.toString()}`);
-      const text =
-        fmt === "json"
-          ? JSON.stringify(bundle, null, 2)
-          : bundleToMarkdown(copyTitle ?? "Record", bundle);
+      const text = fmt === "json" ? exportJson(bundle) : bundleToMarkdown(copyTitle ?? "Record", bundle);
       copy(text, fmt);
     } catch {
       setFlash(null);

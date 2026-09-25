@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { connectorSecrets, connectors, runtimeEnvPresence } from "@/agent/lib/db/schema";
@@ -46,9 +47,6 @@ const deleteSchema = z.strictObject({
   actor: z.string().min(1).optional(),
 });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ");
-}
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -142,7 +140,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ items, canStore: hasSecretsKey() });
    });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -246,7 +244,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     if (e instanceof MissingSecretsKeyError) {
       return NextResponse.json({ error: e.message }, { status: 503 });
     }
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -307,6 +305,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ deleted: true });
    });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

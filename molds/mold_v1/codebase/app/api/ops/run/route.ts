@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { apps, workflows } from "@/agent/lib/db/schema";
@@ -218,9 +219,9 @@ export async function POST(request: NextRequest) {
     if (workflowLease) {
       await finishWorkflowRun(workflowLease, {
         status: "failed",
-        error: e instanceof Error ? e.message : String(e),
+        error: errorMessage(e),
       });
     }
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
   }
 }

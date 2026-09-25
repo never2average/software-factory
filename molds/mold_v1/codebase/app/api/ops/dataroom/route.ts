@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { z } from "zod";
 import {
   blobToken,
@@ -56,7 +57,7 @@ export async function GET(request: NextRequest) {
     const all = await listDataroomPaths(ctx.orgId);
     return NextResponse.json({ paths: prefix ? all.filter((p) => p.startsWith(prefix)) : all });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -121,6 +122,6 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ ok: true, path, bytes: body.length });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

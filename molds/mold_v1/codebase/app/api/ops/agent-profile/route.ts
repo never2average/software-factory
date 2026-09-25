@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { nanoid } from "nanoid";
@@ -72,7 +73,7 @@ export async function GET(request: NextRequest) {
       canEditOrg: isOrgAdmin(ctx.role),
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -115,6 +116,6 @@ export async function PUT(request: NextRequest) {
     );
     return NextResponse.json({ item: view(row) });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

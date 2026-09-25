@@ -38,8 +38,12 @@ fillProfileText("{name} has been quiet for {days} days.", { name, days });   // 
 name; a slot nobody supplied is left as written (so `{customer_id}` inside a seeded README
 survives as literal text).
 
-The rule for new UI copy: if a sentence names the product, a customer, an FDE or a
-data-room domain, it reads the profile. It never hardcodes the word.
+The rule for new UI copy: if a sentence names the product, a customer, an FDE, a deployment, an
+implementation, a rollout or a data-room domain, it reads the profile. It never hardcodes the word.
+`lib/ui-words.ts` has every one of them ready (`W.account`, `W.Accounts`, `W.owner`, `W.Deployment`,
+`W.implementations`, `W.install` for "this deployment", `an(word)`, `domainLabel("Customers")`), and
+`lib/ui-keys.ts` shows a stored key in the profile's words (`speakKey`, `humanizeKey`). See
+[How a person sees it](#how-a-person-sees-it); `npm run check:ui-vocabulary` enforces it.
 
 ## Keys
 
@@ -680,12 +684,37 @@ A company in two portfolios needs a composite key, which is a change to the data
 **Two companies, one report id.** A deployment's key is (customer, id), so `Q2FY26-results` can exist for every
 company. The list keys such rows on customer + id and sends the real id to the API.
 
+## How a person sees it
+
+The same words the model reads, in everything the web UI and the ops API show a person. Under the default
+profile every one of them is the base word it replaced, so the default deployment reads byte for byte what it
+did before (`check:ui-vocabulary` pins each word).
+
+| Where | How it takes the profile's words |
+|---|---|
+| sentences, labels, placeholders, table headers, empty states, toasts, ops API errors | `W.*` from `lib/ui-words.ts`: `` `${W.Deployment} not found` ``, `` `Pick ${an(W.account)} ${W.account}.` ``, `` `not configured on this ${W.install}` `` |
+| the subagent roster (cockpit rail, workspace Agents tab): names, summaries, descriptions, tool names and descriptions | spoken at generation (`scripts/gen-subagent-meta.mjs` → `scripts/lib/speak-subagent-meta.mjs`) with the same `speak()` / `speakIdentifier()` the model's copy goes through, so the panel shows `list_analysts` and "List the analyst roster…", exactly what the model is given |
+| the workflow library | never shipped to the browser: `GET /api/ops/workflows` says in one sentence why the library is smaller (`libraryNote`); a stored base library row that needs an excluded specialist is listed as "not in this workspace", its text in the profile's words, and can be opened and adopted (edit it to use this workspace's specialists) |
+| a workflow a person edited that still delegates to an excluded specialist | a count ("needs 2 specialists"), never the directory names |
+| an enum VALUE a person sees (`customer-vpc`, `customer_cloud`, blockerOwner `Customer`) | the profile's option label; without one, the value as the model is told it (`company-vpc`) |
+| JSON a person views or copies (a record's Copy as JSON / Markdown export, the data-room JSON and JSONL viewers), an ops API error's field path | keys through `lib/ui-keys.ts` (`jsonForPeople`, `lib/ops-errors.ts`); values verbatim |
+| a stored key a person reads (a data-room sheet's column header, a Markdown export's field) | `lib/ui-keys.ts`: `customer_id` → `company_id` (the model's spelling); the owner key humanises to `vocabulary.owner` |
+| a data-room domain | its `dataroom.domains.<Domain>.label`, also in path-shaped placeholders and sheet tabs |
+| specialists the profile excludes | not listed anywhere: not in the roster, not in a starter workflow, not in a connector's "without it, … lose" line |
+
+What is NOT translated, and why, is the allow-list `scripts/fixtures/ui-vocabulary/allow.json`: keys, routes,
+storage keys and stored values a person never reads, each with its reason. User data (names, notes, a
+workflow a person wrote) is never translated.
+
 ## Checks
 
 ```bash
 npm run build:deployment-profile   # merge + validate + write both generated files
 npm run test:deployment-profile    # merge rules, domains (defaults exact, example validates, bad profiles fail), the briefing; offline
 npm run check:agent-vocabulary     # the model-facing surface under a relabelling fixture has no base word; the default's is unchanged
+npm run check:ui-vocabulary        # what a PERSON reads (source text, the built client bundle, prerendered pages) under the same fixture has no base word; the default's words are unchanged
+npm run check:vocabulary           # its static half, in seconds (no build)
+npm run test:ui-vocabulary         # keys in JSON and exports, ops API errors, library rows, unlabelled enum values, the generator during a build
 npm run test:agent-vocabulary      # what the model writes in the profile's words lands in unchanged storage; specialists.exclude moves and restores
 npm run test:custom-fields         # the custom-field validator, the agent's write path, the MCP inputs, the migration; offline
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked

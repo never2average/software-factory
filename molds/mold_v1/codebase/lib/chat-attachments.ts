@@ -95,19 +95,156 @@ export function composeAttachmentMessage(
 
 /** Remove every model-only block. The transcript renderer applies this. */
 export function stripAgentOnly(text: string): string {
-  return text
-    .replace(/⁦attachments⁩[\s\S]*?⁦\/attachments⁩/g, "")
-    .replace(/⁦directives⁩[\s\S]*?⁦\/directives⁩/g, "")
-    /**
-     * Messages sent BEFORE the marker existed carry bare directives, and a
-     * reopened thread replays them from eve, so they still have to go.
-     *
-     * Matched by STRUCTURE, not by bracket balancing: directives sit at the very
-     * start and are followed by a blank line. Both the greedy `[^)]*` and a lazy
-     * `[\s\S]*?\)` stop at the "(browser_open)" nested inside the browser
-     * directive and leak its tail — which is exactly what shipped.
-     */
-    .replace(/^\((?:Context|Web search|Plan mode|Browser use)[\s\S]*?(?:\n\n|$)/i, "");
+  // Directives in every form they were ever sent in — the marker, a truncated
+  // marker, and the bare legacy run a reopened thread still replays — by the
+  // same rules as the sidebar (see `stripDirectiveBlocks`), so the transcript
+  // and the titles can no longer disagree about what is a directive.
+  return stripDirectiveBlocks(text.replace(/⁦attachments⁩[\s\S]*?⁦\/attachments⁩/g, ""));
+}
+
+/**
+ * EVERY DIRECTIVE SENTENCE THE APP HAS EVER SENT BARE — enumerated from the
+ * history of app/_components/agent-chat.tsx (df7a1ed, d321131, 5e791ca,
+ * be33292, d2e39c8), not guessed from fragments. A person's own words that
+ * merely LOOK like a setting ("(Context: I am the CFO) …", "Why did
+ * browser_open fail (timeout) …") are never one of these, and are never
+ * touched. The only variable parts are the account ids of the Context line and
+ * the profile's plural word in the plan line.
+ */
+const LEGACY_DIRECTIVES: readonly RegExp[] = [
+  // Company names may carry their own brackets ("Aadhar Housing (AHFL)").
+  /^\(Context: this conversation is about (?:[^()\n]|\([^()\n]*\))+?\.\)/,
+  /^\(Web search is off — do not use the web_search tool for this request\.\)/,
+  /^\(Browser use is enabled — you may open a real browser \(browser_open\) and navigate \+ read pages with the browser tools when it helps\.\)/,
+  /^\(Plan mode is ON — investigate and plan only, take no action\. Use ONLY read-only tools to gather what you need; do NOT write, mutate, send, draft, schedule, post, page, or anything that would prompt for approval\. If the request is ambiguous or has real options, ask me a short clarifying question first\. Then give a concise plan: the goal, the concrete steps in order, which [^/()\n]+\/records\/systems each step touches, and how we'll verify it\. Then stop and wait for my explicit go — do not act until I approve\.\)/,
+];
+
+/**
+ * The legacy run: at the VERY START of a message, one or more of the exact
+ * sentences above separated by single spaces, and then a blank line (the only
+ * way the app ever sent them). Anything else — a sentence that differs by a
+ * character, a run with no blank line after it — is the person's text.
+ */
+function legacyRunLength(text: string): number {
+  let i = 0;
+  let matched = 0;
+  for (;;) {
+    const rest = text.slice(i);
+    const hit = LEGACY_DIRECTIVES.map((re) => re.exec(rest)).find((m) => m !== null);
+    if (!hit) break;
+    i += hit[0].length;
+    matched += 1;
+    if (text[i] === " ") i += 1;
+  }
+  if (matched === 0) return 0;
+  const tail = /^\s*\n\s*\n/.exec(text.slice(i).replace(/^ +/, ""));
+  if (!tail) return 0;
+  return text.length - text.slice(i).replace(/^ +/, "").slice(tail[0].length).length;
+}
+
+/**
+ * Remove the per-turn DIRECTIVES — and only them: the agent-only marker block
+ * (complete, or cut off by truncation — the marker characters are the app's own,
+ * never a person's), a stray close marker, and the exact legacy run at the head
+ * of a message. DISPLAY ONLY: nothing that is stored or re-sent goes through
+ * this (see `displayText`).
+ */
+export function stripDirectiveBlocks(text: string): string {
+  // Only a COMPLETE open…close pair: text a person pasted that happens to
+  // contain one of the marker characters keeps every word.
+  const out = text.replace(/⁦directives⁩[\s\S]*?⁦\/directives⁩/g, "").replace(/^\s+/, "");
+  return out.slice(legacyRunLength(out));
+}
+
+/** How each generated sentence opens — for a TITLE cut off in the middle of one. */
+const LEGACY_OPENINGS = [
+  "(Context: this conversation is about ",
+  "(Web search is off — ",
+  "(Browser use is enabled — ",
+  "(Plan mode is ON — ",
+];
+
+/**
+ * A title is a prefix of the first message, and a prefix can end INSIDE a
+ * directive: an open marker with no close, or a generated sentence cut short.
+ * Only titles get this: in a message, a marker without its pair is the person's.
+ */
+function stripTruncatedDirective(title: string): string {
+  const open = title.indexOf("⁦directives⁩");
+  if (open >= 0 && title.indexOf("⁦/directives⁩", open) < 0) return title.slice(0, open).trim();
+  let rest = title.replace(/^\s+/, "");
+  let stripped = false;
+  // Complete generated sentences at the head…
+  for (;;) {
+    const hit = LEGACY_DIRECTIVES.map((re) => re.exec(rest)).find((m) => m !== null);
+    if (!hit) break;
+    rest = rest.slice(hit[0].length).replace(/^ /, "");
+    stripped = true;
+  }
+  const tail = rest.trim();
+  // …followed by nothing (the title ended with them), or by the start of
+  // another one that was cut off before its closing bracket.
+  if (stripped && tail === "") return "";
+  const cutOff =
+    tail.length >= 8 &&
+    !tail.includes(")") &&
+    LEGACY_OPENINGS.some((o) => o.startsWith(tail) || tail.startsWith(o));
+  return cutOff ? "" : title;
+}
+
+/**
+ * WHAT A READER MAY SEE of a person's message, a title or a preview — the ONE
+ * function every DISPLAY site uses (scripts/test-chat-directives.mjs enumerates
+ * them). Display only: what is stored, mirrored to the server or re-sent keeps
+ * its text exactly, so a rule that is ever wrong can only hide words on screen,
+ * never lose them.
+ *
+ * "Show the extra chat directives in either the chat input or the sidebar.
+ * You're showing that many, many times. That should not ever be shown." The
+ * directives are sent on EVERY message, and the transcript renderer stripped
+ * them while the sidebar title (`cleanTitle`, legacy parens only), the stored
+ * preview and the suggestion cards' bare directives did not. Every model-only
+ * block goes, in every form; the reader's own words and `[file: …]` chip tokens
+ * stay (the renderer lifts the chips out itself).
+ */
+export function displayText(text: string | null | undefined): string {
+  if (!text) return "";
+  return stripDirectiveBlocks(
+    text
+      .replace(/⁦attachments⁩[\s\S]*?⁦\/attachments⁩/g, "")
+      .replace(/⁦attachments⁩[\s\S]*$/g, "")
+      .replace(/⁦\/attachments⁩/g, ""),
+  ).trim();
+}
+
+/**
+ * A chat's TITLE as the sidebar, the search and the fork banner show it: the
+ * readable text on one line, or the fallback. Applied at RENDER as well as at
+ * persist, so titles stored before this existed are clean without a migration.
+ */
+export function displayTitle(title: string | null | undefined, fallback: string): string {
+  return stripTruncatedDirective(displayText(title)).replace(/\s+/g, " ").trim() || fallback;
+}
+
+/**
+ * The active per-turn settings, as the reader should see them: ONCE, as state,
+ * beside the composer's toggles — never repeated in every message and never in
+ * the sidebar. Only what differs from a plain turn is listed.
+ */
+export function activeSettingLabels(input: {
+  readonly webSearch: boolean;
+  readonly browserUse: boolean;
+  readonly mode: string;
+  readonly customers: readonly string[];
+}): string[] {
+  const out: string[] = [];
+  if (input.customers.length > 0) out.push(`About: ${input.customers.join(", ")}`);
+  if (!input.webSearch) out.push("Web search off");
+  if (input.browserUse) out.push("Browser on");
+  if (input.mode === "plan") out.push("Plan mode");
+  else if (input.mode === "goal") out.push("Goal mode");
+  else if (input.mode === "loop") out.push("Loop mode");
+  return out;
 }
 
 /** Wrap per-turn directives so the model reads them and the reader does not. */
@@ -168,7 +305,7 @@ export function extractAttachmentRefs(text: string): AttachmentRef[] {
  * out. Mirrors the renderer so a test can assert on the real thing.
  */
 export function visibleText(text: string): string {
-  return stripAgentOnly(text)
+  return displayText(text)
     .replace(/\[file(?:: ([^\]]*))?\]/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

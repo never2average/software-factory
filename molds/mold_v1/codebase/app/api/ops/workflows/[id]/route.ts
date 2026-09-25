@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText, zodMessage } from "@/lib/ops-errors";
+import { scriptToStore, workflowForList } from "@/lib/workflow-availability";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { workflowInstructionVersions, workflows } from "@/agent/lib/db/schema";
@@ -36,11 +38,6 @@ const patchWorkflowSchema = z.strictObject({
 // DELETE may carry an optional JSON body naming the actor for the audit trail.
 const deleteBodySchema = z.strictObject({ actor: z.string().min(1).optional() });
 
-function zodMessage(error: z.ZodError): string {
-  return error.issues
-    .map((i) => `${i.path.join(".") || "body"}: ${i.message}`)
-    .join("; ");
-}
 
 const uuidSchema = z.uuid();
 
@@ -68,9 +65,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
     );
     if (!item) return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
     const analysis = item.script ? analyzeWorkflowScript(item.script) : null;
-    return NextResponse.json({ item, analysis });
+    // As the list shows it: a base library original's text in the profile's words (lib/workflow-availability.ts).
+    return NextResponse.json({ item: workflowForList(item), analysis });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -96,6 +94,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: zodMessage(parsed.error) }, { status: 400 });
   }
   const { actor = "web", ...patch } = parsed.data;
+  // Saving a library original's displayed (spoken) script unchanged is not an edit (lib/workflow-availability.ts).
+  if (typeof patch.script === "string") patch.script = scriptToStore(patch.script);
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
@@ -160,7 +160,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({ item });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
 
@@ -198,6 +198,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json({ deleted: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

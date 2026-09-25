@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorText } from "@/lib/ops-errors";
 import { z } from "zod";
 import { desc, eq, inArray, notInArray, asc, sql as dsql } from "drizzle-orm";
 import { customers, interactions, tickets } from "@/agent/lib/db/schema";
@@ -9,6 +10,7 @@ import { recordOpsAudit } from "@/lib/ops-audit";
 import { customBodySchema, customForWrite } from "@/lib/ops-domain-fields";
 import { asCustomValues, customDelta, customFieldsOf, type CustomValues } from "@/agent/lib/custom-fields";
 import { customForNewRow, customMergeSql } from "@/agent/lib/custom-merge-sql";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -146,7 +148,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ customers: [] as CustomerOption[], items: [] as CustomerOption[] });
     }
     console.error("customers GET failed", e);
-    return NextResponse.json({ error: "customer store unavailable" }, { status: 503 });
+    return NextResponse.json({ error: `${W.account} store unavailable` }, { status: 503 });
   }
 }
 
@@ -239,6 +241,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ item: row, created: !existing }, { status: existing ? 200 : 201 });
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

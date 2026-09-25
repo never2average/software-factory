@@ -280,9 +280,14 @@ for (const f of [
  * upsert's UPDATE set let a workspace switch drag every existing conversation
  * into the new workspace. */
 const chatRoute = decomment(readFileSync("app/api/ops/chat-sessions/route.ts", "utf8"));
+// The upsert lives in lib/chat-sessions-mirror.ts (shared with its database test); the route must use it.
+const chatMirror = decomment(readFileSync("lib/chat-sessions-mirror.ts", "utf8"));
 check(
-  "a chat thread's workspace cannot be rewritten by a later sync",
-  /orgId: _immutable, \.\.\.mutable/.test(chatRoute) && /set: \{ \.\.\.mutable/.test(chatRoute),
+  "a chat thread's workspace — and its owner — cannot be rewritten by a later sync",
+  /writeMirrorRows\(/.test(chatRoute) &&
+    /orgId: _immutable, ownerEmail: _owner, /.test(chatMirror) &&
+    /set: \{ \.\.\.mutable/.test(chatMirror) &&
+    /setWhere: eq\((?:table|chatSessions)\.ownerEmail, email\)/.test(chatMirror),
 );
 
 /* The local thread cache must be per workspace, or one browser shows one

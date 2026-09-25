@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { customers, inboxItems, interactions, tickets } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
+import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -117,7 +119,7 @@ export async function POST(request: NextRequest) {
         .limit(1),
     );
     if (!customer) {
-      return NextResponse.json({ error: `No customer '${customerId}' in this workspace.` }, { status: 404 });
+      return NextResponse.json({ error: `No ${W.account} '${customerId}' in this workspace.` }, { status: 404 });
     }
 
     let ticketId: string | undefined;
@@ -169,6 +171,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, interactionId, ticketId: ticketId ?? null }, { status: 201 });
   } catch (e) {
     console.error("inbox promote failed", e);
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
   }
 }
