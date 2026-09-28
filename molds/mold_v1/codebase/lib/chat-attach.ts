@@ -152,6 +152,43 @@ export interface ReadLiveTailInput {
    * fruitless, so a dead connection still reaches the poll via `maxFailures`.
    */
   readonly idleTimeoutMs?: number;
+  /**
+   * IS SILENCE THE EXPECTED STATE RIGHT NOW? Asked when a segment ends.
+   *
+   * THE DEFECT (onfinance_hfc, 2026-09-28). The operator answered a delegated
+   * specialist's question and the chat looked stuck: the tile stayed
+   * "Running" and the orchestrator's follow-on appeared only after a reattach
+   * — 80 s, 279 s. Server-side nothing was wrong: the parent's `action.result`
+   * (`subagent-result`) arrived and the orchestrator went on. But between the
+   * answer and that result the PARENT's stream says nothing at all — the child
+   * is doing the work, on its own session (recorded:
+   * scripts/fixtures/subagent-delivery/child-parks-then-answered.ndjson, index
+   * 9 → 10 is the whole of the child's resumed run). Every segment of that
+   * silence ends cleanly at the seam with zero events, and this loop counted
+   * each one as FRUITLESS: four of them and the reader returned
+   * `stream-failed`, the component spent its attach budget the same way, and
+   * then fell back to `attachRetryDelayMs`' rounds — 5 s rising to a minute.
+   * So the result reached the browser up to a minute after it reached the
+   * server. Measured in the rig with a 4 s seam: "stream opened but delivered
+   * nothing" every ~20 s while the specialist worked.
+   *
+   * A segment that OPENED (the gate let us in, the body was readable), stayed
+   * open for at least `quietMinMs` and then ended cleanly is not a failure when
+   * the caller knows the session is waiting on someone else — it is the seam
+   * cutting a healthy, quiet stream. It is reopened at the floor and not
+   * counted. So is one that ended in a gateway timeout (502/504) or a dropped
+   * socket after that long: eve holds a stream's headers until its first
+   * event, so a seam in pure silence can arrive as an error rather than as an
+   * empty body. Everything else is unchanged: the ownership gate's 404/503, a
+   * 401/403, a segment that ends at once (`< quietMinMs`, the storm shape), and
+   * one the idle watchdog had to cut (a black-holed socket) are still
+   * fruitless. And
+   * with no `quietExpected` at all — an ordinary detached turn — silence still
+   * reaches the poll through `maxFailures`, as before.
+   */
+  readonly quietExpected?: () => boolean;
+  /** How long a silent segment must have stayed open to count as quiet rather than refused. Default 2 s. */
+  readonly quietMinMs?: number;
   /** Injected in tests so a backoff does not make the suite wait. */
   readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -169,6 +206,7 @@ export async function readLiveTail(input: ReadLiveTailInput): Promise<AttachResu
   const maxFailures = input.maxFailures ?? 4;
   const minGap = input.minSegmentGapMs ?? 250;
   const idleTimeout = input.idleTimeoutMs ?? 150_000;
+  const quietMin = input.quietMinMs ?? 2_000;
   const sleep = input.sleep ?? defaultSleep;
   let index = input.startIndex;
   let events = 0;
@@ -188,6 +226,15 @@ export async function readLiveTail(input: ReadLiveTailInput): Promise<AttachResu
   while (!input.signal.aborted && segments < maxSegments) {
     segments += 1;
     let got = 0;
+    /** This segment's open or read threw. */
+    let threw = false;
+    /**
+     * …and how: a gateway giving up on a silent upstream (502/504) or a dropped
+     * socket, which is how a seam can present when eve has sent no headers yet
+     * (it holds them until the first event) — as opposed to the ownership gate
+     * refusing (404) or failing (503), which stay failures.
+     */
+    let threwLikeASeam = false;
     const openedAt = Date.now();
     /**
      * The watchdog's own signal, aborted either by the caller or by silence.
@@ -229,8 +276,13 @@ export async function readLiveTail(input: ReadLiveTailInput): Promise<AttachResu
         if (isSessionBoundary(event)) return done("terminal");
       }
     } catch (err) {
+      threw = true;
       if (input.signal.aborted) return done("aborted");
       const status = statusOf(err);
+      threwLikeASeam =
+        (status === undefined && !(err instanceof Error && err.message === "malformed NDJSON line")) ||
+        status === 502 ||
+        status === 504;
       if (status === 403) {
         // The share was REVOKED. Retrying cannot help and the gate is a database
         // read; stop, and never forgive it on a tab return either.
@@ -284,6 +336,20 @@ export async function readLiveTail(input: ReadLiveTailInput): Promise<AttachResu
       fruitless = 0;
       const left = minGap - (Date.now() - openedAt);
       if (left > 0) await sleep(left);
+      continue;
+    }
+    if ((!threw || threwLikeASeam) && !timedOut && Date.now() - openedAt >= quietMin && input.quietExpected?.()) {
+      // Quiet, not broken: the seam cut a stream that is waiting on a
+      // specialist. Reopen at once (the floor is already paid — the segment
+      // was open for longer than it) and keep the failure count where it was.
+      // A seam that arrived as a gateway error waits a second first: it is
+      // the same silence, but it is not a clean end, and a gateway that is
+      // actually down should not be asked twice a second.
+      if (threw) await sleep(1_000);
+      else {
+        const left = minGap - (Date.now() - openedAt);
+        if (left > 0) await sleep(left);
+      }
       continue;
     }
     fruitless += 1;

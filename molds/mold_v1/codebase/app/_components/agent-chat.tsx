@@ -261,7 +261,9 @@ import {
   appendTailEvent,
   attachDecision,
   attachRearmAllowed,
+  awaitingSpecialists,
   liveDelegations,
+  specialistWorkingLine,
   stopTarget,
   stoppedFromEvents,
   stoppedMarker,
@@ -1280,6 +1282,8 @@ export function AgentChat({
   const [attachLive, setAttachLive] = useState(false);
   /** Bumped when a reader gives up, to arm the next attempt within the budget. */
   const [attachEpoch, setAttachEpoch] = useState(0);
+  /** Forgive the reader's spent budget once an answer is accepted — see `freshAttachAfterAnswer`. */
+  const freshAttachRef = useRef<() => void>(() => {});
   /**
    * The reader stopped on a 401: this browser's sign-in expired under the turn.
    *
@@ -1765,7 +1769,10 @@ export function AgentChat({
           ANSWER_VERIFY_MS,
         );
         setAnswerChecking(false);
-        if (landed) return;
+        if (landed) {
+          freshAttachRef.current();
+          return;
+        }
         forgetDelivery(provisional);
         setRemoteTurn(false);
       }
@@ -1775,7 +1782,10 @@ export function AgentChat({
       // Delivered around an idle store: nothing local is reading yet, so the
       // session is not at rest until the reader has read what it resumes. (A
       // store already reading gets the resumed events on its open stream.)
-      if (!storeReading) setRemoteTurn(true);
+      if (!storeReading) {
+        setRemoteTurn(true);
+        freshAttachRef.current();
+      }
       return;
     }
     if (outcome.body.includes(DEAD_TOKEN_SIGNAL)) {
@@ -1990,6 +2000,19 @@ export function AgentChat({
   );
   holdRef.current = gate.hold;
   gateReasonRef.current = gate.reason;
+  /**
+   * The specialists the main thread is waiting on while nothing is asked of the
+   * person — see `awaitingSpecialists`. Read by the live reader at every seam
+   * (a quiet stream is then expected, not failed) and said in the status line.
+   */
+  const workingSpecialists = useMemo(
+    () =>
+      awaitingSpecialists({ events: mergedEvents as readonly TurnEvent[], openRequests: openInputRequests.length }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventCount, openInputRequests.length],
+  );
+  const specialistQuietRef = useRef(false);
+  specialistQuietRef.current = workingSpecialists.length > 0;
   const detached = gate.reason === "detached";
   /**
    * IS THE ANSWER OVER — for the transcript, not for the composer.
@@ -3420,6 +3443,25 @@ export function AgentChat({
     attachFailures.delete(attachKey);
     setAttachEpoch((n) => n + 1);
   };
+  /**
+   * AN ACCEPTED ANSWER IS A FRESH START for the reader.
+   *
+   * The attach budget and the rearm rounds are keyed by turn, and a reply
+   * resumed by an answer has no `turn.started` — so it inherited whatever the
+   * turn had spent before the question. A turn whose specialist worked quietly
+   * for a few minutes before asking had already climbed to one-minute rounds or
+   * spent its budget outright ("open-failed": no reader at all), and the answer
+   * then waited out that backoff before anything read the hand-back — the 80 s
+   * and 279 s reattaches in the telemetry. Forgive both, and start a reader now
+   * unless one is already on the stream.
+   */
+  const freshAttachAfterAnswer = () => {
+    attachRounds.delete(attachKeyRef.current);
+    setRearmRounds(0);
+    attachFailures.delete(attachKeyRef.current);
+    if (!attachLiveRef.current) setAttachEpoch((n) => n + 1);
+  };
+  freshAttachRef.current = freshAttachAfterAnswer;
   useEffect(() => {
     if (!shouldAttach || !attachId) return;
     const ctrl = new AbortController();
@@ -3454,6 +3496,9 @@ export function AgentChat({
         : eveSessionStream({ sessionId: captured, headers: getAuthHeaders }),
       startIndex,
       signal: ctrl.signal,
+      // A specialist is working and the parent says nothing until it hands
+      // back: a seam in that silence is the stream being healthy, not failing.
+      quietExpected: () => specialistQuietRef.current,
       onEvent: (entry) => {
         // The transcript moved to another session while this reader was open (a
         // resync remount that re-minted the id, a fork, a new session after a
@@ -3485,6 +3530,12 @@ export function AgentChat({
         if (result.outcome === "aborted") return;
         if (result.outcome === "terminal") {
           attachFailures.delete(attachKey);
+          // A reader that read to a boundary proved the connection works: the
+          // next quiet stretch of this turn starts from a 5 s round again, not
+          // from wherever an earlier bad patch left the backoff (a resumed reply
+          // has no `turn.started`, so it shares this key with the whole turn).
+          attachRounds.delete(attachKey);
+          if (alive) setRearmRounds(0);
           // A turn delivered AROUND the store (directDeliver) has now been seen
           // to settle, so the hold it placed can lift without a replay.
           if (alive) {
@@ -4363,8 +4414,8 @@ export function AgentChat({
                     ? owedFromOtherTab
                       ? "Your earlier message is queued and will be sent after this reply. Stop releases it after a minute."
                       : "Your earlier message is waiting its turn on the server — its reply will appear here."
-                  : specialistRunning
-                    ? "Still working — a specialist is running. The rest of the reply will appear here when it finishes."
+                  : specialistRunning || workingSpecialists.length > 0
+                    ? specialistWorkingLine(workingSpecialists.map((d) => d.name))
                     : attachLive
                       ? // A reader IS on the live stream: the words have to match
                         // what the screen is doing, or the one state where the

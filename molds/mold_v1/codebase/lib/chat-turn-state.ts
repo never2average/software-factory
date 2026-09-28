@@ -1595,6 +1595,52 @@ export function liveDelegations(events: readonly TurnEvent[]): { callId: string;
   return [...live].map(([callId, name]) => ({ callId, name }));
 }
 
+/**
+ * WHICH SPECIALISTS IS THE PARENT WAITING ON, with nothing asked of the person?
+ *
+ * After a delegated specialist's question is answered, the parent's stream is
+ * SILENT until the child hands back: the child resumes on its own session, and
+ * the parent says nothing until `subagent.completed` → `action.result`
+ * (`subagent-result`) → the orchestrator's next step (recorded:
+ * scripts/fixtures/subagent-delivery/child-parks-then-answered.ndjson). The
+ * same is true before the first question, while the child simply works.
+ *
+ * That silence is the EXPECTED state, and two things need to know it: the live
+ * reader, which must not take a quiet seam for a failure (`readLiveTail`'s
+ * `quietExpected`), and the status line, which should say who is working
+ * rather than read as a stall. Empty while a question is open — then the
+ * person, not a specialist, is what the turn is waiting on.
+ */
+export function awaitingSpecialists(input: {
+  readonly events: readonly TurnEvent[];
+  /** Questions/approvals on screen that nobody has answered yet. */
+  readonly openRequests: number;
+}): { callId: string; name: string }[] {
+  if (input.openRequests > 0) return [];
+  return liveDelegations(input.events);
+}
+
+/** "investor-presentations" → "Investor Presentations": a specialist's tool name, said as a name. */
+export function specialistDisplayName(name: string): string {
+  const words = name.replace(/[-_]+/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return name;
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+/**
+ * What the status line says while a specialist works and the main thread waits
+ * for it — named, so a quiet stream reads as work in progress, not a stall.
+ */
+export function specialistWorkingLine(names: readonly string[]): string {
+  // `liveDelegations` says "specialist" when the event carried no name.
+  const unique = [...new Set(names.map((n) => n.trim()).filter((n) => n && n !== "specialist"))];
+  if (unique.length === 0) return "Still working — a specialist is running. The rest of the reply will appear here when it finishes.";
+  if (unique.length === 1) {
+    return `The ${specialistDisplayName(unique[0])} specialist is working — the main thread continues here when it hands back.`;
+  }
+  return `${unique.length} specialists are working (${unique.map(specialistDisplayName).join(", ")}) — the main thread continues here when they hand back.`;
+}
+
 /** The browser-only marker a Stop leaves in the transcript (persisted with it, like `client.input.responded`). */
 export const STOPPED_MARKER = "client.turn.stopped";
 

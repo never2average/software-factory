@@ -10,7 +10,10 @@
  * Scripts (chosen by --script, default "delegate-plain"):
  *   delegate-plain     root delegates to `research`; the child answers and ends.
  *   delegate-parks     root delegates to `research`; the child calls ask_question
- *                      first, then answers once the reply reaches it.
+ *                      first, then answers once the reply reaches it. With
+ *                      `--child-work-ms N` that answer takes N ms — a specialist
+ *                      WORKING after its question, while the parent's stream says
+ *                      nothing (scripts/rig-subagent-handback.mjs times the hand-back).
  *   vision             answers a `read_image` call by REPORTING what arrived on the
  *                      wire: the model id, how many image parts and their media types.
  *                      That makes "the picture really reached the provider, as an image
@@ -42,6 +45,10 @@
  *                      recovery can be shown to actually recover rather than
  *                      merely to stop crashing.
  *
+ * `GET /__log` serves every decision with the time it was made (`at`, epoch ms), so a
+ * rig can tell when the orchestrator was asked to continue — the moment a specialist's
+ * result reached it.
+ *
  * Every request body is kept and served at `GET /__requests`, because the field
  * that settles the empty-response hypothesis is one nothing else can see: the
  * `max_tokens` the whole stack (eve, the AI SDK, this repo, a provider default)
@@ -64,6 +71,8 @@ const SCRIPT = arg("script", "delegate-plain");
 const SUBAGENT = arg("subagent", "research");
 const NO_USAGE = argv.includes("--no-usage");
 const EMPTIES = Number(arg("empties", "1"));
+/** delegate-parks: how long the child "works" after its question is answered. */
+const CHILD_WORK_MS = Number(arg("child-work-ms", "0"));
 /** Completion tokens an empty reasoning answer burns — the measured 256. */
 const EMPTY_COMPLETION_TOKENS = Number(arg("empty-completion-tokens", "256"));
 const LOG = [];
@@ -264,6 +273,11 @@ const server = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    if (req.url?.includes("__log")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(LOG));
+      return;
+    }
     if (req.url?.includes("__requests")) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(REQUESTS));
@@ -290,19 +304,29 @@ const server = createServer((req, res) => {
     }
     const messages = payload.messages ?? [];
     const decision = decide(messages, payload);
-    LOG.push({ child: isChild(messages), decision });
+    LOG.push({ at: Date.now(), child: isChild(messages), decision });
     console.error(
       `[fake-model] ${isChild(messages) ? "CHILD " : "ROOT  "} -> ${decision.empty ? "EMPTY" : (decision.tool ?? "text")} (max_tokens=${payload.max_tokens ?? "unset"})`,
     );
-    if (payload.stream) {
-      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-      for (const chunk of sseChunks(decision, payload.model)) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-      res.write("data: [DONE]\n\n");
-      res.end();
+    // The child's resumed work, when asked for: its answer comes CHILD_WORK_MS later.
+    const work = SCRIPT === "delegate-parks" && isChild(messages) && childAlreadyAsked(messages) ? CHILD_WORK_MS : 0;
+    if (work > 0) {
+      setTimeout(() => respond(payload, decision, res), work);
       return;
     }
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(completion(decision, payload.model)));
+    respond(payload, decision, res);
   });
 });
+
+function respond(payload, decision, res) {
+  if (payload.stream) {
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    for (const chunk of sseChunks(decision, payload.model)) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify(completion(decision, payload.model)));
+}
 server.listen(PORT, "127.0.0.1", () => console.error(`[fake-model] script=${SCRIPT} on :${PORT}`));

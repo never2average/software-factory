@@ -247,6 +247,16 @@ jobs:
         if: always()
         run: npm run test:subagent-delivery
 
+      # THE HAND-BACK STAYS LIVE. After a specialist's question is answered the
+      # parent's stream is silent until the child hands back; the chat's reader
+      # counted each quiet ~120s seam as a failure, gave up, and the
+      # orchestrator's follow-on waited out a 5-60s rearm round. Replays the
+      # RECORDED park -> answer -> subagent-result -> continuation on a virtual
+      # clock through the real reader.
+      - name: Subagent hand-back stays live (behavioural)
+        if: always()
+        run: npm run test:subagent-handback
+
       # A parked approval survives a reload on purpose; one whose run has ENDED
       # must not, or it comes back as a live prompt and wedges the composer on a
       # chat that is already finished. Runs eve's own reducer over persisted
