@@ -4,15 +4,12 @@ import { Button } from "@/components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Streamdown } from "streamdown";
+import { streamdownParseKey, useStreamdownPlugins } from "./streamdown-plugins";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -294,19 +291,27 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
-const streamdownPlugins = { cjk, code, math, mermaid };
+// One object, not a literal per render: a new object is a new Streamdown context value, which re-renders every block.
+const NO_LINK_SAFETY = { enabled: false } as const;
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
-      plugins={streamdownPlugins}
-      // Links (e.g. published artifact/workbook signed URLs) open directly in a
-      // new tab — no "Open external link?" confirmation modal.
-      linkSafety={{ enabled: false }}
-      {...props}
-    />
-  ),
+  ({ className, ...props }: MessageResponseProps) => {
+    // Plugins (shiki, katex, mermaid, cjk) load when this text first needs one; see ./streamdown-plugins.
+    const plugins = useStreamdownPlugins(typeof props.children === "string" ? props.children : "", {
+      mermaid: props.mermaid !== undefined,
+    });
+    return (
+      <Streamdown
+        key={streamdownParseKey(plugins)}
+        className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
+        plugins={plugins}
+        // Links (e.g. published artifact/workbook signed URLs) open directly in a
+        // new tab — no "Open external link?" confirmation modal.
+        linkSafety={NO_LINK_SAFETY}
+        {...props}
+      />
+    );
+  },
   (prevProps, nextProps) =>
     prevProps.children === nextProps.children && nextProps.isAnimating === prevProps.isAnimating,
 );

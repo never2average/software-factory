@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bearerMatches } from "@/lib/secret-compare";
 import { errorMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
       { status: 503 },
     );
   }
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!bearerMatches(request.headers.get("authorization"), secret)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const db = getOpsDb();

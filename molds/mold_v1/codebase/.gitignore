@@ -44,3 +44,4 @@ public/pdfjs/
 
 # scripts/check-ui-vocabulary.mjs builds a relabelled copy of the checkout here, and removes it.
 .ui-vocabulary/
+.next-budget

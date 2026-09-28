@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bearerMatches } from "@/lib/secret-compare";
 import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { apps } from "@/agent/lib/db/schema";
 import { cronMatches } from "@/agent/lib/cron-match";
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
       { status: 503 },
     );
   }
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!bearerMatches(request.headers.get("authorization"), secret)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const db = getOpsDb();

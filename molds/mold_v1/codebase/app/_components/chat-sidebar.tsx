@@ -27,10 +27,11 @@ import {
   inferCustomersFromEvents,
   sessionCustomers,
 } from "./chat-shell";
-import { type DataroomTab } from "./dataroom";
-import { OPS_SECTIONS, type OpsSection } from "./ops-center";
+import type { DataroomTab } from "./dataroom";
+import { OPS_SECTIONS, type OpsSection } from "./ops/lib";
 import { activeOrg, opsFetch } from "./ops/lib";
 import { ThemeToggle } from "./theme-toggle";
+import { NotificationsBell } from "./notifications-bell";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 
 interface ChatSidebarProps {
@@ -59,6 +60,8 @@ interface ChatSidebarProps {
   readonly onOpenOps: (section: OpsSection) => void;
   readonly onCollapse: () => void;
   readonly onSignOut: () => void;
+  /** For the notifications bell (this browser's subscription). Absent: no bell. */
+  readonly getAuthHeaders?: () => Record<string, string>;
 }
 
 /** Infer a chat's customer(s) from its raw event log when none were manually
@@ -84,6 +87,7 @@ export function ChatSidebar({
   onOpenOps,
   onCollapse,
   onSignOut,
+  getAuthHeaders,
 }: ChatSidebarProps) {
   const idSet = useMemo(() => new Set(customers.map((c) => c.id.toLowerCase())), [customers]);
   const nameOf = useMemo(() => {
@@ -324,6 +328,7 @@ export function ChatSidebar({
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <ThemeToggle />
+          {getAuthHeaders ? <NotificationsBell getAuthHeaders={getAuthHeaders} /> : null}
           <a
             href="/workspace"
             className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

@@ -12,11 +12,12 @@
  */
 
 import { createContext, useContext, useState } from "react";
+import { lazyPanel } from "@/components/lazy-panel";
 import { ChevronLeftIcon, ChevronRightIcon, ArrowUpRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { extractLeadingJsonObject } from "@/lib/dashboard-spec";
+import { extractLeadingJsonObject } from "@/lib/json-object";
 import { TYPE } from "./tokens";
-import { ChartWidget, type ChartBlock } from "./dashboard-charts";
+import type { ChartBlock } from "./dashboard-charts";
 import {
   TONE,
   asTone,
@@ -372,6 +373,26 @@ const KNOWN = new Set([
   "table",
 ]);
 
+/**
+ * Recharts (and d3 under it) is fetched when a dashboard first shows a chart, not with the page: a chat that never
+ * renders one never downloads it. Until it lands, the card holds the chart's own height, so nothing below it moves;
+ * if it cannot be fetched, the card says so with Retry (components/lazy-panel.tsx).
+ */
+const CHART_HEIGHT = 200; // dashboard-charts HEIGHT
+const LazyChart = lazyPanel(() => import("./dashboard-charts").then((m) => m.ChartWidget), {
+  label: "This chart",
+  placeholder: ({ block }: { readonly block: ChartBlock }) => (
+    <WidgetCard title={block.title}>
+      <div
+        aria-busy="true"
+        data-testid="chart-loading"
+        style={{ height: CHART_HEIGHT }}
+        className="w-full animate-pulse rounded-md bg-muted/40"
+      />
+    </WidgetCard>
+  ),
+});
+
 function BlockView({ block }: { readonly block: Block }) {
   switch (block.type) {
     case "kpi":
@@ -383,7 +404,7 @@ function BlockView({ block }: { readonly block: Block }) {
     case "timeline":
       return <TimelineWidget block={block} />;
     case "chart":
-      return <ChartWidget block={block} />;
+      return <LazyChart block={block} />;
     case "table":
       return <TableWidget block={block} />;
     default:

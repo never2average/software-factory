@@ -1348,6 +1348,25 @@ function receivedTexts(event: TurnEvent): readonly string[] {
 }
 
 /**
+ * HAS THIS MESSAGE ALREADY ARRIVED? — for a message the SERVER sent from the chat's queue
+ * (lib/chat-queue-drain.ts). A tab learns such a delivery after the fact (a refresh of the queue), possibly after it
+ * has already read the turn it started; recording it as owed then would hold the chat on "delivering" for fifteen
+ * minutes waiting for a `message.received` that is already on screen. Only receipts at or after `sinceMs` (eve's
+ * own event stamp, with a minute's slack) count, so an identical earlier message is not mistaken for this one.
+ */
+export function receivedSince(events: readonly TurnEvent[], text: string, sinceMs: number): boolean {
+  const want = normalizeMessageText(text);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as TurnEvent & { meta?: { at?: string } };
+    if (e?.type !== "message.received") continue;
+    const at = Date.parse(e.meta?.at ?? "");
+    if (Number.isFinite(at) && at < sinceMs - 60_000) return false;
+    if (receivedTexts(e).includes(want)) return true;
+  }
+  return false;
+}
+
+/**
  * WHICH OF OUR MESSAGES HAS EVE NOT STARTED YET?
  *
  * THE DEFECT. "When I send a second message, only then does it load the second
@@ -1685,8 +1704,11 @@ export function stoppedFromEvents(events: readonly TurnEvent[]): {
  * rounds (≈ ten minutes) the chat stops on its own and offers "Reconnect".
  */
 export const ATTACH_MAX_ROUNDS = 13;
-export function attachRearmAllowed(round: number, hidden: boolean): boolean {
-  return !hidden && round < ATTACH_MAX_ROUNDS;
+export function attachRearmAllowed(round: number, hidden: boolean, turnRunning = false): boolean {
+  // A HIDDEN tab keeps reading a turn that is still RUNNING: that is the tab the person comes back to, and a
+  // background tab that stopped reading met them with a stale reply. It is still capped (this function's rounds),
+  // and an idle hidden tab — nothing running — is never re-armed, which is what #59 stopped.
+  return round < ATTACH_MAX_ROUNDS && (!hidden || turnRunning);
 }
 
 /**

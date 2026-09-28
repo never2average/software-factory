@@ -97,6 +97,13 @@ for (const table of scoped) {
 }
 console.log(`✓ RLS on ${n} scoped tables (${scoped.length - n} exempt)`);
 
+/* 2b. Owner-only rows: the RESTRICTIVE policies, exactly as .bootstrap-supabase.mjs applies them on a deploy. */
+{
+  const { applyOwnerOnlyPolicies } = await import("./lib/owner-only-policies.mjs");
+  const { applied } = await applyOwnerOnlyPolicies(sql);
+  console.log(`✓ owner-only policies: ${applied.join(", ") || "none"}`);
+}
+
 /* 3. Prove the premise before anyone relies on it. ----------------------- */
 const [role] = await sql`SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname='app_rw'`;
 if (role.rolbypassrls || role.rolsuper) {

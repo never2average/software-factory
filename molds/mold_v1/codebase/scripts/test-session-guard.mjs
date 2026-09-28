@@ -69,8 +69,8 @@ const stepGrant = (email, key = esPriv) =>
     .setProtectedHeader({ alg: "ES256" }).setSubject(email).setIssuer("delivered").setAudience("delivered-agent-grant")
     .setIssuedAt().setExpirationTime("2m").sign(key);
 /** PR #63's queue-delivery token: its own audience and kind, the owner's email and workspace, one session in `sid`. */
-const queueToken = (email, sid, org = ORG_A) =>
-  emailToken(email, { kind: "queue-delivery", org, sid }, "delivered-queue-delivery");
+const queueToken = (email, sid, org = ORG_A, extra = {}) =>
+  emailToken(email, { kind: "queue-delivery", org, sid, ...extra }, "delivered-queue-delivery");
 
 const ORG_A = "org-guard-a";
 const ORG_B = "org-guard-b";
@@ -481,17 +481,56 @@ try {
     jwtEcdsa({ algorithm: "ES256", publicKey: pub, issuer: "delivered", audiences: ["delivered-app"], claims: { kind: ["email-session"] } }),
     jwtEcdsa({ algorithm: "ES256", publicKey: pub, issuer: "delivered", audiences: ["delivered-queue-delivery"], claims: { kind: ["queue-delivery"] } }),
   ];
-  const with63 = guardSessionRoutes(eveChannel({ auth: doors }), { auth: doors });
-  const q = await queueToken(ALICE, S);
-  check("it reads ITS session (200)", (await stream(S, q, with63)).status === 200);
-  check("…and delivers the queued message into it (200)", (await post(S, q, { message: "queued while away", continuationToken: s1.ct }, with63)).status === 200);
-  check("…and nothing else of its owner's (404)", (await stream(step.sessionId, q, with63)).status === 404);
-  check("…and never starts a session (404)", (await create(q, "new", {}, with63)).status === 404);
-  const qForeign = await queueToken(BOB, S);
+  // #63's post tokens are spent ONCE PER REQUEST by the guard (deps.consumeSessionPost); here a stand-in that
+  // admits each (claim, seq) once, so the guard's own spend-once and read/post rules are what is measured.
+  const spentHere = new Set();
+  const consumeSessionPost = async (p) => (spentHere.has(`${p.claim}:${p.seq}`) ? false : (spentHere.add(`${p.claim}:${p.seq}`), true));
+  const with63 = guardSessionRoutes(eveChannel({ auth: doors }), { auth: doors, deps: { consumeSessionPost } });
+  const qRead = await queueToken(ALICE, S, ORG_A, { act: "read" });
+  const qPost = (seq, claim = "c-guard") => queueToken(ALICE, S, ORG_A, { act: "post", item: "q-guard", claim, seq });
+  const queued = { message: "queued while away", continuationToken: s1.ct };
+  check("a READ token reads ITS session (200)", (await stream(S, qRead, with63)).status === 200);
+  check("…and can NEVER write — not a message, not an answer, not a cancel — whatever door admitted it (404)",
+    (await post(S, qRead, queued, with63)).status === 404 &&
+    (await post(S, qRead, { inputResponses: [{ requestId: "r1", optionId: "approve" }], continuationToken: s1.ct }, with63)).status === 404 &&
+    (await call("POST", `/eve/v1/session/${S}/cancel`, { token: qRead, body: {}, via: with63 })).status === 404);
+  const p1 = await qPost(1);
+  check("a POST token delivers the queued message into its session (200)", (await post(S, p1, queued, with63)).status === 200);
+  check("…ONCE: the same token again is refused (404)", (await post(S, p1, queued, with63)).status === 404);
+  check("…never reads the stream (404) and never cancels (404)",
+    (await stream(S, await qPost(2), with63)).status === 404 &&
+    (await call("POST", `/eve/v1/session/${S}/cancel`, { token: await qPost(3), body: {}, via: with63 })).status === 404);
+  const qNoAct = await queueToken(ALICE, S);
+  check("…and a token naming no act is read-only: it reads (200) and never writes (404)", (await stream(S, qNoAct, with63)).status === 200 && (await post(S, qNoAct, queued, with63)).status === 404);
+  check("…and nothing else of its owner's (404)", (await stream(step.sessionId, qRead, with63)).status === 404);
+  check("…and never starts a session (404)", (await create(qRead, "new", {}, with63)).status === 404 && (await create(await qPost(4), "new", {}, with63)).status === 404);
+  const qForeign = await queueToken(BOB, S, ORG_A, { act: "read" });
   check("one minted for someone who does not own the session is refused (404)", (await stream(S, qForeign, with63)).status === 404);
-  const qElsewhere = await queueToken(CAROL, S, ORG_B);
+  const qElsewhere = await queueToken(CAROL, S, ORG_B, { act: "post", item: "x", claim: "x", seq: 1 });
   check("…from another workspace too (404)", (await post(S, qElsewhere, { message: "x", continuationToken: s1.ct }, with63)).status === 404);
-  check("the real channel (no #63 door yet) does not accept it at all (401)", (await stream(S, q)).status === 401);
+
+  console.log("\n…and through the REAL channel, with #63's own door (agent/lib/queue-delivery-auth.ts) and the real spend:");
+  check("a queue-kind token with no act is not admitted at all (401)", (await stream(S, await queueToken(ALICE, S))).status === 401);
+  check("a read token reads its session (200)", (await stream(S, qRead)).status === 200);
+  check("…and cannot post (not admitted: 401/404)", [401, 404].includes((await post(S, qRead, queued)).status));
+  const hasQueue = (await admin`SELECT to_regclass('public.chat_queue_items') AS t`)[0]?.t;
+  if (hasQueue) {
+    const { deliveryReference } = await import("../lib/queue-delivery-token.ts");
+    await admin`INSERT INTO chat_queue_items (id, org_id, owner_email, eve_session_id, text, message, settings, position, state, claim_id, claimed_at)
+                VALUES ('q-real', ${ORG_A}, ${ALICE}, ${S}, 'queued while away', 'queued while away', '{}'::jsonb, 1, 'sending', 'c-real', now())`;
+    try {
+      const real = { message: "queued while away" + deliveryReference("c-real"), continuationToken: s1.ct };
+      const r1 = await queueToken(ALICE, S, ORG_A, { act: "post", item: "q-real", claim: "c-real", seq: 1 });
+      const first = await post(S, r1, real);
+      check("the claimed item's post token is admitted by the door, spent by the guard, and admitted again by eve's own auth pass (200)", first.status === 200, first.status);
+      check("…a replay is refused (404)", (await post(S, r1, real)).status === 404);
+      check("…and a fresh token with other words is refused (401/404)", [401, 404].includes((await post(S, await queueToken(ALICE, S, ORG_A, { act: "post", item: "q-real", claim: "c-real", seq: 2 }), { ...real, message: "other words" })).status));
+      const [row] = await admin`SELECT token_seq FROM chat_queue_items WHERE id = 'q-real'`;
+      check("…the claim records the one spend (token_seq = 1)", row?.token_seq === 1, row);
+    } finally {
+      await admin`DELETE FROM chat_queue_items WHERE id = 'q-real'`;
+    }
+  }
 
   /* ---- the recorded owner never moves ------------------------------------------------------------------- */
 

@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { agentBaseUrl } from "./lib/agent-url.ts";
+import { bundleBudgetDist } from "./lib/bundle-budget-dist.ts";
 
 // This app is the web front-end only. The eve agent runs as a separate Vercel
 // project (fde-agent-api), so we proxy the eve API routes to it server-side.
@@ -12,7 +13,17 @@ import { agentBaseUrl } from "./lib/agent-url.ts";
 // fails rewrite validation with an error naming the route, not the cause.
 const EVE_API = agentBaseUrl();
 
+/**
+ * Set ONLY by scripts/check-bundle-budget.mjs when it has to name the modules that made first-load JavaScript grow:
+ * a separate output directory, with source maps, so the maps (which carry source text) never reach `.next/` — the
+ * directory CI's content checks read and deployments ship.
+ */
+const BUNDLE_BUDGET_DIST = bundleBudgetDist();
+
 const nextConfig: NextConfig = {
+  ...(BUNDLE_BUDGET_DIST
+    ? { distDir: BUNDLE_BUDGET_DIST, productionBrowserSourceMaps: true, experimental: { turbopackSourceMaps: true } }
+    : {}),
   // /api/mcp serves dm.md (the data-room contract) through its dataroom_structure tool.
   outputFileTracingIncludes: { "/api/mcp": ["./dm.md"] },
   async rewrites() {

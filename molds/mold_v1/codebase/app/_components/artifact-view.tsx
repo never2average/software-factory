@@ -1,5 +1,7 @@
 "use client";
 
+import { lazyPanel } from "@/components/lazy-panel";
+import { Spinner } from "@/components/ui/spinner";
 import { useEffect, useRef, useState } from "react";
 import { DownloadIcon, ExternalLinkIcon, FileIcon, Maximize2Icon, PackageIcon, XIcon } from "lucide-react";
 import {
@@ -15,7 +17,26 @@ import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { opsFetch } from "./ops/lib";
-import { PdfView } from "./pdf-view";
+
+/** SheetJS, fetched the first time a workbook preview opens (once per page; a failed fetch may be retried). */
+let xlsxPromise: Promise<typeof import("xlsx")> | null = null;
+function loadXlsx(): Promise<typeof import("xlsx")> {
+  xlsxPromise ??= import("xlsx");
+  xlsxPromise.catch(() => {
+    xlsxPromise = null;
+  });
+  return xlsxPromise;
+}
+
+// The pdf viewer (and pdf.js under it) is fetched when a preview first opens.
+const PdfView = lazyPanel(() => import("./pdf-view").then((m) => m.PdfView), {
+  label: "The preview",
+  placeholder: () => (
+    <div role="status" aria-label="Loading preview" className="flex h-full min-h-40 items-center justify-center">
+      <Spinner />
+    </div>
+  ),
+});
 
 /** Map a filename's extension to a shiki highlighting language. Unknown types
  *  fall back to "text" (a no-op grammar), so highlighting never throws. */
@@ -552,6 +573,8 @@ function XlsxView({ url }: { readonly url?: string }) {
   }>({ status: "loading" });
   const [active, setActive] = useState(0);
   const live = useLiveArtifactUrl(url);
+  // SheetJS starts downloading as the preview opens, alongside the signed link, rather than after it.
+  useEffect(() => void loadXlsx().catch(() => {}), []);
 
   useEffect(() => {
     if (!live.ready) return;
@@ -560,8 +583,7 @@ function XlsxView({ url }: { readonly url?: string }) {
       try {
         const proxiedUrl = live.src;
         if (!proxiedUrl) throw new Error("no url");
-        const XLSX = await import("xlsx");
-        const response = await fetch(proxiedUrl);
+        const [XLSX, response] = await Promise.all([loadXlsx(), fetch(proxiedUrl)]);
         if (!response.ok) throw new Error(`fetch failed: ${response.status}`);
         const buf = await response.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });

@@ -20,8 +20,7 @@ export const EMAIL_SESSION_KIND = "email-session";
  * {@link SESSION_BOUND_CLAIM} claim, whatever door let it in, is a SESSION-BOUND caller (agent/lib/session-guard.ts
  * `callerOf`): admitted only on the one session it names, only when its `email` is that session's recorded owner,
  * and never to create a session (lib/chat-gate.ts). So the door is an extra restriction, never a way around the
- * ownership rule. The names match #63's lib/queue-delivery-token.ts; when it rebases, one of the two should import
- * the other.
+ * ownership rule. #63's lib/queue-delivery-token.ts imports its names from here (one source).
  */
 export const SESSION_BOUND_TOKEN_KIND = "queue-delivery";
 /** Its audience (never the sign-in audience, so no web-app route accepts it). */
@@ -29,6 +28,13 @@ export const SESSION_BOUND_TOKEN_AUDIENCE = "delivered-queue-delivery";
 
 /** The claim naming the one session a session-bound token may touch. */
 export const SESSION_BOUND_CLAIM = "sid";
+
+/**
+ * The claim saying what a session-bound token may do there: "read" (the stream) or "post" (one message). The
+ * session guard enforces it too (lib/chat-gate.ts): a read token can never send, answer or cancel, whatever door
+ * admitted it; a post token never reads. #63's lib/queue-delivery-token.ts takes its names from here.
+ */
+export const SESSION_BOUND_ACT_CLAIM = "act";
 
 /**
  * WHO MAY MAKE A NEW SESSION WORKSPACE-VISIBLE. A workflow, app or cron step is the workspace's to look at (the run

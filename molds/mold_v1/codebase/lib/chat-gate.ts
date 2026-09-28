@@ -46,6 +46,11 @@ export interface GateCaller {
   readonly serviceScope?: string | null;
   /** The one session a session-bound token may touch. */
   readonly boundSessionId?: string | null;
+  /**
+   * What a session-bound token may do on it (`act`, lib/session-token-kinds.ts SESSION_BOUND_ACT_CLAIM): "read" its
+   * stream, or "post" (a write). Anything else — or none — is read-only.
+   */
+  readonly boundAct?: string | null;
 }
 
 /** Who owns the session, as the agent recorded it (or as the legacy rows say, for sessions older than the record). */
@@ -81,6 +86,8 @@ export type GateReason =
   | "wrong-workspace"
   /** A session-bound token presented for another session. */
   | "wrong-session"
+  /** A session-bound token used for what its `act` does not allow (a post token reading the stream). */
+  | "wrong-act"
   /** No verified identity to decide with. */
   | "no-caller";
 
@@ -123,6 +130,12 @@ export function sessionGateDecision(input: GateInput): GateDecision {
     if (!ownership) return { allow: false, reason: "unknown" };
     // Bound AND minted for the session's owner — a bound token for someone else's session proves nothing.
     if (!norm(caller.email) || norm(caller.email) !== norm(ownership.ownerEmail)) return { allow: false, reason: "not-yours" };
+    // The token's act decides the right, here as well as at its door (agent/lib/queue-delivery-auth.ts): only a
+    // POST token writes (sends, answers, cancels) — a READ token, or one naming no act, never does, whatever door
+    // let it in; and a POST token never reads.
+    const act = caller.boundAct ?? null;
+    if (right === "write" && act !== "post") return { allow: false, reason: "read-only" };
+    if (right === "read" && act === "post") return { allow: false, reason: "wrong-act" };
     return { allow: true, reason: "session-bound", role: "session-bound" };
   }
 

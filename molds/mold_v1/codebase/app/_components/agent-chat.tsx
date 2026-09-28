@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazyPanel } from "@/components/lazy-panel";
 import { WorkspaceSummary } from "./workspace-summary";
 import type { UserContent } from "ai";
 import { resolveTextToResponses } from "eve/client";
@@ -95,11 +96,12 @@ function deliveryText(content: UserContent): string {
 }
 
 /**
- * What a chat still HOLDS (its queue) and is still OWED (deliveries eve has not
- * started) — lib/chat-queue. In localStorage when the chat is the person's own
- * (shared across their tabs, scoped like the chat cache); here, by chatKey,
- * otherwise. Module scope for the same reason either way: a hand-back or a
- * resync REMOUNTS the chat, and neither list may be lost to that.
+ * What a chat is still OWED (deliveries eve has not started) — lib/chat-queue.
+ * In localStorage when the chat is the person's own (shared across their tabs,
+ * scoped like the chat cache); here, by chatKey, otherwise. Module scope for
+ * the same reason either way: a hand-back or a resync REMOUNTS the chat, and
+ * the list may not be lost to that. (Its QUEUE is held on the server —
+ * use-chat-queue.ts.)
  */
 const memoryOwed = new Map<string, OwedRecord>();
 /** How long a 5xx/lost answer is watched for before the question comes back. */
@@ -107,11 +109,12 @@ const ANSWER_VERIFY_MS = 60_000;
 /** How often an answer POST is tried when eve has not seen the park yet (see `answerPostRetryable`). */
 const ANSWER_RETRIES = 10;
 
-/** This tab's queue by chatKey — it must outlive a remount (a hand-back, a resync). */
-const heldQueues = new Map<string, QueueItem[]>();
-/** Files of queued items, by item id — only the tab that queued them has them. */
+/**
+ * Files of a queued item this tab must send ITSELF (`where: "local"` — the server could not hold the queue), by
+ * item id. A server-held item's files are stored in the data room when it is queued, so it keeps them.
+ */
 const queuedFiles = new Map<string, AttachedFile[]>();
-/** This page load. A reload is a new tab as far as queued files are concerned: they are gone. */
+/** This page load. */
 const TAB_ID =
   typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -119,9 +122,9 @@ const TAB_ID =
 /**
  * This tab's identity across its own reloads (lib/chat-queue `markGone`): the
  * ids of its earlier pages, which wrote themselves into the TAB's
- * sessionStorage as they unloaded. A reloaded tab takes those pages' queue back,
- * and knows their unacknowledged messages were its own ("your earlier
- * message"); a COPY of a live tab has no such entry, so it asks.
+ * sessionStorage as they unloaded. A reloaded tab knows their unacknowledged
+ * messages were its own ("your earlier message"); a COPY of a live tab has no
+ * such entry, so they read as another tab's.
  */
 const SELF_IDS: ReadonlySet<string> = (() => {
   if (typeof window === "undefined") return new Set([TAB_ID]);
@@ -137,10 +140,6 @@ if (typeof window !== "undefined") {
     if ((e as PageTransitionEvent).persisted) unmarkGone(window.sessionStorage, TAB_ID);
   });
 }
-const newItemId = () =>
-  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `q-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 /** A Stop's note, by chatKey — it must outlive the remount a refresh or a hand-back causes. */
 const stopNotes = new Map<string, string>();
 /** Turn ids this tab asked to stop, by chatKey — so a cancelled turn can say who stopped it. */
@@ -296,31 +295,27 @@ import {
   withSessionEpochs,
   withoutResponses,
   withResponses,
+  receivedSince,
   type Delivery,
   type IndexedEvent,
   type TurnEvent,
 } from "@/lib/chat-turn-state";
 import {
   deliveryId,
-  filesLost,
   isOwedKeyOf,
-  adoptQueue,
-  loadQueue,
-  nextSendable,
   markGone,
   readGone,
   unmarkGone,
   owedKey,
   releasable,
-  queueKey,
   readOwed,
-  saveQueue,
   updateOwed,
   type OwedRecord,
   type PendingDelivery,
-  type QueueItem,
   type QueueSettings,
 } from "@/lib/chat-queue";
+import { useChatQueue, type QueueEntry } from "./use-chat-queue";
+import { notifyFromPage, setViewingSession } from "./desktop-notify";
 import { eveSessionStream, readLiveTail, readTailEvent, streamHasMoved, threadProxyStream } from "@/lib/chat-attach";
 import type { ChatTelemetryKind } from "@/lib/chat-telemetry";
 import {
@@ -333,7 +328,6 @@ import { cn } from "@/lib/utils";
 import { AgentMessage, PendingApprovalCard } from "./agent-message";
 import { GOAL_OUTCOME_SCHEMA, asGoalOutcome, goalPreamble, type GoalOutcome } from "./goal-mode";
 import type { ChatMeta } from "./chat-shell";
-import { Cockpit } from "./cockpit";
 import type { OpsSection } from "./ops-center";
 import { ErrorBoundary } from "./error-boundary";
 import { CustomerSearchDialog, type CustomerListItem, type CustomerListStatus } from "./customer-search";
@@ -344,6 +338,29 @@ import { deriveInsights } from "./insights";
 import { ArtifactPanel, artifactFromHref, readableArtifactName } from "./artifact-view";
 import { ShareThreadButton, type SharePayload } from "./share-thread";
 import { opsFetch } from "./ops/lib";
+
+// The control panel (runs, graphs, dashboards) is fetched when a chat first shows it, not with the composer. Its
+// placeholder fills the rail it will occupy (the <aside> already has its width), so nothing moves when it lands.
+const Cockpit = lazyPanel(() => import("./cockpit").then((m) => m.Cockpit), {
+  label: "The control panel",
+  placeholder: () => <CockpitPlaceholder />,
+});
+
+/** The control panel's outline while its code loads: its 48px header and a few rows, filling the rail. */
+function CockpitPlaceholder() {
+  return (
+    <div aria-busy="true" data-testid="cockpit-loading" className="flex h-full min-h-0 flex-col">
+      <div className="flex h-12 shrink-0 items-center border-border border-b px-3">
+        <span className="font-medium text-sm">Control Panel</span>
+      </div>
+      <div className="flex flex-col gap-2 p-3">
+        {[80, 64, 72].map((w) => (
+          <div key={w} className="h-3.5 animate-pulse rounded bg-muted/50" style={{ width: `${w}%` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export type AgentSession = NonNullable<
   NonNullable<Parameters<typeof useEveAgent>[0]>["initialSession"]
@@ -950,7 +967,6 @@ export function AgentChat({
   const pendingChatId = liveSessionIdRef.current ?? initialSession?.sessionId ?? chatKey;
   const owedKeyNow = ownsPending && storageScope ? owedKey(storageScope, pendingChatId) : null;
   const localStore = () => (typeof window === "undefined" ? null : window.localStorage);
-  const sessionStore = () => (typeof window === "undefined" ? null : window.sessionStorage);
   const memoryOwedList = (rec: OwedRecord | undefined): PendingDelivery[] => {
     if (!rec) return [];
     const released = new Set(rec.released);
@@ -2096,32 +2112,6 @@ export function AgentChat({
   // record the current state as the outcome. When a stop is requested mid-turn,
   // this flag defers the wrap-up message until the in-flight turn halts.
   const [goalStopping, setGoalStopping] = useState(false);
-  /*
-   * THIS TAB'S QUEUE (lib/chat-queue): in sessionStorage, so it survives a
-   * reload of this tab and nothing else, and a removal is final. Never another
-   * tab's: a tab only ever sends what it queued itself.
-   */
-  const queueKeyNow = ownsPending && storageScope ? queueKey(storageScope, pendingChatId) : null;
-  const queueKeyRef = useRef(queueKeyNow);
-  const [queued, setQueued] = useState<QueueItem[]>(() => {
-    const held = heldQueues.get(chatKey);
-    if (held) return held;
-    if (!queueKeyNow || !storageScope) return [];
-    let stored = loadQueue(sessionStore(), queueKeyNow);
-    if (stored.items.length === 0) stored = loadQueue(sessionStore(), queueKey(storageScope, chatKey));
-    if (stored.owner === TAB_ID) return stored.items;
-    // Found on LOAD: only a queue this tab's own earlier page left (it wrote
-    // "gone" as it unloaded) is this tab's to send; a copy, or an old one, asks.
-    return adoptQueue({ stored, gone: SELF_IDS, now: Date.now() });
-  });
-  useEffect(() => {
-    if (queued.length > 0) heldQueues.set(chatKey, queued);
-    else heldQueues.delete(chatKey);
-    // A new chat's minted key becomes the session id: move the queue with it.
-    if (queueKeyRef.current && queueKeyRef.current !== queueKeyNow) saveQueue(sessionStore(), queueKeyRef.current, [], TAB_ID);
-    queueKeyRef.current = queueKeyNow;
-    saveQueue(sessionStore(), queueKeyNow, queued, TAB_ID);
-  }, [chatKey, queued, queueKeyNow]);
   /** The settings a message is sent under — captured when it is queued. */
   const currentSettings = (): QueueSettings => ({
     mode,
@@ -2129,14 +2119,11 @@ export function AgentChat({
     browserUse,
     customers: [...selectedCustomers],
   });
+  /** Queue a message under the settings on screen now (the queue itself is set up below, with the composer). */
   const enqueue = (text: string, files: AttachedFile[]) => {
-    const id = newItemId();
-    if (files.length > 0) queuedFiles.set(id, files);
-    setQueued((prev) => [
-      ...prev,
-      { id, text, files: files.length, createdAt: Date.now(), settings: currentSettings() },
-    ]);
+    void enqueueRef.current(text, files, currentSettings());
   };
+  const enqueueRef = useRef<(text: string, files: AttachedFile[], s: QueueSettings) => Promise<void>>(async () => {});
   // Relay send state for a shared thread this participant contributes to: the
   // optimistic message shown while the server relay runs, and any error.
   const [relayPending, setRelayPending] = useState<string | null>(null);
@@ -2290,6 +2277,67 @@ export function AgentChat({
   persistRef.current = onPersist;
   const sessionId = agent.session?.sessionId;
   const title = cleanTitle(firstUserText(viewMessages));
+  /**
+   * DESKTOP NOTIFICATIONS from this tab (app/_components/desktop-notify.ts): when the tab is hidden or unfocused and
+   * its own stream brings a finished reply, a question or approval, or a failure, say so — under the same tag the
+   * server's push uses, so the two never alert twice. Only for events that ARRIVE while mounted: the transcript a
+   * chat opens with is history. The chat on screen is registered so neither this nor a push notifies about the
+   * conversation the person is looking at.
+   */
+  const viewingSid = liveSessionIdRef.current ?? initialSession?.sessionId ?? null;
+  useEffect(() => {
+    setViewingSession(viewingSid);
+    return () => setViewingSession(null);
+  }, [viewingSid]);
+  const notifiedUpToRef = useRef<number | null>(null);
+  const titleForNotify = useRef<string | null>(null);
+  titleForNotify.current = title ?? null;
+  useEffect(() => {
+    const evs = mergedEvents as readonly TurnEvent[];
+    if (notifiedUpToRef.current === null || notifiedUpToRef.current > evs.length) {
+      notifiedUpToRef.current = evs.length;
+      return;
+    }
+    const from = notifiedUpToRef.current;
+    notifiedUpToRef.current = evs.length;
+    const sid = liveSessionIdRef.current;
+    if (!sid || relayThreadId) return;
+    for (let i = from; i < evs.length; i++) {
+      const e = evs[i] as {
+        type?: string;
+        data?: {
+          turnId?: string;
+          finishReason?: string;
+          message?: string;
+          requests?: ReadonlyArray<{ prompt?: string; action?: { kind?: string; toolName?: string } | null }>;
+        };
+      };
+      const turnId = e.data?.turnId;
+      if (e.type === "input.requested") {
+        const r = e.data?.requests?.[0];
+        const tool = r?.action?.kind === "tool-call" ? r.action.toolName : undefined;
+        void notifyFromPage({ kind: "input", sessionId: sid, turnId, tool, text: tool ? undefined : r?.prompt }, titleForNotify.current);
+      } else if (e.type === "turn.failed") {
+        void notifyFromPage({ kind: "failed", sessionId: sid, turnId }, titleForNotify.current);
+      } else if (e.type === "turn.completed") {
+        // A reply — unless the turn parked on the person (already notified as a question) or produced no answer.
+        let text: string | undefined;
+        let parked = false;
+        for (let j = i - 1; j >= 0; j--) {
+          const p = evs[j] as typeof e;
+          if (p.type === "turn.started" || isSessionBoundary(p as TurnEvent)) break;
+          if (p.data?.turnId && turnId && p.data.turnId !== turnId) break;
+          if (p.type === "input.requested") parked = true;
+          if (text === undefined && p.type === "message.completed" && p.data?.finishReason !== "tool-calls" && p.data?.message?.trim()) {
+            text = p.data.message;
+          }
+        }
+        if (!parked && text) void notifyFromPage({ kind: "reply", sessionId: sid, turnId, text }, titleForNotify.current);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mergedEvents.length]);
+
   const preview = lastText(viewMessages);
   const messageCount = viewMessages.length;
   const customersKey = selectedCustomers.join(",");
@@ -2442,6 +2490,49 @@ export function AgentChat({
     } catch {
       return null;
     }
+  };
+
+  /**
+   * THE QUEUE — held on the server (app/_components/use-chat-queue.ts), so closing the tab does not lose it and the
+   * server sends it when the session comes to rest. Each item carries the WIRE TEXT for the settings it was queued
+   * under (Plan mode keeps its directive), composed here exactly as `sendMessage` composes a direct send. Only the
+   * person's own chats: a shared or relay thread keeps its queue in this tab.
+   */
+  const composeQueued = (
+    text: string,
+    s: QueueSettings,
+    stored: ReadonlyArray<{ name: string; path: string }>,
+    failed: readonly string[],
+  ) => {
+    const qmode = s.mode as AgentMode;
+    const isGoal = qmode === "goal" || qmode === "loop";
+    const body = isGoal ? goalPreamble(text, qmode) : text;
+    return { message: composeAttachmentMessage(withDirectives(body, false, s), stored, failed), goal: isGoal };
+  };
+  const queue = useChatQueue({
+    chatKey,
+    sessionId: liveSessionIdRef.current ?? initialSession?.sessionId ?? null,
+    serverAllowed: ownsPending,
+    getAuthHeaders,
+    compose: composeQueued,
+    upload: (file, name) => persistAttachment({ file, name } as AttachedFile),
+    onDelivered: (d) => {
+      // Sent by the server (or another tab's drain): read its reply like one of ours — unless it is on screen already.
+      const events = mergedEventsRef.current as readonly TurnEvent[];
+      const since = Date.now() - 20 * 60_000;
+      if (receivedSince(events, d.message, since)) return;
+      recordDelivery(d.message, "message");
+      if (d.goal) setGoalRun({ kind: "goal", objective: d.text, outcome: null });
+    },
+  });
+  const queued = queue.entries;
+  enqueueRef.current = async (text, files, s) => {
+    const entry = await queue.add(
+      text,
+      files.map((f) => ({ file: f.file, name: f.name })),
+      s,
+    );
+    if (entry.where === "local" && files.length > 0) queuedFiles.set(entry.id, files);
   };
 
   /**
@@ -2915,7 +3006,8 @@ export function AgentChat({
       await respondToInput(answers);
       return;
     }
-    if (route === "queue") {
+    // Behind what is already queued, never around it: a message typed while earlier ones wait goes after them.
+    if (route === "queue" || (route === "send" && queue.pending.length > 0)) {
       enqueue(raw, outgoing);
       return;
     }
@@ -2967,34 +3059,55 @@ export function AgentChat({
   };
 
   /**
-   * FLUSH THIS TAB'S QUEUE — one message at a time, as soon as the
-   * SESSION is idle (not merely the store, see sendGate).
+   * SEND THE QUEUE — one message at a time, as soon as the SESSION is idle (not merely the store, see sendGate).
    *
-   * One at a time: `flushingRef` holds until the send (upload included) is
-   * done. Two queued sends used to race the upload of the first.
+   * A server-held item is sent BY THE SERVER (lib/chat-queue-drain.ts): usually the agent's hook has already done
+   * it the moment the session came to rest, and this tab only asks in case it has not (a hook that could not reach
+   * the web app, a deployment without the key the server signs with). Either way the server's claim makes it
+   * exactly once, and `onDelivered` has this tab read the reply. The ask backs off: the server may know better
+   * that the session is not at rest (another tab's message is running), and a tight loop would only repeat that.
    *
-   * Each item goes out with the settings it was queued under. An item whose
-   * attachment did not survive a reload waits for the person, without holding
-   * up the plain messages behind it.
+   * An item the server could not hold (`where: "local"`) is sent by this tab, with the settings it was queued
+   * under. One at a time: `flushingRef` holds until the send (upload included) is done.
    */
   const flushingRef = useRef(false);
+  const drainAfterRef = useRef(0);
   const [flushTick, setFlushTick] = useState(0);
   useEffect(() => {
     if (gate.hold || readOnly || flushingRef.current || queued.length === 0) return;
-    const item = nextSendable(queued, new Set(queuedFiles.keys()));
-    if (!item) return;
-    const files = queuedFiles.get(item.id) ?? [];
-    queuedFiles.delete(item.id);
-    setQueued((prev) => prev.filter((q) => q.id !== item.id));
-    flushingRef.current = true;
     const done = () => {
       flushingRef.current = false;
       setFlushTick((n) => n + 1);
     };
-    if (item.text.trim() || files.length > 0) void sendMessage(item.text, files, item.settings).then(done, done);
-    else done();
+    const local = queued.find((q) => q.where === "local" && q.state === "queued" && !q.busy && (q.files === 0 || queuedFiles.has(q.id)));
+    if (local) {
+      const files = queuedFiles.get(local.id) ?? [];
+      queuedFiles.delete(local.id);
+      queue.takeLocal(local.id);
+      flushingRef.current = true;
+      if (local.text.trim() || files.length > 0) void sendMessage(local.text, files, local.settings).then(done, done);
+      else done();
+      return;
+    }
+    if (!queue.serverQueued) return;
+    const wait = drainAfterRef.current - Date.now();
+    if (wait > 0) {
+      const t = setTimeout(() => setFlushTick((n) => n + 1), wait);
+      return () => clearTimeout(t);
+    }
+    flushingRef.current = true;
+    void queue.drain().then(
+      (reason) => {
+        drainAfterRef.current = reason === "sent" || reason === "received" ? 0 : Date.now() + 3_000;
+        done();
+      },
+      () => {
+        drainAfterRef.current = Date.now() + 5_000;
+        done();
+      },
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gate.hold, queued, flushTick, readOnly]);
+  }, [gate.hold, queued, queue.serverQueued, flushTick, readOnly]);
 
   /**
    * Watch a DETACHED turn until it settles, then pull the rest of it in.
@@ -3290,7 +3403,9 @@ export function AgentChat({
     if (!rearmable) return;
     const round = attachRounds.get(attachKey) ?? 0;
     const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
-    if (!attachRearmAllowed(round, hidden)) return;
+    // A hidden tab still re-arms while the turn is running — the reply it shows must be current when the person
+    // comes back (lib/chat-turn-state `attachRearmAllowed`).
+    if (!attachRearmAllowed(round, hidden, stillOwed)) return;
     const timer = setTimeout(() => {
       attachRounds.set(attachKey, round + 1);
       setRearmRounds(round + 1);
@@ -3466,6 +3581,29 @@ export function AgentChat({
    */
   const attachLiveRef = useRef(false);
   attachLiveRef.current = attachLive;
+  /**
+   * …AND THE STORE'S OWN READER. While this tab's send is streaming, the reader is eve's store's, not ours, and it
+   * cannot be reopened in place. If it came back from the background delivering nothing while the session has
+   * moved past what is on screen, its socket died in the sleep: detach it locally (`agent.stop()` aborts only the
+   * local read — the turn keeps running) and the attach reader resumes at the transcript's index, the same path a
+   * severed stream takes. A reader that delivers anything in the first second is left alone.
+   */
+  const storeResyncRef = useRef<() => void>(() => {});
+  storeResyncRef.current = () => {
+    const sid = liveSessionIdRef.current;
+    if (!sid || !(agent.status === "submitted" || agent.status === "streaming")) return;
+    const before = nextIndexRef.current;
+    window.setTimeout(async () => {
+      if (nextIndexRef.current !== before || liveSessionIdRef.current !== sid) return;
+      const moved = await streamHasMoved(eveSessionStream({ sessionId: sid, headers: getAuthHeaders }), before);
+      if (!moved || nextIndexRef.current !== before || liveSessionIdRef.current !== sid) return;
+      if (!(agentStatusRef.current === "submitted" || agentStatusRef.current === "streaming")) return;
+      report("resync", { sessionId: sid, detail: "store reader silent after the tab slept" });
+      agent.stop();
+    }, 1_000);
+  };
+  const agentStatusRef = useRef(agent.status);
+  agentStatusRef.current = agent.status;
   const attachKeyRef = useRef(attachKey);
   attachKeyRef.current = attachKey;
   useEffect(() => {
@@ -3490,10 +3628,37 @@ export function AgentChat({
       setAuthExpired(false);
       setAttachEpoch((n) => n + 1);
     };
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      rearm();
+    /**
+     * BACK FROM THE BACKGROUND: resync at once. A hidden tab's timers are throttled (Chrome: once a minute after
+     * five minutes) and a frozen or back/forward-cached page runs nothing at all, so a reader that looks attached
+     * may be sitting on a socket that died while it slept. After a real absence the reader is reopened at the
+     * transcript's own index — the same motion as the ~120s seam — instead of waiting out its 150 s silence
+     * watchdog. A blink (under two seconds) keeps a healthy reader as it is.
+     */
+    let hiddenAt = document.visibilityState === "hidden" ? Date.now() : 0;
+    const resync = () => {
+      storeResyncRef.current();
+      attachFailures.delete(attachKeyRef.current);
+      if (attachRevoked.has(attachKeyRef.current)) return;
+      setAuthExpired(false);
+      setAttachEpoch((n) => n + 1);
     };
+    const onVisible = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      const away = hiddenAt ? Date.now() - hiddenAt : 0;
+      hiddenAt = 0;
+      if (away >= 2_000) resync();
+      else rearm();
+    };
+    const onResume = () => resync();
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) resync();
+    };
+    document.addEventListener("resume", onResume);
+    window.addEventListener("pageshow", onPageShow);
     /**
      * AND THE NETWORK COMING BACK.
      *
@@ -3509,6 +3674,8 @@ export function AgentChat({
     return () => {
       window.removeEventListener("online", rearm);
       document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("resume", onResume);
+      window.removeEventListener("pageshow", onPageShow);
     };
   }, []);
 
@@ -3595,31 +3762,13 @@ export function AgentChat({
     gate,
     storeBusy: isBusy,
     readOnly,
-    queued: queued.length,
+    queued: queue.pending.length,
     specialistWaiting,
   });
-  const editQueued = (i: number, text: string) =>
-    setQueued((prev) => prev.map((q, j) => (j === i ? { ...q, text } : q)));
-  const removeQueued = (i: number) =>
-    setQueued((prev) => {
-      const gone = prev[i];
-      if (gone) queuedFiles.delete(gone.id);
-      return prev.filter((_, j) => j !== i);
-    });
-  /** The person's say-so for an item whose attachment did not survive a reload. */
-  const sendQueuedWithoutFiles = (i: number) =>
-    setQueued((prev) => prev.map((q, j) => (j === i ? { ...q, files: 0 } : q)));
-  /** The person's say-so for an inherited item (another tab's copy, or an old one). */
-  const sendInherited = (i: number) =>
-    setQueued((prev) => prev.map((q, j) => (j === i ? { ...q, inherited: false } : q)));
-  const moveQueued = (i: number, dir: -1 | 1) =>
-    setQueued((prev) => {
-      const j = i + dir;
-      if (j < 0 || j >= prev.length) return prev;
-      const next = [...prev];
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
+  const removeQueued = (q: QueueEntry) => {
+    queuedFiles.delete(q.id);
+    void queue.remove(q.id);
+  };
 
   // Regenerate: re-send the most recent user message (appends a fresh turn).
   const retryLast = () => {
@@ -4212,7 +4361,7 @@ export function AgentChat({
                       : "Waiting for your answer above. Answer it, or stop this reply to send your queued messages."
                   : gate.reason === "delivering"
                     ? owedFromOtherTab
-                      ? "A message from another tab is waiting its turn on the server — its reply will appear here. Stop releases it after a minute."
+                      ? "Your earlier message is queued and will be sent after this reply. Stop releases it after a minute."
                       : "Your earlier message is waiting its turn on the server — its reply will appear here."
                   : specialistRunning
                     ? "Still working — a specialist is running. The rest of the reply will appear here when it finishes."
@@ -4234,28 +4383,39 @@ export function AgentChat({
             </div>
           ) : null}
           {queued.length > 0 ? (
-            <div className="mb-2 flex flex-col gap-1">
+            <div className="mb-2 flex flex-col gap-1" data-queue>
               <p className="px-1 text-3xs text-muted-foreground" aria-live="polite">
-                {gate.reason === "delivering" && owedFromOtherTab
-                  ? "Queued — a message from another tab is still waiting its turn on the server. Queued messages send after its reply."
-                  : holdLabel(gate.reason, specialistRunning, attachLive, authExpired)}
+                {queue.pending.length === 0
+                  ? "Not sent."
+                  : gate.reason === "delivering" && owedFromOtherTab
+                    ? "Your earlier message is queued and will be sent after this reply."
+                    : gate.hold
+                      ? `${holdLabel(gate.reason, specialistRunning, attachLive, authExpired)}${queue.background ? " They are sent even if you close this tab." : ""}`
+                      : "Queued — sending next."}
               </p>
-              {queued.map((q, i) => (
-                <div key={q.id} className="rounded-lg border border-border/60 bg-muted/40 px-1.5 py-1">
+              {queued.map((q, i) => {
+                const failed = q.state === "failed";
+                const expired = q.state === "expired" || failed;
+                const sending = q.state === "sending";
+                /** Files the closed tab never finished uploading: said here, and the item waits for the person. */
+                const uploadLost = !expired && q.filesPending > 0 && q.busy !== "uploading" && q.busy !== "saving";
+                return (
+                <div key={q.id} className="rounded-lg border border-border/60 bg-muted/40 px-1.5 py-1" data-queue-item={q.state}>
                 <div className="flex items-center gap-1">
                   <span className="w-4 shrink-0 text-center text-3xs text-muted-foreground">
                     {i + 1}
                   </span>
                   <input
                     value={q.text}
-                    onChange={(e) => editQueued(i, e.target.value)}
+                    onChange={(e) => queue.edit(q.id, e.target.value)}
+                    readOnly={expired || sending}
                     placeholder={q.files > 0 ? `${q.files} file(s)` : "empty"}
                     className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
                   />
                   <button
                     type="button"
-                    onClick={() => moveQueued(i, -1)}
-                    disabled={i === 0}
+                    onClick={() => queue.move(q.id, -1)}
+                    disabled={i === 0 || expired || sending}
                     aria-label="Move up"
                     className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
                   >
@@ -4263,8 +4423,8 @@ export function AgentChat({
                   </button>
                   <button
                     type="button"
-                    onClick={() => moveQueued(i, 1)}
-                    disabled={i === queued.length - 1}
+                    onClick={() => queue.move(q.id, 1)}
+                    disabled={i === queued.length - 1 || expired || sending}
                     aria-label="Move down"
                     className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
                   >
@@ -4272,37 +4432,60 @@ export function AgentChat({
                   </button>
                   <button
                     type="button"
-                    onClick={() => removeQueued(i)}
+                    onClick={() => removeQueued(q)}
+                    disabled={sending}
                     aria-label="Remove"
-                    className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
+                    className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-30"
                   >
                     <XIcon className="size-3.5" />
                   </button>
                 </div>
-                {/* An attachment lives in the memory of the tab that queued it; a
-                    reload (or closing that tab) loses it. Said here, and the item
-                    waits for the person instead of going out without it. */}
-                {q.inherited ? (
+                {expired ? (
                   <p data-queue-note className="flex items-center gap-2 px-5 pt-0.5 text-3xs text-amber-700 dark:text-amber-400">
                     <span className="flex-1">
-                      Waiting from another tab or an earlier visit — it will not be sent unless you say so.
+                      {failed
+                        ? "Didn't send — we couldn't confirm it reached the chat."
+                        : "Not sent — it waited more than a day, so it was held back."}
                     </span>
                     <button
                       type="button"
-                      onClick={() => sendInherited(i)}
+                      onClick={() => queue.requeue(q.id)}
                       className="shrink-0 rounded px-1 font-medium hover:bg-amber-500/10"
                     >
-                      Send
+                      {failed ? "Send again" : "Send now"}
                     </button>
                     <button
                       type="button"
-                      onClick={() => removeQueued(i)}
+                      onClick={() => removeQueued(q)}
                       className="shrink-0 rounded px-1 font-medium hover:bg-amber-500/10"
                     >
                       Discard
                     </button>
                   </p>
-                ) : filesLost(q, new Set(queuedFiles.keys())) ? (
+                ) : sending ? (
+                  <p data-queue-note className="px-5 pt-0.5 text-3xs text-muted-foreground">Sending…</p>
+                ) : q.busy === "uploading" ? (
+                  <p data-queue-note className="px-5 pt-0.5 text-3xs text-muted-foreground">
+                    Uploading {q.files === 1 ? "the attachment" : `${q.files} attachments`} — keep this tab open until it finishes.
+                  </p>
+                ) : uploadLost ? (
+                  <p data-queue-note className="flex items-center gap-2 px-5 pt-0.5 text-3xs text-amber-700 dark:text-amber-400">
+                    <span className="flex-1">
+                      {q.filesPending === 1 ? "An attachment was" : `${q.filesPending} attachments were`} still uploading
+                      when the tab closed, so {q.filesPending === 1 ? "it was" : "they were"} lost — re-attach, or send
+                      without {q.filesPending === 1 ? "it" : "them"}.
+                    </span>
+                    {q.text.trim() ? (
+                      <button
+                        type="button"
+                        onClick={() => queue.sendWithout(q.id)}
+                        className="shrink-0 rounded px-1 font-medium hover:bg-amber-500/10"
+                      >
+                        Send without it
+                      </button>
+                    ) : null}
+                  </p>
+                ) : q.where === "local" && q.files > 0 && !queuedFiles.has(q.id) ? (
                   <p data-queue-note className="flex items-center gap-2 px-5 pt-0.5 text-3xs text-amber-700 dark:text-amber-400">
                     <span className="flex-1">
                       {q.files === 1 ? "Attachment" : `${q.files} attachments`} not kept after reload — re-attach it, or send
@@ -4311,16 +4494,19 @@ export function AgentChat({
                     {q.text.trim() ? (
                       <button
                         type="button"
-                        onClick={() => sendQueuedWithoutFiles(i)}
+                        onClick={() => queue.sendWithout(q.id)}
                         className="shrink-0 rounded px-1 font-medium hover:bg-amber-500/10"
                       >
                         Send without it
                       </button>
                     ) : null}
                   </p>
+                ) : q.note ? (
+                  <p data-queue-note className="px-5 pt-0.5 text-3xs text-muted-foreground">{q.note}</p>
                 ) : null}
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : null}
           <input

@@ -129,6 +129,18 @@ if (hasSecrets) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 2b. Owner-only rows (chat queue, notification devices): the RESTRICTIVE
+ *     policies ANDed with org_isolation. Re-applied on every run — a
+ *     `drizzle-kit push --force` drops them and the migration that created
+ *     them never runs twice (scripts/lib/owner-only-policies.mjs).
+ * ------------------------------------------------------------------ */
+{
+  const { applyOwnerOnlyPolicies } = await import("./scripts/lib/owner-only-policies.mjs");
+  const { applied, skipped } = await applyOwnerOnlyPolicies(sql);
+  console.log(`✓ owner-only policies: ${applied.join(", ") || "none"}${skipped.length ? ` (not yet created: ${skipped.join(", ")})` : ""}`);
+}
+
+/* ------------------------------------------------------------------ *
  * 3. The app_rw role.
  * ------------------------------------------------------------------ */
 const pwLit = `'${password.replace(/'/g, "''")}'`;

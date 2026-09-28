@@ -28,6 +28,7 @@ import {
   WORKSPACE_STEP_GRANT_KIND,
   WORKSPACE_STEP_GRANT_TTL_SECONDS,
 } from "./session-token-kinds.ts";
+import { QUEUE_DELIVERY_AUDIENCE, QUEUE_DELIVERY_KIND, QUEUE_DELIVERY_TTL_SECONDS, type DeliveryScope } from "./queue-delivery-token.ts";
 
 /** Both sides of every verification must agree on these two strings. */
 export const SESSION_ISSUER = "delivered";
@@ -124,6 +125,45 @@ export async function mintWorkspaceStepGrant(email: string): Promise<string | nu
     .setAudience(WORKSPACE_STEP_GRANT_AUDIENCE)
     .setIssuedAt()
     .setExpirationTime(`${WORKSPACE_STEP_GRANT_TTL_SECONDS}s`)
+    .sign(key);
+}
+
+/**
+ * A QUEUE-DELIVERY token — what the server signs to send a queued chat message for someone whose tab is closed
+ * (lib/chat-queue-drain.ts). It is NOT a sign-in, and cannot be used as one:
+ *
+ *   - its own audience (`QUEUE_DELIVERY_AUDIENCE`) and `kind`, so `verifySessionToken` — every web-app route —
+ *     refuses it, and only the agent's channel accepts it (agent/lib/queue-delivery-auth.ts);
+ *   - bound to ONE eve session (`sid`) and ONE action (`act`): `read` its stream, or `post` the claimed queued item
+ *     — once (`seq`, recorded on the claim), with exactly that item's text as the body (see queue-delivery-token.ts);
+ *   - two minutes long, with a `jti`.
+ *
+ * It names the person and the workspace the message was queued in, so the turn runs as them, in it.
+ */
+
+export async function mintQueueDeliveryToken(
+  email: string,
+  input: { org: string; sessionId: string; scope: DeliveryScope },
+): Promise<string> {
+  const pem = readKeyMaterial(process.env.AUTH_JWT_PRIVATE_KEY);
+  if (!pem) throw new Error("Email sign-in is not configured (AUTH_JWT_PRIVATE_KEY).");
+  const key = await importPKCS8(pem, ALG);
+  const scope = input.scope;
+  return new SignJWT({
+    email: email.toLowerCase(),
+    kind: QUEUE_DELIVERY_KIND,
+    org: input.org,
+    sid: input.sessionId,
+    act: scope.act,
+    ...(scope.act === "post" ? { item: scope.item, claim: scope.claim, seq: scope.seq } : {}),
+  })
+    .setProtectedHeader({ alg: ALG })
+    .setSubject(email.toLowerCase())
+    .setIssuer(SESSION_ISSUER)
+    .setAudience(QUEUE_DELIVERY_AUDIENCE)
+    .setJti(scope.act === "post" ? `${scope.claim}:${scope.seq}` : crypto.randomUUID())
+    .setIssuedAt()
+    .setExpirationTime(`${QUEUE_DELIVERY_TTL_SECONDS}s`)
     .sign(key);
 }
 

@@ -380,16 +380,18 @@ console.log("\n5. A visible Stop on a hold that feels stuck:");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-console.log("\n6. The queue is PER TAB; what eve owes is shared, one record per tab:");
+console.log("\n6. The queue is held on the SERVER (one per chat, every tab); what eve owes is shared, one record per tab:");
 {
   let q = null;
+  let dr = null;
   try {
     q = await import("../lib/chat-queue.ts");
+    dr = await import("../lib/chat-queue-drain.ts");
   } catch {
     q = null;
   }
-  const api = q && typeof q.loadQueue === "function" && typeof q.updateOwed === "function" ? q : null;
-  check("lib/chat-queue: a per-tab queue and per-tab owed records", Boolean(api));
+  const api = q && typeof q.updateOwed === "function" ? q : null;
+  check("lib/chat-queue: per-tab owed records; lib/chat-queue-drain: the server's send decision", Boolean(api && dr?.sessionRest));
   const makeStorage = () => {
     const mem = new Map();
     return {
@@ -404,57 +406,77 @@ console.log("\n6. The queue is PER TAB; what eve owes is shared, one record per 
     };
   };
   try {
-  if (api) {
-    const plan = { mode: "plan", webSearch: false, browserUse: false, customers: ["acme-hfc"] };
-    const build = { mode: "build", webSearch: true, browserUse: false, customers: [] };
-    // Two tabs = two sessionStorages. A's queue is A's alone.
-    const tabA = makeStorage();
-    const tabB = makeStorage();
-    const key = api.queueKey("tester@example.com:org_a", "ses_1");
-    check("the queue is scoped like the chat cache (person and workspace)", key.includes("tester@example.com:org_a") && key.endsWith(":ses_1"));
-    api.saveQueue(tabA, key, [
-      { id: "m2", text: "MSG-2 PLAN ONLY", files: 0, createdAt: 1, settings: plan },
-      { id: "m3", text: "MSG-3 with a deck", files: 1, createdAt: 2, settings: build },
-      { id: "m4", text: "MSG-4 plain", files: 0, createdAt: 3, settings: build },
-    ], "tabA");
-    check("another tab never sees (and so can never send) this tab's queue", api.loadQueue(tabB, key).items.length === 0);
-    const back = api.loadQueue(tabA, key).items;
-    check("…while this tab's queue survives its own reload", back.length === 3);
-    check("each item keeps the settings it was queued under (Plan mode goes out as Plan mode)", back[0].settings.mode === "plan" && back[0].settings.customers[0] === "acme-hfc");
-    // After the reload the deck's file is gone (it lived in memory).
-    check("an item whose attachment was lost is flagged", api.filesLost(back[1], new Set()) && !api.filesLost(back[0], new Set()));
-    api.saveQueue(tabA, key, back.slice(1), "tabA");
+  if (api && dr) {
+    // THE QUEUE: no tab keeps one. (#59's per-tab sessionStorage queue is why a closed tab's messages were never sent.)
+    const chat = readFileSync("app/_components/agent-chat.tsx", "utf8");
+    const hook = readFileSync("app/_components/use-chat-queue.ts", "utf8");
     check(
-      "…and it does NOT block the plain messages queued after it",
-      api.nextSendable(api.loadQueue(tabA, key).items, new Set())?.id === "m4",
+      "closedtab: no tab stores the queue in its own storage — it is queued on the server (POST /api/ops/chat-queue)",
+      !/saveQueue|loadQueue|adoptQueue/.test(chat) && typeof q.saveQueue !== "function" && /"\/api\/ops\/chat-queue"/.test(hook),
     );
-    check("…while it waits for the person (never sent without its file)", api.nextSendable([back[1]], new Set()) === null);
-    // A COPY of this tab ("Duplicate tab", window.open, a restored tab) finds the queue in its own storage.
-    const copied = api.loadQueue(tabA, key);
-    const now = 10_000_000;
-    const fresh = copied.items.map((q) => ({ ...q, createdAt: now - 1000 }));
-    check("the stored queue names its owner (a tab's in-memory id)", copied.owner === "tabA");
-    // A copy (Duplicate tab / window.open) made while the owner is alive: the owner never wrote "gone".
-    const copyStorage = makeStorage();
-    const dup = api.adoptQueue({ stored: { owner: "tabA", items: fresh }, gone: api.readGone(copyStorage), now });
-    check("a duplicated tab inherits the items: nothing is sent twice", dup.every((q) => q.inherited) && api.nextSendable(dup, new Set()) === null);
     check(
-      "…even when the owner is a BACKGROUND tab whose timers the browser throttled (no heartbeat is consulted at all)",
-      typeof api.tabIsAlive !== "function" && dup.every((q) => q.inherited),
+      "twotab / dup: a tab never sends a server-held item itself — it asks the server, whose claim is exactly-once",
+      !/\/eve\/v1/.test(hook) && /\/api\/ops\/chat-queue\/drain/.test(hook) && /queue\.drain\(\)/.test(chat),
     );
-    // A reload: the owner page wrote "gone" into its own tab's sessionStorage as it unloaded.
-    const reloadStorage = makeStorage();
-    api.markGone(reloadStorage, "tabA");
-    const reloaded = api.adoptQueue({ stored: { owner: "tabA", items: fresh }, gone: api.readGone(reloadStorage), now });
-    check("a RELOADED tab (its own page said it was gone) takes its recent items back", reloaded.every((q) => !q.inherited));
-    const old = api.adoptQueue({ stored: { owner: "tabA", items: fresh.map((q) => ({ ...q, createdAt: now - api.QUEUE_STALE_MS - 1 })) }, gone: api.readGone(reloadStorage), now });
-    check("an item older than 30 minutes found on load is inherited — never auto-sent", old.every((q) => q.inherited));
-    api.unmarkGone(reloadStorage, "tabA");
-    check("a page restored from the back/forward cache is no longer gone", !api.readGone(reloadStorage).has("tabA"));
-    api.saveQueue(tabA, key, [], "tabA");
-    check("an emptied queue leaves nothing behind (a removal is final)", !tabA.mem.has(key));
-    tabA.mem.set(key, "{not json");
-    check("a corrupt queue reads as empty, never a throw", api.loadQueue(tabA, key).items.length === 0);
+    check(
+      "planmode: an item is composed with the settings it was QUEUED under (withDirectives(…, s)), not the composer's",
+      /const composeQueued = \(/.test(chat) && /withDirectives\(body, false, s\)/.test(chat),
+    );
+    check(
+      "reload: a reopened chat reads its queue back from the server (every tab, every device)",
+      /\/api\/ops\/chat-queue\?session=/.test(hook) && /useEffect\(\(\) => \{\s*void refresh\(\);\s*\}, \[sessionId, refresh\]\)/.test(hook),
+    );
+    check(
+      "plain words: \"Your earlier message is queued and will be sent after this reply.\" (not \"waiting its turn on the server\")",
+      chat.includes("Your earlier message is queued and will be sent after this reply.") && !/another tab is (still )?waiting its turn on the server/i.test(chat),
+    );
+    const bell = readFileSync("app/_components/notifications-bell.tsx", "utf8");
+    check(
+      "without the push keys the bell still turns on and says so plainly (in-tab notifications work)",
+      bell.includes("Your administrator hasn&apos;t turned on notifications for closed tabs yet. You&apos;ll still get them") &&
+        !bell.includes("aren&apos;t available here yet"),
+    );
+    check("a delivery that could not be confirmed says \"Didn't send\" and offers \"Send again\"", chat.includes("Didn't send") && chat.includes("Send again"));
+    check(
+      "a message queued before the chat HAS a session (its first message still being created) stays in the tab and is sent by it — the server queue only holds follow-ups, and its tokens can never create a session",
+      /const serverOk = sid && ref\.current\.serverAllowed/.test(hook) && /where: "local"/.test(hook) &&
+        /sessionIdOfRoute/.test(readFileSync("agent/lib/queue-delivery-auth.ts", "utf8")),
+    );
+    const server = readFileSync("lib/chat-queue-server.ts", "utf8");
+    check(
+      "stale: an item still queued after a day is EXPIRED (shown, never sent on its own) — see test:chat-queue-db",
+      /export const QUEUE_EXPIRE_MS = 24 \* 60 \* 60_000/.test(server) && /state = 'expired'/.test(server),
+    );
+
+    // WHEN the server sends: at rest, judged from eve's own tail.
+    const waiting = (k) => ({ type: "session.waiting", data: { continuationToken: `ct-${k}` }, meta: { at: `2026-09-28T10:00:0${k}.000Z` } });
+    const rest = dr.sessionRest([{ type: "step.completed" }, { type: "turn.completed" }, waiting(1)]);
+    check("at rest after a finished turn (and the token to send with)", rest.rest && rest.token === "ct-1");
+    check("a running turn is not at rest", !dr.sessionRest([{ type: "turn.started" }, { type: "message.appended" }]).rest);
+    const parked = dr.sessionRest([{ type: "step.completed" }, { type: "input.requested", data: { requests: [{ requestId: "r1" }] } }, { type: "turn.completed" }, waiting(2)]);
+    check("a turn parked on the person's question or approval is NOT at rest (a queued message would answer or clear it)", !parked.rest && parked.reason === "parked" && parked.parkedOn[0] === "r1");
+    check(
+      "…unless the person stopped that question (eve emits nothing for it; the chat's Stop marker says so)",
+      dr.sessionRest([{ type: "input.requested", data: { requests: [{ requestId: "r1" }] } }, { type: "turn.completed" }, waiting(2)], dr.stoppedRequestIds([{ type: "client.turn.stopped", data: { requestIds: ["r1"] } }])).rest,
+    );
+    check("a cancelled turn is at rest (Stop releases the queue)", dr.sessionRest([{ type: "turn.cancelled" }, waiting(3)]).rest);
+    check("an ended session is never sent into", dr.sessionRest([{ type: "session.completed" }]).reason === "ended");
+    check("an unreadable tail is \"unknown\", never \"at rest\"", dr.sessionRest(null).reason === "unknown" && dr.sessionRest([]).reason === "unknown");
+    check(
+      "two rests are told apart by eve's own stamps (the next item waits for the NEXT rest)",
+      dr.sessionRest([waiting(1)]).mark !== dr.sessionRest([waiting(2)]).mark,
+    );
+    check(
+      "eve's \"target session was not found\" is a delivery that did not happen (retried); a 5xx without it is not",
+      dr.parkNotVisible({ status: 500, text: '{"error":"target session was not found"}' }) && !dr.parkNotVisible({ status: 500, text: "boom" }) && !dr.parkNotVisible({ status: 200 }),
+    );
+    // A message the SERVER sent, learned after the fact, is owed only if it has not arrived yet.
+    const st = await import("../lib/chat-turn-state.ts");
+    const now = Date.parse("2026-09-28T10:00:10.000Z");
+    const evs = [{ type: "message.received", data: { message: "MSG-2 queued" }, meta: { at: "2026-09-28T10:00:05.000Z" } }];
+    check("a server-sent message already on screen is not owed again (no 15-minute hold)", st.receivedSince(evs, "MSG-2 queued", now - 60_000));
+    check("…one not on screen yet is", !st.receivedSince(evs, "MSG-3 next", now - 60_000));
+    check("…and an identical OLDER message is not mistaken for it", !st.receivedSince(evs, "MSG-2 queued", now + 10 * 60_000));
 
     // WHAT IS OWED: shared through localStorage, one record per tab.
     const local = makeStorage();
@@ -482,18 +504,25 @@ console.log("\n6. The queue is PER TAB; what eve owes is shared, one record per 
       "a reloaded tab's OWN earlier message is its own (\"your earlier message\"), not another tab's",
       api.releasable(api.readOwed(local, owed), new Set(["A", "B"]), 0, 2010).some((d) => d.text === "MSG-5"),
     );
+    // A reload: the page wrote "gone" into its own tab's sessionStorage as it unloaded.
+    const reloadStorage = makeStorage();
+    api.markGone(reloadStorage, "tabA");
+    check("a RELOADED tab knows its earlier page's id (its deliveries are its own)", api.readGone(reloadStorage).has("tabA"));
+    api.unmarkGone(reloadStorage, "tabA");
+    check("a page restored from the back/forward cache is no longer gone", !api.readGone(reloadStorage).has("tabA"));
     api.updateOwed(local, owed, "A", (o) => ({ ...o, deliveries: [], released: [] }), 2100);
     check("…and what it released is gone for every tab", !api.readOwed(local, owed).some((d) => d.text === "MSG-2"));
     const later = 2000 + api.OWED_MAX_AGE_MS + 1;
     api.updateOwed(local, owed, "C", (o) => o, later);
     check("records expire with their deliveries (no unbounded storage)", api.readOwed(local, owed).length === 0 && ![...local.mem.keys()].some((k) => k.endsWith(":t:B")));
     // Sign-out.
-    api.saveQueue(tabA, key, [{ id: "z", text: "x", files: 0, createdAt: 1, settings: build }], "tabA");
+    const tabA = makeStorage();
+    tabA.setItem(`${api.QUEUE_KEY_PREFIX}:tester@example.com:org_a:ses_1`, "[]"); // an old per-tab queue
     api.updateOwed(local, owed, "A", (o) => ({ ...o, deliveries: [{ text: "x", at: 1, sentAt: later }] }), later);
     local.mem.set("workspace-chats:tester@example.com:org_a", "[]");
     api.clearAllPending(local, tabA);
     check(
-      "sign-out clears every queue and owed record of the person, and nothing else",
+      "sign-out clears every owed record (and any old per-tab queue) of the person, and nothing else",
       tabA.mem.size === 0 && [...local.mem.keys()].every((k) => k.startsWith("workspace-chats:")),
     );
   }
@@ -562,7 +591,8 @@ console.log("\n7. Stop is aimed at the turn on screen — never a guess — and 
   if (allowed) {
     check("…it re-arms while under the cap", allowed(0, false) && allowed(state.ATTACH_MAX_ROUNDS - 1, false));
     check("…stops at the cap (then the chat offers Reconnect)", !allowed(state.ATTACH_MAX_ROUNDS, false));
-    check("…and never re-arms in a hidden tab", !allowed(0, true));
+    check("…and never re-arms an IDLE hidden tab", !allowed(0, true) && !allowed(0, true, false));
+    check("…but a hidden tab keeps re-arming while its turn is RUNNING (it must be current when the person returns)", allowed(0, true, true) && !allowed(state.ATTACH_MAX_ROUNDS, true, true));
   }
 }
 
@@ -669,7 +699,8 @@ console.log("\n7c. A Stop follows the chat to every device; an accepted answer s
   check("a typed answer stays in the thread as the person's own words", /<YourAnswer text=\{said\} \/>/.test(msg) && /Your answer/.test(msg));
   check("the composer says when the next message will answer the question", /Your next message will answer the question above\./.test(chat));
   check("a refused answer offers a one-click resend of what they answered", /data-answer-retry/.test(chat) && /again\n?\s*<\/button>|” again/.test(chat));
-  check("an idle tab says the waiting message is another tab's", /A message from another tab is waiting its turn/.test(chat));
+  // Plain words (review of #63): the waiting message is the person's own, from another tab or not.
+  check("an idle tab says a waiting message will be sent after this reply", /owedFromOtherTab\s*\?\s*"Your earlier message is queued and will be sent after this reply/.test(chat));
 }
 
 console.log("\n7d. Markers never break the chat-list sync; answers are retried and verified:");

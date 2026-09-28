@@ -19,6 +19,8 @@ interface Props {
    * automatically instead of leaving the chat "stuck broken".
    */
   readonly resetKeys?: readonly unknown[];
+  /** Where the error card is drawn (a lazily loaded modal puts it in an overlay); default: in place. */
+  readonly frame?: (card: ReactNode) => ReactNode;
 }
 
 interface State {
@@ -59,9 +61,10 @@ export class ErrorBoundary extends Component<Props, State> {
     const { error } = this.state;
     if (!error) return this.props.children;
 
+    const frame = this.props.frame ?? ((card: ReactNode) => card);
     if (this.props.compact) {
-      return (
-        <div className="flex flex-col items-center gap-2 p-6 text-center">
+      return frame(
+        <div role="alert" data-testid="error-boundary" className="flex flex-col items-center gap-2 p-6 text-center">
           <AlertTriangleIcon className="size-5 text-amber-500" />
           <p className="font-medium text-sm">{this.props.label} hit an error</p>
           <p className="max-w-[16rem] break-words text-xs text-muted-foreground">
@@ -75,12 +78,12 @@ export class ErrorBoundary extends Component<Props, State> {
             <RefreshCwIcon className="size-3.5" />
             Retry
           </button>
-        </div>
+        </div>,
       );
     }
 
-    return (
-      <div className="grid h-full place-items-center p-6">
+    return frame(
+      <div role="alert" data-testid="error-boundary" className="grid h-full place-items-center p-6">
         <div className="flex max-w-md flex-col items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-6 text-center">
           <AlertTriangleIcon className="size-6 text-amber-500" />
           <p className="font-medium text-base">{this.props.label} hit an error</p>
@@ -94,7 +97,7 @@ export class ErrorBoundary extends Component<Props, State> {
             Retry
           </button>
         </div>
-      </div>
+      </div>,
     );
   }
 }

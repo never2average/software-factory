@@ -7,6 +7,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
 import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 import { clearAllPending } from "@/lib/chat-queue";
+import { clearDesktopPrefs, forgetThisDevice } from "./desktop-notify";
+import { forgetQueueCache } from "./use-chat-queue";
 
 // Minimal typing for the Google Identity Services client we load at runtime.
 declare global {
@@ -180,6 +182,11 @@ export function AuthGate() {
   }, []);
 
   const signOut = useCallback(() => {
+    // Desktop notifications: this device stops receiving the person's notifications. Asked BEFORE the sign-in is
+    // dropped — the server needs it to know whose device row to delete — and not waited for.
+    void forgetThisDevice(getAuthHeaders());
+    clearDesktopPrefs();
+    forgetQueueCache();
     window.google?.accounts.id.disableAutoSelect();
     restoredRef.current = false;
     tokenRef.current = null;

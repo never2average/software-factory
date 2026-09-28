@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { lazyPanel } from "@/components/lazy-panel";
 import { INVITE_RESULT_KEY } from "./auth-gate";
 import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 import { AgentChat, type AgentEvents, type AgentSession } from "./agent-chat";
+import { installNotificationBridge } from "./desktop-notify";
 import { ChatSidebar } from "./chat-sidebar";
 import { ChatSearchDialog } from "./chat-search";
-import { Dataroom, type DataroomTab } from "./dataroom";
+import type { DataroomTab } from "./dataroom";
 import type { CustomerListItem, CustomerListStatus } from "./customer-search";
-import { OpsCenter, type OpsSection } from "./ops-center";
+import type { OpsSection } from "./ops-center";
 import { activeOrg, opsFetch } from "./ops/lib";
 import {
   SNAPSHOT_VERSION,
@@ -26,6 +28,16 @@ import { withFreshestToken } from "@/lib/chat-session-cursor";
 import { MARKERS_MAX_BYTES_CLIENT, capMarkers, isPersistedMarker } from "@/lib/chat-turn-state";
 import { createPersistWriter } from "@/lib/chat-persist";
 import { cn } from "@/lib/utils";
+
+/**
+ * The data room and the Ops Center are fetched the first time one is opened, not with the chat. Between them they
+ * are most of the app's code (every ops panel, the workbook previews, the task board's charts), and a person who
+ * opens the app to ask a question needs none of it. Each mounts on its first open and then stays mounted, so its
+ * state and its closing animation behave exactly as before. A chunk that fails to load shows a card with Retry over
+ * the page (components/lazy-panel.tsx), never the whole app's error screen.
+ */
+const Dataroom = lazyPanel(() => import("./dataroom").then((m) => m.Dataroom), { label: "The data room", overlay: true });
+const OpsCenter = lazyPanel(() => import("./ops-center").then((m) => m.OpsCenter), { label: "The Ops Center", overlay: true });
 
 /**
  * What a replay hands back.
@@ -395,6 +407,11 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const [opsOpen, setOpsOpen] = useState(false);
   const [opsSection, setOpsSection] = useState<OpsSection>("connectors");
   const [opsInitialId, setOpsInitialId] = useState<string | undefined>(undefined);
+  // Once opened, the lazily loaded data room / Ops Center stay mounted (see `Dataroom` above).
+  const dataroomMounted = useRef(false);
+  if (dataroomOpen) dataroomMounted.current = true;
+  const opsMounted = useRef(false);
+  if (opsOpen) opsMounted.current = true;
   const [opsInitialView, setOpsInitialView] = useState<
     "tasks" | "sprints" | "deployments" | "implementations" | undefined
   >(undefined);
@@ -2098,6 +2115,20 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     }
   }, []);
 
+  // A desktop notification was clicked (public/sw.js): open that chat — the sidebar's own entry when it is one of
+  // ours, else the session itself, exactly as the `?chatSession=` deep link below does.
+  const openChatRef = useRef(openChat);
+  openChatRef.current = openChat;
+  useEffect(
+    () =>
+      installNotificationBridge((sid) => {
+        const s = sessionsRef.current.find((x) => x.session?.sessionId === sid || x.id === sid);
+        if (s) openChatRef.current(s);
+        else void mountEveSession(sid);
+      }),
+    [mountEveSession],
+  );
+
   // Deep-link: `/?chatSession=<eve session id>` opens that session as a chat
   // (used by the "Open as chat" link on a workflow-run step / app refresh). An
   // optional `&from=<name>&kind=<workflow-run|app>` stamps the top provenance
@@ -2280,6 +2311,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           onOpenOps={openOps}
           onCollapse={() => setCollapsed(true)}
           onSignOut={onSignOut}
+          getAuthHeaders={getAuthHeaders}
         />
           </div>
         </>
@@ -2335,22 +2367,26 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         }}
       />
 
-      <Dataroom
-        open={dataroomOpen}
-        onOpenChange={setDataroomOpen}
-        initialTab={dataroomTab}
-        initialSheet={dataroomSheet}
-        getAuthHeaders={getAuthHeaders}
-      />
+      {dataroomOpen || dataroomMounted.current ? (
+        <Dataroom
+          open={dataroomOpen}
+          onOpenChange={setDataroomOpen}
+          initialTab={dataroomTab}
+          initialSheet={dataroomSheet}
+          getAuthHeaders={getAuthHeaders}
+        />
+      ) : null}
 
-      <OpsCenter
-        open={opsOpen}
-        onOpenChange={setOpsOpen}
-        section={opsSection}
-        authorEmail={email ?? undefined}
-        initialSelectedId={opsInitialId}
-        initialView={opsInitialView}
-      />
+      {opsOpen || opsMounted.current ? (
+        <OpsCenter
+          open={opsOpen}
+          onOpenChange={setOpsOpen}
+          section={opsSection}
+          authorEmail={email ?? undefined}
+          initialSelectedId={opsInitialId}
+          initialView={opsInitialView}
+        />
+      ) : null}
     </div>
   );
 }

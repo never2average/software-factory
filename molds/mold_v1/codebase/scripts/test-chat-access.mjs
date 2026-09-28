@@ -156,8 +156,16 @@ check(
 );
 check("…and refused a session nobody recorded", !gate({ caller: { kind: "service", email: null }, ownership: null }).allow);
 check(
-  "a session-bound token opens its one session, for its owner",
-  gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: SID }, right: "write" }).allow,
+  "a session-bound token opens its one session, for its owner — a POST token to write, any other to read",
+  gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: SID, boundAct: "post" }, right: "write" }).allow &&
+    gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: SID, boundAct: "read" }, right: "read" }).allow &&
+    gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: SID }, right: "read" }).allow,
+);
+check(
+  "…a READ token (or one naming no act) never writes; a POST token never reads (PR #63's token kinds)",
+  !gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: SID, boundAct: "read" }, right: "write" }).allow &&
+    !gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: SID }, right: "write" }).allow &&
+    !gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: SID, boundAct: "post" }, right: "read" }).allow,
 );
 check(
   "…and no other, whatever email it carries",

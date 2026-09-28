@@ -53,6 +53,11 @@ export const STORAGE_KEYS = {
    * `${chatOwed}:${email}:${orgId}:${chatId}:t:${tab}` (lib/chat-queue). Cleared on sign-out.
    */
   chatOwed: "workspace-chat-owed",
+  /**
+   * This browser's "Desktop notifications" choice: `{ on, preview }` (app/_components/desktop-notify.ts). Whether
+   * the server may push is the subscription row; this is what a hidden tab's own notifier reads. Cleared on sign-out.
+   */
+  desktopNotifications: "workspace-desktop-notifications",
 } as const;
 
 /**
@@ -60,7 +65,11 @@ export const STORAGE_KEYS = {
  * spelling, so they are exempt from the "every key has a legacy spelling" rule
  * (scripts/test-wire-names.mjs) — by being listed here, not by the rule relaxing.
  */
-export const STORAGE_KEYS_SINCE_RENAME: ReadonlySet<string> = new Set([STORAGE_KEYS.chatPending, STORAGE_KEYS.chatOwed]);
+export const STORAGE_KEYS_SINCE_RENAME: ReadonlySet<string> = new Set([
+  STORAGE_KEYS.chatPending,
+  STORAGE_KEYS.chatOwed,
+  STORAGE_KEYS.desktopNotifications,
+]);
 
 /**
  * new key -> the key that held the same value before the rename.

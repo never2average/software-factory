@@ -6,6 +6,7 @@ import { guardSessionRoutes } from "../lib/session-guard.ts";
 import { guardedLocalDev } from "../lib/local-dev.ts";
 import { sessionPublicKeyPem } from "../lib/session-public-key.ts";
 import { EMAIL_SESSION_KIND } from "../../lib/session-token-kinds.ts";
+import { queueDeliveryAuth } from "../lib/queue-delivery-auth.ts";
 
 // Google sign-in (free). The web chat attaches the signed-in user's Google ID
 // token as a bearer; this verifier accepts it only when it was minted for our
@@ -120,6 +121,10 @@ const auth = [
   ...googleAuth,
   // …or one we signed in ourselves with an emailed code.
   ...emailSessionAuth,
+  // A queued chat message the web app sends after the person's tab closed: its own token kind, two minutes, read or
+  // post-once, admitted only on the routes of the one session it names (agent/lib/queue-delivery-auth.ts). An EXTRA
+  // restriction: the session guard below still holds it to that session's recorded owner.
+  ...(sessionPublicKey ? [queueDeliveryAuth(sessionPublicKey)] : []),
   // Vercel-internal + runtime callers (subagents, etc.) plus the front-end
   // project acting as a service (autonomous workflow resume).
   vercelOidc({ subjects: [FRONTEND_SUBJECT] }),

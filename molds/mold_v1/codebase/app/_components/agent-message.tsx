@@ -1,5 +1,7 @@
 "use client";
 
+import { lazyPanel } from "@/components/lazy-panel";
+import { Spinner } from "@/components/ui/spinner";
 import type {
   EveAuthorizationPart,
   EveDynamicToolPart,
@@ -22,7 +24,6 @@ import {
   XIcon,
 } from "lucide-react";
 import { ArtifactCard } from "./artifact-view";
-import { PdfView } from "./pdf-view";
 import {
   Dialog,
   DialogContent,
@@ -55,6 +56,16 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+
+// The pdf viewer (and pdf.js under it) is fetched when a preview first opens.
+const PdfView = lazyPanel(() => import("./pdf-view").then((m) => m.PdfView), {
+  label: "The preview",
+  placeholder: () => (
+    <div role="status" aria-label="Loading preview" className="flex h-full min-h-40 items-center justify-center">
+      <Spinner />
+    </div>
+  ),
+});
 
 export type AgentInputResponse = {
   readonly optionId?: string;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bearerMatches } from "@/lib/secret-compare";
 import { ABANDONED_RUN_MS, closeAbandonedWorkflowRuns } from "@/agent/lib/workflow-usage";
 import { getOpsDb } from "@/lib/ops-db";
 
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
       { status: 503 },
     );
   }
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!bearerMatches(request.headers.get("authorization"), secret)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const db = getOpsDb();

@@ -22,7 +22,6 @@ import {
   useState,
 } from "react";
 import type { BundledLanguage, BundledTheme, HighlighterGeneric, ThemedToken } from "shiki";
-import { createHighlighter } from "shiki";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -148,10 +147,15 @@ const getHighlighter = (
     return cached;
   }
 
-  const highlighterPromise = createHighlighter({
-    langs: [language],
-    themes: ["github-light", "github-dark"],
-  });
+  // shiki (and its oniguruma engine) is fetched the first time a block is highlighted, not with the page: the raw
+  // tokens below render meanwhile. A failed fetch drops the cache entry so a later block can try again.
+  const highlighterPromise = import("shiki").then(({ createHighlighter }) =>
+    createHighlighter({
+      langs: [language],
+      themes: ["github-light", "github-dark"],
+    }),
+  );
+  highlighterPromise.catch(() => highlighterCache.delete(language));
 
   highlighterCache.set(language, highlighterPromise);
   return highlighterPromise;

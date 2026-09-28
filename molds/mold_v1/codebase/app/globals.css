@@ -171,3 +171,13 @@ body {
     font: inherit;
   }
 }
+
+/* components/ai-elements/shimmer.tsx: the light sweeping across "Thinking...". */
+@keyframes shimmer-sweep {
+  from {
+    background-position: 100% center;
+  }
+  to {
+    background-position: 0% center;
+  }
+}

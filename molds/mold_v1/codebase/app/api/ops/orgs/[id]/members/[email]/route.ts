@@ -7,6 +7,8 @@ import { getOpsDb } from "@/lib/ops-db";
 import { isOrgAdmin, orgContextForRequest, canAccessOrg } from "@/lib/org-context";
 import { recordOpsAudit } from "@/lib/ops-audit";
 import { verifyOpsAuth } from "@/lib/ops-auth";
+import { removeMemberEverywhere } from "@/lib/member-removal";
+import { runInOrg } from "@/lib/chat-queue-runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,7 +92,15 @@ export async function DELETE(
     if (owners.some((o) => o.email === email) && ctx.role !== "owner") {
       return NextResponse.json({ error: "Only an owner can remove another owner." }, { status: 403 });
     }
-    await db.delete(orgMembers).where(and(eq(orgMembers.orgId, id), eq(orgMembers.email, email)));
+    // ONE transaction: the membership, the messages they queued that have not gone, and their notification devices
+    // in this workspace (lib/member-removal.ts). If any of it fails, nothing is removed and this answers 500 —
+    // never a removal that leaves their queue sending as them.
+    try {
+      await removeMemberEverywhere(runInOrg, { orgId: id, email });
+    } catch (e) {
+      console.error(`[members] removing ${email} from ${id} failed and was rolled back:`, e);
+      return NextResponse.json({ error: "The member could not be removed. Nothing was changed — try again." }, { status: 500 });
+    }
     void recordOpsAudit(db, {
       automationType: "org",
       automationId: id,

@@ -66,12 +66,14 @@ import {
 } from "../../lib/session-gate.ts";
 export { agentGateDb } from "./session-owners.ts";
 import {
+  SESSION_BOUND_ACT_CLAIM,
   SESSION_BOUND_CLAIM,
   SESSION_BOUND_TOKEN_KIND,
   SESSION_VISIBILITY_GRANT_HEADER,
   WORKSPACE_STEP_GRANT_AUDIENCE,
   WORKSPACE_STEP_GRANT_KIND,
 } from "../../lib/session-token-kinds.ts";
+import { claimsOf, consumePostInDb, postClaimOf, type PostClaim } from "./queue-delivery-auth.ts";
 import { sessionPublicKeyPem } from "./session-public-key.ts";
 import { withoutContinuationTokens } from "../../lib/chat-replay-stream.ts";
 import { noticeDelegations } from "./session-lineage-stream.ts";
@@ -96,6 +98,12 @@ export interface GuardDeps {
   readonly streamProbeMs: number;
   /** The email a workspace-step grant was signed for, or null when it does not verify. */
   readonly grantEmail: (grant: string) => Promise<string | null>;
+  /**
+   * SPEND a session-bound post token (PR #63's queue delivery) — once, for exactly its claimed item's body. True when
+   * this request may go on. The guard runs first on every per-session route, and eve re-runs the auth list inside
+   * its handler, so this is the one place a single-use token can be spent exactly once per request.
+   */
+  readonly consumeSessionPost: (post: PostClaim) => Promise<boolean>;
 }
 
 export interface GuardOptions {
@@ -112,6 +120,7 @@ const defaultDeps: GuardDeps = {
   },
   localDevAllowed: () => localDevAllowed(),
   streamProbeMs: 3_000,
+  consumeSessionPost: consumePostInDb,
   async grantEmail(grant) {
     const publicKey = sessionPublicKeyPem();
     if (!publicKey) return null;
@@ -144,7 +153,12 @@ export function callerOf(auth: AuthContext, headers: Headers): GateCaller {
   // authenticator, so no door that admits such a token — PR #63's, or one added later — can make it more than a
   // token for that one session and its owner (lib/session-token-kinds.ts).
   if (attr(auth, "kind") === SESSION_BOUND_TOKEN_KIND || attr(auth, SESSION_BOUND_CLAIM) !== undefined) {
-    return { kind: "session-bound", email, boundSessionId: attr(auth, SESSION_BOUND_CLAIM) ?? null };
+    return {
+      kind: "session-bound",
+      email,
+      boundSessionId: attr(auth, SESSION_BOUND_CLAIM) ?? null,
+      boundAct: attr(auth, SESSION_BOUND_ACT_CLAIM) ?? null,
+    };
   }
   if (auth.authenticator === "local-dev") return { kind: "local-dev", email: null, principalId: auth.principalId };
   if (isServicePrincipal(auth)) {
@@ -443,6 +457,12 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
       logDenied(sessionId, caller, decision.reason, key);
       return notFound();
     }
+    // A session-bound token writes ONE thing: a message POST (its body checked and the token spent below). Never a
+    // cancel, nor any per-session write eve adds later.
+    if (caller.kind === "session-bound" && right === "write" && key !== CONTINUE_ROUTE) {
+      logDenied(sessionId, caller, "read-only", key);
+      return notFound();
+    }
 
     if (key === CONTINUE_ROUTE) {
       // Read the body once, check its token belongs to THIS session, and hand eve an identical request.
@@ -453,6 +473,20 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
         body = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
       } catch {
         body = null; // eve answers "Invalid JSON body." itself
+      }
+      if (caller.kind === "session-bound") {
+        // Spent here, once: the claimed queued item's exact body, a higher seq than any admitted before.
+        const post = postClaimOf(claimsOf(request), sessionId, body);
+        let spent = false;
+        try {
+          spent = Boolean(post) && (await deps.consumeSessionPost(post as PostClaim));
+        } catch {
+          return unavailable();
+        }
+        if (!spent) {
+          logDenied(sessionId, caller, "read-only", key);
+          return notFound();
+        }
       }
       const token = typeof body?.continuationToken === "string" && body.continuationToken ? body.continuationToken : null;
       if (token && decision.role !== "local-dev") {

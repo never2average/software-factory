@@ -34,6 +34,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /* -------------------------------------------------------------------------- */
 /* Customers — one row per customer account (the account spine)               */
@@ -2301,5 +2302,110 @@ export const inboxItems = pgTable(
     uniqueIndex("inbox_items_dedupe_uidx").on(t.orgId, t.source, t.externalId),
     index("inbox_items_org_status_idx").on(t.orgId, t.status),
     index("inbox_items_thread_idx").on(t.orgId, t.threadKey),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Chat queue — messages typed while a turn runs, held on the SERVER          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A message typed while the agent was still working, waiting for the chat to come to rest.
+ *
+ * It used to live in the tab's sessionStorage (#59), so closing the tab lost it: nothing was left to send it. Held
+ * here, the server sends it when the session reaches rest (lib/chat-queue-drain.ts, nudged by
+ * agent/hooks/chat-queue.ts on `session.waiting`, swept by /api/cron/deliver-queued), whether or not a tab is open.
+ *
+ * EXACTLY ONCE: an item leaves `queued` only through one atomic claim (`claimNextQueued`), and the partial unique
+ * index below allows ONE item per (workspace, eve session) in `sending` at a time, so two tabs, the hook and the cron racing for
+ * the same session produce one delivery. `message` is the wire text composed by the browser when the item was
+ * queued (directives for the settings it was queued under, the data-room paths of its attachments), so what is sent
+ * is exactly what the person queued, whatever the composer shows later.
+ *
+ * Org-scoped under `org_isolation` and OWNER-ONLY under the restrictive `chat_queue_owner` policy
+ * (drizzle/0021_chat_queue_and_push.sql), plus the owner filter every read and write in lib/chat-queue-server.ts
+ * carries.
+ */
+export const chatQueueItems = pgTable(
+  "chat_queue_items",
+  {
+    // Minted by the browser, so a retried enqueue is the same row, never a second one.
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    ownerEmail: text("owner_email").notNull(),
+    eveSessionId: text("eve_session_id").notNull(),
+    // The sidebar entry (StoredSession.id) the message was typed in.
+    chatId: text("chat_id"),
+    // What the person typed, as the queue row shows it.
+    text: text("text").notNull(),
+    // What is sent: directives + text + attachment block (lib/chat-attachments composeAttachmentMessage).
+    message: text("message").notNull(),
+    // { mode, webSearch, browserUse, customers } it was queued under (#59's per-item settings).
+    settings: jsonb("settings").$type<{ mode: string; webSearch: boolean; browserUse: boolean; customers: string[] }>().notNull(),
+    // Goal / Loop mode: sent with the completion-gate output schema.
+    goal: boolean("goal").notNull().default(false),
+    // [{ name, path }] — files already stored in the data room.
+    attachments: jsonb("attachments").$type<Array<{ name: string; path: string }>>(),
+    // Files still uploading. Not sent while > 0; an upload the closed tab never finished stays here until the
+    // person chooses "Send without it".
+    filesPending: integer("files_pending").notNull().default(0),
+    fileNames: jsonb("file_names").$type<string[]>(),
+    position: bigint("position", { mode: "number" }).notNull(),
+    // queued | sending | sent | expired | failed
+    state: text("state").notNull().default("queued"),
+    claimId: text("claim_id"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    // "server" (hook, cron) or "tab" (a drain a tab asked for)
+    sentBy: text("sent_by"),
+    // The `session.waiting` it was delivered against (its eve timestamp and token). The NEXT item may go only once
+    // the session has come to rest AGAIN, i.e. its tail is a different waiting — compared on eve's own stamps, so no
+    // clock of ours is ever compared with eve's.
+    restMark: text("rest_mark"),
+    // The highest delivery-token `seq` the agent has admitted for the current claim: a post token is single-use
+    // (agent/lib/queue-delivery-auth.ts admits it only while its seq is higher, and raises this to it).
+    tokenSeq: integer("token_seq").notNull().default(0),
+    // Exactly what was sent (the text plus its delivery reference, lib/queue-delivery-token.ts), once sent.
+    sentMessage: text("sent_message"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("chat_queue_items_session_idx").on(t.orgId, t.eveSessionId, t.state, t.position),
+    index("chat_queue_items_state_idx").on(t.state, t.createdAt),
+    uniqueIndex("chat_queue_items_one_sending_uidx").on(t.orgId, t.eveSessionId).where(sql`state = 'sending'`),
+  ],
+);
+
+/**
+ * One browser's Web Push subscription — a DEVICE a person asked to be notified on.
+ *
+ * Written by the web app (app/api/ops/push/subscriptions) when the person turns "Desktop notifications" on, read by
+ * the agent's notification hook (agent/hooks/notifications.ts) to send, and removed when the push service answers
+ * 404/410 (the browser dropped it), when the person turns it off, and on sign-out. `preview` is the person's
+ * "Show message preview in notifications" choice for this device: off sends the chat title only.
+ *
+ * Org-scoped and owner-only, exactly like `chat_queue_items`. One endpoint belongs to one person per workspace: a
+ * row under another owner is never taken over (lib/push-subscriptions.ts).
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    ownerEmail: text("owner_email").notNull(),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    preview: boolean("preview").notNull().default(true),
+    userAgent: text("user_agent"),
+    lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("push_subscriptions_endpoint_uidx").on(t.orgId, t.endpoint),
+    index("push_subscriptions_owner_idx").on(t.orgId, t.ownerEmail),
   ],
 );

@@ -55,6 +55,18 @@ jobs:
       - name: Build
         run: npm run build
 
+      # FIRST-LOAD JAVASCRIPT HAS A BUDGET. Opening the chat downloaded 32 files, 4.4 MB of JavaScript (1.0 MB
+      # brotli) before the person did anything: shiki, katex, mermaid, recharts, zod, motion and every Ops Center
+      # panel were imported at the top of modules the chat loads. They load on first use now; this keeps it that way.
+      # It weighs what `next build` reports each page loads first against scripts/bundle-budget.json (brotli +5% or
+      # +20 KB, whichever is smaller; no extra file; a missing page fails) and, since size alone let motion back in
+      # at +34 KB, checks by MODULE IDENTITY that none of the lazily loaded libraries and panels is in a first load:
+      # a second, source-mapped build into .next-budget/ (so .next/ never holds maps) attributes every byte to its
+      # module. A failure names the modules that are new or heavier.
+      - name: First-load JavaScript within budget
+        if: always()
+        run: npm run check:bundle-budget
+
       # The offline suites. Each is independent, so `if: always()` reports every
       # failure in one run instead of stopping at the first — a green-after-fix
       # loop that only ever shows you one problem at a time wastes a cycle per
@@ -287,6 +299,12 @@ jobs:
       # The offline half of the attachment contract. The end-to-end companion
       # (test:attachment-e2e) needs production credentials and a live agent, so
       # it is run by hand; this half holds the two invariants on every PR.
+      # Desktop notifications, the server half: RFC 8291 encryption (the RFC's own vector), a VAPID request a
+      # fake push service can verify, a payload of title + short preview only (title alone with previews off),
+      # a 410 removing that device, and which moments of a turn notify.
+      - name: Web Push (encryption, VAPID, payload, 410 cleanup)
+        run: npm run test:web-push
+
       - name: Chat attachments (behavioural)
         if: always()
         run: npm run test:chat-attachments
@@ -371,6 +389,11 @@ jobs:
         if: always()
         run: npx playwright install --with-deps chromium
 
+      # The service worker in a real Chromium with notifications granted: a pushed payload is shown under its
+      # event's tag (never twice), not for the chat on screen, and a click opens that chat.
+      - name: Desktop notifications service worker (push shown, deduped, click opens the chat)
+        run: npm run test:push-sw
+
       - name: UI vocabulary comes from the deployment profile (source, enum labels, built bundle, rendered pages)
         if: always()
         run: npm run check:ui-vocabulary
@@ -392,6 +415,18 @@ jobs:
       - name: Sample data stays a local demo's (fallback, seed gate, prompts)
         if: always()
         run: npm run test:sample-data
+
+      # The heavy libraries that left the first load ("First-load JavaScript within budget") still arrive when used.
+      # A stray static import puts one back into every page load; a lazy one that never arrives leaves a reply as raw
+      # source. On the production build, signed in with the ops API faked: a plain chat downloads none of them; a
+      # code fence is highlighted (also nested in a list or a quote, and when it arrives mid-stream), a mermaid fence
+      # is a diagram, $$…$$ is typeset (with katex's stylesheet) without redrawing a diagram already on screen, CJK
+      # emphasis parses, a dashboard draws its chart and its mermaid chart, an attached PDF paints a page, an agent's
+      # .xlsx opens as a table, the data room, the Ops Center and the control panel open. A chunk that cannot be
+      # fetched shows a card with Retry and leaves the chat working, and Retry loads it once the network is back.
+      - name: Heavy libraries load on first use, and work (built chunks, rendered chat)
+        if: always()
+        run: npm run check:lazy-features
 
       # …and what the scans cannot read: keys in JSON a person copies or views, ops API errors, the base library
       # rows a workspace does not run (still listed and adoptable, naming no excluded specialist), a visible enum
@@ -617,6 +652,18 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:chat-sessions-mirror-db
+
+      # THE CHAT QUEUE MOVED TO THE SERVER (closing a tab no longer loses a queued message), and the devices people
+      # asked to be notified on. Database facts only: that both tables are owner-only AND workspace-scoped (the
+      # takeover variants above, through the library and in raw SQL under the restrictive owner policy of
+      # drizzle/0021), that eight claimers racing for one session send ONE message every time, and that the drain
+      # the agent's hook and a tab both call keeps #59's guarantees (Plan mode, stale, ×, two tabs) with a fake eve.
+      - name: Chat queue and notification devices (owner-only, exactly once), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:chat-queue-db
 
 # NOT RUN HERE, deliberately:
 #

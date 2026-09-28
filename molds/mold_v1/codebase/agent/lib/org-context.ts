@@ -17,6 +17,7 @@
  * control plane, which carry no org_id and no RLS.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
+import { resolvableByDomain } from "../../lib/workspace-rules.ts";
 import { getDb, type Db } from "./db/index.ts";
 import { customers, orgMembers, orgs } from "./db/schema.ts";
 import { inheritedScope } from "./session-scope.ts";
@@ -168,7 +169,8 @@ export async function resolveOrg(email?: string, hd?: string): Promise<string> {
       const [row] = await db
         .select({ orgId: orgs.orgId })
         .from(orgs)
-        .where(and(eq(orgs.googleHostedDomain, hd), eq(orgs.status, "active")))
+        // The web app's rule, from one shared function (lib/workspace-rules.ts): any workspace not suspended.
+        .where(and(eq(orgs.googleHostedDomain, hd), resolvableByDomain(orgs.status)))
         .limit(1);
       if (row) return row.orgId;
     }

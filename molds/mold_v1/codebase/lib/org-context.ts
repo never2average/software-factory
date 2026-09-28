@@ -15,6 +15,7 @@
  * `server-only`: this reads the DB and trusts request headers set by the proxy.
  */
 import "server-only";
+import { resolvableByDomain } from "@/lib/workspace-rules";
 
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { getOpsDb, withOrgRls, type Db } from "@/lib/ops-db";
@@ -151,7 +152,7 @@ export async function resolveOrgForIdentity(
         // EXCLUDE suspended rather than require "active": an allow-list means
         // any status nobody remembered to handle silently stops resolving a
         // workspace, which is how self-serve orgs became unreachable.
-        .where(and(eq(orgs.googleHostedDomain, hostedDomain), ne(orgs.status, "suspended")))
+        .where(and(eq(orgs.googleHostedDomain, hostedDomain), resolvableByDomain(orgs.status)))
         .limit(1);
       if (byDomain) return { orgId: byDomain.orgId, role: "member", fallback: false };
     }

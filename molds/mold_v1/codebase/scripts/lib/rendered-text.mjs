@@ -62,8 +62,10 @@ export const PAGE_SPECS = [
 ];
 export const PAGES = PAGE_SPECS.map((p) => p.path);
 
-/** What the app shows when a page crashed. Seeing it fails the pass. */
-const ERROR_SCREENS = [/This page couldn.t load/i, /Application error/i, /Unhandled Runtime Error/i, /Something went wrong/i];
+/** What the app shows when a page crashed. Seeing it fails the pass. A region's own boundary ("The Ops Center hit an
+ *  error", app/_components/error-boundary.tsx; "This page hit an error", app/error.tsx) is a crash too: the panel
+ *  that should have been read is not there. */
+const ERROR_SCREENS = [/This page couldn.t load/i, /Application error/i, /Unhandled Runtime Error/i, /Something went wrong/i, /\bhit an error\b/i];
 
 /**
  * The fields a profile can hide in the data room, by where they live (BASE keys): the account's scalar fields, and the

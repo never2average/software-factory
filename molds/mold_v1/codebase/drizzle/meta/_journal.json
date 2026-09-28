@@ -150,6 +150,13 @@
       "breakpoints": true
     },
     {
+      "idx": 21,
+      "version": "7",
+      "when": 1790800000000,
+      "tag": "0021_chat_queue_and_push",
+      "breakpoints": true
+    },
+    {
       "idx": 22,
       "version": "7",
       "when": 1790900000000,
