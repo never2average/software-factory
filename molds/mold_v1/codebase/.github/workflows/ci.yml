@@ -430,6 +430,17 @@ jobs:
         if: always()
         run: npm run check:no-sample-data
 
+      # A signed-in person's first screen comes from this browser, at once. The page painted the sign-in card for
+      # someone signed in, then an empty sidebar, then a new chat, and asked the server for nothing until every script
+      # had run (two reads twice, one after another; the agent's cold start paid by the first message). On the
+      # production build, signed in with the ops API faked and a slow chat list: the first paint is the app's frame
+      # (signed out: the card), the last chat and the sidebar show from the cache before the list answers, with a
+      # quiet "updating" until it has, a chat deleted elsewhere is not kept open, each startup read is made once and
+      # before the scripts have arrived, and the agent is warmed once per tab.
+      - name: First screen from the browser's cache, startup reads early and once, agent warmed
+        if: always()
+        run: npm run check:first-screen
+
       # …and the rules that need no build: the no-database fallback is empty unless DEMO_SAMPLE_DATA=1 and never
       # writes to disk, seed:postgres refuses without DEMO_SAMPLE_DATA=1 or --sample (before connecting), and nothing
       # the model or a connector card reads names the sample file or its ids.

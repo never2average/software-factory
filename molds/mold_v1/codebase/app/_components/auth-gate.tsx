@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatShell } from "./chat-shell";
 import { EmailSignIn } from "./email-sign-in";
 import { Spinner } from "@/components/ui/spinner";
+import { sharedGet } from "@/lib/startup-fetch";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
 import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 import { clearAllPending } from "@/lib/chat-queue";
@@ -92,6 +93,43 @@ function loadGis(): Promise<void> {
   });
 }
 
+/**
+ * The <head> script (lib/startup-fetch.ts) marks <html data-session> when this browser holds an unexpired session, so
+ * the first paint is the app's frame rather than the sign-in card. The moment this component learns there is no
+ * usable session after all (none restored, refused, expired, signed out) the mark goes, and the card shows.
+ */
+function endSessionFrame(): void {
+  try {
+    document.documentElement.removeAttribute("data-session");
+  } catch {
+    /* no document */
+  }
+}
+
+/**
+ * What a signed-in person sees before the app's JavaScript has run: the shell's outline (sidebar, composer) in the
+ * page's own colours, instead of a sign-in card that is about to vanish. Shown only under <html data-session>.
+ */
+function SessionFrame() {
+  return (
+    <div data-session-frame aria-hidden className="h-dvh w-full bg-background">
+      <div className="hidden h-dvh w-72 shrink-0 flex-col gap-2 border-border border-r bg-muted/20 px-3 py-4 md:flex">
+        <div className="h-6 w-32 rounded bg-muted/70" />
+        <div className="mt-4 flex flex-col gap-2">
+          {[70, 55, 62, 48, 66, 58].map((w, i) => (
+            <div key={i} className="h-3.5 rounded bg-muted/50" style={{ width: `${w}%` }} />
+          ))}
+        </div>
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col justify-end">
+        <div className="mx-auto w-full max-w-3xl px-4 pb-5 sm:px-6">
+          <div className="h-24 w-full rounded-2xl border border-border/60 bg-muted/30" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AuthGate() {
   const [token, setToken] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -159,6 +197,7 @@ export function AuthGate() {
           "If you were invited, use “Invited by email? Sign in with a code” below.",
       );
       removeStored(TOKEN_KEY);
+      endSessionFrame();
       return;
     }
     tokenRef.current = credential;
@@ -177,6 +216,7 @@ export function AuthGate() {
         tokenRef.current = null;
         setToken(null);
         removeStored(TOKEN_KEY);
+        endSessionFrame();
       }, Math.max(msLeft, 0));
     }
   }, []);
@@ -197,6 +237,7 @@ export function AuthGate() {
     // Both spellings: a sign-out that cleared only the new key would leave a live
     // token under the old one, and the next load would silently restore it.
     removeStored(TOKEN_KEY);
+    endSessionFrame();
     // Queued messages and owed deliveries are one person's (lib/chat-queue):
     // on a shared machine they must not survive into the next sign-in.
     try {
@@ -228,13 +269,18 @@ export function AuthGate() {
   // Restore a still-valid token across refreshes (before Google even loads).
   useEffect(() => {
     const stored = readStored(TOKEN_KEY);
-    if (!stored) return;
+    // Coming back from the redirect flow, the effect above has already adopted a fresh token.
+    if (!stored) {
+      if (!tokenRef.current) endSessionFrame();
+      return;
+    }
     const claims = decodeJwt(stored);
     if (claims.exp && claims.exp * 1000 > Date.now() + 60_000) {
       restoredRef.current = true;
       applyToken(stored);
     } else {
       removeStored(TOKEN_KEY);
+      endSessionFrame();
     }
   }, [applyToken]);
 
@@ -333,7 +379,8 @@ export function AuthGate() {
           window.history.replaceState({}, "", window.location.pathname);
         }
 
-        const res = await fetch("/api/ops/orgs", { headers: { Authorization: `Bearer ${token}` } });
+        // The same read (same headers) the workspace switcher makes, and the <head> script started early: one request.
+        const res = await sharedGet("/api/ops/orgs", getAuthHeaders());
         if (!res.ok) return alive && setOrgState("ok");
         const data = (await res.json()) as { items?: unknown[] };
         if (!alive) return;
@@ -372,7 +419,7 @@ export function AuthGate() {
     return () => {
       alive = false;
     };
-  }, [token]);
+  }, [token, getAuthHeaders]);
 
   /**
    * Full-page redirect sign-in — the escape hatch when GIS can't work.
@@ -436,7 +483,11 @@ export function AuthGate() {
   }
 
   return (
-    <main className="relative flex h-dvh flex-col items-center justify-center overflow-hidden bg-background px-6 text-foreground">
+    // The sign-in card keeps its indentation inside the fragment on purpose: deployments' branding overlays match
+    // its markup (the brand mark, the tagline) verbatim.
+    <>
+    <SessionFrame />
+    <main data-signed-out className="relative flex h-dvh flex-col items-center justify-center overflow-hidden bg-background px-6 text-foreground">
       {/* Quiet backdrop: one radial wash + a faint grid, nothing animated. */}
       <div
         aria-hidden
@@ -551,5 +602,6 @@ export function AuthGate() {
         <span>By continuing you agree to your organization's usage policies.</span>
       </footer>
     </main>
+    </>
   );
 }

@@ -45,6 +45,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { STORAGE_KEYS, readStored, writeStored } from "@/lib/browser-storage";
+import { sharedGet } from "@/lib/startup-fetch";
 
 /** Approx model context window for the gauge (Claude/GLM-class). Approximate on
  *  purpose — the ring is an indicator; eve owns the real compaction threshold. */
@@ -4930,7 +4931,8 @@ function useStarterCards(
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch("/api/ops/customers", { headers: getAuthHeaders() });
+        // The shell reads this same list for the account picker at the same moment: one request (lib/startup-fetch).
+        const res = await sharedGet("/api/ops/customers", getAuthHeaders());
         if (!res.ok) return;
         const { customers = [] } = (await res.json()) as { customers?: StarterCustomer[] };
         if (cancelled) return;

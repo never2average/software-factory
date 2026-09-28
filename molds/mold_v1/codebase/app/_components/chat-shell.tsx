@@ -12,6 +12,7 @@ import type { DataroomTab } from "./dataroom";
 import type { CustomerListItem, CustomerListStatus } from "./customer-search";
 import type { OpsSection } from "./ops-center";
 import { activeOrg, opsFetch } from "./ops/lib";
+import { sharedGet } from "@/lib/startup-fetch";
 import {
   SNAPSHOT_VERSION,
   buildSnapshot,
@@ -259,6 +260,51 @@ function storageKey(email: string | null) {
   return `${STORAGE_KEYS.chats}:${email ?? "anon"}:${activeOrg() ?? "default"}`;
 }
 
+/** Which chat this person last had open in this workspace, so a reload reopens it (see `bootFromCache`). */
+function lastChatKey(email: string | null) {
+  return `${STORAGE_KEYS.lastChat}:${email ?? "anon"}:${activeOrg() ?? "default"}`;
+}
+
+/**
+ * This browser's cached chat list, cleaned: workflow/cron-opened threads (clientKey `eve-…`) a previous build
+ * persisted are dropped (they are ephemeral), `shared-…` entries an earlier build filed here are dropped (they belong
+ * under "Shared with you", read from the server), and streams stored with accumulated duplicates are healed.
+ * `changed` says the stored copy needs the repair written back.
+ */
+function readCachedSessions(email: string | null): { cleaned: StoredSession[]; changed: boolean } | null {
+  try {
+    const raw = readStored(storageKey(email));
+    if (!raw) return null;
+    const stored = JSON.parse(raw) as StoredSession[];
+    const cleaned = stored
+      .filter((s) => !s.clientKey?.startsWith("eve-") && !s.clientKey?.startsWith("shared-"))
+      .filter((s) => !s.id?.startsWith("shared-"))
+      .map((s) => (s.events?.length ? { ...s, events: dedupeEvents(s.events) as AgentEvents } : s));
+    return { cleaned, changed: cleaned.length !== stored.length };
+  } catch {
+    return null; // corrupt storage
+  }
+}
+
+/**
+ * THE FIRST SCREEN, FROM THIS BROWSER'S CACHE.
+ *
+ * The sidebar used to start empty and fill in an effect, and every load landed on a new chat whatever the person had
+ * open. Now the first render already holds the cached list, and the chat they last had open when it can be shown
+ * straight from the cache (a transcript and a resume token, exactly what a click on a cached chat mounts). A last
+ * chat the cache cannot show is opened through `openChat` right after mount, as a click would. The server list then
+ * replaces the cached one as before; until it has answered, the sidebar says it is updating.
+ */
+function bootFromCache(email: string | null) {
+  const cached = readCachedSessions(email);
+  const sessions = cached?.cleaned ?? [];
+  const lastId = readStored(lastChatKey(email));
+  const last = lastId ? sessions.find((s) => s.id === lastId) : undefined;
+  const instant =
+    last?.session?.sessionId && last.session.continuationToken && last.events?.length ? last : undefined;
+  return { sessions, repair: cached?.changed ?? false, last, instant };
+}
+
 /**
  * The quota back-off and the coalescer MOVED to lib/chat-persist.ts, for the
  * reason `dedupeEvents` moved to lib/chat-snapshot.ts: this is the code whose
@@ -366,7 +412,9 @@ function ChatShimmer() {
 }
 
 export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: ChatShellProps) {
-  const [sessions, setSessions] = useState<StoredSession[]>([]);
+  // Read once, on the first render: the cached list and the chat to reopen (see `bootFromCache`).
+  const [boot] = useState(() => bootFromCache(email));
+  const [sessions, setSessions] = useState<StoredSession[]>(boot.sessions);
   // Customer list for the per-chat context selector: the workspace's own, from the
   // system of record via /api/ops/customers, and nothing else. It starts EMPTY and
   // loading. It used to start from a bundled sample list and keep it whenever the
@@ -465,7 +513,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/ops/customers", { headers: getAuthHeaders() });
+        // Shared with the starter cards' read of the same list, and started early by the <head> script.
+        const res = await sharedGet("/api/ops/customers", getAuthHeaders());
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { customers?: CustomerListItem[] };
         if (cancelled) return;
@@ -500,7 +549,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
    */
   const mintKey = (prefix: string) =>
     `${prefix}-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
-  const [mountKey, setMountKey] = useState(() => mintKey("new"));
+  const [mountKey, setMountKey] = useState(() => boot.instant?.id ?? mintKey("new"));
   /**
    * Bumped to force a REMOUNT of the same chat, which is the only way to make
    * the eve store re-open a stream (it reads its session config once, at
@@ -509,10 +558,17 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
    * new chat instead of continuing this one.
    */
   const [attachNonce, setAttachNonce] = useState(0);
-  const [initialSession, setInitialSession] = useState<AgentSession | undefined>(undefined);
-  const [initialEvents, setInitialEvents] = useState<AgentEvents | undefined>(undefined);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [activeCustomers, setActiveCustomers] = useState<string[]>([]);
+  // A reopened last chat mounts exactly as `openChat` mounts a cached one: its session, its events plus markers.
+  const [initialSession, setInitialSession] = useState<AgentSession | undefined>(boot.instant?.session);
+  const [initialEvents, setInitialEvents] = useState<AgentEvents | undefined>(() =>
+    boot.instant
+      ? (dedupeEvents([...((boot.instant.events ?? []) as unknown[]), ...(boot.instant.markers ?? [])]) as AgentEvents)
+      : undefined,
+  );
+  const [activeId, setActiveId] = useState<string | null>(boot.instant?.id ?? null);
+  const [activeCustomers, setActiveCustomers] = useState<string[]>(() =>
+    boot.instant ? sessionCustomers(boot.instant) : [],
+  );
   // When the current mount is a shared thread opened by a non-owner: the owner's
   // email drives the view-only composer notice. Cleared on any other open.
   const [readOnlyOwner, setReadOnlyOwner] = useState<string | undefined>(undefined);
@@ -535,34 +591,21 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   // The last list load failed: what is on screen is the cache, not the truth.
   const [listStale, setListStale] = useState(false);
 
-  // Load persisted sessions for this user. Drop any workflow/cron-opened threads
-  // (clientKey "eve-…") that a previous build persisted — they are ephemeral and
-  // must not survive a reload; re-save the cleaned list so they never return.
+  // Load persisted sessions for this user (the first render already did, from `boot`; this runs again when the
+  // person changes) and write the cleaned list back when it needed repair — see `readCachedSessions`.
+  const bootedFor = useRef<string | null | undefined>(email);
   useEffect(() => {
-    try {
-      const raw = readStored(storageKey(email));
-      if (!raw) return;
-      const stored = JSON.parse(raw) as StoredSession[];
-      const cleaned = stored
-        // `shared-…` entries are other people's threads that an earlier build
-        // filed here. They belong under "Shared with you", which reads from the
-        // server, so dropping them locally is a repair, not a loss.
-        .filter((s) => !s.clientKey?.startsWith("eve-") && !s.clientKey?.startsWith("shared-"))
-        .filter((s) => !s.id?.startsWith("shared-"))
-        // Heal streams a previous build stored with accumulated duplicates
-        // (which rendered as duplicated / jumbled / blank messages on reopen).
-        .map((s) => (s.events?.length ? { ...s, events: dedupeEvents(s.events) as AgentEvents } : s));
-      setSessions(cleaned);
-      if (cleaned.length !== stored.length) {
-        // Land any coalesced write FIRST, so a frame that has not fired yet
-        // cannot arrive after this repair and put the dropped entries back.
-        flushSessionWrite();
-        writeStored(storageKey(email), JSON.stringify(cleaned));
-      }
-    } catch {
-      /* ignore corrupt storage */
+    const cached = bootedFor.current === email ? { cleaned: boot.sessions, changed: boot.repair } : readCachedSessions(email);
+    bootedFor.current = undefined;
+    if (!cached) return;
+    setSessions(cached.cleaned);
+    if (cached.changed) {
+      // Land any coalesced write FIRST, so a frame that has not fired yet
+      // cannot arrive after this repair and put the dropped entries back.
+      flushSessionWrite();
+      writeStored(storageKey(email), JSON.stringify(cached.cleaned));
     }
-  }, [email]);
+  }, [email, boot]);
 
   /**
    * THE SERVER OWNS THE LIST. localStorage owns the transcripts.
@@ -594,7 +637,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       try {
         // One retry: a single unlucky request should not leave the sidebar
         // stale for the rest of the session.
-        let res = await fetch("/api/ops/chat-sessions", { headers: getAuthHeaders() });
+        // The first read is usually already answered: the <head> script started it (lib/startup-fetch).
+        let res = await sharedGet("/api/ops/chat-sessions", getAuthHeaders());
         if (!res.ok && res.status >= 500) {
           await new Promise((r) => setTimeout(r, 1500));
           if (cancelled) return;
@@ -1253,7 +1297,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const [seedPrompt, setSeedPrompt] = useState<string | undefined>(undefined);
   // The origin thread of the currently-mounted fork (fresh or reopened), so the
   // chat can show a "back to original" link at its top.
-  const [forkedFrom, setForkedFrom] = useState<{ id: string; title: string } | undefined>(undefined);
+  const [forkedFrom, setForkedFrom] = useState<{ id: string; title: string } | undefined>(boot.instant?.forkedFrom);
   // Refs so the stable (deps-[]) callbacks below read live values.
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
@@ -1934,6 +1978,28 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     [replaySession, persist, fetchSnapshot, storeSnapshot, getAuthHeaders],
   );
 
+  // The last chat, when the cache could not show it by itself (no transcript or no resume token here): open it the
+  // way a click would, once, right after the first render.
+  useEffect(() => {
+    if (boot.last && !boot.instant) void openChat(boot.last);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, for the chat the first render found
+  }, []);
+
+  // Remember which chat is open, so the next load reopens it; a new chat (or a shared one) forgets it.
+  useEffect(() => {
+    if (activeId && !activeId.startsWith("shared:")) writeStored(lastChatKey(email), activeId);
+    else removeStored(lastChatKey(email));
+  }, [activeId, email]);
+
+  // The reopened chat was deleted on another device: once the server's list is in and it is not on it, start fresh
+  // rather than keep a conversation open that no longer exists.
+  useEffect(() => {
+    const reopened = boot.instant?.id ?? boot.last?.id;
+    if (!mergedFromDb || !reopened || activeIdRef.current !== reopened) return;
+    if (!sessionsRef.current.some((s) => s.id === reopened)) newChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- decided once, when the server list first lands
+  }, [mergedFromDb]);
+
   // Navigate back to a thread by id (the fork's "back to original" link).
   const openThreadById = useCallback((id: string) => {
     const s = sessionsRef.current.find((x) => x.id === id);
@@ -2294,6 +2360,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         <ChatSidebar
           sessions={ordered}
           listStale={listStale}
+          listUpdating={!mergedFromDb && !listStale}
           saveFailed={syncFailed}
           sharedThreads={sharedThreads}
           onSelectShared={openSharedThread}

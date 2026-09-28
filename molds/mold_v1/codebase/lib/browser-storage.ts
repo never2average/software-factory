@@ -44,6 +44,11 @@ export const STORAGE_KEYS = {
   /** PREFIX. The real key is `${chats}:${email}:${orgId}` — see chat-shell.tsx. */
   chats: "workspace-chats",
   /**
+   * PREFIX. `${lastChat}:${email}:${orgId}` holds the id of the chat that person last had open in that workspace, so
+   * a reload reopens it from the cache (app/_components/chat-shell.tsx, bootFromCache).
+   */
+  lastChat: "workspace-last-chat",
+  /**
    * PREFIX, in sessionStorage. THIS TAB's queue for a chat:
    * `${chatPending}:${email}:${orgId}:${chatId}` (lib/chat-queue). Cleared on sign-out.
    */
@@ -69,6 +74,7 @@ export const STORAGE_KEYS_SINCE_RENAME: ReadonlySet<string> = new Set([
   STORAGE_KEYS.chatPending,
   STORAGE_KEYS.chatOwed,
   STORAGE_KEYS.desktopNotifications,
+  STORAGE_KEYS.lastChat,
 ]);
 
 /**

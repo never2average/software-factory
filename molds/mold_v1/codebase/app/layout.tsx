@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
 import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/lib/browser-storage";
+import { startupScript } from "@/lib/startup-fetch";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
@@ -59,6 +60,13 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
               `try{var s=localStorage,t=s.getItem(${JSON.stringify(STORAGE_KEYS.theme)})||s.getItem(${JSON.stringify(LEGACY_STORAGE_KEYS[STORAGE_KEYS.theme])});if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}`,
           }}
         />
+        {/*
+          A signed-in person's first screen, before any bundle has arrived: mark <html data-session> so the page paints
+          the app's frame rather than the sign-in card (app/globals.css), and start the reads that screen needs with
+          the same headers the app would send (lib/startup-fetch.ts), so they run while the JavaScript downloads
+          instead of after it.
+        */}
+        <script dangerouslySetInnerHTML={{ __html: startupScript() }} />
       </head>
       <body>
         <TooltipProvider>{children}</TooltipProvider>

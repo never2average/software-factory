@@ -38,6 +38,8 @@ interface ChatSidebarProps {
   readonly sessions: StoredSession[];
   /** The last list load failed — say so instead of claiming there are none. */
   readonly listStale?: boolean;
+  /** The list on screen is this browser's cached copy and the server's has not answered yet. */
+  readonly listUpdating?: boolean;
   /** Writes to the durable mirror are failing. Distinct from listStale: the
    *  chats on screen are real, but they are NOT being saved, and silence here
    *  is how a finished conversation disappears on the next reload. */
@@ -70,6 +72,7 @@ interface ChatSidebarProps {
 export function ChatSidebar({
   sessions,
   listStale,
+  listUpdating,
   saveFailed,
   sharedThreads = [],
   onSelectShared,
@@ -169,14 +172,22 @@ export function ChatSidebar({
       <hr className="mx-3 my-1.5 border-border" />
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pt-0.5 pb-2">
-        <p className="px-3 pt-1 pb-0.5 font-medium text-3xs text-muted-foreground uppercase tracking-wide">
+        <p className="flex items-center gap-1.5 px-3 pt-1 pb-0.5 font-medium text-3xs text-muted-foreground uppercase tracking-wide">
           Chats
+          {/* Cached rows are on screen at once; say, quietly, that they are being checked. */}
+          {listUpdating && sessions.length > 0 ? (
+            <span role="status" data-testid="chat-list-updating" className="font-normal normal-case tracking-normal text-muted-foreground/70">
+              · updating
+            </span>
+          ) : null}
         </p>
         {sessions.length === 0 ? (
           <p className="px-2 py-3 text-center text-muted-foreground text-xs">
             {listStale
               ? "Couldn't load your chats. Retrying…"
-              : "No chats yet. Hit + to start one."}
+              : listUpdating
+                ? "Loading your chats…"
+                : "No chats yet. Hit + to start one."}
           </p>
         ) : (
           <ul className="flex flex-col gap-0.5">

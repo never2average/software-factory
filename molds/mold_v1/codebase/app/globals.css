@@ -1,6 +1,21 @@
 @import "tailwindcss";
 @source "../node_modules/streamdown/dist/*.js";
 
+/*
+ * A signed-in person's first paint (app/layout.tsx, lib/startup-fetch.ts): under <html data-session> the page shows
+ * the app's frame, not the sign-in card, until the app mounts. AuthGate removes the mark the moment there is no usable
+ * session, so a signed-out person always gets the card.
+ */
+[data-session-frame] {
+  display: none;
+}
+html[data-session] [data-session-frame] {
+  display: flex;
+}
+html[data-session] [data-signed-out] {
+  display: none;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

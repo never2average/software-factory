@@ -7,6 +7,8 @@
  * Surface-specific chrome (attach/search/plan tools, attachment chips) comes
  * in through slots; the rail passes none.
  */
+import { useEffect } from "react";
+import { prewarmAgent } from "@/lib/agent-prewarm";
 import {
   PromptInput,
   PromptInputFooter,
@@ -38,6 +40,10 @@ export function ChatComposer({
    *  ring). The submit sits at `right-2.5 bottom-2.5`; this clears it. */
   readonly submitAccessory?: React.ReactNode;
 }) {
+  // A composer on screen means a message is coming: start the agent's cold start now, not on Enter.
+  useEffect(() => {
+    prewarmAgent();
+  }, []);
   return (
     <PromptInput onSubmit={onSubmit}>
       {header ? <PromptInputHeader>{header}</PromptInputHeader> : null}

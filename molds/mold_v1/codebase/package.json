@@ -127,6 +127,7 @@
     "check:lazy-features": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check-lazy-features.mjs",
     "check:ui-vocabulary": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check-ui-vocabulary.mjs",
     "test:ui-vocabulary": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-ui-vocabulary.mjs",
+    "check:first-screen": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check-first-screen.mjs",
     "check:agent-vocabulary": "node scripts/check-agent-vocabulary.mjs",
     "test:agent-vocabulary": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-agent-vocabulary.mjs",
     "check:wire-names": "node scripts/check-wire-names.mjs",

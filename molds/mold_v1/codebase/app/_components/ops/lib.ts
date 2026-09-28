@@ -17,6 +17,7 @@ import {
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 import { an, W } from "@/lib/ui-words";
+import { isStartupRead, sharedGet } from "@/lib/startup-fetch";
 
 /** What a TODO is filed under, as a person reads it — only the containers whose data-room domain this deployment
  *  shows, in the profile's words ("deployment/implementation" by default). */
@@ -525,7 +526,12 @@ export async function opsFetch<T>(path: string, init?: RequestInit): Promise<T> 
    */
   const org = activeOrg();
   if (org) headers["x-ops-org"] = org;
-  const res = await fetch(path, { ...init, headers });
+  // A plain GET of a first-screen read is shared with every other caller asking for it now, and with the <head>
+  // script's early request (lib/startup-fetch).
+  const res =
+    !init?.method && !init?.body && !init?.signal && isStartupRead(path)
+      ? await sharedGet(path, headers)
+      : await fetch(path, { ...init, headers });
   let data: unknown = null;
   try {
     data = await res.json();

@@ -46,22 +46,23 @@ export function WorkspaceSwitcher() {
   const [logos, setLogos] = useState<Record<string, string | undefined>>({});
 
   const load = useCallback(async () => {
+    // Branding lives on the org row, not the membership — fetched so the
+    // trigger can show the uploaded logo rather than falling back to a
+    // monogram for a workspace that has one. Asked for alongside the
+    // memberships, not after them: it needs nothing from their answer.
+    opsFetch<{ items: { orgId: string; branding?: { logoUrl?: string } | null }[] }>("/api/ops/orgs")
+      .then((o) =>
+        setLogos(Object.fromEntries(o.items.map((x) => [x.orgId, x.branding?.logoUrl]))),
+      )
+      .catch(() => {
+        /* branding is decorative — a monogram is a fine fallback */
+      });
     try {
       const d = await opsFetch<{ memberships: Membership[]; invites: Invite[]; active?: string | null }>(
         "/api/ops/me/workspaces",
       );
       setMemberships(d.memberships);
       setInvites(d.invites);
-      // Branding lives on the org row, not the membership — fetched so the
-      // trigger can show the uploaded logo rather than falling back to a
-      // monogram for a workspace that has one.
-      opsFetch<{ items: { orgId: string; branding?: { logoUrl?: string } | null }[] }>("/api/ops/orgs")
-        .then((o) =>
-          setLogos(Object.fromEntries(o.items.map((x) => [x.orgId, x.branding?.logoUrl]))),
-        )
-        .catch(() => {
-          /* branding is decorative — a monogram is a fine fallback */
-        });
       // No stored choice yet: adopt the same one the server would default to,
       // so the label matches what the API is actually returning.
       // `active` is the server's own answer (most recently chosen membership); memberships[0] is merely the
