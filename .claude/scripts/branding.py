@@ -302,9 +302,9 @@ def auth_mark_jsx(inner):
     dropped and its strokes and fills are re-pointed at the background colour. SVG attributes are
     hyphenated; JSX wants them camel-cased."""
     if is_logo_mark(inner):
-        svg = f'<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">{inner}</svg>'
-        uri = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
-        return f'<img src="{uri}" alt="" className="size-8 rounded-md" aria-hidden />'
+        # The same mark is already served as app/icon.svg (/icon.svg). Point at it rather than inlining a
+        # base64 copy: inlined, a raster logo was ~72 KB of every page's HTML AND of the JS bundle (fde-agent #64).
+        return '<img src="/icon.svg" alt="" className="size-8 rounded-md" aria-hidden />'
     body = re.sub(r"<rect\b[^>]*/>", "", inner, count=1).strip()
     body = re.sub(r'\sfill="none"', "", body)
     body = re.sub(r'\sstroke="[^"]*"', ' className="stroke-background"', body)
