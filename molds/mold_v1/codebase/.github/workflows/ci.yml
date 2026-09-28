@@ -306,6 +306,17 @@ jobs:
         if: always()
         run: npm run test:chat-end-of-answer
 
+      # "The thinking stream continues above the subagent segment." After a specialist returns, eve resumes the
+      # turn at stepIndex 0 again, and its reducer keys thinking and text by step, so the orchestrator's later
+      # thinking streamed INTO the block above the card (and a sentence written before delegating was overwritten
+      # by the answer). Recorded eve streams (scripts/fixtures/event-order), folded whole (a reopened thread),
+      # event by event (a live turn), resumed mid-fold, compacted as a snapshot and across two sessions: every
+      # part lands in event order, a retried step still rewrites in place, and every other recorded transcript
+      # projects as before. The rendered half is tests/event-order.spec.ts.
+      - name: Chat parts in event order (behavioural)
+        if: always()
+        run: npm run test:chat-event-order
+
       # The offline half of the attachment contract. The end-to-end companion
       # (test:attachment-e2e) needs production credentials and a live agent, so
       # it is run by hand; this half holds the two invariants on every PR.

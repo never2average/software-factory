@@ -731,7 +731,9 @@ export function projectAttached<TData, TEvent extends TurnEvent>(
  * keep upserting in place, so it does not count.
  *
  * Wraps any `{ initial, reduce }` reducer; events of the first session pass
- * through untouched, so ordinary transcripts are byte-identical to before.
+ * through untouched, so ordinary transcripts are byte-identical to before. It
+ * also applies `withResumedSteps` (below): a turn that resumes after a
+ * specialist returns keeps its later parts below the specialist's card.
  */
 export interface EventReducer<TData, TEvent> {
   initial(): TData;
@@ -741,9 +743,95 @@ export interface EventReducer<TData, TEvent> {
 const EPOCH = "~epoch";
 type WithEpoch = { [EPOCH]?: { epoch: number; ended: boolean } };
 
-export function withSessionEpochs<TData extends object, TEvent extends TurnEvent>(
+/**
+ * A shallow copy that KEEPS non-enumerable properties. A spread drops them, and
+ * the wrappers below each keep their state in one — so a spread in the outer
+ * wrapper would silently reset the inner wrapper's state.
+ */
+function copyWithState<T extends object>(data: T): T {
+  return Object.defineProperties({}, Object.getOwnPropertyDescriptors(data)) as T;
+}
+
+/**
+ * EVERY PART OF A TURN IN THE ORDER IT HAPPENED — steps after a delegation.
+ *
+ * THE DEFECT. "The thinking stream continues above the subagent segment even
+ * though it should be below the subagent section." When the orchestrator hands
+ * work to a specialist, eve suspends the turn's durable workflow and resumes it
+ * when the specialist's result arrives — and the resumed half starts counting
+ * steps from 0 AGAIN (its emission state is rebuilt with `stepIndex: 0`;
+ * recorded in scripts/fixtures/subagent-delivery/child-completes.ndjson and
+ * scripts/fixtures/event-order/). eve's reducer keys a turn's reasoning and
+ * text parts by step alone (`reasoning:<stepIndex>` / `text:<stepIndex>`,
+ * `partKey` in node_modules/eve/dist/src/client/message-reducer.js) and
+ * `upsertPart` replaces a part WHERE IT ALREADY IS. So the thinking after the
+ * delegation was written into the thinking block BEFORE it — above the
+ * specialist's card — and a sentence the orchestrator wrote before delegating
+ * was overwritten by its answer after. Live and on reopen alike: both are the
+ * same fold over the same events.
+ *
+ * THE RULE. A step can only start once. A `step.started` for a step index this
+ * turn has already COMPLETED is the resumed half, so it and every later event
+ * of that turn are renumbered past the last completed step — the reducer then
+ * opens new parts below the card instead of rewriting old ones. Nothing else is
+ * renumbered: a step that throws never completes, so eve's retry of it keeps its
+ * index and still upserts in place, and `turn.started` (a new turn, or eve
+ * replaying the whole turn after a throw) starts the count again. A transcript
+ * with no delegation passes through untouched.
+ */
+const STEPS = "~steps";
+type StepState = Readonly<Record<string, { readonly completed: number; readonly offset: number }>>;
+type WithSteps = { [STEPS]?: StepState };
+
+export function withResumedSteps<TData extends object, TEvent extends TurnEvent>(
   base: EventReducer<TData, TEvent>,
 ): EventReducer<TData, TEvent> {
+  return {
+    initial: () => base.initial(),
+    reduce(data, event) {
+      const state: StepState = (data as WithSteps)[STEPS] ?? {};
+      const payload = (event as { data?: { turnId?: unknown; stepIndex?: unknown } }).data;
+      const turnId = typeof payload?.turnId === "string" ? payload.turnId : undefined;
+      let next = state;
+      let scoped = event;
+      if (turnId !== undefined && event?.type === "turn.started") {
+        if (state[turnId]) {
+          const { [turnId]: _dropped, ...rest } = state;
+          next = rest;
+        }
+      } else if (turnId !== undefined && typeof payload?.stepIndex === "number") {
+        const step = payload.stepIndex;
+        let turn = state[turnId] ?? { completed: -1, offset: 0 };
+        if (event.type === "step.started" && step + turn.offset <= turn.completed) {
+          turn = { ...turn, offset: turn.completed + 1 - step };
+        }
+        const index = step + turn.offset;
+        if (event.type === "step.completed" && index > turn.completed) turn = { ...turn, completed: index };
+        if (turn !== state[turnId]) next = { ...state, [turnId]: turn };
+        if (turn.offset !== 0) scoped = { ...event, data: { ...payload, stepIndex: index } };
+      }
+      const reduced = base.reduce(data, scoped);
+      if (next === state) {
+        // Carry the state onto a new projection that the base built without it.
+        if (reduced !== data && (reduced as WithSteps)[STEPS] !== state && Object.keys(state).length) {
+          Object.defineProperty(reduced, STEPS, { value: state, enumerable: false, configurable: true });
+        }
+        return reduced;
+      }
+      const out = reduced === data ? copyWithState(data) : reduced;
+      Object.defineProperty(out, STEPS, { value: next, enumerable: false, configurable: true });
+      return out;
+    },
+  };
+}
+
+export function withSessionEpochs<TData extends object, TEvent extends TurnEvent>(
+  reducer: EventReducer<TData, TEvent>,
+): EventReducer<TData, TEvent> {
+  // Every transcript reducer also gets `withResumedSteps`, INSIDE the epoch
+  // scoping: its state is keyed by the scoped turn id, so a new session's
+  // `turn_0` never inherits the old one's step count.
+  const base = withResumedSteps(reducer);
   return {
     initial: () => base.initial(),
     reduce(data, event) {
@@ -774,8 +862,8 @@ export function withSessionEpochs<TData extends object, TEvent extends TurnEvent
       const next = base.reduce(data, scoped);
       if (next === data && epoch === state.epoch && ended === state.ended) return data;
       // Non-enumerable: invisible to JSON, spreads and every `data.messages` reader.
-      const out = next === data ? ({ ...data } as TData) : next;
-      Object.defineProperty(out, EPOCH, { value: { epoch, ended }, enumerable: false });
+      const out = next === data ? copyWithState(data) : next;
+      Object.defineProperty(out, EPOCH, { value: { epoch, ended }, enumerable: false, configurable: true });
       return out;
     },
   };

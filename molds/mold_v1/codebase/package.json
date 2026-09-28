@@ -95,6 +95,7 @@
     "test:chat-directives": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-directives.mjs",
     "test:chat-buffered-turns": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-buffered-turns.mjs",
     "test:chat-end-of-answer": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-end-of-answer.mjs",
+    "test:chat-event-order": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-event-order.mjs",
     "test:attachment-e2e": "node --conditions=react-server --experimental-strip-types scripts/test-attachment-e2e.mjs",
     "test:chat-attachments": "node --experimental-strip-types scripts/test-chat-attachments.mjs",
     "test:chat-usage": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-usage.mjs",
