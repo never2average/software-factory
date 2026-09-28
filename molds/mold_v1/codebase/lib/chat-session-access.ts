@@ -3,8 +3,9 @@ import { and, eq, isNull, ne } from "drizzle-orm";
 import { chatSessions, chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
 import { getOpsDb, listWorkspaceIds, withOrgRls } from "./ops-db";
 import { snapshotAccess } from "./chat-snapshot";
-import { sessionGateDecision, type GateReason } from "./chat-gate";
-import { tenancyEnabled } from "./org-context";
+import type { GateDecision, SessionOwnership, SessionRight } from "./chat-gate";
+import { gateSessionRequest, type GateDb } from "./session-gate";
+import { DEFAULT_ORG, workspacesOf } from "./org-context";
 
 /**
  * May this caller read (or replace) the transcript of an eve SESSION?
@@ -110,121 +111,33 @@ export async function accessForSession(
 }
 
 /**
- * The ownership gate in front of eve's OWN per-session routes.
+ * The ownership gate in front of eve's OWN per-session routes, as the web proxy asks it.
  *
- * The rule is `sessionGateDecision` (lib/chat-gate.ts); this is the part that
- * has to read rows, and reading them wrong is the entire bug it replaces. Three
- * queries on the bare `getOpsDb()` handle returned 0 / 0 / 0 under the
- * production fail-closed policy, and the gate read that as "we have no record
- * of this session" and allowed every signed-in caller into every conversation.
+ * One implementation with the agent: the reads are lib/session-gate.ts and the rule is `sessionGateDecision`
+ * (lib/chat-gate.ts), and the agent (agent/lib/session-guard.ts) runs the same two in front of the same routes. This
+ * function only says how the WEB reaches the database — `withOrgRls` per workspace, and the control-plane lists.
  *
- * Nothing here swallows a database error. The caller decides what a failure
- * means — the gate route fails OPEN on one, loudly and deliberately, because
- * locking people out of their own conversations is the worse failure — and that
- * choice is only defensible while it stays the EXCEPTION. It stops being
- * defensible the moment the everyday path also produces "we could not see", so
- * the everyday path has to be a scoped read that actually works.
+ * Nothing here swallows a database error: the proxy answers 503 on one. It used to fail OPEN, and it used to allow a
+ * session nobody had a record of; neither is true any more, because the agent now records every session's owner
+ * before it hands the id to anyone.
  *
- * tenancy-ok: every statement in this file runs inside `withOrgRls(…)`. The one
- * cross-workspace read is the workspace LIST, which belongs to lib/ops-db.ts
- * with the rest of the tenancy mechanism rather than to a handle held here.
+ * tenancy-ok: every tenant-table statement runs inside `withOrgRls(…)`; memberships come from lib/org-context.ts.
  */
 export async function gateForSession(
-  orgId: string,
   email: string,
   sessionId: string,
-): Promise<{ allow: boolean; reason: GateReason }> {
+  right: SessionRight,
+): Promise<GateDecision & { ownership: SessionOwnership | null }> {
   const me = email.trim().toLowerCase();
-  if (!me) return { allow: false, reason: "no-caller" };
-
-  const [mirrors, threads] = await Promise.all([
-    withOrgRls(orgId, (tx) =>
-      tx
-        .select({ ownerEmail: chatSessions.ownerEmail })
-        .from(chatSessions)
-        .where(eq(chatSessions.eveSessionId, sessionId)),
-    ),
-    withOrgRls(orgId, (tx) =>
-      tx
-        .select({ id: chatThreads.id, ownerEmail: chatThreads.ownerEmail })
-        .from(chatThreads)
-        .where(eq(chatThreads.eveSessionId, sessionId)),
-    ),
-  ]);
-
-  /**
-   * A REVOKED member is not a member.
-   *
-   * The gate's member lookup carried no status filter at all, while the two
-   * neighbouring access helpers both use `ne(status, "revoked")`. So revoking
-   * someone cut them out of the shared-thread proxy and the transcript cache
-   * and left them full live read-and-send access to the session itself, for as
-   * long as they kept the id — which is the one thing revocation is for.
-   */
-  let isMember = false;
-  if (threads.length > 0) {
-    const rows = await withOrgRls(orgId, (tx) =>
-      tx
-        .select({ threadId: chatThreadMembers.threadId })
-        .from(chatThreadMembers)
-        .where(and(eq(chatThreadMembers.email, me), ne(chatThreadMembers.status, "revoked"))),
-    );
-    const mine = new Set(rows.map((r) => r.threadId));
-    isMember = threads.some((t) => mine.has(t.id));
-  }
-
-  // Only when this workspace has no record at all: is the session somebody
-  // else's, somewhere else? See the "other-workspace" note in lib/chat-gate.ts.
-  const knownElsewhere =
-    mirrors.length === 0 && threads.length === 0
-      ? await sessionExistsOutside(orgId, sessionId)
-      : false;
-
-  return sessionGateDecision({
-    callerEmail: me,
-    mirrorOwners: mirrors.map((m) => m.ownerEmail),
-    threads,
-    isMember,
-    knownElsewhere,
-  });
-}
-
-/**
- * Is this session recorded in some OTHER workspace?
- *
- * One lookup per workspace, each inside its own scope — the shape of
- * `acrossOrgsRls`, deliberately NOT that function: it logs a workspace that
- * fails and carries on, which would turn a database error into "not recorded
- * there", and "not recorded anywhere" is what this gate reads as permission.
- * Errors propagate here so the caller treats them as the failure they are.
- *
- * There are two workspaces, and this only runs while the caller's own has no
- * record of the session — which is the debounce window at the start of a brand
- * new chat, and never afterwards.
- */
-async function sessionExistsOutside(orgId: string, sessionId: string): Promise<boolean> {
-  const db = getOpsDb();
-  if (!db) return false;
-  // Pre-tenancy there is one implicit workspace, so there is no "outside".
-  if (!(await tenancyEnabled(db))) return false;
-  for (const workspace of await listWorkspaceIds()) {
-    if (workspace === orgId) continue; // already read, above
-    const [thread] = await withOrgRls(workspace, (tx) =>
-      tx
-        .select({ id: chatThreads.id })
-        .from(chatThreads)
-        .where(eq(chatThreads.eveSessionId, sessionId))
-        .limit(1),
-    );
-    if (thread) return true;
-    const [mirror] = await withOrgRls(workspace, (tx) =>
-      tx
-        .select({ id: chatSessions.id })
-        .from(chatSessions)
-        .where(eq(chatSessions.eveSessionId, sessionId))
-        .limit(1),
-    );
-    if (mirror) return true;
-  }
-  return false;
+  if (!me) return { allow: false, reason: "no-caller", ownership: null };
+  if (!getOpsDb()) throw new Error("Database not configured");
+  const deps: GateDb = {
+    inOrg: (orgId, fn) => withOrgRls(orgId, fn),
+    async listOrgs() {
+      const ids = await listWorkspaceIds();
+      return ids.length ? ids : [DEFAULT_ORG];
+    },
+    orgsOf: (address) => workspacesOf(address),
+  };
+  return gateSessionRequest(deps, { kind: "person", email: me }, sessionId, right);
 }

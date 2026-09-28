@@ -1,7 +1,11 @@
 import { eveChannel } from "eve/channels/eve";
-import { jwtEcdsa, localDev, oidc, vercelOidc, vercelSubject } from "eve/channels/auth";
+import { jwtEcdsa, oidc, vercelOidc, vercelSubject } from "eve/channels/auth";
 import { compatEnv } from "../lib/compat-env.ts";
 import { FRONTEND_SUBJECT as SERVICE_FRONTEND_SUBJECT, sessionAuthForRequest } from "../lib/service-scope.ts";
+import { guardSessionRoutes } from "../lib/session-guard.ts";
+import { guardedLocalDev } from "../lib/local-dev.ts";
+import { sessionPublicKeyPem } from "../lib/session-public-key.ts";
+import { EMAIL_SESSION_KIND } from "../../lib/session-token-kinds.ts";
 
 // Google sign-in (free). The web chat attaches the signed-in user's Google ID
 // token as a bearer; this verifier accepts it only when it was minted for our
@@ -73,17 +77,11 @@ const googleAuth = googleClientId
  * and is never deployed here, so a compromise of the agent cannot forge a
  * session. The issuer/audience strings must match `lib/auth-session.ts`.
  */
-const sessionPublicKey = (() => {
-  const raw = process.env.AUTH_JWT_PUBLIC_KEY?.trim();
-  if (!raw) return null;
-  if (raw.includes("-----BEGIN")) return raw.replace(/\\n/g, "\n");
-  try {
-    const decoded = Buffer.from(raw, "base64").toString("utf8");
-    return decoded.includes("-----BEGIN") ? decoded : null;
-  } catch {
-    return null;
-  }
-})();
+const sessionPublicKey = sessionPublicKeyPem();
+//
+// The token's KIND is checked, not just its signature. The web app's verifier (lib/auth-session.ts) has always
+// required `kind: "email-session"`; this one accepted anything signed with the key, so the first second kind to be
+// minted — a token meant for one narrow job — would have been a full sign-in here.
 const emailSessionAuth = sessionPublicKey
   ? [
       jwtEcdsa({
@@ -91,9 +89,14 @@ const emailSessionAuth = sessionPublicKey
         publicKey: sessionPublicKey,
         issuer: "delivered",
         audiences: ["delivered-app"],
+        claims: { kind: [EMAIL_SESSION_KIND] },
       }),
     ]
   : [];
+
+// A TOKEN BOUND TO ONE SESSION (PR #63's queue delivery) gets its own door in this list when #63 lands. Whatever
+// that door admits, the session guard below treats any principal carrying a `sid` claim or the queue-delivery kind
+// as bound to that one session and its owner (lib/session-token-kinds.ts) — so the door can only ever narrow.
 
 // The front-end (fde-agent) as a first-class SERVICE identity. The autonomous
 // workflow-resume cron has no human token, so it presents the front-end's own
@@ -112,18 +115,28 @@ if (FRONTEND_SUBJECT !== SERVICE_FRONTEND_SUBJECT) throw new Error("eve.ts FRONT
 // agent's API cross-origin, so browsers need CORS. WEB_ORIGIN is that app's URL.
 const webOrigin = process.env.WEB_ORIGIN ?? "https://fde-agent.vercel.app";
 
-export default eveChannel({
-  auth: [
-    // Signed-in humans via the web chat: a Google account…
-    ...googleAuth,
-    // …or one we signed in ourselves with an emailed code.
-    ...emailSessionAuth,
-    // Vercel-internal + runtime callers (subagents, etc.) plus the front-end
-    // project acting as a service (autonomous workflow resume).
-    vercelOidc({ subjects: [FRONTEND_SUBJECT] }),
-    // Loopback only, for `eve dev`.
-    localDev(),
-  ],
+const auth = [
+  // Signed-in humans via the web chat: a Google account…
+  ...googleAuth,
+  // …or one we signed in ourselves with an emailed code.
+  ...emailSessionAuth,
+  // Vercel-internal + runtime callers (subagents, etc.) plus the front-end
+  // project acting as a service (autonomous workflow resume).
+  vercelOidc({ subjects: [FRONTEND_SUBJECT] }),
+  // Loopback only, for `eve dev` — and never in a production or preview build, whatever the Host header says
+  // (agent/lib/local-dev.ts).
+  guardedLocalDev(),
+];
+
+/**
+ * WHOSE SESSION IS IT. eve's per-session routes authenticate a caller and then act on any session id; this agent is
+ * its own public deployment, so the web proxy's ownership check was one a caller could simply not go through. The
+ * guard puts the same rule (lib/chat-gate.ts) in front of every per-session route HERE — stream, message, approval
+ * answers, cancel — for every caller, and records a new session's owner before its id is returned. See
+ * agent/lib/session-guard.ts.
+ */
+export default guardSessionRoutes(eveChannel({
+  auth,
   cors: {
     origin: [webOrigin, "http://localhost:3000"],
     allowedHeaders: ["authorization", "content-type"],
@@ -149,4 +162,4 @@ export default eveChannel({
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ],
   },
-});
+}), { auth });

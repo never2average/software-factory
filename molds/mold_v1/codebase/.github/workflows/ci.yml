@@ -535,6 +535,23 @@ jobs:
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           node scripts/test-chat-access-db.mjs
 
+      # WHOSE SESSION IS IT — enforced by the AGENT, for every caller. The agent API is its own public deployment,
+      # and eve's per-session routes authenticate a caller and then act on any session id: a signed-in person from
+      # another workspace, calling it directly, read a transcript (its continuation token included), posted into
+      # it, answered its approvals and cancelled it. This drives the channel agent/channels/eve.ts exports — its
+      # real auth list and real verifiers, eve's runtime replaced by an in-memory one that delivers by token as eve
+      # does — as app_rw against the production fail-closed policies: the owner, a shared thread's participant,
+      # viewer and revoked member, a workspace-visible workflow step, the front-end's service token, a subagent's
+      # child session, a token bound to one session, a continuation token on another session's id, a spoofed
+      # `Host: localhost` in production, and the database going away (503, closed). The live-HTTP companion against
+      # `eve dev` is scripts/test-session-guard-live.mjs, run by hand (see its header).
+      - name: Agent session ownership (the agent's own routes), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:session-guard
+
       # THE CROSS-WORKSPACE READ, against the production policy: for every by-id reader and writer the model can
       # reach, workspace B asking for workspace A's id gets nothing and A's record is unchanged, the owner still
       # gets it, and a refused write's error carries none of the row's values. Flips every org_isolation policy to

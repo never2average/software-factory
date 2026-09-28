@@ -88,6 +88,8 @@
     "test:service-scope-oidc": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-service-scope-oidc.mjs",
     "test:cross-workspace-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-cross-workspace-reads-db.mjs",
     "test:chat-access-db": "node scripts/test-chat-access-db.mjs",
+    "test:session-guard": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-session-guard.mjs",
+    "test:session-guard-live": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-session-guard-live.mjs",
     "test:chat-collapse": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-collapse.mjs",
     "test:chat-send-gate": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-send-gate.mjs",
     "test:chat-directives": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-directives.mjs",

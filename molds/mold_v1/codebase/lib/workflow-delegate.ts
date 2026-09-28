@@ -18,6 +18,8 @@
 import "server-only";
 // Relative, with its extension: this file is also loaded by the offline tests under plain node.
 import { SERVICE_SCOPE_HEADER } from "../agent/lib/service-scope.ts";
+import { SESSION_VISIBILITY_GRANT_HEADER } from "./session-token-kinds.ts";
+import { mintWorkspaceStepGrant } from "./auth-session.ts";
 import { speak } from "../agent/lib/agent-vocabulary.ts";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
@@ -152,6 +154,22 @@ async function cancelEveSession(sessionId: string, bearer: string): Promise<void
   }).catch(() => undefined);
 }
 
+/**
+ * The grant for a step created with a PERSON's token, or null. The email is read from the bearer's payload without
+ * verifying it: the agent verifies the bearer itself and honours the grant only when the two emails match, so a
+ * wrong guess here costs nothing but the grant.
+ */
+async function workspaceStepGrant(bearer: string): Promise<string | null> {
+  try {
+    const payload = JSON.parse(Buffer.from(bearer.split(".")[1] ?? "", "base64url").toString("utf8")) as {
+      email?: unknown;
+    };
+    return typeof payload.email === "string" && payload.email ? await mintWorkspaceStepGrant(payload.email) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function makeDelegate(
   bearer: string,
   timeoutMs: number = STEP_TIMEOUT_MS,
@@ -179,12 +197,18 @@ export function makeDelegate(
     // The browser subagent's steps get the longer budget.
     const effectiveTimeout = subagent === "browser" ? Math.max(timeoutMs, BROWSER_STEP_TIMEOUT_MS) : timeoutMs;
 
+    const grant = await workspaceStepGrant(bearer);
     const started = await fetch(`${AGENT_URL}/eve/v1/session`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${bearer}`,
         ...(orgId ? { [SERVICE_SCOPE_HEADER]: orgId } : {}),
+        // A step belongs to its run, and a run is the workspace's: the run timeline opens every step's session for
+        // whoever in the workspace is looking at it (to READ — lib/chat-gate.ts). The agent honours that only with a
+        // grant signed here, server-side, for the person whose token creates the step (lib/session-token-kinds.ts).
+        // The service token needs none: a session a service starts is the workspace's already.
+        ...(grant ? { [SESSION_VISIBILITY_GRANT_HEADER]: grant } : {}),
       },
       body: JSON.stringify({ message: composeStepMessage(prompt, subagent, stepContext) }),
       signal: requestSignal(effectiveTimeout, signal),

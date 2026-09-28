@@ -11,10 +11,13 @@
  *
  * Six things it holds, in order:
  *
- *   1. the session gate refuses a stranger, refuses a revoked member, and still
- *      allows a session nobody has any record of (the debounce asymmetry);
- *   2. a session known in ANOTHER workspace is not "unknown" — the difference
- *      between "we looked and found nothing" and "we cannot see";
+ *   1. the session gate (lib/chat-gate.ts — the ONE rule the agent and the web
+ *      proxy both run) admits the recorded owner, a live member of a thread the
+ *      OWNER shared (a viewer read-only), a workspace-visible step's colleagues,
+ *      trusted services and a session-bound token for its one session — and
+ *      refuses everyone else, INCLUDING for a session nobody has a record of
+ *      (the old "unknown, allow" branch);
+ *   2. the transcript-cache rule;
  *   3. a viewer's mount carries no continuation token, proved by running the
  *      proxy's redaction over a stream that contains one;
  *   4. a colleague cannot claim someone else's session, at the read rule and at
@@ -35,7 +38,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { sessionGateDecision } from "../lib/chat-gate.ts";
+import { rightFor, sessionGateDecision } from "../lib/chat-gate.ts";
 import { snapshotAccess } from "../lib/chat-snapshot.ts";
 import { withoutContinuationTokens } from "../lib/chat-replay-stream.ts";
 
@@ -52,61 +55,137 @@ const check = (what, ok) => {
 const ME = "analyst@onfinance.in";
 const OWNER = "victim@onfinance.in";
 const THREAD = { ownerEmail: OWNER };
+const SID = "wrun_probe";
 
-/** The gate, with nothing recorded anywhere unless a case says otherwise. */
+/** A session Alice-style owned, recorded by the agent at creation. */
+const OWNED = {
+  orgId: "org-a",
+  ownerEmail: OWNER,
+  ownerPrincipal: null,
+  ownerKind: "person",
+  visibility: "owner",
+  rootSessionId: null,
+  tokenSha256: "abc",
+  source: "record",
+};
+const person = (email) => ({ kind: "person", email });
+
+/** The gate, with a recorded owner and nothing else unless a case says otherwise. */
 const gate = (over = {}) =>
   sessionGateDecision({
-    callerEmail: ME,
-    mirrorOwners: [],
-    threads: [],
-    isMember: false,
-    knownElsewhere: false,
+    caller: person(ME),
+    sessionId: SID,
+    right: "read",
+    ownership: OWNED,
+    membership: null,
+    callerInWorkspace: false,
+    localDevAllowed: false,
     ...over,
   });
 
 /* ---- 1. the eve session gate --------------------------------------------- */
 
-console.log("\nThe ownership gate in front of eve's session routes:");
+console.log("\nThe ownership gate in front of eve's session routes (agent AND web proxy):");
 
 check(
   "a stranger who knows the id is refused a session that is not theirs",
   (() => {
-    const d = gate({ mirrorOwners: [OWNER] });
+    const d = gate();
     return !d.allow && d.reason === "not-yours";
   })(),
 );
+check("…whatever they ask to do", !gate({ right: "write" }).allow);
+check("the recorded owner reads", gate({ caller: person(OWNER) }).allow);
+check("…and writes (message, approval answer, cancel)", gate({ caller: person(OWNER), right: "write" }).allow);
 check(
-  "…and refused a SHARED thread they were never invited to",
-  !gate({ threads: [THREAD] }).allow,
-);
-check("the owner of the mirrored chat is allowed", gate({ callerEmail: OWNER, mirrorOwners: [OWNER] }).allow);
-check("the owner of the thread is allowed", gate({ callerEmail: OWNER, threads: [THREAD] }).allow);
-check(
-  "a non-revoked member is allowed — viewer or participant, this gate reads both",
-  gate({ threads: [THREAD], isMember: true }).allow,
+  "a live PARTICIPANT of a thread the owner shared reads and writes",
+  gate({ membership: { role: "participant" } }).allow && gate({ membership: { role: "participant" }, right: "write" }).allow,
 );
 check(
-  "a REVOKED member is refused (the lookup carried no status filter at all)",
-  !gate({ threads: [THREAD], isMember: false }).allow,
-);
-check(
-  "a session NOBODY has a record of is still allowed — the mirror write is debounced",
+  "a VIEWER reads…",
   (() => {
-    const d = gate();
-    return d.allow && d.reason === "unknown";
+    const d = gate({ membership: { role: "viewer" } });
+    return d.allow && d.role === "viewer";
   })(),
 );
 check(
-  "a session recorded in ANOTHER workspace is not 'unknown' — that is 'we cannot see'",
+  "…but may not send, answer an approval or cancel",
   (() => {
-    const d = gate({ knownElsewhere: true });
-    return !d.allow && d.reason === "other-workspace";
+    const d = gate({ membership: { role: "viewer" }, right: "write" });
+    return !d.allow && d.reason === "read-only";
   })(),
 );
-check("a caller with no verified email decides nothing", !gate({ callerEmail: "" }).allow);
+check(
+  "a REVOKED member is refused (the reads never hand one over as membership)",
+  !gate({ membership: null }).allow,
+);
+check(
+  "a session NOBODY has a record of is REFUSED — the old 'debounce' allowance is gone",
+  (() => {
+    const d = gate({ ownership: null, caller: person(OWNER) });
+    return !d.allow && d.reason === "unknown";
+  })(),
+);
+check(
+  "a workspace-visible step is open to its workspace's members…",
+  gate({ ownership: { ...OWNED, visibility: "workspace" }, callerInWorkspace: true }).allow,
+);
+check(
+  "…to READ only: a colleague may not steer, answer or cancel it",
+  (() => {
+    const d = gate({ ownership: { ...OWNED, visibility: "workspace" }, callerInWorkspace: true, right: "write" });
+    return !d.allow && d.reason === "read-only";
+  })(),
+);
+check(
+  "…while its initiator keeps full rights",
+  gate({ caller: person(OWNER), ownership: { ...OWNED, visibility: "workspace" }, right: "write" }).allow,
+);
+check("…and to nobody else", !gate({ ownership: { ...OWNED, visibility: "workspace" }, callerInWorkspace: false }).allow);
+check("…while a private chat is not open to the workspace", !gate({ callerInWorkspace: true }).allow);
+check(
+  "a trusted service is admitted to a known session",
+  gate({ caller: { kind: "service", email: null, serviceScope: null } }).allow,
+);
+check(
+  "…refused one naming a different workspace than the session's",
+  (() => {
+    const d = gate({ caller: { kind: "service", email: null, serviceScope: "org-b" } });
+    return !d.allow && d.reason === "wrong-workspace";
+  })(),
+);
+check("…and refused a session nobody recorded", !gate({ caller: { kind: "service", email: null }, ownership: null }).allow);
+check(
+  "a session-bound token opens its one session, for its owner",
+  gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: SID }, right: "write" }).allow,
+);
+check(
+  "…and no other, whatever email it carries",
+  !gate({ caller: { kind: "session-bound", email: OWNER, boundSessionId: "wrun_other" } }).allow,
+);
+check(
+  "…nor someone else's session it was (mis)bound to",
+  !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: SID } }).allow,
+);
+check(
+  "a session-bound token is never read as its person (no membership widening)",
+  !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: "wrun_other" }, membership: { role: "participant" } }).allow,
+);
+check("eve dev's local-dev principal only where local development is allowed", gate({ caller: { kind: "local-dev", email: null }, localDevAllowed: true }).allow && !gate({ caller: { kind: "local-dev", email: null } }).allow);
+check("a caller with no verified identity decides nothing", !gate({ caller: { kind: "none", email: null } }).allow);
+check("…nor a person with an empty email", !gate({ caller: person("") }).allow);
+check(
+  "a principal with no email owns only what it created (by principal id)",
+  gate({ caller: { kind: "principal", email: null, principalId: "p1" }, ownership: { ...OWNED, ownerEmail: null, ownerPrincipal: "p1" } }).allow &&
+    !gate({ caller: { kind: "principal", email: null, principalId: "p2" }, ownership: { ...OWNED, ownerEmail: null, ownerPrincipal: "p1" } }).allow,
+);
 check(
   "the comparison is case- and space-insensitive, because a token subject is not normalised",
-  gate({ callerEmail: "  Victim@OnFinance.in ", mirrorOwners: ["victim@onfinance.in"] }).allow,
+  gate({ caller: person("  Victim@OnFinance.in ") }).allow,
+);
+check(
+  "a stream read is the only read; every other verb is a write",
+  rightFor("GET", ["stream"]) === "read" && rightFor("POST", []) === "write" && rightFor("POST", ["cancel"]) === "write" && rightFor("GET", []) === "write",
 );
 
 /* ---- 2. who may replace the cached transcript ---------------------------- */
@@ -223,14 +302,15 @@ check(
   "the gate no longer queries an unscoped handle",
   !/\bdb\s*\.(select|insert|update|delete)\b/.test(gateRoute.replace(/\s+/g, " ")),
 );
-check("…it resolves the workspace the way its neighbours do", /orgContextForRequest\(request\)/.test(gateRoute));
-check("…and refuses a caller whose workspace will not resolve", /if \(!ctx\)[\s\S]{0,120}401/.test(gateRoute));
-check(
-  "…the fail-open on a database error is still there, and still loud",
-  /SESSION GATE FAILED OPEN/.test(gateRoute) && /console\.error/.test(gateRoute),
-);
-check("every gate read runs inside a workspace scope", /withOrgRls\(orgId, \(tx\)/.test(accessLib));
-check("the gate's member lookup filters revoked rows", /ne\(chatThreadMembers\.status, "revoked"\)/.test(accessLib));
+const sharedReads = src("lib/session-gate.ts");
+const agentGuard = src("agent/lib/session-guard.ts");
+check("the web proxy and the agent run ONE gate", /gateSessionRequest\(/.test(accessLib) && /from "\.\.\/\.\.\/lib\/session-gate\.ts"/.test(agentGuard) && /sessionGateDecision\(/.test(agentGuard));
+check("…the proxy refuses with 404, never a 403 that confirms the id", /status: 404/.test(gateRoute) && !/status: 403/.test(gateRoute));
+check("…and answers 503 when it cannot read — it no longer fails OPEN", /status: 503/.test(gateRoute) && !/FAILED OPEN/.test(gateRoute));
+check("…the agent answers 503 too", /unavailable\(\)/.test(agentGuard) && /status: 503/.test(agentGuard));
+check("every gate read runs inside a workspace scope", /inOrg: \(orgId, fn\) => withOrgRls\(orgId, fn\)/.test(accessLib) && !/\bdb\s*\.\s*select\(\)\.from\(chat/.test(sharedReads));
+check("the gate's member lookup filters revoked rows", /ne\(chatThreadMembers\.status, "revoked"\)/.test(sharedReads));
+check("…and counts only threads the session's OWNER shared", /lower\(\$\{chatThreads\.ownerEmail\}\) = \$\{owner\}/.test(sharedReads));
 check("the transcript rule ignores an un-shared thread", /isNull\(chatThreads\.archivedAt\)/.test(accessLib));
 check(
   "…and reads EVERY mirror row for the session, not only the caller's",

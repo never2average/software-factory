@@ -99,37 +99,33 @@ const gateRule = readFileSync("lib/chat-gate.ts", "utf8");
 const gateReads = readFileSync("lib/chat-session-access.ts", "utf8");
 
 console.log("\nSession ownership:");
+const gateShared = readFileSync("lib/session-gate.ts", "utf8");
+const agentGuard = readFileSync("agent/lib/session-guard.ts", "utf8");
+const agentChannel = readFileSync("agent/channels/eve.ts", "utf8");
 check(
   "per-session paths are gated, not blindly proxied",
-  /permitted\(ctx\.orgId, sessionId, identity\.email\)/.test(gate),
+  /permitted\(sessionId, identity\.email, segments\.slice\(1\), request\.method\)/.test(gate),
 );
 check(
-  // The gate asked its three questions on the BARE handle, and under the
-  // production fail-closed policy all three answered "no rows" — which it read
-  // as "no record of this session" and turned into "allow everybody". The
-  // workspace is now part of the question, which is the whole fix.
-  "…inside the workspace's scope, or the reads cannot answer at all",
-  /orgContextForRequest\(request\)/.test(gate),
+  // The agent API is its own public deployment: a gate only in the web proxy is one a caller can skip.
+  "…and the AGENT enforces the same rule itself, for every caller",
+  /export default guardSessionRoutes\(eveChannel\(/.test(agentChannel) && /sessionGateDecision\(/.test(agentGuard),
 );
-check("a non-owner is refused", /status: 403/.test(gate));
+check("a non-owner is refused with 404 (existence is not confirmed)", /status: 404/.test(gate) && !/status: 403/.test(gate));
 // The gate is a dynamic route; `afterFiles` rewrites (a bare array) beat dynamic
 // routes, so the handler built fine and was never reached. Measured, not guessed.
 check("the eve rewrite is a fallback so the gate wins", /fallback: \[/.test(nextCfg));
 check("…and no afterFiles rewrite shadows it", /afterFiles: \[\]/.test(nextCfg));
 check("the stream is passed through, never buffered", /new Response\(upstream\.body/.test(gate));
-// The rule itself moved to lib/chat-gate.ts, where it can be EXECUTED rather
-// than matched — see scripts/test-chat-access.mjs, which runs every branch of
-// it. These two keep watch on the properties this file has always guarded.
+// The rule itself lives in lib/chat-gate.ts, where it is EXECUTED — scripts/test-chat-access.mjs runs every branch
+// of it, and scripts/test-session-guard.mjs runs it through the agent's real channel.
 check(
-  "an unknown session still fails open (never lock someone out of a new chat)",
-  /reason: "unknown"/.test(gateRule),
-);
-check(
-  "…but 'unknown' now means we looked EVERYWHERE, not that we could not see",
-  /reason: "other-workspace"/.test(gateRule) && /knownElsewhere/.test(gateRule),
+  "an unknown session is REFUSED — the agent records every owner before it returns an id",
+  /if \(!ownership\) return \{ allow: false, reason: "unknown" \}/.test(gateRule) && !/allow: true, reason: "unknown"/.test(gateRule),
 );
 check("shared-thread members keep access", /reason: "member"/.test(gateRule));
-check("…and a revoked one does not", /ne\(chatThreadMembers\.status, "revoked"\)/.test(gateReads));
+check("…and a revoked one does not", /ne\(chatThreadMembers\.status, "revoked"\)/.test(gateShared));
+check("…the web gate reads through the shared implementation", /gateSessionRequest\(/.test(gateReads));
 
 console.log("\nThread fork:");
 check(
@@ -211,7 +207,7 @@ console.log("\nObservability:");
 check("chat failures are reported somewhere queryable", /chat-telemetry/.test(shell) && /chat-telemetry/.test(chat));
 check("a stream that gives up mid-turn is recorded", /stream-gave-up/.test(chat));
 check("a failed save is recorded", /save-failed/.test(shell));
-check("the gate says so when it fails open", /SESSION GATE FAILED OPEN/.test(gateRoute));
+check("the gate says so, loudly, when it cannot read — and refuses (503) rather than failing open", /session gate could not read — refusing \(503\)/.test(gateRoute) && /console\.error/.test(gateRoute));
 check("the gate's ceiling is not the narrowest on the path", /maxDuration = 800/.test(gateRoute));
 
 console.log(`\nchat reliability: ${passed}/${passed} checks passed`);

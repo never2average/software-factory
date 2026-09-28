@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOpsDb } from "@/lib/ops-db";
 import { gateForSession } from "@/lib/chat-session-access";
-import { orgContextForRequest } from "@/lib/org-context";
+import { rightFor } from "@/lib/chat-gate";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 
 export const runtime = "nodejs";
@@ -31,35 +30,28 @@ export const maxDuration = 800;
  * requests because `next.config.ts` puts that rewrite under `fallback`. A bare
  * array means `afterFiles`, which Next applies BEFORE dynamic routes — the
  * first version of this gate built cleanly and was never reached. If you revert
- * next.config.ts to a bare array, this 403 silently stops existing.
+ * next.config.ts to a bare array, this gate silently stops existing.
  *
- * THE RULE: deny when the session is known to belong to someone else. Allow when
- * we have no record of it.
+ * THIS IS NO LONGER THE ONLY GATE, AND IT IS NOT THE ONE THAT COUNTS.
  *
- * That asymmetry is deliberate. The mirror write is debounced, so a session that
- * was created a second ago may not be in the database yet — requiring a record
- * would lock people out of the chat they just started, which is a worse and far
- * more frequent failure than the one being fixed. Every session that persists
- * gains a record, so the exposure this closes — someone turning up later with an
- * id they should not have — is closed. A brand-new session is unknown to the
- * attacker for the same reason it is unknown to us.
+ * The agent API is its own public deployment. A caller who skipped this proxy
+ * and called it directly — any signed-in person, from any workspace — read, sent
+ * into, answered approvals on and cancelled other people's sessions, because eve
+ * checks who is calling and never whose session it is. So the agent now enforces
+ * ownership itself (agent/lib/session-guard.ts) with the same rule and the same
+ * reads as this proxy (lib/chat-gate.ts, lib/session-gate.ts). This handler is
+ * the early refusal in front of it.
  *
- * …AND IT WAS PERMANENTLY OPEN, because of HOW it asked.
+ * Two things the old rule did are gone. It allowed a session nobody had a record
+ * of (the mirror write is debounced, so "unknown" was read as "probably just
+ * started"): the agent now records a session's owner before it returns the id,
+ * so there is no such window, and a session with no owner is refused. And it
+ * failed OPEN on a database error: it now answers 503, as the agent does.
  *
- * The three reads ran on the bare `getOpsDb()` handle, naming no workspace.
- * Production RLS fails closed, so all three returned zero rows, "no record of
- * it" was true of every session in the product, and the asymmetry above turned
- * into "allow everybody". Measured on the live database on 2026-09-22 and
- * reproduced on a throwaway Postgres carrying the production policy shape:
- * unscoped 0 sessions / 0 threads / 0 members, the same reads scoped to the
- * workspace 1 / 1 / 1. Any signed-in person holding a session id could read the
- * whole conversation through `GET /eve/v1/session/:id/stream` and send into it
- * with a POST.
- *
- * The rule now lives in lib/chat-gate.ts and the reads in
- * `gateForSession` (lib/chat-session-access.ts), scoped with `withOrgRls` — and
- * "unknown" now means WE LOOKED PROPERLY AND FOUND NOTHING, in this workspace
- * and in every other one, rather than "we cannot see".
+ * History worth keeping: the first version of this gate read with an unscoped
+ * handle, production RLS fails closed, every read returned zero rows and every
+ * session read as "unknown" — allowed. Every read here runs inside a workspace's
+ * RLS scope (lib/session-gate.ts).
  */
 
 const AGENT = process.env.NEXT_PUBLIC_EVE_API_URL ?? "https://fde-agent-api.vercel.app";
@@ -75,46 +67,39 @@ function forwardHeaders(request: NextRequest): Headers {
 }
 
 /**
- * May `email`, in workspace `orgId`, touch `sessionId`? Owner of the mirrored
- * chat, owner of a thread on that session, or a NON-REVOKED member of one.
+ * What the proxy does with the shared gate's answer (lib/chat-gate.ts, read by lib/session-gate.ts — the SAME code
+ * the agent runs in front of the same routes, agent/lib/session-guard.ts).
  *
- * `gateForSession` reads the rows inside the workspace's RLS scope and
- * `sessionGateDecision` applies the rule; this wrapper owns only the question
- * of what a FAILURE means, which is the part that has to be decided here and
- * nowhere else.
+ *   allowed                     → forward.
+ *   refused, session KNOWN      → 404, here, without a round trip. Never 403: a stranger must not learn the id exists.
+ *   refused, NO RECORD of it    → forward, and let the AGENT answer. The agent is the enforcement point and it is
+ *                                 strictly better placed: it can resolve a subagent's child session to its root
+ *                                 through eve's own lineage, which no database row here describes yet, and it
+ *                                 refuses (404) anything it cannot place. This is not the old fail-open — that
+ *                                 forwarded to an agent which checked nothing.
+ *   the database cannot answer  → 503. It used to fail OPEN; the agent fails closed on the same error, so doing
+ *                                 otherwise here would only have hidden it.
  */
-async function permitted(orgId: string, sessionId: string, email: string): Promise<boolean> {
-  const db = getOpsDb();
-  if (!db) return true; // no database to consult — fail OPEN, see the note above
+async function permitted(
+  sessionId: string,
+  email: string,
+  rest: string[],
+  method: string,
+): Promise<"forward" | "refuse" | "unavailable"> {
   try {
-    const { allow, reason } = await gateForSession(orgId, email, sessionId);
-    if (!allow) {
-      // Someone reaching for a conversation that is not theirs is worth a
-      // record, whether it is an attack or a bug in our own reconcile logic.
-      console.warn("session access denied", { sessionId, email, orgId, reason });
-    }
-    return allow;
+    const decision = await gateForSession(email, sessionId, rightFor(method, rest));
+    if (decision.allow) return "forward";
+    if (!decision.ownership && decision.reason === "unknown") return "forward";
+    // Someone reaching for a conversation that is not theirs is worth a record, whether it is an attack or a bug.
+    console.warn("session access denied", { sessionId, email, reason: decision.reason });
+    return "refuse";
   } catch (error) {
-    /**
-     * A database hiccup must not take chat down — the failure we refuse to
-     * introduce is locking people out of their own conversations. But an access
-     * check that disables ITSELF is a security event, and this used to happen
-     * in total silence. Say it, loudly, every time.
-     *
-     * This is now genuinely the exception. It used to be the EVERYDAY path
-     * wearing a different mask: the unscoped reads did not throw, they returned
-     * zero rows, so the gate took its "unknown session, let it through" branch
-     * on every request and nothing was ever logged at all. Fail-open is a
-     * deliberate availability choice only while the ordinary request is decided
-     * by a read that works.
-     */
-    console.error("SESSION GATE FAILED OPEN — ownership not verified", {
+    console.error("session gate could not read — refusing (503)", {
       sessionId,
       email,
-      orgId,
       error: error instanceof Error ? error.message : String(error),
     });
-    return true;
+    return "unavailable";
   }
 }
 
@@ -133,13 +118,18 @@ async function proxy(request: NextRequest, segments: string[]): Promise<Response
    * the one case where allowing the request would be the gate deciding it does
    * not know who is asking and letting them in anyway.
    */
-  const ctx = await orgContextForRequest(request);
-  if (!ctx) {
-    return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
-  }
   const sessionId = segments[0];
-  if (sessionId && !(await permitted(ctx.orgId, sessionId, identity.email))) {
-    return NextResponse.json({ error: "That conversation isn't yours." }, { status: 403 });
+  if (sessionId) {
+    const verdict = await permitted(sessionId, identity.email, segments.slice(1), request.method);
+    if (verdict === "refuse") {
+      return NextResponse.json({ error: "Session not found.", ok: false }, { status: 404 });
+    }
+    if (verdict === "unavailable") {
+      return NextResponse.json(
+        { error: "Conversation access could not be checked right now. Try again in a moment.", ok: false },
+        { status: 503, headers: { "retry-after": "5" } },
+      );
+    }
   }
 
   const url = `${AGENT}/eve/v1/session/${segments.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;

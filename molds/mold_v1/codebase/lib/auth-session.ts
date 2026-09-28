@@ -21,6 +21,13 @@
  * form that survives every copy-paste path into a dashboard.
  */
 import { importPKCS8, importSPKI, jwtVerify, SignJWT } from "jose";
+// Relative with its extension, like its neighbours that the agent and plain-node tests also load.
+import {
+  EMAIL_SESSION_KIND,
+  WORKSPACE_STEP_GRANT_AUDIENCE,
+  WORKSPACE_STEP_GRANT_KIND,
+  WORKSPACE_STEP_GRANT_TTL_SECONDS,
+} from "./session-token-kinds.ts";
 
 /** Both sides of every verification must agree on these two strings. */
 export const SESSION_ISSUER = "delivered";
@@ -87,7 +94,7 @@ export async function mintSessionToken(
   const key = await importPKCS8(pem, ALG);
   return new SignJWT({
     email: email.toLowerCase(),
-    kind: "email-session",
+    kind: EMAIL_SESSION_KIND,
     ...(opts?.org ? { org: opts.org } : {}),
   })
     .setProtectedHeader({ alg: ALG })
@@ -96,6 +103,27 @@ export async function mintSessionToken(
     .setAudience(SESSION_AUDIENCE)
     .setIssuedAt()
     .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
+    .sign(key);
+}
+
+/**
+ * A grant letting the session `email` is about to create be WORKSPACE-visible (a workflow/app/cron step — see
+ * lib/session-token-kinds.ts). Not a sign-in: its own kind and audience, two minutes, and the agent honours it only
+ * alongside a verified token for the same email. Returns null when this deployment cannot sign (no private key); the
+ * step is then private to its initiator, which is the safe side.
+ */
+export async function mintWorkspaceStepGrant(email: string): Promise<string | null> {
+  const pem = readKeyMaterial(process.env.AUTH_JWT_PRIVATE_KEY);
+  const who = email.trim().toLowerCase();
+  if (!pem || !who) return null;
+  const key = await importPKCS8(pem, ALG);
+  return new SignJWT({ email: who, kind: WORKSPACE_STEP_GRANT_KIND })
+    .setProtectedHeader({ alg: ALG })
+    .setSubject(who)
+    .setIssuer(SESSION_ISSUER)
+    .setAudience(WORKSPACE_STEP_GRANT_AUDIENCE)
+    .setIssuedAt()
+    .setExpirationTime(`${WORKSPACE_STEP_GRANT_TTL_SECONDS}s`)
     .sign(key);
 }
 
@@ -114,7 +142,7 @@ export async function verifySessionToken(token: string | null | undefined): Prom
       audience: SESSION_AUDIENCE,
       algorithms: [ALG],
     });
-    if (payload.kind !== "email-session") return null;
+    if (payload.kind !== EMAIL_SESSION_KIND) return null;
     const email = typeof payload.email === "string" ? payload.email.toLowerCase() : "";
     return email || null;
   } catch {

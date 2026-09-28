@@ -23,11 +23,14 @@
  * and eve's `maxReconnectAttempts` handles the socket-level case underneath it.
  *
  * EVERY REOPEN COSTS A DATABASE READ. The ownership gate in front of the agent's
- * session routes runs `permitted()` — two to three workspace-scoped queries — on
- * every single request, reconnects included, and it FAILS OPEN on a database
- * error. So: never a tight retry (a cold database makes one reopen slow while
- * the turn is perfectly healthy), always a backoff, and a transient failure is
- * retried rather than treated as the end of the reply.
+ * session routes (the web proxy's and the agent's own, one rule: lib/chat-gate.ts)
+ * runs workspace-scoped queries on every single request, reconnects included, and
+ * answers 503 on a database error. So: never a tight retry (a cold database makes
+ * one reopen slow while the turn is perfectly healthy), always a backoff, and a
+ * transient failure — a 503 included — is retried rather than treated as the end
+ * of the reply. A refusal from that gate is a 404 (it never confirms that someone
+ * else's session exists), which this reader also treats as transient: it runs out
+ * its bounded budget rather than stopping at once.
  *
  * 403 IS THE ONE EXCEPTION. On the membership-checked proxy a 403 means the
  * share was REVOKED, which is the thing that makes revoke real. Retrying that
@@ -242,8 +245,8 @@ export async function readLiveTail(input: ReadLiveTailInput): Promise<AttachResu
         detail = "access 401";
         return done("unauthorized");
       }
-      // Anything else is transient by assumption: the ownership gate fails open
-      // on a database error but can still be SLOW enough to time out, and a
+      // Anything else is transient by assumption: the ownership gate answers 503
+      // on a database error and can be SLOW enough to time out, and a
       // severed body mid-read is the normal 120s seam. Reopen at the advanced
       // index — the events already delivered stay delivered.
       detail = err instanceof Error ? err.message.slice(0, 120) : String(err).slice(0, 120);

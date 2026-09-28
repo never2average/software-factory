@@ -176,6 +176,21 @@ export async function resolveOrgForIdentity(
  *   if (!ctx) return unauthorized();
  *   const { db, where, stamp } = orgDb(ctx);
  */
+/**
+ * Every workspace `email` is a member of (`org_members`, the tenancy control plane — no RLS). Used by the session
+ * gate (lib/session-gate.ts) to find a session's owner in one read and to decide a workspace-visible step. Throws on
+ * a database error: the gate refuses (503) rather than reading a failure as "no memberships".
+ */
+export async function workspacesOf(email: string): Promise<string[]> {
+  const db = getOpsDb();
+  if (!db) throw new Error("Database not configured");
+  const rows = await db
+    .select({ orgId: orgMembers.orgId })
+    .from(orgMembers)
+    .where(eq(orgMembers.email, email.trim().toLowerCase()));
+  return rows.map((r) => r.orgId);
+}
+
 export async function orgContextForRequest(request: Request): Promise<OrgContext | null> {
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!identity) return null;

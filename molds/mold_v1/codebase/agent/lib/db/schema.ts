@@ -1306,6 +1306,49 @@ export const agentSessionScopes = pgTable(
 );
 
 /**
+ * WHO OWNS AN AGENT SESSION — written once, by the agent, from the verified token that created it.
+ *
+ * eve's own per-session routes (`/eve/v1/session/:id`, `…/stream`, `…/cancel`) authenticate a caller and then act
+ * on ANY session id they are given. This row is what the agent's session guard (agent/lib/session-guard.ts, rule in
+ * lib/chat-gate.ts) asks instead, for every caller, before any of them runs.
+ *
+ * Why not `agent_session_scopes`: its `principal_email` is rewritten at the start of every turn to whoever sent that
+ * turn (a shared thread's participant, and before the guard, anyone at all), so it says who spoke LAST, not who owns
+ * the conversation. And why not the web's `chat_sessions` / `chat_threads`: those rows are written by the browser's
+ * own requests, and a caller can name any session id in them. This row is written only by the agent, only when the
+ * session is created (POST /eve/v1/session, before the id is returned to anyone), and never updated except to fill
+ * `token_sha256` once. INSERT … ON CONFLICT DO NOTHING everywhere: an owner cannot be replaced.
+ *
+ *   owner_email      a person's verified email (Google or emailed-code sign-in: the same person either way)
+ *   owner_principal  the principal id of a caller with no email (a service, a Vercel token of this project)
+ *   owner_kind       'person' | 'service' | 'principal' | 'local-dev'
+ *   visibility       'owner' (a chat) | 'workspace' (a workflow/app/cron step — every member of org_id may open it,
+ *                    as the run timeline always let them)
+ *   root_session_id  set on a subagent's child session: ownership is its parent's, recorded when eve's own
+ *                    `subagent.called` for it passes through the parent's stream (never from anything a caller sends)
+ *   token_sha256     sha256 of the session's continuation token. eve delivers a POST by TOKEN, not by the id in
+ *                    the path, so without this a caller admitted to their own session could deliver into another
+ *                    session whose token they held.
+ */
+export const agentSessionOwners = pgTable(
+  "agent_session_owners",
+  {
+    sessionId: text("session_id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    ownerEmail: text("owner_email"),
+    ownerPrincipal: text("owner_principal"),
+    ownerKind: text("owner_kind").notNull(),
+    visibility: text("visibility").notNull().default("owner"),
+    rootSessionId: text("root_session_id"),
+    parentSessionId: text("parent_session_id"),
+    tokenSha256: text("token_sha256"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("agent_session_owners_org_owner_idx").on(t.orgId, t.ownerEmail)],
+);
+
+/**
  * Token usage of ORDINARY chat turns — the main agent, not a workflow.
  *
  * `automation_runs` accounts for subagent (workflow) turns through each

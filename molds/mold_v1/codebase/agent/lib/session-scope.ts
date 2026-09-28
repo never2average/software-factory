@@ -4,8 +4,8 @@
  * See `agentSessionScopes` in db/schema.ts for why this exists. Two halves:
  *
  *   recordSessionScope  — the ROOT agent, which has the signed-in person's identity, records its session's
- *                         workspace at the start of every turn (awaited, so the row exists before the model
- *                         can delegate).
+ *                         workspace at the start of its first turn (awaited, so the row exists before the model
+ *                         can delegate). First writer wins: later turns never change it.
  *   inheritedScope      — a child session looks up its ROOT session's row. The id comes from
  *                         `ctx.session.parent.rootSessionId`, which eve sets; nothing the model writes can
  *                         change which row is read, so a subagent cannot be talked into another workspace.
@@ -48,14 +48,19 @@ export async function recordSessionScope(
   if (known && known.orgId === orgId) return;
   try {
     if (!getDb()) return;
+    /**
+     * FIRST WRITER WINS. This was an upsert that rewrote `org_id` and `principal_email` at the start of every turn
+     * (skipped only on this instance's cache hit), so whoever spoke LAST became the session's recorded principal —
+     * a shared thread's participant, a service step, and, while eve's per-session routes checked no ownership, anyone
+     * at all posting once into someone else's chat on a cold instance. The row is written by the session's first
+     * turn and never changed after: a later turn by anyone, services included, cannot move it. Who OWNS the session
+     * is a separate, stricter record (agent_session_owners, written at creation by agent/lib/session-guard.ts).
+     */
     await withOrgDb(orgId, (tx) =>
       tx
         .insert(agentSessionScopes)
         .values({ sessionId, orgId, principalEmail: principal })
-        .onConflictDoUpdate({
-          target: agentSessionScopes.sessionId,
-          set: { orgId, principalEmail: principal, updatedAt: new Date() },
-        }),
+        .onConflictDoNothing({ target: agentSessionScopes.sessionId }),
     );
     remember(sessionId, { orgId, email: principal });
   } catch (error) {
