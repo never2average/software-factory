@@ -458,6 +458,28 @@ def mint_jwt_pair():
     priv, pub = subprocess.check_output(["node", "-e", js], text=True).split()
     return priv, pub
 
+def mint_vapid_pair():
+    """The app's Web Push (VAPID) key pair, as (public, private): base64url of the 65-byte uncompressed P-256
+    point and of the 32-byte private scalar, the shapes agent/lib/web-push.ts reads. Minted ONCE per app and
+    kept: a new pair orphans every device already subscribed. Never printed; the values go straight to the store."""
+    js = ("const{createECDH}=require('crypto');const e=createECDH('prime256v1');e.generateKeys();"
+          "console.log(e.getPublicKey().toString('base64url'));console.log(e.getPrivateKey().toString('base64url'))")
+    pub, priv = subprocess.check_output(["node", "-e", js], text=True).split()
+    return pub, priv
+
+def owner_email(app_id):
+    """The first workspace owner's email in the app's state: the contact push services may use (VAPID_SUBJECT)."""
+    try: app = json.load(open(os.path.join(ROOT, "state/application", app_id, "application.json")))
+    except Exception: return None
+    stack = [app]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            if x.get("role") == "owner" and "@" in str(x.get("email", "")): return x["email"]
+            stack.extend(x.values())
+        elif isinstance(x, list): stack.extend(x)
+    return None
+
 def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
     pg, blob = ds.get("postgres", {}), ds.get("blob", {})
@@ -495,6 +517,13 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
         priv, pub = mint_jwt_pair()
         _set_env("AUTH_JWT_PRIVATE_KEY", priv, mold_dir, project=proj); _set_env("AUTH_JWT_PUBLIC_KEY", pub, mold_dir, project=proj)
         print("generated AUTH_JWT key pair" + ("" if "AUTH_JWT_PRIVATE_KEY" not in present else " (the previous pair was write-only, so it could never reach the api project; every session signed with it is now invalid)"))
+    # Web Push keys, only for a mold that sends push (fde-agent #63): minted once, never rotated here.
+    if os.path.exists(os.path.join(mold_dir, "agent/lib/web-push.ts")) and not {"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"} <= present:
+        pub, priv = mint_vapid_pair()
+        _set_env("VAPID_PUBLIC_KEY", pub, mold_dir, project=proj); _set_env("VAPID_PRIVATE_KEY", priv, mold_dir, project=proj)
+        print("generated VAPID key pair (desktop notifications)")
+    if os.path.exists(os.path.join(mold_dir, "agent/lib/web-push.ts")) and "VAPID_SUBJECT" not in present and owner_email(app_id):
+        _set_env("VAPID_SUBJECT", "mailto:" + owner_email(app_id), mold_dir, project=proj); print("set VAPID_SUBJECT to the workspace owner's contact")
     present = vercel_env_names(mold_dir, proj)
     if "POSTGRES_ADMIN_URL" not in present and "SUPABASE_POSTGRES_URL" in present:
         # NOT DATABASE_URL. This line used to copy SUPABASE_POSTGRES_URL — the pooled URL whose user is
@@ -526,10 +555,12 @@ DEPLOY_TIME = ["TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT
 API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "AI_GATEWAY_API_KEY",
            "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT", "CRON_SECRET", "DATABASE_URL", "OPS_MULTI_TENANT",
            "MODEL_PROVIDER", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "EXA_API_KEY", "BROWSERBASE_API_KEY",
-           "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID", "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST"]
+           "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID", "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST",
+           "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"]
 # Absent means "feature off" or "the mold's default", never a broken deploy.
 OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT",
-                "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST")
+                "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST",
+                "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT")
 WORKFLOW_ENV = ["DATABASE_URL"]   # TASK_WORKFLOW_SERVICE_TOKEN is minted onto both projects directly, never copied
 
 def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
