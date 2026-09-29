@@ -73,13 +73,13 @@
  *   exit 3  it could not run at all (unreachable, refused, bad credentials) — nothing was measured
  */
 import postgres from "postgres";
-import { measurePolicies, isScoped, exprs, why, cap, q } from "./rls-policy.mjs";
+import { measurePolicies, isScoped, exprs, why, cap, q, CONTROL_PLANE as CONTROL_SET } from "./rls-policy.mjs";
 
 const url = process.env.APP_RW_URL;
 if (!url) { console.error("APP_RW_URL is not set"); process.exit(2); }
 const mode = process.env.RLS_MODE || "fail_closed";
 const ROLE = process.env.APP_ROLE || "app_rw";
-const CONTROL_PLANE = ["orgs", "org_members", "org_invites"];   // same set as rls-cover.mjs; see its header
+const CONTROL_PLANE = [...CONTROL_SET];   // the one set rls-cover.mjs and deploy-window.mjs use (rls-policy.mjs)
 const A = "__rls_probe_a__", B = "__rls_probe_b__", C = "__rls_probe_c__";
 const ROLLBACK = "__rls_probe_rollback__";
 
