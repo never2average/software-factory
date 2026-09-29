@@ -30,7 +30,7 @@ become `TODO` in `context.md`.
 
 **3. Create.** Run:
 ```bash
-npm run fde:new-customer -- --name "Contoso Bank" --tier Enterprise \
+npm run fde:new-customer -- --name "Contoso Bank" --tier Enterprise --org <workspace id> \
   --vertical banking --region APAC \
   --business-owner cfo@contoso.com --technical-owner cto@contoso.com
 ```
@@ -68,6 +68,6 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:new-customer -- --name "…" --tier … --vertical … --region … \
+npm run fde:new-customer -- --name "…" --tier … --org <workspace id> --vertical … --region … \
   [--id …] [--business-owner …] [--technical-owner …] [--force]
 ```

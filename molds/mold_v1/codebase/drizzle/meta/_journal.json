@@ -169,6 +169,13 @@
       "when": 1791000000000,
       "tag": "0023_provider_launch_approver",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791200000000,
+      "tag": "0024_company_key_per_workspace",
+      "breakpoints": true
     }
   ]
 }

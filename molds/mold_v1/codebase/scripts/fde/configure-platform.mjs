@@ -3,13 +3,13 @@
 // --customer, upsert that customer's platform-governance row.
 //
 //   npm run fde:configure-platform -- --version v2.4.0
-//   npm run fde:configure-platform -- --version v2.4.0 --customer contoso-bank \
+//   npm run fde:configure-platform -- --version v2.4.0 --customer contoso-bank --org <workspace id> \
 //     --deployment-model single_tenant --residency in-country --primary-model claude-opus-4.8 \
 //     --use-case "collections triage"
 //
 // Version-scoped writes go to Platform/{ver}/ (shared, blob-only). The per-customer
 // governance row is the `platform` table. See docs/FDE_WORKFLOW.md (stage 3).
-import { getDb, closeDb, dataroom, getCustomer, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
+import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
 import { platform } from "../../agent/lib/db/schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
@@ -58,14 +58,16 @@ async function main() {
       console.error(`${glyph.bad} No DATABASE_URL — run with --env-file=.env.local.`);
       process.exit(1);
     }
-    if (!(await getCustomer(db, customerId))) {
-      console.error(`${glyph.bad} Customer "${customerId}" not found. Create it first (fde:new-customer).`);
+    const orgId = workspaceFor();
+    if (!(await getCustomer(db, orgId, customerId))) {
+      console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
       await closeDb();
       process.exit(1);
     }
-    await db
+    await withOrgDb(orgId, (tx) => tx
       .insert(platform)
       .values({
+        orgId,
         customerId,
         deploymentModel: flag("deployment-model").trim() || "single_tenant",
         dataResidencyConstraint: flag("residency").trim() || "none",
@@ -76,15 +78,16 @@ async function main() {
         platformConfigStatus: "configuring",
       })
       .onConflictDoUpdate({
-        target: platform.customerId,
+        // The company's whole key: the same id in another workspace is another company.
+        target: [platform.orgId, platform.customerId],
         set: {
           deploymentModel: flag("deployment-model").trim() || "single_tenant",
           dataResidencyConstraint: flag("residency").trim() || "none",
           primaryModel: flag("primary-model").trim() || "claude-opus-4.8",
           platformConfigStatus: "configuring",
         },
-      });
-    console.log(`${glyph.ok} Upserted platform-governance row for ${customerId}.`);
+      }));
+    console.log(`${glyph.ok} Upserted platform-governance row for ${customerId} in ${orgId}.`);
     await closeDb();
   }
 

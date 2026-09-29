@@ -1,3 +1,7 @@
+// FIXTURE — do not edit. agent/lib/db/schema.ts exactly as it was at 419b38d, before the company key became
+// (org_id, customer_id) (mold_v1-118). Every live database was pushed from a schema of this shape; the migration
+// test pushes this file to build one (scripts/test-company-key-migration-db.mjs), so drizzle/0025 is proven on the
+// column order and constraints production actually has.
 /**
  * Drizzle Postgres schema for the FDE system of record.
  *
@@ -8,11 +12,8 @@
  * stay in the data-room store (`agent/lib/dataroom-store.ts`).
  *
  * Conventions:
- * - A company is keyed by (`org_id`, `customer_id`): the account's slug
- *   (e.g. `acme-bank`) is unique WITHIN a workspace, and two workspaces may
- *   each hold the same one (mold_v1-118). Every customer-scoped table keys on
- *   (`org_id`, `customer_id`, …) with a two-column FK to `customers`, so a row
- *   can only hang off a company in its own workspace.
+ * - Every customer-scoped table keys on `customer_id` (the account's slug,
+ *   e.g. `acme-bank`) with an FK to `customers`.
  * - Zod enums are stored as `text` — the Zod schemas remain the validation
  *   contract at the application boundary; Postgres stores the literal value.
  * - Date/timestamp strings in the Zod contract are loose ISO strings, so they
@@ -26,7 +27,6 @@ import {
   bigint,
   boolean,
   doublePrecision,
-  foreignKey,
   index,
   integer,
   jsonb,
@@ -47,12 +47,11 @@ import { sql } from "drizzle-orm";
 export const customers = pgTable(
   "customers",
   {
-    // Which org (workspace) holds this company: the first half of its key. Declared before customer_id, as in every
-    // table here (see the key below).
+    // `customers[].id` in the Zod contract; `customer_id` on the sheet.
+    customerId: text("customer_id").primaryKey(),
+    // Which org (workspace) owns this customer account. Nullable → backfills to
+    // 'onfinance'; every customer-scoped table inherits its org through here.
     orgId: text("org_id").notNull(),
-    // `customers[].id` in the Zod contract; `customer_id` on the sheet. Unique within a workspace only: the key is
-    // (org_id, customer_id), so two workspaces can each hold the same company (mold_v1-118).
-    customerId: text("customer_id").notNull(),
     customerName: text("customer_name").notNull(),
     tier: text("tier"),
     lifecycleStage: text("lifecycle_stage"),
@@ -96,15 +95,6 @@ export const customers = pgTable(
     custom: jsonb("custom").$type<Record<string, string | number>>(),
   },
   (t) => [
-    /**
-     * The key, and every key and foreign key hanging off it, lists org_id first, then customer_id, then the row's
-     * own id: the order those columns STAND in each table. drizzle-kit reads a composite key's columns back in column
-     * order and compares them to the declaration in order, so a key declared in any other order is dropped and
-     * re-created by every push (and shows in the deploy's drift plan). The child tables have always had org_id first;
-     * on a database pushed before this change customers had customer_id first, and drizzle/0024 moves it after
-     * org_id so both sides of every foreign key read the same way (scripts/test-company-key-migration-db.mjs).
-     */
-    primaryKey({ name: "customers_org_id_customer_id_pk", columns: [t.orgId, t.customerId] }),
     index("customers_fde_owner_idx").on(t.fdeOwner),
     index("customers_lifecycle_stage_idx").on(t.lifecycleStage),
   ],
@@ -116,7 +106,9 @@ export const customers = pgTable(
 
 export const platform = pgTable("platform", {
     orgId: text("org_id").notNull(),
-  customerId: text("customer_id").notNull(),
+  customerId: text("customer_id")
+    .primaryKey()
+    .references(() => customers.customerId, { onDelete: "cascade" }),
   tenantId: text("tenant_id"),
   platformConfigStatus: text("platform_config_status"),
   deploymentModel: text("deployment_model").notNull(),
@@ -151,10 +143,7 @@ export const platform = pgTable("platform", {
   featureFlags: jsonb("feature_flags").$type<string[]>().notNull(),
   primaryUseCase: text("primary_use_case").notNull(),
   lastHealthCheckAt: text("last_health_check_at"),
-}, (t) => [
-  primaryKey({ name: "platform_org_id_customer_id_pk", columns: [t.orgId, t.customerId] }),
-  foreignKey({ name: "platform_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
-]);
+});
 
 /* -------------------------------------------------------------------------- */
 /* Deployments — one row per deployable runtime instance                      */
@@ -165,7 +154,9 @@ export const deployments = pgTable(
   "deployments",
   {
     orgId: text("org_id").notNull(),
-    customerId: text("customer_id").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.customerId, { onDelete: "cascade" }),
     deploymentId: text("deployment_id").notNull(),
     // Optional human title; blank falls back to the composed "customer · env · version".
     displayName: text("display_name"),
@@ -225,8 +216,7 @@ export const deployments = pgTable(
     custom: jsonb("custom").$type<Record<string, string | number>>().notNull().default({}),
   },
   (t) => [
-    primaryKey({ name: "deployments_org_id_customer_id_deployment_id_pk", columns: [t.orgId, t.customerId, t.deploymentId] }),
-    foreignKey({ name: "deployments_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
+    primaryKey({ columns: [t.customerId, t.deploymentId] }),
     index("deployments_customer_id_idx").on(t.customerId),
     index("deployments_health_status_idx").on(t.healthStatus),
   ],
@@ -240,7 +230,9 @@ export const solutions = pgTable(
   "solutions",
   {
     orgId: text("org_id").notNull(),
-    customerId: text("customer_id").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.customerId, { onDelete: "cascade" }),
     solutionId: text("solution_id").notNull(),
     useCase: text("use_case").notNull(),
     workflowId: text("workflow_id"),
@@ -317,8 +309,7 @@ export const solutions = pgTable(
     lastReviewedDate: text("last_reviewed_date"),
   },
   (t) => [
-    primaryKey({ name: "solutions_org_id_customer_id_solution_id_pk", columns: [t.orgId, t.customerId, t.solutionId] }),
-    foreignKey({ name: "solutions_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
+    primaryKey({ columns: [t.customerId, t.solutionId] }),
     index("solutions_customer_id_idx").on(t.customerId),
     index("solutions_solution_status_idx").on(t.solutionStatus),
   ],
@@ -330,7 +321,9 @@ export const solutions = pgTable(
 
 export const implementation = pgTable("implementation", {
     orgId: text("org_id").notNull(),
-  customerId: text("customer_id").notNull(),
+  customerId: text("customer_id")
+    .primaryKey()
+    .references(() => customers.customerId, { onDelete: "cascade" }),
   rolloutId: text("rollout_id"),
   // Optional human title; blank falls back to the composed "customer · stage".
   displayName: text("display_name"),
@@ -385,10 +378,7 @@ export const implementation = pgTable("implementation", {
   implementationLastUpdatedAt: text("implementation_last_updated_at"),
   // The deployment profile's own fields (`domains.implementations.custom_fields`); see deployments.custom.
   custom: jsonb("custom").$type<Record<string, string | number>>().notNull().default({}),
-}, (t) => [
-  primaryKey({ name: "implementation_org_id_customer_id_pk", columns: [t.orgId, t.customerId] }),
-  foreignKey({ name: "implementation_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
-]);
+});
 
 /* -------------------------------------------------------------------------- */
 /* Tickets — one row per actionable ticket / follow-up / incident             */
@@ -398,7 +388,9 @@ export const tickets = pgTable(
   "tickets",
   {
     orgId: text("org_id").notNull(),
-    customerId: text("customer_id").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.customerId, { onDelete: "cascade" }),
     ticketId: text("ticket_id").notNull(),
     summary: text("summary").notNull(),
     description: text("description"),
@@ -465,8 +457,7 @@ export const tickets = pgTable(
     ticketNextStep: text("ticket_next_step").notNull(),
   },
   (t) => [
-    primaryKey({ name: "tickets_org_id_customer_id_ticket_id_pk", columns: [t.orgId, t.customerId, t.ticketId] }),
-    foreignKey({ name: "tickets_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
+    primaryKey({ columns: [t.customerId, t.ticketId] }),
     index("tickets_customer_id_idx").on(t.customerId),
     index("tickets_ticket_status_idx").on(t.ticketStatus),
     index("tickets_ticket_category_idx").on(t.ticketCategory),
@@ -481,7 +472,9 @@ export const interactions = pgTable(
   "interactions",
   {
     orgId: text("org_id").notNull(),
-    customerId: text("customer_id").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.customerId, { onDelete: "cascade" }),
     interactionId: text("interaction_id").notNull(),
     interactionAt: text("interaction_at").notNull(),
     interactionType: text("interaction_type").notNull(),
@@ -504,8 +497,7 @@ export const interactions = pgTable(
     recordedAt: text("recorded_at"),
   },
   (t) => [
-    primaryKey({ name: "interactions_org_id_customer_id_interaction_id_pk", columns: [t.orgId, t.customerId, t.interactionId] }),
-    foreignKey({ name: "interactions_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
+    primaryKey({ columns: [t.customerId, t.interactionId] }),
     index("interactions_customer_id_idx").on(t.customerId),
     index("interactions_interaction_at_idx").on(t.interactionAt),
   ],
@@ -519,7 +511,9 @@ export const internalStaff = pgTable(
   "internal_staff",
   {
     orgId: text("org_id").notNull(),
-    customerId: text("customer_id").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.customerId, { onDelete: "cascade" }),
     // "solution_engineer" | "account_executive"
     staffRole: text("staff_role").notNull(),
     name: text("name").notNull(),
@@ -529,8 +523,7 @@ export const internalStaff = pgTable(
     lastContact: text("last_contact"),
   },
   (t) => [
-    primaryKey({ name: "internal_staff_org_id_customer_id_staff_role_email_pk", columns: [t.orgId, t.customerId, t.staffRole, t.email] }),
-    foreignKey({ name: "internal_staff_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
+    primaryKey({ columns: [t.customerId, t.staffRole, t.email] }),
     index("internal_staff_email_idx").on(t.email),
   ],
 );
@@ -539,7 +532,9 @@ export const customerStakeholders = pgTable(
   "customer_stakeholders",
   {
     orgId: text("org_id").notNull(),
-    customerId: text("customer_id").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.customerId, { onDelete: "cascade" }),
     // "key_user" | "decision_maker" | "champion"
     stakeholderRole: text("stakeholder_role").notNull(),
     name: text("name").notNull(),
@@ -549,10 +544,7 @@ export const customerStakeholders = pgTable(
     lastContact: text("last_contact"),
   },
   (t) => [
-    // Named: the default (customer_stakeholders_org_id_customer_id_stakeholder_role_email_pk) is past Postgres's
-    // 63-character limit, and a truncated name would read to drizzle-kit as another constraint on every push.
-    primaryKey({ name: "customer_stakeholders_org_customer_role_email_pk", columns: [t.orgId, t.customerId, t.stakeholderRole, t.email] }),
-    foreignKey({ name: "customer_stakeholders_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
+    primaryKey({ columns: [t.customerId, t.stakeholderRole, t.email] }),
     index("customer_stakeholders_email_idx").on(t.email),
   ],
 );
@@ -1037,17 +1029,16 @@ export const comments = pgTable(
  * session id, else the delegation tool-call id) so the name never shifts.
  */
 /**
- * Cached AI briefings for one person on one account, keyed (org_id, `${email}|${accountId}`).
+ * Cached AI briefings for one person on one account, keyed `${email}|${accountId}`.
  * Regenerating on every chip click was the latency the operator felt; a row is
- * served for an hour before it is refreshed. The workspace is part of the key: an account id names a company only
- * within a workspace (mold_v1-118), and one person in two workspaces that both hold it has two briefings.
+ * served for an hour before it is refreshed.
  */
 export const accountSummaries = pgTable("account_summaries", {
     orgId: text("org_id").notNull(),
-  key: text("key").notNull(),
+  key: text("key").primaryKey(),
   summary: text("summary").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [primaryKey({ name: "account_summaries_org_id_key_pk", columns: [t.orgId, t.key] })]);
+});
 
 export const subagentRuns = pgTable("subagent_runs", {
     orgId: text("org_id").notNull(),
@@ -2045,7 +2036,7 @@ export const taskWorkflowTransitionEvents = pgTable(
 /* OnFinance is org #1 (slug 'onfinance'). Everything global (connectors,     */
 /* workflows, apps, cycles, todos, roster, memories, schedules, secrets) is   */
 /* scoped to an org via a nullable `org_id` that backfills to 'onfinance';    */
-/* customer-scoped tables name it in their key and foreign key.               */
+/* customer-scoped tables inherit their org through the customer FK.          */
 /* See docs/plan: Org Onboarding & Control Plane.                             */
 /* -------------------------------------------------------------------------- */
 

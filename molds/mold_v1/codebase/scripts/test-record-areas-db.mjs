@@ -246,11 +246,25 @@ try {
   });
 
   console.log("\n5. Another workspace cannot write any nested area of this account (review of #70)");
-  // Workspace OTHER names this account's id. Its read sees no account (RLS), so the write is a "create"; the
-  // account row is not its to insert, and the nested rows (whose foreign key is checked past RLS) must not land,
-  // stamped with OTHER, under this workspace's account.
+  // Workspace OTHER names this account's id. A company is keyed by (org_id, customer_id) (mold_v1-118), so OTHER's
+  // write is to ITS OWN company of that id, created on first use; the nested rows it writes carry OTHER and hang off
+  // OTHER's company (the foreign key names both columns). Nothing may land under THIS workspace's account, and a row
+  // stamped OTHER with no company of OTHER's to hang off is refused by the database.
   const FIXTURE = JSON.parse(readFileSync(new URL("./fixtures/customers.fixture.json", import.meta.url), "utf8")).customers[0];
-  const count = async (table) => (await admin.unsafe(`select count(*)::int as n from ${table} where org_id = $1`, [OTHER]))[0].n;
+  const mineNow = async () => {
+    const out = {};
+    for (const t of ["customers", "deployments", "implementation", "platform", "solutions", "tickets", "interactions"]) {
+      out[t] = await admin.unsafe(`select to_jsonb(x) - 'updated_at' as r from ${t} x where customer_id = $1 and org_id = $2 order by 1::text`, [CO, ORG]);
+    }
+    return JSON.stringify(out);
+  };
+  const orphans = async () =>
+    (await admin.unsafe(`select count(*)::int as n from (
+       select org_id, customer_id from deployments union all select org_id, customer_id from implementation
+       union all select org_id, customer_id from platform union all select org_id, customer_id from solutions
+       union all select org_id, customer_id from tickets union all select org_id, customer_id from interactions) r
+     where r.org_id = $1 and not exists (select 1 from customers c where c.org_id = r.org_id and c.customer_id = r.customer_id)`, [OTHER]))[0].n;
+  const mineBefore = await mineNow();
   const attempts = {
     deployments: { deployments: [{ deploymentId: `SQUAT-${process.pid}`, ...REQUIRED_DEP }] },
     implementation: { implementation: { ...REQUIRED_IMPL } },
@@ -260,15 +274,21 @@ try {
     interactions: { interactions: [{ interactionId: `INT-squat-${process.pid}`, interactionAt: "2026-09-29", interactionType: "note", sourceSystem: "manual", note: "squat" }] },
   };
   for (const [area, patch] of Object.entries(attempts)) {
-    let refused = null;
+    let written = null;
     try {
-      await sor.upsertCustomer({ id: CO, ...patch }, OTHER, { declared });
+      written = await sor.upsertCustomer({ id: CO, ...patch }, OTHER, { declared });
     } catch (e) {
-      refused = String(e?.message ?? e);
+      written = String(e?.message ?? e);
     }
-    const planted = await count(area === "implementation" ? "implementation" : area);
-    check(`${area}: refused, and nothing is written under another workspace's account (planted ${planted})`, refused !== null && planted === 0, { refused: refused?.slice(0, 160), planted });
+    const theirs = typeof written === "object" && written !== null;
+    check(`${area}: OTHER's write lands in OTHER's own company of this id, never under this workspace's account`,
+      (await mineNow()) === mineBefore && (await orphans()) === 0 && (!theirs || (written.name === CO && !JSON.stringify(written).includes("Areas Co"))),
+      { written: typeof written === "string" ? written.slice(0, 160) : written?.name, orphans: await orphans() });
   }
+  const { deployments: depTable } = await import("../agent/lib/db/schema.ts");
+  const planted = await withOrgDb(OTHER, (tx) => tx.insert(depTable).values({ orgId: OTHER, customerId: `areas-none-${process.pid}`, deploymentId: "X", ...REQUIRED_DEP })).then(() => "inserted", (e) => e?.code ?? e?.cause?.code ?? String(e));
+  check("a nested row stamped OTHER under an id OTHER does not hold is refused by the foreign key (23503)", planted === "23503", planted);
+  await admin`delete from customers where customer_id = ${CO} and org_id = ${OTHER}`;
 
   console.log("\n4. A new row still needs every required field, said in a sentence, and nothing is written");
   await attempt("a new row without its required fields is refused", async () => {
@@ -279,7 +299,7 @@ try {
     check("…and nothing was written, the account included", !(await depRow("R9")) && (await admin`select health_reason from customers where customer_id = ${CO}`)[0].health_reason !== "should not land");
   });
 } finally {
-  await admin`delete from customers where customer_id = ${CO}`.catch(() => {});
+  await admin`delete from customers where customer_id = ${CO}`.catch(() => {}); // both workspaces' companies of this id
   for (const t of ["deployments", "implementation", "platform", "solutions", "tickets", "interactions"]) await admin.unsafe(`delete from ${t} where org_id = $1`, [OTHER]).catch(() => {});
   await admin`delete from orgs where org_id in (${ORG}, ${OTHER})`.catch(() => {});
   await admin.end();

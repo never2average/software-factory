@@ -165,6 +165,7 @@ export async function runEmailIntake(
       externalId: e.messageId,
       reportedByEmail: isEmail(sender) ? sender : undefined,
       customerContactEmail: isEmail(sender) ? sender : undefined,
+    // The caller's workspace, where the sender was matched (matchCustomerByEmail refuses to match without one).
     }, opts.orgId);
     staged.push({
       ticketId: r.ticketId,

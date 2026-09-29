@@ -3,13 +3,13 @@
 // the 4-party signoff skeleton, and upsert the deployments row. This is the
 // per-deployment substrate a solution runs on — not a solution itself.
 //
-//   npm run fde:configure-infra -- --customer contoso-bank --version v2.4.0 \
+//   npm run fde:configure-infra -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
 //     [--region ap-south-1] [--cloud aws] [--environment prod]
 //
 // See docs/FDE_WORKFLOW.md (stage 4). Signoffs seed as PENDING — the deployment is
 // not done until the four parties sign.
-import { getDb, closeDb, dataroom, writeIfAbsent, checkValues, fixedOr } from "./lib/customer.mjs";
-import { getCustomer as getRecord, ownerWorkspaceOf, upsertCustomer } from "../../agent/lib/system-of-record.ts";
+import { getDb, closeDb, dataroom, workspaceFor, writeIfAbsent, checkValues, fixedOr } from "./lib/customer.mjs";
+import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system-of-record.ts";
 import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
@@ -35,11 +35,11 @@ async function main() {
     console.error(`${glyph.bad} No DATABASE_URL — run with --env-file=.env.local.`);
     process.exit(1);
   }
-  // Read in the account's own workspace (a bare read sees nothing under row-level security).
-  const orgId = await ownerWorkspaceOf(customerId);
+  // The workspace, named (--org): a company id names a company only within a workspace (mold_v1-118).
+  const orgId = workspaceFor();
   const record = await getRecord(customerId, orgId);
   if (!record) {
-    console.error(`${glyph.bad} Customer "${customerId}" not found. Create it first (fde:new-customer).`);
+    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
     await closeDb();
     process.exit(1);
   }
@@ -73,7 +73,7 @@ async function main() {
   console.log(`${glyph.ok} ${stored ? "Updated" : "Created"} deployments row (${customerId}, ${version}).`);
 
   // 2. The infra domain scaffold (blob). Never clobber authored infra.
-  const store = dataroom();
+  const store = dataroom(orgId);
   const root = `Deployments/${customerId}/${version}/infrastructure`;
   const existing = await store.list(root);
   let wrote = 0;

@@ -27,12 +27,12 @@ its `steps` are the FDE's to fill; don't invent them.
 
 **3. Backfill.** Single pipeline via flags:
 ```bash
-npm run fde:backfill-integrations -- --customer contoso-bank \
+npm run fde:backfill-integrations -- --customer contoso-bank --org <workspace id> \
   --pipeline pl-collections --summary "Collections ETL via Integromat"
 ```
 Many via a JSON file (`[{ "pipelineId", "summary", "config" }, …]`):
 ```bash
-npm run fde:backfill-integrations -- --customer contoso-bank \
+npm run fde:backfill-integrations -- --customer contoso-bank --org <workspace id> \
   --from-file integrations.json
 ```
 This upserts the `implementation` row (stage `integration`, the pipeline ids as its
@@ -64,6 +64,6 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:backfill-integrations -- --customer <id> \
+npm run fde:backfill-integrations -- --customer <id> --org <workspace id> \
   [--pipeline <pid>] [--summary "…"] [--from-file integrations.json]
 ```

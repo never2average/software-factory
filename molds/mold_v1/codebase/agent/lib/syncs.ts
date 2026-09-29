@@ -33,7 +33,7 @@ import {
   type JsonValue,
 } from "#lib/dataroom-schema.js";
 import { getDataroomStore } from "#lib/dataroom-store.js";
-import { orgForCustomer } from "#lib/org-context.js";
+import { getDb } from "#lib/db/index.js";
 import { interactionSchema } from "#lib/customer-schema.js";
 import { recordInteraction } from "#lib/system-of-record.js";
 import { searchGranolaNotes } from "#lib/granola.js";
@@ -489,8 +489,14 @@ export async function ingestSource(input: IngestInput): Promise<IngestResult> {
     return skip(output.reason ?? "no items to land", output.skipped);
   }
 
-  // 2. Wrap each item in a RawSyncRecord and land them in one durable append.
-  const store = getDataroomStore(input.orgId || (customerId ? await orgForCustomer(customerId) : undefined));
+  // 2. Wrap each item in a RawSyncRecord and land them in one durable append, in the workspace the sync was run
+  //    for. It used to fall back to "the workspace that owns this customer id" (orgForCustomer); a company id names
+  //    a company only within a workspace (mold_v1-118), so a sync with a database and no workspace lands nothing.
+  //    Without a database (dev, tests) there is one workspace, the default one.
+  if (!input.orgId && getDb()) {
+    return skip(`no workspace was given for ${customerId}: a company id names a company only within a workspace`);
+  }
+  const store = getDataroomStore(input.orgId || undefined);
   const wrapped = output.items.map((item) => {
     const syncId = `SYNC-${nanoid(10)}`;
     const record: RawSyncRecord = {

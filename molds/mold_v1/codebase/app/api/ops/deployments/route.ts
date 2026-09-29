@@ -64,7 +64,8 @@ export async function POST(request: NextRequest) {
   // security, so a create naming another workspace's account id used to succeed, stamped with this workspace.
   // Absent and not-yours read the same, so neither answer confirms an id exists elsewhere.
   if (!(await customerInOrg(ctx.orgId, keyed.data.customerId))) return noSuchAccount();
-  const where = and(eq(deployments.customerId, keyed.data.customerId), eq(deployments.deploymentId, keyed.data.deploymentId));
+  // The row's whole key: (org_id, customer_id, deployment_id). The same ids in another workspace are its own row.
+  const where = and(eq(deployments.orgId, ctx.orgId), eq(deployments.customerId, keyed.data.customerId), eq(deployments.deploymentId, keyed.data.deploymentId));
   try {
     // The row is looked up inside the caller's scope: another workspace's row with this key is simply not there.
     const [existing] = await withOrgRls(ctx.orgId, (tx) => tx.select({ custom: deployments.custom }).from(deployments).where(where));
@@ -94,7 +95,7 @@ export async function POST(request: NextRequest) {
           deployOwnerEmail: data.deployOwnerEmail || null,
           displayName: data.displayName || null,
         })
-        .onConflictDoNothing()
+        .onConflictDoNothing({ target: [deployments.orgId, deployments.customerId, deployments.deploymentId] })
         .returning(),
     );
     // Created by someone else since the lookup: this call is an update of it.

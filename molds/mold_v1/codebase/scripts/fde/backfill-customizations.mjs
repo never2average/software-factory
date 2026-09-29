@@ -1,7 +1,7 @@
 // fde:backfill-customizations — reconstruct a customer's deployment/customization
 // history into the canonical Deployments/ layout + the `deployments` row.
 //
-//   npm run fde:backfill-customizations -- --customer contoso-bank --version v2.4.0 \
+//   npm run fde:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
 //     [--region ap-south-1] [--cloud aws] [--summary "GPU inference, custom guardrails"] \
 //     [--from-file customizations.json]
 //
@@ -11,8 +11,8 @@
 // materialises Deployments/{id}/{ver}/infrastructure/inference/{customizations.tf,
 // rationale.md} plus the 4-party signoff skeleton. --from-file takes an array of
 // { title, tf, rationale } customizations. See docs/FDE_WORKFLOW.md (stage 4).
-import { getDb, closeDb, dataroom, nowIso, appendInteraction, readFromFile, checkValues, fixedOr } from "./lib/customer.mjs";
-import { getCustomer as getRecord, ownerWorkspaceOf, upsertCustomer } from "../../agent/lib/system-of-record.ts";
+import { getDb, closeDb, dataroom, workspaceFor, nowIso, appendInteraction, readFromFile, checkValues, fixedOr } from "./lib/customer.mjs";
+import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system-of-record.ts";
 import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
@@ -34,12 +34,12 @@ async function main() {
     console.error(`${glyph.bad} No DATABASE_URL — run with --env-file=.env.local.`);
     process.exit(1);
   }
-  // Read in the account's own workspace (a bare read sees nothing under row-level security).
-  const orgId = await ownerWorkspaceOf(customerId);
+  // The workspace, named (--org): a company id names a company only within a workspace (mold_v1-118).
+  const orgId = workspaceFor();
   const record = await getRecord(customerId, orgId);
   const customer = record ? { customerName: record.name } : null;
   if (!customer) {
-    console.error(`${glyph.bad} Customer "${customerId}" not found. Create it first (fde:new-customer).`);
+    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
     await closeDb();
     process.exit(1);
   }
@@ -77,7 +77,7 @@ async function main() {
   console.log(`${glyph.ok} ${stored ? "Updated" : "Created"} deployments row (${customerId}, ${deploymentId}).`);
 
   // 2. The canonical data-room artifacts.
-  const store = dataroom();
+  const store = dataroom(orgId);
   const base = `Deployments/${customerId}/${version}/infrastructure/inference`;
   const items = readFromFile() ?? [
     {

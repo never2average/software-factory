@@ -2,7 +2,7 @@
 // must contain, what's present, what's missing, and its live [[edges]].
 //
 //   npm run fde:context-graph -- --path "Customers/contoso-bank"
-//   npm run fde:context-graph -- --customer contoso-bank   # shorthand for Customers/<id>
+//   npm run fde:context-graph -- --customer contoso-bank --org <workspace id>   # shorthand for Customers/<id>
 //   npm run fde:context-graph -- --path "Deployments/contoso-bank/v2.4.0/infrastructure/inference"
 //
 // This is the COMPUTED projection of DATAROOM_PATH_TEMPLATES (the dm.md grammar)
@@ -18,9 +18,12 @@ async function main() {
     console.error(`${glyph.bad} --path "<Domain/…>" (or --customer <id>) is required.`);
     process.exit(1);
   }
-  const store = dataroom();
+  // The workspace's own data room and records (--org / FDE_ORG); none reads the default workspace's tree, without
+  // DB edges (a company id names a company only within a workspace).
+  const orgId = (flag("org") || process.env.FDE_ORG || "").trim() || undefined;
+  const store = dataroom(orgId);
   const db = getDb();
-  const g = await buildContextGraph(store, db, path, nowIso());
+  const g = await buildContextGraph(store, db, path, nowIso(), orgId);
   await closeDb();
 
   console.log(`Context graph — ${g.path}\n`);

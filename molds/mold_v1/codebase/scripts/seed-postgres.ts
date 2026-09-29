@@ -16,6 +16,7 @@
  * the people tables are re-seeded via delete + insert.
  */
 import { readFileSync } from "node:fs";
+import { eq, sql } from "drizzle-orm";
 import { customerStoreSchema, peopleStoreSchema } from "../agent/lib/customer-schema.ts";
 import { closeDb, getDatabaseUrl, getDb } from "../agent/lib/db/index.ts";
 import { customerStakeholders, internalStaff } from "../agent/lib/db/schema.ts";
@@ -61,13 +62,17 @@ if (!db) throw new Error("seed:postgres: getDb() returned null despite a configu
 
 try {
   for (const customer of customerStore.customers) {
-    await writeCustomerToPostgres(db, customer);
-    console.log(`seed:postgres: upserted customer ${customer.id}`);
+    // Into SEED_ORG, by the company's whole key (org_id, customer_id): the same id in another workspace is another
+    // company and is not touched.
+    await writeCustomerToPostgres(db, customer, SEED_ORG);
+    console.log(`seed:postgres: upserted customer ${customer.id} in ${SEED_ORG}`);
   }
 
   await db.transaction(async (tx) => {
-    await tx.delete(internalStaff);
-    await tx.delete(customerStakeholders);
+    // SEED_ORG's people only. This deleted every workspace's staff and stakeholders.
+    await tx.execute(sql`select set_config('app.org_id', ${SEED_ORG}, true)`);
+    await tx.delete(internalStaff).where(eq(internalStaff.orgId, SEED_ORG));
+    await tx.delete(customerStakeholders).where(eq(customerStakeholders.orgId, SEED_ORG));
     if (peopleStore.internalStaffAssignments.length > 0) {
       await tx.insert(internalStaff).values(
         peopleStore.internalStaffAssignments.map((p) => ({

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText, zodMessage } from "@/lib/ops-errors";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { implementation } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -64,7 +64,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
   try {
     const [before] = await withOrgRls(octx.orgId, (tx) =>
-      tx.select().from(implementation).where(eq(implementation.customerId, customerId)),
+      tx.select().from(implementation).where(and(eq(implementation.orgId, octx.orgId), eq(implementation.customerId, customerId))),
     );
     if (before && "custom" in set) {
       const checked = customForWrite("implementations", set.custom, before);
@@ -79,7 +79,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       tx
         .update(implementation)
         .set(set)
-        .where(eq(implementation.customerId, customerId))
+        .where(and(eq(implementation.orgId, octx.orgId), eq(implementation.customerId, customerId)))
         .returning(),
     );
     if (!item) return NextResponse.json({ error: `${W.Implementation} not found` }, { status: 404 });
@@ -105,7 +105,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 }
 
 /** DELETE /api/ops/implementations/:id?customerId=… — remove a rollout record.
- *  Keyed by customerId (the table's primary key). */
+ *  Keyed by (customerId, the caller's workspace): the table's primary key. */
 export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const octx = await orgContextForRequest(request);
   if (!octx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -113,7 +113,7 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const url = new URL(request.url);
   const { id } = await ctx.params;
-  // customerId is the PK; fall back to the route id (which is rolloutId ?? customerId).
+  // customerId (with the workspace) is the PK; fall back to the route id (which is rolloutId ?? customerId).
   const customerId = url.searchParams.get("customerId") ?? id;
   if (!(await customerInOrg(octx.orgId, customerId))) {
     return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
@@ -122,7 +122,7 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
     const [item] = await withOrgRls(octx.orgId, (tx) =>
       tx
         .delete(implementation)
-        .where(eq(implementation.customerId, customerId))
+        .where(and(eq(implementation.orgId, octx.orgId), eq(implementation.customerId, customerId)))
         .returning(),
     );
     if (!item) return NextResponse.json({ error: `${W.Implementation} not found` }, { status: 404 });

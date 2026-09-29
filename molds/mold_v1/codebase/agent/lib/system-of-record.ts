@@ -41,7 +41,7 @@ import {
   type Interaction,
   type Ticket,
 } from "./customer-schema.ts";
-import { acrossOrgDbs, getDb, withOrgDb, type Db } from "./db/index.ts";
+import { getDb, withOrgDb, type Db } from "./db/index.ts";
 import {
   customers as customersTable,
   deployments as deploymentsTable,
@@ -54,7 +54,6 @@ import {
   tickets as ticketsTable,
 } from "./db/schema.ts";
 import { getDataroomStore } from "./dataroom-store.ts";
-import { DEFAULT_ORG } from "./org-context.ts";
 import { LONG_TEXT_LIMIT, asCustomValues, customDelta, customFieldsOf, replacedKeys, validateAppend, validateCustom, type CustomDelta, type CustomValues } from "./custom-fields.ts";
 import { customMergeSql } from "./custom-merge-sql.ts";
 import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
@@ -62,39 +61,39 @@ import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.gene
 export type FollowUp = Ticket;
 
 /**
- * The workspace a by-id call acts in. A caller that knows its workspace (every model tool: orgForSession) names
- * it, and then an id from another workspace is simply not found — row-level security is the check.
+ * The workspace a by-id call acts in: ALWAYS the caller's, named. A company is keyed by (org_id, customer_id)
+ * (mold_v1-118): two workspaces may each hold `aditya-birla-hfl`, so an id alone names no one company and no
+ * workspace can be taken from it. A caller that knows its workspace (every model tool: orgForSession) names it, and
+ * then an id held only by another workspace is simply not found — row-level security and the key are the check.
  *
- * Only a SYSTEM path with no caller at all (`orgId` undefined: a seed script, a sync with no session) falls back to
- * the workspace that owns the customer, found by asking each workspace in its own scope. It used to ask
- * orgForCustomer, which reads on the bare handle; under the fail-closed policy that sees no row and answers the
- * default workspace for every id, so a system write to any other workspace's account was "Unknown customer".
- * A caller that passes an EMPTY workspace is refused rather than given the owner's: an empty answer from
- * orgForSession must never widen into "whoever owns this id". No model tool reaches the fallback
- * (scripts/test-cross-workspace.mjs holds that every tool passes orgForSession).
+ * A caller that names none (undefined, null or empty) is refused, never given "whoever holds this id". That used to
+ * be the fallback for a system path with no session (a seed script, a sync, the scripts/fde backfills), found by
+ * asking each workspace for the owner; with the same id in two workspaces it would pick one of them. Those paths now
+ * carry their workspace explicitly (`--org`, the sync's own orgId).
  */
-async function scopeFor(customerId: string, orgId?: string | null): Promise<string> {
+function scopeFor(customerId: string, orgId?: string | null): string {
   if (orgId) return orgId;
-  if (orgId !== undefined) throw new Error(`No workspace was given for customer ${customerId}, so nothing was read or changed.`);
-  const [owner] = await acrossOrgDbs((tx) =>
-    tx
-      .select({ orgId: customersTable.orgId })
-      .from(customersTable)
-      .where(eq(customersTable.customerId, customerId))
-      .limit(1),
-  );
-  // Absent everywhere: any scope reads it as absent, so the caller's own "Unknown customer" follows.
-  return owner?.orgId ?? DEFAULT_ORG;
+  throw new Error(`No workspace was given for customer ${customerId}, so nothing was read or changed. A company id names a company only within a workspace: name the workspace.`);
 }
 
 /**
- * The workspace that owns a customer, for a SYSTEM caller with no session (the scripts/fde backfills): found by
- * asking each workspace in its own scope, never unscoped. DEFAULT_ORG when no workspace has it. A caller that has a
- * session uses orgForSession instead, and never this.
+ * The workspace a LIST is asked in: the caller's, named, or the list is refused. Workspaces are not aware of each
+ * other: no list here sweeps every workspace, not for a cron, a digest or an inbox (an empty answer from
+ * orgForSession must never widen into "all of them"). Only the in-memory fallback, which holds one workspace and
+ * names none, lists without one.
  */
-export async function ownerWorkspaceOf(customerId: string): Promise<string> {
-  return getDb() ? scopeFor(customerId) : DEFAULT_ORG;
+function listScope(what: string, orgId?: string | null): string {
+  if (orgId) return orgId;
+  throw new Error(`No workspace was given, so ${what} were not read. Name the workspace: a list is always one workspace's.`);
 }
+
+/** One company, by its whole key: this workspace's row for this id. */
+const ofCompany = (orgId: string, customerId: string) => and(eq(customersTable.orgId, orgId), eq(customersTable.customerId, customerId));
+/** A table hanging off a company, keyed the same way (its own id, where it has one, is added by the caller). */
+type CompanyKeyed = { orgId: PgColumn; customerId: PgColumn };
+const underCompany = (t: CompanyKeyed, orgId: string, customerId: string) => and(eq(t.orgId, orgId), eq(t.customerId, customerId));
+/** A map key for a company across workspaces: the same id in two workspaces is two companies. */
+const companyKey = (orgId: string, customerId: string) => `${orgId}\u0000${customerId}`;
 
 /* -------------------------------------------------------------------------- */
 /* Fallback store — in memory, empty unless DEMO_SAMPLE_DATA asks for samples */
@@ -140,9 +139,9 @@ function stripNulls(row: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-/** Nested-domain row -> plain entity candidate (drop the FK, strip NULLs). */
+/** Nested-domain row -> plain entity candidate (drop the company key, strip NULLs). */
 function rowToEntity(row: Record<string, unknown>): Record<string, unknown> {
-  const { customerId: _customerId, ...rest } = row;
+  const { customerId: _customerId, orgId: _orgId, ...rest } = row;
   // `custom` is NOT NULL DEFAULT '{}': a record with no profile-declared values reads exactly as it did before
   // the column existed.
   if (rest.custom && typeof rest.custom === "object" && Object.keys(rest.custom).length === 0) delete rest.custom;
@@ -214,36 +213,28 @@ function isOpenTicket(status: Ticket["ticketStatus"]): boolean {
   return !CLOSED_TICKET_STATUSES.includes(status);
 }
 
-async function dbGetCustomer(db: Db, id: string, orgId?: string | null): Promise<Customer | null> {
+async function dbGetCustomer(db: Db, id: string, orgId: string | null | undefined): Promise<Customer | null> {
   /**
-   * Seven parallel reads, one workspace scope.
+   * Seven parallel reads, one workspace scope, each by the company's whole key (org_id, customer_id).
    *
-   * Scoped when the caller knows the workspace, swept when it does not — the
-   * existing contract for a bare lookup is "find it wherever it lives", and a
-   * single unscoped read returns nothing once the policy fails closed.
+   * Always the caller's workspace. It used to sweep every workspace when none was named ("find it wherever it
+   * lives"); with the same id held by two workspaces that sweep would merge both companies' rows into one record.
    */
-  const run = <T>(fn: (tx: Db) => Promise<T[]>): Promise<T[]> =>
-    orgId ? withOrgDb(orgId, fn) : acrossOrgDbs(fn);
+  const org = scopeFor(id, orgId);
+  const run = <T>(fn: (tx: Db) => Promise<T[]>): Promise<T[]> => withOrgDb(org, fn);
   const [customerRows, platformRows, deploymentRows, solutionRows, implementationRows, ticketRows, interactionRows] =
     await Promise.all([
-      run((tx) =>
-tx.select().from(customersTable).where(eq(customersTable.customerId, id)).limit(1)),
-      run((tx) =>
-tx.select().from(platformTable).where(eq(platformTable.customerId, id))),
-      run((tx) =>
-tx.select().from(deploymentsTable).where(eq(deploymentsTable.customerId, id))),
-      run((tx) =>
-tx.select().from(solutionsTable).where(eq(solutionsTable.customerId, id))),
-      run((tx) =>
-tx.select().from(implementationTable).where(eq(implementationTable.customerId, id))),
-      run((tx) =>
-tx.select().from(ticketsTable).where(eq(ticketsTable.customerId, id))),
-      run((tx) =>
-tx.select().from(interactionsTable).where(eq(interactionsTable.customerId, id))),
+      run((tx) => tx.select().from(customersTable).where(ofCompany(org, id)).limit(1)),
+      run((tx) => tx.select().from(platformTable).where(underCompany(platformTable, org, id))),
+      run((tx) => tx.select().from(deploymentsTable).where(underCompany(deploymentsTable, org, id))),
+      run((tx) => tx.select().from(solutionsTable).where(underCompany(solutionsTable, org, id))),
+      run((tx) => tx.select().from(implementationTable).where(underCompany(implementationTable, org, id))),
+      run((tx) => tx.select().from(ticketsTable).where(underCompany(ticketsTable, org, id))),
+      run((tx) => tx.select().from(interactionsTable).where(underCompany(interactionsTable, org, id))),
     ]);
   const row = customerRows[0];
   if (!row) return null;
-  const { customerId, customerName, custom, ...scalar } = row;
+  const { customerId, customerName, custom, orgId: _org, ...scalar } = row;
   const candidate: Record<string, unknown> = {
     id: customerId,
     name: customerName,
@@ -277,18 +268,15 @@ tx.select().from(interactionsTable).where(eq(interactionsTable.customerId, id)))
  * `scripts/seed-postgres.ts`.
  */
 /**
- * @param orgId  The workspace this customer belongs to. Optional ONLY so the
- * fallback JSON store and older callers still compile — passing nothing writes
- * a row with a null org_id, which is invisible to every reader.
- *
- * That is not hypothetical: the agent created 66 customers this way and none of
- * them appeared in the customer picker, because the UI filters by workspace and
- * the rows belonged to none. The data was there the whole time and unreachable.
+ * @param orgId  The workspace this customer belongs to: half of the company's key (org_id, customer_id), so it is
+ * required. It was optional, and passing nothing wrote a row with a null org_id, invisible to every reader (the
+ * agent once created 66 customers that way, none of them in the customer picker); with the key it would not even
+ * name which company to replace.
  */
 export async function writeCustomerToPostgres(
   db: Db,
   customer: Customer,
-  orgId?: string | null,
+  orgId: string,
   /**
    * The account's own fields (customers.custom). An existing row's column is changed ONLY through `accountCustom`,
    * a delta merged in SQL onto what is stored at write time (agent/lib/custom-merge-sql.ts); without one the
@@ -298,14 +286,12 @@ export async function writeCustomerToPostgres(
   opts: { accountCustom?: CustomDelta } = {},
 ): Promise<void> {
   const valid = customerSchema.parse(customer);
+  const org = scopeFor(valid.id, orgId);
   const rows = customerToDbRows(valid);
-  // The workspace goes on EVERY row, not only the customer's. The nested tables carry their own NOT NULL org_id
-  // under the same org_isolation policy, so an unstamped deployment / implementation row is refused by the
-  // database (42501) and the whole upsert rolls back: upsert_customer could write a customer, never its records.
-  if (orgId) {
-    const nested = [rows.customer, rows.platform, rows.implementation, ...rows.deployments, ...rows.solutions, ...rows.tickets, ...rows.interactions];
-    for (const row of nested) if (row && "orgId" in row) (row as Record<string, unknown>).orgId = orgId;
-  }
+  // The workspace goes on EVERY row, not only the customer's: it is half of every key here, and the nested tables'
+  // foreign key names it, so a row can only hang off this workspace's company.
+  const nested = [rows.customer, rows.platform, rows.implementation, ...rows.deployments, ...rows.solutions, ...rows.tickets, ...rows.interactions];
+  for (const row of nested) if (row && "orgId" in row) (row as Record<string, unknown>).orgId = org;
   await db.transaction(async (tx) => {
     /**
      * The scope is set INSIDE the existing transaction, not by wrapping it.
@@ -315,13 +301,14 @@ export async function writeCustomerToPostgres(
      * transaction's locks. One `set_config` here scopes every statement below,
      * which is all withOrgDb does anyway.
      */
-    if (orgId) await tx.execute(sql`select set_config('app.org_id', ${orgId}, true)`);
-    const { customerId: _pk, custom: _custom, ...customerSet } = rows.customer as Record<string, unknown>;
+    await tx.execute(sql`select set_config('app.org_id', ${org}, true)`);
+    const { customerId: _pk, orgId: _org, custom: _custom, ...customerSet } = rows.customer as Record<string, unknown>;
     if (opts.accountCustom) customerSet.custom = customMergeSql(customersTable.custom, opts.accountCustom);
     const [written] = await tx
       .insert(customersTable)
       .values(rows.customer)
-      .onConflictDoUpdate({ target: customersTable.customerId, set: customerSet })
+      // The company's whole key: another workspace's company with this id is another row, never this one.
+      .onConflictDoUpdate({ target: [customersTable.orgId, customersTable.customerId], set: customerSet })
       .returning({ custom: customersTable.custom });
     // The length cap, at WRITE time. Each append was checked against the text as it was READ; two appends at once
     // (18,000 stored + 1,500 + 1,500) each pass that check and together exceed it, after which every later append
@@ -335,12 +322,13 @@ export async function writeCustomerToPostgres(
     }
     // Replace-all for the nested domains: `valid` carries the full state, so
     // delete + insert keeps the tables an exact mirror of the entity.
-    await tx.delete(platformTable).where(eq(platformTable.customerId, valid.id));
-    await tx.delete(deploymentsTable).where(eq(deploymentsTable.customerId, valid.id));
-    await tx.delete(solutionsTable).where(eq(solutionsTable.customerId, valid.id));
-    await tx.delete(implementationTable).where(eq(implementationTable.customerId, valid.id));
-    await tx.delete(ticketsTable).where(eq(ticketsTable.customerId, valid.id));
-    await tx.delete(interactionsTable).where(eq(interactionsTable.customerId, valid.id));
+    // By the company's whole key: the same id in another workspace is another company, and its rows are not these.
+    await tx.delete(platformTable).where(underCompany(platformTable, org, valid.id));
+    await tx.delete(deploymentsTable).where(underCompany(deploymentsTable, org, valid.id));
+    await tx.delete(solutionsTable).where(underCompany(solutionsTable, org, valid.id));
+    await tx.delete(implementationTable).where(underCompany(implementationTable, org, valid.id));
+    await tx.delete(ticketsTable).where(underCompany(ticketsTable, org, valid.id));
+    await tx.delete(interactionsTable).where(underCompany(interactionsTable, org, valid.id));
     if (rows.platform) await tx.insert(platformTable).values(rows.platform);
     if (rows.deployments.length > 0) await tx.insert(deploymentsTable).values(rows.deployments);
     if (rows.solutions.length > 0) await tx.insert(solutionsTable).values(rows.solutions);
@@ -384,25 +372,18 @@ export async function listCustomers(orgId?: string | null): Promise<
   };
   const db = getDb();
   if (db) {
-    // Workspace scope: filter to the caller's org when one is given (fail-safe:
-    // no org → all rows, which is the single-org world). org_id backfills to
-    // 'onfinance', so passing 'onfinance' matches every legacy row.
-    const orgFilter = orgId ? eq(customersTable.orgId, orgId) : undefined;
     /**
-     * Scoped when a workspace is named, swept across all of them when not.
-     *
-     * "No workspace → every row" is the existing contract. Sweeping preserves
-     * exactly that while keeping each read inside a scope, so it survives the
-     * fail-closed policy — where one unscoped query returns nothing. This is
-     * the function whose unscoped read blinded the agent when the flip first
-     * went in.
+     * The caller's workspace, and only it. "No workspace → every row" was the contract here (a sweep, each workspace
+     * in its own scope); workspaces are not aware of each other now, so no workspace is refused (listScope).
      */
-    const run = <T>(fn: (tx: Db) => Promise<T[]>): Promise<T[]> =>
-      orgId ? withOrgDb(orgId, fn) : acrossOrgDbs(fn);
+    const org = listScope("customers", orgId);
+    const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
+      withOrgDb(org, (tx) => fn(tx, org));
     const [rows, openTicketRows] = await Promise.all([
-      run((tx) =>
+      run((tx, org) =>
 tx
         .select({
+          orgId: customersTable.orgId,
           id: customersTable.customerId,
           name: customersTable.customerName,
           tier: customersTable.tier,
@@ -415,19 +396,21 @@ tx
           custom: customersTable.custom,
         })
         .from(customersTable)
-        .where(orgFilter)
+        .where(eq(customersTable.orgId, org))
         .orderBy(customersTable.customerId),
       ),
-      run((tx) =>
+      run((tx, org) =>
 tx
-          .select({ customerId: ticketsTable.customerId })
+          .select({ orgId: ticketsTable.orgId, customerId: ticketsTable.customerId })
           .from(ticketsTable)
-          .where(notInArray(ticketsTable.ticketStatus, CLOSED_TICKET_STATUSES)),
+          .where(and(eq(ticketsTable.orgId, org), notInArray(ticketsTable.ticketStatus, CLOSED_TICKET_STATUSES))),
       ),
     ]);
+    // Counted per company, by its whole key.
     const openByCustomer = new Map<string, number>();
     for (const t of openTicketRows) {
-      openByCustomer.set(t.customerId, (openByCustomer.get(t.customerId) ?? 0) + 1);
+      const key = companyKey(t.orgId, t.customerId);
+      openByCustomer.set(key, (openByCustomer.get(key) ?? 0) + 1);
     }
     return rows.map((row) => ({
       id: row.id,
@@ -439,7 +422,7 @@ tx
       companyDomain: row.companyDomain ?? undefined,
       businessOwnerEmail: row.businessOwnerEmail ?? undefined,
       technicalOwnerEmail: row.technicalOwnerEmail ?? undefined,
-      openTickets: openByCustomer.get(row.id) ?? 0,
+      openTickets: openByCustomer.get(companyKey(row.orgId, row.id)) ?? 0,
       ...listCustom(row.custom),
     }));
   }
@@ -472,8 +455,8 @@ export async function getCustomer(id: string, orgId?: string | null): Promise<Cu
     // caller's scope, which workspace owned the row; under the fail-closed
     // policy that second read cannot see another workspace's row, came back
     // empty, and `row?.orgId && …` let the other workspace's record through.
-    // No orgId (seed scripts, tests, the JSON fallback) keeps the old
-    // "find it wherever it lives" contract.
+    // No workspace is refused (dbGetCustomer): with the same id in two workspaces, "find it wherever it lives"
+    // would merge two companies. Only the in-memory fallback, which holds one workspace, reads without one.
     return await dbGetCustomer(db, id, orgId);
   }
   const { customers } = await readStore();
@@ -724,28 +707,31 @@ const notYours = (id: string) => `Unknown customer: ${id}`;
  *    row by (customer, its id): its named fields SET (null clears one), `custom` merged by delta where it has one; a
  *    new row inserted whole; `remove: true` deletes it; a row the patch does not name is untouched.
  *
- * THE ACCOUNT MUST BE THE CALLER'S before any nested row is written (review of #70). A nested table's foreign key is
- * checked past row-level security, so a patch from another workspace naming this account's id, which reads no
- * account and so takes the "new account" path, would otherwise plant rows under it stamped with its own workspace.
- * The account row is read back inside this transaction, in the caller's scope; absent, nothing is written.
+ * THE ACCOUNT MUST BE THE CALLER'S before any nested row is written (review of #70). Every row, statement and conflict
+ * target here is keyed by the company's whole key (org_id, customer_id), and the nested tables' foreign key names both
+ * columns, so a nested row can only hang off the caller's own company: a patch from a workspace that does not hold
+ * the id creates ITS OWN company under it (two workspaces may hold the same id, mold_v1-118), never rows under
+ * another's. The account row is still read back inside this transaction, in the caller's scope; absent, nothing is
+ * written.
  */
 export async function writeCustomerPatchToPostgres(
   db: Db,
   patch: CustomerPatch,
   existing: Customer | null,
-  orgId?: string | null,
+  orgId: string,
   deltas: { accountCustom?: CustomDelta; rows?: RowCustomDeltas } = {},
 ): Promise<void> {
   const id = patch.id;
+  const org = scopeFor(id, orgId);
   const created = existing ? null : applyPatchToRecord(null, patch);
   if (existing) checkRowPatch(patch, existing);
   const stamp = <T extends Row>(row: T): T => {
-    if (orgId && "orgId" in row) (row as Row).orgId = orgId;
+    if ("orgId" in row) (row as Row).orgId = org;
     return row;
   };
   await db.transaction(async (tx) => {
     // Scoped inside this transaction, as writeCustomerToPostgres is (withOrgDb would open a second one).
-    if (orgId) await tx.execute(sql`select set_config('app.org_id', ${orgId}, true)`);
+    await tx.execute(sql`select set_config('app.org_id', ${org}, true)`);
 
     // The account row: the scalar fields the patch names, and `custom` only through its delta.
     const customerSet: Row = {};
@@ -759,15 +745,15 @@ export async function writeCustomerPatchToPostgres(
       const row = stamp(customerToDbRows(created).customer as Row) as typeof customersTable.$inferInsert;
       const insert = tx.insert(customersTable).values(row);
       [written] = await (Object.keys(customerSet).length
-        ? insert.onConflictDoUpdate({ target: customersTable.customerId, set: customerSet })
-        : insert.onConflictDoNothing()
+        ? insert.onConflictDoUpdate({ target: [customersTable.orgId, customersTable.customerId], set: customerSet })
+        : insert.onConflictDoNothing({ target: [customersTable.orgId, customersTable.customerId] })
       ).returning({ custom: customersTable.custom });
     } else if (Object.keys(customerSet).length) {
-      [written] = await tx.update(customersTable).set(customerSet).where(eq(customersTable.customerId, id)).returning({ custom: customersTable.custom });
+      [written] = await tx.update(customersTable).set(customerSet).where(ofCompany(org, id)).returning({ custom: customersTable.custom });
       if (!written) throw new Error(notYours(id));
     }
     // The account is the caller's, as this transaction sees it, or nothing below is written (see above).
-    const [mine] = await tx.select({ id: customersTable.customerId }).from(customersTable).where(eq(customersTable.customerId, id)).limit(1);
+    const [mine] = await tx.select({ id: customersTable.customerId }).from(customersTable).where(ofCompany(org, id)).limit(1);
     if (!mine) throw new Error(notYours(id));
     // The length cap, at WRITE time (see writeCustomerToPostgres): the row is locked until commit.
     for (const key of Object.keys(deltas.accountCustom?.append ?? {})) {
@@ -779,10 +765,10 @@ export async function writeCustomerPatchToPostgres(
 
     // Every nested part: one statement per named row.
     for (const part of NESTED) {
-      const t = part.table as unknown as Record<string, PgColumn> & PgTable;
+      const t = part.table as unknown as Record<string, PgColumn> & PgTable & CompanyKeyed;
       const stored = storedRows(existing, part);
       for (const row of patchRows(patch, part)) {
-        const where = part.id ? and(eq(t.customerId, id), eq(t[part.id], row[part.id] as string)) : eq(t.customerId, id);
+        const where = part.id ? and(underCompany(t, org, id), eq(t[part.id], row[part.id] as string)) : underCompany(t, org, id);
         const name = rowName(part, row);
         if (row.remove) {
           const gone = await tx.delete(t).where(where).returning({ id: t.customerId });
@@ -800,10 +786,11 @@ export async function writeCustomerPatchToPostgres(
           const full = part.schema.parse(mergeRow(undefined, row, part.id)) as Row;
           const values = "custom" in full || part.key === "deployments" || part.key === "implementation" ? { ...full, custom: asCustomValues(full.custom) } : full;
           const insertRow = stamp(fullRow(part.table, { customerId: id, ...values }) as Row);
-          const target = part.id ? [t.customerId, t[part.id]] : t.customerId;
+          // The row's whole key: (org_id, customer_id[, its id]).
+          const target = part.id ? [t.orgId, t.customerId, t[part.id]] : [t.orgId, t.customerId];
           // Written by someone else since the read: the named fields are applied onto it, as for a stored row.
           const insert = tx.insert(t).values(insertRow as never);
-          await (Object.keys(set).length ? insert.onConflictDoUpdate({ target, set }) : insert.onConflictDoNothing());
+          await (Object.keys(set).length ? insert.onConflictDoUpdate({ target, set }) : insert.onConflictDoNothing({ target }));
         }
       }
     }
@@ -842,13 +829,14 @@ export async function upsertCustomer(
     // The record being patched is read in the CALLER's workspace. Read across all of them, another workspace's
     // record was merged into this patch and written under the caller's scope; the database refused the write,
     // and the refusal text carried every merged value back to the model.
-    const existing = await dbGetCustomer(db, parsedPatch.id, orgId);
+    const org = scopeFor(parsedPatch.id, orgId);
+    const existing = await dbGetCustomer(db, parsedPatch.id, org);
     const { patch: validPatch, accountDelta, rowDeltas } = applyCustomFieldsWithDelta(parsedPatch, existing, opts.declared);
     // Only what the patch names, each change applied in SQL onto what is stored at write time.
-    await writeCustomerPatchToPostgres(db, validPatch, existing, orgId, { accountCustom: accountDelta, rows: rowDeltas });
+    await writeCustomerPatchToPostgres(db, validPatch, existing, org, { accountCustom: accountDelta, rows: rowDeltas });
     // The record AS STORED after the write, not the one computed from the read: a change someone else made in
     // between is part of it, and the caller is not told a stale value was kept.
-    const after = await dbGetCustomer(db, parsedPatch.id, orgId);
+    const after = await dbGetCustomer(db, parsedPatch.id, org);
     if (!after) throw new Error(`Unknown customer: ${parsedPatch.id}`);
     return after;
   }
@@ -872,12 +860,12 @@ export async function recordInteraction(
   const db = getDb();
   if (db) {
     const valid = interactionSchema.parse(interaction);
-    const scope = await scopeFor(customerId, orgId);
+    const scope = scopeFor(customerId, orgId);
     const exists = await withOrgDb(scope, (tx) =>
       tx
         .select({ customerId: customersTable.customerId })
         .from(customersTable)
-        .where(eq(customersTable.customerId, customerId))
+        .where(ofCompany(scope, customerId))
         .limit(1),
     );
     if (exists.length === 0) throw new Error(`Unknown customer: ${customerId}`);
@@ -918,12 +906,12 @@ export async function recordInteractions(
   const valid = interactions.map((i) => interactionSchema.parse(i));
   const db = getDb();
   if (db) {
-    const scope = await scopeFor(customerId, orgId);
+    const scope = scopeFor(customerId, orgId);
     const exists = await withOrgDb(scope, (tx) =>
       tx
         .select({ customerId: customersTable.customerId })
         .from(customersTable)
-        .where(eq(customersTable.customerId, customerId))
+        .where(ofCompany(scope, customerId))
         .limit(1),
     );
     if (exists.length === 0) throw new Error(`Unknown customer: ${customerId}`);
@@ -949,6 +937,8 @@ export async function recordInteractions(
 
 /** A customer that has gone quiet — no logged interaction within the window. */
 export interface StaleCustomer {
+  /** The workspace holding it: the same id in two workspaces is two companies. */
+  orgId: string;
   customerId: string;
   customerName: string;
   lifecycleStage: string | null;
@@ -967,15 +957,23 @@ export interface StaleCustomer {
  */
 const ACTIVE_STALE_STAGES = ["Onboarding", "Pilot", "Contracting"];
 
-export async function listStaleCustomers(days: number): Promise<StaleCustomer[]> {
+export async function listStaleCustomers(
+  days: number,
+  /** The caller's workspace. Required with a database: a list is one workspace's (listScope). */
+  orgId?: string | null,
+): Promise<StaleCustomer[]> {
   const db = getDb();
   if (!db) return [];
   const now = Date.now();
   const cutoffMs = now - days * 86_400_000;
+  const org = listScope("stale customers", orgId);
+  const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
+    withOrgDb(org, (tx) => fn(tx, org));
 
-  const rows = await acrossOrgDbs((tx) =>
+  const rows = await run((tx, org) =>
     tx
       .select({
+        orgId: customersTable.orgId,
         customerId: customersTable.customerId,
         customerName: customersTable.customerName,
         lifecycleStage: customersTable.lifecycleStage,
@@ -983,27 +981,31 @@ export async function listStaleCustomers(days: number): Promise<StaleCustomer[]>
         healthReason: customersTable.healthReason,
         fdeOwner: customersTable.fdeOwner,
       })
-      .from(customersTable),
+      .from(customersTable)
+      .where(eq(customersTable.orgId, org)),
   );
 
-  // Latest interaction per customer (one pass over the interactions table).
+  // Latest interaction per company (one pass over the interactions table), by its whole key: another workspace's
+  // company with the same id has its own interactions, which say nothing about this one's.
   const latest = new Map<string, number>();
-  const ints = await acrossOrgDbs((tx) =>
+  const ints = await run((tx, org) =>
     tx
-      .select({ customerId: interactionsTable.customerId, at: interactionsTable.interactionAt })
-      .from(interactionsTable),
+      .select({ orgId: interactionsTable.orgId, customerId: interactionsTable.customerId, at: interactionsTable.interactionAt })
+      .from(interactionsTable)
+      .where(eq(interactionsTable.orgId, org)),
   );
   for (const i of ints) {
     const t = Date.parse(String(i.at ?? ""));
     if (Number.isNaN(t)) continue;
-    const prev = latest.get(i.customerId);
-    if (prev === undefined || t > prev) latest.set(i.customerId, t);
+    const key = companyKey(i.orgId, i.customerId);
+    const prev = latest.get(key);
+    if (prev === undefined || t > prev) latest.set(key, t);
   }
 
   const stale: StaleCustomer[] = [];
   for (const r of rows) {
     if (!ACTIVE_STALE_STAGES.includes(r.lifecycleStage ?? "")) continue;
-    const last = latest.get(r.customerId);
+    const last = latest.get(companyKey(r.orgId, r.customerId));
     if (last !== undefined && last >= cutoffMs) continue; // touched recently — not stale
     stale.push({
       ...r,
@@ -1019,6 +1021,8 @@ export async function listStaleCustomers(days: number): Promise<StaleCustomer[]>
 /** An open, urgent ticket surfaced for the prioritized sweep. */
 export interface UrgentTicket {
   ticketId: string;
+  /** The workspace holding the ticket's company. */
+  orgId: string;
   customerId: string;
   customerName: string;
   summary: string;
@@ -1044,15 +1048,22 @@ const URGENT_PRIORITIES = ["P0-Critical", "P1-High"];
  * customers, ranked most-urgent first. This is the "urgent tickets from the
  * tickets store" filter the sweep prioritizes on. [] on the JSON fallback.
  */
-export async function listUrgentTickets(): Promise<UrgentTicket[]> {
+export async function listUrgentTickets(
+  /** The caller's workspace. Required with a database: a list is one workspace's (listScope). */
+  orgId?: string | null,
+): Promise<UrgentTicket[]> {
   const db = getDb();
   if (!db) return [];
-  const rows = await acrossOrgDbs((tx) =>
+  const org = listScope("urgent tickets", orgId);
+  const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
+    withOrgDb(org, (tx) => fn(tx, org));
+  const rows = await run((tx, org) =>
     tx
       .select({ ticket: ticketsTable, customerName: customersTable.customerName })
       .from(ticketsTable)
-      .innerJoin(customersTable, eq(ticketsTable.customerId, customersTable.customerId))
-      .where(notInArray(ticketsTable.ticketStatus, CLOSED_TICKET_STATUSES)),
+      // Joined on the company's whole key: the same id in another workspace is another company.
+      .innerJoin(customersTable, and(eq(ticketsTable.customerId, customersTable.customerId), eq(ticketsTable.orgId, customersTable.orgId)))
+      .where(and(eq(ticketsTable.orgId, org), notInArray(ticketsTable.ticketStatus, CLOSED_TICKET_STATUSES))),
   );
 
   const now = Date.now();
@@ -1072,6 +1083,7 @@ export async function listUrgentTickets(): Promise<UrgentTicket[]> {
     const openedMs = t.ticketOpenedDate ? Date.parse(t.ticketOpenedDate) : NaN;
     out.push({
       ticketId: t.ticketId,
+      orgId: t.orgId,
       customerId: t.customerId,
       customerName,
       summary: t.summary,
@@ -1104,12 +1116,12 @@ export async function reassignOwner(
 ): Promise<{ customerId: string; previousOwner: string | null; newOwner: string }> {
   const db = getDb();
   if (!db) throw new Error("reassignOwner requires a database");
-  const staffOrg = await scopeFor(customerId, orgId);
+  const staffOrg = scopeFor(customerId, orgId);
   const rows = await withOrgDb(staffOrg, (tx) =>
     tx
       .select({ fdeOwner: customersTable.fdeOwner })
       .from(customersTable)
-      .where(eq(customersTable.customerId, customerId))
+      .where(ofCompany(staffOrg, customerId))
       .limit(1),
   );
   if (rows.length === 0) throw new Error(`Unknown customer: ${customerId}`);
@@ -1118,7 +1130,7 @@ export async function reassignOwner(
     tx
       .update(customersTable)
       .set({ fdeOwner: newOwnerEmail })
-      .where(eq(customersTable.customerId, customerId)),
+      .where(ofCompany(staffOrg, customerId)),
   );
   // The customer owns the workspace answer here — a staff row belongs to the
   // same workspace as the account it staffs. Resolved once above, used for both
@@ -1149,7 +1161,9 @@ export async function reassignOwner(
         employerOrg: org?.name ?? staffOrg,
         lastContact: new Date().toISOString(),
       })
-      .onConflictDoNothing(),
+      // Already on this company's staff in this role: kept. The key carries the workspace, so the same person on
+      // another workspace's company with this id is another row.
+      .onConflictDoNothing({ target: [internalStaffTable.orgId, internalStaffTable.customerId, internalStaffTable.staffRole, internalStaffTable.email] }),
   );
   return { customerId, previousOwner, newOwner: newOwnerEmail };
 }
@@ -1186,12 +1200,12 @@ export async function createTicket(
 ): Promise<{ ticketId: string; created: boolean }> {
   const db = getDb();
   if (!db) throw new Error("createTicket requires a database");
-  const scope = await scopeFor(input.customerId, orgId);
+  const scope = scopeFor(input.customerId, orgId);
   const exists = await withOrgDb(scope, (tx) =>
     tx
       .select({ id: customersTable.customerId })
       .from(customersTable)
-      .where(eq(customersTable.customerId, input.customerId))
+      .where(ofCompany(scope, input.customerId))
       .limit(1),
   );
   if (exists.length === 0) throw new Error(`Unknown customer: ${input.customerId}`);
@@ -1202,9 +1216,7 @@ export async function createTicket(
       tx
         .select({ ticketId: ticketsTable.ticketId })
         .from(ticketsTable)
-        .where(
-          and(eq(ticketsTable.customerId, input.customerId), eq(ticketsTable.externalId, externalId)),
-        )
+        .where(and(underCompany(ticketsTable, scope, input.customerId), eq(ticketsTable.externalId, externalId)))
         .limit(1),
     );
     if (dup.length > 0) return { ticketId: dup[0].ticketId, created: false };
@@ -1255,7 +1267,9 @@ async function appendInteractionArtifacts(
 ): Promise<void> {
   if (interactions.length === 0) return;
   try {
-    await getDataroomStore(await scopeFor(customerId, orgId)).appendJsonl(
+    // The workspace's own data room (dataroom/orgs/<org>/Customers/<id>/…). The in-memory fallback, which holds one
+    // workspace and names none, writes the default one's, as it always has.
+    await getDataroomStore(getDb() ? scopeFor(customerId, orgId) : orgId).appendJsonl(
       `Customers/${customerId}/interactions.jsonl`,
       interactions.length === 1 ? interactions[0] : [...interactions],
       interactionSchema,
@@ -1265,27 +1279,35 @@ async function appendInteractionArtifacts(
   }
 }
 
+/** A ticket with the company it belongs to: `orgId` is set on the database path (the same id may be two companies). */
+export type CompanyTicket = Ticket & { customerId: string; customerName: string; orgId?: string };
+
+/** Tickets joined to their company on its whole key (org_id, customer_id), inside one workspace's scope. */
+const ticketsWithCompany = (tx: Db, org: string, where: ReturnType<typeof and>) =>
+  tx
+    .select({ ticket: ticketsTable, customerName: customersTable.customerName })
+    .from(ticketsTable)
+    .innerJoin(customersTable, and(eq(ticketsTable.customerId, customersTable.customerId), eq(ticketsTable.orgId, customersTable.orgId)))
+    .where(and(eq(ticketsTable.orgId, org), where))
+    .orderBy(ticketsTable.customerId, ticketsTable.ticketId);
+
 /** List open follow-ups across all customers, or scoped to one. */
 export async function listFollowUps(
   customerId?: string,
-  /** The caller's workspace. Omitted, it spans every workspace (the digest crons). */
+  /** The caller's workspace. Required with a database: a list is one workspace's (listScope). */
   orgId?: string | null,
-): Promise<Array<Ticket & { customerId: string; customerName: string }>> {
+): Promise<CompanyTicket[]> {
   const db = getDb();
   if (db) {
     const filters = [notInArray(ticketsTable.ticketStatus, CLOSED_TICKET_STATUSES)];
     if (customerId) filters.push(eq(ticketsTable.customerId, customerId));
-    const run = <T>(fn: (tx: Db) => Promise<T[]>): Promise<T[]> => (orgId ? withOrgDb(orgId, fn) : acrossOrgDbs(fn));
-    const rows = await run((tx) =>
-      tx
-        .select({ ticket: ticketsTable, customerName: customersTable.customerName })
-        .from(ticketsTable)
-        .innerJoin(customersTable, eq(ticketsTable.customerId, customersTable.customerId))
-        .where(and(...filters))
-        .orderBy(ticketsTable.customerId, ticketsTable.ticketId),
-    );
+    const org = listScope("follow-ups", orgId);
+    const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
+      withOrgDb(org, (tx) => fn(tx, org));
+    const rows = await run((tx, org) => ticketsWithCompany(tx, org, and(...filters)));
     return rows.map((row) => ({
       ...ticketReadSchema.parse(rowToEntity(row.ticket)),
+      orgId: row.ticket.orgId,
       customerId: row.ticket.customerId,
       customerName: row.customerName,
     }));
@@ -1307,11 +1329,12 @@ export async function resolveFollowUp(
 ): Promise<Ticket> {
   const db = getDb();
   if (db) {
-    const updated = await withOrgDb(await scopeFor(customerId, orgId), (tx) =>
+    const scope = scopeFor(customerId, orgId);
+    const updated = await withOrgDb(scope, (tx) =>
       tx
         .update(ticketsTable)
         .set({ ticketStatus: "Resolved" satisfies Ticket["ticketStatus"] })
-        .where(and(eq(ticketsTable.customerId, customerId), eq(ticketsTable.ticketId, followUpId)))
+        .where(and(underCompany(ticketsTable, scope, customerId), eq(ticketsTable.ticketId, followUpId)))
         .returning(),
     );
     if (updated.length === 0) {
@@ -1345,11 +1368,12 @@ export async function setTicketStatus(
   const now = new Date().toISOString();
   const db = getDb();
   if (db) {
-    const updated = await withOrgDb(await scopeFor(customerId, orgId), (tx) =>
+    const scope = scopeFor(customerId, orgId);
+    const updated = await withOrgDb(scope, (tx) =>
       tx
         .update(ticketsTable)
         .set({ ticketStatus, lastActivityDate: now })
-        .where(and(eq(ticketsTable.customerId, customerId), eq(ticketsTable.ticketId, ticketId)))
+        .where(and(underCompany(ticketsTable, scope, customerId), eq(ticketsTable.ticketId, ticketId)))
         .returning(),
     );
     if (updated.length === 0) {
@@ -1374,21 +1398,19 @@ export async function setTicketStatus(
  * "Needs Triage"), across all customers. These are what email intake stages —
  * a person promotes them to "Open" (approve) or resolves them (discard).
  */
-export async function listTriageTickets(): Promise<
-  Array<Ticket & { customerId: string; customerName: string }>
-> {
+export async function listTriageTickets(
+  /** The caller's workspace. Required with a database: a list is one workspace's (listScope). */
+  orgId?: string | null,
+): Promise<CompanyTicket[]> {
   const db = getDb();
   if (db) {
-    const rows = await acrossOrgDbs((tx) =>
-      tx
-        .select({ ticket: ticketsTable, customerName: customersTable.customerName })
-        .from(ticketsTable)
-        .innerJoin(customersTable, eq(ticketsTable.customerId, customersTable.customerId))
-        .where(eq(ticketsTable.ticketStatus, "Needs Triage"))
-        .orderBy(ticketsTable.customerId, ticketsTable.ticketId),
-    );
+    const org = listScope("triage tickets", orgId);
+    const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
+      withOrgDb(org, (tx) => fn(tx, org));
+    const rows = await run((tx, org) => ticketsWithCompany(tx, org, eq(ticketsTable.ticketStatus, "Needs Triage")));
     return rows.map((row) => ({
       ...ticketReadSchema.parse(rowToEntity(row.ticket)),
+      orgId: row.ticket.orgId,
       customerId: row.ticket.customerId,
       customerName: row.customerName,
     }));
@@ -1410,7 +1432,13 @@ const FREEMAIL_DOMAINS = new Set([
 ]);
 
 export type CustomerMatch =
-  | { matched: true; customerId: string; customerName: string; fdeOwner?: string; matchedOn: "contact" | "domain" }
+  | {
+      matched: true;
+      customerId: string;
+      customerName: string;
+      fdeOwner?: string;
+      matchedOn: "contact" | "domain";
+    }
   | { matched: false };
 
 /**
@@ -1422,7 +1450,7 @@ export type CustomerMatch =
  */
 export async function matchCustomerByEmail(
   sender: string,
-  /** The caller's workspace: only its customers can match. Omitted, every workspace's can (a system inbox). */
+  /** The caller's workspace: only its customers can match. Required with a database (listScope). */
   orgId?: string | null,
 ): Promise<CustomerMatch> {
   const raw = (sender ?? "").trim().toLowerCase();
@@ -1434,34 +1462,43 @@ export async function matchCustomerByEmail(
 
   const db = getDb();
   if (db) {
-    const run = <T>(fn: (tx: Db) => Promise<T[]>): Promise<T[]> => (orgId ? withOrgDb(orgId, fn) : acrossOrgDbs(fn));
-    const [byContact] = await run((tx) =>
+    const org = listScope("customers to match a sender against", orgId);
+    const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
+      withOrgDb(org, (tx) => fn(tx, org));
+    const pick = { orgId: customersTable.orgId, id: customersTable.customerId, name: customersTable.customerName, fdeOwner: customersTable.fdeOwner };
+    const found = (row: { orgId: string; id: string; name: string; fdeOwner: string | null }, matchedOn: "contact" | "domain"): CustomerMatch => ({
+      matched: true,
+      customerId: row.id,
+      customerName: row.name,
+      fdeOwner: row.fdeOwner ?? undefined,
+      matchedOn,
+    });
+    const [byContact] = await run((tx, org) =>
       tx
-        .select({ id: customersTable.customerId, name: customersTable.customerName, fdeOwner: customersTable.fdeOwner })
+        .select(pick)
         .from(customersTable)
         .where(
-          or(
-            ilike(customersTable.businessOwnerEmail, bare),
-            ilike(customersTable.technicalOwnerEmail, bare),
-            ilike(customersTable.executiveSponsorEmail, bare),
+          and(
+            eq(customersTable.orgId, org),
+            or(
+              ilike(customersTable.businessOwnerEmail, bare),
+              ilike(customersTable.technicalOwnerEmail, bare),
+              ilike(customersTable.executiveSponsorEmail, bare),
+            ),
           ),
         )
         .limit(1),
     );
-    if (byContact) {
-      return { matched: true, customerId: byContact.id, customerName: byContact.name, fdeOwner: byContact.fdeOwner ?? undefined, matchedOn: "contact" };
-    }
+    if (byContact) return found(byContact, "contact");
     if (!FREEMAIL_DOMAINS.has(domain)) {
-      const [byDomain] = await run((tx) =>
+      const [byDomain] = await run((tx, org) =>
         tx
-          .select({ id: customersTable.customerId, name: customersTable.customerName, fdeOwner: customersTable.fdeOwner })
+          .select(pick)
           .from(customersTable)
-          .where(ilike(customersTable.companyDomain, domain))
+          .where(and(eq(customersTable.orgId, org), ilike(customersTable.companyDomain, domain)))
           .limit(1),
       );
-      if (byDomain) {
-        return { matched: true, customerId: byDomain.id, customerName: byDomain.name, fdeOwner: byDomain.fdeOwner ?? undefined, matchedOn: "domain" };
-      }
+      if (byDomain) return found(byDomain, "domain");
     }
     return { matched: false };
   }

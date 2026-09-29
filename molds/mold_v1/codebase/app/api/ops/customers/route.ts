@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
 import { z } from "zod";
-import { desc, eq, inArray, notInArray, asc, sql as dsql } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray, asc, sql as dsql } from "drizzle-orm";
 import { customers, interactions, tickets } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
@@ -88,7 +88,7 @@ async function listCustomers(request: NextRequest) {
       tx
         .select({ customerId: tickets.customerId, open: dsql<number>`count(*)::int` })
         .from(tickets)
-        .where(notInArray(tickets.ticketStatus, CLOSED_TICKET_STATUSES))
+        .where(and(eq(tickets.orgId, ctx.orgId), notInArray(tickets.ticketStatus, CLOSED_TICKET_STATUSES)))
         .groupBy(tickets.customerId),
     );
     const openByCustomer = new Map(ticketCounts.map((t) => [t.customerId, t.open]));
@@ -106,7 +106,7 @@ async function listCustomers(request: NextRequest) {
             note: interactions.note,
           })
           .from(interactions)
-          .where(inArray(interactions.customerId, ids))
+          .where(and(eq(interactions.orgId, ctx.orgId), inArray(interactions.customerId, ids)))
           .orderBy(interactions.customerId, desc(interactions.interactionAt)),
       );
       for (const l of latest) {
@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
       const [existing] = await tx
         .select({ id: customers.customerId, custom: customers.custom })
         .from(customers)
-        .where(eq(customers.customerId, rest.customerId))
+        .where(and(eq(customers.orgId, ctx.orgId), eq(customers.customerId, rest.customerId)))
         .limit(1);
       // An undeclared key or a wrong type is a 400 with the sentences, and nothing is written.
       const checked = customForWrite("account", customInput, existing ?? null);
@@ -229,7 +229,9 @@ export async function POST(request: NextRequest) {
         .insert(customers)
         .values({ ...rest, ...(delta ? { custom: customForNewRow(delta) } : {}), orgId: ctx.orgId })
         .onConflictDoUpdate({
-          target: customers.customerId,
+          // The company's whole key (org_id, customer_id): another workspace holding this id has its own company,
+          // which this write neither updates nor collides with (mold_v1-118).
+          target: [customers.orgId, customers.customerId],
           // Only overwrite what was actually sent; a partial update must not
           // blank the fields it didn't mention.
           set: {

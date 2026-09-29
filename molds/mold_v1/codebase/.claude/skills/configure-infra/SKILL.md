@@ -15,7 +15,7 @@ architecture). See [`docs/FDE_WORKFLOW.md`](../../../docs/FDE_WORKFLOW.md) (stag
 
 **1. Scaffold.**
 ```bash
-npm run fde:configure-infra -- --customer contoso-bank --version v2.4.0 \
+npm run fde:configure-infra -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
   --region APAC --cloud aws
 ```
 Upserts the `deployments` row and writes `customizations.tf` + `rationale.md` under
@@ -47,5 +47,5 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:configure-infra -- --customer <id> --version <ver> [--region … --cloud …]
+npm run fde:configure-infra -- --customer <id> --org <workspace id> --version <ver> [--region … --cloud …]
 ```

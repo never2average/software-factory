@@ -70,23 +70,20 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ email: 
       octx.orgId,
       (tx) =>
         Promise.all([
-      tx.select().from(internalStaff),
-      tx.select().from(customerStakeholders),
-      // Workspace-scoped: roster + customers + todos carry org_id directly.
+      // Every table by the workspace's own org_id. The company-keyed ones used to be read whole and kept when their
+      // customer id was one of this workspace's; a company is keyed by (org_id, customer_id) now, and another
+      // workspace holding the same id would have passed that filter (mold_v1-118).
+      tx.select().from(internalStaff).where(eq(internalStaff.orgId, octx.orgId)),
+      tx.select().from(customerStakeholders).where(eq(customerStakeholders.orgId, octx.orgId)),
       tx.select().from(peopleRoster).where(and(eq(peopleRoster.orgId, octx.orgId), isNull(peopleRoster.archivedAt))),
       tx.select({ id: customers.customerId, name: customers.customerName }).from(customers).where(eq(customers.orgId, octx.orgId)),
-      tx.select().from(tickets),
-      tx.select().from(deployments),
-      tx.select().from(implementation),
+      tx.select().from(tickets).where(eq(tickets.orgId, octx.orgId)),
+      tx.select().from(deployments).where(eq(deployments.orgId, octx.orgId)),
+      tx.select().from(implementation).where(eq(implementation.orgId, octx.orgId)),
       tx.select().from(todos).where(and(eq(todos.orgId, octx.orgId), isNull(todos.archivedAt))),
         ]),
     );
-    // Customer-scoped tables inherit org through the customer — keep only rows
-    // for THIS workspace's customers (custs is already org-filtered).
-    const orgCustomerIds = new Set(custs.map((c) => c.id));
-    const tks = allTks.filter((t) => orgCustomerIds.has(t.customerId));
-    const deps = allDeps.filter((d) => orgCustomerIds.has(d.customerId));
-    const impls = allImpls.filter((i) => orgCustomerIds.has(i.customerId));
+    const [tks, deps, impls] = [allTks, allDeps, allImpls];
     const customerName = (id: string | null | undefined) =>
       (id ? custs.find((c) => c.id === id)?.name : null) ?? id ?? null;
 

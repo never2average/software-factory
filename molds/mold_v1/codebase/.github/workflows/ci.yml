@@ -616,6 +616,16 @@ jobs:
         if: always()
         run: ADMIN_URL="$ADMIN_URL" npm run test:migrations-db
 
+      # THE COMPANY KEY IS (org_id, customer_id) (mold_v1-118): drizzle/0024 on a database built as the live one was
+      # (pushed from the schema before this change, scripts/fixtures/schema-419b38d.ts, then bootstrapped) and seeded
+      # like it (two workspaces, 100 companies, rows in every table), through the deploy chain the factory runs on a
+      # live database: the journal, then a read-only drift dry run of `drizzle-kit push` against schema.ts, whose plan
+      # must be EMPTY (push --force runs only on an empty database). Also a journal-built database with the NULL
+      # workspaces and planted rows it allows: no row lost, keys as schema.ts names them, harmless run twice.
+      - name: Company key per workspace, migration on production-shaped data
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:company-key-migration-db
+
       - name: Cross-tenant isolation
         run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" node scripts/test-org-isolation.mjs
 
@@ -661,6 +671,17 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:cross-workspace-db
+
+      # TWO WORKSPACES HOLD THE SAME COMPANY ID (mold_v1-118), through the agent's write and read paths and every
+      # agent tool that reads a company, against the production fail-closed policies: each sees only its own record in
+      # every part, an update or delete in one never touches the other, a row still cannot be planted under another
+      # workspace's company (the foreign key carries the workspace), and a system path must name its workspace.
+      - name: Two workspaces, one company id (agent paths), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:shared-company-id-db
 
       # THE RUN HISTORY, which is two database facts and nothing else. That a
       # parent writing a row for a child that never started cannot produce a
@@ -757,6 +778,15 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:deployment-upsert-db
+
+      # The same over HTTP (reuses the relabelling build above): the Ops API, the workbook route, the export and the
+      # hosted MCP endpoint, for one person in two workspaces that both hold `aditya-birla-hfl`.
+      - name: Two workspaces, one company id (Ops API, workbook, MCP), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:shared-company-id-http-db
 
 # NOT RUN HERE, deliberately:
 #

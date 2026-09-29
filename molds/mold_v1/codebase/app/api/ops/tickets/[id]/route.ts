@@ -27,7 +27,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   try {
     const [row] = await withOrgRls(octx.orgId, (tx) =>
-      tx.select().from(tickets).where(eq(tickets.ticketId, id)).limit(1),
+      tx.select().from(tickets).where(and(eq(tickets.orgId, octx.orgId), eq(tickets.ticketId, id))).limit(1),
     );
     if (!row) return NextResponse.json({ found: false, ticket: null, todos: [] });
     // The ticket's customer must belong to the caller's workspace.
@@ -38,7 +38,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
       tx
         .select({ name: customers.customerName })
         .from(customers)
-        .where(eq(customers.customerId, row.customerId))
+        // The ticket's own company: this workspace's row for the id (another workspace may hold the same id).
+        .where(and(eq(customers.orgId, octx.orgId), eq(customers.customerId, row.customerId)))
         .limit(1),
     );
     const linked = await withOrgRls(octx.orgId, (tx) =>
@@ -91,7 +92,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 /**
  * PATCH /api/ops/tickets/:id — edit the editable key fields (owner / status /
  * priority) of a ticket from the TODO workspace's details card. Keyed by
- * (customerId, ticketId), so customerId comes in the body. NOTE: this writes
+ * (customerId, ticketId) in the caller's workspace, so customerId comes in the body. NOTE: this writes
  * the system-of-record; a re-sync could later overwrite it.
  */
 const patchSchema = z.strictObject({
@@ -126,7 +127,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       tx
         .update(tickets)
         .set(set)
-        .where(and(eq(tickets.ticketId, id), eq(tickets.customerId, customerId)))
+        .where(and(eq(tickets.orgId, octx.orgId), eq(tickets.ticketId, id), eq(tickets.customerId, customerId)))
         .returning(),
     );
     if (!item) return NextResponse.json({ error: "Ticket not found" }, { status: 404 });

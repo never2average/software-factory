@@ -141,6 +141,8 @@ const BY_ID = [
   "getCustomer", "upsertCustomer", "recordInteraction", "recordInteractions", "reassignOwner", "createTicket",
   "setTicketStatus", "resolveFollowUp", "listFollowUps", "matchCustomerByEmail", "listCustomers", "renderAccountReport",
   "renderDataroomSummary", "buildCustomerWorkbookSpecs", "buildDomainWorkbookSpec", "runEmailIntake", "ingestSource",
+  // The "across all customers" lists: asked IN the caller's workspace (mold_v1-118), never swept and filtered by id.
+  "listStaleCustomers", "listUrgentTickets", "listTriageTickets",
 ];
 const TOOL_FILES = ["agent/lib/tools.ts", "agent/lib/artifact-render-tools.ts", "agent/lib/sync-tools.ts", "agent/lib/signoff-tools.ts"];
 const WORKSPACE = /orgForSession\(ctx|\borg(?:Id)?\b/;
@@ -156,18 +158,33 @@ for (const file of TOOL_FILES) {
   check(`${file}: no workspace taken from a customer id`, !/\borgForCustomer\(/.test(src));
 }
 check(`(${calls} by-id calls found — the list is not empty)`, calls >= 15, calls);
-// The one place the fallback may live: a system path with no caller. It must be the fallback, never the answer.
+// No workspace is ever taken from a company id: a company is keyed by (org_id, customer_id), and two workspaces may
+// hold the same id (mold_v1-118). A by-id call names its workspace or is refused.
 const sor = readFileSync("agent/lib/system-of-record.ts", "utf8");
 {
-  // The no-caller fallback finds the OWNER per workspace (acrossOrgDbs), never through orgForCustomer — which reads
-  // on the bare handle and, fail-closed, answers the default workspace for every id — and only when NO workspace was
-  // given: an empty one is refused, not widened.
-  const fn = sor.slice(sor.indexOf("async function scopeFor"), sor.indexOf("\n}\n", sor.indexOf("async function scopeFor")));
+  // It used to fall back, for a caller that named none, to "the workspace that owns this id" (first through
+  // orgForCustomer, then per workspace through acrossOrgDbs). With the same id in two workspaces that picks one.
+  const at = sor.indexOf("function scopeFor(");
+  const fn = sor.slice(at, sor.indexOf("\n}\n", at));
   check("system-of-record: nothing calls orgForCustomer", callsOf(sor, "orgForCustomer").length === 0);
-  check("system-of-record: the fallback resolves the owner across workspaces, each in its own scope", /acrossOrgDbs\(/.test(fn) && /customersTable\.customerId, customerId/.test(fn), fn);
-  check("system-of-record: …only when no workspace was given at all", /if \(orgId\) return orgId;/.test(fn) && /if \(orgId !== undefined\) throw/.test(fn), fn);
+  check("system-of-record: scopeFor answers only the workspace it was given, and otherwise refuses", at !== -1 && /if \(orgId\) return orgId;/.test(fn) && /throw new Error/.test(fn) && !/acrossOrgDbs|customersTable|DEFAULT_ORG/.test(fn), fn);
+  check("system-of-record: nothing resolves an owner workspace from an id", !/ownerWorkspaceOf|orgForCustomer\(/.test(sor));
+  check("system-of-record: no list sweeps every workspace (acrossOrgDbs), and none widens a missing workspace", !/acrossOrgDbs/.test(sor) && /function listScope\(/.test(sor) && (sor.match(/listScope\("/g) ?? []).length === 6);
+  check("system-of-record: nothing lists the workspaces that hold an id", !/workspacesHolding/.test(sor));
+  check("scripts/fde/lib/customer.mjs: --org is required and the holders of an id are never named", !/acrossOrgDbs|holding/.test(readFileSync("scripts/fde/lib/customer.mjs", "utf8")));
+  check("agent/lib/org-context.ts: orgForCustomer is gone", !/export async function orgForCustomer/.test(readFileSync("agent/lib/org-context.ts", "utf8")));
 }
 check("system-of-record: getCustomer reads in the caller's scope, not across all", /return await dbGetCustomer\(db, id, orgId\)/.test(sor));
+{
+  // Every read and write of one company names both halves of its key.
+  // A line matching on a company id without its workspace: only list_followups' optional filter, which is ANDed
+  // into ticketsWithCompany, whose own WHERE names the workspace.
+  const oneColumn = sor.split("\n").filter((l) => /eq\((customersTable|platformTable|deploymentsTable|solutionsTable|implementationTable|ticketsTable|interactionsTable)\.customerId, /.test(l) && !/orgId/.test(l));
+  const helper = sor.slice(sor.indexOf("const ticketsWithCompany"), sor.indexOf(";\n", sor.indexOf("const ticketsWithCompany")));
+  check("system-of-record: no statement keys a company by its id alone", oneColumn.length === 1 && /filters\.push\(eq\(ticketsTable\.customerId, customerId\)\)/.test(oneColumn[0]) && /eq\(ticketsTable\.orgId, org\)/.test(helper), oneColumn);
+  const tools = readFileSync("agent/lib/tools.ts", "utf8");
+  check("agent/lib/tools.ts: the lists are no longer filtered by a set of the caller's ids (scopeToOrg)", !/scopeToOrg|new Set\(\(await listCustomers/.test(tools));
+}
 
 /* ---- 2b. service sessions name their workspace ------------------------- */
 

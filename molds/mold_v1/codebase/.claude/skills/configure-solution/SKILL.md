@@ -64,6 +64,6 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:configure-solution -- --version <ver> --id <pid> --use-case "…" [--customer <id>]
+npm run fde:configure-solution -- --version <ver> --id <pid> --use-case "…" [--customer <id> --org <workspace id>]
 npm run fde:validate-solution  -- --version <ver> --id <pid> [--strict]
 ```

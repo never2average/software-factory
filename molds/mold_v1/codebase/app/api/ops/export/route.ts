@@ -39,8 +39,12 @@ type Bundle = {
 
 /** Read a customer's data-room context: context.md prose + a little structured
  *  context (personas, latest interactions, SLA) when present. Best-effort — a
- *  missing file just yields null. */
+ *  missing file just yields null. In the CALLER's workspace's data room
+ *  (dataroom/orgs/<org>/Customers/<id>/…): it read the default workspace's for
+ *  every caller, which with the same company id in two workspaces (mold_v1-118)
+ *  handed one workspace's files to the other. */
 async function readCustomerContext(
+  orgId: string,
   customerId: string | null,
 ): Promise<{ context: string | null; files: Record<string, unknown> }> {
   if (!customerId) return { context: null, files: {} };
@@ -50,7 +54,7 @@ async function readCustomerContext(
     const path = `${base}/${rel}`;
     if (!isSafeDataroomPath(path)) return null;
     try {
-      return await readDataroomFile(path);
+      return await readDataroomFile(path, orgId);
     } catch {
       return null;
     }
@@ -159,7 +163,7 @@ export async function GET(request: NextRequest) {
       if (row.containerType === "deployment" && row.containerId) {
         const containerId = row.containerId;
         const [dep] = await withOrgRls(ctx.orgId, (tx) =>
-          tx.select().from(deployments).where(eq(deployments.deploymentId, containerId)).limit(1),
+          tx.select().from(deployments).where(and(eq(deployments.orgId, ctx.orgId), eq(deployments.deploymentId, containerId))).limit(1),
         );
         if (dep) {
           bundle.resolved.deployment = dep;
@@ -168,7 +172,7 @@ export async function GET(request: NextRequest) {
       } else if (row.containerType === "implementation" && row.containerId) {
         const containerId = row.containerId;
         const [impl] = await withOrgRls(ctx.orgId, (tx) =>
-          tx.select().from(implementation).where(eq(implementation.customerId, containerId)).limit(1),
+          tx.select().from(implementation).where(and(eq(implementation.orgId, ctx.orgId), eq(implementation.customerId, containerId))).limit(1),
         );
         if (impl) {
           bundle.resolved.implementation = impl;
@@ -181,18 +185,23 @@ export async function GET(request: NextRequest) {
       bundle.resolved.comments = await commentsFor(db, ctx.orgId, "task", id);
       bundle.resolved.activity = await activityFor(db, ctx.orgId, "task", id);
       bundle.dataroom.customerId = customerId ?? null;
-      const dr = await readCustomerContext(customerId ?? null);
+      const dr = await readCustomerContext(ctx.orgId, customerId ?? null);
       bundle.dataroom.context = dr.context;
       bundle.dataroom.files = dr.files;
     } else if (type === "deployment") {
       const [row] = await withOrgRls(ctx.orgId, (tx) =>
-        tx.select().from(deployments).where(eq(deployments.deploymentId, id)).limit(1),
+        tx
+          .select()
+          .from(deployments)
+          // The named company's row when the caller names one (two companies may each have a Q2FY26 record).
+          .where(and(eq(deployments.orgId, ctx.orgId), eq(deployments.deploymentId, id), ...(customerIdParam ? [eq(deployments.customerId, customerIdParam)] : [])))
+          .limit(1),
       );
       if (!row) return NextResponse.json({ error: `${W.Deployment} not found` }, { status: 404 });
       bundle.record = row as Record<string, unknown>;
       const customerId = customerIdParam ?? row.customerId;
       const [cust] = await withOrgRls(ctx.orgId, (tx) =>
-        tx.select().from(customers).where(eq(customers.customerId, customerId)).limit(1),
+        tx.select().from(customers).where(and(eq(customers.orgId, ctx.orgId), eq(customers.customerId, customerId))).limit(1),
       );
       if (cust) bundle.resolved.customer = { id: cust.customerId, name: cust.customerName };
       const related = await withOrgRls(ctx.orgId, (tx) =>
@@ -206,29 +215,29 @@ export async function GET(request: NextRequest) {
       bundle.resolved.comments = await commentsFor(db, ctx.orgId, "deployment", id);
       bundle.resolved.activity = await activityFor(db, ctx.orgId, "deployment", id);
       bundle.dataroom.customerId = customerId;
-      const dr = await readCustomerContext(customerId);
+      const dr = await readCustomerContext(ctx.orgId, customerId);
       bundle.dataroom.context = dr.context;
       bundle.dataroom.files = dr.files;
     } else {
-      // implementation — keyed by customerId (its PK); `id` is rolloutId ?? customerId.
+      // implementation — keyed by (customerId, workspace) (its PK); `id` is rolloutId ?? customerId.
       const customerId = customerIdParam ?? id;
       const [byCustomer] = await withOrgRls(ctx.orgId, (tx) =>
         tx
           .select()
           .from(implementation)
-          .where(eq(implementation.customerId, customerId))
+          .where(and(eq(implementation.orgId, ctx.orgId), eq(implementation.customerId, customerId)))
           .limit(1),
       );
       const [rec] = byCustomer
         ? [byCustomer]
         : await withOrgRls(ctx.orgId, (tx) =>
-            tx.select().from(implementation).where(eq(implementation.rolloutId, id)).limit(1),
+            tx.select().from(implementation).where(and(eq(implementation.orgId, ctx.orgId), eq(implementation.rolloutId, id))).limit(1),
           );
       if (!rec) return NextResponse.json({ error: `${W.Implementation} not found` }, { status: 404 });
       bundle.record = rec as Record<string, unknown>;
       const cid = rec.customerId;
       const [cust] = await withOrgRls(ctx.orgId, (tx) =>
-        tx.select().from(customers).where(eq(customers.customerId, cid)).limit(1),
+        tx.select().from(customers).where(and(eq(customers.orgId, ctx.orgId), eq(customers.customerId, cid))).limit(1),
       );
       if (cust) bundle.resolved.customer = { id: cust.customerId, name: cust.customerName };
       const related = await withOrgRls(ctx.orgId, (tx) =>
@@ -242,7 +251,7 @@ export async function GET(request: NextRequest) {
       bundle.resolved.comments = await commentsFor(db, ctx.orgId, "implementation", cid);
       bundle.resolved.activity = await activityFor(db, ctx.orgId, "implementation", cid);
       bundle.dataroom.customerId = cid;
-      const dr = await readCustomerContext(cid);
+      const dr = await readCustomerContext(ctx.orgId, cid);
       bundle.dataroom.context = dr.context;
       bundle.dataroom.files = dr.files;
     }

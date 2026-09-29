@@ -206,7 +206,7 @@ export async function computeStandupDigest(opts: {
   now: Date | string;
   dueSoonDays?: number;
   topPerCustomer?: number;
-  /** The caller's workspace. Omitted, the digest spans every workspace. */
+  /** The caller's workspace: a digest is one workspace's (with a database, none is refused). */
   orgId?: string | null;
 }): Promise<StandupDigest> {
   const dueSoonDays = opts.dueSoonDays ?? 3;
@@ -268,8 +268,10 @@ export async function computeStandupDigest(opts: {
 /** Open follow-ups whose urgency is `overdue`, ranked by rule 3. */
 export async function computeOverdueAlerts(opts: {
   now: Date | string;
+  /** The caller's workspace: one workspace's tickets (with a database, none is refused). */
+  orgId?: string | null;
 }): Promise<FollowUpAlert[]> {
-  const alerts = await buildAlerts(opts.now, 3);
+  const alerts = await buildAlerts(opts.now, 3, opts.orgId);
   return alerts.filter((a) => a.urgency === "overdue");
 }
 
@@ -285,10 +287,12 @@ export async function computeOverdueAlerts(opts: {
 export async function computeSlaBreaches(opts: {
   now: Date | string;
   agingDays?: number;
+  /** The caller's workspace: one workspace's tickets (with a database, none is refused). */
+  orgId?: string | null;
 }): Promise<SlaBreachReport> {
   const agingDays = opts.agingDays ?? 14;
   const nowT = nowMs(opts.now);
-  const followUps = await listFollowUps();
+  const followUps = await listFollowUps(undefined, opts.orgId);
 
   const breaches: FollowUpAlert[] = [];
   const atRisk: FollowUpAlert[] = [];

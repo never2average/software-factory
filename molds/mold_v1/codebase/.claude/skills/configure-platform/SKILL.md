@@ -30,7 +30,7 @@ stubs** — they are the contract solutions bind to.
 **2. Customer governance (optional).** When a customer's platform settings need
 recording:
 ```bash
-npm run fde:configure-platform -- --version v2.4.0 --customer contoso-bank \
+npm run fde:configure-platform -- --version v2.4.0 --customer contoso-bank --org <workspace id> \
   --deployment-model single_tenant --residency in-country \
   --primary-model claude-opus-4.8 --use-case "collections triage"
 ```
@@ -52,6 +52,6 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:configure-platform -- --version <ver> [--customer <id> \
+npm run fde:configure-platform -- --version <ver> [--customer <id> --org <workspace id> \
   --deployment-model … --residency … --primary-model … --use-case "…"]
 ```

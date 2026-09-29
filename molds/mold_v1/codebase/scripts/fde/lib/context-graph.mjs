@@ -7,8 +7,9 @@
 // deployments, implementation, tickets, stakeholders) as [[wikilinks]] — the same
 // link vocabulary the memory system uses — and you have a graph, not just a tree.
 import { DATAROOM_PATH_TEMPLATES } from "../../../agent/lib/dataroom-store.ts";
-import { customers, deployments, implementation, tickets, customerStakeholders } from "../../../agent/lib/db/schema.ts";
-import { eq } from "drizzle-orm";
+import { deployments, implementation, tickets, customerStakeholders } from "../../../agent/lib/db/schema.ts";
+import { withOrgDb } from "../../../agent/lib/db/index.ts";
+import { and, eq } from "drizzle-orm";
 
 const isToken = (seg) => /^\{[a-z_]+\}$/.test(seg);
 
@@ -70,17 +71,25 @@ async function presentChildren(store, folderPath) {
   return { files: [...files], dirs: [...dirs] };
 }
 
-/** Live cross-folder edges for a customer node (DB-derived), as [[wikilinks]]. */
-async function customerEdges(db, customerId) {
-  if (!db) return [];
+/**
+ * Live cross-folder edges for a customer node (DB-derived), as [[wikilinks]]: the workspace's own company, by its
+ * whole key (org_id, customer_id), read inside the workspace's scope. Without a workspace there are no DB edges: the
+ * same id may be two companies in two workspaces (mold_v1-118).
+ */
+async function customerEdges(db, orgId, customerId) {
+  if (!db || !orgId) return [];
   const edges = [];
-  const deps = await db.select({ v: deployments.deploymentId }).from(deployments).where(eq(deployments.customerId, customerId));
+  const [deps, impl, tks, stk] = await withOrgDb(orgId, (tx) =>
+    Promise.all([
+      tx.select({ v: deployments.deploymentId }).from(deployments).where(and(eq(deployments.orgId, orgId), eq(deployments.customerId, customerId))),
+      tx.select({ c: implementation.customerId }).from(implementation).where(and(eq(implementation.orgId, orgId), eq(implementation.customerId, customerId))),
+      tx.select({ id: tickets.ticketId, type: tickets.ticketType }).from(tickets).where(and(eq(tickets.orgId, orgId), eq(tickets.customerId, customerId))),
+      tx.select({ e: customerStakeholders.email }).from(customerStakeholders).where(and(eq(customerStakeholders.orgId, orgId), eq(customerStakeholders.customerId, customerId))),
+    ]),
+  );
   for (const d of deps) edges.push(`[[Deployments/${customerId}/${d.v}]]`);
-  const impl = await db.select({ c: implementation.customerId }).from(implementation).where(eq(implementation.customerId, customerId));
   if (impl.length) edges.push(`[[Implementation/${customerId}]]`);
-  const tks = await db.select({ id: tickets.ticketId, type: tickets.ticketType }).from(tickets).where(eq(tickets.customerId, customerId));
   for (const t of tks) edges.push(`[[Tickets/${t.type ?? "feat"}/${customerId}]]`);
-  const stk = await db.select({ e: customerStakeholders.email }).from(customerStakeholders).where(eq(customerStakeholders.customerId, customerId));
   for (const s of stk) edges.push(`[[person:${s.e}]]`);
   return edges;
 }
@@ -90,7 +99,7 @@ async function customerEdges(db, customerId) {
  * actually contains, what's missing, and its live edges. Pure data — a caller
  * prints it, writes it, or validates against it (fde:doctor).
  */
-export async function buildContextGraph(store, db, folderPath, stampIso) {
+export async function buildContextGraph(store, db, folderPath, stampIso, orgId) {
   const req = folderRequirements(folderPath);
   const present = await presentChildren(store, folderPath);
   const missingFiles = req.requiredFiles.filter((f) => !present.files.includes(f));
@@ -100,7 +109,7 @@ export async function buildContextGraph(store, db, folderPath, stampIso) {
   const segs = folderPath.split("/").filter(Boolean);
   let edges = [];
   if (segs.length === 2 && segs[0] === "Customers") {
-    edges = await customerEdges(db, segs[1]);
+    edges = await customerEdges(db, orgId, segs[1]);
   }
 
   return {

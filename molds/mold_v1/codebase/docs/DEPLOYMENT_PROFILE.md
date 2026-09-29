@@ -678,8 +678,8 @@ None of them is a column of the base, and none needed a migration beyond the one
 *period* stays on `deployedVersion` ("Period / basis"): it is required, every report has one, and the built-in
 column already sorts and composes the row's title.
 
-**One company, one portfolio.** `implementation.customer_id` is the table's primary key, so a company has one
-row and is in one portfolio at a time; "New portfolio entry" for a company that already has a row moves it.
+**One company, one portfolio.** (`org_id`, `customer_id`) is the table's primary key, so a company has one
+row per workspace and is in one portfolio at a time; "New portfolio entry" for a company that already has a row moves it.
 A company in two portfolios needs a composite key, which is a change to the data model, not to a profile.
 
 **Two companies, one report id.** A deployment's key is (customer, id), so `Q2FY26-results` can exist for every

@@ -3,7 +3,7 @@ import { errorMessage } from "@/lib/ops-errors";
 import { speak } from "@/agent/lib/agent-vocabulary";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText } from "ai";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { accountSummaries } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -156,7 +156,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ email:
         tx
           .select()
           .from(accountSummaries)
-          .where(eq(accountSummaries.key, key)),
+          .where(and(eq(accountSummaries.orgId, org.orgId), eq(accountSummaries.key, key))),
       );
       if (hit && Date.now() - hit.createdAt.getTime() < CACHE_MS) {
         return NextResponse.json({ summary: hit.summary, cached: true });
@@ -180,7 +180,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ email:
             .insert(accountSummaries)
             .values({ orgId: org.orgId, key, summary, createdAt: new Date() })
             .onConflictDoUpdate({
-              target: accountSummaries.key,
+              // The workspace is half the key: the same person and account id in another workspace is another row.
+              target: [accountSummaries.orgId, accountSummaries.key],
               set: { summary, createdAt: new Date() },
             }),
         );

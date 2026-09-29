@@ -1,15 +1,16 @@
 // fde:new-customer — create a customer and seed its context in the data room.
 //
-//   npm run fde:new-customer -- --name "Contoso Bank" --tier Enterprise \
+//   npm run fde:new-customer -- --name "Contoso Bank" --tier Enterprise --org <workspace id> \
 //     [--id contoso-bank] [--vertical banking] [--region APAC] \
 //     [--business-owner cfo@contoso.com] [--technical-owner cto@contoso.com]
 //
-// Writes ONE `customers` row (idempotent by id) + assigns you as the solution
+// Writes ONE `customers` row in the workspace (idempotent by (id, workspace): another workspace may hold the
+// same id, mold_v1-118) + assigns you as the solution
 // engineer in `internal_staff`, and seeds `Customers/{id}/context.md` +
 // `interactions.jsonl` in the data room. See docs/FDE_WORKFLOW.md (stage 1).
-import { getDb, closeDb, slugify, dataroom, getCustomer, nowIso, appendInteraction } from "./lib/customer.mjs";
+import { getDb, closeDb, slugify, dataroom, getCustomer, nowIso, appendInteraction, workspaceFor, withOrgDb } from "./lib/customer.mjs";
 import { customers, internalStaff } from "../../agent/lib/db/schema.ts";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { glyph, flag, hasFlag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
 async function main() {
@@ -31,16 +32,18 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`New customer: ${name}  (id: ${id})\n`);
+  const orgId = workspaceFor();
+  console.log(`New customer: ${name}  (id: ${id}, workspace: ${orgId})\n`);
 
-  const existing = await getCustomer(db, id);
+  const existing = await getCustomer(db, orgId, id);
   if (existing && !hasFlag("force")) {
-    console.error(`${glyph.bad} Customer "${id}" already exists. Pass --force to update it, or choose --id.`);
+    console.error(`${glyph.bad} Customer "${id}" already exists in ${orgId}. Pass --force to update it, or choose --id.`);
     await closeDb();
     process.exit(1);
   }
 
   const row = {
+    orgId,
     customerId: id,
     customerName: name,
     tier: flag("tier").trim() || null,
@@ -54,22 +57,24 @@ async function main() {
   };
 
   if (existing) {
-    await db.update(customers).set(row).where(eq(customers.customerId, id));
-    console.log(`${glyph.ok} Updated customer row "${id}".`);
+    await withOrgDb(orgId, (tx) => tx.update(customers).set(row).where(and(eq(customers.orgId, orgId), eq(customers.customerId, id))));
+    console.log(`${glyph.ok} Updated customer row "${id}" in ${orgId}.`);
   } else {
-    await db.insert(customers).values(row);
-    console.log(`${glyph.ok} Created customer row "${id}" (lifecycle: Onboarding, owner: ${fde}).`);
+    await withOrgDb(orgId, (tx) => tx.insert(customers).values(row));
+    console.log(`${glyph.ok} Created customer row "${id}" in ${orgId} (lifecycle: Onboarding, owner: ${fde}).`);
   }
 
-  // Assign yourself as the solution engineer (idempotent on the composite PK).
-  await db
-    .insert(internalStaff)
-    .values({ customerId: id, staffRole: "solution_engineer", name: fde.split("@")[0], employerOrg: "OnFinance", email: fde })
-    .onConflictDoNothing();
+  // Assign yourself as the solution engineer (idempotent on the composite PK, which carries the workspace).
+  await withOrgDb(orgId, (tx) =>
+    tx
+      .insert(internalStaff)
+      .values({ orgId, customerId: id, staffRole: "solution_engineer", name: fde.split("@")[0], employerOrg: "OnFinance", email: fde })
+      .onConflictDoNothing({ target: [internalStaff.orgId, internalStaff.customerId, internalStaff.staffRole, internalStaff.email] }),
+  );
   console.log(`${glyph.ok} Assigned you (${fde}) as solution_engineer.`);
 
   // Seed the data-room context. Only create context.md if absent — never clobber.
-  const store = dataroom();
+  const store = dataroom(orgId);
   const ctxPath = `Customers/${id}/context.md`;
   const present = await store.list(`Customers/${id}`);
   if (!present.includes(ctxPath) || hasFlag("force")) {

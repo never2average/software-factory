@@ -19,7 +19,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { resolvableByDomain } from "../../lib/workspace-rules.ts";
 import { getDb, type Db } from "./db/index.ts";
-import { customers, orgMembers, orgs } from "./db/schema.ts";
+import { orgMembers, orgs } from "./db/schema.ts";
 import { inheritedScope } from "./session-scope.ts";
 import { isServicePrincipal, serviceScopeOf, type AuthLike } from "./service-scope.ts";
 
@@ -280,22 +280,8 @@ export async function orgForSession(ctx: SessionCtxLike | undefined): Promise<st
   return resolveOrg(email, hd);
 }
 
-/**
- * The org that OWNS a customer account — the right workspace for that customer's
- * data-room artifacts (Customers/{id}/…, Tickets/…). A customer belongs to
- * exactly one org via `customers.org_id`. Fail-safe → DEFAULT_ORG.
+/*
+ * orgForCustomer ("the org that OWNS a customer account") is gone: a company is keyed by (org_id, customer_id), and
+ * two workspaces may hold the same id (mold_v1-118), so no workspace can be read off an id. Every caller names its
+ * own (orgForSession, a sync's orgId, a script's --org). scripts/check-tenancy.mjs still refuses the name.
  */
-export async function orgForCustomer(customerId: string): Promise<string> {
-  const db = getDb();
-  if (!db || !(await tenancyEnabled(db))) return DEFAULT_ORG;
-  try {
-    const [row] = await db
-      .select({ orgId: customers.orgId })
-      .from(customers)
-      .where(eq(customers.customerId, customerId))
-      .limit(1);
-    return row?.orgId ?? DEFAULT_ORG;
-  } catch {
-    return DEFAULT_ORG;
-  }
-}

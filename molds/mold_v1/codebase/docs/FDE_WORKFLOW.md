@@ -70,6 +70,10 @@ Each skill is a guided, step-at-a-time procedure. They share the scripts under
 [`scripts/fde/`](../scripts/fde/) (run with `node --experimental-strip-types`, wired
 as `npm run fde:*`).
 
+Every script that touches one customer's records takes `--org <workspace id>` (or `FDE_ORG`): a company is keyed
+by (customer id, workspace), and two workspaces may hold the same id, so the workspace is never taken from the id.
+Without it the script stops before reading anything.
+
 | Skill | Use it to | Backing script |
 | --- | --- | --- |
 | `onboard-self` | Get yourself operational as an FDE and recorded in the system | `fde:onboard-self` |
@@ -110,12 +114,12 @@ one); the script prints how to pull it.
 Every folder's required structure is **derived** from the dm.md grammar
 (`DATAROOM_PATH_TEMPLATES`), never hand-authored — so it can't drift:
 
-- **`fde:context-graph -- --path "Customers/{id}"`** (or `--customer {id}`) — the
+- **`fde:context-graph -- --path "Customers/{id}" --org {workspace}`** (or `--customer {id}`) — the
   computed graph for a folder: required files/dirs (from the templates), what's
   present, what's missing, and live `[[edges]]` (a customer → its deployments,
   implementation, tickets, stakeholders — the same `[[wikilink]]` vocabulary the
   memory system uses).
-- **`fde:doctor [--customer {id}] [--strict]`** — walks customer folders and
+- **`fde:doctor [--org {workspace} [--customer {id}]] [--strict]`** — walks customer folders and
   reports missing required files / dangling edges against their context graph. The
   dm.md-driven, structural analogue of solution-manager's `doctor.ts`.
 

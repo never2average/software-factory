@@ -64,7 +64,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
   }
   try {
-    const where = and(eq(deployments.deploymentId, id), eq(deployments.customerId, customerId));
+    const where = and(eq(deployments.orgId, octx.orgId), eq(deployments.deploymentId, id), eq(deployments.customerId, customerId));
     const [before] = await withOrgRls(octx.orgId, (tx) =>
       tx.select().from(deployments).where(where),
     );
@@ -119,7 +119,7 @@ export async function DELETE(request: NextRequest, ctx: RouteContext) {
     const [item] = await withOrgRls(octx.orgId, (tx) =>
       tx
         .delete(deployments)
-        .where(and(eq(deployments.deploymentId, id), eq(deployments.customerId, customerId)))
+        .where(and(eq(deployments.orgId, octx.orgId), eq(deployments.deploymentId, id), eq(deployments.customerId, customerId)))
         .returning(),
     );
     if (!item) return NextResponse.json({ error: `${W.Deployment} not found` }, { status: 404 });

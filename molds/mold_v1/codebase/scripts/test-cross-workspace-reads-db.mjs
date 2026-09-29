@@ -164,13 +164,14 @@ try {
   // Seeded through the real write path, in each owner's own scope.
   await sor.upsertCustomer(account(X, SECRET_NAME, SECRET_REASON, CONTACT, DOMAIN), A);
   await sor.upsertCustomer(account(YX, `Y Holdings ${PID}`, "ordinary", `cfo-${PID}@y-probe.test`, `y-${PID}.test`), Y);
-  const [seeded] = await admin`SELECT org_id FROM customers WHERE customer_id = ${X}`;
+  const [seeded] = await admin`SELECT org_id FROM customers WHERE customer_id = ${X} AND org_id = ${A}`;
   assert.equal(seeded?.org_id, A, "the probe account must be seeded in the default workspace");
+  // A's company by its whole key (org_id, customer_id): another workspace may hold the same id (mold_v1-118).
   const snapshot = async () =>
     JSON.stringify(await admin`SELECT c.customer_name, c.health_reason, c.fde_owner,
-      (SELECT count(*) FROM interactions i WHERE i.customer_id = c.customer_id)::int AS interactions,
-      (SELECT json_agg(json_build_array(t.ticket_id, t.ticket_status) ORDER BY t.ticket_id) FROM tickets t WHERE t.customer_id = c.customer_id) AS tickets
-      FROM customers c WHERE c.customer_id = ${X}`);
+      (SELECT count(*) FROM interactions i WHERE i.customer_id = c.customer_id AND i.org_id = c.org_id)::int AS interactions,
+      (SELECT json_agg(json_build_array(t.ticket_id, t.ticket_status) ORDER BY t.ticket_id) FROM tickets t WHERE t.customer_id = c.customer_id AND t.org_id = c.org_id) AS tickets
+      FROM customers c WHERE c.customer_id = ${X} AND c.org_id = ${A}`);
   const before = await snapshot();
 
   console.log("\n1. getCustomer — the reported leak");
@@ -181,12 +182,20 @@ try {
   check("A asking for Y's id gets null (and the reverse)", (await sor.getCustomer(YX, A)) === null && (await sor.getCustomer(X, Y)) === null);
 
   console.log("\n2. upsertCustomer — the merge that leaked through the refusal text");
-  const upErr = await errorOf(() => sor.upsertCustomer({ id: X, healthReason: `from B ${PID}` }, B));
-  const upText = upErr ? `${messageOf(upErr)} ${String(upErr)} ${JSON.stringify(upErr)}` : "";
-  check("B patching A's id is refused", upErr !== null);
-  check("…and the error carries none of A's values", upErr !== null && !upText.includes(SECRET_NAME) && !upText.includes(SECRET_REASON) && !upText.includes(CONTACT), upText.slice(0, 400));
-  check("…nor the statement and its parameters", upErr !== null && !/Failed query|params:/.test(upText), upText.slice(0, 200));
+  // A company is keyed by (org_id, customer_id) (mold_v1-118): B patching an id it does not hold creates B's OWN
+  // company of that id. What #58 closed must stay closed: nothing of A's is merged into B's write or its answer,
+  // and A's record is untouched.
+  let upOut = null;
+  const upErr = await errorOf(async () => { upOut = await sor.upsertCustomer({ id: X, healthReason: `from B ${PID}` }, B); });
+  const upText = `${upErr ? `${messageOf(upErr)} ${String(upErr)} ${JSON.stringify(upErr)}` : ""} ${JSON.stringify(upOut ?? {})}`;
+  check("B patching A's id never reaches A's record: it is B's own company of that id", upErr === null && upOut?.id === X && upOut.name === X && upOut.healthReason === `from B ${PID}`, upText.slice(0, 300));
+  check("…and neither its answer nor any error carries A's values", !upText.includes(SECRET_NAME) && !upText.includes(SECRET_REASON) && !upText.includes(CONTACT), upText.slice(0, 400));
+  check("…nor the statement and its parameters", !/Failed query|params:/.test(upText), upText.slice(0, 200));
   check("…and A's record is unchanged", (await snapshot()) === before);
+  const bRows = await admin`SELECT org_id, customer_name FROM customers WHERE customer_id = ${X} ORDER BY org_id`;
+  check("…two companies of the id now, each in its own workspace", bRows.length === 2 && bRows.some((r) => r.org_id === A && r.customer_name === SECRET_NAME) && bRows.some((r) => r.org_id === B && r.customer_name === X), bRows);
+  // Back to B holding nothing of the id: the refusals below are of writes into a company B does not hold.
+  await admin`DELETE FROM customers WHERE customer_id = ${X} AND org_id = ${B}`;
 
   console.log("\n3. recordInteraction / recordInteractions");
   check("B logging onto A's id is refused as an unknown customer", /Unknown customer/.test(messageOf(await errorOf(() => sor.recordInteraction(X, interaction(`INT-b1-${PID}`), B)))));
@@ -322,11 +331,13 @@ try {
   }).catch((e) => messageOf(e));
   check("…while the agent project's PREVIEW token gets neither the attribute nor the recorded scope", previewCont !== Y, previewCont);
 
-  console.log("\n11. A system path with no caller acts in the OWNER's workspace, found per workspace");
-  const sysY = await sor.recordInteraction(YX, interaction(`INT-sys-${PID}`), undefined).catch((e) => e);
-  check("a system write (no workspace given) to Y's account lands in Y (it was 'Unknown customer')", sysY?.id === YX && sysY.interactions?.some((i) => i.interactionId === `INT-sys-${PID}`), messageOf(sysY));
+  console.log("\n11. A system path names its workspace: a company id no longer names one (mold_v1-118)");
+  const sysNone = await sor.recordInteraction(YX, interaction(`INT-sys-${PID}`), undefined).catch((e) => e);
+  check("a system write with no workspace is refused, never sent to 'whoever holds the id'", sysNone instanceof Error && /workspace/i.test(sysNone.message), messageOf(sysNone));
+  check("…and nothing was written", (await admin`SELECT count(*)::int AS n FROM interactions WHERE interaction_id = ${`INT-sys-${PID}`}`)[0].n === 0);
+  const sysY = await sor.recordInteraction(YX, interaction(`INT-sys-${PID}`), Y).catch((e) => e);
   const [sysRow] = await admin`SELECT org_id FROM interactions WHERE interaction_id = ${`INT-sys-${PID}`}`;
-  check("…stamped with Y's workspace", sysRow?.org_id === Y, sysRow);
+  check("a system write naming Y lands in Y's account, stamped with Y", sysY?.id === YX && sysRow?.org_id === Y, messageOf(sysY));
   check("an EMPTY workspace is refused, never widened to the owner's", (await errorOf(() => sor.recordInteraction(X, interaction(`INT-empty-${PID}`), ""))) !== null && (await errorOf(() => sor.recordInteraction(X, interaction(`INT-null-${PID}`), null))) !== null);
 } catch (error) {
   failures++;

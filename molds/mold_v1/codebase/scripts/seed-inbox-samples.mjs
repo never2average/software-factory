@@ -116,11 +116,11 @@ if (process.argv.includes("--clear")) {
     }
     const [{ refs }] = await sql`
       SELECT (
-        (SELECT count(*) FROM interactions   WHERE customer_id = ${id}) +
-        (SELECT count(*) FROM tickets        WHERE customer_id = ${id}) +
-        (SELECT count(*) FROM deployments    WHERE customer_id = ${id}) +
-        (SELECT count(*) FROM implementation WHERE customer_id = ${id}) +
-        (SELECT count(*) FROM solutions      WHERE customer_id = ${id})
+        (SELECT count(*) FROM interactions   WHERE customer_id = ${id} AND org_id = ${orgId}) +
+        (SELECT count(*) FROM tickets        WHERE customer_id = ${id} AND org_id = ${orgId}) +
+        (SELECT count(*) FROM deployments    WHERE customer_id = ${id} AND org_id = ${orgId}) +
+        (SELECT count(*) FROM implementation WHERE customer_id = ${id} AND org_id = ${orgId}) +
+        (SELECT count(*) FROM solutions      WHERE customer_id = ${id} AND org_id = ${orgId})
       )::int AS refs`;
     if (refs > 0) {
       console.log(`  kept ${id} — ${refs} record(s) now reference it`);

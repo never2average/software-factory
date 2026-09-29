@@ -29,12 +29,12 @@ terraform/config (`tf`), and the `rationale` (why). One or many.
 
 **3. Backfill.** Single customization via flags:
 ```bash
-npm run fde:backfill-customizations -- --customer contoso-bank --version v2.4.0 \
+npm run fde:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
   --region APAC --cloud aws --summary "GPU inference + custom guardrails"
 ```
 Many at once via a JSON file (`[{ "title", "tf", "rationale" }, …]`):
 ```bash
-npm run fde:backfill-customizations -- --customer contoso-bank --version v2.4.0 \
+npm run fde:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
   --from-file customizations.json
 ```
 This upserts the `deployments` row, writes `customizations.tf` + `rationale.md`
@@ -65,6 +65,6 @@ WRITE (per `Deployments/{id}/{version}/infrastructure/inference/`):
 ## Quick reference
 
 ```bash
-npm run fde:backfill-customizations -- --customer <id> --version <ver> \
+npm run fde:backfill-customizations -- --customer <id> --org <workspace id> --version <ver> \
   [--region …] [--cloud …] [--summary "…"] [--from-file customizations.json]
 ```

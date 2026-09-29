@@ -5,10 +5,10 @@
 // Deployments agent recipe folder.
 //
 //   npm run fde:configure-agents -- --version v2.4.0 --id collections-agent \
-//     --use-case "Autonomous collections triage" [--customer contoso-bank]
+//     --use-case "Autonomous collections triage" [--customer contoso-bank --org <workspace id>]
 //
 // See docs/FDE_WORKFLOW.md. Agents are solutions too — same validate + eval gate.
-import { getDb, closeDb, dataroom, getCustomer, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
+import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
 import { solutions } from "../../agent/lib/db/schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
@@ -52,19 +52,23 @@ async function main() {
       console.error(`${glyph.bad} No DATABASE_URL — run with --env-file=.env.local.`);
       process.exit(1);
     }
-    if (!(await getCustomer(db, customerId))) {
-      console.error(`${glyph.bad} Customer "${customerId}" not found. Create it first (fde:new-customer).`);
+    // The workspace, named (--org): a company id names a company only within a workspace (mold_v1-118).
+    const orgId = workspaceFor();
+    if (!(await getCustomer(db, orgId, customerId))) {
+      console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
       await closeDb();
       process.exit(1);
     }
-    await db
+    await withOrgDb(orgId, (tx) => tx
       .insert(solutions)
-      .values({ customerId, solutionId: id, useCase, businessProcess: "agent", modulesEnabled: [], solutionStatus: "configuring", solutionFdeOwner: fde })
-      .onConflictDoUpdate({ target: [solutions.customerId, solutions.solutionId], set: { useCase, businessProcess: "agent", solutionStatus: "configuring", solutionFdeOwner: fde } });
+      .values({ orgId, customerId, solutionId: id, useCase, businessProcess: "agent", modulesEnabled: [], solutionStatus: "configuring", solutionFdeOwner: fde })
+      .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, businessProcess: "agent", solutionStatus: "configuring", solutionFdeOwner: fde } }));
     // Seed the customer's deployment agent recipe folder (dm.md recipe seam).
     const dep = `Deployments/${customerId}/${version}/platform/agents/${id}`;
-    const depExisting = await store.list(dep);
-    await writeIfAbsent(store, depExisting, `${dep}/recipe.md`, `# ${id} — seeded for ${customerId}\n\nSeeded from ${base}. Configure before first run.\n`);
+    // In the workspace's own data room: Deployments/{customer_id}/… is per company, and so per workspace.
+    const customerStore = dataroom(orgId);
+    const depExisting = await customerStore.list(dep);
+    await writeIfAbsent(customerStore, depExisting, `${dep}/recipe.md`, `# ${id} — seeded for ${customerId}\n\nSeeded from ${base}. Configure before first run.\n`);
     console.log(`${glyph.ok} Registered solutions row (agent) + seeded ${dep}.`);
     await closeDb();
   }

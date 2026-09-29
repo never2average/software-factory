@@ -1,7 +1,7 @@
 // fde:backfill-integrations — reconstruct a customer's pipeline/integration
 // history into the canonical Implementation/ layout + the `implementation` row.
 //
-//   npm run fde:backfill-integrations -- --customer contoso-bank \
+//   npm run fde:backfill-integrations -- --customer contoso-bank --org <workspace id> \
 //     [--pipeline pl-collections] [--summary "Collections ETL via Integromat"] \
 //     [--from-file integrations.json]
 //
@@ -9,8 +9,8 @@
 // Implementation/{id}/pipelines/{pid}/pipeline_config.json + integromat.json.
 // --from-file takes an array of { pipelineId, summary, config }. See
 // docs/FDE_WORKFLOW.md (stage 5).
-import { getDb, closeDb, dataroom, nowIso, appendInteraction, readFromFile, checkValues } from "./lib/customer.mjs";
-import { getCustomer as getRecord, ownerWorkspaceOf, upsertCustomer } from "../../agent/lib/system-of-record.ts";
+import { getDb, closeDb, dataroom, workspaceFor, nowIso, appendInteraction, readFromFile, checkValues } from "./lib/customer.mjs";
+import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system-of-record.ts";
 import { implementationSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
@@ -31,12 +31,12 @@ async function main() {
     console.error(`${glyph.bad} No DATABASE_URL — run with --env-file=.env.local.`);
     process.exit(1);
   }
-  // Read in the account's own workspace (a bare read sees nothing under row-level security).
-  const orgId = await ownerWorkspaceOf(customerId);
+  // The workspace, named (--org): a company id names a company only within a workspace (mold_v1-118).
+  const orgId = workspaceFor();
   const record = await getRecord(customerId, orgId);
   const customer = record ? { customerName: record.name } : null;
   if (!customer) {
-    console.error(`${glyph.bad} Customer "${customerId}" not found. Create it first (fde:new-customer).`);
+    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
     await closeDb();
     process.exit(1);
   }
@@ -72,7 +72,7 @@ async function main() {
   console.log(`${glyph.ok} ${record.implementation ? "Updated" : "Created"} implementation row (${customerId}).`);
 
   // 2. Canonical data-room artifacts per pipeline.
-  const store = dataroom();
+  const store = dataroom(orgId);
   for (const p of pipelines) {
     const pid = p.pipelineId || "pl-001";
     const cfg = p.config ?? {

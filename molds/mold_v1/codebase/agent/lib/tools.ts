@@ -30,6 +30,7 @@ import {
 import { searchGranolaNotes } from "#lib/granola.js";
 import { getDataroomStore } from "#lib/dataroom-store.js";
 import { orgForSession } from "#lib/org-context.js";
+import { getDb } from "#lib/db/index.js";
 import { createDraft, listInbox } from "#lib/email.js";
 import { runEmailIntake } from "#lib/email-intake.js";
 import { getOnCall, pageOnCall } from "#lib/pagerduty.js";
@@ -131,22 +132,23 @@ export const webSearchTool = modelFacing("web_search", defineTool({
 }), { opaqueOutput: "*" });
 
 /**
- * Keep only the rows belonging to the caller's workspace.
+ * The caller's own rows of a list that spans "all customers", each query asked IN the caller's workspace.
  *
- * These four queries span every customer by design ("across all customers"),
- * which was correct when there was one tenant and is a cross-tenant read now.
- * Scoping at the tool boundary rather than in each query is deliberate: it is
- * one place to be right, and it fails CLOSED — an org whose customer set can
- * not be read gets nothing rather than everything.
+ * It used to run the query across every workspace and keep the rows whose customer id was in the caller's own
+ * list. A company is keyed by (org_id, customer_id) now (mold_v1-118): two workspaces may both hold
+ * `aditya-birla-hfl`, and the other one's tickets under that id passed an id filter. The query is scoped to the
+ * workspace instead, and every row it returns must carry that workspace, or it is dropped (fails CLOSED: a caller
+ * with no workspace gets nothing). The workspace is then taken off each row: the model's output is unchanged.
  */
-async function scopeToOrg<T extends { customerId?: string; id?: string }>(
-  rows: T[],
+async function ownRows<T extends { orgId?: string }>(
   ctx: Parameters<typeof orgForSession>[0],
-): Promise<T[]> {
+  query: (org: string) => Promise<T[]>,
+): Promise<Omit<T, "orgId">[]> {
   const org = await orgForSession(ctx);
   if (!org) return [];
-  const mine = new Set((await listCustomers(org)).map((c) => c.id));
-  return rows.filter((r) => mine.has(r.customerId ?? r.id ?? ""));
+  // Only the in-memory fallback (no database: one workspace, dev and tests) returns rows without a workspace.
+  const untagged = !getDb();
+  return (await query(org)).filter((r) => r.orgId === org || (untagged && r.orgId === undefined)).map(({ orgId: _org, ...rest }) => rest);
 }
 
 /**
@@ -313,7 +315,7 @@ export const listStaleCustomersTool = modelFacing("list_stale_customers", define
       .describe("Staleness window in days (default 7): no interaction within this many days = out of touch."),
   }),
   async execute({ days }, ctx) {
-    return { staleCustomers: await scopeToOrg(await listStaleCustomers(days ?? 7), ctx) };
+    return { staleCustomers: await ownRows(ctx, (org) => listStaleCustomers(days ?? 7, org)) };
   },
 }));
 
@@ -574,7 +576,7 @@ export const listTriageTicketsTool = modelFacing("list_triage_tickets", defineTo
     "List the triage queue — draft tickets awaiting approval (status 'Needs Triage') across all customers, e.g. those staged by email intake. Each carries the customer, summary, description, priority, owner, and source. Use this to review what to promote (approve) or resolve (discard).",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
-    return { triageTickets: await scopeToOrg(await listTriageTickets(), ctx) };
+    return { triageTickets: await ownRows(ctx, (org) => listTriageTickets(org)) };
   },
 }));
 
@@ -583,7 +585,7 @@ export const listUrgentTicketsTool = modelFacing("list_urgent_tickets", defineTo
     "List OPEN, URGENT tickets across all customers from the tickets store — P0-Critical/P1-High priority, SLA at-risk/breached, or past their due date — ranked most-urgent first. Each ticket carries urgencyRank, customer, summary, DESCRIPTION (the reported metric signal — uptime/accuracy/throughput incidents live here), next step, openedAt, and ageHours (the measured TAT, for reconciling against a TAT SLA commitment), plus due date. Use this to prioritize whoever most needs a change and to reconcile SLA breaches from ticket data.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
-    return { urgentTickets: await scopeToOrg(await listUrgentTickets(), ctx) };
+    return { urgentTickets: await ownRows(ctx, (org) => listUrgentTickets(org)) };
   },
 }));
 
@@ -594,7 +596,7 @@ export const listFollowupsTool = modelFacing("list_followups", defineTool({
     customerId: z.string().optional().describe("Optional: scope to a single customer."),
   }),
   async execute({ customerId }, ctx) {
-    return { followUps: await scopeToOrg(await listFollowUps(customerId, await orgForSession(ctx)), ctx) };
+    return { followUps: await ownRows(ctx, (org) => listFollowUps(customerId, org)) };
   },
 }));
 

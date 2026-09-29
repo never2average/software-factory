@@ -57,6 +57,6 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:configure-agents   -- --version <ver> --id <agent> --use-case "…" [--customer <id>]
+npm run fde:configure-agents   -- --version <ver> --id <agent> --use-case "…" [--customer <id> --org <workspace id>]
 npm run fde:validate-solution  -- --version <ver> --id <agent> --kind agent [--strict]
 ```

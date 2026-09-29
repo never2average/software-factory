@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { customers, implementation, solutions } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -21,9 +21,9 @@ const GROUPED_BY_ROLLOUT = DEPLOYMENT_PROFILE.domains.implementations.group_by =
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** POST /api/ops/implementations — hand-create a rollout. `customerId` is the
- *  primary key (one implementation per customer), so a second create for the
- *  same customer returns a friendly conflict. Stage/risk/progress default to a
+/** POST /api/ops/implementations — hand-create a rollout. (customerId, the workspace) is the
+ *  primary key (one implementation per company), so a second create for the
+ *  same company updates it. Stage/risk/progress default to a
  *  fresh rollout the operator refines in the detail panel. */
 const createSchema = z.object({
   customerId: z.string().min(1, `Pick ${an(W.account)} ${W.account}.`),
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     // This route is an UPSERT, so whether the custom fields are a create (required ones enforced) or a partial
     // change merged onto the stored ones depends on the row being there. Read inside the caller's scope.
     const [existing] = await withOrgRls(ctx.orgId, (tx) =>
-      tx.select({ custom: implementation.custom }).from(implementation).where(eq(implementation.customerId, data.customerId)),
+      tx.select({ custom: implementation.custom }).from(implementation).where(and(eq(implementation.orgId, ctx.orgId), eq(implementation.customerId, data.customerId))),
     );
     const checked = customForWrite("implementations", customInput, existing ?? null);
     if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
@@ -95,7 +95,8 @@ export async function POST(request: NextRequest) {
         .insert(implementation)
         .values(values)
         .onConflictDoUpdate({
-          target: implementation.customerId,
+          // The record's whole key (org_id, customer_id): one per company, and a company is per workspace.
+          target: [implementation.orgId, implementation.customerId],
           // Never blank a field the caller didn't mention; blockerOwner in
           // particular is ours, not theirs, and would wipe a real owner.
           // `custom` only by the keys the body names, merged in SQL onto what is stored at write time.
