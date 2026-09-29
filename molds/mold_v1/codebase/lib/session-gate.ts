@@ -96,7 +96,8 @@ export async function readOwnerRecord(
  *     open, so its `principal_email` names whoever spoke LAST — possibly a colleague who was never the owner. It is
  *     never read as an owner, and never as evidence that a session is the workspace's.
  *   · The OWNER comes only from the chat rows: the shared thread's owner, else the ONLY person with a
- *     `chat_sessions` row for it (two claimants prove nothing).
+ *     `chat_sessions` row for it (two claimants prove nothing) IN THE ANCHOR'S WORKSPACE — a claimant in any other
+ *     workspace is ignored, and since mold_v1-140 the mirror refuses to file one (lib/chat-sessions-mirror rule 4).
  *   · WORKSPACE visibility (colleagues may read) comes only from positive evidence that the session was a workflow,
  *     app or cron step: a `workflow_run_journal` step naming it (as its session or its child session), or an app /
  *     app version whose last run it was.
@@ -113,7 +114,7 @@ export async function readLegacyOwnership(db: GateDb, sessionId: string): Promis
   for (const orgId of orgs) {
     const evidence = await db.inOrg(orgId, async (tx) => {
       const [scope] = await tx
-        .select({ sessionId: agentSessionScopes.sessionId })
+        .select({ sessionId: agentSessionScopes.sessionId, orgId: agentSessionScopes.orgId })
         .from(agentSessionScopes)
         .where(eq(agentSessionScopes.sessionId, sessionId))
         .limit(1);
@@ -122,7 +123,7 @@ export async function readLegacyOwnership(db: GateDb, sessionId: string): Promis
         .from(chatThreads)
         .where(eq(chatThreads.eveSessionId, sessionId));
       const mirrors = await tx
-        .select({ ownerEmail: chatSessions.ownerEmail })
+        .select({ ownerEmail: chatSessions.ownerEmail, orgId: chatSessions.orgId })
         .from(chatSessions)
         .where(eq(chatSessions.eveSessionId, sessionId));
       const [journal] = await tx
@@ -138,9 +139,12 @@ export async function readLegacyOwnership(db: GateDb, sessionId: string): Promis
         : await tx.select({ id: appVersions.id }).from(appVersions).where(eq(appVersions.sessionId, sessionId)).limit(1);
       return {
         orgId,
-        scoped: Boolean(scope),
+        // Each piece counts for THIS workspace only when its own org_id says so — not merely because the scope let
+        // the row through (a policy that is permissive, or a row read on a wider handle, must not move a claimant
+        // or an anchor between workspaces). A claimant counts only in the scope row's workspace (mold_v1-140).
+        scoped: Boolean(scope && scope.orgId === orgId),
         threadOwners: [...new Set(threads.map((t) => norm(t.ownerEmail)).filter(Boolean))],
-        claimants: [...new Set(mirrors.map((m) => norm(m.ownerEmail)).filter(Boolean))],
+        claimants: [...new Set(mirrors.filter((m) => m.orgId === orgId).map((m) => norm(m.ownerEmail)).filter(Boolean))],
         step: Boolean(journal || app || version),
       };
     });

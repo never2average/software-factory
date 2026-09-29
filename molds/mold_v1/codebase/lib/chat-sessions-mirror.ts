@@ -18,6 +18,15 @@
  *     schema rejected the WHOLE sync (400) for one chat with many answers, and
  *     titles, archive state and new chats then stopped syncing everywhere.
  *     Markers are now trimmed per chat (`capMarkers`), never refused.
+ *  4. ONE SESSION, ONE WORKSPACE (mold_v1-140). Rule 1 refused a duplicate
+ *     claim only inside the caller's workspace, so a member of ANOTHER
+ *     workspace could file a row for someone's legacy (pre-0016, no scope row)
+ *     session; when the owner then deleted their chat, that row was the only
+ *     claimant left and legacy inference named its filer the owner. A claim
+ *     for an eve session that already has a `chat_sessions` row or an
+ *     `agent_session_scopes` row in any OTHER workspace is now refused, read
+ *     across every workspace the way the session gate reads (`across`: each
+ *     workspace inside its own scope).
  *  3. EITHER DEPLOY ORDER IS SAFE. `client_markers` arrives with migration 0020;
  *     code that names a missing column fails every query (500, and the sidebar
  *     stops syncing). The column is looked up once (re-checked every minute
@@ -146,12 +155,51 @@ export async function readMirrorRows(
   );
 }
 
+/** How the mirror reads OTHER workspaces (rule 4): the gate's own reader — the workspace list, and each one's scope. */
+export type AcrossWorkspaces = Pick<GateDb, "inOrg" | "listOrgs">;
+
+/**
+ * The eve sessions among `sessionIds` that another workspace already holds: a `chat_sessions` row or an
+ * `agent_session_scopes` row anywhere but `orgId` (rule 4).
+ */
+export async function sessionsHeldElsewhere(
+  across: AcrossWorkspaces,
+  orgId: string,
+  sessionIds: readonly string[],
+): Promise<Set<string>> {
+  const held = new Set<string>();
+  if (!sessionIds.length) return held;
+  const others = [...new Set(await across.listOrgs())].filter((o) => o !== orgId);
+  for (const other of others) {
+    const found = await across.inOrg(other, async (tx: Tx) => {
+      const rows = (await tx
+        .select({ eveSessionId: chatSessions.eveSessionId })
+        .from(chatSessions)
+        .where(inArray(chatSessions.eveSessionId, [...sessionIds]))) as { eveSessionId: string | null }[];
+      const scopes = (await tx
+        .select({ sessionId: agentSessionScopes.sessionId })
+        .from(agentSessionScopes)
+        .where(inArray(agentSessionScopes.sessionId, [...sessionIds]))) as { sessionId: string }[];
+      return [...rows.map((r) => r.eveSessionId), ...scopes.map((r) => r.sessionId)];
+    });
+    for (const id of found) if (id) held.add(id);
+  }
+  return held;
+}
+
 /** Write the caller's chat list. Returns how many rows were refused as somebody else's. */
 export async function writeMirrorRows(
   inOrg: InOrg,
-  input: { readonly orgId: string; readonly email: string; readonly sessions: readonly MirrorRowInput[] },
+  input: {
+    readonly orgId: string;
+    readonly email: string;
+    readonly sessions: readonly MirrorRowInput[];
+    /** Rule 4: required, so a caller cannot skip the cross-workspace check by leaving it out. */
+    readonly across: AcrossWorkspaces;
+  },
 ): Promise<{ readonly refused: number }> {
-  const { orgId, email, sessions } = input;
+  const { orgId, email, sessions, across } = input;
+  if (!across) throw new Error("writeMirrorRows: `across` (the cross-workspace reader) is required");
   /**
    * A thread somebody else owns is never one of your chats — whether it was
    * shared (a `chat_threads` row), already mirrored by someone else under its
@@ -179,6 +227,8 @@ export async function writeMirrorRows(
     for (const c of claimed as { eveSessionId: string | null; ownerEmail: string }[]) {
       if (c.eveSessionId && c.ownerEmail.toLowerCase() !== email) foreignSessions.add(c.eveSessionId);
     }
+    // Rule 4: held in another workspace — by anyone, the caller included (a session belongs to one workspace).
+    for (const id of await sessionsHeldElsewhere(across, orgId, sessionIds)) foreignSessions.add(id);
   }
   const ids = sessions.map((s) => s.id);
   if (ids.length) {

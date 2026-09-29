@@ -142,6 +142,8 @@
     "build:agent-cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/build-agent-cli.mjs",
     "test:agent-cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-agent-cli-build.mjs",
     "test:sandbox-libs": "node scripts/test-sandbox-libs.mjs",
+    "test:own-listener": "node scripts/test-own-listener.mjs",
+    "test:chat-stop-state": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-stop-state.mjs",
     "test:empty-model-response": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-empty-model-response.mjs",
     "test:recovery-honesty": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-recovery-honesty.mjs",
     "test:model-output-budget": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-model-output-budget.mjs",

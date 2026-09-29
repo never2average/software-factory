@@ -142,27 +142,8 @@ if (typeof window !== "undefined") {
     if ((e as PageTransitionEvent).persisted) unmarkGone(window.sessionStorage, TAB_ID);
   });
 }
-/** A Stop's note, by chatKey — it must outlive the remount a refresh or a hand-back causes. */
-const stopNotes = new Map<string, string>();
-/** Turn ids this tab asked to stop, by chatKey — so a cancelled turn can say who stopped it. */
-const stoppedHere = new Map<string, Set<string>>();
-/**
- * A Stop's transcript markers (`client.turn.stopped`), by chatKey — held HERE,
- * not only in the component, because the Stop's answer and the remount race.
- * Stopping a parked specialist's resumed reply ends it with a boundary, the live
- * reader reads that boundary and hands the transcript back (a remount), and the
- * cancel's 202 is often processed a moment AFTER: the marker was set on the
- * instance that had just been replaced, never persisted, and gone on reload
- * (review of #72/#74 — eve sends no `turn.cancelled` for a resumed reply, so the
- * marker is the only record that the reply was stopped). Every mounted instance
- * of the chat listens, so the marker reaches whichever one is current.
- */
-const stopMarkersByChat = new Map<string, TurnEvent[]>();
-const stopMarkerListeners = new Map<string, Set<() => void>>();
-function recordStopMarker(chatKey: string, marker: TurnEvent): void {
-  stopMarkersByChat.set(chatKey, [...(stopMarkersByChat.get(chatKey) ?? []), marker]);
-  for (const listen of stopMarkerListeners.get(chatKey) ?? []) listen();
-}
+// A Stop's note, the turns this tab stopped and a Stop's transcript markers live in ./chat-stop-state, keyed
+// `${email}:${orgId}:${chatKey}` and forgotten on sign-out (mold_v1-141).
 /** Re-arm rounds of the live reader after its budget ran out, by `chatKey:turn`. */
 const attachRounds = new Map<string, number>();
 /** chatKey → ordinal of a turn the server reported as not running. */
@@ -342,6 +323,7 @@ import {
   type QueueSettings,
 } from "@/lib/chat-queue";
 import { useChatQueue, type QueueEntry } from "./use-chat-queue";
+import { onStopMarker, recordStopMarker, stopKey, stopMarkersFor, stopNotes, stoppedHere } from "./chat-stop-state";
 import { notifyFromPage, setViewingSession } from "./desktop-notify";
 import { eveSessionStream, readLiveTail, readTailEvent, streamHasMoved, threadProxyStream } from "@/lib/chat-attach";
 import type { ChatTelemetryKind } from "@/lib/chat-telemetry";
@@ -1418,17 +1400,15 @@ export function AgentChat({
    * the question does not come back as live, and the tile does not go back to
    * "Running".
    */
-  const [stoppedMarkers, setStoppedMarkers] = useState<TurnEvent[]>(() => stopMarkersByChat.get(chatKey) ?? []);
+  // Whose Stop state this is: the person and workspace as well as the chat (./chat-stop-state).
+  const stopStateKey = stopKey(storageScope, chatKey);
+  const [stoppedMarkers, setStoppedMarkers] = useState<TurnEvent[]>(() => stopMarkersFor(stopStateKey));
   useEffect(() => {
-    const sync = () => setStoppedMarkers(stopMarkersByChat.get(chatKey) ?? []);
-    const listeners = stopMarkerListeners.get(chatKey) ?? new Set<() => void>();
-    listeners.add(sync);
-    stopMarkerListeners.set(chatKey, listeners);
+    const sync = () => setStoppedMarkers(stopMarkersFor(stopStateKey));
+    const off = onStopMarker(stopStateKey, sync);
     sync();
-    return () => {
-      listeners.delete(sync);
-    };
-  }, [chatKey]);
+    return off;
+  }, [stopStateKey]);
   const stopped = useMemo(
     () => stoppedFromEvents([...(mergedEvents as readonly TurnEvent[]), ...stoppedMarkers]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2796,10 +2776,10 @@ export function AgentChat({
    */
   const [stopping, setStopping] = useState(false);
   /** What the last Stop found, said once above the composer (a refused Stop from a stale tab). */
-  const [stopNote, setStopNoteState] = useState<string | null>(() => stopNotes.get(chatKey) ?? null);
+  const [stopNote, setStopNoteState] = useState<string | null>(() => stopNotes.get(stopStateKey) ?? null);
   const setStopNote = (note: string | null) => {
-    if (note) stopNotes.set(chatKey, note);
-    else stopNotes.delete(chatKey);
+    if (note) stopNotes.set(stopStateKey, note);
+    else stopNotes.delete(stopStateKey);
     setStopNoteState(note);
   };
   const stopFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2889,9 +2869,9 @@ export function AgentChat({
       // was holding a message behind the stopped turn, it runs next.
       releaseDeliveries(await withGrace());
       setLingerUntil(Date.now() + 20_000);
-      const mine = stoppedHere.get(chatKey) ?? new Set<string>();
+      const mine = stoppedHere.get(stopStateKey) ?? new Set<string>();
       mine.add(target.turnId as string);
-      stoppedHere.set(chatKey, mine);
+      stoppedHere.set(stopStateKey, mine);
       const res = await fetch(`/eve/v1/session/${encodeURIComponent(sid)}/cancel`, {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -2905,7 +2885,7 @@ export function AgentChat({
       if (body.status === "accepted") setRemoteTurn(false);
       if (body.status === "accepted" && (parkedOn.length > 0 || target.resumed || target.parked)) {
         recordStopMarker(
-          chatKey,
+          stopStateKey,
           // The note goes under the reply that was stopped: a resumed hand-back's own turn.
           stoppedMarker({ requestIds: parkedOn, delegations, at: absoluteIndex(events), turnId: target.replyTurnId ?? target.turnId }),
         );
@@ -2920,7 +2900,7 @@ export function AgentChat({
         // Stop is recorded as a marker: persisted with the chat (client_markers),
         // it says "Stopped." under this turn on every open and every device.
         recordStopMarker(
-          chatKey,
+          stopStateKey,
           stoppedMarker({ requestIds: [], delegations: [], at: absoluteIndex(events), turnId: target.turnId }),
         );
       }
@@ -3843,10 +3823,10 @@ export function AgentChat({
     () =>
       stoppedTurnNotes(
         [...(mergedEvents as readonly TurnEvent[]), ...stoppedMarkers],
-        stoppedHere.get(chatKey) ?? new Set(),
+        stoppedHere.get(stopStateKey) ?? new Set(),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mergedEvents.length, stoppedMarkers, chatKey],
+    [mergedEvents.length, stoppedMarkers, stopStateKey],
   );
   /** message id → the "Stopped." note said under it (see `stoppedNoteHosts`). */
   const stoppedNoteAt = useMemo(

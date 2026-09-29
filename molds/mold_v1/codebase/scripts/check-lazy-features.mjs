@@ -32,10 +32,10 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import http from "node:http";
 import { MOCKS } from "./lib/rendered-text.mjs";
+import { freePort, waitForNextStart } from "./lib/own-listener.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const argAfter = (flag) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : null);
@@ -364,7 +364,6 @@ function streamingEvents() {
 async function render() {
   let chromium;
   try { ({ chromium } = require("@playwright/test")); } catch { throw new Error("@playwright/test is not installed (npm ci)"); }
-  const freePort = () => new Promise((res, rej) => { const s = createServer(); s.listen(0, "127.0.0.1", () => { const { port: p } = s.address(); s.close(() => res(p)); }); s.on("error", rej); });
   const port = await freePort();
   const server = spawn(process.execPath, [join(ROOT, "node_modules/next/dist/bin/next"), "start", "-p", String(port), "-H", "127.0.0.1"], { cwd: DIR, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" }, detached: true });
   // Its own process group: `next start` runs the server as a child, and killing only the parent can leave it behind.
@@ -387,16 +386,12 @@ async function render() {
     up.on("error", () => { try { res.writeHead(502).end(); } catch { /* closed */ } });
     req.pipe(up);
   });
-  const frontPort = await freePort();
-  await new Promise((r) => front.listen(frontPort, "127.0.0.1", r));
+  await new Promise((r) => front.listen(0, "127.0.0.1", r));
+  const frontPort = front.address().port;
   const base = `http://127.0.0.1:${frontPort}`;
   let browser;
   try {
-    for (let i = 0; ; i++) {
-      try { if ((await fetch(`http://127.0.0.1:${port}/onboard`)).status < 500) break; } catch { /* not up yet */ }
-      if (i > 240 || server.exitCode !== null) throw new Error(`next start did not come up:\n${log.slice(-2000)}`);
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    await waitForNextStart({ server, port, log: () => log });
     try { browser = await chromium.launch(); } catch (e) {
       throw new Error(`Chromium is not installed for Playwright; run \`npx playwright install chromium\`. ${String(e.message ?? e).split("\n")[0]}`);
     }

@@ -33,10 +33,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import postgres from "postgres";
+import { freePort, waitForNextStart } from "./lib/own-listener.mjs";
 
 const adminUrl = process.env.ADMIN_URL;
 const url = process.env.DATABASE_URL;
@@ -130,8 +130,6 @@ async function unseed() {
 
 /* ------------------------------------------------------------------------------------ the server */
 
-const freePort = () => new Promise((res, rej) => { const s = createServer(); s.listen(0, "127.0.0.1", () => { const { port } = s.address(); s.close(() => res(port)); }); s.on("error", rej); });
-
 const { generateKeyPair, exportPKCS8, exportSPKI } = await import("jose");
 const { privateKey, publicKey } = await generateKeyPair("ES256", { extractable: true });
 process.env.AUTH_JWT_PRIVATE_KEY = await exportPKCS8(privateKey);
@@ -151,11 +149,7 @@ async function start() {
   });
   server.stdout.on("data", (d) => (log += d));
   server.stderr.on("data", (d) => (log += d));
-  for (let i = 0; ; i++) {
-    try { if ((await fetch(`${base}/onboard`)).status < 500) return; } catch { /* not up yet */ }
-    if (i > 240 || server.exitCode !== null) throw new Error(`next start did not come up:\n${log.slice(-2000)}`);
-    await new Promise((r) => setTimeout(r, 250));
-  }
+  await waitForNextStart({ server, port, log: () => log });
 }
 const get = async (path) => {
   const res = await fetch(base + path, { headers: { authorization: `Bearer ${token}` } });

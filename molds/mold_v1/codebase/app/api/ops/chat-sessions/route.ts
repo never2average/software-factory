@@ -197,6 +197,14 @@ export async function POST(request: NextRequest) {
     const { refused } = await writeMirrorRows(inOrg, {
       orgId: ctx.orgId,
       email,
+      // One session, one workspace: a claim another workspace already holds is refused (mold_v1-140).
+      across: {
+        inOrg: (orgId, fn) => withOrgRls(orgId, fn),
+        async listOrgs() {
+          const ids = await listWorkspaceIds();
+          return ids.length ? ids : [ctx.orgId];
+        },
+      },
       sessions: parsed.data.sessions.map((s) => ({
         ...s,
         clientMarkers: Array.isArray(s.clientMarkers) ? s.clientMarkers : null,

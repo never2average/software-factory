@@ -37,7 +37,6 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { spawn } from "node:child_process";
 import { z } from "zod";
 import {
   NUDGE_NO_TOOL_RESULTS,
@@ -54,6 +53,7 @@ import {
   summarizeGenerateResult,
 } from "../agent/lib/empty-model-response.ts";
 import { CHAT_TELEMETRY_KINDS, chatSessionTag, chatTelemetrySentence } from "../lib/chat-telemetry.ts";
+import { spawnFakeModel } from "./lib/own-listener.mjs";
 
 let passed = 0;
 const check = (label, condition) => {
@@ -687,24 +687,14 @@ console.log("\nThe wiring:");
 
 console.log("\nThe real provider path, against a model that answers empty:");
 {
-  const port = 8791;
-  const server = spawn(
-    process.execPath,
-    ["scripts/fake-model-server.mjs", "--port", String(port), "--script", "empty-then-answer", "--empties", "1"],
-    { cwd: new URL("..", import.meta.url).pathname, stdio: ["ignore", "ignore", "pipe"] },
-  );
-  server.stderr.on("data", () => {});
+  // Port 0, read back from the server itself (mold_v1-121): a fixed port that
+  // something else already held used to answer every assertion below.
+  const fake = await spawnFakeModel(["--script", "empty-then-answer", "--empties", "1"], {
+    cwd: new URL("..", import.meta.url).pathname,
+  });
+  const { port } = fake;
+  const server = fake.child;
   try {
-    // Wait for the listener rather than sleeping a guess.
-    for (let i = 0; i < 100; i++) {
-      try {
-        await fetch(`http://127.0.0.1:${port}/__requests`);
-        break;
-      } catch {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-    }
-
     process.env.MODEL_PROVIDER = "cloudflare";
     process.env.CLOUDFLARE_ACCOUNT_ID = "test-account";
     process.env.CLOUDFLARE_API_TOKEN = "test-token";

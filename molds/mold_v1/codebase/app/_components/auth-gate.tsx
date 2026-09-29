@@ -10,6 +10,7 @@ import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/brows
 import { clearAllPending } from "@/lib/chat-queue";
 import { clearDesktopPrefs, forgetThisDevice } from "./desktop-notify";
 import { forgetQueueCache } from "./use-chat-queue";
+import { forgetStopState } from "./chat-stop-state";
 
 // Minimal typing for the Google Identity Services client we load at runtime.
 declare global {
@@ -227,6 +228,8 @@ export function AuthGate() {
     void forgetThisDevice(getAuthHeaders());
     clearDesktopPrefs();
     forgetQueueCache();
+    // A Stop's markers, notes and "stopped here" turns are one person's (mold_v1-141).
+    forgetStopState();
     window.google?.accounts.id.disableAutoSelect();
     restoredRef.current = false;
     tokenRef.current = null;

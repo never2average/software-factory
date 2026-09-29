@@ -32,11 +32,11 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import zlib from "node:zlib";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { freePort, spawnFakeModel } from "./lib/own-listener.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 let passed = 0;
@@ -55,14 +55,6 @@ delete process.env.DATABASE_URL; // no tenancy tables -> every caller resolves t
 process.env.CLOUDFLARE_ACCOUNT_ID = "test-account";
 process.env.CLOUDFLARE_API_TOKEN = "test-token";
 
-/** A free port, taken and released, so two runs in parallel cannot collide. */
-async function freePort() {
-  const probe = createServer();
-  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const { port } = probe.address();
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-}
 const PORT = await freePort();
 process.env.CLOUDFLARE_BASE_URL = `http://127.0.0.1:${PORT}/v1`;
 
@@ -79,21 +71,10 @@ async function useModelScript(script) {
     modelServer.kill();
     await new Promise((resolve) => modelServer.once("exit", resolve));
   }
-  modelServer = spawn(
-    process.execPath,
-    [join(ROOT, "scripts/fake-model-server.mjs"), "--port", String(PORT), "--script", script],
-    { stdio: ["ignore", "ignore", "pipe"] },
-  );
-  await new Promise((resolve, reject) => {
-    const onData = (chunk) => {
-      if (String(chunk).includes(`script=${script}`)) {
-        modelServer.stderr.off("data", onData);
-        resolve();
-      }
-    };
-    modelServer.stderr.on("data", onData);
-    modelServer.once("error", reject);
-  });
+  // Same port every time (the client froze it), but the fake's own ready line is
+  // the proof it bound — a held port rejects here instead of hanging or, worse,
+  // being answered by whoever holds it (scripts/lib/own-listener.mjs).
+  modelServer = (await spawnFakeModel(["--script", script], { cwd: ROOT, port: PORT })).child;
 }
 
 /**

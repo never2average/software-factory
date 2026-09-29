@@ -181,11 +181,12 @@ function classify(files, { isExempt, offends = (src) => unscopedQuery(src) || un
  * `db.select` on an unscoped handle, so it lands in `pending` and the ratchet
  * fails, which is what should have happened the day it was written.
  *
- * `--include=*.ts` deliberately keeps `.tsx` out: components do not hold a
- * database handle, and `lib/**` and `app/**` route files are where this
- * question is decided.
+ * `.tsx` is read too (mold_v1-135). It was kept out on the theory that
+ * components do not hold a database handle, but `app/**` pages are server
+ * components and can; a theory about where a mistake cannot be is the kind of
+ * claim this file exists to stop making.
  */
-const webFiles = execSync("grep -rl 'getOpsDb' app lib --include=*.ts").toString().trim().split("\n");
+const webFiles = execSync("grep -rl 'getOpsDb' app lib --include=*.ts --include=*.tsx").toString().trim().split("\n");
 const web = classify(webFiles, {
   isExempt: (f) =>
     !NOT_CONTROL_PLANE.some(([path]) => f === path) &&
@@ -197,7 +198,7 @@ const web = classify(webFiles, {
 const walk = (dir) =>
   readdirSync(dir).flatMap((f) => {
     const full = `${dir}/${f}`;
-    return statSync(full).isDirectory() ? walk(full) : full.endsWith(".ts") ? [full] : [];
+    return statSync(full).isDirectory() ? walk(full) : /\.tsx?$/.test(full) ? [full] : [];
   });
 
 /**
@@ -290,6 +291,23 @@ const service = classify(
  *              hidden row satisfies;
  *   EARLY      `if (!row) return true` in a function whose answer is otherwise
  *              "the owner matches";
+
+ * mold_v1-135 — six more that walked past the first tree walk:
+ *
+ *   ALL/ANY    `rows.every((r) => r.orgId === orgId)` (true on the empty list RLS
+ *              leaves) and `rows.some((r) => r.orgId !== orgId)` as a refusal
+ *              (false on it) — sound only behind a non-empty / counted check of the
+ *              same list (`rows.length > 0 && …`, `rows.length === 0 || …`);
+ *   DESTRUCT   `const { orgId: owner } = row ?? {}` taints `owner` like `row?.orgId`;
+ *   REVERSED   `row?.orgId === orgId || row === undefined` (and `mismatch && row`);
+ *   EARLY      now any value that ADMITS, not only `true`: `{ ok: true }`, or the
+ *              literal the function returns on a match (`… ? "allow" : "deny"`);
+ *   LATE       `let o; o = row?.orgId` taints `o` like a declaration does;
+ *   .tsx       files are walked.
+ *
+ * Tainted names are SCOPED to the function that taints them: `const { orgId } =
+ * row ?? {}` in one function says nothing about a parameter called `orgId` in
+ * the next.
  *
  * Polarity is what makes a guard unsound, so it is what is checked: `row?.orgId !==
  * orgId` alone refuses a hidden row (undefined is not the caller's workspace) and is
@@ -405,7 +423,8 @@ function ownerComparisons(node, base, sf, tainted) {
   const isOwnerOfBase = (e) => {
     const x = bare(e);
     if (ownershipKey(x) && about(canon(x.expression, sf))) return true;
-    if (ts.isIdentifier(x) && tainted.has(x.text)) return x.text === base || about(tainted.get(x.text));
+    const t = ts.isIdentifier(x) ? tainted.of(x) : null;
+    if (t) return x.text === base || about(t);
     if (ts.isFunctionLike(x)) return false;
     let hit = false;
     ts.forEachChild(x, (c) => {
@@ -434,6 +453,24 @@ const COMPARE = new Set([
 
 
 const isTrue = (n) => bare(n)?.kind === ts.SyntaxKind.TrueKeyword;
+const isFalse = (n) => bare(n)?.kind === ts.SyntaxKind.FalseKeyword;
+
+/**
+ * Does returning `e` ADMIT? `true`; or an object literal that says so (`{ ok: true }` — at least one property
+ * set to `true` and none to `false`); or a literal equal to one of `admitting`, the values the function
+ * returns when the owner MATCHES (`row.orgId === orgId ? "allow" : "deny"` → "allow").
+ */
+function admits(e, sf, admitting = new Set()) {
+  const x = bare(e);
+  if (!x) return false;
+  if (isTrue(x)) return true;
+  if (ts.isObjectLiteralExpression(x)) {
+    const vals = x.properties.filter(ts.isPropertyAssignment).map((p) => p.initializer);
+    return vals.some(isTrue) && !vals.some(isFalse);
+  }
+  if (ts.isStringLiteralLike(x) || ts.isNumericLiteral(x)) return admitting.has(canon(x, sf));
+  return false;
+}
 
 /** Does `stmt` hold an `if (<owner mismatch on base>) return/throw …`? */
 function refusesOnMismatch(stmt, base, sf, tainted) {
@@ -447,11 +484,11 @@ function refusesOnMismatch(stmt, base, sf, tainted) {
   visit(stmt);
   return found;
 }
-/** Does this statement (or block) do nothing but `return true`? */
-function returnsTrue(stmt) {
-  if (!stmt) return false;
-  if (ts.isBlock(stmt)) return stmt.statements.length === 1 && returnsTrue(stmt.statements[0]);
-  return ts.isReturnStatement(stmt) && Boolean(stmt.expression) && isTrue(stmt.expression);
+/** The value this statement (or single-statement block) returns, or null. */
+function returned(stmt) {
+  if (!stmt) return null;
+  if (ts.isBlock(stmt)) return stmt.statements.length === 1 ? returned(stmt.statements[0]) : null;
+  return ts.isReturnStatement(stmt) && stmt.expression ? stmt.expression : null;
 }
 
 /** Local names this file gives orgForCustomer / orgForCustomerId (and namespaces that carry them). */
@@ -499,7 +536,39 @@ function unsoundGuards(file, src) {
 
   // Variables holding a possibly-hidden owner: `const owner = row?.orgId`, `const o = row && row.orgId`.
   // `const owner = row?.orgId`, `= row?.["org_id"] ?? null`, `= row && row.orgId`: the variable IS the row's owner.
-  const tainted = new Map();
+  // Scoped: each taint holds for the function (or file) that made it, never for a same-named parameter elsewhere.
+  const taints = new Map();
+  const scopeOf = (n) => {
+    let s = n.parent;
+    while (s && !ts.isFunctionLike(s) && !ts.isSourceFile(s)) s = s.parent;
+    return s ?? sf;
+  };
+  const tainted = {
+    add(name, base, at) {
+      if (!taints.has(name)) taints.set(name, []);
+      taints.get(name).push({ base, scope: scopeOf(at) });
+    },
+    /** The row an identifier's value is the owner of, if a taint covers this use. Innermost wins. */
+    of(ident) {
+      const list = taints.get(ident.text);
+      if (!list) return null;
+      let best = null;
+      for (const t of list) {
+        if (t.scope.pos <= ident.pos && ident.end <= t.scope.end && (!best || t.scope.end - t.scope.pos < best.scope.end - best.scope.pos)) best = t;
+      }
+      return best?.base ?? null;
+    },
+  };
+  /** `row ?? {}`, `row || {}`, `await row`, `row` → the row's canonical base (for destructuring). */
+  const rowOf = (e) => {
+    let x = bare(e);
+    if (ts.isAwaitExpression(x)) x = bare(x.expression);
+    if (ts.isBinaryExpression(x) && (x.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken || x.operatorToken.kind === ts.SyntaxKind.BarBarToken)) {
+      return rowOf(x.left);
+    }
+    if (ts.isIdentifier(x) || ts.isPropertyAccessExpression(x) || ts.isElementAccessExpression(x)) return canon(x, sf);
+    return null;
+  };
   const ownerValue = (e) => {
     let x = bare(e);
     if (ts.isAwaitExpression(x)) x = bare(x.expression);
@@ -513,11 +582,61 @@ function unsoundGuards(file, src) {
   const collect = (n) => {
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
       const base = ownerValue(n.initializer);
-      if (base) tainted.set(n.name.text, base);
+      if (base) tainted.add(n.name.text, base, n);
+    }
+    // DESTRUCT — `const { orgId: owner } = row ?? {}`, `const { org_id } = row || {}`.
+    if (ts.isVariableDeclaration(n) && ts.isObjectBindingPattern(n.name) && n.initializer) {
+      const base = rowOf(n.initializer);
+      if (base) {
+        for (const el of n.name.elements) {
+          const from = el.propertyName ?? el.name;
+          const key = ts.isIdentifier(from) || ts.isStringLiteralLike(from) ? from.text : null;
+          if (key && ORG_KEY.test(key) && ts.isIdentifier(el.name)) tainted.add(el.name.text, base, n);
+        }
+      }
+    }
+    // LATE — `let o; o = row?.orgId`.
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(bare(n.left))) {
+      const base = ownerValue(n.right);
+      if (base) tainted.add(bare(n.left).text, base, n);
     }
     ts.forEachChild(n, collect);
   };
   collect(sf);
+
+  /**
+   * Is `node` the right side of an `&&` (every) / `||` (some) whose left side checks `list`'s length or presence?
+   * `rows.length > 0 && rows.every(…)`, `rows.length === ids.length && …`, `rows.length === 0 || rows.some(…)`.
+   */
+  const countedBefore = (node, list, joiner) => {
+    let child = node;
+    let p = node.parent;
+    while (p && (ts.isParenthesizedExpression(p) || (ts.isBinaryExpression(p) && p.operatorToken.kind === joiner))) {
+      if (ts.isBinaryExpression(p) && p.right === child) {
+        const left = p.left;
+        if (canon(left, sf).includes(`${list}.length`) || presenceOf(left, sf) === list || absenceOf(left, sf) === list) return true;
+      }
+      child = p;
+      p = p.parent;
+    }
+    return false;
+  };
+  /** Literals `fn` returns when the owner of `base` MATCHES: `row.orgId === orgId ? "allow" : "deny"` → "allow". */
+  const matchValues = (fn, base) => {
+    const out = new Set();
+    const visit = (x) => {
+      if (x !== fn && ts.isFunctionLike(x)) return;
+      if (ts.isConditionalExpression(x)) {
+        const k = ownerComparisons(x.condition, base, sf, tainted);
+        const pick = k.has("match") && !k.has("mismatch") ? x.whenTrue : k.has("mismatch") && !k.has("match") ? x.whenFalse : null;
+        const v = pick && bare(pick);
+        if (v && (ts.isStringLiteralLike(v) || ts.isNumericLiteral(v))) out.add(canon(v, sf));
+      }
+      ts.forEachChild(x, visit);
+    };
+    visit(fn);
+    return out;
+  };
 
   const isTool = /\bmodelFacing\(/.test(src);
   const resolvers = isTool ? resolverNames(sf) : null;
@@ -533,11 +652,41 @@ function unsoundGuards(file, src) {
           flag(n, `\`${n.left.getText(sf).trim()} && …\` ownership guard (a row RLS hid makes it false, and it passes)`);
         }
       }
+      // REVERSED PRESENCE — `row?.orgId !== orgId && row != null`: the same guard, operands swapped.
+      if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
+        const base = presenceOf(n.right, sf);
+        if (base && ownerComparisons(n.left, base, sf, tainted).has("mismatch")) {
+          flag(n, `\`… && ${n.right.getText(sf).trim()}\` ownership guard (a row RLS hid makes it false, and it passes)`);
+        }
+      }
       // ABSENCE — `!row || row.orgId === …`, `rows.length === 0 || rows[0].orgId === …`: true when hidden, a "match".
       if (op === ts.SyntaxKind.BarBarToken) {
         const base = absenceOf(n.left, sf);
         if (base && ownerComparisons(n.right, base, sf, tainted).has("match")) {
           flag(n, `\`${n.left.getText(sf).trim()} || …\` ownership guard (admits a row it could not see)`);
+        }
+        // REVERSED ABSENCE — `row?.orgId === orgId || row === undefined`.
+        const after = absenceOf(n.right, sf);
+        if (after && ownerComparisons(n.left, after, sf, tainted).has("match")) {
+          flag(n, `\`… || ${n.right.getText(sf).trim()}\` ownership guard (admits a row it could not see)`);
+        }
+      }
+    }
+    // ALL/ANY — `rows.every((r) => r.orgId === orgId)` is true on the empty list RLS leaves; `rows.some((r) =>
+    // r.orgId !== orgId)` as a refusal is false on it. Sound only behind a non-empty or counted check of the list.
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(bare(n.expression)) && n.arguments.length >= 1) {
+      const callee = bare(n.expression);
+      const method = callee.name.text;
+      const fn = bare(n.arguments[0]);
+      const param = (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) && fn.parameters[0] && ts.isIdentifier(fn.parameters[0].name) ? fn.parameters[0].name.text : null;
+      if ((method === "every" || method === "some") && param) {
+        const found = ownerComparisons(fn.body, param, sf, tainted);
+        const list = canon(callee.expression, sf);
+        const unsound = method === "every" ? found.has("match") : found.has("mismatch");
+        if (unsound && !countedBefore(n, list, method === "every" ? ts.SyntaxKind.AmpersandAmpersandToken : ts.SyntaxKind.BarBarToken)) {
+          flag(n, method === "every"
+            ? `\`${list}.every(… owner === …)\` is true on the empty list a row-level security filter leaves`
+            : `\`${list}.some(… owner !== …)\` refuses nothing on the empty list a row-level security filter leaves`);
         }
       }
     }
@@ -546,19 +695,21 @@ function unsoundGuards(file, src) {
       const present = presenceOf(n.condition, sf);
       const absent = absenceOf(n.condition, sf);
       if (
-        (present && isTrue(n.whenFalse) && ownerComparisons(n.whenTrue, present, sf, tainted).has("match")) ||
-        (absent && isTrue(n.whenTrue) && ownerComparisons(n.whenFalse, absent, sf, tainted).has("match"))
+        (present && admits(n.whenFalse, sf) && ownerComparisons(n.whenTrue, present, sf, tainted).has("match")) ||
+        (absent && admits(n.whenTrue, sf) && ownerComparisons(n.whenFalse, absent, sf, tainted).has("match"))
       ) {
         flag(n, "`row ? row.orgId … : true` guard (admits a row it could not see)");
       }
     }
-    // EARLY — `if (!row) return true` in a function whose answer is otherwise "the owner matches".
-    if (ts.isIfStatement(n) && returnsTrue(n.thenStatement)) {
+    // EARLY — `if (!row) return true` (or `{ ok: true }`, or the value a match returns) in a function whose answer
+    // is otherwise "the owner matches".
+    const early = ts.isIfStatement(n) ? returned(n.thenStatement) : null;
+    if (early) {
       const base = absenceOf(n.expression, sf);
       let fn = n.parent;
       while (fn && !ts.isFunctionLike(fn) && !ts.isSourceFile(fn)) fn = fn.parent;
-      if (base && fn && !ts.isSourceFile(fn) && ownerComparisons(fn, base, sf, tainted).has("match")) {
-        flag(n, `\`if (${n.expression.getText(sf).trim()}) return true\` before an ownership match (admits a row it could not see)`);
+      if (base && fn && !ts.isSourceFile(fn) && ownerComparisons(fn, base, sf, tainted).has("match") && admits(early, sf, matchValues(fn, base))) {
+        flag(n, `\`if (${n.expression.getText(sf).trim()}) return ${early.getText(sf).trim()}\` before an ownership match (admits a row it could not see)`);
       }
     }
     // PRESENCE, as a block — `if (row) { if (row.orgId !== orgId) return null; }` / `if (owner) { … throw … }`: the
@@ -589,7 +740,7 @@ const guardFiles = [
   ...(existsSync("app") ? walk("app") : []),
   ...(existsSync("services/task-workflow/lib") ? walk("services/task-workflow/lib") : []),
   ...(existsSync("services/task-workflow/app") ? walk("services/task-workflow/app") : []),
-].filter((f) => !f.includes("node_modules") && !f.endsWith(".generated.ts"));
+].filter((f) => !f.includes("node_modules") && !/\.generated\.tsx?$/.test(f));
 const guardHits = [];
 for (const f of guardFiles) {
   for (const [line, why] of unsoundGuards(f, readFileSync(f, "utf8"))) guardHits.push(`${f}:${line}  ${why}`);

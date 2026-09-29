@@ -112,16 +112,6 @@ export interface GateInput {
   readonly callerInWorkspace: boolean;
   /** Is local development allowed in this process at all (agent/lib/local-dev.ts)? */
   readonly localDevAllowed: boolean;
-  /**
-   * TRANSITION — REMOVE AFTER 2026-10-13 (follow-up task: "drop the headerless service door", mold_v1-130).
-   *
-   * Set by the agent's guard for a stream READ or a CANCEL only. The web app before mold_v1-130 sent
-   * `x-workspace-scope` on a step's create alone, and provisioning deploys the agent before the web app, so for the
-   * minutes between them — or for good, if the web deploy then fails — its service stream reads and cancels carry no
-   * header. When set, a headerless service is admitted to a session that passes {@link serviceMayAct}, in the
-   * session's own recorded workspace; never to a person's chat, never to post into anything, never to create.
-   */
-  readonly headerlessServiceTransition?: boolean;
 }
 
 export interface GateDecision {
@@ -161,14 +151,10 @@ export function sessionGateDecision(input: GateInput): GateDecision {
     // It used to be refused only when it named a DIFFERENT workspace: naming none admitted it to every session of
     // every workspace, and naming one to every person's private chat in it (mold_v1-130).
     const named = caller.serviceScope?.trim();
-    if (!named) {
-      // TRANSITION — remove after 2026-10-13 (see GateInput.headerlessServiceTransition): the workspace is the
-      // session's own, and only a session the platform runs qualifies.
-      if (input.headerlessServiceTransition && ownership && serviceMayAct(ownership)) {
-        return { allow: true, reason: "service", role: "service" };
-      }
-      return { allow: false, reason: "no-workspace" };
-    }
+    // No header, no door — for every route (mold_v1-138). #69 held a one-release exception open for a pre-#69 web
+    // app's headerless stream reads and cancels; the web app and agent now deploy together and name the workspace
+    // on every call, so that exception is gone and a headerless service reads and cancels nothing.
+    if (!named) return { allow: false, reason: "no-workspace" };
     if (!ownership) return { allow: false, reason: "unknown" };
     if (named !== ownership.orgId) return { allow: false, reason: "wrong-workspace" };
     if (!serviceMayAct(ownership)) return { allow: false, reason: "not-yours" };

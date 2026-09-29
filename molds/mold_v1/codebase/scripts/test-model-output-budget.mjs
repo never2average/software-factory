@@ -45,9 +45,8 @@
  * Run:  npm run test:model-output-budget
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { freePort, spawnFakeModel } from "./lib/own-listener.mjs";
 
 let passed = 0;
 const check = (label, condition) => {
@@ -59,13 +58,6 @@ const src = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8
 
 /* ── the scripted provider, on one port, restartable ─────────────────────── */
 
-const freePort = async () => {
-  const probe = createServer();
-  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const { port } = probe.address();
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-};
 const PORT = await freePort();
 const ROOT = new URL("..", import.meta.url).pathname;
 
@@ -86,21 +78,10 @@ async function useModelScript(script, extra = []) {
     modelServer.kill("SIGKILL");
     await new Promise((resolve) => modelServer.once("exit", resolve));
   }
-  modelServer = spawn(
-    process.execPath,
-    [`${ROOT}scripts/fake-model-server.mjs`, "--port", String(PORT), "--script", script, ...extra],
-    { stdio: ["ignore", "ignore", "pipe"] },
-  );
-  await new Promise((resolve, reject) => {
-    const onData = (chunk) => {
-      if (String(chunk).includes(`script=${script}`)) {
-        modelServer.stderr.off("data", onData);
-        resolve();
-      }
-    };
-    modelServer.stderr.on("data", onData);
-    modelServer.once("error", reject);
-  });
+  // Same port every time (the client froze it), but the fake's own ready line is
+  // the proof it bound — a held port rejects here instead of hanging or, worse,
+  // being answered by whoever holds it (scripts/lib/own-listener.mjs).
+  modelServer = (await spawnFakeModel(["--script", script, ...extra], { cwd: ROOT, port: PORT })).child;
 }
 const recordedRequests = async () => await (await fetch(`http://127.0.0.1:${PORT}/__requests`)).json();
 /** What the provider was really told it may produce. "absent" is the pre-fix answer. */

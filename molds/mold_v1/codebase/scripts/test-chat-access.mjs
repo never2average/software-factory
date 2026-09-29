@@ -178,17 +178,21 @@ check(
   })(),
 );
 check("…and with no header at all (the old any-workspace door)", !gate({ caller: svc(null) }).allow && !gate({ caller: svc("") }).allow);
-// TRANSITION — remove after 2026-10-13: the agent sets this for a headerless stream read or cancel only.
+// mold_v1-138: #69's one-release door for a headerless service stream read or cancel of a platform step is closed.
+// The web app and agent deploy together and name the workspace on every call, so no header is refused everywhere.
 check(
-  "TRANSITION: a headerless service read/cancel reaches a step the platform runs, in the step's own workspace",
-  gate({ caller: svc(null), ownership: STEP, headerlessServiceTransition: true }).allow &&
-    gate({ caller: svc(null), ownership: STEP, right: "write", headerlessServiceTransition: true }).allow,
+  "a headerless service is refused even a step the platform runs, to read or to cancel (no-workspace)",
+  (() => {
+    const read = gate({ caller: svc(null), ownership: STEP });
+    const cancel = gate({ caller: svc(null), ownership: STEP, right: "write" });
+    const blank = gate({ caller: svc("   "), ownership: STEP });
+    return !read.allow && read.reason === "no-workspace" && !cancel.allow && cancel.reason === "no-workspace" && !blank.allow;
+  })(),
 );
 check(
-  "…and never a person's private chat, nor anything unrecorded",
-  !gate({ caller: svc(null), headerlessServiceTransition: true }).allow &&
-    !gate({ caller: svc(null), ownership: null, headerlessServiceTransition: true }).allow &&
-    !gate({ caller: svc("   "), headerlessServiceTransition: true }).allow,
+  "…and the transition input is gone from the gate and the agent's guard (not merely unset)",
+  !/headerlessServiceTransition/.test(readFileSync(new URL("../lib/chat-gate.ts", import.meta.url), "utf8")) &&
+    !/headerlessServiceTransition|HEADERLESS service/.test(readFileSync(new URL("../agent/lib/session-guard.ts", import.meta.url), "utf8")),
 );
 check(
   "…refused one naming a different workspace than the session's",

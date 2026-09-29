@@ -6,6 +6,7 @@
  * runtime, the subagent registry, the hooks and the HTTP channel are all real.
  *
  *   node scripts/fake-model-server.mjs --port 8788 --script <name>
+ *   (--port 0: the kernel picks; the chosen port is on the "[fake-model] ... on :PORT" line)
  *
  * Scripts (chosen by --script, default "delegate-plain"):
  *   delegate-plain     root delegates to `research`; the child answers and ends.
@@ -387,4 +388,11 @@ function respond(payload, decision, res) {
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify(completion(decision, payload.model)));
 }
-server.listen(PORT, "127.0.0.1", () => console.error(`[fake-model] script=${SCRIPT} on :${PORT}`));
+// Port 0 lets the kernel choose (scripts/lib/own-listener.mjs reads the port back
+// from the line below). A port that is already held is fatal and says so: a fake
+// that silently failed to bind is how a test ends up talking to a stranger.
+server.on("error", (e) => {
+  console.error(`[fake-model] could not listen on :${PORT}: ${e.code ?? e.message}`);
+  process.exit(1);
+});
+server.listen(PORT, "127.0.0.1", () => console.error(`[fake-model] script=${SCRIPT} on :${server.address().port}`));

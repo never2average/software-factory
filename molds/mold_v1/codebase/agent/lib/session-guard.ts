@@ -422,7 +422,6 @@ async function decide(
   right: SessionRight,
   args: RouteHandlerArgs,
   deps: GuardDeps,
-  key = "",
 ): Promise<GateDecision & { ownership: SessionOwnership | null; db: GateDb | null }> {
   if (caller.kind === "local-dev" && deps.localDevAllowed()) {
     return { allow: true, reason: "local-dev", role: "local-dev", ownership: null, db: deps.db() };
@@ -441,14 +440,7 @@ async function decide(
       membership: facts.membership,
       callerInWorkspace: facts.callerInWorkspace,
       localDevAllowed: deps.localDevAllowed(),
-      // TRANSITION — remove after 2026-10-13: a pre-mold_v1-130 web app's headerless stream reads and cancels.
-      headerlessServiceTransition: key === STREAM_ROUTE || key === CANCEL_ROUTE,
     });
-    if (decision.allow && caller.kind === "service" && !caller.serviceScope) {
-      console.warn(
-        `[session-guard] admitted a HEADERLESS service ${key} on ${sessionId} (workspace ${ownership?.orgId}) — transition door, remove after 2026-10-13; the web app should send x-workspace-scope`,
-      );
-    }
     return { ...decision, ownership, db };
   } catch (error) {
     throw new GateUnavailable(error instanceof Error ? error.message : String(error));
@@ -603,7 +595,7 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
 
     let decision: Awaited<ReturnType<typeof decide>>;
     try {
-      decision = await decide(caller, sessionId, right, args, deps, key);
+      decision = await decide(caller, sessionId, right, args, deps);
     } catch (error) {
       console.error("[session-guard] could not check access — refusing (503)", {
         route: key,

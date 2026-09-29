@@ -17,7 +17,7 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { createServer } from "node:net";
+import { freePort, waitForNextStart } from "./own-listener.mjs";
 
 /**
  * Every page and tab, each with the text (or CSS selector, `css:`) that proves it RENDERED — a page that shows the
@@ -140,8 +140,6 @@ export function baseWordsIn(t) {
   return f;
 }
 
-const freePort = () => new Promise((res, rej) => { const s = createServer(); s.listen(0, "127.0.0.1", () => { const { port } = s.address(); s.close(() => res(port)); }); s.on("error", rej); });
-
 /**
  * The canary: the inbox answered with no `threads` crashes to the error screen. The pass must report it; a pass that
  * reads a crashed page as rendered (as the first version did, on every page) is not reading anything.
@@ -161,11 +159,7 @@ export async function renderedText({ dir, root, specs = PAGE_SPECS }) {
   const base = `http://127.0.0.1:${port}`;
   let browser;
   try {
-    for (let i = 0; ; i++) {
-      try { if ((await fetch(base + "/onboard")).status < 500) break; } catch { /* not up yet */ }
-      if (i > 240 || server.exitCode !== null) throw new Error(`next start did not come up:\n${log.slice(-2000)}`);
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    await waitForNextStart({ server, port, log: () => log });
     try { browser = await chromium.launch(); } catch (e) {
       throw new Error(`Chromium is not installed for Playwright; run \`npx playwright install chromium\` (CI: --with-deps). ${String(e.message ?? e).split("\n")[0]}`);
     }

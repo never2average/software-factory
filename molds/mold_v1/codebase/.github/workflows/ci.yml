@@ -291,6 +291,12 @@ jobs:
         if: always()
         run: npm run test:chat-buffered-turns
 
+      # A Stop's markers, notes and "stopped here" turns outlive a remount at module scope; keyed by person,
+      # workspace and chat, and forgotten on sign-out, so a shared machine never shows the last person's Stop.
+      - name: Chat Stop state is one person's (keyed, cleared on sign-out)
+        if: always()
+        run: npm run test:chat-stop-state
+
       # "You're showing [the chat directives] many, many times. That should not
       # ever be shown." One function (lib/chat-attachments displayText) over every
       # form a directive was ever sent or stored in, and a gate over every site
@@ -349,6 +355,12 @@ jobs:
       - name: PDF preview (rules, and the wiring that ships)
         if: always()
         run: npm run test:pdf-preview
+
+      # A test talks to the server it started, or fails loudly: fixed ports and
+      # "the port answers" readiness let a squatter answer every assertion.
+      - name: Own listeners (no fixed ports, no squatters)
+        if: always()
+        run: npm run test:own-listener
 
       # AN EMPTY MODEL RESPONSE. On 2026-09-23 the live chat died on every
       # attempt with `MODEL_CALL_FAILED "Empty model response"` AFTER the pdf had

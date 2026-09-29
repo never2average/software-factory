@@ -696,14 +696,14 @@ try {
   );
   check("…nor another person's legacy chat (404)", (await svcCall("GET", L, "/stream")).status === 404);
   check("…nor a subagent child of a person's chat (404)", (await svcCall("GET", C, "/stream")).status === 404);
-  // TRANSITION (remove after 2026-10-13): a pre-mold_v1-130 web app sends the header only on a step's create, and the
-  // agent deploys first. Its headerless stream reads and cancels still reach the steps the platform runs — in the
-  // step's own workspace — and nothing else.
+  // mold_v1-138: #69 held a one-release door open for a pre-#69 web app's headerless stream reads and cancels of the
+  // steps the platform runs. The web app and agent now deploy together, naming the workspace on every call, so the
+  // door is shut: a headerless service reads, cancels and posts into nothing.
   const cancelsBefore = sessions.get(cronStep.sessionId).cancelled;
-  check("an OLD web app's headerless stream read of its own step still works (200)", (await call("GET", `/eve/v1/session/${cronStep.sessionId}/stream`, { token: svc })).status === 200);
-  check("…and its headerless cancel of a step (202)", (await call("POST", `/eve/v1/session/${cronStep.sessionId}/cancel`, { token: svc, body: {} })).status === 202 && sessions.get(cronStep.sessionId).cancelled === cancelsBefore + 1);
-  check("…and of a person's workflow step (202)", (await call("POST", `/eve/v1/session/${step.sessionId}/cancel`, { token: svc, body: {} })).status === 202);
-  check("…but never a headerless POST into a step (404)", (await call("POST", `/eve/v1/session/${cronStep.sessionId}`, { token: svc, body: { message: "steer", continuationToken: cronStep.ct } })).status === 404);
+  check("a headerless stream read of a platform step is refused (404)", (await call("GET", `/eve/v1/session/${cronStep.sessionId}/stream`, { token: svc })).status === 404);
+  check("…and a headerless cancel of it (404, not cancelled)", (await call("POST", `/eve/v1/session/${cronStep.sessionId}/cancel`, { token: svc, body: {} })).status === 404 && sessions.get(cronStep.sessionId).cancelled === cancelsBefore);
+  check("…and of a person's workflow step (404)", (await call("POST", `/eve/v1/session/${step.sessionId}/cancel`, { token: svc, body: {} })).status === 404);
+  check("…and a headerless POST into a step (404)", (await call("POST", `/eve/v1/session/${cronStep.sessionId}`, { token: svc, body: { message: "steer", continuationToken: cronStep.ct } })).status === 404);
   check(
     "…and never a person's chat, headerless: not its stream, not its cancel (404)",
     (await call("GET", `/eve/v1/session/${S}/stream`, { token: svc })).status === 404 &&
@@ -721,7 +721,7 @@ try {
   const AGENT = process.env.NEXT_PUBLIC_EVE_API_URL;
   const seen = [];
   let onStreamOpen = null;
-  /** `oldWeb`: the pre-mold_v1-130 web app, which named the workspace on a step's CREATE only. */
+  /** `oldWeb`: the pre-mold_v1-130 web app, which named the workspace on a step's CREATE only — refused since mold_v1-138. */
   let oldWeb = false;
   const beforeDelegate = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
@@ -754,15 +754,15 @@ try {
   const signingKey = await exportPKCS8(esPriv);
   try {
     const { makeDelegate } = await import("../lib/workflow-delegate.ts");
-    for (const web of ["NEW", "OLD"]) {
-      oldWeb = web === "OLD";
+    for (const web of ["NEW"]) {
+      oldWeb = false;
       seen.length = 0;
       try {
       const answer = await makeDelegate(svc, 5_000, undefined, undefined, ORG_A, "step")("summarise the quarter", "research");
       check(`${web} web app: a service step runs to its answer, read from the delegated child's own session`, answer === "CHILD-ANSWER-7", { answer, seen });
       check(
-        `…every call it made was admitted${oldWeb ? " (headerless after the create: the transition door)" : ", each naming the workspace"}`,
-        seen.filter((r) => r.path.endsWith("/stream")).length >= 2 && seen.every((r) => r.status < 300 && (oldWeb ? r.path !== "/eve/v1/session" || r.scope === ORG_A : r.scope === ORG_A)),
+        "…every call it made was admitted, each naming the workspace",
+        seen.filter((r) => r.path.endsWith("/stream")).length >= 2 && seen.every((r) => r.status < 300 && r.scope === ORG_A),
         seen,
       );
       seen.length = 0;
@@ -772,13 +772,23 @@ try {
       onStreamOpen = null;
       for (let i = 0; i < 50 && !seen.some((r) => r.path.endsWith("/cancel")); i++) await new Promise((r) => setTimeout(r, 20));
       const stop = seen.find((r) => r.path.endsWith("/cancel"));
-      check(`…a run aborted mid-step cancels its session (202)${oldWeb ? ", headerless" : ", naming the workspace"}`, stop?.status === 202 && (oldWeb ? stop.scope === null : stop.scope === ORG_A), seen);
+      check("…a run aborted mid-step cancels its session (202), naming the workspace", stop?.status === 202 && stop.scope === ORG_A, seen);
       } catch (error) {
         check(`${web} web app: the workflow delegate runs a service step`, false, String(error?.message ?? error));
       } finally {
         onStreamOpen = null;
       }
     }
+    // mold_v1-138: a web app that names the workspace on the create alone (pre-mold_v1-130) no longer reads its step.
+    oldWeb = true;
+    seen.length = 0;
+    const oldAnswer = await makeDelegate(svc, 5_000, undefined, undefined, ORG_A, "step")("summarise the quarter", "research").catch((e) => e);
+    const oldStreams = seen.filter((r) => r.path.endsWith("/stream"));
+    check(
+      "OLD web app (header on the create only): its headerless stream read is refused (404) and the step yields no answer",
+      oldAnswer !== "CHILD-ANSWER-7" && oldStreams.length >= 1 && oldStreams.every((r) => r.scope === null && r.status === 404),
+      { oldAnswer: String(oldAnswer?.message ?? oldAnswer), seen },
+    );
     oldWeb = false;
 
     // A PERSON's step: made the workspace's with the web app's signed grant, so the run can cancel and resume it.

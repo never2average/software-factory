@@ -14,6 +14,11 @@
  *     trimmed for that chat, and the rest of the list still syncs.
  *  3. EITHER DEPLOY ORDER: with `client_markers` absent (before migration 0020)
  *     the list still reads and writes; after the migration, markers are kept.
+ *  4. A deleted chat's session cannot be re-claimed (mold_v1-122).
+ *  5. One session, one workspace (mold_v1-140): a member of another workspace
+ *     cannot file a row for someone's legacy session and so cannot become its
+ *     owner when the real owner deletes; a claimant outside the scope row's
+ *     workspace is never inferred owner.
  *
  * Run:  ADMIN_URL=… DATABASE_URL=…app_rw… npm run test:chat-sessions-mirror-db
  */
@@ -49,6 +54,11 @@ const STOP = { type: "client.turn.stopped", data: { requestIds: ["r1"], delegati
 const { withOrgDb, closeDb } = await import("../agent/lib/db/index.ts");
 const mirror = await import("../lib/chat-sessions-mirror.ts");
 const inOrg = (fn) => withOrgDb(ORG, fn);
+/** The cross-workspace reader the route passes (rule 4): every workspace, each inside its own scope. */
+const across = {
+  inOrg: (orgId, fn) => withOrgDb(orgId, fn),
+  listOrgs: async () => (await admin`select org_id from orgs`).map((r) => r.org_id),
+};
 const row = async (id) => {
   const hasMarkers =
     (await admin`select 1 from information_schema.columns where table_name = 'chat_sessions' and column_name = 'client_markers'`).length > 0;
@@ -70,6 +80,7 @@ try {
 
   console.log("\n1. A colleague in the same workspace cannot take a chat over by its id");
   await mirror.writeMirrorRows(inOrg, {
+    across,
     orgId: ORG,
     email: ALICE,
     sessions: [{ id: SID, eveSessionId: SID, title: "Alice's chat", clientMarkers: [STOP] }],
@@ -86,7 +97,7 @@ try {
     },
   ];
   for (const a of attempts) {
-    const { refused } = await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: MALLORY, sessions: [a.session] });
+    const { refused } = await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: MALLORY, sessions: [a.session] });
     const after = await row(SID);
     check(`refused ${a.label}`, refused === 1, refused);
     check(
@@ -98,7 +109,7 @@ try {
   const theirs = await mirror.readMirrorRows((fn) => withOrgDb(ORG, fn), { orgId: ORG, email: MALLORY });
   check("the colleague's list does not contain it", !theirs.some((r) => r.id === SID));
   // The owner's own upsert may not null the session either.
-  await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: [{ id: SID, title: "renamed" }] });
+  await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: SID, title: "renamed" }] });
   const renamed = await row(SID);
   check("the owner's later write without an eveSessionId keeps it (it is set once, never nulled)", renamed?.eve_session_id === SID && renamed?.title === "renamed", renamed);
 
@@ -110,7 +121,7 @@ try {
     { id: `${SID}_b`, eveSessionId: `${SID}_b`, title: "hundreds of answers", clientMarkers: [...many, STOP] },
     { id: `${SID}_c`, eveSessionId: `${SID}_c`, title: "an ordinary chat" },
   ];
-  const { refused } = await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: batch });
+  const { refused } = await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: batch });
   const [a, b, c] = await Promise.all(batch.map((s) => row(s.id)));
   check("every chat in the batch is written", refused === 0 && a && b && c, { refused });
   check("the huge answer is trimmed, the Stop kept", JSON.stringify(a.client_markers).length < 32_000 && a.client_markers.some((m) => m.type === "client.turn.stopped"), JSON.stringify(a.client_markers).length);
@@ -128,7 +139,7 @@ try {
     console.log("     read failed:", String(e?.message ?? e).slice(0, 120));
   }
   try {
-    await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: [{ id: `${SID}_d`, eveSessionId: `${SID}_d`, title: "before the column", clientMarkers: [STOP] }] });
+    await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: `${SID}_d`, eveSessionId: `${SID}_d`, title: "before the column", clientMarkers: [STOP] }] });
   } catch (e) {
     writeOk = false;
     console.log("     write failed:", String(e?.message ?? e).slice(0, 120));
@@ -137,7 +148,7 @@ try {
   check("writing the list works without the column (markers simply not kept yet)", writeOk && (await row(`${SID}_d`))?.title === "before the column");
   await applyMigration();
   mirror.resetMarkersColumnCache();
-  await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: [{ id: `${SID}_d`, eveSessionId: `${SID}_d`, title: "after", clientMarkers: [STOP] }] });
+  await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: `${SID}_d`, eveSessionId: `${SID}_d`, title: "after", clientMarkers: [STOP] }] });
   check("after the migration, markers are kept", (await row(`${SID}_d`))?.client_markers?.length === 1);
 
   console.log("\n4. A deleted chat's session cannot be re-claimed by another member (review of #59; mold_v1-122)");
@@ -150,20 +161,20 @@ try {
       await inOrg((tx) => tx.execute(sql`delete from chat_sessions where id = ${sessionId} and owner_email = ${owner}`));
     };
     const claim = (sessionId) =>
-      mirror.writeMirrorRows(inOrg, { orgId: ORG, email: MALLORY, sessions: [{ id: `${sessionId}_m`, eveSessionId: sessionId, title: "mine now" }] });
+      mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: MALLORY, sessions: [{ id: `${sessionId}_m`, eveSessionId: sessionId, title: "mine now" }] });
     const ownerOf = async (sessionId) => (await gate.readOwnership(db, sessionId, [ORG]))?.ownerEmail ?? null;
 
     // (a) A session created since #66: the agent recorded its owner at creation. #66 alone already holds it.
     const NEW = `${SID}_new`;
     await gate.recordOwner(db, { sessionId: NEW, orgId: ORG, ownerEmail: ALICE, ownerPrincipal: null, ownerKind: "person", visibility: "owner" });
-    await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: [{ id: NEW, eveSessionId: NEW, title: "Alice's new chat" }] });
+    await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: NEW, eveSessionId: NEW, title: "Alice's new chat" }] });
     await deleteChat(NEW, ALICE, { tombstone: false });
     await claim(NEW);
     check("#66: a session with an owner RECORD stays its owner's after the chat is deleted and re-claimed", (await ownerOf(NEW)) === ALICE);
 
     // (b) A session from before #66 (no record), deleted WITHOUT the tombstone — the gap #66 left.
     const OLD = `${SID}_old`;
-    await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: [{ id: OLD, eveSessionId: OLD, title: "Alice's old chat" }] });
+    await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: OLD, eveSessionId: OLD, title: "Alice's old chat" }] });
     check("a pre-#66 session is its owner's by inference while her row exists", (await ownerOf(OLD)) === ALICE);
     await deleteChat(OLD, ALICE, { tombstone: false });
     const refusedOld = (await claim(OLD)).refused;
@@ -171,7 +182,7 @@ try {
 
     // (c) The same, deleted the way the route now deletes.
     const HELD = `${SID}_held`;
-    await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: [{ id: HELD, eveSessionId: HELD, title: "Alice's other old chat" }] });
+    await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: HELD, eveSessionId: HELD, title: "Alice's other old chat" }] });
     await deleteChat(HELD, ALICE, { tombstone: true });
     await claim(HELD);
     check("with it, the owner is frozen before the row goes: the claim changes nothing", (await ownerOf(HELD)) === ALICE);
@@ -183,7 +194,7 @@ try {
     // is refused.
     const TWO = `${SID}_two`;
     const CAROL = "carol@probe.example";
-    await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: [{ id: TWO, eveSessionId: TWO, title: "claimed twice" }] });
+    await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: TWO, eveSessionId: TWO, title: "claimed twice" }] });
     await admin`insert into chat_sessions (id, org_id, owner_email, eve_session_id, title) values (${`${TWO}_x`}, ${ORG}, ${CAROL}, ${TWO}, 'x')`;
     check("with two claimants nothing is inferred", (await ownerOf(TWO)) === null);
     check("…and deleting records nothing: Alice is not the only claimant", (await mirror.recordOwnershipBeforeDelete(db, { sessionId: TWO, orgId: ORG, email: ALICE })) === "skipped");
@@ -199,11 +210,12 @@ try {
     );
   }
 
-  console.log("\n5. Another workspace cannot tombstone someone's legacy session (review of #77)");
+  console.log("\n5. One session, one workspace: another workspace can neither claim nor tombstone a legacy session (#77; mold_v1-140)");
   {
-    // A pre-0016 session (no scope row) mirrored by Alice in workspace ORG. Mallory is a member of workspace
-    // ORG_B only. The mirror refuses duplicate claims inside the CALLER's workspace, so her row in B is accepted;
-    // she then deletes it. Her DELETE must record nothing about a session whose evidence she does not hold alone.
+    // A pre-0016 session (no scope row) mirrored by Alice in workspace ORG. Mallory is a member of workspace ORG_B
+    // only. The mirror used to refuse duplicate claims inside the CALLER's workspace alone, so her row in B was
+    // accepted — and when Alice deleted her chat, Mallory's row was the only claimant left and she was inferred
+    // its owner. Now a claim for a session another workspace holds is refused.
     const ORG_B = `${ORG}-b`;
     await admin`insert into orgs (org_id, name, status) values (${ORG_B}, 'Chat mirror probe B', 'active')`;
     const gate = await import("../lib/session-gate.ts");
@@ -212,20 +224,60 @@ try {
       listOrgs: async () => [ORG, ORG_B],
       orgsOf: async (e) => (e === ALICE ? [ORG] : [ORG_B]),
     };
+    const inB = (fn) => withOrgDb(ORG_B, fn);
+    const ownerOf = async (sessionId) => (await gate.readOwnership(db2, sessionId, [ORG]))?.ownerEmail ?? null;
+    const claimInB = async (sessionId, email = MALLORY) =>
+      (await mirror.writeMirrorRows(inB, { across, orgId: ORG_B, email, sessions: [{ id: `${sessionId}_m`, eveSessionId: sessionId, title: "x" }] })).refused;
+    const rowsInB = async (sessionId) => (await admin`select id from chat_sessions where org_id = ${ORG_B} and eve_session_id = ${sessionId}`).length;
+    /** What the route does on DELETE, in order: record ownership, then remove the caller's row. */
+    const deleteChat = async (sessionId, rowId, org, email) => {
+      const outcome = await mirror.recordOwnershipBeforeDelete(db2, { sessionId, orgId: org, email });
+      await withOrgDb(org, (tx) => tx.execute(sql`delete from chat_sessions where id = ${rowId} and owner_email = ${email}`));
+      return outcome;
+    };
+
+    // (a) The reviewer's probe: B files a row for A's legacy session, A deletes, B must not become owner.
+    const PROBE = `${SID}_probe`;
+    await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: `${PROBE}_a`, eveSessionId: PROBE, title: "Alice's pre-0016 chat" }] });
+    check("the legacy session is Alice's while only her row names it", (await ownerOf(PROBE)) === ALICE);
+    check("Mallory's claim from ANOTHER workspace is refused, and no row is written there", (await claimInB(PROBE)) === 1 && (await rowsInB(PROBE)) === 0);
+    const outcome = await deleteChat(PROBE, `${PROBE}_a`, ORG, ALICE);
+    check("Alice deletes her chat: she holds all the evidence, so she is frozen as its owner", outcome === "frozen", outcome);
+    check("…and Mallory is not the owner", (await ownerOf(PROBE)) === ALICE);
+    await claimInB(PROBE);
+    check("…nor after she files again once Alice's row is gone (the record decides)", (await ownerOf(PROBE)) === ALICE);
+    check(
+      "…nor may she read it",
+      !(await gate.gateSessionRequest(db2, { kind: "person", email: MALLORY }, PROBE, "read")).allow,
+    );
+
+    // (b) A session anchored by a scope row in ORG is refused in B too, even with no chat row anywhere.
+    const SCOPED = `${SID}_scoped`;
+    await admin`insert into agent_session_scopes (session_id, org_id, principal_email) values (${SCOPED}, ${ORG}, ${ALICE})`;
+    check("a claim for a session whose scope row is in another workspace is refused", (await claimInB(SCOPED)) === 1 && (await rowsInB(SCOPED)) === 0);
+    // One workspace per session, whoever asks: Alice filing her own session from workspace B is refused as well.
+    check("…and so is Alice's own claim of it from workspace B (a session has one workspace)", (await claimInB(SCOPED, ALICE)) === 1 && (await rowsInB(SCOPED)) === 0);
+
+    // (c) Rows filed BEFORE this change are still there. The inference ignores a claimant outside the scope row's
+    // workspace: with Alice's scope row in ORG and Mallory's old row in B, deleting Alice's chat does not make
+    // Mallory the owner.
+    await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: `${SCOPED}_a`, eveSessionId: SCOPED, title: "Alice's scoped chat" }] });
+    await admin`insert into chat_sessions (id, org_id, owner_email, eve_session_id, title) values (${`${SCOPED}_old`}, ${ORG_B}, ${MALLORY}, ${SCOPED}, 'filed before the fix')`;
+    check("with a scope row in ORG, Alice is the owner while her row exists (Mallory's row in B is ignored)", (await ownerOf(SCOPED)) === ALICE);
+    await deleteChat(SCOPED, `${SCOPED}_a`, ORG, ALICE);
+    check("…and once it is deleted Mallory, a claimant outside the anchor's workspace, is NOT inferred owner", (await ownerOf(SCOPED)) !== MALLORY);
+
+    // (d) Review of #77, on a row filed before this change: Mallory's own DELETE must record nothing about a
+    // session whose evidence she does not hold alone (no tombstone locking Alice out).
     const LEG = `${SID}_xws`;
-    await mirror.writeMirrorRows(inOrg, { orgId: ORG, email: ALICE, sessions: [{ id: `${LEG}_a`, eveSessionId: LEG, title: "Alice's pre-0016 chat" }] });
-    check("the legacy session is Alice's while only her row names it", (await gate.readOwnership(db2, LEG, [ORG]))?.ownerEmail === ALICE);
-    const accepted = (await mirror.writeMirrorRows((fn) => withOrgDb(ORG_B, fn), { orgId: ORG_B, email: MALLORY, sessions: [{ id: `${LEG}_m`, eveSessionId: LEG, title: "x" }] })).refused === 0;
-    check("(the mirror accepts Mallory's row in her own workspace — refusal is per workspace)", accepted);
-    const recorded = await mirror.recordOwnershipBeforeDelete(db2, { sessionId: LEG, orgId: ORG_B, email: MALLORY });
-    await withOrgDb(ORG_B, (tx) => tx.execute(sql`delete from chat_sessions where id = ${`${LEG}_m`} and owner_email = ${MALLORY}`));
+    await mirror.writeMirrorRows(inOrg, { across, orgId: ORG, email: ALICE, sessions: [{ id: `${LEG}_a`, eveSessionId: LEG, title: "Alice's pre-0016 chat" }] });
+    await admin`insert into chat_sessions (id, org_id, owner_email, eve_session_id, title) values (${`${LEG}_m`}, ${ORG_B}, ${MALLORY}, ${LEG}, 'filed before the fix')`;
+    const recorded = await deleteChat(LEG, `${LEG}_m`, ORG_B, MALLORY);
     check("Mallory's DELETE records nothing: the evidence spans two workspaces", recorded === "skipped", recorded);
     const rec = (await admin`select owner_email, owner_kind, org_id from agent_session_owners where session_id = ${LEG}`)[0] ?? null;
     check("…no tombstone and no owner record exists for the session", rec === null, rec);
-    const after = await gate.readOwnership(db2, LEG, [ORG]);
     check("…and once her row is gone the session is Alice's again, and Alice may read it",
-      after?.ownerEmail === ALICE && (await gate.gateSessionRequest(db2, { kind: "person", email: ALICE }, LEG, "read")).allow);
-    // Alice's own delete still freezes her — she is the sole claimant, and all the evidence is in her workspace.
+      (await ownerOf(LEG)) === ALICE && (await gate.gateSessionRequest(db2, { kind: "person", email: ALICE }, LEG, "read")).allow);
     check("Alice deleting her own chat still freezes her as the owner", (await mirror.recordOwnershipBeforeDelete(db2, { sessionId: LEG, orgId: ORG, email: ALICE })) === "frozen");
     await admin`delete from chat_sessions where org_id = ${ORG_B}`.catch(() => {});
     await admin`delete from agent_session_owners where org_id = ${ORG_B}`.catch(() => {});
@@ -235,6 +287,7 @@ try {
   await applyMigration().catch(() => {});
   await admin`delete from chat_sessions where org_id = ${ORG}`.catch(() => {});
   await admin`delete from agent_session_owners where org_id = ${ORG}`.catch(() => {});
+  await admin`delete from agent_session_scopes where org_id = ${ORG}`.catch(() => {});
   await admin`delete from orgs where org_id = ${ORG}`.catch(() => {});
   await admin.end();
   await closeDb?.();

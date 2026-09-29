@@ -873,10 +873,11 @@ console.log("\n7g. Stopping a parked specialist's resumed reply says so under TH
   check("the Stop handler keys the marker to the reply's turn", /turnId: target\.replyTurnId \?\? target\.turnId \}/.test(chat));
   check(
     "a Stop's marker outlives the hand-back remount that races the cancel's answer (module scope, every instance listens)",
-    /const stopMarkersByChat = new Map<string, TurnEvent\[\]>\(\);/.test(chat) &&
-      /useState<TurnEvent\[\]>\(\(\) => stopMarkersByChat\.get\(chatKey\) \?\? \[\]\)/.test(chat) &&
+    // Module scope moved to ./chat-stop-state (keyed by person, workspace and chat since mold_v1-141).
+    /const stopMarkers = new Map<string, TurnEvent\[\]>\(\);/.test(readFileSync("app/_components/chat-stop-state.ts", "utf8")) &&
+      /useState<TurnEvent\[\]>\(\(\) => stopMarkersFor\(stopStateKey\)\)/.test(chat) &&
       !/setStoppedMarkers\(\(prev\)/.test(chat) &&
-      (chat.match(/recordStopMarker\(\s*chatKey,/g) ?? []).length === 2,
+      (chat.match(/recordStopMarker\(\s*stopStateKey,/g) ?? []).length === 2,
   );
 }
 
