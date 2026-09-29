@@ -50,6 +50,21 @@
  * policy report as uncovered. The two are ANDed. A table is protected when it is enabled, forced,
  * carries a scoped policy, and NOT ONE of its permissive policies admitted a foreign row here.
  */
+/**
+ * THE predicates, in one place. rls-cover.mjs converges every org-scoped table to them and
+ * deploy-window.mjs holds the same tables to them for the length of a deploy; if the two ever differed,
+ * the guard would either lock the app out (stricter) or be the window it exists to close (looser).
+ * provision.py --self-test fails if either script defines its own copy.
+ *
+ * The CONTROL PLANE (read before any workspace is known: sign-in, "which workspaces am I in", claiming an
+ * invite, acrossOrgsRls()'s sweep) keeps the open-when-unset shape even in fail_closed; see rls-cover.mjs.
+ */
+export const CONTROL_PLANE = new Set(["orgs", "org_members", "org_invites"]);
+export const STRICT = `(org_id = current_setting('app.org_id', true))`;
+export const OPEN = `(coalesce(current_setting('app.org_id', true), '') = '' OR org_id = current_setting('app.org_id', true))`;
+/** The predicate a table converges to under `mode`. */
+export const orgPredicate = (mode, t) => (mode === "fail_closed" && !CONTROL_PLANE.has(t) ? STRICT : OPEN);
+
 export const q = (id) => '"' + String(id).replace(/"/g, '""') + '"';
 export const exprs = (p) => [p.qual, p.with_check].filter((e) => e !== null && e !== undefined && e !== "");
 /** A predicate can only confine a row to a workspace if it reads the workspace and compares org_id. */
