@@ -20,24 +20,65 @@
  *     run key was identical for every invocation and run two silently merged
  *     into run one (three invocations, one row — measured 2026-09-23).
  *
+ *   - the session's workspace (`orgForSession(ctx)`) is passed too. A workflow
+ *     NAME is not unique across workspaces, so the recorder files the run in
+ *     the workspace it ran in and only there; since fde-agent #85 a call with
+ *     no workspace records nothing at all. The recorders are called through a
+ *     4-parameter type so this also compiles against a base without that
+ *     parameter (where the extra argument is simply ignored).
+ *
  * Observe-only, and never throws: eve escalates a thrown hook to turn.failed,
  * so the recorder swallows its own errors (see agent/lib/workflow-usage.ts).
  */
 import { defineHook } from "eve/hooks";
-import { finishWorkflowRun, openWorkflowRun, recordWorkflowStep } from "#lib/workflow-usage.js";
+import {
+  finishWorkflowRun as finishRun,
+  openWorkflowRun as openRun,
+  recordWorkflowStep as recordStep,
+} from "#lib/workflow-usage.js";
+import { orgForSession } from "#lib/org-context.js";
+
+type Outcome = { status: "success" | "failed"; error?: string };
+type StepUsage = Parameters<typeof recordStep>[2];
+type OrgId = string | null;
+
+// Assignment (not a cast) keeps these type-checked: a base whose recorders take
+// the workspace matches exactly, an older one takes fewer parameters.
+const openWorkflowRun: (name: string, turnId: string, sessionId?: string, orgId?: OrgId) => Promise<void> = openRun;
+const recordWorkflowStep: (
+  name: string,
+  turnId: string,
+  usage: StepUsage,
+  sessionId?: string,
+  orgId?: OrgId,
+) => Promise<void> = recordStep;
+const finishWorkflowRun: (
+  name: string,
+  turnId: string,
+  outcome: Outcome,
+  sessionId?: string,
+  orgId?: OrgId,
+) => Promise<void> = finishRun;
+
+/**
+ * The workspace this run belongs to — the session's own (a delegated child's is
+ * its root's). Never throws (see above).
+ */
+const workspaceOf = (ctx: Parameters<typeof orgForSession>[0]): Promise<OrgId> =>
+  orgForSession(ctx).catch(() => null);
 
 const WORKFLOW = "lodr-filings";
 
 export default defineHook({
   events: {
     async "turn.started"(event, ctx) {
-      await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id);
+      await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id, await workspaceOf(ctx));
     },
     async "step.completed"(event, ctx) {
-      await recordWorkflowStep(WORKFLOW, event.data.turnId, event.data.usage, ctx.session.id);
+      await recordWorkflowStep(WORKFLOW, event.data.turnId, event.data.usage, ctx.session.id, await workspaceOf(ctx));
     },
     async "turn.completed"(event, ctx) {
-      await finishWorkflowRun(WORKFLOW, event.data.turnId, { status: "success" }, ctx.session.id);
+      await finishWorkflowRun(WORKFLOW, event.data.turnId, { status: "success" }, ctx.session.id, await workspaceOf(ctx));
     },
     async "turn.failed"(event, ctx) {
       await finishWorkflowRun(
@@ -45,6 +86,7 @@ export default defineHook({
         event.data.turnId,
         { status: "failed", error: event.data.message },
         ctx.session.id,
+        await workspaceOf(ctx),
       );
     },
   },
