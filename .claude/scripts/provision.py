@@ -2,6 +2,7 @@
 """Provision: validated application state -> running deployment.
 
   provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]
+  provision.py --self-test   offline checks of the deadlines, deploy watch and VM-headroom logic
 
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
   projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare
@@ -30,6 +31,16 @@
   result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only
   measure). No build, no deploy, no password rotation. Run it after any restore or migration.
 
+NOTHING WAITS FOREVER, AND A BUSY VM IS WAITED OUT (mold_v1-106, -109). Every vercel call has a deadline
+and runs in its own process group, killed whole on timeout or on an interrupt. Each `vercel deploy` is
+watched on the API: a deployment stuck in QUEUED/INITIALIZING (PROVISION_DEPLOY_STALL_S, 600) or past
+PROVISION_DEPLOY_TIMEOUT_S (2400) is CANCELLED on Vercel and the run fails saying how long it waited.
+--deploy first waits (PROVISION_HEADROOM_WAIT_S, 900) for load <= PROVISION_MAX_LOAD (CPU count) and
+MemAvailable >= PROVISION_MIN_FREE_MB (3072), naming the busiest processes, and refuses before touching
+anything if the box stays busy. The eve build runs under `nice` with a V8 heap ceiling and, if the kernel
+kills it for memory (exit 137), waits and retries once. SIGTERM/SIGHUP unwind into the revert record, which
+says which services this run actually replaced and which still serve their previous deployment.
+
 TENANT ISOLATION IS A GATE, NOT A LABEL. datastores.postgres.rls says what the application asked
 for: "fail_closed" and "on" are enforced — the deploy stops and the app is recorded `reverted`
 rather than `stamped` if a workspace can read another workspace's rows — while "off" is measured
@@ -46,16 +57,211 @@ DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier 
 Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.
 `self_hosted` means a Postgres on a PRIVATE docker network with no host port — never a public one.
 """
-import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse, time
+import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse, time, signal
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
 def sh(cmd, cwd=None, check=True):
-    r = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    r = vrun(cmd, shell=True, cwd=cwd)
     if check and r.returncode: sys.exit(f"$ {cmd}\n{r.stdout}{r.stderr}")
     return r.stdout
+
+# ---- every external call has a deadline (mold_v1-106) ------------------------------------------------
+# A `vercel deploy` whose deployment sat at UNKNOWN on Vercel made the CLI wait 2h14m (2026-09-23), with
+# application.json parked at `stamping` until the process was force-killed. subprocess.run(timeout=) alone
+# does not fix that: it kills the SHELL, and `communicate()` then waits on pipes the node grandchild still
+# holds open. So every call runs in its own process group, and a timeout (or an interrupt of provision.py
+# itself) kills the whole group. Limits are seconds and overridable by environment for a slow day.
+VERCEL_CALL_TIMEOUT_S = int(os.environ.get("PROVISION_VERCEL_CALL_TIMEOUT_S") or 300)   # api / env / project calls
+DEPLOY_TIMEOUT_S = int(os.environ.get("PROVISION_DEPLOY_TIMEOUT_S") or 2400)           # one `vercel deploy`, end to end
+DEPLOY_STALL_S = int(os.environ.get("PROVISION_DEPLOY_STALL_S") or 600)                # QUEUED/INITIALIZING/UNKNOWN unchanged this long = stuck
+DEPLOY_POLL_S = float(os.environ.get("PROVISION_DEPLOY_POLL_S") or 20)
+BUILD_TIMEOUT_S = int(os.environ.get("PROVISION_BUILD_TIMEOUT_S") or 2400)             # the local eve build
+SHIPPED = []   # (deployable, url) replaced in production by THIS run, in order: what an interrupted deploy really changed
+
+def _fmt_s(s):
+    m, s = divmod(int(s), 60)
+    return f"{m}m{s:02d}s" if m else f"{s}s"
+
+def _kill_tree(p):
+    try: os.killpg(p.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError): pass
+
+def _label(cmd):
+    s = cmd if isinstance(cmd, str) else " ".join(map(str, cmd))
+    return re.sub(r"://[^@\s/]+@", "://***@", s)[:160]
+
+def vrun(cmd, shell=None, cwd=None, env=None, input=None, capture_output=True, text=True, timeout=None, what=None):
+    """subprocess.run with a deadline that holds: own process group, the whole group killed on timeout or
+    on any interrupt of this process. A timeout is a clear SystemExit naming the call and the elapsed time."""
+    shell = isinstance(cmd, str) if shell is None else shell
+    timeout = VERCEL_CALL_TIMEOUT_S if timeout is None else timeout
+    t0 = time.monotonic()
+    pipe = subprocess.PIPE if capture_output else None
+    p = subprocess.Popen(cmd, shell=shell, cwd=cwd, env=env, text=text, start_new_session=True,
+                         stdin=subprocess.PIPE if input is not None else None, stdout=pipe, stderr=pipe)
+    try:
+        out, err = p.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(p)
+        try: p.communicate(timeout=10)
+        except Exception: pass
+        sys.exit(f"{what or _label(cmd)} did not finish: timed out after {_fmt_s(time.monotonic() - t0)} "
+                 f"(limit {_fmt_s(timeout)}) and was killed. Nothing after it ran.")
+    except BaseException:
+        _kill_tree(p); raise
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+def _deployment_state(host, cwd):
+    """(readyState, id) of one deployment, read from the API; (None, None) when the read itself fails."""
+    try:
+        r = vrun(f"vercel api /v13/deployments/{host} --raw", cwd=cwd, timeout=60)
+        d = json.loads(r.stdout or "{}")
+        return (d.get("readyState") or d.get("status")), d.get("id")
+    except (SystemExit, ValueError):
+        return None, None
+
+def _cancel_deployment(ref, cwd):
+    """Cancel a deployment that will not finish, so it cannot go live later behind a `reverted` record."""
+    dep_id = ref if str(ref).startswith("dpl_") else _deployment_state(ref, cwd)[1]
+    if not dep_id: return f"Could not look up {ref} to cancel it; cancel it by hand in the Vercel dashboard (Deployments -> ... -> Cancel)."
+    try: r = vrun(f"vercel api /v12/deployments/{dep_id}/cancel -X PATCH --raw", cwd=cwd, timeout=60)
+    except SystemExit as e: return f"Cancelling {dep_id} did not answer ({e}); cancel it by hand in the Vercel dashboard."
+    if r.returncode or '"error"' in (r.stdout or ""):
+        return f"Cancelling {dep_id} was refused: {(r.stdout + r.stderr).strip()[-200:]}"
+    return f"Cancelled {dep_id} on Vercel, so it cannot go live later."
+
+WAITING_STATES = (None, "UNKNOWN", "QUEUED", "INITIALIZING")
+def vercel_deploy(cmd, cwd, label, env=None, timeout=None, stall=None, poll=None, quiet=False):
+    """One `vercel deploy`, watched: the deployment it creates is polled on the API, a deployment that sits
+    in a waiting state for `stall` seconds or runs past `timeout` is cancelled and the CLI killed, and an
+    ERROR/CANCELED one ends the wait at once. Returns the CLI's output (stdout+stderr) on success."""
+    timeout = timeout or DEPLOY_TIMEOUT_S; stall = stall or DEPLOY_STALL_S; poll = poll or DEPLOY_POLL_S
+    t0 = time.monotonic()
+    log = tempfile.TemporaryFile(mode="w+")
+    p = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, text=True, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    host = dep_id = state = None; since = last_note = t0
+    def output():
+        log.seek(0); return log.read()
+    def stop(why, cancel=True):
+        _kill_tree(p)
+        note = _cancel_deployment(dep_id or host, cwd) if cancel and (dep_id or host) else ""
+        return SystemExit(f"{label} failed after {_fmt_s(time.monotonic() - t0)}: {why}. {note}\n" + output().strip()[-1500:])
+    try:
+        while True:
+            try:
+                p.wait(timeout=poll); break
+            except subprocess.TimeoutExpired: pass
+            now = time.monotonic()
+            if not host:
+                m = re.search(r"https://([a-z0-9.-]+\.vercel\.app)", output())   # the CLI prints the new deployment's URL first
+                if m: host = m.group(1)
+            if host:
+                st, did = _deployment_state(host, cwd)
+                dep_id = did or dep_id
+                if st and st != state: state, since = st, now
+                if state in ("ERROR", "CANCELED"): raise stop(f"Vercel reports the deployment {host} as {state}", cancel=False)
+            # Stuck = the API itself reports a waiting state that has not moved, or the CLI never named a
+            # deployment at all (given twice as long: an upload of the prebuilt eve output is slow). A host
+            # whose state cannot be READ is not evidence of anything and is bounded by `timeout` alone.
+            if host and state in WAITING_STATES and state is not None and now - since > stall:
+                raise stop(f"the deployment {host} sat at {state} for {_fmt_s(now - since)} without moving (limit {_fmt_s(stall)})")
+            if not host and now - t0 > 2 * stall:
+                raise stop(f"the CLI named no deployment (not created yet) in {_fmt_s(now - t0)} (limit {_fmt_s(2 * stall)})")
+            if now - t0 > timeout:
+                raise stop(f"no result within {_fmt_s(timeout)} (deployment {host or 'not created'}, last state {state or 'UNKNOWN'})")
+            if not quiet and now - last_note >= 60:
+                print(f"  {label}: {_fmt_s(now - t0)} elapsed, deployment {state or 'not reported yet'}", flush=True); last_note = now
+    except SystemExit:
+        raise
+    except BaseException:
+        # Ctrl-C / SIGTERM of provision.py mid-deploy: do not leave a --prod deployment running that could
+        # go live after the app is recorded reverted.
+        _kill_tree(p)
+        if dep_id or host: print("  " + _cancel_deployment(dep_id or host, cwd), flush=True)
+        raise
+    out = output()
+    if p.returncode: raise SystemExit(f"{label} failed after {_fmt_s(time.monotonic() - t0)}:\n" + out.strip()[-1500:])
+    return out
+
+# ---- a busy VM is waited out, not crashed into (mold_v1-109) ------------------------------------------
+# `npm run build:eve` (vercel build of the eve API, the one build that runs HERE) was SIGKILLed by the
+# kernel (exit 137) at load 5.8 with 2GB free, three agents building on the same 4-vCPU box. So: before a
+# deploy starts, and again before that build, wait (bounded, with progress naming what is using the box)
+# for the load and available memory to come under thresholds; run the build under `nice` with a V8 heap
+# ceiling; and treat exit 137 as the machine's fault, not the app's: wait again and retry once.
+HEADROOM_LOAD = float(os.environ.get("PROVISION_MAX_LOAD") or (os.cpu_count() or 4))
+HEADROOM_MEM_MB = int(os.environ.get("PROVISION_MIN_FREE_MB") or 3072)
+HEADROOM_WAIT_S = int(os.environ.get("PROVISION_HEADROOM_WAIT_S") or 900)
+
+def _machine():
+    """(1-minute load, MemAvailable in MB)."""
+    load1 = os.getloadavg()[0]
+    avail = 0
+    try:
+        for l in open("/proc/meminfo"):
+            if l.startswith("MemAvailable:"): avail = int(l.split()[1]) // 1024; break
+    except OSError: pass
+    return load1, avail
+
+def _busiest(n=3):
+    """The top memory users, for the progress line. Command lines are shortened and scrubbed: another
+    process's argv can carry a connection string, and this line is printed."""
+    try:
+        out = subprocess.run(["ps", "-eo", "rss=,args=", "--sort=-rss"], capture_output=True, text=True, timeout=10).stdout
+    except Exception: return "unknown"
+    rows = []
+    for l in out.splitlines()[:n]:
+        rss, _, args = l.strip().partition(" ")
+        args = re.sub(r"://[^@\s/]+@", "://***@", args)
+        args = re.sub(r"[A-Za-z0-9_\-+/=]{32,}", "…", args)[:70]
+        rows.append(f"{args} ({int(rss) // 1024}MB)")
+    return "; ".join(rows) or "unknown"
+
+def wait_for_headroom(label, deadline_s=None, probe=_machine, sleep=time.sleep, every=30):
+    """Block until load <= HEADROOM_LOAD and available memory >= HEADROOM_MEM_MB, or the deadline passes.
+    Returns (ok, 'load X, Y MB available'). Prints a line every `every` seconds while it waits."""
+    deadline_s = HEADROOM_WAIT_S if deadline_s is None else deadline_s
+    waited = 0
+    while True:
+        load1, avail = probe()
+        now = f"load {load1:.1f} (limit {HEADROOM_LOAD:g}), {avail}MB available (need {HEADROOM_MEM_MB}MB)"
+        if load1 <= HEADROOM_LOAD and avail >= HEADROOM_MEM_MB: return True, now
+        if waited >= deadline_s: return False, now
+        if waited % max(every, 1) == 0:
+            print(f"  waiting for the VM before {label}: {now}; {_fmt_s(waited)} of {_fmt_s(deadline_s)}. "
+                  f"Busiest: {_busiest()}", flush=True)
+        step = min(every, max(deadline_s - waited, 1)); sleep(step); waited += step
+
+def _node_options(avail_mb, current=""):
+    """A V8 old-space ceiling sized to what is free: half of it, clamped to 2-4GB, unless one is already set."""
+    if "max-old-space-size" in (current or ""): return current
+    mb = max(2048, min(4096, avail_mb // 2))
+    return f"{current} --max-old-space-size={mb}".strip()
+
+def _oom_killed(r):
+    text = (r.stdout or "") + (r.stderr or "")
+    return r.returncode in (137, -9) or (r.returncode != 0 and bool(re.search(r"\bKilled\b|exit(?:ed with| code)? 137|SIGKILL", text)))
+
+def heavy_build(cmd, cwd, label, env=None, wait=wait_for_headroom, runner=None, timeout=None):
+    """Run a build that can exhaust this VM: after waiting for headroom, under `nice`, with a heap ceiling,
+    retried once after another wait if the kernel killed it for memory. Returns the CompletedProcess."""
+    runner = runner or (lambda c, e: vrun(c, shell=True, cwd=cwd, env=e, timeout=timeout or BUILD_TIMEOUT_S, what=label))
+    for attempt in (1, 2):
+        ok, now = wait(label)
+        if not ok: print(f"  WARNING: building anyway, the VM is still busy after the wait ({now})", flush=True)
+        e = dict(env if env is not None else os.environ)
+        e["NODE_OPTIONS"] = _node_options(_machine()[1], e.get("NODE_OPTIONS", ""))
+        r = runner(f"nice -n 10 {cmd}", e)
+        if not r.returncode or not _oom_killed(r): return r
+        load1, avail = _machine()
+        msg = (f"{label} was killed by the kernel for lack of memory (exit {r.returncode}) at load {load1:.1f} with "
+               f"{avail}MB available: other work on this VM, not a defect of the application")
+        if attempt == 1: print(f"  {msg}; waiting for headroom and retrying once", flush=True)
+        else: r.stderr = (r.stderr or "") + f"\n{msg}, twice. Run the deploy again when the VM is quieter."
+    return r
 
 def vercel_env_names(cwd, project):
     out = sh(f"NO_COLOR=1 FORCE_COLOR=0 vercel env ls production --project {project} 2>/dev/null", cwd=cwd, check=False)
@@ -71,11 +277,11 @@ GENERATED = {  # app-internal secrets the factory may mint itself (never externa
 REDACTED = "[SENSITIVE]"   # what `vercel env pull` writes for a write-only variable
 def _env_api(project, path, method, body, cwd):
     """Vercel API call with the body on stdin, so secret values never reach argv or a file."""
-    return subprocess.run(["vercel", "api", path, "-X", method, "--input", "-", "--raw"], cwd=cwd,
+    return vrun(["vercel", "api", path, "-X", method, "--input", "-", "--raw"], cwd=cwd,
                           input=json.dumps(body), capture_output=True, text=True)
 
 def _env_entries(project, cwd):
-    r = subprocess.run(f"vercel api /v9/projects/{project}/env --raw", shell=True, cwd=cwd, capture_output=True, text=True)
+    r = vrun(f"vercel api /v9/projects/{project}/env --raw", shell=True, cwd=cwd, capture_output=True, text=True)
     try: return json.loads(r.stdout).get("envs", [])
     except Exception: return []
 
@@ -90,7 +296,7 @@ def _set_env(name, value, cwd, project=None):
     if value is None or value == "" or value == REDACTED:
         sys.exit(f"refusing to write {name} on {project}: value is empty or redacted")
     project = project or load(os.path.join(cwd, ".vercel/project.json"))["projectId"]
-    subprocess.run(f"vercel env rm {name} production --project {project} --yes", shell=True, cwd=cwd, capture_output=True, text=True)   # API DELETE refuses without a confirmation flag
+    vrun(f"vercel env rm {name} production --project {project} --yes", shell=True, cwd=cwd, capture_output=True, text=True)   # API DELETE refuses without a confirmation flag
     r = _env_api(project, f"/v10/projects/{project}/env", "POST", {"key": name, "value": value, "type": "encrypted", "target": ["production"]}, cwd)
     if '"error"' in r.stdout or r.returncode: sys.exit(f"could not set {name} on {project}: {(r.stdout + r.stderr).strip()[-200:]}")
     got = [e for e in _env_entries(project, cwd) if e.get("key") == name and "production" in (e.get("target") or [])]
@@ -148,7 +354,7 @@ def ensure_projects(proj, mold_dir):
     that exist today were created by other means, which is why nobody had hit this."""
     for p in (proj, f"{proj}-api", f"{proj}-workflow"):
         if _project_meta(p, mold_dir).get("id"): continue
-        r = subprocess.run(f"vercel project add {p}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        r = vrun(f"vercel project add {p}", shell=True, cwd=mold_dir, capture_output=True, text=True)
         if not _project_meta(p, mold_dir).get("id"):
             sys.exit(f"could not create the Vercel project {p}: " + (r.stdout + r.stderr).strip()[-200:])
         print(f"  created Vercel project {p}")
@@ -159,7 +365,7 @@ def ensure_projects(proj, mold_dir):
 
 def _neon_spares(mold_dir):
     """Every Neon resource on this team that is available and attached to no project."""
-    r = subprocess.run("vercel integration list --all --json", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun("vercel integration list --all --json", shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: res = json.loads(r.stdout[r.stdout.index("{"):]).get("resources", [])
     except Exception: res = []
     return [x["name"] for x in res if x.get("product") == "Neon" and x.get("status") == "available" and not x.get("projects")]
@@ -177,7 +383,7 @@ def _scratch_project(mold_dir):
     """A throwaway Vercel project with no deployment, no domain and no traffic, whose only job is to
     hold a candidate database's connection string long enough to LOOK at it. Returns its name or None."""
     name = f"sf-neon-inspect-{os.urandom(4).hex()}"
-    r = subprocess.run(f"vercel project add {name}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun(f"vercel project add {name}", shell=True, cwd=mold_dir, capture_output=True, text=True)
     if _project_meta(name, mold_dir).get("id"): return name
     print("  could not create a temporary inspection project: " + _cli_err(r.stdout + r.stderr)[:160]); return None
 
@@ -187,7 +393,7 @@ def _project_gone(project, mold_dir):
     """True ONLY when Vercel says the project does not exist. A lookup that fails for any other reason
     (no network, an expired token -> `Not authorized (403)`, a rate limit) returns False, so the caller
     treats "unknown" as "still there" and says so, rather than reading a blind spot as a deletion."""
-    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
     if r.returncode == 0:
         try:
             if json.loads(r.stdout).get("id"): return False
@@ -209,7 +415,7 @@ def _rm_scratch_project(name, mold_dir):
     if the name lookup and the delete disagree. Returns True only on a confirmed 404 afterwards: a
     lookup that merely FAILED is not a deletion, and the operator gets the dashboard note instead."""
     for ref in (name, _project_meta(name, mold_dir).get("id") or name):
-        subprocess.run(f"vercel api /v9/projects/{ref} -X DELETE --raw --dangerously-skip-permissions",
+        vrun(f"vercel api /v9/projects/{ref} -X DELETE --raw --dangerously-skip-permissions",
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
         if _project_gone(name, mold_dir): return True
     print(f"  NOTE: the temporary inspection project {name} could not be confirmed deleted. Check the Vercel "
@@ -226,7 +432,7 @@ def _sweep_scratch_projects(mold_dir):
     sweep that took every match would delete a concurrent run's project mid-probe — with a Neon
     resource still connected to it, and that run then buying a fresh database it did not need. A
     project whose age cannot be read is left alone for the same reason: unknown is not stale."""
-    r = subprocess.run('vercel api "/v9/projects?search=sf-neon-inspect-&limit=100" --raw',
+    r = vrun('vercel api "/v9/projects?search=sf-neon-inspect-&limit=100" --raw',
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: projects = json.loads(r.stdout).get("projects", [])
     except Exception: projects = []
@@ -252,14 +458,14 @@ def _neon_probe(name, mold_dir):
     scratch = _scratch_project(mold_dir)
     if not scratch: return None, "no temporary project to inspect it in"
     try:
-        c = subprocess.run(f"vercel integration-resource connect {name} {scratch} -e development --yes",
+        c = vrun(f"vercel integration-resource connect {name} {scratch} -e development --yes",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         if c.returncode: return None, _cli_err(c.stdout + c.stderr)[:160]
         try:
             st = _db_stat(mold_dir, scratch, environment="development")
             return st, ("" if st else "connecting it injected no database URL")
         finally:
-            subprocess.run(f"vercel integration-resource disconnect {name} {scratch} --yes",
+            vrun(f"vercel integration-resource disconnect {name} {scratch} --yes",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
     finally:
         _rm_scratch_project(scratch, mold_dir)
@@ -295,7 +501,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
         second resource with the same name."""
         for key in ("DATABASE_URL", "DATABASE_URL_UNPOOLED"):
             for env_ in ("production", "preview", "development"):
-                subprocess.run(f"vercel env rm {key} {env_} --project {proj} --yes", shell=True, cwd=mold_dir,
+                vrun(f"vercel env rm {key} {env_} --project {proj} --yes", shell=True, cwd=mold_dir,
                                capture_output=True, text=True)
         print(f"  cleared the stale DATABASE_URL on {proj} (a leftover of a database this app no longer uses)")
 
@@ -303,7 +509,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
         """Connect a database already PROVEN empty to the app's project, and confirm what landed.
         Anything unexpected disconnects again: the failure path leaves nothing attached."""
         clear_stale_db_env()
-        c = subprocess.run(f"vercel integration-resource connect {name} {proj} -e production -e preview -e development --yes",
+        c = vrun(f"vercel integration-resource connect {name} {proj} -e production -e preview -e development --yes",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         if c.returncode:
             err = _cli_err(c.stdout + c.stderr)
@@ -320,7 +526,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
             infra.setdefault("datastores", {})["neon_resource"] = name; return True
         print(f"  {name} is not usable on {proj} after connecting "
               f"({(st or {}).get('tables', 'no database URL was injected')}); disconnecting it again")
-        subprocess.run(f"vercel integration-resource disconnect {name} {proj} --yes",
+        vrun(f"vercel integration-resource disconnect {name} {proj} --yes",
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
         return False
 
@@ -349,7 +555,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
     d = _link_dir(scratch, mold_dir)
     try:
         if not d: sys.exit(f"the temporary project {scratch} could not be linked; nothing was provisioned.")
-        r = subprocess.run(f"vercel integration add neon -n {res_name} --no-claim --no-env-pull -e development --cwd {d}",
+        r = vrun(f"vercel integration add neon -n {res_name} --no-claim --no-env-pull -e development --cwd {d}",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         out = r.stdout + r.stderr; link_ = next((l.strip() for l in open(urls) if l.strip()), None)
         if "Additional setup required" in out or link_:
@@ -359,10 +565,10 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
             msg = [l for l in out.splitlines() if l.strip() and not l.lstrip().startswith("at ")]
             sys.exit("neon provisioning failed: " + " | ".join(msg[-3:]))
         print("  " + next((l for l in out.splitlines() if "provisioned" in l), "provisioned").strip()[:160])
-        subprocess.run(f"vercel integration-resource connect {res_name} {scratch} -e development --yes",
+        vrun(f"vercel integration-resource connect {res_name} {scratch} -e development --yes",
                        shell=True, cwd=mold_dir, capture_output=True, text=True)   # explicit: `add` connects via its cwd
         st = _db_stat(mold_dir, scratch, environment="development")
-        subprocess.run(f"vercel integration-resource disconnect {res_name} {scratch} --yes",
+        vrun(f"vercel integration-resource disconnect {res_name} {scratch} --yes",
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
     finally:
         if d: shutil.rmtree(d, ignore_errors=True)
@@ -383,7 +589,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
 
 def _blob_store(name, mold_dir):
     """The team's Blob store of this name, with the projects it is connected to, or None."""
-    r = subprocess.run("vercel api /v1/storage/stores --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun("vercel api /v1/storage/stores --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: st = json.loads(r.stdout).get("stores", [])
     except Exception: st = []
     return next((x for x in st if x.get("type") == "blob" and x.get("name") == name), None)
@@ -391,7 +597,7 @@ def _blob_store(name, mold_dir):
 def _connect_store(store_id, project_id, mold_dir):
     """Attach an existing store to a project, which is what injects its token into that project's env.
     Same endpoint the CLI's own create path uses (connectResourceToProject in the Vercel CLI)."""
-    return subprocess.run(["vercel", "api", f"/v1/storage/stores/{store_id}/connections", "-X", "POST", "--input", "-", "--raw"],
+    return vrun(["vercel", "api", f"/v1/storage/stores/{store_id}/connections", "-X", "POST", "--input", "-", "--raw"],
                           cwd=mold_dir, capture_output=True, text=True,
                           input=json.dumps({"envVarEnvironments": ["production", "preview", "development"],
                                             "projectId": project_id, "type": "integration"}))
@@ -420,7 +626,7 @@ def ensure_blob_store(app_id, mold_dir, infra, proj):
     if not meta.get("id"): sys.exit(f"the Vercel project {proj} does not exist yet; rerun --check")
     d = _link_dir(proj, mold_dir)
     try:
-        r = subprocess.run(f"vercel blob create-store {name} --access private -e production -e preview -e development --yes --cwd {d}",
+        r = vrun(f"vercel blob create-store {name} --access private -e production -e preview -e development --yes --cwd {d}",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         out = r.stdout + r.stderr
     finally:
@@ -492,7 +698,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     if pg.get("scope") == "fresh" and prov == "supabase" and DB_SENTINEL["supabase"] not in present:
         print(f"provisioning fresh Supabase project '{app_id}' via Vercel Marketplace ...")
         urls = os.path.expanduser("~/.factory-open-urls"); open(urls, "w").close()   # the xdg-open shim (infra/vm/provision.sh) records links a CLI tried to open
-        r = subprocess.run(f"vercel integration add supabase -n {app_id} --prefix SUPABASE_ --no-claim --no-env-pull -e production -e preview -e development", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        r = vrun(f"vercel integration add supabase -n {app_id} --prefix SUPABASE_ --no-claim --no-env-pull -e production -e preview -e development", shell=True, cwd=mold_dir, capture_output=True, text=True)
         out = r.stdout + r.stderr; link_ = next((l.strip() for l in open(urls) if l.strip()), None)
         if "Additional setup required" in out or link_:
             sys.exit("ONE-TIME STEP: open this link in a browser, accept the Supabase plan for this project, then run the same command again:\n  " + (link_ or f"https://vercel.com/{infra['vercel']['team']}/~/integrations/checkout/supabase?productSlug=supabase&defaultResourceName={app_id}&source=cli&projectSlug={infra['vercel']['project']}"))
@@ -536,7 +742,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
         # passes — so a project that has never been bootstrapped has no DATABASE_URL at all. That fails
         # closed (the app cannot reach the database) instead of failing open (it reaches it as root).
         tmp = os.path.join(mold_dir, ".env.provision")
-        subprocess.run(f"vercel env pull --yes --environment=production --project {proj} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
+        vrun(f"vercel env pull --yes --environment=production --project {proj} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
         val = next((l.split("=",1)[1].strip().strip('"') for l in open(tmp) if l.startswith("SUPABASE_POSTGRES_URL=")), "")
         os.remove(tmp)
         if val: _add_env("POSTGRES_ADMIN_URL", val, mold_dir, proj); print("derived POSTGRES_ADMIN_URL (admin only; DATABASE_URL is written by the RLS gate)")
@@ -658,7 +864,7 @@ def pull_env(mold_dir, project, environment="production", required=True):
     inspection reads a throwaway project that may legitimately hold nothing, and an exit there would
     skip the cleanup that removes it."""
     tmp = os.path.join(mold_dir, f".env.provision.{project}")
-    subprocess.run(f"vercel env pull --yes --environment={environment} --project {project} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
+    vrun(f"vercel env pull --yes --environment={environment} --project {project} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
     vals, unreadable = {}, []
     for l in (open(tmp) if os.path.exists(tmp) else []):
         if "=" in l and not l.startswith("#"):
@@ -676,14 +882,14 @@ def set_framework(project, framework, mold_dir):
     """The eve API and the task-workflow service need different presets (eve / nextjs); auto-detection
     picks Next.js for both and then rejects the eve build output. Verified through the API, whose value
     is the slug (`nextjs`), not the console's display name (`Next.js`)."""
-    subprocess.run(f"vercel api /v9/projects/{project} -X PATCH -F framework={framework} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
-    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    vrun(f"vercel api /v9/projects/{project} -X PATCH -F framework={framework} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: got = json.loads(r.stdout).get("framework")
     except Exception: got = None
     if got != framework: sys.exit(f"could not set framework={framework} on {project} (reads {got!r})")
 
 def _project_meta(project, mold_dir):
-    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: return json.loads(r.stdout)
     except Exception: return {}
 
@@ -711,7 +917,7 @@ def disconnect_git(project, mold_dir):
         os.makedirs(os.path.join(d, ".vercel"))
         json.dump({"projectId": meta.get("id"), "orgId": meta.get("accountId"), "projectName": project},
                   open(os.path.join(d, ".vercel/project.json"), "w"))
-        subprocess.run(f"vercel git disconnect --cwd {d}", shell=True, cwd=mold_dir,
+        vrun(f"vercel git disconnect --cwd {d}", shell=True, cwd=mold_dir,
                        input="y\n", capture_output=True, text=True)   # the CLI confirms interactively
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -1099,10 +1305,17 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         if want != cur:
             for p_ in (proj, f"{proj}-api", f"{proj}-workflow"): _set_env("PLATFORM_NOTIFY_FROM", want, mold_dir, project=p_)
             print(f"  PLATFORM_NOTIFY_FROM display name set from this app's branding: {want.split(' <')[0]}")
-    def run(cmd, env=None, label=""):
-        r = subprocess.run(cmd, shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
-        urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", r.stdout + r.stderr)
-        if r.returncode: sys.exit(f"{label or cmd} failed:\n" + (r.stdout + r.stderr).strip()[-1500:])
+    SHIPPED.clear()
+    def run(cmd, env=None, label="", kind="deploy"):
+        # deploy: watched on the API, cancelled if stuck, bounded end to end (vercel_deploy).
+        # build: the local eve build, waited for, niced, heap-capped and retried once on an OOM kill (heavy_build).
+        if kind == "deploy":
+            out = vercel_deploy(cmd, mold_dir, label or cmd, env=env)
+        else:
+            r = heavy_build(cmd, mold_dir, label or cmd, env=env)
+            out = (r.stdout or "") + (r.stderr or "")
+            if r.returncode: sys.exit(f"{label or cmd} failed:\n" + out.strip()[-1500:])
+        urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", out)
         return urls[-1] if urls else ""
     if not shared:
         # Minted on EVERY deploy and written to both ends at once. It used to be minted only when the main
@@ -1119,6 +1332,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         # workflow service: its own Next.js app under services/task-workflow
         print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
         wf_url = run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy")
+        SHIPPED.append(("workflow", wf_url))
         disconnect_git(f"{proj}-workflow", mold_dir)
         infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=proj)
@@ -1131,8 +1345,9 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=f"{proj}-api")
         subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
-        run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build")
+        run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build", kind="build")
         api_url = run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy")
+        SHIPPED.append(("api", api_url))
         disconnect_git(f"{proj}-api", mold_dir)
         infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
         _set_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir, project=proj)
@@ -1155,6 +1370,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     # the eve prebuilt output and the build-time env `vercel build` wrote are the api's, not the web app's
     subprocess.run("rm -rf .vercel/output .vercel/static-build .vercel/.env.production.local", shell=True, cwd=mold_dir)
     url = run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy")
+    SHIPPED.append(("web", url))
     disconnect_git(proj, mold_dir)
     # An app with its own domain (domain.py attach/switch) keeps it as its front door: `vercel deploy` always
     # answers with the project's *.vercel.app address, and recording that would send WEB_ORIGIN, emailed links
@@ -1760,11 +1976,12 @@ def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
                  f"  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
     print(f"  the running app reports: enforced ({ev['running_app_detail']})")
 
-def _revert(adir, app, reason):
+def _revert(adir, app, reason, note=""):
     """A deploy that could not prove isolation is not a deploy. Record it as reverted, with the reason,
-    instead of leaving the app in `stamping` or — as before — writing `stamped` regardless."""
+    instead of leaving the app in `stamping` or — as before — writing `stamped` regardless. `note` (what
+    this run actually replaced in production) is kept whole, after the truncated reason."""
     app["status"] = "reverted"
-    app["revert"] = {"reason": reason[:400], "lane": "functional", "at": NOW}
+    app["revert"] = {"reason": (reason[:400] + (" " + note if note else "")).strip(), "lane": "functional", "at": NOW}
     save(os.path.join(adir, "application.json"), app)
     print(f"  status set to reverted: {reason[:200]}")
 
@@ -1799,7 +2016,136 @@ def _refuse_live_or_shared_project(app_id, infra):
                  f"would land in that app's environment. Give this app its own project in state/application/{app_id}/"
                  f"infrastructure.json (vercel.project) and rerun. Nothing was written.")
 
+FAKE_VERCEL = r'''#!/bin/sh
+# a stand-in for the vercel CLI, driven by FAKE_MODE; writes what it was asked to cancel to $FAKE_DIR/cancelled
+case "$1 $2" in
+  "deploy "*|"deploy")
+    case "$FAKE_MODE" in
+      nourl) sleep 30 ;;
+      ready) echo "Production: https://fake-abc123.vercel.app [1s]"; sleep 1; echo "Aliased: https://fake.vercel.app"; exit 0 ;;
+      *) echo "Production: https://fake-abc123.vercel.app [1s]"; sleep 30 ;;
+    esac ;;
+  "api /v13/deployments/"*)
+    case "$FAKE_MODE" in
+      error) echo '{"id":"dpl_fake","readyState":"ERROR"}' ;;
+      building) echo '{"id":"dpl_fake","readyState":"BUILDING"}' ;;
+      unreadable) echo 'Error: not authorized' >&2; exit 1 ;;
+      ready) echo '{"id":"dpl_fake","readyState":"BUILDING"}' ;;
+      *) echo '{"id":"dpl_fake","readyState":"QUEUED"}' ;;
+    esac ;;
+  "api /v12/deployments/"*) echo "$2" >> "$FAKE_DIR/cancelled"; echo '{}' ;;
+  *) echo "unexpected: $*" >&2; exit 2 ;;
+esac
+'''
+
+def self_test():
+    """Offline checks of the deadline, deploy-watch and headroom logic. No network, no state, no Vercel."""
+    fails, n = [], [0]
+    def check(name, cond, detail=""):
+        n[0] += 1
+        if not cond: fails.append(f"{name}{': ' + str(detail) if detail else ''}")
+    # 1. a call past its deadline is killed with its whole process group and says how long it ran
+    t0 = time.monotonic()
+    try: vrun("sh -c 'sleep 30 & sleep 30'", timeout=1); check("vrun timeout", False, "no exit")
+    except SystemExit as e: check("vrun timeout names the elapsed time", "timed out after" in str(e) and "limit 1s" in str(e), e)
+    check("vrun timeout does not wait on a grandchild's pipe", time.monotonic() - t0 < 6, f"{time.monotonic() - t0:.1f}s")
+    r = vrun("echo hi; exit 3")
+    check("vrun passes output and exit code through", r.stdout.strip() == "hi" and r.returncode == 3, r)
+    check("vrun scrubs credentials from the label", "***@" in _label("psql postgres://u:pw@h/db") and "pw" not in _label("psql postgres://u:pw@h/db"))
+    # 2. `vercel deploy` watched against a fake CLI
+    d = tempfile.mkdtemp(prefix="provision-selftest-")
+    try:
+        fake = os.path.join(d, "vercel"); open(fake, "w").write(FAKE_VERCEL); os.chmod(fake, 0o755)
+        def deploy(mode, **kw):
+            env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}", FAKE_MODE=mode, FAKE_DIR=d)
+            try: os.remove(os.path.join(d, "cancelled"))
+            except FileNotFoundError: pass
+            old = os.environ.copy(); os.environ.update(env)   # the watcher's own `vercel api` polls find the fake too
+            try: return vercel_deploy("vercel deploy --prod --yes", d, f"{mode} deploy", env=env, quiet=True, **kw), None
+            except SystemExit as e: return None, str(e)
+            finally: os.environ.clear(); os.environ.update(old)
+        cancelled = lambda: open(os.path.join(d, "cancelled")).read() if os.path.exists(os.path.join(d, "cancelled")) else ""
+        t0 = time.monotonic(); out, err = deploy("stuck", stall=1.5, poll=0.3, timeout=20)
+        check("a deployment stuck in QUEUED is given up on", err and "sat at QUEUED" in err, err)
+        check("  ...within the stall limit, not the CLI's forever", time.monotonic() - t0 < 10, f"{time.monotonic() - t0:.1f}s")
+        check("  ...and cancelled on Vercel", "dpl_fake" in cancelled() and "Cancelled dpl_fake" in (err or ""), cancelled())
+        out, err = deploy("ready", stall=5, poll=0.3, timeout=20)
+        check("a deployment that finishes returns its output", out and "fake.vercel.app" in out and not err, err)
+        check("  ...and is not cancelled", not cancelled())
+        out, err = deploy("error", stall=5, poll=0.3, timeout=20)
+        check("an ERROR deployment ends the wait at once", err and "as ERROR" in err, err)
+        check("  ...without a cancel", not cancelled())
+        out, err = deploy("nourl", stall=0.5, poll=0.3, timeout=20)
+        check("a deploy that never creates a deployment is given up on", err and "(not created yet)" in err, err)
+        out, err = deploy("unreadable", stall=0.5, poll=0.3, timeout=2)
+        check("a state the API cannot report is bounded by the timeout, not called stuck", err and "no result within 2s" in err and "last state UNKNOWN" in err, err)
+        out, err = deploy("building", stall=1, poll=0.3, timeout=2)
+        check("BUILDING is bounded by the overall timeout, not the stall", err and "no result within 2s" in err and "BUILDING" in err, err)
+        check("  ...and cancelled", "dpl_fake" in cancelled())
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # 3. headroom: waits with progress, gives up at the deadline, never sleeps for real here
+    seq = iter([(9.0, 500), (6.0, 4000), (1.0, 5000)]); slept = []
+    ok, now = wait_for_headroom("x", deadline_s=600, probe=lambda: next(seq), sleep=slept.append, every=30)
+    check("headroom waits until load and memory are both under the limits", ok and len(slept) == 2 and "load 1.0" in now, (ok, slept, now))
+    slept = []
+    ok, now = wait_for_headroom("x", deadline_s=90, probe=lambda: (12.0, 100), sleep=slept.append, every=30)
+    check("headroom gives up at its deadline", not ok and sum(slept) == 90, (ok, slept))
+    check("heap ceiling is half of what is free, clamped to 2-4GB",
+          (_node_options(6000), _node_options(1000), _node_options(20000)) ==
+          ("--max-old-space-size=3000", "--max-old-space-size=2048", "--max-old-space-size=4096"))
+    check("an existing heap ceiling is kept", _node_options(6000, "--max-old-space-size=1234") == "--max-old-space-size=1234")
+    # 4. the heavy build: nice, NODE_OPTIONS, one retry on an OOM kill only
+    CP = subprocess.CompletedProcess
+    for codes, want_calls, want_rc in (([137, 0], 2, 0), ([137, 137], 2, 137), ([1, 0], 1, 1), ([0], 1, 0)):
+        calls, it = [], iter(codes)
+        def runner(c, e): calls.append((c, e.get("NODE_OPTIONS", ""))); return CP(c, next(it), "", "")
+        r = heavy_build("vercel build", "/", "eve api build", env={}, wait=lambda l: (True, "quiet"), runner=runner)
+        check(f"heavy build exits {codes}: {want_calls} call(s), rc {want_rc}", len(calls) == want_calls and r.returncode == want_rc, (calls, r.returncode))
+        check(f"  ...under nice with a heap ceiling", all(c.startswith("nice -n 10 vercel build") and "max-old-space-size" in o for c, o in calls), calls)
+    check("an OOM reported only in the output counts", _oom_killed(CP("x", 1, 'Error: Command "npm run build:eve" exited with 137', "")))
+    check("an ordinary failure does not", not _oom_killed(CP("x", 1, "Type error: foo", "")))
+    # 5. the record a stopped deploy leaves
+    SHIPPED.clear()
+    check("nothing shipped says the old deployment still serves", "still serving" in shipped_note())
+    SHIPPED.append(("workflow", "https://w.vercel.app"))
+    check("a partial deploy names what it replaced and what it did not", "Replaced in production before it stopped: workflow" in shipped_note() and "api, web" in shipped_note(), shipped_note())
+    d = tempfile.mkdtemp(prefix="provision-selftest-")
+    try:
+        app = {"status": "stamping"}
+        _revert(d, app, "x" * 1000, shipped_note())
+        got = load(os.path.join(d, "application.json"))
+        check("revert keeps the whole note after a long reason", got["status"] == "reverted" and got["revert"]["reason"].endswith(shipped_note()), got)
+    finally:
+        shutil.rmtree(d, ignore_errors=True); SHIPPED.clear()
+    # 6. SIGTERM becomes a SystemExit the revert handler catches
+    prev = signal.signal(signal.SIGTERM, _on_signal)
+    try:
+        os.kill(os.getpid(), signal.SIGTERM); time.sleep(1); check("SIGTERM unwinds", False, "no exception")
+    except SystemExit as e: check("SIGTERM unwinds as SystemExit naming the signal", "SIGTERM" in str(e), e)
+    finally: signal.signal(signal.SIGTERM, prev)
+    if fails:
+        sys.exit("self-test FAILED:\n  " + "\n  ".join(fails))
+    print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals)")
+
+def shipped_note():
+    """What a stopped deploy really changed in production (mold_v1-106/109). A deploy that died in the eve
+    build replaced nothing the web app serves, and the record should say so rather than read as an outage."""
+    done = [n for n, _ in SHIPPED]
+    rest = [n for n in ("workflow", "api", "web") if n not in done]
+    if not done:
+        return "Nothing was replaced in production: the previous deployment of every service is still serving."
+    return (f"Replaced in production before it stopped: {', '.join(done)}. "
+            + (f"Still serving their previous deployment: {', '.join(rest)}." if rest else ""))
+
+def _on_signal(signum, _frame):
+    # SIGTERM (a `kill`, a timeout wrapper, systemd) and SIGHUP (a closed terminal) used to end the process
+    # without unwinding, so the handler below never ran and the app stayed `stamping` (mold_v1-106). As a
+    # SystemExit they land in that handler like any other stop. SIGKILL cannot be caught by anything.
+    raise SystemExit(f"the deploy was stopped by {signal.Signals(signum).name} before it finished")
+
 def main(a):
+    if a and a[0] == "--self-test": return self_test()
     if not a or a[0].startswith("-"): sys.exit(__doc__)   # `--help`, or a flag where the app id goes
     app_id = a[0]; deploy = "--deploy" in a
     adir = os.path.join(ST, "application", app_id)
@@ -1924,6 +2270,15 @@ def main(a):
                 ask_nicely_for(app_id, missing_user)
                 sys.exit(f"refusing {verb}: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
                          f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} {verb}")
+            if deploy:
+                # A deploy on a saturated VM is an OOM waiting to happen (mold_v1-109). Wait for room first,
+                # bounded; if it never comes, stop HERE, before anything is created or the status moves.
+                ok, now = wait_for_headroom("the deploy")
+                if not ok:
+                    sys.exit(f"refusing --deploy: the VM stayed busy for {_fmt_s(HEADROOM_WAIT_S)} ({now}). Busiest: "
+                             f"{_busiest()}. NOTHING was created and {app_id}'s status is unchanged; the running "
+                             f"app is untouched. Rerun when that work has finished: python3 .claude/scripts/provision.py {app_id} --deploy")
+                print(f"  VM headroom ok: {now}")
             ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
             present = provision_datastores(app_id, ds, mold_dir, present, infra, proj)
             save(os.path.join(adir, "infrastructure.json"), infra)
@@ -1983,6 +2338,7 @@ def main(a):
               + f" python3 .claude/scripts/provision.py {app_id} --deploy")
         sys.exit(1 if missing_user else 0)
     if missing_user or missing_derived: sys.exit("refusing to deploy with missing secrets")
+    for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, _on_signal)
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
     try:
         running = deploy_vercel(app_id, app, infra, ds, mold_dir, adir)
@@ -1997,11 +2353,13 @@ def main(a):
         # half-deployed app that no gate ever looks at again. An unknown failure is the LEAST safe
         # moment to skip the revert. The exception is re-raised untouched, so the traceback (and the
         # exit code) still reach the operator.
+        for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, signal.SIG_IGN)   # the record below must land
         save(os.path.join(adir, "infrastructure.json"), infra)
-        if isinstance(e, SystemExit): _revert(adir, app, str(e) if e.code else "deploy stopped")
-        elif isinstance(e, KeyboardInterrupt): _revert(adir, app, "the deploy was interrupted before it finished")
+        note = shipped_note()
+        if isinstance(e, SystemExit): _revert(adir, app, str(e) if e.code else "deploy stopped", note)
+        elif isinstance(e, KeyboardInterrupt): _revert(adir, app, "the deploy was interrupted before it finished", note)
         else: _revert(adir, app, f"the deploy stopped on an unexpected {type(e).__name__}: {str(e)[:200]}. "
-                                 f"Nothing about this app is proven; re-run: python3 .claude/scripts/provision.py {app_id} --deploy")
+                                 f"Nothing about this app is proven; re-run: python3 .claude/scripts/provision.py {app_id} --deploy", note)
         raise
     # An INSTANT, not a day (infrastructure.schema.json: deployed_at), and the SAME instant as the
     # rls_verified.at this run wrote: NOW is taken once per process, so the proof, the running_app reading
