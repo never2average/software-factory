@@ -511,6 +511,68 @@ console.log("\nThe record:");
   check("the sentence opens with something a human can act on", sentence.startsWith("Model returned an empty response"));
 }
 
+/* ═══ 5b. HOW LONG IT TOOK, AND WHICH RESPONSE IT WAS (mold_v1-112) ═══════ */
+// The 2026-09-23 morning deaths ("Empty model response" on the streamed chat
+// path) could not be told apart from a budget failure afterwards: a model that
+// declined at once and a provider that stalled for a minute and gave up read the
+// same in every field the row had. Two more: the attempt's wall time, and the
+// provider's own id for the response (what an escalation quotes).
+console.log("\n5b. The row says how long the empty attempt took, and which response it was:");
+{
+  let t = 1_000_000;
+  const records = [];
+  const middleware = createEmptyResponseRecovery({
+    modelId: () => "@cf/zai-org/glm-5.3",
+    fallback: () => null,
+    publish: (r) => records.push(r),
+    sleep: async () => {},
+    newId: () => `rec_${records.length + 1}`,
+    now: () => t,
+  });
+  const stalled = () => {
+    t += 61_000; // the provider held the call for a minute, then finished with nothing
+    return {
+      stream: streamOf([
+        { type: "stream-start", warnings: [] },
+        { type: "response-metadata", id: "chatcmpl-9f2c7e41b0", modelId: "@cf/zai-org/glm-5.3", timestamp: new Date(0) },
+        { type: "finish", finishReason: finish("stop", "stop"), usage: usage({ completion: 0, reasoning: 0 }) },
+      ]),
+    };
+  };
+  const quick = () => {
+    t += 180;
+    return { ...emptyGenerate(), response: { id: "gen-7a1", modelId: "@cf/zai-org/glm-5.3", timestamp: new Date(0) } };
+  };
+  await drain(
+    await middleware.wrapStream({
+      doStream: async () => stalled(),
+      doGenerate: async () => quick(),
+      params: params({ cap: 4096 }),
+      model: { doStream: async () => stalled(), doGenerate: async () => quick() },
+    }),
+  );
+  const first = records[0];
+  check("a stream's empty attempt records its wall time", first?.elapsedMs === 61_000);
+  check("…and the provider's response id", first?.responseId === "chatcmpl-9f2c7e41b0");
+  const detail = formatEmptyResponseDetail(first);
+  check("both are on the row: ms= and resp=", /ms=61000/.test(detail) && /resp=chatcmpl-9f2c7e41b0/.test(detail));
+  check("each reissue is timed on its own, not from the first call", records.length > 1 && records.slice(1).every((r) => r.elapsedMs === 61_000));
+  records.length = 0;
+  await middleware.wrapGenerate({
+    doGenerate: async () => quick(),
+    doStream: async () => stalled(),
+    params: params({ cap: 4096 }),
+    model: { doGenerate: async () => quick(), doStream: async () => stalled() },
+  });
+  check("a generate's empty attempt too: 180 ms, gen-7a1", records[0]?.elapsedMs === 180 && records[0]?.responseId === "gen-7a1");
+  const long = formatEmptyResponseDetail({ ...records[0], responseId: "x".repeat(300) });
+  check("a long id is cut, and the row still fits the 400 characters", long.length <= 400 && /resp=x{48}(\s|$)/.test(long));
+  check(
+    "without a clock or an id the row says so plainly",
+    /ms=\?/.test(formatEmptyResponseDetail({ ...records[0], elapsedMs: null })) && !/resp=/.test(formatEmptyResponseDetail({ ...records[0], responseId: null })),
+  );
+}
+
 /* ═══ 6. THE KINDS REACH THE OPERATOR ═══════════════════════════════════ */
 
 console.log("\nThe telemetry lands where an operator reads it:");

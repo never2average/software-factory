@@ -33,7 +33,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { defaultMessageReducer } from "eve/client";
 import { compactTranscript } from "../lib/chat-snapshot.ts";
-import { projectAttached, turnFinished, withSessionEpochs } from "../lib/chat-turn-state.ts";
+import { continuationTurnId, projectAttached, turnFinished, withResumedSteps, withSessionEpochs } from "../lib/chat-turn-state.ts";
 
 let passed = 0;
 const check = (label, condition, detail) => {
@@ -200,20 +200,144 @@ console.log("\n4. What must not change");
   };
   const exact = [];
   const reordered = [];
+  const named = [];
   const differs = [];
+  // A parked specialist's hand-back arrives with `turnId: ""` (section 6): its
+  // reply is the same, in its own message named `turn_<sequence>`.
+  const handsBack = (events) => events.some((e) => e.data?.turnId === "");
   for (const dir of ["subagent-delivery", "approval-park", "buffered-turns"]) {
     for (const file of readdirSync(`scripts/fixtures/${dir}`).filter((f) => f.endsWith(".ndjson"))) {
       const events = loadFile(`scripts/fixtures/${dir}/${file}`);
       const plain = fold(events, defaultMessageReducer());
       const ours = fold(events);
       const name = `${dir}/${file}`;
-      if (!restarts(events)) (show(plain.messages) === show(ours.messages) ? exact : differs).push(name);
+      if (handsBack(events)) {
+        const same = show(assistantView(plain)) === show(assistantView(ours));
+        const unnamed = ours.messages.some((m) => m.metadata?.turnId === "");
+        (same && !unnamed ? named : differs).push(name);
+      } else if (!restarts(events)) (show(plain.messages) === show(ours.messages) ? exact : differs).push(name);
       else (show(assistantView(plain)) === show(assistantView(ours)) ? reordered : differs).push(name);
     }
   }
   check(`${exact.length} recorded transcripts without a restarted step project byte-for-byte as before`, exact.length > 0 && differs.length === 0, show(differs));
   check(`${reordered.length} with one (a delegation that returned) read the same, card then reply`, reordered.length > 0 && differs.length === 0, show(differs));
+  check(`${named.length} with a parked specialist's hand-back read the same, the hand-back under its own turn id`, named.length > 0 && differs.length === 0, show(differs));
   check("nothing is added to what is persisted (the state is not enumerable)", !Object.keys(fold(REASONING)).some((k) => k.startsWith("~")));
+}
+
+console.log("\n5. The Control Panel's rail folds a specialist's own stream the same way");
+{
+  // A specialist is an eve session like any other: when IT delegates (or is
+  // resumed), eve restarts its step count exactly as it does the orchestrator's.
+  // The rail (app/_components/cockpit.tsx, useChildFeeds) folds that stream
+  // event by event into a feed; this is its fold, read from its source.
+  const cockpit = readFileSync("app/_components/cockpit.tsx", "utf8");
+  check(
+    "the rail mounts the chat's reducer: withSessionEpochs(defaultMessageReducer())",
+    /const childReducer = withSessionEpochs\(defaultMessageReducer\(\)\);/.test(cockpit),
+  );
+  check(
+    "each event is folded onto the feed's own previous projection, never a rebuilt { messages }",
+    /childReducer\.reduce\(\s*f\.transcript \?\? childReducer\.initial\(\)/.test(cockpit) &&
+      !/childReducer\.reduce\(\s*\{\s*messages:/.test(cockpit),
+  );
+  check(
+    "a re-opened feed continues from where its fold stopped (no replay onto a full transcript)",
+    /let cursor = cursors\.current\[sid\] \?\? 0;/.test(cockpit) && /cursors\.current\[sid\] = cursor;/.test(cockpit),
+  );
+  // The rail's fold, as written there: the feed keeps `transcript`, messages are read from it.
+  const railFold = (events, reducer) => {
+    let feed = { messages: [], transcript: undefined };
+    const frames = [];
+    for (const event of events) {
+      const transcript = reducer.reduce(feed.transcript ?? reducer.initial(), event);
+      feed = { ...feed, transcript, messages: transcript.messages };
+      frames.push(feed.messages);
+    }
+    return frames;
+  };
+  const bodyOf = (messages) => assistantView({ messages });
+  for (const [name, events] of [["reasoning-around-subagent", REASONING], ["text-before-subagent", SAY]]) {
+    const frames = railFold(events, withSessionEpochs(defaultMessageReducer()));
+    check(
+      `${name}: the rail's detail reads thinking, card, later thinking, answer`,
+      show(bodyOf(frames.at(-1))) === show(assistantView(fold(events))),
+      show(bodyOf(frames.at(-1))),
+    );
+    const bad = frames.findIndex((m) => {
+      const [view] = bodyOf(m);
+      if (!view) return false;
+      const card = view.indexOf("subagent");
+      const t2 = view.indexOf("reasoning:ORCH-THINK-2");
+      return t2 >= 0 && !(card >= 0 && t2 > card);
+    });
+    check(`${name}: at no frame does the later thinking stream above the card in the rail`, bad === -1, `frame ${bad}`);
+  }
+  // What the rail did before: eve's reducer alone, folded onto a rebuilt { messages } each event.
+  const before = (events, reducer) => {
+    let messages = [];
+    for (const e of events) messages = reducer.reduce({ messages }, e).messages;
+    return assistantView({ messages });
+  };
+  check(
+    "before: the rail showed the later thinking ABOVE the card (the #67 defect, in the Control Panel)",
+    show(before(REASONING, defaultMessageReducer())) === show([["reasoning:ORCH-THINK-2", "subagent", "text:FINAL-ANSWER"]]),
+    show(before(REASONING, defaultMessageReducer())),
+  );
+  check(
+    "and wrapping alone is not enough: a rebuilt { messages } drops the wrapper's state every event",
+    show(before(REASONING, withSessionEpochs(defaultMessageReducer()))) !== show(assistantView(fold(REASONING))),
+  );
+}
+
+console.log("\n6. A parked specialist's hand-back (turnId \"\") is its own turn, in stream order");
+{
+  const TWO = load("two-parked-handbacks");
+  const handBacks = TWO.filter((e) => e.type === "step.started" && e.data?.turnId === "");
+  check(
+    "the recording: two hand-backs, each with turnId \"\", at sequences 1 and 3 (turn_1 and turn_3 are never sent)",
+    show(handBacks.map((e) => e.data.sequence)) === show([1, 3]) &&
+      !TWO.some((e) => e.data?.turnId === "turn_1" || e.data?.turnId === "turn_3") &&
+      TWO.some((e) => e.data?.turnId === "turn_2"),
+  );
+  const said = (data) =>
+    data.messages.map((m) => {
+      const text = m.parts.filter((p) => p.type === "text").map((p) => p.text.split(" ")[0]).join("+");
+      return `${m.role}:${text || m.parts.filter((p) => p.type === "dynamic-tool").length + "tools"}`;
+    });
+  const expected = ["user:MSG-1", "assistant:2tools", "assistant:ORCH-CONTINUE", "user:MSG-3", "assistant:2tools", "assistant:ORCH-CONTINUE"];
+  const questionIn = (data) =>
+    data.messages
+      .filter((m) => m.parts.some((p) => p.type === "dynamic-tool" && p.toolName === "ask_question"))
+      .map((m) => `${m.metadata?.turnId}:${m.parts.filter((p) => p.toolName === "ask_question").length}`);
+  check(
+    "each specialist's question card sits in the turn that delegated to it (the second is sent with the child's turn_0)",
+    show(questionIn(fold(TWO))) === show(["turn_0:1", "turn_2:1"]) &&
+      TWO.filter((e) => e.type === "input.requested").every((e) => e.data.turnId === "turn_0"),
+    show(questionIn(fold(TWO))),
+  );
+  check("each hand-back reads under the message that asked for it", show(said(fold(TWO))) === show(expected), show(said(fold(TWO))));
+  check(
+    "named as eve numbers turns: turn_1 and turn_3",
+    show(fold(TWO).messages.map((m) => m.metadata?.turnId)) === show(["turn_0", "turn_0", "turn_1", "turn_2", "turn_2", "turn_3"]),
+    show(fold(TWO).messages.map((m) => m.metadata?.turnId)),
+  );
+  let resumedAgree = true;
+  for (let cut = 1; cut < TWO.length; cut++) {
+    const reducer = withSessionEpochs(defaultMessageReducer());
+    if (show(projectAttached(reducer, fold(TWO.slice(0, cut), reducer), TWO.slice(cut)).messages) !== show(fold(TWO).messages)) resumedAgree = false;
+  }
+  check("a fold resumed at any event, and the compacted snapshot, agree", resumedAgree && show(fold(compactTranscript(TWO)).messages) === show(fold(TWO).messages));
+  const before = fold(TWO, withResumedSteps(defaultMessageReducer()));
+  check(
+    "before: the second hand-back was written into the FIRST one's message, and its question card into MSG-1's reply, both above MSG-3",
+    show(said(before)) === show(["user:MSG-1", "assistant:3tools", "assistant:ORCH-CONTINUE+ORCH-CONTINUE", "user:MSG-3", "assistant:1tools"]),
+    show(said(before)),
+  );
+  check(
+    "an empty turn id without a sequence is left alone",
+    continuationTurnId("", undefined) === "" && continuationTurnId("turn_4", 9) === "turn_4" && continuationTurnId("", 5) === "turn_5",
+  );
 }
 
 console.log(`\n${passed} checks passed`);

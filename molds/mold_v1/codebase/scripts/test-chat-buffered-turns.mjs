@@ -747,6 +747,75 @@ console.log("\n7d. Markers never break the chat-list sync; answers are retried a
   check("a reloaded tab recognises its own deliveries (its earlier pages' ids)", /SELF_IDS\.has\(/.test(chat) && /markGone\(window\.sessionStorage, TAB_ID\)/.test(chat));
 }
 
+console.log("\n7e. A Stop before the reply said anything is said under that turn, on every open (mold_v1-125):");
+{
+  // Recorded: a message whose model has not produced its first token, stopped
+  // (POST /cancel {turnId}) while nothing had streamed. What eve sends for it is
+  // in the fixture; what a reopened chat has is exactly these events plus the
+  // chat's persisted markers.
+  const rec = load("stop-before-first-token").events;
+  const nothing = fn("turnShowedNothing");
+  const hosts = fn("stoppedNoteHosts");
+  const notes = fn("stoppedTurnNotes");
+  const mark = fn("stoppedMarker");
+  check("turnShowedNothing and stoppedNoteHosts exist", Boolean(nothing && hosts));
+  if (nothing && hosts && notes && mark) {
+    const cancelAt = rec.findIndex((e) => e.type === "turn.cancelled" || e.type === "session.waiting");
+    check("the recording: the turn was stopped with nothing of its own on screen", cancelAt > 0 && nothing(rec, "turn_0"));
+    const said = load("buffered-mid-turn").events;
+    check("…and a turn that streamed text is not \"nothing\"", !nothing(said, "turn_0"));
+    const withReasoning = [{ type: "reasoning.appended", data: { turnId: "turn_5", reasoningSoFar: "hm" } }];
+    const withTool = [{ type: "actions.requested", data: { turnId: "turn_5", actions: [] } }];
+    check("…nor one that thought or called a tool", !nothing(withReasoning, "turn_5") && !nothing(withTool, "turn_5"));
+
+    // The view: eve's reducer over the recording, and AgentMessage's own "renders anything" rule, restated.
+    const reducer = state.withSessionEpochs(defaultMessageReducer());
+    let data = reducer.initial();
+    for (const e of rec) data = reducer.reduce(data, e);
+    const renders = (m) =>
+      m.parts.some((p) => (p.type === "text" && p.text?.trim()) || (p.type === "reasoning" && p.text?.trim()) || p.type === "dynamic-tool" || p.type === "file");
+    const assistant = data.messages.find((m) => m.role === "assistant" && m.metadata?.turnId === "turn_0");
+    check("the stopped turn's reply renders nothing (so a note under it was never shown)", !assistant || !renders(assistant));
+
+    // A reopen: the server's events, then the persisted marker the Stop left.
+    const marker = mark({ requestIds: [], delegations: [], at: rec.length, turnId: "turn_0" });
+    const reopened = notes([...rec, marker]);
+    const at = hosts(data.messages, reopened, renders);
+    const user = data.messages.find((m) => m.role === "user" && m.metadata?.turnId === "turn_0");
+    check("after a reopen the note is said under the person's own message, in place", at.get(user?.id) === "Stopped.");
+    check("…exactly once", at.size === 1);
+    // Whatever the cached transcript held of eve's own end of the turn, the marker alone carries it.
+    const serverOnly = rec.filter((e) => e.type !== "turn.cancelled");
+    check(
+      "…even when the reopened events hold no turn.cancelled (the marker is what persists)",
+      hosts(data.messages, notes([...serverOnly, marker]), renders).get(user?.id) === "Stopped.",
+    );
+    // A stopped reply that DID say something keeps its note under the reply.
+    const reply = { id: "turn_3:assistant", role: "assistant", metadata: { turnId: "turn_3" }, parts: [{ type: "text", text: "half a reply" }] };
+    const ask = { id: "turn_3:user", role: "user", metadata: { turnId: "turn_3" }, parts: [{ type: "text", text: "q" }] };
+    const later = { id: "turn_4:user", role: "user", metadata: { turnId: "turn_4" }, parts: [{ type: "text", text: "next" }] };
+    const placed = hosts([ask, reply, later], new Map([["turn_3", "Stopped."]]), renders);
+    check("a stopped reply with content carries the note under the reply, not the question", placed.get(reply.id) === "Stopped." && !placed.has(ask.id));
+    check("a turn with nothing on screen gets no host (the composer note is the fallback)", hosts([later], new Map([["turn_9", "Stopped."]]), renders).size === 0);
+  }
+  const chat = readFileSync("app/_components/agent-chat.tsx", "utf8");
+  const stop = chat.slice(chat.indexOf("const stopTurn = useCallback"), chat.indexOf("}, [agent, chatKey, getAuthHeaders, report, onResync]);"));
+  check(
+    "an accepted Stop of a turn that showed nothing leaves a persisted marker",
+    /turnShowedNothing\(mergedEventsRef\.current as readonly TurnEvent\[\], target\.turnId\)[\s\S]{0,700}stoppedMarker\(\{ requestIds: \[\], delegations: \[\], at: absoluteIndex\(events\), turnId: target\.turnId \}\)/.test(stop),
+  );
+  check(
+    "every message is given the note stoppedNoteHosts chose for it (a user message included)",
+    /stoppedNote=\{stoppedNoteAt\.get\(message\.id\)\}/.test(chat) &&
+      /stoppedNoteHosts\(viewMessages, stoppedNotes, \(m\) => messageRendersContent\(m, true, isProxiedChildApproval\)\)/.test(chat),
+  );
+  const msg = readFileSync("app/_components/agent-message.tsx", "utf8");
+  check(
+    "the host test is AgentMessage's own (the one that drops an empty message)",
+    /export function messageRendersContent\(/.test(msg) && /const hasRenderableContent = messageRendersContent\(message, hoistPendingInput, isProxiedApproval\);/.test(msg),
+  );
+}
+
 console.log("\n8. An owed delivery always ends:");
 {
   const od = fn("outstandingDeliveries");

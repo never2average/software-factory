@@ -45,6 +45,19 @@
  *                      recovery can be shown to actually recover rather than
  *                      merely to stop crashing.
  *
+ *   slow-reply         a plain text answer STREAMED slowly: `--chunks N` pieces
+ *                      ("SLOW-REPLY part i."), `--chunk-delay-ms D` apart, ending
+ *                      "SLOW-REPLY END." — a turn long enough to be severed mid-reply
+ *                      (scripts/rig-chat-reattach.mjs).
+ *   long-tool          the root makes ONE long tool call, then answers slowly as
+ *                      slow-reply does ("TOOL-ANSWER part i." … "TOOL-ANSWER END.").
+ *                      `--tool bash` (default) runs eve's own `bash` in the sandbox:
+ *                      `sleep <--tool-seconds, default 20> && echo TOOL-DONE`;
+ *                      `--tool delegate` hands the work to the specialist instead,
+ *                      which works `--child-work-ms` before it answers. Either way a
+ *                      tool is IN FLIGHT for that long with nothing streaming
+ *                      (scripts/rig-end-of-answer.mjs).
+ *
  * `GET /__log` serves every decision with the time it was made (`at`, epoch ms), so a
  * rig can tell when the orchestrator was asked to continue — the moment a specialist's
  * result reached it.
@@ -73,6 +86,12 @@ const NO_USAGE = argv.includes("--no-usage");
 const EMPTIES = Number(arg("empties", "1"));
 /** delegate-parks: how long the child "works" after its question is answered. */
 const CHILD_WORK_MS = Number(arg("child-work-ms", "0"));
+/** slow-reply / long-tool: how the answer streams. */
+const CHUNKS = Number(arg("chunks", "8"));
+const CHUNK_DELAY_MS = Number(arg("chunk-delay-ms", "700"));
+/** long-tool: which tool is long, and how long a bash one sleeps. */
+const LONG_TOOL = arg("tool", "bash");
+const TOOL_SECONDS = Number(arg("tool-seconds", "20"));
 /** Completion tokens an empty reasoning answer burns — the measured 256. */
 const EMPTY_COMPLETION_TOKENS = Number(arg("empty-completion-tokens", "256"));
 const LOG = [];
@@ -143,6 +162,19 @@ function decide(messages, payload = {}) {
     // reissue after an empty answer reaches the person, and a tool call would
     // put an unrelated tool loop in the way of saying so.
     return { text: "RECOVERED: the answer that the empty response was hiding." };
+  }
+  const slow = (tag) => ({
+    text: Array.from({ length: CHUNKS }, (_, i) => `${tag} part ${i + 1}. `).join("") + `${tag} END.`,
+    chunked: true,
+  });
+  if (SCRIPT === "slow-reply") return slow("SLOW-REPLY");
+  if (SCRIPT === "long-tool" && !isChild(messages)) {
+    if (!parentHasResult(messages)) {
+      return LONG_TOOL === "delegate"
+        ? { tool: SUBAGENT, args: { message: "Do the long specialist work." } }
+        : { tool: "bash", args: { command: `sleep ${TOOL_SECONDS} && echo TOOL-DONE` } };
+    }
+    return slow("TOOL-ANSWER");
   }
   if (isChild(messages)) {
     if (SCRIPT === "delegate-parks" && !childAlreadyAsked(messages)) {
@@ -309,7 +341,11 @@ const server = createServer((req, res) => {
       `[fake-model] ${isChild(messages) ? "CHILD " : "ROOT  "} -> ${decision.empty ? "EMPTY" : (decision.tool ?? "text")} (max_tokens=${payload.max_tokens ?? "unset"})`,
     );
     // The child's resumed work, when asked for: its answer comes CHILD_WORK_MS later.
-    const work = SCRIPT === "delegate-parks" && isChild(messages) && childAlreadyAsked(messages) ? CHILD_WORK_MS : 0;
+    const work =
+      (SCRIPT === "delegate-parks" && isChild(messages) && childAlreadyAsked(messages)) ||
+      (SCRIPT === "long-tool" && isChild(messages))
+        ? CHILD_WORK_MS
+        : 0;
     if (work > 0) {
       setTimeout(() => respond(payload, decision, res), work);
       return;
@@ -319,6 +355,28 @@ const server = createServer((req, res) => {
 });
 
 function respond(payload, decision, res) {
+  if (payload.stream && decision.chunked) {
+    // One piece per sentence, CHUNK_DELAY_MS apart: a reply that is still being
+    // written for seconds, the way a real one is.
+    seq++;
+    const base = { id: `chatcmpl-${seq}`, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: payload.model };
+    const pieces = decision.text.split(/(?<=\. )/);
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] })}\n\n`);
+    let i = 0;
+    const next = () => {
+      if (i < pieces.length) {
+        res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { content: pieces[i++] }, finish_reason: null }] })}\n\n`);
+        setTimeout(next, CHUNK_DELAY_MS);
+        return;
+      }
+      res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], ...(NO_USAGE ? {} : { usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } }) })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    };
+    setTimeout(next, CHUNK_DELAY_MS);
+    return;
+  }
   if (payload.stream) {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
     for (const chunk of sseChunks(decision, payload.model)) res.write(`data: ${JSON.stringify(chunk)}\n\n`);

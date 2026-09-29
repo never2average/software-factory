@@ -309,6 +309,37 @@ console.log("\nresyncDecision (one detach leads to one resync that holds):");
   check("an empty transcript still yields a line", renderLoopScene([], []).includes("msgs 0"));
 }
 
+// --- the render census: WHICH component was looping when #185 fired (mold_v1-095) ----------------------------
+{
+  const { noteRender, renderCensus, resetRenderCensus } = await import("../lib/render-census.ts");
+  const { renderLoopDetail } = await import("../lib/chat-turn-state.ts");
+  resetRenderCensus();
+  // A loop: one component re-rendering hundreds of times inside a few ms, beside ordinary renders.
+  noteRender("AgentChat", 1_000);
+  noteRender("AgentChat", 1_400);
+  for (let i = 0; i < 600; i++) noteRender("ToolCluster", 1_500 + i * 0.01);
+  for (let i = 0; i < 40; i++) noteRender("AgentMessage", 1_500 + i * 0.1);
+  noteRender("Cockpit", 100); // long before the window
+  const census = renderCensus(1_000, 4, 1_510);
+  check("the census names the looping component first", census.startsWith("ToolCluster×600"));
+  check("…then the others that rendered in the last second", census.includes("AgentMessage×40") && census.includes("AgentChat×2"));
+  check("…and not what rendered before the window", !census.includes("Cockpit"));
+  const detail = renderLoopDetail(
+    "Minified React error #185; visit https://react.dev/errors/185 for the full message or use the non-minified dev environment for full errors and additional helpful warnings.",
+    "msgs 12 · parts 7 · tail text/streaming · event message.appended · table · 900x700",
+    census,
+  );
+  check("the report leads with the census and the scene, inside 300 characters", detail.startsWith("renders ToolCluster×600") && detail.includes("table") && detail.length <= 300);
+  resetRenderCensus();
+  check("with nothing counted it says so", renderLoopDetail("x", "msgs 0", renderCensus()).startsWith("renders none counted"));
+  const { readFileSync } = await import("node:fs");
+  const chat = readFileSync("app/_components/agent-chat.tsx", "utf8");
+  check("agent-chat's render-loop report carries the census", /detail: renderLoopDetail\(msg, sceneRef\.current, renderCensus\(\)\)/.test(chat));
+  const counted = ["AgentChat", "AgentMessage", "AgentMessagePart", "ToolCluster", "ToolClusterRow", "PendingApprovalCard", "ChatShell", "Cockpit"];
+  const src = ["agent-chat", "agent-message", "chat-shell", "cockpit"].map((f) => readFileSync(`app/_components/${f}.tsx`, "utf8")).join("\n");
+  check("every chat component that can drive its own updates counts its renders", counted.every((n) => src.includes(`noteRender("${n}")`)));
+}
+
 /* ═══ THE REATTACH DEFECTS PROVED BY REVIEW ON 2026-09-22 ═══════════════════
  *
  * Each block below fails on the code that shipped as PR #37 and passes on the

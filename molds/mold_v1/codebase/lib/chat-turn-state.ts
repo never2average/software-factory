@@ -825,16 +825,105 @@ export function withResumedSteps<TData extends object, TEvent extends TurnEvent>
   };
 }
 
-export function withSessionEpochs<TData extends object, TEvent extends TurnEvent>(
-  reducer: EventReducer<TData, TEvent>,
+/**
+ * A PARKED SPECIALIST'S HAND-BACK GETS ITS OWN TURN.
+ *
+ * When a delegation parks (the specialist asked the person something) the
+ * parent's turn ends at `session.waiting`. The answer resumes the specialist,
+ * and when it hands back eve runs the parent's reply as a continuation that
+ * has NO `turn.started` and arrives with `turnId: ""` — the same emission-state
+ * reset as the step renumbering above; recorded in
+ * scripts/fixtures/subagent-delivery/child-parks-then-answered.ndjson and
+ * scripts/fixtures/event-order/two-parked-handbacks.ndjson. eve's reducer keys
+ * the assistant message by turn id (`${turnId}:assistant`), so EVERY such
+ * hand-back in a thread folded into ONE message — the first one's, wherever
+ * it sits: the second specialist's answer appeared above every message sent
+ * since, inside the first specialist's reply.
+ *
+ * The continuation still carries its `sequence`, which is the number eve gives
+ * every turn (`turn_<sequence>`: the recordings show `turn_0`, the hand-back at
+ * sequence 1, then `turn_2` — the id eve skipped). So a `""` turn id becomes
+ * `turn_<sequence>`: its own message, in stream order, under the id eve would
+ * have sent. An event without a sequence is left as it is.
+ */
+export function continuationTurnId(turnId: unknown, sequence: unknown): unknown {
+  return turnId === "" && typeof sequence === "number" && Number.isInteger(sequence) && sequence >= 0
+    ? `turn_${sequence}`
+    : turnId;
+}
+
+/**
+ * A SPECIALIST'S QUESTION GOES TO THE TURN THAT DELEGATED.
+ *
+ * A question a parked specialist asks is proxied onto the parent's stream with
+ * the CHILD's own ids (`turnId: "turn_0"`, `sequence: 0` — recorded in
+ * scripts/fixtures/event-order/two-parked-handbacks.ndjson). For the first
+ * delegation that happens to be right. For a later one it names a turn that
+ * ended long ago, and eve's reducer put the card — answered, it stays in the
+ * transcript — into THAT turn's reply, above every message since.
+ *
+ * A turn that has completed cannot ask anything, so an `input.requested` for a
+ * completed turn is re-addressed to the turn running now (the latest to
+ * start). A question for a turn still open is left exactly where it is.
+ */
+const QUESTIONS = "~questions";
+type QuestionState = { readonly completed: readonly string[]; readonly latest?: string };
+type WithQuestions = { [QUESTIONS]?: QuestionState };
+
+export function withDelegatedQuestions<TData extends object, TEvent extends TurnEvent>(
+  base: EventReducer<TData, TEvent>,
 ): EventReducer<TData, TEvent> {
-  // Every transcript reducer also gets `withResumedSteps`, INSIDE the epoch
-  // scoping: its state is keyed by the scoped turn id, so a new session's
-  // `turn_0` never inherits the old one's step count.
-  const base = withResumedSteps(reducer);
   return {
     initial: () => base.initial(),
     reduce(data, event) {
+      const state: QuestionState = (data as WithQuestions)[QUESTIONS] ?? { completed: [] };
+      const payload = (event as { data?: { turnId?: unknown } }).data;
+      const turnId = typeof payload?.turnId === "string" ? payload.turnId : undefined;
+      let next = state;
+      let scoped = event;
+      if (turnId !== undefined) {
+        if (event.type === "turn.completed") {
+          if (!state.completed.includes(turnId)) next = { ...state, completed: [...state.completed, turnId] };
+        } else if (event.type === "input.requested") {
+          if (state.latest && state.latest !== turnId && state.completed.includes(turnId)) {
+            scoped = { ...event, data: { ...payload, turnId: state.latest } } as TEvent;
+          }
+        } else if (turnId !== state.latest && !state.completed.includes(turnId)) {
+          // The first sign of a turn — `turn.started`, or a hand-back's first step.
+          next = { ...state, latest: turnId };
+        }
+      }
+      const reduced = base.reduce(data, scoped);
+      if (next === state) {
+        if (reduced !== data && (reduced as WithQuestions)[QUESTIONS] !== state && (state.latest || state.completed.length)) {
+          Object.defineProperty(reduced, QUESTIONS, { value: state, enumerable: false, configurable: true });
+        }
+        return reduced;
+      }
+      const out = reduced === data ? copyWithState(data) : reduced;
+      Object.defineProperty(out, QUESTIONS, { value: next, enumerable: false, configurable: true });
+      return out;
+    },
+  };
+}
+
+export function withSessionEpochs<TData extends object, TEvent extends TurnEvent>(
+  reducer: EventReducer<TData, TEvent>,
+): EventReducer<TData, TEvent> {
+  // Every transcript reducer also gets `withResumedSteps` (and
+  // `withDelegatedQuestions` around it), INSIDE the epoch scoping: their state
+  // is keyed by the scoped turn id, so a new session's `turn_0` never inherits
+  // the old one's.
+  const base = withDelegatedQuestions(withResumedSteps(reducer));
+  return {
+    initial: () => base.initial(),
+    reduce(data, raw) {
+      let event = raw;
+      const sent = (raw as { data?: { turnId?: unknown; sequence?: unknown } }).data;
+      if (sent?.turnId === "") {
+        const named = continuationTurnId(sent.turnId, sent.sequence);
+        if (named !== "") event = { ...raw, data: { ...sent, turnId: named } } as TEvent;
+      }
       const state = (data as WithEpoch)[EPOCH] ?? { epoch: 0, ended: false };
       let { epoch, ended } = state;
       const type = event?.type;
@@ -1380,6 +1469,16 @@ export function renderLoopScene(
 }
 
 /**
+ * The `render-loop` report's detail, inside its 300 characters: WHO was rendering
+ * (the census, lib/render-census.ts), WHAT was on screen (the scene), then as much
+ * of the error text as fits — "Minified React error #185" says nothing else.
+ */
+export function renderLoopDetail(message: string, scene: string, census: string): string {
+  const head = `renders ${census || "none counted"} — ${scene}`;
+  return `${head} — ${message}`.slice(0, 300);
+}
+
+/**
  * A MESSAGE THIS CHAT DELIVERED, and where the stream stood when it did.
  *
  * `at` is the ABSOLUTE stream index at the moment of delivery (see
@@ -1791,6 +1890,81 @@ export function stoppedTurnNotes(
     }
   }
   return notes;
+}
+
+/**
+ * Did this turn put NOTHING of its own on screen — no text, no thinking, no
+ * tool? Such a turn's Stop is recorded as a marker too (`stoppedMarker`), not
+ * left to eve's `turn.cancelled` alone: the note is then carried with the
+ * chat's persisted markers (client_markers), so every open and every device
+ * says it, whatever the stream held when the transcript was cached.
+ */
+export function turnShowedNothing(events: readonly TurnEvent[], turnId: string): boolean {
+  for (const raw of events) {
+    const e = raw as {
+      type?: string;
+      data?: { turnId?: unknown; messageSoFar?: unknown; message?: unknown; reasoningSoFar?: unknown; reasoning?: unknown };
+    };
+    if (e?.data?.turnId !== turnId) continue;
+    switch (e.type) {
+      case "actions.requested":
+      case "input.requested":
+      case "authorization.required":
+        return false;
+      case "message.appended":
+        if (typeof e.data.messageSoFar === "string" && e.data.messageSoFar.trim()) return false;
+        break;
+      case "message.completed":
+        if (typeof e.data.message === "string" && e.data.message.trim()) return false;
+        break;
+      case "reasoning.appended":
+        if (typeof e.data.reasoningSoFar === "string" && e.data.reasoningSoFar.trim()) return false;
+        break;
+      case "reasoning.completed":
+        if (typeof e.data.reasoning === "string" && e.data.reasoning.trim()) return false;
+        break;
+    }
+  }
+  return true;
+}
+
+/**
+ * WHERE EACH "Stopped." NOTE IS SAID — under the last thing its turn put on
+ * screen, in the conversation's history.
+ *
+ * The note used to go only under the turn's ASSISTANT message. A turn stopped
+ * before it streamed anything has an assistant message with nothing to show
+ * (eve's reducer makes one from `step.started` / `turn.cancelled`, holding only
+ * a `step-start`), and a message that renders nothing is dropped whole — note
+ * and all. So the note was said above the composer instead, only until the
+ * next turn, and a reopened chat had nowhere to say it at all (live check
+ * 2026-09-25, mold_v1-125). The host is now the LAST message of the turn that
+ * renders something: the reply if it has any content, else the person's own
+ * message. `rendersContent` is the view's own test (AgentMessage's), so a
+ * host is never a message that will not render.
+ *
+ * Returns message id → note. A turn none of whose messages is on screen (an
+ * optimistic bubble eve has not numbered yet) has no host: the caller says it
+ * above the composer, as before.
+ */
+export function stoppedNoteHosts<M extends { readonly id: string; readonly metadata?: { readonly turnId?: string } | undefined }>(
+  messages: readonly M[],
+  notes: ReadonlyMap<string, string>,
+  rendersContent: (message: M) => boolean,
+): ReadonlyMap<string, string> {
+  const hosts = new Map<string, string>();
+  if (notes.size === 0) return hosts;
+  const seen = new Set<string>();
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const turnId = m.metadata?.turnId;
+    if (!turnId || seen.has(turnId)) continue;
+    const note = notes.get(turnId);
+    if (note === undefined || !rendersContent(m)) continue;
+    seen.add(turnId);
+    hosts.set(m.id, note);
+  }
+  return hosts;
 }
 
 /**

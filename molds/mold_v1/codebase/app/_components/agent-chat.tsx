@@ -1,5 +1,6 @@
 "use client";
 
+import { noteRender, renderCensus } from "@/lib/render-census";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { lazyPanel } from "@/components/lazy-panel";
 import { WorkspaceSummary } from "./workspace-summary";
@@ -268,7 +269,9 @@ import {
   stopTarget,
   stoppedFromEvents,
   stoppedMarker,
+  stoppedNoteHosts,
   stoppedTurnNotes,
+  turnShowedNothing,
   attachRetryDelayMs,
   composerRoute,
   deadInputRequestIds,
@@ -281,6 +284,7 @@ import {
   outstandingDeliveries,
   pendingInputRequestParts,
   proxiedChildRequestIds,
+  renderLoopDetail,
   renderLoopScene,
   resyncDecision,
   retryStormDetected,
@@ -328,7 +332,7 @@ import {
   wrapDirectives,
 } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
-import { AgentMessage, PendingApprovalCard } from "./agent-message";
+import { AgentMessage, PendingApprovalCard, messageRendersContent } from "./agent-message";
 import { GOAL_OUTCOME_SCHEMA, asGoalOutcome, goalPreamble, type GoalOutcome } from "./goal-mode";
 import type { ChatMeta } from "./chat-shell";
 import type { OpsSection } from "./ops-center";
@@ -672,6 +676,7 @@ export function AgentChat({
   sharedThreadId,
   storageScope,
 }: AgentChatProps) {
+  noteRender("AgentChat");
   /**
    * A dropped stream must not look like a finished answer.
    *
@@ -814,7 +819,10 @@ export function AgentChat({
         report("render-loop", {
           sessionId: sessionIdRef.current ?? undefined,
           // The scene, not just the code: #185 minifies to a sentence that names nothing.
-          detail: `${msg.slice(0, 170)} — ${sceneRef.current}`.slice(0, 300),
+          // And WHO was rendering (lib/render-census.ts): the scene says what was on
+          // screen, the census which component was looping. Census first, so the
+          // 300-character cap trims the error text — the one part that says nothing.
+          detail: renderLoopDetail(msg, sceneRef.current, renderCensus()),
         });
         return;
       }
@@ -2857,6 +2865,19 @@ export function AgentChat({
           stoppedMarker({ requestIds: parkedOn, delegations, at: absoluteIndex(events), turnId: target.turnId }),
         ]);
         setStopping(false);
+      } else if (
+        body.status === "accepted" &&
+        target.turnId &&
+        turnShowedNothing(mergedEventsRef.current as readonly TurnEvent[], target.turnId)
+      ) {
+        // STOPPED BEFORE IT SAID ANYTHING. The note has no reply to sit under and
+        // eve's `turn.cancelled` may not be in what a later open reads, so the
+        // Stop is recorded as a marker: persisted with the chat (client_markers),
+        // it says "Stopped." under this turn on every open and every device.
+        setStoppedMarkers((prev) => [
+          ...prev,
+          stoppedMarker({ requestIds: [], delegations: [], at: absoluteIndex(events), turnId: target.turnId }),
+        ]);
       }
       if (body.status === "no_active_turn") {
         // Nothing is running under this id, yet the transcript never saw the
@@ -3782,8 +3803,15 @@ export function AgentChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [mergedEvents.length, stoppedMarkers, chatKey],
   );
-  // A stopped turn that never produced a reply has nowhere to put its note: say
-  // it above the composer instead, until the next turn.
+  /** message id → the "Stopped." note said under it (see `stoppedNoteHosts`). */
+  const stoppedNoteAt = useMemo(
+    () => stoppedNoteHosts(viewMessages, stoppedNotes, (m) => messageRendersContent(m, true, isProxiedChildApproval)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [viewMessages, stoppedNotes],
+  );
+  // A stopped turn with NO message on screen (eve has not numbered it yet) has
+  // nowhere to put its note: say it above the composer instead, until the next
+  // turn. Every other stopped turn says it in place, in the history.
   const cancelledNote = useMemo(() => {
     for (let i = mergedEvents.length - 1; i >= 0; i--) {
       const e = mergedEvents[i] as { type?: string; data?: { turnId?: string } };
@@ -3800,12 +3828,13 @@ export function AgentChat({
               return part.type === "dynamic-tool" || (part.type === "text" && Boolean(part.text?.trim()));
             }),
         );
-        return shown ? null : (stoppedNotes.get(id) ?? null);
+        const hosted = viewMessages.some((m) => m.metadata?.turnId === id && stoppedNoteAt.has(m.id));
+        return shown || hosted ? null : (stoppedNotes.get(id) ?? null);
       }
     }
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mergedEvents.length, viewMessages, stoppedNotes]);
+  }, [mergedEvents.length, viewMessages, stoppedNotes, stoppedNoteAt]);
   /** A way out of a hold that feels stuck — see `stopAvailable`. */
   // The question on screen is a delegated specialist's (it cannot be dismissed).
   const specialistWaiting =
@@ -3977,7 +4006,15 @@ export function AgentChat({
           // events/messages arrive; sessionId changes on a thread switch.
           resetKeys={[sessionId, agent.status, mergedEvents.length, viewMessages.length]}
         >
-          <Conversation className="min-h-0 flex-1">
+          {/* The turn as the transcript sees it: what the end-of-answer row is
+              decided on (`answerOver`) and how far into the stream this view has
+              read. A finer signal than text growth for anything sampling the
+              page (scripts/rig-end-of-answer.mjs; mold_v1-111). */}
+          <Conversation
+            className="min-h-0 flex-1"
+            data-turn={answerOver ? "finished" : "running"}
+            data-stream-index={absoluteIndex(mergedEvents as readonly TurnEvent[])}
+          >
             <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-4 py-6 sm:px-6">
             {autoBadge ? (
               autoBadge.kind === "cron" || (autoBadge.ts && !autoBadge.kind) ? (
@@ -4040,13 +4077,7 @@ export function AgentChat({
                     isStreaming={liveStreaming && index === viewMessages.length - 1}
                     message={message}
                     stoppedDelegations={stopped.delegations}
-                    stoppedNote={
-                      message.role === "assistant" &&
-                      turnId &&
-                      viewMessages[index + 1]?.metadata?.turnId !== turnId
-                        ? stoppedNotes.get(turnId)
-                        : undefined
-                    }
+                    stoppedNote={stoppedNoteAt.get(message.id)}
                     onFocusSubagent={(toolCallId) => {
                       setCockpitOpen(true);
                       setFocusSubagent(toolCallId);

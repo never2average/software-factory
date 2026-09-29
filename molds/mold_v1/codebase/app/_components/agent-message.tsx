@@ -1,5 +1,6 @@
 "use client";
 
+import { noteRender } from "@/lib/render-census";
 import { lazyPanel } from "@/components/lazy-panel";
 import { Spinner } from "@/components/ui/spinner";
 import type {
@@ -145,6 +146,20 @@ function segmentParts(parts: readonly EveMessagePart[]): PartSegment[] {
  *  ConversationContent flex-gap slot, which is the blank band between a crashed
  *  child's delegation card and its hoisted approvals. AgentMessage drops such
  *  messages so no empty shell occupies transcript space. */
+/**
+ * Does this message put anything on screen? The SAME test AgentMessage uses to
+ * drop an empty message (below) — so a caller choosing where to say something
+ * (lib/chat-turn-state `stoppedNoteHosts`) never picks a message that renders
+ * nothing.
+ */
+export function messageRendersContent(
+  message: EveMessage,
+  hoistPendingInput?: boolean,
+  isProxiedApproval?: (part: EveMessagePart) => boolean,
+): boolean {
+  return message.parts.some((p) => partRendersContent(p, message.role, hoistPendingInput, isProxiedApproval));
+}
+
 function partRendersContent(
   part: EveMessagePart,
   role: EveMessage["role"],
@@ -230,6 +245,7 @@ export function AgentMessage({
    */
   readonly turnActive: boolean;
 }) {
+  noteRender("AgentMessage");
   const lastTextIndex = message.parts.reduce(
     (last, part, index) => (part.type === "text" ? index : last),
     -1,
@@ -254,9 +270,7 @@ export function AgentMessage({
   // renders an empty bubble that still eats a ConversationContent gap slot.
   // Drop it, but keep the actively streaming last message mounted so its block
   // caret isn't dropped mid-stream (zombie messages are never streaming).
-  const hasRenderableContent = message.parts.some((p) =>
-    partRendersContent(p, message.role, hoistPendingInput, isProxiedApproval),
-  );
+  const hasRenderableContent = messageRendersContent(message, hoistPendingInput, isProxiedApproval);
   if (!hasRenderableContent && !isStreaming) return null;
 
   return (
@@ -337,7 +351,9 @@ function MessageActions({ text, onRetry }: { readonly text: string; readonly onR
   const btn =
     "rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
   return (
-    <div className="mt-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+    // `data-end-of-answer`: what a check (scripts/rig-end-of-answer.mjs) or a live
+    // sampler looks for — the row's presence, not its hover opacity.
+    <div data-end-of-answer className="mt-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
       <button type="button" onClick={copy} title="Copy" aria-label="Copy" className={btn}>
         {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       </button>
@@ -546,6 +562,7 @@ function AgentMessagePart({
   readonly showCaret: boolean;
   readonly role: EveMessage["role"];
 }) {
+  noteRender("AgentMessagePart");
   // Hooks must run unconditionally (the switch below branches per part type).
   // Standalone tool cards: open state is CONTROLLED so a card that LATER needs
   // input (approval flips in, proxied request arrives) opens itself — Radix
@@ -794,6 +811,7 @@ function ToolCluster({
   readonly onFocusSubagent?: (toolCallId: string) => void;
   readonly parts: readonly EveDynamicToolPart[];
 }) {
+  noteRender("ToolCluster");
   const failed = parts.filter((p) => p.state === "output-error").length;
   return (
     // mb-4 matches the standalone Tool card (tool.tsx) so both tool surfaces
@@ -829,6 +847,7 @@ function ToolClusterRow({
   readonly onFocusSubagent?: (toolCallId: string) => void;
   readonly part: EveDynamicToolPart;
 }) {
+  noteRender("ToolClusterRow");
   // Collapsed by DEFAULT for every row, errors included — a click pins it open.
   // (Previously errors auto-expanded; the operator wants a uniform collapsed
   // resting state, with the error text still one click away.)
@@ -994,6 +1013,7 @@ export function PendingApprovalCard({
   readonly onDismiss?: () => void;
   readonly part: EveDynamicToolPart;
 }) {
+  noteRender("PendingApprovalCard");
   const hasInputRequest = Boolean(part.toolMetadata?.eve?.inputRequest);
   if (stoppedName !== undefined) {
     return (

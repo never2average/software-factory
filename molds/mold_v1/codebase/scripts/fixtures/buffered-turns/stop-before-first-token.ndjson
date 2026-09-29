@@ -1,0 +1,6 @@
+{"data":{"runtime":{"agentId":"fde-agent","agentName":"fde-agent","eveVersion":"0.25.1","modelId":"cloudflare-workers-ai/@cf/test/scripted"}},"type":"session.started","meta":{"at":"2026-09-29T04:30:04.710Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.started","meta":{"at":"2026-09-29T04:30:04.714Z"}}
+{"data":{"message":"MSG-1 SLOWSTART please answer","parts":[{"text":"MSG-1 SLOWSTART please answer","type":"text"}],"sequence":0,"turnId":"turn_0"},"type":"message.received","meta":{"at":"2026-09-29T04:30:04.797Z"}}
+{"data":{"sequence":0,"stepIndex":0,"turnId":"turn_0"},"type":"step.started","meta":{"at":"2026-09-29T04:30:04.840Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.cancelled","meta":{"at":"2026-09-29T04:30:07.213Z"}}
+{"data":{"continuationToken":"eve:97c72462-4b1b-4477-b278-4d633a80d8f1","wait":"next-user-message"},"type":"session.waiting","meta":{"at":"2026-09-29T04:30:07.214Z"}}

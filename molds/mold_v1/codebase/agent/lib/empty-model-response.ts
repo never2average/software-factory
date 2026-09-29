@@ -143,10 +143,26 @@ export interface ModelCallOutcome {
   readonly reasoningTokens: number | null;
   /** Whether ANY tool call came back — the difference between "said nothing" and "did nothing". */
   readonly hadToolCalls: boolean;
+  /**
+   * The provider's own id for this response (`response-metadata` on a stream,
+   * `response.id` on a generate), or null. What an escalation to the provider
+   * quotes: without it an empty answer can be described but never traced
+   * (mold_v1-112 — the 2026-09-23 morning deaths could not be).
+   */
+  readonly responseId: string | null;
 }
 
 /** One recorded empty response: the row's whole content. */
 export interface EmptyResponseRecord extends ModelCallShape, ModelCallOutcome {
+  /**
+   * How long THIS attempt took, call to last part, in ms (null when unknown).
+   *
+   * The one discriminator the row lacked for the 2026-09-23 morning deaths
+   * (mold_v1-112): `finish=stop out=0` in 200 ms is a model that declined at
+   * once; the same after 60 s is a provider that stalled and gave up. The
+   * finish reason and the token counts read identically for both.
+   */
+  readonly elapsedMs: number | null;
   /** Unique per record, so a drain that runs twice cannot write the row twice. */
   readonly id: string;
   /** 1 for the provider's first answer, 2 for the first reissue, and so on. */
@@ -295,6 +311,9 @@ export function summarizeGenerateResult(result: GenerateResult): ModelCallOutcom
     completionTokens: usage.completion,
     reasoningTokens: usage.reasoning,
     hadToolCalls,
+    responseId: typeof (result as { response?: { id?: unknown } } | undefined)?.response?.id === "string"
+      ? ((result as { response: { id: string } }).response.id)
+      : null,
   };
 }
 
@@ -308,10 +327,14 @@ export function createStreamWatcher() {
   let promptTokens: number | null = null;
   let completionTokens: number | null = null;
   let reasoningTokens: number | null = null;
+  let responseId: string | null = null;
   return {
     observe(part: StreamPart): void {
-      const p = part as { type?: string; delta?: string; finishReason?: unknown; usage?: unknown };
+      const p = part as { type?: string; delta?: string; finishReason?: unknown; usage?: unknown; id?: unknown };
       switch (p?.type) {
+        case "response-metadata":
+          if (typeof p.id === "string" && p.id) responseId = p.id;
+          break;
         case "text-delta":
           if (typeof p.delta === "string" && p.delta.trim() !== "") hadText = true;
           break;
@@ -350,6 +373,7 @@ export function createStreamWatcher() {
         promptTokens,
         completionTokens,
         reasoningTokens,
+        responseId,
         hadToolCalls,
       };
     },
@@ -993,6 +1017,10 @@ export function formatEmptyResponseDetail(record: EmptyResponseRecord): string {
     ...(record.nextOutputCap === null ? [] : [`next_cap=${record.nextOutputCap}`]),
     ...(record.nextReasoning === null ? [] : [`next_reasoning=${record.nextReasoning}`]),
     `images=${record.hasImageInput ? "yes" : "no"}`,
+    // How long the empty attempt took, and the provider's id for it (mold_v1-112):
+    // "declined at once" and "stalled, then gave up" read the same in every other field.
+    `ms=${record.elapsedMs === null ? "?" : Math.round(record.elapsedMs)}`,
+    ...(record.responseId ? [`resp=${record.responseId.slice(0, 48)}`] : []),
     // Only on an answer that had content and was withheld anyway.
     ...(record.rejected === null ? [] : [`rejected=${record.rejected}`]),
     `next=${record.next}${record.nextReason ? `:${record.nextReason}` : ""}`,
@@ -1024,6 +1052,8 @@ export interface EmptyResponseDeps {
   sleep(ms: number): Promise<void>;
   /** Injected so a test can assert record identity without matching a uuid. */
   newId(): string;
+  /** A clock, for `elapsedMs`. Defaults to Date.now; injected by tests. */
+  now?(): number;
   /** Is this (model-facing) tool known read-only? Defaults to agent/lib/read-only-tools.ts; injected by tests. */
   isReadOnlyTool?(name: string): boolean;
 }
@@ -1078,6 +1108,7 @@ function textParts(id: string, text: string): StreamPart[] {
  */
 export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageModelMiddleware {
   const readOnly: ReadOnlyToolTest = deps.isReadOnlyTool ?? isReadOnlyTool;
+  const now = () => (deps.now ? deps.now() : Date.now());
   function record(input: {
     shape: ModelCallShape;
     outcome: ModelCallOutcome;
@@ -1087,10 +1118,12 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
     step: RecoveryStep;
     rejected?: RejectionReason | null;
     nextReasoning?: "low" | null;
+    elapsedMs?: number | null;
   }): void {
     const row: EmptyResponseRecord = {
       ...input.shape,
       ...input.outcome,
+      elapsedMs: input.elapsedMs ?? null,
       id: deps.newId(),
       attempt: input.attempt,
       modelId: input.modelId,
@@ -1127,9 +1160,11 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
        * retry cannot leave two copies of it in a later attempt's prompt.
        */
       let callParams = params;
+      let startedAt = now();
       let result = await doGenerate();
       for (;;) {
         attempt++;
+        const elapsedMs = now() - startedAt;
         const outcome = summarizeGenerateResult(result);
         let rejected: RejectionReason | null = null;
         if (!outcome.empty) {
@@ -1147,7 +1182,7 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
         const step = planRecovery({ attempt, shape, outcome, fallbackAvailable: fallback !== null, fallbackUsed });
         const nextModelId = step.action === "fallback" && fallback ? fallback.id : activeId;
         const nextReasoning = step.action === "explain" ? null : raisedRecoveryReasoning(callParams, outcome, nextModelId);
-        record({ shape, outcome, attempt, modelId: activeId, path: "generate", step, rejected, nextReasoning });
+        record({ shape, outcome, attempt, modelId: activeId, path: "generate", step, rejected, nextReasoning, elapsedMs });
         if (step.delayMs > 0) await deps.sleep(step.delayMs);
         if (step.action === "explain") {
           const explained: GenerateResult = {
@@ -1161,6 +1196,7 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
         // decided per call, because the next model may not take the field.
         callParams = withOutputBudget(callParams, step.outputBudget);
         const sent = withRecoveryReasoning(callParams, nextReasoning);
+        startedAt = now();
         if (step.action === "fallback" && fallback) {
           activeId = fallback.id;
           fallbackUsed = true;
@@ -1176,6 +1212,7 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
     },
 
     async wrapStream({ doStream, params, model }) {
+      let startedAt = now();
       const first = await doStream();
       const sink = new TransformStream<StreamPart, StreamPart>();
       const writer = sink.writable.getWriter();
@@ -1253,6 +1290,7 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
             // exactly as it always did. Every later attempt is a recovery.
             const hold = attempt > 0 && guardsRecoveredAnswer(callParams, readOnly);
             const { outcome, finish, sawError, held, text } = await pump(stream, suppressStart, hold);
+            const elapsedMs = now() - startedAt;
             attempt++;
             let rejected: RejectionReason | null = null;
             // Judged whether or not the stream also carried an error part: an
@@ -1268,7 +1306,7 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
             const step = planRecovery({ attempt, shape, outcome, fallbackAvailable: fallback !== null, fallbackUsed });
             const nextModelId = step.action === "fallback" && fallback ? fallback.id : activeId;
             const nextReasoning = step.action === "explain" ? null : raisedRecoveryReasoning(callParams, outcome, nextModelId);
-            record({ shape, outcome, attempt, modelId: activeId, path: "stream", step, rejected, nextReasoning });
+            record({ shape, outcome, attempt, modelId: activeId, path: "stream", step, rejected, nextReasoning, elapsedMs });
             if (step.delayMs > 0) await deps.sleep(step.delayMs);
             if (step.action === "explain") {
               for (const part of textParts(`empty-recovery-${attempt}`, LAST_RESORT_SENTENCE)) {
@@ -1297,6 +1335,7 @@ export function createEmptyResponseRecovery(deps: EmptyResponseDeps): LanguageMo
             suppressStart = true;
             callParams = withOutputBudget(callParams, step.outputBudget);
             const sent = withRecoveryReasoning(callParams, nextReasoning);
+            startedAt = now();
             if (step.action === "fallback" && fallback) {
               activeId = fallback.id;
               fallbackUsed = true;

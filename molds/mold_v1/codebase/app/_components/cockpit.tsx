@@ -1,5 +1,6 @@
 "use client";
 
+import { noteRender } from "@/lib/render-census";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlarmClockIcon,
@@ -36,6 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { defaultMessageReducer } from "eve/react";
 import type { EveMessage } from "eve/react";
+import { withSessionEpochs } from "@/lib/chat-turn-state";
 import { AgentMessage } from "./agent-message";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { ChatComposer } from "./composer";
@@ -135,6 +137,7 @@ export function Cockpit({
   /** Open the Ops Center on a section, optionally deep-linked to a row id. */
   readonly onOpenOps?: (section: OpsSection, id?: string) => void;
 }) {
+  noteRender("Cockpit");
   const [selected, setSelected] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
 
@@ -2482,12 +2485,20 @@ type FeedRow =
 let feedSeq = 0;
 const feedId = () => `f${++feedSeq}`;
 
-// The SAME reducer the main chat uses (eve/react). Folding the child stream
-// through it yields real EveMessage parts — reasoning, tool calls with their
-// input/output, text — so the rail detail renders with the very same
-// AgentMessage component as the main thread instead of a bespoke row model.
-// reduce() is pure, so one shared instance is fine.
-const childReducer = defaultMessageReducer();
+// The SAME reducer the main chat mounts (agent-chat.tsx): eve's message reducer
+// inside `withSessionEpochs`, which also applies `withResumedSteps` and names a
+// parked specialist's hand-back. Folding the child stream through it yields real
+// EveMessage parts — reasoning, tool calls with their input/output, text — so
+// the rail detail renders with the very same AgentMessage component as the main
+// thread instead of a bespoke row model. A specialist that delegates in turn is
+// resumed at step 0 again by eve, exactly like the orchestrator (#67); with
+// eve's reducer alone its later thinking was written into the block ABOVE its
+// own specialist's card. reduce() is pure, so one shared instance is fine — but
+// the wrappers keep their state on the reducer's DATA object (non-enumerable),
+// so each feed folds onto its own previous `transcript`, never onto a rebuilt
+// `{ messages }` (which would reset that state on every event).
+const childReducer = withSessionEpochs(defaultMessageReducer());
+type ChildTranscript = ReturnType<typeof childReducer.initial>;
 
 /** Fold one child-session stream event into the feed (loosely typed on purpose). */
 function applyFeedEvent(
@@ -2615,6 +2626,9 @@ interface ChildFeed {
    *  by AgentMessage, exactly as the main chat. `rows` stays for the list's
    *  live tool-call counts. */
   messages: EveMessage[];
+  /** The reducer's own projection `messages` is read from. Kept whole: it
+   *  carries the wrappers' step/epoch state, which `{ messages }` would drop. */
+  transcript?: ChildTranscript;
   /** Local rail meta-notes (steer sent, cancel/resume, dead-run) — not part of
    *  the model transcript, shown beneath it. */
   notes: { id: string; text: string }[];
@@ -2655,6 +2669,15 @@ interface ChildFeed {
 function useChildFeeds(targets: readonly string[], liveTargets: readonly string[]) {
   const [feeds, setFeeds] = useState<Record<string, ChildFeed>>({});
   const conns = useRef<Record<string, { ctrl: AbortController; live: boolean }>>({});
+  /**
+   * Where each feed's fold stopped, in absolute stream events. The feed itself
+   * outlives its connection (a harvested run re-opened live, a target that left
+   * and came back), so a new connection CONTINUES the fold from here rather than
+   * replaying the history onto a transcript that already holds it: a replay
+   * appended every tool row a second time, and on the wrapped reducer it would
+   * re-enter a finished session's events under the NEXT session's epoch.
+   */
+  const cursors = useRef<Record<string, number>>({});
   const targetsKey = [...targets].sort().join(",");
   const liveKey = [...liveTargets].sort().join(",");
   useEffect(() => {
@@ -2695,7 +2718,7 @@ function useChildFeeds(targets: readonly string[], liveTargets: readonly string[
          * line INCLUDING one that fails to parse — undercounting silently
          * replays events already shown, which is the same flood in slow motion.
          */
-        let cursor = 0;
+        let cursor = cursors.current[sid] ?? 0;
         let segments = 0;
         try {
           while (!ctrl.signal.aborted && segments < 60) {
@@ -2724,6 +2747,7 @@ function useChildFeeds(targets: readonly string[], liveTargets: readonly string[
               // Count first: the cursor is an absolute event count, so a line we
               // cannot parse still occupies a position.
               cursor++;
+              cursors.current[sid] = cursor;
               let event: { type?: string; data?: Record<string, unknown> };
               try {
                 event = JSON.parse(row);
@@ -2738,14 +2762,18 @@ function useChildFeeds(targets: readonly string[], liveTargets: readonly string[
               ) {
                 ended = true;
               }
-              patch(sid, (f) => ({
-                ...f,
-                rows: applyFeedEvent(f.rows, event).slice(-150),
-                messages: childReducer.reduce(
-                  { messages: f.messages },
+              patch(sid, (f) => {
+                const transcript = childReducer.reduce(
+                  f.transcript ?? childReducer.initial(),
                   event as Parameters<typeof childReducer.reduce>[1],
-                ).messages as EveMessage[],
-              }));
+                );
+                return {
+                  ...f,
+                  rows: applyFeedEvent(f.rows, event).slice(-150),
+                  transcript,
+                  messages: transcript.messages as EveMessage[],
+                };
+              });
               if (event.type === "turn.started") {
                 patch(sid, (f) => ({ ...f, turnActive: true }));
               } else if (event.type === "turn.completed" || event.type === "turn.failed") {

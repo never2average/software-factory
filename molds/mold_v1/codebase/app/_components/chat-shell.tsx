@@ -1,5 +1,6 @@
 "use client";
 
+import { noteRender } from "@/lib/render-census";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { lazyPanel } from "@/components/lazy-panel";
 import { INVITE_RESULT_KEY } from "./auth-gate";
@@ -412,6 +413,7 @@ function ChatShimmer() {
 }
 
 export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: ChatShellProps) {
+  noteRender("ChatShell");
   // Read once, on the first render: the cached list and the chat to reopen (see `bootFromCache`).
   const [boot] = useState(() => bootFromCache(email));
   const [sessions, setSessions] = useState<StoredSession[]>(boot.sessions);
