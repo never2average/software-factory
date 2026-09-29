@@ -1,7 +1,7 @@
 # mold_v1
 
 **Status:** active
-**Source:** github.com/never2average/fde-agent @ 3ddcd85 (`main`, snapshot 2026-09-29; PRs #13-#69, #71-#75, #78, #79): subagent packs, CI checks, deployment profile, subagent workspace inheritance + thread sharing + PDF viewer + per-role models, settings on the active workspace + Invite agents)
+**Source:** github.com/never2average/fde-agent @ d40f244 (`main`, snapshot 2026-09-29; PRs #13-#81): subagent packs, CI checks, deployment profile, subagent workspace inheritance + thread sharing + PDF viewer + per-role models, settings on the active workspace + Invite agents)
 
 **Node:** 24.x (package.json engines; VM and Vercel project both on 24)
 **Target model:** GLM 5.2 via OpenAI-compatible provider
