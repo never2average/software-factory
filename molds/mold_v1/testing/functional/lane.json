@@ -225,7 +225,7 @@
         },
         {
           "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 300",
-          "else": "No usable session: a chat turn runs as a signed-in person. Sign in to the app yourself and re-run the lane with that browser's `fde-google-token` in MOLD_V1_SESSION_TOKEN, or (simpler) ask the factory to request a one-time emailed code, paste it into the chat, and it exchanges the code for a session for one run. Until then this check is `skipped` and so is the LANE: never `pass`."
+          "else": "No usable session: a chat turn runs as a signed-in person. Sign in to the app yourself and re-run the lane with that browser's `workspace-google-token` in MOLD_V1_SESSION_TOKEN, or (simpler) ask the factory to request a one-time emailed code, paste it into the chat, and it exchanges the code for a session for one run. Until then this check is `skipped` and so is the LANE: never `pass`."
         }
       ]
     }

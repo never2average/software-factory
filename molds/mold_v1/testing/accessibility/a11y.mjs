@@ -191,7 +191,7 @@ const notRendered = (c) => c.interactive ? null
 // resolved a workspace for the identity; 401 means the token is not this deployment's, or has expired.
 const serverAcceptsSession = (page) => page.evaluate(async () => {
   try {
-    const t = localStorage.getItem("fde-google-token");
+    const t = localStorage.getItem("workspace-google-token") || localStorage.getItem("fde-google-token");
     if (!t) return { status: -1, why: "no session was installed in this browser" };
     const r = await fetch("/api/ops/orgs", { headers: { authorization: "Bearer " + t } });
     return { status: r.status };
@@ -206,7 +206,10 @@ const newCtx = async (token) => {
     // script runs in EVERY frame, including third-party sign-in iframes, and a credential must never
     // be written into somebody else's storage.
     await ctx.addInitScript(({ t, o }) => {
-      try { if (location.origin === o) localStorage.setItem("fde-google-token", t); } catch { /* private mode */ }
+      // Both spellings: the app reads `workspace-google-token` (lib/browser-storage.ts STORAGE_KEYS.token,
+      // fde-agent #47) and falls back to the legacy `fde-google-token`; a deployment older than #47 reads
+      // only the legacy one. Writing both keeps the harness correct on either side of the alias removal.
+      try { if (location.origin === o) { localStorage.setItem("workspace-google-token", t); localStorage.setItem("fde-google-token", t); } } catch { /* private mode */ }
     }, { t: token, o: ORIGIN });
   }
   await guard(ctx);

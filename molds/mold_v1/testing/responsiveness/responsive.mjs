@@ -29,6 +29,7 @@
 // expired, or refused by the deployment) · 3 the target stopped answering mid-run.
 // A skipped row NEVER lifts the exit code: unmeasured must never read as pass.
 import { createRequire } from "node:module";
+import os from "node:os";
 const { chromium } = createRequire("/usr/lib/node_modules/")("playwright");
 
 const BUDGET = {
@@ -93,7 +94,92 @@ const AUTH_SURFACES = [
   { name: "/workspace builder",  path: "/workspace?tab=workflows", marker: /new workflow/i, what: 'the workflow builder\'s "New workflow" control', needs: "task-workflow" },
 ];
 
+// ---- INP: a median over several samples, with the machine's load beside each (mold_v1-083) ---------
+// INP on this shared 4-vCPU VM swung 32-376ms on an UNCHANGED page. One sample is a coin toss, and even
+// "fail only if every repeat is over" let a single fast sample decide a row. So an INP row takes at
+// least INP_MIN samples, and at most INP_MAX, stopping as soon as the MEDIAN of INP_MAX is decided on
+// one side of the budget (a majority of samples is already under it, or already over it). The verdict
+// is the median of the samples taken; p75 and every sample are printed, each with the 1-minute load
+// average it was taken at, so a slow VM is visible in the row rather than hidden in a pass or a fail.
+// Overridable for a quiet box or a paranoid run: RESP_INP_MIN / RESP_INP_MAX.
+const INP_MIN = Math.max(1, Number(process.env.RESP_INP_MIN) || 3);
+const INP_MAX = Math.max(INP_MIN, Number(process.env.RESP_INP_MAX) || 5);
+const CPUS = os.cpus().length || 1;
+// Past this much wall time the run stops buying extra samples (max falls to min) so the added samples can
+// never push a check into lanes.py's timeout_s, which is a FAIL. The median of INP_MIN is still graded.
+const T0 = Date.now();
+const SAMPLING_SOFT_MS = (Number(process.env.RESP_SAMPLING_SOFT_S) || 540) * 1000;
+function quantile(xs, q) {
+  const s = [...xs].sort((a, b) => a - b);
+  if (!s.length) return NaN;
+  const pos = (s.length - 1) * q, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return s[lo] + (s[hi] - s[lo]) * (pos - lo);
+}
+async function sampleTiming(sample, budget, { min = INP_MIN, max = INP_MAX, load = () => os.loadavg()[0],
+                                              late = () => Date.now() - T0 > SAMPLING_SOFT_MS } = {}) {
+  const runs = [], loads = [];
+  let capped = false;
+  if (late() && max > min) { max = min; capped = true; }
+  const need = Math.floor(max / 2) + 1;   // samples on one side of the budget that fix the median of `max`
+  let last;
+  for (let i = 0; i < max; i++) {
+    const l = load();
+    last = await sample();
+    if (last.err || last.dead || last.skip || last.gate) return { last, runs, loads };
+    runs.push(last.value); loads.push(l);
+    const under = runs.filter((v) => v <= budget).length, over = runs.length - under;
+    if (runs.length >= min && (under >= need || over >= need)) break;
+  }
+  const median = quantile(runs, 0.5), p75 = quantile(runs, 0.75);
+  return { last, runs, loads, median, p75, over: median > budget, capped };
+}
+/** One cell: the verdict statistic, the spread and every sample with its load, plus a noise note. */
+function inpDetail(r, budget) {
+  const ms = (v) => String(Math.round(v));
+  const samples = r.runs.map((v, i) => `${ms(v)}@${r.loads[i].toFixed(1)}`).join(", ");
+  const notes = [];
+  const peak = Math.max(...r.loads);
+  if (peak >= CPUS) notes.push(`load reached ${peak.toFixed(1)} on ${CPUS} CPUs while sampling, so these numbers include the VM's own contention`);
+  const spread = Math.max(...r.runs) - Math.min(...r.runs);
+  if (r.runs.length > 1 && spread > budget / 2) notes.push(`samples spread ${ms(spread)}ms: noisy, graded on the median, not the worst`);
+  if (r.capped) notes.push(`the run was past its sampling time budget, so this row took ${r.runs.length} sample(s), not up to ${INP_MAX}`);
+  return `INP median ${ms(r.median)}ms, p75 ${ms(r.p75)}ms over ${r.runs.length} sample(s) [${samples} (ms@load1)] (budget ${budget}ms, median graded)`
+    + (notes.length ? ` · noise: ${notes.join("; ")}` : "");
+}
+
 const args = process.argv.slice(2);
+if (args.includes("--self-test")) {
+  // Pure checks of the INP statistic: no browser, no network, no target.
+  const seq = (vals) => { let i = 0; return async () => ({ value: vals[i++] }); };
+  const calm = () => 0.5, busy = () => 6.2;
+  const fails = [];
+  const eq = (name, got, want) => { if (JSON.stringify(got) !== JSON.stringify(want)) fails.push(`${name}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`); };
+  let r = await sampleTiming(seq([32, 376, 40, 48, 999]), 200, { min: 3, max: 5, load: calm });
+  eq("one slow sample buys a 4th and does not fail", [r.runs, r.median, r.over], [[32, 376, 40, 48], 44, false]);
+  r = await sampleTiming(seq([376, 300, 250, 10, 10]), 200, { min: 3, max: 5, load: calm });
+  eq("three slow samples fail without more", [r.runs.length, r.median, r.over], [3, 300, true]);
+  r = await sampleTiming(seq([210, 50, 220, 60, 70]), 200, { min: 3, max: 5, load: calm });
+  eq("an undecided row samples to the max", [r.runs.length, r.median, r.over], [5, 70, false]);
+  r = await sampleTiming(seq([210, 250, 50, 230, 20]), 200, { min: 3, max: 5, load: calm });
+  eq("a majority over fails even with fast samples", [r.runs.length, r.median, r.over], [4, 220, true]);
+  r = await sampleTiming(seq([24, 32, 40]), 200, { min: 3, max: 5, load: calm });
+  eq("a healthy row costs exactly INP_MIN samples", r.runs.length, 3);
+  eq("p75 interpolates", r.p75, 36);
+  r = await sampleTiming(async () => ({ err: "HTTP 502" }), 200, { load: calm });
+  eq("a load error ends sampling and is reported", [r.last.err, r.runs.length], ["HTTP 502", 0]);
+  r = await sampleTiming(seq([32, 376, 40]), 200, { min: 3, max: 3, load: busy });
+  const d = inpDetail(r, 200);
+  if (!/median 40ms/.test(d) || !/32@6\.2/.test(d) || !/noise: load reached 6\.2/.test(d) || !/spread 344ms/.test(d)) fails.push(`inpDetail: ${d}`);
+  r = await sampleTiming(seq([30, 40, 50]), 200, { min: 3, max: 5, load: calm });
+  if (/noise/.test(inpDetail(r, 200))) fails.push(`a calm, tight row printed a noise note: ${inpDetail(r, 200)}`);
+  r = await sampleTiming(seq([210, 50, 220, 60, 70]), 200, { min: 3, max: 5, load: calm, late: () => true });
+  eq("past the time budget a row stops at min", [r.runs.length, r.median, r.over, r.capped], [3, 210, true, true]);
+  if (!/sampling time budget/.test(inpDetail(r, 200))) fails.push("a capped row does not say so");
+  eq("quantile of one", [quantile([7], 0.5), quantile([7], 0.75)], [7, 7]);
+  if (fails.length) { console.error("self-test FAILED:\n  " + fails.join("\n  ")); process.exit(1); }
+  console.log("self-test ok: 12 INP sampling checks");
+  process.exit(0);
+}
 const arg = (k, d) => { const i = args.indexOf(k); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 const BASE = (arg("--url", "") || "").replace(/\/+$/, "");
 const ONLY = arg("--only", "all");
@@ -107,7 +193,7 @@ const WITHOUT = new Set(args.flatMap((x, i) => (x === "--without" && args[i + 1]
 const declaredOff = (su) => AUTH && su.needs && WITHOUT.has(su.needs)
   ? `declared off on this fixture: it does not run the ${su.needs} service, which ${su.what} needs (--without ${su.needs} from lane-url.py), so this surface was not opened and nothing here measures it`
   : null;
-if (!BASE) { console.error("usage: responsive.mjs --url <base> [--only layout|targets|interaction] [--auth] [--session-env NAME] [--without <service>]"); process.exit(2); }
+if (!BASE) { console.error("usage: responsive.mjs --url <base> [--only layout|targets|interaction] [--auth] [--session-env NAME] [--without <service>] | --self-test"); process.exit(2); }
 const ORIGIN = new URL(BASE).origin;
 // `--without` is a statement about a FIXTURE — the mold started on this box, which lane-url.py only ever names
 // at a loopback address. So it is honoured only when --url is loopback (the same two hosts lane-url.py
@@ -177,7 +263,10 @@ async function newCtx(browser, vp) {
     // application's own origin: an init script runs in EVERY frame, third-party sign-in iframes
     // included, and a credential must never be written into somebody else's storage.
     await ctx.addInitScript(({ t, o }) => {
-      try { if (location.origin === o) localStorage.setItem("fde-google-token", t); } catch { /* private mode */ }
+      // Both spellings: the app reads `workspace-google-token` (lib/browser-storage.ts STORAGE_KEYS.token,
+      // fde-agent #47) and falls back to the legacy `fde-google-token`; a deployment older than #47 reads
+      // only the legacy one. Writing both keeps the harness correct on either side of the alias removal.
+      try { if (location.origin === o) { localStorage.setItem("workspace-google-token", t); localStorage.setItem("fde-google-token", t); } } catch { /* private mode */ }
     }, { t: SESSION.token, o: ORIGIN });
   }
   await ctx.route("**/*", (r) => {
@@ -242,7 +331,7 @@ const notRendered = (c) => c.controls ? null
 //      without this a green row would certify the shell. Nothing measured is never a pass.
 const serverAcceptsSession = (page) => page.evaluate(async () => {
   try {
-    const t = localStorage.getItem("fde-google-token");
+    const t = localStorage.getItem("workspace-google-token") || localStorage.getItem("fde-google-token");
     if (!t) return { status: -1, why: "no session was installed in this browser" };
     const r = await fetch("/api/ops/orgs", { headers: { authorization: "Bearer " + t } });
     return { status: r.status };
@@ -299,6 +388,7 @@ async function authGate(page, su, shell) {
 // genuinely slow interaction cannot come in under budget on a repeat, and every sample is printed, so
 // a borderline number stays visible instead of being smoothed away.
 const CONFIRM = 3;
+// (INP no longer goes through here: see sampleTiming, a median over 3-5 samples. CLS still does.)
 async function confirm(sample, budget) {
   const runs = [];
   let last;
@@ -517,16 +607,15 @@ async function interaction(browser) {
       await page.close();
       return { value: inp, clicked, navigated };
     };
-    const clicked = await confirm(clickProbe, BUDGET.inpMs);
+    const clicked = await sampleTiming(clickProbe, BUDGET.inpMs);
     if (clicked.last.err) row(label, "skipped", `did not load: ${clicked.last.err}`);
     else if (clicked.last.dead) row(label, "fail", clicked.last.dead);
     else if (clicked.last.gate) row(label, refused ? "not-covered" : "fail", clicked.last.gate);
     else if (clicked.last.skip) row(label, "skipped", clicked.last.skip);
-    else row(label, clicked.best > BUDGET.inpMs ? "fail" : "pass",
-      clicked.best > BUDGET.inpMs
-        ? `INP over budget ${BUDGET.inpMs}ms on all ${clicked.runs.length} runs: ${seen(clicked.runs, "ms")}`
-        : (clicked.last.navigated ? `stopped after ${clicked.last.clicked} click(s): the page navigated, so later clicks were not measured · ` : `${clicked.last.clicked} in-page click(s) · `)
-          + `INP=${seen(clicked.runs, "ms")} (budget ${BUDGET.inpMs}ms)`);
+    else row(label, clicked.over ? "fail" : "pass",
+      (clicked.over ? `INP median over budget · ` : "")
+        + (clicked.last.navigated ? `stopped after ${clicked.last.clicked} click(s): the page navigated, so later clicks were not measured · ` : `${clicked.last.clicked} in-page click(s) · `)
+        + inpDetail(clicked, BUDGET.inpMs));
     }
     // Keyboard focus rows: pressing Tab is safe on every route and is the one interaction a
     // keyboard-only user makes constantly.
@@ -552,14 +641,13 @@ async function interaction(browser) {
         await page.close();
         return { value: inp, presses, c };
       };
-      const k = await confirm(kbProbe, BUDGET.inpMs);
+      const k = await sampleTiming(kbProbe, BUDGET.inpMs);
       if (k.last.err) { row(klabel, "skipped", `did not load: ${k.last.err}`); continue; }
       if (k.last.dead) { row(klabel, "fail", k.last.dead); continue; }
       if (k.last.gate) { row(klabel, refused ? "not-covered" : "fail", k.last.gate); continue; }
-      row(klabel, k.best > BUDGET.inpMs ? "fail" : "pass",
-        k.best > BUDGET.inpMs
-          ? `INP over budget ${BUDGET.inpMs}ms on all ${k.runs.length} runs: ${seen(k.runs, "ms")}`
-          : `${k.last.presses} Tab press(es) over ${k.last.c.controls} rendered control(s) · INP=${seen(k.runs, "ms")} (budget ${BUDGET.inpMs}ms)`);
+      row(klabel, k.over ? "fail" : "pass",
+        (k.over ? `INP median over budget · ` : "")
+          + `${k.last.presses} Tab press(es) over ${k.last.c.controls} rendered control(s) · ` + inpDetail(k, BUDGET.inpMs));
     }
     await ctx.close();
   }

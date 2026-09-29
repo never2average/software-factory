@@ -112,7 +112,7 @@ produce and must not try — or the app's **own** "email-session" token: ES256, 
 exp}`. `verifyOpsAuth` checks that kind first and asks nothing else of it. The emailed six-digit code
 gates the **route** that mints (`/api/auth/email/verify`), not the token: what that route returns after a
 code is exactly this token for that email. The browser's "signed in" is the same token under
-`localStorage["fde-google-token"]`. The factory generates and holds a provisioned application's key pair
+`localStorage["workspace-google-token"]` (`fde-google-token` on a deployment older than fde-agent #47). The factory generates and holds a provisioned application's key pair
 by name, so it can sign the same bytes — for **the app's own FDE**, `application.workspace.fde_self.email`,
 the person the app was stamped for and seeded as its workspace owner; never a hard-coded address.
 
@@ -131,14 +131,15 @@ check here is 15 and asks for 20 — not the seven days the app's own sessions g
 and runs the check with that. To measure as yourself, or as a `member` rather than the owner:
 
 1. Open the application in Chrome and sign in the way you normally would.
-2. `F12` -> **Application** -> **Local Storage** -> the app's own URL -> the row `fde-google-token`.
+2. `F12` -> **Application** -> **Local Storage** -> the app's own URL -> the row `workspace-google-token` (or `fde-google-token` on an older deployment).
 3. Copy that value and put it in the environment of one run:
    `MOLD_V1_SESSION_TOKEN='<paste>' python3 .claude/scripts/lanes.py <app_id> --lane accessibility`.
 
 Treat it as a password. The harness prints the identity it signed in as and the expiry, never the token.
 
-**What the harness does with it.** It stores the token under `fde-google-token` for the app's own
-origin only — the same key the app's own sign-in writes — then opens `/`, `/workspace?tab=people`,
+**What the harness does with it.** It stores the token under `workspace-google-token` and the legacy
+`fde-google-token` for the app's own origin only — the key the app's own sign-in writes today and the one an
+older bundle (or the app's read-fallback) still reads — then opens `/`, `/workspace?tab=people`,
 `?tab=audit` and `?tab=workflows` (the app's own deep links) and grades them exactly as the signed-out
 rows are graded.
 
