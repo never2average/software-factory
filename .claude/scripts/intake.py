@@ -2,6 +2,7 @@
 """Intake: brief -> four application state files, asking only what the schemas cannot resolve.
 
   intake.py <brief.md> --app <app_id> [--mold mold_v1] [--answers answers.json] [--ask]
+  intake.py --self-test [app_id]   re-run on a temp copy of a deployed app; nothing it did not write is dropped
 
 Without --ask (the subagent path) it never prompts: it drafts what it can, writes
 state/application/<app_id>/questions.json for anything unresolved, and exits 2.
@@ -243,6 +244,50 @@ def pick_product(mold_id, hints, existing=None):
         return prods[0]
     return prods[0]
 
+# ---- a re-run keeps what other writers recorded (mold_v1-081) ------------------------------------------
+# Intake owns the fields it derives from the brief and answers. Everything else in an app's state was
+# written by something that MEASURED or DID it — provision.py (rls_verified, deployed_at, health, google,
+# mold_commit), agent_cli.py, domain.py, mint handoff — and a re-run used to rebuild the four files from
+# scratch and drop whatever it had no line for (on onfinance_hfc: the whole rls_verified proof, the Google
+# client, the agent CLI package, handoff_url). So every key the old file has and the new one lacks is carried
+# forward, recursively, EXCEPT the paths intake decides by leaving out: those below disappear on purpose
+# when the brief or answers change (a vm app has no `vercel` block, a single-pack brief drops a pack, a neon
+# app has no self-hosted network). Lists are values, not merged.
+OWNED_BY_OMISSION = {
+  "application": {"customer_id", "packs", "clone_of", "surface.branding", "surface.primary_context.entity_vocabulary.note"},
+  "infrastructure": {"vercel", "vm"},
+  "datastores": {"postgres.network", "postgres.host", "postgres.port", "postgres.database", "postgres.exposure",
+                 "postgres.admin_url_ref", "postgres.pooling", "postgres.rls_verified"},
+  "datainfra": set(),
+}
+def carry_forward(new, old, owned, path=""):
+    """Copy into `new` every key of `old` it lacks (recursing into dicts both have), except `owned` paths."""
+    for k, v in old.items():
+        p = f"{path}.{k}" if path else k
+        if p in owned: continue
+        if k not in new: new[k] = v
+        elif isinstance(new[k], dict) and isinstance(v, dict): carry_forward(new[k], v, owned, p)
+    return new
+
+def keep_measured(app, infra, ds, existing):
+    """The carry-forward, plus the three fields intake writes but a later writer knows better."""
+    ex_app, ex_inf, ex_ds = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores"))
+    # mold_commit is what is IN FRONT OF TRAFFIC once provision.py deployed it; mint.py compares it with the
+    # snapshot to know a redeploy is due, so resetting it to the snapshot's commit would hide a pending deploy.
+    if ex_app.get("mold_commit") and ex_app.get("status") not in (None, "planned"): app["mold_commit"] = ex_app["mold_commit"]
+    # The brief never names a model; intake only fills the factory default. An operator's later choice (roles,
+    # a newer model) is kept while the provider is the same, and reset only when the provider itself changed.
+    if (ex_app.get("model") or {}).get("provider") == app["model"]["provider"]: app["model"] = ex_app["model"]
+    # rls_verified is a measurement OF A DATABASE: kept only while the provider it measured is still the one.
+    rv = (ex_ds.get("postgres") or {}).get("rls_verified")
+    if rv and rv.get("backend") == ds["postgres"]["provider"]: ds["postgres"]["rls_verified"] = rv
+    for name, new, old in (("application", app, ex_app), ("infrastructure", infra, ex_inf), ("datastores", ds, ex_ds)):
+        carry_forward(new, old, OWNED_BY_OMISSION[name])
+    # a target switch drops the other target's block, but the SAME target keeps its whole block's history
+    for t in ("vercel", "vm"):
+        if t in infra and isinstance(ex_inf.get(t), dict): carry_forward(infra[t], ex_inf[t], set())
+    return app, infra, ds
+
 def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     d = factory.get("defaults", {}); mold = next(m for m in factory["molds"] if m["mold_id"]==mold_id)
     prod = pick_product(mold_id, hints, existing)
@@ -415,9 +460,75 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         ex_di = existing.get("datainfra", {})
         for k in ("platforms", "deployments", "pipelines", "agents", "dataroom"):
             if ex_di.get(k): di[k] = ex_di[k]
+    if existing:
+        app, infra, ds = keep_measured(app, infra, ds, existing)
+        carry_forward(di, existing.get("datainfra", {}), OWNED_BY_OMISSION["datainfra"])
     return app, infra, ds, di
 
+def self_test(app_id="onfinance_hfc"):
+    """Re-run intake on a COPY of a deployed app's state, in a temp tree, and prove nothing a deploy or a
+    verify wrote is dropped. The real state/ is read, never written: the run happens under a temp ROOT
+    (scripts and state copied; packs, molds and briefs linked read-only) and state/ is hashed around it."""
+    import hashlib, shutil, tempfile
+    def digest(d):
+        h = hashlib.sha256()
+        for r, _, fs in sorted(os.walk(d)):
+            for f in sorted(fs): h.update(f.encode()); h.update(open(os.path.join(r, f), "rb").read())
+        return h.hexdigest()
+    def paths(o, p=""):
+        if isinstance(o, dict):
+            for k, v in o.items(): yield from paths(v, f"{p}.{k}" if p else k)
+        else: yield p, o
+    real = digest(ST); fails, n = [], 0
+    src = os.path.join(ST, "application", app_id)
+    if not os.path.exists(os.path.join(src, "answers.json")): sys.exit(f"self-test needs a deployed app with answers.json; {app_id} has none")
+    T = tempfile.mkdtemp(prefix="intake-selftest-")
+    try:
+        shutil.copytree(os.path.dirname(os.path.abspath(__file__)), os.path.join(T, ".claude", "scripts"))
+        shutil.copytree(ST, os.path.join(T, "state"))
+        for d in ("packs", "molds", "briefs"): os.symlink(os.path.join(ROOT, d), os.path.join(T, d))
+        tapp = os.path.join(T, "state", "application", app_id)
+        before = {nm: load(os.path.join(src, f"{nm}.json")) for nm in ("application", "infrastructure", "datastores", "datainfra")}
+        brief = before["application"]["brief"]
+        def rerun(answers):
+            save(os.path.join(T, "answers.in.json"), answers)
+            return subprocess.run([sys.executable, os.path.join(T, ".claude/scripts/intake.py"), os.path.join(T, brief), "--app", app_id,
+                                   "--answers", os.path.join(T, "answers.in.json")], cwd=T, capture_output=True, text=True)
+        answers = load(os.path.join(src, "answers.json"))
+        r = rerun(answers); n += 1
+        if r.returncode: fails.append(f"re-run exited {r.returncode}: {(r.stdout + r.stderr).strip()[-400:]}")
+        for nm, old in before.items():
+            new = load(os.path.join(tapp, f"{nm}.json"))
+            lost = [p for p, _ in paths(old) if p not in dict(paths(new))]
+            n += 1
+            if lost: fails.append(f"{nm}: a same-answers re-run dropped {len(lost)} field(s): {', '.join(lost[:8])}")
+        after = {nm: load(os.path.join(tapp, f"{nm}.json")) for nm in ("application", "datastores")}
+        n += 1
+        if after["datastores"]["postgres"].get("rls_verified") != before["datastores"]["postgres"].get("rls_verified"):
+            fails.append("datastores.postgres.rls_verified changed on a same-answers re-run")
+        n += 1
+        if after["application"].get("mold_commit") != before["application"].get("mold_commit"):
+            fails.append(f"mold_commit (what is deployed) changed: {before['application'].get('mold_commit')} -> {after['application'].get('mold_commit')}")
+        n += 1
+        if after["application"]["model"] != before["application"]["model"]:
+            fails.append("the operator's model choice was reset by a re-run that did not change the provider")
+        # a real change of database provider must NOT keep the old database's isolation proof
+        for nm in before: save(os.path.join(tapp, f"{nm}.json"), before[nm])
+        other = "supabase" if answers.get("postgres_provider") != "supabase" else "neon"
+        r = rerun(dict(answers, postgres_provider=other)); n += 1
+        ds2 = load(os.path.join(tapp, "datastores.json"))
+        if "rls_verified" in ds2.get("postgres", {}): fails.append(f"switching postgres to {other} kept the old database's rls_verified")
+        n += 1
+        if other != "neon" and "pooling" in ds2["postgres"]: fails.append("switching away from neon kept postgres.pooling")
+    finally:
+        shutil.rmtree(T, ignore_errors=True)
+    n += 1
+    if digest(ST) != real: fails.append("the REAL state/ changed during the self-test")
+    if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
+    print(f"intake: {n} checks passed (re-run on a temp copy of {app_id}; real state untouched)")
+
 def main(a):
+    if a and a[0] == "--self-test": return self_test(*a[1:2])
     if not a or a[0].startswith("-"): sys.exit(__doc__)
     brief_path = os.path.abspath(a[0]); opts = a[1:]
     def opt(k, d=None): return opts[opts.index(k)+1] if k in opts else d
