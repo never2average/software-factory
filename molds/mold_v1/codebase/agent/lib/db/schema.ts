@@ -226,8 +226,8 @@ export const deployments = pgTable(
   },
   (t) => [
     primaryKey({ name: "deployments_org_id_customer_id_deployment_id_pk", columns: [t.orgId, t.customerId, t.deploymentId] }),
+    // No index on customer_id alone: the key leads with (org_id, customer_id) and serves it (0025 dropped it).
     foreignKey({ name: "deployments_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
-    index("deployments_customer_id_idx").on(t.customerId),
     index("deployments_health_status_idx").on(t.healthStatus),
   ],
 );
@@ -318,8 +318,8 @@ export const solutions = pgTable(
   },
   (t) => [
     primaryKey({ name: "solutions_org_id_customer_id_solution_id_pk", columns: [t.orgId, t.customerId, t.solutionId] }),
+    // No index on customer_id alone: the key leads with (org_id, customer_id) and serves it (0025 dropped it).
     foreignKey({ name: "solutions_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
-    index("solutions_customer_id_idx").on(t.customerId),
     index("solutions_solution_status_idx").on(t.solutionStatus),
   ],
 );
@@ -466,8 +466,8 @@ export const tickets = pgTable(
   },
   (t) => [
     primaryKey({ name: "tickets_org_id_customer_id_ticket_id_pk", columns: [t.orgId, t.customerId, t.ticketId] }),
+    // No index on customer_id alone: the key leads with (org_id, customer_id) and serves it (0025 dropped it).
     foreignKey({ name: "tickets_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
-    index("tickets_customer_id_idx").on(t.customerId),
     index("tickets_ticket_status_idx").on(t.ticketStatus),
     index("tickets_ticket_category_idx").on(t.ticketCategory),
   ],
@@ -505,8 +505,8 @@ export const interactions = pgTable(
   },
   (t) => [
     primaryKey({ name: "interactions_org_id_customer_id_interaction_id_pk", columns: [t.orgId, t.customerId, t.interactionId] }),
+    // No index on customer_id alone: the key leads with (org_id, customer_id) and serves it (0025 dropped it).
     foreignKey({ name: "interactions_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
-    index("interactions_customer_id_idx").on(t.customerId),
     index("interactions_interaction_at_idx").on(t.interactionAt),
   ],
 );

@@ -176,6 +176,13 @@
       "when": 1791200000000,
       "tag": "0024_company_key_per_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791300000000,
+      "tag": "0025_drop_redundant_customer_id_indexes",
+      "breakpoints": true
     }
   ]
 }

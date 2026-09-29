@@ -626,6 +626,12 @@ jobs:
         if: always()
         run: ADMIN_URL="$ADMIN_URL" npm run test:company-key-migration-db
 
+      # 0025 drops the single-column customer_id indexes the (org_id, customer_id, …) keys made redundant. The deploy's
+      # drift step refuses index drops, so the journal must do it and the plan after it must be empty (mold_v1-145).
+      - name: Redundant customer_id indexes dropped by the journal, drift plan empty after it
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:customer-id-index-migration-db
+
       - name: Cross-tenant isolation
         run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" node scripts/test-org-isolation.mjs
 

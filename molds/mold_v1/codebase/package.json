@@ -128,6 +128,7 @@
     "test:shared-company-id-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-shared-company-id-db.mjs",
     "test:shared-company-id-http-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-shared-company-id-http-db.mjs",
     "test:company-key-migration-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-company-key-migration-db.mjs",
+    "test:customer-id-index-migration-db": "node scripts/test-customer-id-index-migration-db.mjs",
     "test:mcp-endpoint": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-mcp-endpoint.mjs",
     "check:vocabulary": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check-ui-vocabulary.mjs --static",
     "test:sample-data": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-sample-data.mjs",
