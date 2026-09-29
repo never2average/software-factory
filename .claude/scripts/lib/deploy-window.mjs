@@ -19,7 +19,8 @@
  * Neither script is ours to change (HARD RULE 1), so the factory closes the window around them:
  *
  *   probe    how much is there: public base tables, org-scoped tables, whether the app role exists.
- *            provision.py only lets `drizzle-kit push --force` near a database with NO public table.
+ *            provision.py only lets `drizzle-kit push --force` near a database with NO public table;
+ *            a live one gets the journal first, then `apply` for whatever drift is left.
  *   hold     one transaction: every org-scoped table ENABLEd and FORCEd, plus a RESTRICTIVE policy
  *            `factory_deploy_guard` TO the app role with the mode's own predicate. Restrictive
  *            policies AND with the permissive ones, and neither the bootstrap nor the task-workflow
