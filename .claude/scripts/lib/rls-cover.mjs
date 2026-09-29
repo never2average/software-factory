@@ -81,7 +81,7 @@
  *   exit 3  it could not run at all (unreachable, refused, bad credentials) — nothing was measured
  */
 import postgres from "postgres";
-import { measurePolicies, isScoped, exprs, why, cap, q } from "./rls-policy.mjs";
+import { measurePolicies, isScoped, exprs, why, cap, q, CONTROL_PLANE, orgPredicate } from "./rls-policy.mjs";
 
 const url = process.env.ADMIN_URL;
 if (!url) { console.error("ADMIN_URL is not set"); process.exit(2); }
@@ -90,9 +90,7 @@ if (!["fail_closed", "on"].includes(mode)) { console.error(`RLS_MODE=${mode} is 
 const APP_ROLE = process.env.APP_ROLE || "app_rw";
 
 // Read unscoped before a workspace exists; see the header.
-const CONTROL_PLANE = new Set(["orgs", "org_members", "org_invites"]);
-const STRICT = `(org_id = current_setting('app.org_id', true))`;
-const OPEN = `(coalesce(current_setting('app.org_id', true), '') = '' OR org_id = current_setting('app.org_id', true))`;
+// CONTROL_PLANE and the predicates (orgPredicate) come from rls-policy.mjs, shared with deploy-window.mjs's guard.
 const norm = (x) => String(x).toLowerCase().replace(/::[a-z ]+/g, "").replace(/[\s()]/g, "");
 
 const sql = postgres(url, { ssl: "require", prepare: false, max: 1, connect_timeout: 20, onnotice: () => {} });
@@ -136,7 +134,7 @@ try {
   let by = group(await POLICIES());
   const changed = [], kept = [], cp = [], other = [];
   for (const { t, enabled, forced } of tables) {
-    const pred = mode === "fail_closed" && !CONTROL_PLANE.has(t) ? STRICT : OPEN;
+    const pred = orgPredicate(mode, t);
     if (CONTROL_PLANE.has(t)) cp.push(t);
     const did = [];
     if (!enabled) { await sql.unsafe(`ALTER TABLE ${q(t)} ENABLE ROW LEVEL SECURITY`); did.push("enable"); }

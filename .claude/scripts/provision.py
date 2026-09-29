@@ -840,7 +840,9 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
                "reused; --check reads names, not values, so it cannot tell) — a rotation stops every build made against the older one"
                if "DATABASE_URL" in present
                else "ROTATES the app_rw password: every build made against an older one stops connecting")
-        create.append(f"the database, with every org-scoped table held closed to app_rw throughout: schema (a full push only on an empty database), migration journal, RLS + app_rw bootstrap ({rot}), task-workflow "
+        create.append(f"the database, with every org-scoped table held closed to app_rw throughout: schema (a full push only on an empty database), migration journal, "
+                      f"then on a live database the schema drift the journal did not cover (a read-only dry run; anything that would delete data or drop an index stops the deploy instead), "
+                      f"RLS + app_rw bootstrap ({rot}), task-workflow "
                       f"migration, the RLS coverage pass, then the isolation proof; ONLY after the proof passes, env "
                       f"DATABASE_URL (app_rw) on {proj}, {api}, {wf}")
     if mode == "deploy":
@@ -1226,25 +1228,47 @@ def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_u
 # tables (and the task-workflow migration its 3) to "permissive when app.org_id is unset", which let an
 # unscoped app_rw query read every workspace's rows from 16 tables until rls-cover. So:
 #   hold     lib/deploy-window.mjs puts a RESTRICTIVE `factory_deploy_guard` on every org-scoped table
-#            first, with the predicate rls-cover converges to; nothing in the chain drops that name.
+#            first, with the predicate rls-cover converges to (both import it from lib/rls-policy.mjs);
+#            nothing in the chain drops that name. It also withholds app_rw's default grant on NEW
+#            tables, and it runs again after the journal and after the drift apply (it is idempotent), so
+#            a table either of them creates — possibly backfilled from existing rows — is never readable
+#            by the serving app before it is guarded; the bootstrap grants it later, under the guard.
 #   push     `push --force` ONLY on a database with no public table (nothing there to expose).
 #   migrate  the journal, as before. On a live database it now runs BEFORE any schema.ts drift: that is
 #            the mold's own Makefile path (`migrate-production`, no push), which its migrations are
 #            written for — e.g. a primary-key change a migration performs its own way, where drizzle's
 #            naive plan for the same change could fail.
 #   drift    on a live database, a read-only `push --strict --verbose` dry run says what push would still
-#            do; what drops a policy, disables RLS or drops an index the mold made outside schema.ts is
-#            set aside, and the rest (usually nothing) is applied in one transaction.
+#            do. What drops a policy, disables RLS, or drops the ONE index the mold makes outside
+#            schema.ts is set aside; anything that deletes data (truncate, DROP TABLE/COLUMN/SCHEMA/
+#            MATERIALIZED VIEW, or drizzle's own "Found data-loss statements") or drops any other index
+#            STOPS the deploy — that belongs in a migration; the rest (usually nothing) is applied in one
+#            transaction.
 #   release  only after rls-cover exited 0, i.e. once the permissive policies are strict again.
-SCHEMA_CHAIN = ("hold", "push", "migrate", "drift", "bootstrap", "task-workflow", "cover", "release", "prove", "publish")
+SCHEMA_CHAIN = ("hold", "push", "migrate", "hold", "drift", "hold", "bootstrap", "task-workflow", "cover", "release",
+                "prove", "publish")
 
 # What drizzle-kit push would do to things schema.ts does not model. Kept OUT of every apply: they are
-# not schema drift, they are the database's security (and the mold's own out-of-band indexes, which the
-# task-workflow migration would only recreate a second later — a unique index dropped in between is a
-# uniqueness window of its own).
-SET_ASIDE = re.compile(r"^\s*(DROP\s+POLICY\b|ALTER\s+POLICY\b|DROP\s+INDEX\b|"
+# not schema drift, they are the database's security — and the one index the mold creates outside
+# schema.ts (.migrate-task-workflow-service.mjs), which that migration would only recreate a second later
+# (a unique index dropped in between is a uniqueness window of its own). Any OTHER index drop is refused.
+OUT_OF_BAND_INDEXES = ("workflow_definitions_one_default_idx",)
+SET_ASIDE = re.compile(r"^\s*(DROP\s+POLICY\b|ALTER\s+POLICY\b|"
+                       r"DROP\s+INDEX\s+(IF\s+EXISTS\s+)?\"?(" + "|".join(OUT_OF_BAND_INDEXES) + r")\"?\s*;|"
                        r"ALTER\s+TABLE\b.*\b(DISABLE|NO\s+FORCE)\s+ROW\s+LEVEL\s+SECURITY)", re.I | re.S)
+# What must never be applied from a plan on a live database: it deletes rows, or drops an index nobody
+# declared gone. drizzle adds `truncate table "x" cascade;` on its own for a type change or a NOT NULL
+# column without a default on a table with rows — measured, and applied it would empty the table.
+DATA_LOSS = re.compile(r"^\s*truncate\b|\bDROP\s+(TABLE|COLUMN|SCHEMA|MATERIALIZED\s+VIEW)\b", re.I)
+DROPS_INDEX = re.compile(r"^\s*DROP\s+INDEX\b", re.I)
 DRY_RUN_HEAD = "You are about to execute current statements:"
+# A statement drizzle prints starts at column 0 with one of these; everything else (tab-indented columns,
+# `);`, a DO block's body) continues the one before. Its PK drop is printed WITHOUT a trailing `;`.
+SQL_START = re.compile(r"^(CREATE|ALTER|DROP|TRUNCATE|COMMENT|DO|GRANT|REVOKE|INSERT|UPDATE|DELETE|SELECT|WITH|SET|REFRESH)\b", re.I)
+PLAN_END = re.compile(r"^\s*(Warning\b|Error:|THIS ACTION\b|Do you still want\b|\[.\]|·)")
+
+class DryRunError(Exception):
+    """The schema check could not produce a plan it is safe to act on. The message is for the operator."""
 
 def _read_only(url):
     """The admin URL with every transaction read-only, so the dry run CANNOT write whatever drizzle-kit
@@ -1254,35 +1278,84 @@ def _read_only(url):
     qs = [(k, v) for k, v in qs if k != "options"] + [("options", (opt + " -c default_transaction_read_only=on").strip())]
     return urllib.parse.urlunsplit((a.scheme, a.netloc, a.path, urllib.parse.urlencode(qs, quote_via=urllib.parse.quote), a.fragment))
 
-def _push_plan(raw):
-    """The statements a `drizzle-kit push --strict --verbose` dry run printed, one string each.
+def _split_statements(block):
+    """drizzle's printed plan -> one string per statement, every line accounted for.
+
+    Printed statements are joined by newlines; some span lines (CREATE TABLE, a DO block), some end in a
+    blank line, and the primary-key drop has no `;` at all — reading `;` as the boundary glued that one
+    to the next statement and discarded it when it came last. So a statement starts where a line opens
+    with an SQL verb at column 0 outside a $$ body. A non-blank line that belongs to no statement, or a
+    $$ body left open, raises: a plan this cannot read whole is not a plan to act on."""
+    out, cur, dollars = [], [], 0
+    for line in block.splitlines():
+        if not line.strip() and dollars % 2 == 0: continue
+        if SQL_START.match(line) and dollars % 2 == 0:
+            if cur: out.append("\n".join(cur))
+            cur = [line]
+        elif cur: cur.append(line)
+        else: raise DryRunError(f"the schema check printed a line that is not part of any statement: {line.strip()[:120]!r}")
+        dollars += line.count("$$")
+    if dollars % 2: raise DryRunError("the schema check printed a $$ block that never closes")
+    if cur: out.append("\n".join(cur))
+    return [x.strip() if x.strip().endswith(";") else x.strip() + ";" for x in out]
+
+def _push_plan(raw, rc=0):
+    """(statements, data_loss_notes) from a `drizzle-kit push --strict --verbose` dry run.
 
     With stdout not a TTY the approval prompt rejects BEFORE anything executes (and the connection is
-    read-only besides). Returns [] for "No changes detected", the list after DRY_RUN_HEAD otherwise, and
-    None when drizzle-kit stopped earlier — a rename question, which only a database holding a
-    DIFFERENT schema asks. Raises if the output claims it applied anything."""
+    read-only besides). ([], []) for "No changes detected". Raises DryRunError, with a sentence for the
+    operator, for everything else: no plan because it could not connect (drizzle exits 1 and prints
+    nothing), a question it asked BEFORE planning (a rename, or a unique constraint on a table with rows),
+    or output that claims it applied something."""
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw).replace("\r", "\n")
-    if "Changes applied" in text: raise RuntimeError("the drizzle-kit dry run reports it applied changes")
-    if DRY_RUN_HEAD not in text: return [] if "No changes detected" in text else None
-    out, cur = [], []
-    for line in text.split(DRY_RUN_HEAD, 1)[1].splitlines():
-        if not line.strip():
-            if cur: break
-            continue
-        if line.lstrip().startswith(("Error:", "at ")): break
-        cur.append(line)
-        if line.rstrip().endswith(";"): out.append("\n".join(cur).strip()); cur = []
-    return out
+    if "Changes applied" in text: raise DryRunError("the schema dry run reports it APPLIED changes; stopping before anything else touches this database")
+    if DRY_RUN_HEAD not in text:
+        if "No changes detected" in text: return [], []
+        if "Interactive prompts require a TTY" in text:
+            uq = re.search(r"add (\S+) unique constraint to the table, which contains (\d+) items", text)
+            if uq: raise DryRunError(f"schema.ts adds the unique constraint {uq.group(1)} to a table that already holds "
+                                     f"{uq.group(2)} row(s), and drizzle-kit would ask whether to TRUNCATE it. Add it in a "
+                                     f"migration under drizzle/ (removing duplicates first); nothing was changed")
+            raise DryRunError("drizzle-kit stopped to ask a question before it could plan the schema — almost always "
+                              "whether a table or column is new or was RENAMED. A rename has to be written as a migration "
+                              "under drizzle/; nothing was changed")
+        if rc: raise DryRunError(f"could not connect to the database for the schema check (drizzle-kit exited {rc} "
+                                 "without a plan); nothing was changed")
+        raise DryRunError("the schema check ended without a plan or a reason; nothing was changed")
+    head, tail = text.split(DRY_RUN_HEAD, 1)
+    lines = tail.splitlines(); cut = next((i for i, l in enumerate(lines) if PLAN_END.match(l)), len(lines))
+    notes = []
+    if "Found data-loss statements" in tail:
+        after = tail.split("Found data-loss statements", 1)[1].splitlines()
+        notes = [l.strip().lstrip("·").strip() for l in after if l.strip().startswith("·")]
+        notes = notes or ["drizzle-kit reported data-loss statements"]
+    return _split_statements("\n".join(lines[:cut])), notes
 
 def _split_push(stmts):
     """(apply, set_aside): schema drift to apply, and what push would do to unmodelled security."""
     return [x for x in stmts if not SET_ASIDE.match(x)], [x for x in stmts if SET_ASIDE.match(x)]
 
+def _refused(todo, notes):
+    """The plan's statements that must not be applied on a live database, as one plain sentence, or ""."""
+    loss = [x for x in todo if DATA_LOSS.search(x)]
+    idx = [x for x in todo if DROPS_INDEX.match(x)]
+    one = lambda x: re.sub(r"\s+", " ", x)[:140]
+    why = []
+    if loss or notes:
+        why.append("schema.ts asks for changes that would DELETE data on the live database"
+                   + (f": {'; '.join(one(x) for x in loss[:6])}" if loss else "")
+                   + (f" (drizzle-kit: {'; '.join(notes[:4])})" if notes else "")
+                   + ". Make that change in a migration under drizzle/ — it runs in the journal step, before this check")
+    if idx:
+        why.append(f"drizzle-kit would drop {', '.join(one(x) for x in idx[:4])}, which schema.ts no longer declares; an "
+                   "index is not dropped automatically on a live database — drop it in a migration, or declare it in schema.ts")
+    return ". ".join(why)
+
 def _window(run, action, admin, mode, hint, **extra):
     """One lib/deploy-window.mjs call; its JSON line, or the deploy stops with the reason."""
     r = run("deploy-window.mjs", dict({"ACTION": action, "ADMIN_URL": admin, "RLS_MODE": mode}, **extra))
     line = (r.stdout.strip().splitlines() or [""])[-1]
-    if r.returncode == 1: sys.exit(f"deploy window {action} failed, nothing was changed by it: " + _node_err(r))
+    if r.returncode == 1: sys.exit(f"deploy window {action} failed: " + _node_err(r))   # the script says what, if anything, committed
     if r.returncode or not line.startswith("{"): sys.exit(_unprovable(r, hint, f"the deploy window ({action})"))
     return json.loads(line)
 
@@ -1312,18 +1385,32 @@ def push_schema(sh, run, url, mode, hint):
 def apply_drift(sh, run, url, mode, hint):
     """What schema.ts still has that the journal did not make, applied WITHOUT opening anything.
 
-    A read-only `push --strict --verbose` prints the plan and stops at its own prompt; _split_push sets
-    aside what push would do to the database's security; the rest is applied by lib/deploy-window.mjs
-    `apply` in one transaction that also ENABLEs and FORCEs RLS on any org-scoped table it creates. On a
-    current database the rest is nothing. Returns (applied, set_aside) counts."""
-    r = sh("npx drizzle-kit push --strict --verbose", {"DATABASE_URL": _read_only(url)})
-    try: plan = _push_plan(r.stdout + r.stderr)
-    except RuntimeError as e: sys.exit(f"{e}; stopping before anything else touches this database.")
-    if plan is None:
-        msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
-        sys.exit("drizzle-kit cannot plan this database without an interactive rename decision, so it holds a DIFFERENT "
-                 "version of the schema; nothing was changed by this step. Last output:\n" + "\n".join(msg[-6:]))
+    First the read-only connection itself is proven (deploy-window `probe` through the same URL, which
+    must report read-only), so "could not connect" and "the provider refuses the read-only option" are
+    each said plainly rather than read as drift. Then a `push --strict --verbose` dry run prints the plan
+    and stops at its own prompt; _split_push sets aside what push would do to the database's security;
+    _refused stops the deploy on anything that deletes data or drops an undeclared index; the rest is
+    applied by lib/deploy-window.mjs `apply` in one transaction that also ENABLEs and FORCEs RLS on any
+    org-scoped table it creates. On a current database the rest is nothing. Returns (applied, set_aside)."""
+    ro = _read_only(url)
+    p = run("deploy-window.mjs", {"ACTION": "probe", "ADMIN_URL": ro, "RLS_MODE": mode})
+    line = (p.stdout.strip().splitlines() or [""])[-1]
+    if p.returncode or not line.startswith("{"):
+        plain = run("deploy-window.mjs", {"ACTION": "probe", "ADMIN_URL": url, "RLS_MODE": mode})
+        if plain.returncode == 0:
+            sys.exit("the database refused the read-only connection option the schema check needs "
+                     "(options=-c default_transaction_read_only=on), so schema drift cannot be planned safely here; "
+                     f"nothing was changed. It said: {_node_err(p)}")
+        sys.exit(f"could not connect to the database for the schema check; nothing was changed. It said: {_node_err(p)}")
+    if not json.loads(line).get("read_only"):
+        sys.exit("the database accepted the read-only connection option but did not apply it (a pooler that drops "
+                 "startup options?), so the schema check could write; nothing was changed. Use the direct admin URL.")
+    r = sh("npx drizzle-kit push --strict --verbose", {"DATABASE_URL": ro})
+    try: plan, notes = _push_plan(r.stdout + r.stderr, r.returncode)
+    except DryRunError as e: sys.exit(str(e) + ".")
     todo, aside = _split_push(plan)
+    refused = _refused(todo, notes)
+    if refused: sys.exit(refused + ". The deploy stopped before applying any of it; nothing was changed by this step.")
     drops = sum(1 for x in aside if re.match(r"\s*DROP\s+POLICY", x, re.I))
     offs = sum(1 for x in aside if re.search(r"DISABLE\s+ROW", x, re.I))
     print(f"  schema drift: {len(todo)} statement(s) to apply; set aside what push --force would have done to "
@@ -2198,27 +2285,32 @@ esac
 '''
 
 # A model of the database the schema chain runs against, for --self-test: enough of Postgres's RLS
-# semantics (permissive policies OR, restrictive ones AND, RLS off means no policy applies) to replay
-# SCHEMA_CHAIN step by step, statement by statement, and ask after EVERY one whether the serving app
-# role could read another workspace's row. Four tables stand for the four ways the chain treats one:
-# the bootstrap's own list (customers), coverage only (chat_threads), the task-workflow migration's
-# (task_workflow_instances) and the control plane (orgs), which stays readable before a workspace is known.
+# semantics (permissive policies OR, restrictive ones AND, RLS off means no policy applies, no grant means
+# no read at all) to replay SCHEMA_CHAIN step by step, statement by statement, and ask after EVERY one
+# whether the serving app role could read another workspace's row. The tables stand for the ways the
+# chain treats one: the bootstrap's own list (customers), coverage only (chat_threads), the task-workflow
+# migration's (task_workflow_instances), the control plane (orgs, readable before a workspace is known),
+# and one the JOURNAL creates mid-chain and backfills from existing rows (journal_new).
 WINDOW_TABLES = {"customers": "bootstrap", "chat_threads": "cover", "task_workflow_instances": "task-workflow", "orgs": "control"}
 
-def _window_model(chain, split=None, mode="fail_closed"):
+def _window_model(chain, split=None, mode="fail_closed", old_hold=False):
     """Replay `chain` against a covered LIVE database; return the exposures seen, [] if none.
 
     `push` is a no-op here (it only runs on an empty database); `drift` treats drizzle-kit's plan with
-    `split` (_split_push in the chain as it is); `push --force` is the chain as it was."""
+    `split` (_split_push in the chain as it is); `push --force` is the chain as it was. `old_hold` is the
+    first cut of hold, which guarded tables but left app_rw's default grant on new ones in place."""
     admits = {"strict": lambda g, o: g == o, "open": lambda g, o: g in (None, "") or g == o}
-    cover = lambda t: "open" if WINDOW_TABLES[t] == "control" or mode == "on" else "strict"
-    db = {t: {"rls": True, "perm": {"org_isolation": cover(t)}, "restr": {}} for t in WINDOW_TABLES}
+    kind = dict(WINDOW_TABLES)
+    cover = lambda t: "open" if kind[t] == "control" or mode == "on" else "strict"
+    db = {t: {"rls": True, "perm": {"org_isolation": cover(t)}, "restr": {}, "grant": True} for t in kind}
+    state = {"default_grant": True}
     seen = []
     def look(step):
         for t, st in db.items():
             for who, g in (("scoped to A", "A"), ("unscoped", None)):
-                if who == "unscoped" and (WINDOW_TABLES[t] == "control" or mode == "on"): continue   # open by design
-                if not st["rls"]: ok = True
+                if who == "unscoped" and (kind[t] == "control" or mode == "on"): continue   # open by design
+                if not st["grant"]: ok = False
+                elif not st["rls"]: ok = True
                 else: ok = any(admits[p](g, "B") for p in st["perm"].values()) and all(admits[p](g, "B") for p in st["restr"].values())
                 if ok: seen.append(f"{step}: app_rw {who} reads workspace B on {t}")
     def ddl(stmt):
@@ -2233,25 +2325,36 @@ def _window_model(chain, split=None, mode="fail_closed"):
         body = "\n".join([f'ALTER TABLE "{t}" DISABLE ROW LEVEL SECURITY;' for t, st in db.items() if st["rls"]] +
                          [f'DROP POLICY "{p}" ON "{t}" CASCADE;' for t, st in db.items() for p in {**st["perm"], **st["restr"]}] +
                          ['DROP INDEX "workflow_definitions_one_default_idx";'])
-        return _push_plan(f"Using 'postgres' driver\n\n Warning  {DRY_RUN_HEAD}\n\n{body}\n\nError: Interactive prompts require a TTY terminal")
+        return _push_plan(f"Using 'postgres' driver\n\n Warning  {DRY_RUN_HEAD}\n\n{body}\n\nError: Interactive prompts require a TTY terminal")[0]
     def step(name):
         if name == "hold":
+            if not old_hold: state["default_grant"] = False
             for t in db: db[t]["rls"] = True; db[t]["restr"]["factory_deploy_guard"] = cover(t)
             look(name)
         elif name == "push --force":          # the chain as it was: every statement, one at a time
             for x in plan(): ddl(x); look(f"push --force: {x[:40]}")
+        elif name == "migrate":               # a journal entry that creates an org-scoped table and backfills it
+            if "journal_new" not in db:
+                kind["journal_new"] = "journal"
+                db["journal_new"] = {"rls": False, "perm": {}, "restr": {}, "grant": state["default_grant"]}
+            look(name)
         elif name == "drift":
             todo, _ = split(plan())
             for x in todo: ddl(x)              # one transaction: nobody sees in between
             look(name)
         elif name in ("bootstrap", "task-workflow"):
+            if name == "bootstrap":            # GRANT ... ON ALL TABLES, and the default grant, to app_rw
+                state["default_grant"] = True
+                for t in db: db[t]["grant"] = True
+                look("bootstrap: grants")
             for t in db:
-                if WINDOW_TABLES[t] == name:
+                if kind[t] == name:
                     db[t]["rls"] = True; db[t]["perm"].pop("org_isolation", None); look(f"{name}: drop org_isolation on {t}")
                     db[t]["perm"]["org_isolation"] = "open"; look(f"{name}: create permissive org_isolation on {t}")
         elif name == "cover":
             for t in db: db[t]["rls"] = True; db[t]["perm"]["org_isolation"] = cover(t); look(f"cover: {t}")
         elif name == "release":
+            state["default_grant"] = True
             for t in db: db[t]["restr"].pop("factory_deploy_guard", None)
             look(name)
         else: look(name)
@@ -2360,23 +2463,87 @@ def self_test():
           any(x.startswith("push") for x in _window_model(("hold", "push --force") + SCHEMA_CHAIN[2:], split=_split_push)))
     check("  ...and neither does a drift step that applies the whole plan",
           _window_model(SCHEMA_CHAIN, split=lambda st: (st, [])) != [])
-    order = [SCHEMA_CHAIN.index(k) if k in SCHEMA_CHAIN else -1 for k in ("hold", "push", "migrate", "drift", "bootstrap", "cover", "release", "prove", "publish")]
-    check("SCHEMA_CHAIN holds before the schema, applies drift after the journal, releases only after cover",
-          -1 not in order and order == sorted(order), SCHEMA_CHAIN)
-    dry = ("\x1b[33m Warning \x1b[39m You are about to execute current statements:\n\n"
-           'ALTER TABLE "a" DISABLE ROW LEVEL SECURITY;\nALTER TABLE "b" NO FORCE ROW LEVEL SECURITY;\n'
-           'DROP POLICY "org_isolation" ON "a" CASCADE;\nDROP INDEX "x_idx";\n'
-           'CREATE TABLE "n" (\n\t"id" text PRIMARY KEY NOT NULL,\n\t"org_id" text NOT NULL\n);\n'
-           'ALTER TABLE "c" ADD COLUMN "z" text;\n\nError: Interactive prompts require a TTY terminal\n    at render10')
-    todo, aside = _split_push(_push_plan(dry))
-    check("the dry run is parsed into whole statements, multi-line CREATE TABLE included",
-          len(todo) == 2 and todo[0].startswith('CREATE TABLE "n"') and todo[0].endswith(");") and len(aside) == 4, (todo, aside))
-    check("nothing that drops a policy, disables or unforces RLS, or drops an index is ever applied",
-          not any(re.search(r"DROP POLICY|DISABLE ROW|NO FORCE|DROP INDEX", x) for x in todo), todo)
-    check("an up-to-date database plans nothing", _push_plan("[i] No changes detected") == [])
-    check("a rename question is not read as an empty plan", _push_plan("Error: Interactive prompts require a TTY terminal") is None)
+    # item 5: a table the journal creates mid-chain (and backfills) is never readable before it is guarded
+    first_cut = ("hold", "push", "migrate", "drift", "bootstrap", "task-workflow", "cover", "release", "prove", "publish")
+    fc = _window_model(first_cut, split=_split_push, old_hold=True)
+    check("the model catches a journal-created table under the first cut (one hold, default grant kept)",
+          any("journal_new" in x for x in fc), fc[:3])
+    check("  ...and re-holding alone is not enough while app_rw keeps its default grant on new tables",
+          any("journal_new" in x for x in _window_model(SCHEMA_CHAIN, split=_split_push, old_hold=True)))
+    pos = lambda k, after=-1: next((i for i, x in enumerate(SCHEMA_CHAIN) if x == k and i > after), -1)
+    ok_order = (0 <= pos("hold") < pos("push") < pos("migrate") < pos("hold", pos("migrate")) < pos("drift")
+                < pos("hold", pos("drift")) < pos("bootstrap") < pos("cover") < pos("release") < pos("prove") < pos("publish"))
+    check("SCHEMA_CHAIN holds first, again after the journal and after drift, and releases only after cover", ok_order, SCHEMA_CHAIN)
+    # item 6: the guard and rls-cover read their predicates from ONE module
+    lib = os.path.join(ROOT, ".claude/scripts/lib")
+    src = {f: open(os.path.join(lib, f)).read() for f in ("rls-policy.mjs", "rls-cover.mjs", "deploy-window.mjs", "verify-apprw.mjs")}
+    check("rls-policy.mjs defines CONTROL_PLANE, STRICT, OPEN and orgPredicate",
+          all(re.search(rf"export const {k}\b", src["rls-policy.mjs"]) for k in ("CONTROL_PLANE", "STRICT", "OPEN", "orgPredicate")))
+    for f in ("rls-cover.mjs", "deploy-window.mjs"):
+        check(f"{f} imports orgPredicate from rls-policy.mjs and defines no predicate of its own",
+              re.search(r"import \{[^}]*\borgPredicate\b[^}]*\} from \"\./rls-policy\.mjs\"", src[f]) is not None
+              and not re.search(r"const (STRICT|OPEN|CONTROL_PLANE)\s*=\s*(new Set|`|\[)", src[f]), f)
+    check("verify-apprw.mjs takes its control plane from rls-policy.mjs",
+          "CONTROL_PLANE as CONTROL_SET" in src["verify-apprw.mjs"] and '["orgs", "org_members", "org_invites"]' not in src["verify-apprw.mjs"])
+    # item 2: the printed plan is read whole — measured drizzle-kit 0.31 output, PK drop without `;`
+    DL = ("No config path provided, using default 'drizzle.config.ts'\nUsing 'postgres' driver for database querying\n\n"
+          "\x1b[48;5;244m\x1b[38;5;16m Warning \x1b[39m\x1b[49m You are about to execute current statements:\n\n"
+          'CREATE TABLE "t4" (\n\t"id" text PRIMARY KEY NOT NULL,\n\t"org_id" text NOT NULL\n);\n\n'
+          'ALTER TABLE "t1" ALTER COLUMN "n" SET DATA TYPE integer;\nALTER TABLE "t2" DROP CONSTRAINT "t2_a_pk"\n'
+          'ALTER TABLE "t2" ALTER COLUMN "a" DROP NOT NULL;\nALTER TABLE "t2" ADD CONSTRAINT "t2_a_b_pk" PRIMARY KEY("a","b");\n'
+          'truncate table "t1" cascade;\nALTER TABLE "t1" ADD COLUMN "m" text NOT NULL;\n\n'
+          " Warning  Found data-loss statements:\n· You're about to change t2 primary key. This statements may fail and you table may left without primary key\n"
+          "· You're about to add not-null m column without default value, which contains 1 items\n\n"
+          "THIS ACTION WILL CAUSE DATA LOSS AND CANNOT BE REVERTED\n\nDo you still want to push changes?\n"
+          "Error: Interactive prompts require a TTY terminal (process.stdin.isTTY or process.stdout.isTTY is false).\n")
+    st, notes = _push_plan(DL)
+    check("every printed statement is its own statement, the PK drop without `;` included",
+          len(st) == 7 and 'ALTER TABLE "t2" DROP CONSTRAINT "t2_a_pk";' in st and st[0].endswith(");"), st)
+    st2, _ = _push_plan(f" Warning  {DRY_RUN_HEAD}\n\nALTER TABLE \"a\" ADD COLUMN \"z\" text;\nALTER TABLE \"t2\" DROP CONSTRAINT \"t2_a_pk\"\n\nError: Interactive prompts require a TTY")
+    check("  ...and a last statement without `;` is kept, not discarded", st2[-1:] == ['ALTER TABLE "t2" DROP CONSTRAINT "t2_a_pk";'], st2)
+    st3, _ = _push_plan(f" Warning  {DRY_RUN_HEAD}\n\nDO $$ BEGIN\n ALTER TABLE \"a\" ADD CONSTRAINT \"f\" FOREIGN KEY (\"x\") REFERENCES \"b\"(\"x\");\n"
+                        "EXCEPTION\n WHEN duplicate_object THEN null;\nEND $$;\nALTER TABLE \"a\" ADD COLUMN \"z\" text;\n\nError: x")
+    check("  ...and a DO block stays one statement", len(st3) == 2 and st3[0].startswith("DO $$") and st3[0].endswith("END $$;"), st3)
+    for bad in ("  stray text", "DO $$ BEGIN\n SELECT 1;"):
+        try: _push_plan(f" Warning  {DRY_RUN_HEAD}\n{bad}\nError: x"); check(f"  ...and unreadable output raises ({bad[:12]!r})", False)
+        except DryRunError: check(f"  ...and unreadable output raises ({bad[:12]!r})", True)
+    # item 1 (and 3, 4): drift refuses data loss and undeclared index drops, and says why a check could not run
+    CP = subprocess.CompletedProcess
+    def drift(out, rc=0, probe_ro=(0, '{"action":"probe","read_only":true}'), probe_plain=(0, "{}")):
+        calls = []
+        def run(script, env):
+            calls.append(env["ACTION"])
+            if env["ACTION"] == "probe":
+                code, line = probe_ro if "read_only" in env["ADMIN_URL"] else probe_plain
+                return CP(script, code, line, "" if code == 0 else "deploy window probe could not be measured — cannot reach the database")
+            return CP(script, 0, '{"action":"apply","applied":1}', "")
+        try: apply_drift(lambda c, e: CP(c, rc, out, ""), run, "postgresql://u:p@h/db", "fail_closed", "hint"); return None, calls
+        except SystemExit as e: return str(e), calls
+    err, calls = drift(DL)
+    check("a plan that would truncate or drop data stops the deploy and applies nothing",
+          err and "DELETE data" in err and "truncate" in err and "apply" not in calls, (err, calls))
+    err, calls = drift(f" Warning  {DRY_RUN_HEAD}\n\nALTER TABLE \"t\" DROP COLUMN \"c\";\n\nError: x")
+    check("  ...DROP COLUMN too, even without drizzle's own data-loss notice", err and "DROP COLUMN" in err and "apply" not in calls, err)
+    err, calls = drift(f" Warning  {DRY_RUN_HEAD}\n\nDROP INDEX \"x_idx\";\nDROP INDEX \"workflow_definitions_one_default_idx\";\n\nError: x")
+    check("an undeclared index drop is named and refused; the mold's own out-of-band index is only set aside",
+          err and '"x_idx"' in err and "workflow_definitions" not in err and "apply" not in calls, err)
+    err, calls = drift(f" Warning  {DRY_RUN_HEAD}\n\nDROP INDEX \"workflow_definitions_one_default_idx\";\nALTER TABLE \"a\" ADD COLUMN \"z\" text;\n\nError: x")
+    check("  ...and plain drift beside it is applied", err is None and calls[-1] == "apply", (err, calls))
+    err, _ = drift("", rc=1)
+    check("a dry run that exits 1 with no output is 'could not connect', never drift", err and "could not connect to the database for the schema check" in err, err)
+    err, _ = drift("", probe_ro=(3, ""), probe_plain=(3, ""))
+    check("  ...said before drizzle-kit even runs, when the database cannot be reached", err and "could not connect" in err, err)
+    err, _ = drift("", probe_ro=(3, ""), probe_plain=(0, "{}"))
+    check("a provider that refuses the read-only option gets its own sentence", err and "refused the read-only connection option" in err, err)
+    err, _ = drift("", probe_ro=(0, '{"read_only":false}'))
+    check("  ...and one that silently ignores it is refused", err and "did not apply it" in err, err)
+    err, _ = drift("· You're about to add t1_org_id_unique unique constraint to the table, which contains 1 items. Do you want to truncate t1 table?\n\nError: Interactive prompts require a TTY terminal")
+    check("a new unique constraint on a table with rows is named, not read as drift", err and "t1_org_id_unique" in err and "migration" in err, err)
+    err, _ = drift("Error: Interactive prompts require a TTY terminal\nError: Interactive prompts require a TTY terminal")
+    check("a rename question says rename", err and "RENAMED" in err, err)
+    check("an up-to-date database plans nothing", _push_plan("[i] No changes detected") == ([], []))
     try: _push_plan("[✓] Changes applied"); check("a dry run that applied something stops the deploy", False)
-    except RuntimeError: check("a dry run that applied something stops the deploy", True)
+    except DryRunError: check("a dry run that applied something stops the deploy", True)
     ro = _read_only("postgresql://u:p@h/db?sslmode=require&options=endpoint%3Dep-x")
     check("the dry run's URL is read-only and keeps an existing options value",
           "default_transaction_read_only%3Don" in ro and "endpoint%3Dep-x" in ro and "sslmode=require" in ro, ro)
