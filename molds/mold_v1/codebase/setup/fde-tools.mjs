@@ -704,7 +704,8 @@ const TOOLS = [
   },
   {
     name: "deployment_upsert",
-    description: "Create or update a deployment record: environment, region, version, release + health status, owner.",
+    description:
+      "Create or update a deployment record, keyed on customerId + deploymentId. A new record needs environment, region and deployedVersion (release and health status default to deployed / healthy). Calling it again for the same deploymentId UPDATES that record: only the fields you pass change, everything else is kept; send \"\" to clear an optional field, and in `custom` only the keys you are changing (null clears one).\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`).",
     inputSchema: {
       type: "object",
       properties: {
@@ -719,7 +720,7 @@ const TOOLS = [
         displayName: { type: "string" },
         custom: customInput("deployments", "deployment_list"),
       },
-      required: ["customerId"],
+      required: ["customerId", "deploymentId"],
     },
     handler: async (a) => json(await api("POST", "/api/ops/deployments", a)),
   },

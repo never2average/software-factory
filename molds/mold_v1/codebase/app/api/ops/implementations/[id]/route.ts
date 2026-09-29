@@ -7,6 +7,8 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordFieldChanges } from "@/lib/ops-activity";
 import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
 import { customBodySchema, customFieldChanges, customForWrite, profileFieldLabel, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { customDelta } from "@/agent/lib/custom-fields";
+import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { W } from "@/lib/ui-words";
 
 export const runtime = "nodejs";
@@ -67,7 +69,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (before && "custom" in set) {
       const checked = customForWrite("implementations", set.custom, before);
       if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
-      set.custom = checked.custom;
+      // Only the keys the body names, merged in SQL onto what is stored at write time: the value checked above was
+      // read before this statement, and writing it back whole lost an own value saved in between.
+      const delta = customDelta(set.custom, checked.custom ?? {});
+      if (delta) set.custom = customMergeSql(implementation.custom, delta, { empty: "object" });
+      else delete set.custom;
     }
     const [item] = await withOrgRls(octx.orgId, (tx) =>
       tx

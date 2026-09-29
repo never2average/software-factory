@@ -238,7 +238,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "upsert_customer",
-        "description": "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only provided fields are changed; nested domains (platform, deployments, solutions, implementation, tickets, interactions) are upserted alongside the customer row. Gated on approval since this mutates the team's source of truth."
+        "description": "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (platform, deployments, solutions, implementation, tickets, interactions) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth."
       },
       {
         "name": "web_search",
@@ -511,7 +511,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "upsert_customer",
-        "description": "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only provided fields are changed; nested domains (platform, deployments, solutions, implementation, tickets, interactions) are upserted alongside the customer row. Gated on approval since this mutates the team's source of truth."
+        "description": "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (platform, deployments, solutions, implementation, tickets, interactions) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth."
       },
       {
         "name": "web_search",

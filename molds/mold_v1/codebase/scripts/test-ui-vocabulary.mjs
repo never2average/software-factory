@@ -63,6 +63,21 @@ async function relabelled() {
     assert.equal(keys.humanizeKey("fdeOwner"), "Covering analyst");
   });
 
+  const wb = await imp("lib/workbook-fields.ts");
+  const { DOMAIN_FIELDS: FIELDS } = await imp("lib/deployment-profile.generated.ts");
+  await check("9b a record area's OWN sheet names each of its columns in the profile's words, deployment_strategy included (review of #62)", () => {
+    const snake = (k) => k.replace(/([A-Z])/g, "_$1").toLowerCase();
+    for (const [sheet, area] of [["Deployments", "deployments"], ["Implementation", "implementations"]]) {
+      for (const key of Object.keys(FIELDS[area])) {
+        for (const col of [snake(key), key]) assert.deepEqual(baseWords(wb.sheetColumnKey(sheet, col)), [], `${sheet} column ${col} reads ${wb.sheetColumnKey(sheet, col)}`);
+      }
+    }
+    assert.equal(wb.sheetColumnKey("Deployments", "deployment_strategy"), keys.speakKey("deployment_id").replace(/_id$/, "_strategy"), "named as the model is given it");
+    assert.equal(wb.sheetColumnKey("Deployments", "customer_id"), "company_id");
+    assert.equal(wb.sheetColumnKey("Deployments", "notes"), "notes");
+    assert.equal(wb.sheetColumnKey("Platform", "deployment_model"), "deployment_model", "elsewhere speakKey's rule stands");
+  });
+
   const errs = await imp("lib/ops-errors.ts");
   await check("6 an ops API error names the field in the profile's words (zod path) and speaks its prose", () => {
     const z = errs.errorText(zodIssue(["customerId"], "Required"));

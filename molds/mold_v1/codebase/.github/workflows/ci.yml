@@ -107,6 +107,12 @@ jobs:
         if: always()
         run: npm run test:workbook-spec
 
+      # The data room's workbook preview: long text cut on whole characters (never inside an emoji), the cap
+      # banner saying the order the rows were kept in, and free-text dates read as dates for "most recent first".
+      - name: Workbook preview (text cut, cap banner, date order wiring)
+        if: always()
+        run: npm run test:workbook-preview
+
       # These four existed and were never wired in, so the chat suite ran only
       # when somebody typed it — which is the pre-CI failure mode this file was
       # written to end. Every chat regression this month shipped past a green CI
@@ -591,6 +597,13 @@ jobs:
       - name: Build the tenancy model (app_rw + RLS)
         run: DATABASE_URL="$ADMIN_URL" node scripts/bootstrap-test-db.mjs
 
+      # A new deployment's database is built from drizzle/meta/_journal.json (db:migrate:production), this job's
+      # from schema.ts (push). The journal missed a rename (implementation.provider_launch_approver_email), so every
+      # implementation read failed on a journal-built database. Builds one from the journal and compares.
+      - name: The migration journal builds the schema the app reads
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:migrations-db
+
       - name: Cross-tenant isolation
         run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" node scripts/test-org-isolation.mjs
 
@@ -664,6 +677,16 @@ jobs:
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:account-custom-fields-db
 
+      # The two record areas (deployments[], implementation) written by upsert_customer: only the rows and fields
+      # a patch names change, each in SQL onto what is stored at write time; a row is deleted only by remove: true;
+      # the result is read back after the write. 40-round races against a scoped ops write, as for #57.
+      - name: Record areas merge per row, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:record-areas-db
+
       # WHO OWNS A CHAT IN THE LIST MIRROR. The upsert conflicts on the row id
       # (the eve session id) while ownership was checked only on eveSessionId,
       # so a colleague in the same workspace who knew a session id could post
@@ -713,6 +736,15 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:chat-queue-db
+
+      # deployment_upsert (MCP) posts to POST /api/ops/deployments, which was insert-only: a record could be created
+      # and never corrected. Reuses the relabelling build of the workbook route step.
+      - name: deployment_upsert updates an existing record, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:deployment-upsert-db
 
 # NOT RUN HERE, deliberately:
 #

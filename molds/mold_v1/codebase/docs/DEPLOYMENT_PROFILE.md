@@ -270,9 +270,10 @@ cannot be cleared.*
 
 The two redefinable areas hide their own fields with `domains.<area>.fields.<key>.hidden` (above), and the record
 tools apply those the same way: a hidden `deployments[]` / `implementation` field WITHOUT a `fixed` value is not a
-parameter and is not in a returned record, and when the model rewrites a row (a patch replaces `deployments[]` and
-`implementation` wholesale) the stored value of each hidden field it could not see is carried over. A hidden field
-WITH a `fixed` value stays a parameter, because the briefing tells the model to write that value.
+parameter and is not in a returned record, and a write never blanks it: a patch changes only the `deployments[]`
+rows and `implementation` fields it names (null clears one, `remove: true` deletes a row, and a row or field it
+leaves out keeps its stored value), each written in SQL onto what is stored at write time. A hidden field WITH a
+`fixed` value stays a parameter, because the briefing tells the model to write that value.
 
 ### Own fields on the account record
 

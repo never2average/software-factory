@@ -10,20 +10,24 @@
  *
  *   ((coalesce(custom, '{}') || set) with each append concatenated onto the stored text) - clear…
  *
- * and NULL when that leaves nothing (customers.custom is nullable: NULL is "no own values").
+ * and NULL when that leaves nothing (customers.custom is nullable: NULL is "no own values"). The two record areas'
+ * `custom` (deployments, implementation) is NOT NULL DEFAULT '{}': `empty: "object"` leaves {} instead, and the same
+ * merge is applied to each of their rows (upsert_customer's deployments[] and implementation).
  *
  * Keys are profile field keys (snake_case, checked by the generator); every key and value is a bound parameter.
  */
 import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { APPEND_SEPARATOR, type CustomDelta } from "./custom-fields.ts";
 
-export function customMergeSql(column: AnyColumn, delta: CustomDelta): SQL {
+export function customMergeSql(column: AnyColumn, delta: CustomDelta, opts: { empty?: "null" | "object" } = {}): SQL {
   let expr: SQL = sql`(coalesce(${column}, '{}'::jsonb) || ${JSON.stringify(delta.set)}::jsonb)`;
   for (const [key, text] of Object.entries(delta.append)) {
     // The stored text (if any), the separator, the addition: appended to what is there NOW, not what was read.
     expr = sql`jsonb_set(${expr}, ARRAY[${key}::text], to_jsonb(coalesce(nullif(${column} ->> ${key}::text, '') || ${APPEND_SEPARATOR}::text, '') || ${text}::text))`;
   }
   for (const key of delta.clear) expr = sql`(${expr} - ${key}::text)`;
+  // customers.custom is nullable (NULL = no own values); the two areas' `custom` is NOT NULL DEFAULT '{}'.
+  if (opts.empty === "object") return expr;
   return sql`(select case when m = '{}'::jsonb then null else m end from (select ${expr} as m) as merged)`;
 }
 

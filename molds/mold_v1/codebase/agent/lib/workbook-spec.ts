@@ -35,6 +35,8 @@ import {
 } from "./customer-schema.ts";
 import { readFileSync } from "node:fs";
 import { compatEnv } from "./compat-env.ts";
+import { customFieldsOf } from "./custom-fields.ts";
+import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
 import { samplePeople } from "./sample-data.ts";
 
 /* -------------------------------------------------------------------------- */
@@ -590,7 +592,45 @@ export function deriveInteractionDigestRow(customer: Customer): CellValue[] {
 /* Per-domain sheet builders                                                  */
 /* -------------------------------------------------------------------------- */
 
-function domainSheets(customer: Customer, domain: WorkbookDomain): SheetSpec[] {
+/** The profile's own fields per record (`custom_fields`); this build's unless a test passes another's. */
+export type DeclaredOwnFields = Partial<Record<CustomFieldArea, CustomFieldSpec[]>>;
+
+/**
+ * A sheet with the record's OWN fields (the profile's `custom_fields`, stored in `custom`) as columns after the
+ * stored ones, headed by their keys like every other column, one value per row. The workbook used to carry only the
+ * base columns, so a research desk's rating, target price and notes never reached its Master.xlsx. A profile that
+ * declares none gets exactly the sheet it got before.
+ */
+function withOwnFields(sheet: SheetSpec, fields: CustomFieldSpec[], owners: Array<{ custom?: unknown } | undefined>): SheetSpec {
+  if (!fields.length) return sheet;
+  const taken = new Set(sheet.columns);
+  const own = fields.filter((f) => !taken.has(f.key));
+  return {
+    ...sheet,
+    columns: [...sheet.columns, ...own.map((f) => f.key)],
+    rows: sheet.rows.map((row, i) => {
+      const custom = (owners[i]?.custom ?? {}) as Record<string, unknown>;
+      return [...row, ...own.map((f) => normalizeCell(custom[f.key]))];
+    }),
+  };
+}
+
+const ownFieldsOf = (declared: DeclaredOwnFields | undefined, area: CustomFieldArea): CustomFieldSpec[] =>
+  declared ? (declared[area] ?? []) : customFieldsOf(area);
+
+function domainSheets(customer: Customer, domain: WorkbookDomain, declared?: DeclaredOwnFields): SheetSpec[] {
+  return baseDomainSheets(customer, domain).map((sheet) =>
+    sheet.name === "Customers"
+      ? withOwnFields(sheet, ownFieldsOf(declared, "account"), [customer])
+      : sheet.name === "Deployments"
+        ? withOwnFields(sheet, ownFieldsOf(declared, "deployments"), customer.deployments ?? [])
+        : sheet.name === "Implementation"
+          ? withOwnFields(sheet, ownFieldsOf(declared, "implementations"), customer.implementation ? [customer.implementation] : [])
+          : sheet,
+  );
+}
+
+function baseDomainSheets(customer: Customer, domain: WorkbookDomain): SheetSpec[] {
   const cid = customer.id;
   const cname = customer.name;
   switch (domain) {
@@ -713,6 +753,8 @@ export async function buildDomainWorkbookSpec(opts: {
   now: Date | string;
   /** The caller's workspace: a customer outside it is "Unknown customer". */
   orgId?: string | null;
+  /** Tests only: the declared own fields, when this build's profile declares none. */
+  declared?: DeclaredOwnFields;
 }): Promise<WorkbookSpec> {
   void opts.now; // reserved: digest is derived purely from stored rows
   const customer = await getCustomer(opts.customerId, opts.orgId);
@@ -720,7 +762,7 @@ export async function buildDomainWorkbookSpec(opts: {
   return {
     workbook: `${opts.domain}/Master.xlsx`,
     domain: opts.domain,
-    sheets: domainSheets(customer, opts.domain),
+    sheets: domainSheets(customer, opts.domain, opts.declared),
   };
 }
 
@@ -733,6 +775,8 @@ export async function buildCustomerWorkbookSpecs(opts: {
   now: Date | string;
   /** The caller's workspace: a customer outside it is "Unknown customer". */
   orgId?: string | null;
+  /** Tests only: the declared own fields, when this build's profile declares none. */
+  declared?: DeclaredOwnFields;
 }): Promise<WorkbookSpec[]> {
   void opts.now; // reserved
   const customer = await getCustomer(opts.customerId, opts.orgId);
@@ -740,6 +784,6 @@ export async function buildCustomerWorkbookSpecs(opts: {
   return WORKBOOK_DOMAINS.map((domain) => ({
     workbook: `${domain}/Master.xlsx`,
     domain,
-    sheets: domainSheets(customer, domain),
+    sheets: domainSheets(customer, domain, opts.declared),
   }));
 }

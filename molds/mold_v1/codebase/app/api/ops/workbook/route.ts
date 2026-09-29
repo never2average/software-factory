@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import {
   customerStakeholders,
   customers,
@@ -17,9 +17,11 @@ import { isEmptyStore } from "@/lib/pg-error";
 import { sampleCustomerStore, samplePeople } from "@/agent/lib/sample-data";
 import { W } from "@/lib/ui-words";
 import {
-  TEXT_PREVIEW_CHARS,
   TRUNCATED_MARK,
+  WORKBOOK_ORDER,
   WORKBOOK_ROW_CAP,
+  cutText,
+  dateSortKeySql,
   listedOwnFields,
   workbookHidden,
   type WorkbookTable,
@@ -46,7 +48,9 @@ export const dynamic = "force-dynamic";
  *   - of the profile's own fields (`custom`), only those it lists (show_in_list), as /api/ops/customers sends them.
  *     A 2 MB note used to go out on every open;
  *   - text cut to a preview (TEXT_PREVIEW_CHARS), marked in the text and named in the row's `_truncated`;
- *   - at most WORKBOOK_ROW_CAP rows per table, the MOST RECENT first, and `truncated` said when there were more.
+ *   - at most WORKBOOK_ROW_CAP rows per table, the MOST RECENT first where a table has a date (read as the date the
+ *     free text says, lib/workbook-fields.ts dateSortKeySql, not as a string), else by name or id; `truncated` said
+ *     when there were more, and `order` saying which of those the kept rows are.
  *
  * One table is one table. Each is read on its own: one that cannot be read (missing, refused, failed) is named in
  * `unavailable` and the rest are served. It used to be one read, where any failure answered the WHOLE workspace as
@@ -61,11 +65,13 @@ export const dynamic = "force-dynamic";
 type Row = Record<string, unknown>;
 const NO_STORE = { "Cache-Control": "private, no-store" };
 
-/** A text value as a preview: cut, and the cut said. */
+/** A text value as a preview: cut on whole characters (never inside an emoji), and the cut said. */
 function preview(value: unknown, key: string, cut: string[]): unknown {
-  if (typeof value !== "string" || value.length <= TEXT_PREVIEW_CHARS) return value;
+  if (typeof value !== "string") return value;
+  const short = cutText(value);
+  if (short === null) return value;
   cut.push(key);
-  return value.slice(0, TEXT_PREVIEW_CHARS) + TRUNCATED_MARK;
+  return short + TRUNCATED_MARK;
 }
 
 /**
@@ -100,7 +106,7 @@ async function readTable(orgId: string, table: WorkbookTable, query: (tx: Db) =>
     const rows = await withOrgRls(orgId, query);
     const truncated = rows.length > WORKBOOK_ROW_CAP;
     const kept = truncated ? rows.slice(0, WORKBOOK_ROW_CAP) : rows;
-    return { ok: true, rows: kept, info: { rows: kept.length, truncated, cap: WORKBOOK_ROW_CAP } };
+    return { ok: true, rows: kept, info: { rows: kept.length, truncated, cap: WORKBOOK_ROW_CAP, order: WORKBOOK_ORDER[table] } };
   } catch (e) {
     const missing = isEmptyStore(e);
     if (!missing) console.error(`workbook GET: ${table} could not be read`, e);
@@ -134,9 +140,11 @@ export async function GET(request: NextRequest) {
   const org = ctx.orgId;
   const cap = WORKBOOK_ROW_CAP + 1;
   // A nested part the profile hides is not read at all.
-  const skip = async (): Promise<Read> => ({ ok: true, rows: [], info: { rows: 0, truncated: false, cap: WORKBOOK_ROW_CAP } });
+  const skip = async (): Promise<Read> => ({ ok: true, rows: [], info: { rows: 0, truncated: false, cap: WORKBOOK_ROW_CAP, order: "id" } });
   const attempted = (t: WorkbookTable) => !hidden.tables.has(t);
   // Most useful first, deterministically: the most recent activity where a table has a date, then a stable id.
+  // The date columns are free text: ordered by the date the text says (NULL when it says none), then as written.
+  const newest = (column: string) => sql.raw(`${dateSortKeySql(column)} desc nulls last, ${column} desc nulls last`);
   const reads: Record<WorkbookTable, Promise<Read>> = {
     customers: readTable(org, "customers", (tx) =>
       tx.select().from(customers).where(eq(customers.orgId, org)).orderBy(asc(customers.customerName), asc(customers.customerId)).limit(cap)),
@@ -144,23 +152,23 @@ export async function GET(request: NextRequest) {
       tx.select().from(platform).where(eq(platform.orgId, org)).orderBy(asc(platform.customerId)).limit(cap)),
     deployments: readTable(org, "deployments", (tx) =>
       tx.select().from(deployments).where(eq(deployments.orgId, org))
-        .orderBy(sql`${deployments.lastDeployAt} desc nulls last`, asc(deployments.deploymentId)).limit(cap)),
+        .orderBy(newest(`"deployments"."last_deploy_at"`), asc(deployments.deploymentId)).limit(cap)),
     solutions: hidden.tables.has("solutions") ? skip() : readTable(org, "solutions", (tx) =>
       tx.select().from(solutions).where(eq(solutions.orgId, org))
-        .orderBy(sql`${solutions.lastReviewedDate} desc nulls last`, asc(solutions.solutionId)).limit(cap)),
+        .orderBy(newest(`"solutions"."last_reviewed_date"`), asc(solutions.solutionId)).limit(cap)),
     implementation: readTable(org, "implementation", (tx) =>
       tx.select().from(implementation).where(eq(implementation.orgId, org)).orderBy(asc(implementation.customerId)).limit(cap)),
     tickets: hidden.tables.has("tickets") ? skip() : readTable(org, "tickets", (tx) =>
-      tx.select().from(tickets).where(eq(tickets.orgId, org)).orderBy(desc(tickets.lastActivityDate), asc(tickets.ticketId)).limit(cap)),
+      tx.select().from(tickets).where(eq(tickets.orgId, org)).orderBy(newest(`"tickets"."last_activity_date"`), asc(tickets.ticketId)).limit(cap)),
     interactions: readTable(org, "interactions", (tx) =>
       tx.select().from(interactions).where(eq(interactions.orgId, org))
-        .orderBy(desc(interactions.interactionAt), asc(interactions.interactionId)).limit(cap)),
+        .orderBy(newest(`"interactions"."interaction_at"`), asc(interactions.interactionId)).limit(cap)),
     internal_staff: readTable(org, "internal_staff", (tx) =>
       tx.select().from(internalStaff).where(eq(internalStaff.orgId, org))
-        .orderBy(sql`${internalStaff.lastContact} desc nulls last`, asc(internalStaff.name)).limit(cap)),
+        .orderBy(newest(`"internal_staff"."last_contact"`), asc(internalStaff.name)).limit(cap)),
     customer_stakeholders: readTable(org, "customer_stakeholders", (tx) =>
       tx.select().from(customerStakeholders).where(eq(customerStakeholders.orgId, org))
-        .orderBy(sql`${customerStakeholders.lastContact} desc nulls last`, asc(customerStakeholders.name)).limit(cap)),
+        .orderBy(newest(`"customer_stakeholders"."last_contact"`), asc(customerStakeholders.name)).limit(cap)),
   };
   const entries = await Promise.all((Object.entries(reads) as [WorkbookTable, Promise<Read>][]).map(async ([t, p]) => [t, await p] as const));
   const read = Object.fromEntries(entries) as Record<WorkbookTable, Read>;

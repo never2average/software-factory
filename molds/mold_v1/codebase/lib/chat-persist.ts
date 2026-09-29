@@ -50,8 +50,93 @@
  *     the ~5 MB limit; that is why it exists.
  */
 
+
 /** A ceiling so a runaway can't wedge storage — far above any real sidebar. */
 export const STORAGE_MAX_CHATS = 300;
+
+/**
+ * THE MOST ONE CHAT'S CACHED TRANSCRIPT MAY WEIGH, in characters of JSON.
+ *
+ * localStorage holds ~5 M characters per origin, for the whole chat list. A
+ * transcript heavier than this is stored as metadata only — the chat then opens
+ * from the server's snapshot (#35), exactly as a stripped older chat does —
+ * WHATEVER protects it. Protection used to be absolute, and the operator's real
+ * thread (44.6 MB of JSON for a 60 KB answer, mold_v1-104) therefore could
+ * never be stored: every step of the back-off below kept it, every step failed,
+ * and the LAST RESORT kept it too — so nothing was written at all, not even the
+ * other chats' titles, after ~9 failed 45 MB serialisations per persist.
+ */
+export const CHAT_CACHE_MAX_CHARS = 1_500_000;
+
+/** A delta type → the field that carries its whole text so far, and the event that completes it. */
+const DELTAS: Record<string, { soFar: string; completed: string }> = {
+  "message.appended": { soFar: "messageSoFar", completed: "message.completed" },
+  "reasoning.appended": { soFar: "reasoningSoFar", completed: "reasoning.completed" },
+};
+
+type Ev = { type?: string; data?: Record<string, unknown> };
+
+/**
+ * What a chat's transcript is CACHED as: every event IN ITS PLACE, with each
+ * superseded delta EMPTIED rather than dropped.
+ *
+ * eve's deltas each carry the whole text so far, so a long answer is quadratic
+ * in the stream (the operator's 60 KB answer was 44.6 MB of JSON). A delta the
+ * very next event overwrites — the same turn and step, a later delta or its
+ * completion — is invisible to the reducer (#35's rule, `compactTranscript`),
+ * so its text can go. But the EVENT stays, as a placeholder carrying only what
+ * the reducers key on (`turnId`, `stepIndex`, `sequence` — a parked
+ * specialist's hand-back is named from it, `continuationTurnId`), an empty
+ * text, and its position (`~`, so two placeholders are never byte-identical and
+ * `dedupeEvents` cannot fold them together).
+ *
+ * WHY NOT DROP THEM, as the first version of this did (review of #81). A mount
+ * measures its absolute-index deficit ONCE (`absoluteIndexBase` = cursor −
+ * events held), so every event kept before a dropped delta was read at an index
+ * shifted up by the deltas dropped after it. The chat's decisions compare those
+ * indexes with where its deliveries were sent (`outstandingDeliveries`): a
+ * reload during a parked specialist's resumed reply saw the park's
+ * `session.waiting` at or past the answer's `at`, settled the answer, and
+ * `attachDecision` answered "terminal" — the reply froze at two parts. With
+ * every event in place the cached transcript has the stream's own numbering,
+ * and every decision is the one the full stream gives
+ * (scripts/test-chat-persist-coalesce.mjs, parity).
+ */
+export function cacheTranscript(events: readonly unknown[]): unknown[] {
+  const out: unknown[] = new Array(events.length);
+  for (let i = 0; i < events.length; i++) {
+    const cur = events[i] as Ev;
+    const rule = cur?.type ? DELTAS[cur.type] : undefined;
+    const next = events[i + 1] as Ev | undefined;
+    const sameSlot =
+      rule !== undefined &&
+      next !== undefined &&
+      next.data?.turnId === cur.data?.turnId &&
+      next.data?.stepIndex === cur.data?.stepIndex;
+    const superseded =
+      sameSlot && (next!.type === cur.type || (next!.type === rule!.completed && next!.data?.message !== null));
+    if (!superseded) {
+      out[i] = cur;
+      continue;
+    }
+    const d = cur.data ?? {};
+    out[i] = {
+      type: cur.type,
+      data: {
+        turnId: d.turnId,
+        stepIndex: d.stepIndex,
+        ...(d.sequence !== undefined ? { sequence: d.sequence } : {}),
+        [rule!.soFar]: "",
+        "~": i,
+      },
+    };
+  }
+  return out;
+}
+
+function cachedEvents(events: unknown): unknown {
+  return Array.isArray(events) ? cacheTranscript(events) : events;
+}
 
 /**
  * The minimum a chat must have for this file to store it. Deliberately
@@ -83,14 +168,14 @@ export interface PersistStorage {
  *
  * A WeakMap so a deleted chat's JSON is collectable with the chat.
  */
-const serialized = new WeakMap<object, { at: number; full?: string; meta?: string }>();
+const serialized = new WeakMap<object, { at: number; full?: string; meta?: string; tooBig?: boolean }>();
 
 /**
  * Test-only visibility, and the reason it is exported: the claim "an unchanged
  * chat is not re-serialised" is worth nothing asserted in a comment. The
  * coalescing test reads these counters to PROVE it.
  */
-export const persistStats = { serialized: 0, reused: 0 };
+export const persistStats = { serialized: 0, reused: 0, tooBig: 0 };
 
 function chatJson(chat: PersistableChat, withEvents: boolean): string {
   let slot = serialized.get(chat);
@@ -98,7 +183,10 @@ function chatJson(chat: PersistableChat, withEvents: boolean): string {
     slot = { at: chat.updatedAt };
     serialized.set(chat, slot);
   }
-  const cached = withEvents ? slot.full : slot.meta;
+  // Over the per-chat cap: its metadata form, from now on, without building the
+  // full one again (the chat object is replaced, not mutated, when it changes).
+  const full = withEvents && !slot.tooBig;
+  const cached = full ? slot.full : slot.meta;
   if (cached !== undefined) {
     persistStats.reused++;
     return cached;
@@ -108,10 +196,25 @@ function chatJson(chat: PersistableChat, withEvents: boolean): string {
   // JSON.stringify drops an undefined value, so the key disappears and the read
   // path sees a chat with no cached transcript. Same bytes as before, built the
   // same way.
-  const json = JSON.stringify(withEvents ? chat : { ...chat, events: undefined });
-  if (withEvents) slot.full = json;
-  else slot.meta = json;
+  if (full) {
+    const json = JSON.stringify({ ...chat, events: cachedEvents(chat.events) });
+    if (json.length <= CHAT_CACHE_MAX_CHARS) {
+      slot.full = json;
+      return json;
+    }
+    slot.tooBig = true;
+    persistStats.tooBig++;
+    return chatJson(chat, false);
+  }
+  const json = JSON.stringify({ ...chat, events: undefined });
+  slot.meta = json;
   return json;
+}
+
+/** Would this chat's transcript be cached at all (not over {@link CHAT_CACHE_MAX_CHARS})? For tests and the warning. */
+export function chatCacheable(chat: PersistableChat): boolean {
+  chatJson(chat, true);
+  return !serialized.get(chat)?.tooBig;
 }
 
 /**
@@ -212,8 +315,17 @@ export function writeChats(
   // Truly pathological single huge chat — cap the count (very high), metadata only.
   onWarn?.("[chat-shell] localStorage still over quota after stripping all event streams — capping chat count.");
   const capped = list.slice(0, STORAGE_MAX_CHATS);
-  const ok = tryWrite(serializeChats(capped, (s) => kept(s)));
-  forgetStrippedFull(list, (s) => kept(s));
+  if (tryWrite(serializeChats(capped, (s) => kept(s)))) {
+    forgetStrippedFull(list, (s) => kept(s));
+    return true;
+  }
+  // FAIL GRACEFULLY: the protected chats' transcripts are what does not fit, so
+  // store the list without them. The chat list — every title, every session to
+  // reopen — is worth more than one cached transcript, which the server's
+  // snapshot can rebuild. Keeping it cost the whole write, every time.
+  onWarn?.("[chat-shell] the open chat's transcript does not fit in localStorage — storing the chat list without it.");
+  const ok = tryWrite(serializeChats(capped, () => false));
+  forgetStrippedFull(list, () => false);
   return ok;
 }
 

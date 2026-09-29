@@ -23,10 +23,11 @@
  *     stops syncing). The column is looked up once (re-checked every minute
  *     while absent), and the reads and writes name it only if it is there.
  */
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { boolean, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
-import { chatSessions, chatThreads } from "../agent/lib/db/schema.ts";
+import { agentSessionScopes, appVersions, apps, chatSessions, chatThreads, workflowRunJournal } from "../agent/lib/db/schema.ts";
 import { capMarkers, MARKERS_MAX_BYTES_SERVER } from "./chat-turn-state.ts";
+import { readLegacyOwnership, readOwnerRecord, recordOwner, type GateDb } from "./session-gate.ts";
 
 /**
  * `chat_sessions` as it is BEFORE migration 0020 — every column but
@@ -251,4 +252,83 @@ export async function writeMirrorRows(
     );
   }
   return { refused };
+}
+
+/**
+ * A DELETED CHAT'S SESSION CANNOT CHANGE HANDS (review of #59; mold_v1-122).
+ *
+ * Deleting a chat removes its `chat_sessions` row. For every session created since
+ * #66 that changes nothing about who owns it: the agent recorded the owner in
+ * `agent_session_owners` before it handed the id out, the record is insert-only
+ * (`recordOwner`), nothing deletes it, and the gate reads it first. But a session
+ * from BEFORE #66 that nobody has opened since has no record — its owner is
+ * inferred (`readLegacyOwnership`) from the chat rows, and the mirror only refuses
+ * a row that another person's EXISTING row or thread already claims. Once the
+ * owner's row is gone, a colleague who knows the id (it is in `?chatSession=`
+ * links) could file their own row for it, become its only claimant, and be read —
+ * and then frozen by the agent's guard — as its owner.
+ *
+ * So before the row goes, ownership is made a RECORD: the owner as inferred while
+ * the owner's row still exists (the same freeze the guard applies on first
+ * access), or — when nothing names one — a TOMBSTONE, a record with no owner,
+ * which every person is refused.
+ *
+ * ONLY WHEN THE DELETER HOLDS ALL THE EVIDENCE (review of #77). A record is
+ * permanent, and the mirror refuses a duplicate claim only inside the CALLER's
+ * workspace: a member of another workspace could file a row for someone's legacy
+ * session in their own workspace and DELETE it, recording a tombstone that locked
+ * the real owner out for good. So a record is written only when every piece of
+ * ownership evidence (a scope row, a shared thread, a chat row, a workflow/app
+ * step) is in the caller's workspace AND the caller is the only person with a chat
+ * row for it there. Otherwise the caller's own row is simply deleted and nothing
+ * is recorded ("skipped"): the evidence that remains decides, as it did before.
+ * A session that already has a record is left alone ("recorded").
+ */
+export async function recordOwnershipBeforeDelete(
+  db: GateDb,
+  input: { readonly sessionId: string; readonly orgId: string; readonly email: string },
+): Promise<"recorded" | "frozen" | "tombstone" | "skipped"> {
+  const { sessionId, orgId } = input;
+  const me = input.email.trim().toLowerCase();
+  if (await readOwnerRecord(db, sessionId, [orgId])) return "recorded";
+  const orgs = [...new Set([orgId, ...(await db.listOrgs())])];
+  for (const org of orgs) {
+    const evidence = await db.inOrg(org, async (tx: Tx) => {
+      const claimants = (
+        (await tx
+          .select({ ownerEmail: chatSessions.ownerEmail })
+          .from(chatSessions)
+          .where(eq(chatSessions.eveSessionId, sessionId))) as { ownerEmail: string }[]
+      ).map((r) => r.ownerEmail.trim().toLowerCase());
+      const [scope] = await tx.select({ id: agentSessionScopes.sessionId }).from(agentSessionScopes).where(eq(agentSessionScopes.sessionId, sessionId)).limit(1);
+      const [thread] = await tx.select({ id: chatThreads.id }).from(chatThreads).where(eq(chatThreads.eveSessionId, sessionId)).limit(1);
+      const [journal] = await tx
+        .select({ runId: workflowRunJournal.runId })
+        .from(workflowRunJournal)
+        .where(or(eq(workflowRunJournal.sessionId, sessionId), eq(workflowRunJournal.childSessionId, sessionId)))
+        .limit(1);
+      const [app] = await tx.select({ id: apps.id }).from(apps).where(eq(apps.lastSessionId, sessionId)).limit(1);
+      const [version] = await tx.select({ id: appVersions.id }).from(appVersions).where(eq(appVersions.sessionId, sessionId)).limit(1);
+      return { claimants, other: Boolean(scope || thread || journal || app || version) };
+    });
+    if (org !== orgId) {
+      if (evidence.claimants.length || evidence.other) return "skipped";
+    } else if (evidence.claimants.length !== 1 || evidence.claimants[0] !== me) {
+      return "skipped";
+    }
+  }
+  const legacy = await readLegacyOwnership(db, sessionId);
+  if (legacy && (legacy.ownerEmail || legacy.visibility === "workspace")) {
+    await recordOwner(db, {
+      sessionId,
+      orgId: legacy.orgId,
+      ownerEmail: legacy.ownerEmail,
+      ownerPrincipal: null,
+      ownerKind: legacy.ownerKind,
+      visibility: legacy.visibility,
+    });
+    return "frozen";
+  }
+  await recordOwner(db, { sessionId, orgId, ownerEmail: null, ownerPrincipal: null, ownerKind: "deleted", visibility: "owner" });
+  return "tombstone";
 }

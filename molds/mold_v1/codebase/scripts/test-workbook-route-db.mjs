@@ -18,6 +18,10 @@
  *      (scripts/fixtures/agent-vocabulary/50-relabelled.json, the hfc-research pack's), which hides 26.
  *   4. CAPS SAY SO: past the per-table cap the answer flags `tables.<t>.truncated` and keeps the MOST RECENT rows.
  *   5. `Cache-Control: private, no-store` on this route and on /api/ops/customers; and another workspace's rows never.
+ *   6. (mold_v1-124) FREE-TEXT DATES ARE READ AS DATES: "most recent first" ordered the text columns as strings, so
+ *      "16/02/2026" sorted below "2026-01-04" and the newest rows were the ones past the cap. Each date form is run
+ *      through dateSortKeySql here, and over HTTP the newest rows, written as people write dates, are kept. The
+ *      text cut splits no emoji, and each table says the order its kept rows are in.
  *
  * Needs a production build in --dir (default: this checkout), ADMIN_URL (seeding, DDL) and DATABASE_URL (app_rw).
  * Without the URLs it skips. Its rows live under two throwaway workspaces carrying this process's pid, removed in a
@@ -82,6 +86,10 @@ const C1 = `wb-c1-${process.pid}`;
 const C2 = `wb-c2-${process.pid}`;
 const C3 = `wb-c3-${process.pid}`;
 const INTERACTIONS = 5010; // past the route's per-table cap of 5,000
+// Newer than every ISO-dated interaction above (those run 2026-01-01 .. 2026-01-04), written the ways people write
+// dates. As strings, "16/02/2026" and "15 Feb 2026" sort below "2026-…", so past the cap they were dropped.
+const FREE_TEXT_NEWEST = { "wbf-1": "15 Feb 2026", "wbf-2": "16/02/2026", "wbf-3": "Feb 17, 2026", "wbf-4": "18-Feb-2026" };
+const EMOJI_NOTE = "a".repeat(499) + "😀".repeat(20);
 const BIG_NOTE = "N".repeat(2_000_000);
 
 async function seed() {
@@ -103,6 +111,10 @@ async function seed() {
                      to_char(timestamp '2026-01-01' + (i || ' minutes')::interval, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
                      'call', 'manual', case when i = ${INTERACTIONS} then repeat('L', 5000) else 'n' end
               from generate_series(1, ${INTERACTIONS}) as i`;
+  for (const [id, at] of Object.entries(FREE_TEXT_NEWEST)) {
+    await admin`insert into interactions (org_id, customer_id, interaction_id, interaction_at, interaction_type, source_system, note)
+                values (${W1}, ${C1}, ${`${id}-${process.pid}`}, ${at}, 'call', 'manual', ${id === "wbf-4" ? EMOJI_NOTE : "n"})`;
+  }
   await admin`insert into internal_staff (org_id, customer_id, staff_role, name, employer_org, email)
               values (${W1}, ${C1}, 'solution_engineer', 'Wb Staff', 'Workbook A', 'staff@w1.test')`;
 }
@@ -158,6 +170,24 @@ const get = async (path) => {
 try {
   await unseed();
   await seed();
+
+  console.log("6a. dateSortKeySql, each date form, in Postgres");
+  const { dateSortKeySql } = await import(pathToFileURL(join(DIR, "lib/workbook-fields.ts")).href);
+  const forms = [
+    ["2026-09-29", 20260929000000], ["2026/9/29", 20260929000000], ["2026-09-29T10:05:07Z", 20260929100507], ["2026-09-29 10:05", 20260929100500],
+    ["29/09/2026", 20260929000000], ["29-09-2026", 20260929000000], ["29.09.2026", 20260929000000], ["09/29/2026", 20260929000000], ["03/04/2026", 20260403000000],
+    ["29 Sep 2026", 20260929000000], ["29th September, 2026", 20260929000000], ["29-Sep-2026", 20260929000000], ["Sep 29, 2026", 20260929000000],
+    ["September 29th 2026", 20260929000000], ["Sep 2026", 20260900000000], ["2026-09", 20260900000000], ["2026", 20260000000000],
+    ["  2026-09-29  ", 20260929000000], ["2026-02-31", 20260231000000], ["not a date", null],
+    // Out of range (review of #76): garbage that looks like a date must not sort above every real one and take the
+    // cap's slots. A month outside 1-12, a day outside 1-31, a time outside the clock: no date.
+    ["99/99/2026", null], ["2026-13-45", null], ["2026-00-10", null], ["2026-09-00", null], ["31/31/2026", null],
+    ["2026-09-29T25:00", null], ["2026-09-29 10:61", null], ["2026-09-29T10:05:60", null], ["45 Sep 2026", null], ["Sep 32, 2026", null], ["2026-13", null], ["Q2 FY26", null], ["", null], [null, null],
+  ];
+  const got = await admin.unsafe(`select v, ${dateSortKeySql("t.v")} as k from unnest($1::text[]) with ordinality as t(v, n) order by n`, [forms.map(([v]) => v)]);
+  const wrong = forms.map(([v, want], i) => ({ v, want, got: got[i].k === null ? null : Number(got[i].k) })).filter((f) => f.got !== f.want);
+  check(`every date form reads as its date, and text that is no date as none (${forms.length} forms)`, wrong.length === 0, wrong);
+
   await start();
 
   const r = await get("/api/ops/workbook");
@@ -191,6 +221,13 @@ try {
   check("a table past the cap is flagged truncated", r.body?.tables?.interactions?.truncated === true, r.body?.tables?.interactions);
   check("…and keeps the most recent rows (the newest interaction is there)", Boolean(newest));
   check("a table under the cap is not flagged", r.body?.tables?.customers?.truncated === false, r.body?.tables?.customers);
+
+  console.log("6. free-text dates, the cut, the order");
+  const kept = new Set((c1?.interactions ?? []).map((i) => i.interactionId));
+  for (const [id, at] of Object.entries(FREE_TEXT_NEWEST)) check(`the newest interaction written "${at}" is kept past the cap`, kept.has(`${id}-${process.pid}`));
+  const emoji = c1?.interactions?.find((i) => i.interactionId === `wbf-4-${process.pid}`);
+  check("a note cut at an emoji keeps it whole (no lone surrogate half)", typeof emoji?.note === "string" && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(emoji.note) && emoji.note.startsWith("a".repeat(499) + "😀") && emoji.note.includes("[cut"), emoji?.note?.slice(495, 510));
+  check("each table says the order its rows were kept in", r.body?.tables?.interactions?.order === "recent" && r.body?.tables?.customers?.order === "name" && r.body?.tables?.implementation?.order === "id", r.body?.tables);
 
   console.log("5. cache and workspace");
   check("the workbook is Cache-Control: private, no-store", /private/.test(r.cache) && /no-store/.test(r.cache), r.cache);

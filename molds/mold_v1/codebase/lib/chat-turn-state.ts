@@ -280,7 +280,13 @@ export function holdLabel(
   specialistRunning = false,
   attached = false,
   signedOut = false,
+  /** An answer whose response went missing is being checked against the stream. */
+  checkingAnswer = false,
 ): string {
+  // Whether the answer landed — and so whether anything is running because of
+  // it — is exactly what is not known yet. "A specialist is running" said a
+  // thing nobody knew (review of #59).
+  if (checkingAnswer && !signedOut) return `Queued — sends once your answer is confirmed. ${ANSWER_CHECKING_LINE}`;
   switch (reason) {
     case "detached":
       // A 401 is not a slow turn: the hour-long session token expired under it
@@ -302,6 +308,31 @@ export function holdLabel(
     default:
       return "Queued — sending after the current reply";
   }
+}
+
+/** Said while an answer whose response went missing is checked against the stream (`answerNeedsCheck`). */
+export const ANSWER_CHECKING_LINE =
+  "Checking whether your answer reached the server — if it did not, the question comes back above.";
+
+/** What posting an answer came to. `notSent`: no POST was made at all (no session, or no resume token). */
+export interface AnswerPostOutcome {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly body: string;
+  readonly notSent?: "no-session" | "no-token";
+}
+
+/**
+ * SHOULD A FAILED ANSWER BE CHECKED AGAINST THE STREAM before the question comes
+ * back? Only when it may have LANDED: a 5xx, or a request whose response went
+ * missing (status 0 from a fetch that threw). Not when nothing was posted —
+ * status 0 meant that too ("no session", "no resume token"), and those waited
+ * the whole minute for an answer that was never sent (review of #59). Not a
+ * 4xx either: that is the server's answer.
+ */
+export function answerNeedsCheck(outcome: AnswerPostOutcome): boolean {
+  if (outcome.ok || outcome.notSent) return false;
+  return outcome.status === 0 || outcome.status >= 500;
 }
 
 /**
@@ -1741,6 +1772,14 @@ export function stopTarget(events: readonly TurnEvent[]): {
   readonly turnId?: string;
   readonly resumed?: boolean;
   readonly parked?: boolean;
+  /**
+   * A resumed reply's OWN turn, as the transcript names it — where its "Stopped."
+   * goes. The cancel still aims at `turnId` (the parked turn, what eve's cancel
+   * route matches), but the reply a parked specialist hands back arrives with
+   * `turnId: ""` and is projected as `turn_<sequence>` (`continuationTurnId`), so
+   * a note keyed to the parked turn was said ABOVE the reply that was stopped.
+   */
+  readonly replyTurnId?: string;
 } {
   let turnId: string | undefined;
   let started = -1;
@@ -1762,7 +1801,18 @@ export function stopTarget(events: readonly TurnEvent[]): {
   }
   if (boundary < 0) return {};
   const after = events.slice(boundary + 1).filter((e) => !e?.type?.startsWith("client."));
-  if (after.length > 0 && !after.some((e) => e?.type === "turn.started")) return { turnId, resumed: true };
+  if (after.length > 0 && !after.some((e) => e?.type === "turn.started")) {
+    let replyTurnId: string | undefined;
+    for (const e of after) {
+      const d = (e as { data?: { turnId?: unknown; sequence?: unknown } }).data;
+      const named = continuationTurnId(d?.turnId, d?.sequence);
+      if (typeof named === "string" && named && named !== turnId && typeof d?.turnId === "string") {
+        replyTurnId = named;
+        break;
+      }
+    }
+    return { turnId, resumed: true, ...(replyTurnId ? { replyTurnId } : {}) };
+  }
   const beforeBoundary = events.slice(Math.max(started, boundary - 4), boundary).map((e) => e?.type);
   if (beforeBoundary.includes("input.requested")) return { turnId, parked: true };
   return {};

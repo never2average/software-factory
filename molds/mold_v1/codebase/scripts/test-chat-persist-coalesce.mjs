@@ -33,7 +33,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  CHAT_CACHE_MAX_CHARS,
   STORAGE_MAX_CHATS,
+  chatCacheable,
   createPersistWriter,
   persistStats,
   serializeChats,
@@ -116,11 +118,16 @@ function writeSessionsOnMain(storage, key, sessions, protect) {
 }
 
 const AT = 1_780_000_000_000;
-/** `events` big enough that stripping them is visible in the payload size. */
+/**
+ * `events` big enough that stripping them is visible in the payload size. Each
+ * on its own step, so none supersedes another and the cache's compaction
+ * (section 5) leaves them all: the back-off below is compared byte for byte
+ * with main's, and that comparison is only about the back-off.
+ */
 const transcript = (n, tag) =>
   Array.from({ length: n }, (_, i) => ({
     type: "message.appended",
-    data: { messageId: `m-${tag}`, i, text: `${tag}-${"x".repeat(200)}-${i}` },
+    data: { messageId: `m-${tag}`, i, stepIndex: i, text: `${tag}-${"x".repeat(200)}-${i}` },
   }));
 
 const chat = (i, { events = 40, at = AT - i * 1000 } = {}) => ({
@@ -395,6 +402,210 @@ console.log("\nThe queue's own hazards:");
     serializeChats(list, (_s, i) => i < 3),
     JSON.stringify(stripped),
   );
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. A thread bigger than the quota (mold_v1-104).
+ *
+ * The operator's real thread was 44.6 MB of JSON for a 60 KB answer: eve's
+ * `message.appended` carries the whole text so far on every delta. As the open
+ * chat it is protected, so on main every step of the back-off kept it, every
+ * step failed, and so did the last resort: NOTHING was stored — not even the
+ * other chats' titles — after one failed 45 MB serialisation per step.
+ * ------------------------------------------------------------------------ */
+
+console.log("\nA thread bigger than the quota (mold_v1-104):");
+{
+  const { defaultMessageReducer } = await import("eve/client");
+  const { withSessionEpochs, absoluteIndexBase, serverEventCount } = await import("../lib/chat-turn-state.ts");
+  // The real shape: a turn that thinks (reasoning deltas), then streams a 60 KB
+  // answer in 40-character deltas, each carrying everything so far.
+  const ANSWER = Array.from({ length: 1500 }, (_, i) => `| row ${String(i).padStart(4, "0")} | ${"v".repeat(24)} |\n`).join("").slice(0, 60_000);
+  const THINK = "I should build the table from the filings. ".repeat(60);
+  const big = [
+    { type: "session.started", data: {} },
+    { type: "turn.started", data: { turnId: "turn_0", sequence: 0 } },
+    { type: "message.received", data: { turnId: "turn_0", message: "the table please", sequence: 0 } },
+    { type: "step.started", data: { turnId: "turn_0", stepIndex: 0, sequence: 0 } },
+  ];
+  for (let i = 40; i <= THINK.length; i += 40) big.push({ type: "reasoning.appended", data: { turnId: "turn_0", stepIndex: 0, reasoningDelta: THINK.slice(i - 40, i), reasoningSoFar: THINK.slice(0, i) } });
+  big.push({ type: "reasoning.completed", data: { turnId: "turn_0", stepIndex: 0, reasoning: THINK } });
+  for (let i = 40; i <= ANSWER.length; i += 40) big.push({ type: "message.appended", data: { turnId: "turn_0", stepIndex: 0, messageDelta: ANSWER.slice(i - 40, i), messageSoFar: ANSWER.slice(0, i) } });
+  big.push({ type: "message.completed", data: { turnId: "turn_0", stepIndex: 0, message: ANSWER, finishReason: "stop" } });
+  big.push({ type: "step.completed", data: { turnId: "turn_0", stepIndex: 0 } }, { type: "turn.completed", data: { turnId: "turn_0" } });
+  big.push({ type: "session.waiting", data: { continuationToken: "tok-big" } }, { type: "client.input.responded", data: { responses: [] } });
+  const huge = { ...chat(0, { at: AT + 50 }), events: big, session: { sessionId: "sess-big", continuationToken: "tok-big", streamIndex: 1 + serverEventCount(big) - 1 } };
+  const rawChars = JSON.stringify(huge).length;
+  check(`the harness thread is the real shape: ${(rawChars / 1e6).toFixed(1)} MB of JSON for a ${ANSWER.length / 1000} KB answer`, rawChars > 40e6);
+
+  const others = Array.from({ length: 5 }, (_, i) => chat(i + 1, { events: 20 }));
+  const list = [huge, ...others];
+  const protect = new Set(["chat-0", "new-0"]);
+  const QUOTA = 5_000_000; // characters, as browsers count localStorage
+
+  const theirs = fakeStorage(QUOTA);
+  const mainOk = writeSessionsOnMain(theirs, KEY, list, protect);
+  check(
+    `before: nothing at all was stored (${theirs.stats.attempts.length} attempts of ${(theirs.stats.attempts[0] / 1e6).toFixed(0)} MB, every one refused)`,
+    !mainOk && theirs.stats.value === null && theirs.stats.attempts.length >= 5,
+  );
+
+  const mine = fakeStorage(QUOTA);
+  const ok = writeChats(mine, KEY, list, protect);
+  check("now the list is stored, first try", ok && mine.stats.attempts.length === 1);
+  const stored = JSON.parse(mine.stats.value);
+  const cached = stored.find((s) => s.id === "chat-0");
+  check(
+    `…with the open thread's transcript cached, compacted: ${(JSON.stringify(cached).length / 1e3).toFixed(0)} KB instead of ${(rawChars / 1e6).toFixed(1)} MB`,
+    Array.isArray(cached.events) && JSON.stringify(cached).length < 500_000,
+  );
+  check("…and every other chat with its own", stored.filter((s) => s.id !== "chat-0").every((s) => s.events?.length === 20));
+  const fold = (events) => {
+    const reducer = withSessionEpochs(defaultMessageReducer());
+    let data = reducer.initial();
+    for (const e of events) data = reducer.reduce(data, e);
+    return JSON.stringify(data.messages);
+  };
+  check("the cached transcript projects EXACTLY what the full one does (thinking and answer, finished)", fold(cached.events) === fold(big));
+  check("…and keeps the chat's browser-made markers", cached.events.some((e) => e.type === "client.input.responded"));
+
+  // Reopening from it: the mount measures the gap between the cursor and the
+  // events it was given, and resumes the stream exactly where it stood.
+  const base = absoluteIndexBase(cached.session.streamIndex, cached.events);
+  check("a reopen resumes at the true stream index, not before it", serverEventCount(cached.events) + base === serverEventCount(big));
+
+  // MID-TURN: the store's own cursor stands at the last boundary while the reply
+  // streams, and a persist files it beside every event since. The cache keeps
+  // one event per event, so the mount's count covers the gap exactly as the
+  // full transcript's would.
+  const midTurn = big.slice(0, 1000);
+  const lagging = 0;
+  const compacted = JSON.parse(chatJsonOf({ ...chat(9), events: midTurn })).events;
+  check(
+    "mid-turn, with the store's lagging cursor, the cache mounts at the index the full transcript does",
+    compacted.length === midTurn.length &&
+      serverEventCount(compacted) + absoluteIndexBase(lagging, compacted) === serverEventCount(midTurn) + absoluteIndexBase(lagging, midTurn),
+  );
+  check("…and it is still small", JSON.stringify(compacted).length < JSON.stringify(midTurn).length / 20);
+
+  // A transcript that is heavy even compacted: over the per-chat cap it is
+  // cached as metadata (the server's snapshot rebuilds it), protected or not.
+  const distinct = Array.from({ length: 900 }, (_, i) => ({ type: "action.result", data: { turnId: "turn_0", stepIndex: i, result: { callId: `c${i}`, output: "o".repeat(2_000) } } }));
+  const heavy = { ...chat(0, { at: AT + 60 }), events: distinct };
+  check("the harness: this one is over the per-chat cap even compacted", !chatCacheable(heavy) && JSON.stringify(heavy).length > CHAT_CACHE_MAX_CHARS);
+  const warnings = [];
+  const store = fakeStorage(QUOTA);
+  check("a chat over the cap never blocks the write", writeChats(store, KEY, [heavy, ...others], protect, (m) => warnings.push(m)) && store.stats.attempts.length === 1);
+  const heavyStored = JSON.parse(store.stats.value).find((s) => s.id === "chat-0");
+  check("…it is kept as metadata (title, session to reopen), without the transcript", heavyStored.events === undefined && heavyStored.session?.sessionId === "sess-0");
+  const again = persistStats.serialized;
+  writeChats(fakeStorage(QUOTA), KEY, [heavy, ...others], protect);
+  check(`…and the next persist does not build its full JSON again (${persistStats.serialized - again} rebuilt)`, persistStats.serialized === again);
+
+  // FAIL GRACEFULLY: a quota so small that even the open chat's COMPACTED
+  // transcript does not fit beside the list. The list is what must survive.
+  const tiny = fakeStorage(Math.round(JSON.stringify(cached).length / 2));
+  const survived = writeChats(tiny, KEY, list, protect, (m) => warnings.push(m));
+  const tinyStored = survived ? JSON.parse(tiny.stats.value) : [];
+  check(
+    "with no room even for that, the chat list is still stored (metadata for every chat)",
+    survived && tinyStored.length === list.length && tinyStored.every((s) => s.events === undefined),
+  );
+  check("…and it says so", warnings.some((m) => /does not fit in localStorage — storing the chat list without it/.test(m)));
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. PARITY: a chat mounted from the cache decides exactly what the full stream
+ *    decides (review of #81).
+ *
+ * The cache used to DROP superseded deltas. A mount measures its absolute-index
+ * deficit once (`absoluteIndexBase` = cursor − events held), so every event kept
+ * before a dropped delta was read at an index shifted UP by the deltas dropped
+ * after it. `outstandingDeliveries` then saw the park's `session.waiting` at or
+ * past the answer's `at` and settled the answer early, `attachDecision` said
+ * "terminal", and a reload during a resumed hand-back froze it at two parts. The
+ * same shift can drop a delivery made after a `session.completed` (`ended`) and
+ * loosen `message.received` matching. So: at EVERY prefix of every recorded
+ * stream with deliveries, and with the store's own lagging cursor as well as
+ * the exact one, the cached mount must give the same outstanding deliveries and
+ * the same attach decision as the full one.
+ * ------------------------------------------------------------------------ */
+
+console.log("\nParity: a mount from the cache decides what the full stream decides (review of #81):");
+{
+  const { absoluteIndexBase, attachDecision, isSessionBoundary, outstandingDeliveries, serverEventCount } = await import("../lib/chat-turn-state.ts");
+  const loadNd = (path) => readFileSync(path, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+  const cases = [];
+  for (const name of ["buffered-behind-park", "buffered-mid-turn", "stop-before-first-token"]) {
+    const events = loadNd(`scripts/fixtures/buffered-turns/${name}.ndjson`);
+    const recorded = JSON.parse(readFileSync(`scripts/fixtures/buffered-turns/${name}.deliveries.json`, "utf8")).deliveries;
+    const deliveries = recorded
+      .filter((d) => d.message !== undefined || d.inputResponses)
+      .map((d) => ({ text: d.message ?? "", at: d.at, kind: d.inputResponses ? "answer" : "message" }));
+    cases.push({ name, events, deliveries });
+  }
+  // Two parked delegations, each answered right after its park (recorded, event-order fixtures).
+  const two = loadNd("scripts/fixtures/event-order/two-parked-handbacks.ndjson");
+  const parks = two.map((e, i) => (e.type === "session.waiting" ? i + 1 : -1)).filter((i) => i > 0);
+  cases.push({ name: "two-parked-handbacks", events: two, deliveries: [{ text: "", at: parks[0], kind: "answer" }, { text: "MSG-3 ASK delegate again", at: parks[1], kind: "message" }, { text: "", at: parks[2], kind: "answer" }] });
+  // The review's PARK scenario: a question parks, the answer is POSTed, the resumed hand-back streams many deltas.
+  const E = (type, data) => ({ type, data, meta: { at: "2026-09-29T00:00:00Z" } });
+  const park = [E("session.started", {}), E("turn.started", { sequence: 0, turnId: "turn_0" }), E("message.received", { message: "q", parts: [{ type: "text", text: "q" }], sequence: 0, turnId: "turn_0" }),
+    E("step.started", { sequence: 0, stepIndex: 0, turnId: "turn_0" }), E("actions.requested", { actions: [{ kind: "subagent-call", callId: "c1", subagentName: "configuration", input: {} }], sequence: 0, stepIndex: 0, turnId: "turn_0" }),
+    E("input.requested", { requests: [{ requestId: "r1", action: { callId: "r1", kind: "tool-call", toolName: "ask_question", input: {} } }], sequence: 0, stepIndex: 0, turnId: "turn_0" }),
+    E("turn.completed", { sequence: 0, turnId: "turn_0" }), E("session.waiting", { continuationToken: "tokP", wait: "next-user-message" })];
+  const answeredAt = park.length;
+  park.push(E("step.started", { sequence: 1, stepIndex: 0, turnId: "" }));
+  let so = "";
+  for (let i = 0; i < 30; i++) { so += `HANDBACK part ${i}. `; park.push(E("message.appended", { messageDelta: `HANDBACK part ${i}. `, messageSoFar: so, sequence: 1, stepIndex: 0, turnId: "" })); }
+  park.push(E("message.completed", { message: so, finishReason: "stop", sequence: 1, stepIndex: 0, turnId: "" }), E("step.completed", { sequence: 1, stepIndex: 0, turnId: "" }), E("turn.completed", { sequence: 1, turnId: "" }), E("session.waiting", { continuationToken: "tokP", wait: "next-user-message" }));
+  cases.push({ name: "PARK, reload during the resumed hand-back", events: park, deliveries: [{ text: "q", at: 0, kind: "message" }, { text: "", at: answeredAt, kind: "answer" }] });
+
+  const NOW = Date.now();
+  const cacheOf = (events) => JSON.parse(chatJsonOf({ ...chat(7), events })).events;
+  const verdict = (events, base, deliveries) => {
+    const out = outstandingDeliveries({ deliveries, events, indexBase: base, now: NOW });
+    const d = attachDecision({ sessionId: "s", storeBusy: false, events, outstanding: out.length });
+    return JSON.stringify({ owed: out.map((x) => `${x.kind}@${x.at}`), attach: d.attach, reason: d.reason });
+  };
+  const { defaultMessageReducer } = await import("eve/client");
+  const { withSessionEpochs } = await import("../lib/chat-turn-state.ts");
+  const projection = (events) => {
+    const r = withSessionEpochs(defaultMessageReducer());
+    let data = r.initial();
+    for (const e of events) data = r.reduce(data, e);
+    return JSON.stringify(data.messages);
+  };
+  let prefixes = 0;
+  for (const c of cases) {
+    const mismatches = [];
+    for (let n = 1; n <= c.events.length; n++) {
+      const prefix = c.events.slice(0, n);
+      const deliveries = c.deliveries.filter((d) => d.at <= n).map((d) => ({ ...d, sentAt: NOW - 1_000 }));
+      const cached = cacheOf(prefix);
+      // The cursor a persist files: what was read (exact), or the store's own, which only moves at a boundary.
+      let lastBoundary = 0;
+      prefix.forEach((e, i) => { if (isSessionBoundary(e)) lastBoundary = i + 1; });
+      for (const cursor of [serverEventCount(prefix), lastBoundary]) {
+        const full = verdict(prefix, absoluteIndexBase(cursor, prefix), deliveries);
+        const mounted = verdict(cached, absoluteIndexBase(cursor, cached), deliveries);
+        if (full !== mounted) mismatches.push({ n, cursor, full, mounted });
+      }
+      if (projection(prefix) !== projection(cached)) mismatches.push({ n, projection: "differs" });
+      prefixes++;
+    }
+    check(`${c.name}: at all ${c.events.length} prefixes, the cached mount owes, attaches and projects exactly as the full one`, mismatches.length === 0 || (console.log("     first:", JSON.stringify(mismatches[0])), false));
+  }
+  check(`(${prefixes} prefixes compared, each with two cursors)`, prefixes > 100);
+  const cachedPark = cacheOf(park);
+  check("every cached event keeps its stream position (one event per event)", cachedPark.length === park.length);
+  const texts = (evs) => evs.reduce((n, e) => n + (typeof e.data?.messageSoFar === "string" ? e.data.messageSoFar.length : 0) + (typeof e.data?.message === "string" && e.type === "message.completed" ? e.data.message.length : 0), 0);
+  check("…and the quadratic text is gone: the hand-back's text is held once (by its completion)", texts(cachedPark) === so.length && texts(park) > 10 * so.length);
+}
+
+/** The JSON the cache stores for one chat, with its events. */
+function chatJsonOf(c) {
+  return serializeChats([c], () => true).slice(1, -1);
 }
 
 console.log(`\nchat persist: ${passed}/${passed} checks passed`);

@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { customers, deployments } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
-import { orgContextForRequest } from "@/lib/org-context";
+import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
 import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
 import { customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
-import { asCustomValues } from "@/agent/lib/custom-fields";
+import { asCustomValues, customDelta } from "@/agent/lib/custom-fields";
+import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { an, upperFirst, W } from "@/lib/ui-words";
 
@@ -16,9 +17,13 @@ const ENV_HIDDEN = DEPLOYMENT_PROFILE.domains.deployments.fields.environment?.hi
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** POST /api/ops/deployments — hand-create a deployment record. The identity
- *  fields are required (they're NOT NULL); health/release default to sane
- *  values the operator refines in the detail panel. */
+/** POST /api/ops/deployments — create a deployment record, or UPDATE the one with this (customerId, deploymentId).
+ *
+ *  A create needs the identity fields (they're NOT NULL); health/release default to sane values the operator
+ *  refines in the detail panel. An update changes ONLY the fields the body names ("" or null clears an optional
+ *  one), and its `custom` only by the keys it names, merged in SQL onto what is stored at write time. It used to be
+ *  insert-only, so the MCP tool `deployment_upsert` could create a record and never correct one: a second call for
+ *  the same id was a unique-key error. */
 const createSchema = z.object({
   customerId: z.string().min(1, `Pick ${an(W.account)} ${W.account}.`),
   deploymentId: z.string().min(1, `${upperFirst(an(W.deployment))} ${W.deployment} id is required.`),
@@ -34,13 +39,40 @@ const createSchema = z.object({
   // The profile's OWN fields (`custom_fields`), by key. Checked below by the shared validator, not by zod.
   custom: customBodySchema,
 });
+/** An update: the same fields, none required and none defaulted, so a field the body leaves out keeps its value. */
+const updateSchema = createSchema.partial().extend({
+  customerId: createSchema.shape.customerId,
+  deploymentId: createSchema.shape.deploymentId,
+  environment: z.string().min(1, "An environment cannot be cleared.").optional(),
+  region: z.string().min(1, "A region cannot be cleared.").optional(),
+  deployedVersion: z.string().min(1, "A version cannot be cleared.").optional(),
+  releaseStatus: z.string().min(1).optional(),
+  healthStatus: z.string().min(1).optional(),
+});
 
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
-  const parsed = createSchema.safeParse(await request.json().catch(() => null));
+  const body = await request.json().catch(() => null);
+  const keyed = updateSchema.safeParse(body);
+  if (!keyed.success) {
+    return NextResponse.json({ error: keyed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
+  }
+  // The account must be this workspace's. The foreign key alone does not say so: it is checked past row-level
+  // security, so a create naming another workspace's account id used to succeed, stamped with this workspace.
+  // Absent and not-yours read the same, so neither answer confirms an id exists elsewhere.
+  if (!(await customerInOrg(ctx.orgId, keyed.data.customerId))) return noSuchAccount();
+  const where = and(eq(deployments.customerId, keyed.data.customerId), eq(deployments.deploymentId, keyed.data.deploymentId));
+  try {
+    // The row is looked up inside the caller's scope: another workspace's row with this key is simply not there.
+    const [existing] = await withOrgRls(ctx.orgId, (tx) => tx.select({ custom: deployments.custom }).from(deployments).where(where));
+    if (existing) return await update(ctx.orgId, keyed.data, existing, where);
+  } catch (e) {
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
+  }
+  const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
@@ -62,25 +94,58 @@ export async function POST(request: NextRequest) {
           deployOwnerEmail: data.deployOwnerEmail || null,
           displayName: data.displayName || null,
         })
+        .onConflictDoNothing()
         .returning(),
     );
-    return NextResponse.json({ item: { id: row.deploymentId } }, { status: 201 });
+    // Created by someone else since the lookup: this call is an update of it.
+    if (!row) return await update(ctx.orgId, keyed.data, null, where);
+    return NextResponse.json({ item: { id: row.deploymentId }, created: true }, { status: 201 });
   } catch (e) {
     const msg = String(e);
     // Same trap as implementations: the FK to `customers` surfaced as an opaque
     // driver dump. Say the fixable thing instead.
-    if (isForeignKeyViolation(e)) {
-      return NextResponse.json(
-        {
-          error:
-            `No ${W.account} with that id exists yet, so this ${W.deployment} has nothing to attach to. ` +
-            `Create the ${W.account} first (POST /api/ops/customers, or customer_create from the CLI).`,
-        },
-        { status: 409 },
-      );
-    }
+    if (isForeignKeyViolation(e)) return noSuchAccount();
     return NextResponse.json({ error: errorText(msg) }, { status: 500 });
   }
+}
+
+function noSuchAccount(): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        `No ${W.account} with that id exists yet, so this ${W.deployment} has nothing to attach to. ` +
+        `Create the ${W.account} first (POST /api/ops/customers, or customer_create from the CLI).`,
+    },
+    { status: 409 },
+  );
+}
+
+/** The update half of POST: the named fields SET, `custom` merged by the keys named, in SQL at write time. */
+async function update(
+  orgId: string,
+  data: z.infer<typeof updateSchema>,
+  existing: { custom: unknown } | null,
+  where: ReturnType<typeof and>,
+): Promise<NextResponse> {
+  const { customerId: _c, deploymentId, custom: customInput, ...fields } = data;
+  const set: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === undefined) continue;
+    set[k] = v === "" ? null : v;
+  }
+  if (customInput != null) {
+    const [stored] = existing ? [existing] : await withOrgRls(orgId, (tx) => tx.select({ custom: deployments.custom }).from(deployments).where(where));
+    const checked = customForWrite("deployments", customInput, stored ?? { custom: {} });
+    if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
+    const delta = customDelta(customInput, checked.custom ?? {});
+    if (delta) set.custom = customMergeSql(deployments.custom, delta, { empty: "object" });
+  }
+  if (Object.keys(set).length === 0) {
+    return NextResponse.json({ error: `This ${W.deployment} already exists and the request names nothing to change.` }, { status: 400 });
+  }
+  const [row] = await withOrgRls(orgId, (tx) => tx.update(deployments).set(set).where(where).returning({ id: deployments.deploymentId }));
+  if (!row) return NextResponse.json({ error: `${W.Deployment} ${deploymentId} was removed while it was being updated.` }, { status: 409 });
+  return NextResponse.json({ item: { id: row.id }, updated: true }, { status: 200 });
 }
 
 /** GET /api/ops/deployments — deployment cards + container-picker rows. */

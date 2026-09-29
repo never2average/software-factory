@@ -7,11 +7,11 @@ import {
   chatThreads,
   chatTranscriptSnapshots,
 } from "@/agent/lib/db/schema";
-import { getOpsDb, withOrgRls } from "@/lib/ops-db";
-import { orgContextForRequest } from "@/lib/org-context";
+import { getOpsDb, listWorkspaceIds, withOrgRls } from "@/lib/ops-db";
+import { orgContextForRequest, workspacesOf } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { isEmptyStore } from "@/lib/pg-error";
-import { readMirrorRows, writeMirrorRows, type InOrg } from "@/lib/chat-sessions-mirror";
+import { readMirrorRows, recordOwnershipBeforeDelete, writeMirrorRows, type InOrg } from "@/lib/chat-sessions-mirror";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -253,6 +253,24 @@ export async function DELETE(request: NextRequest) {
     );
     const eveSessionId = mine?.eveSessionId ?? null;
     if (eveSessionId) {
+      /**
+       * Ownership becomes a RECORD before the row that proves it goes — so the
+       * session id cannot be re-claimed by whoever files a row for it next
+       * (lib/chat-sessions-mirror `recordOwnershipBeforeDelete`). A failure here
+       * refuses the delete (caught below): a chat is never removed while its
+       * session is left claimable.
+       */
+      await recordOwnershipBeforeDelete(
+        {
+          inOrg: (orgId, fn) => withOrgRls(orgId, fn),
+          async listOrgs() {
+            const ids = await listWorkspaceIds();
+            return ids.length ? ids : [ctx.orgId];
+          },
+          orgsOf: (address) => workspacesOf(address),
+        },
+        { sessionId: eveSessionId, orgId: ctx.orgId, email },
+      );
       await withOrgRls(ctx.orgId, (tx) =>
         tx
           .delete(chatTranscriptSnapshots)

@@ -735,7 +735,7 @@ console.log("\n7d. Markers never break the chat-list sync; answers are retried a
   const respond = chat.slice(chat.indexOf("const respondToInput = async ("), chat.indexOf("// Case (c): the store surfaces"));
   check(
     "a 5xx or lost response on an answer is VERIFIED against the stream before the question comes back",
-    /outcome\.status === 0 \|\| outcome\.status >= 500/.test(respond) &&
+    /if \(answerNeedsCheck\(outcome\)\) \{/.test(respond) &&
       /const provisional = recordDelivery\("", "answer"\)/.test(respond) &&
       /answeredAt,\s*ANSWER_VERIFY_MS/.test(respond) &&
       /const ANSWER_VERIFY_MS = 60_000/.test(chat),
@@ -813,6 +813,70 @@ console.log("\n7e. A Stop before the reply said anything is said under that turn
   check(
     "the host test is AgentMessage's own (the one that drops an empty message)",
     /export function messageRendersContent\(/.test(msg) && /const hasRenderableContent = messageRendersContent\(message, hoistPendingInput, isProxiedApproval\);/.test(msg),
+  );
+}
+
+console.log("\n7f. Checking an answer says what is happening; an answer never sent is said at once (review of #59, mold_v1-122):");
+{
+  const needs = fn("answerNeedsCheck");
+  check("answerNeedsCheck exists", Boolean(needs));
+  if (needs) {
+    check("NO POST MADE (no session) is not checked for a minute: it fails at once", !needs({ ok: false, status: 0, body: "no session", notSent: "no-session" }));
+    check("…nor with no resume token", !needs({ ok: false, status: 0, body: "no resume token", notSent: "no-token" }));
+    check("a request whose response went missing IS checked (it may have landed)", needs({ ok: false, status: 0, body: "network" }));
+    check("…and a 5xx", needs({ ok: false, status: 502, body: "bad gateway" }));
+    check("…but not a refusal, nor an accepted answer", !needs({ ok: false, status: 409, body: "conflict" }) && !needs({ ok: true, status: 200, body: "" }));
+  }
+  const label = state.holdLabel("detached", true, false, false, true);
+  check("while an answer is checked, the queue line does not claim a specialist is running", !/specialist/i.test(label) && label.includes(state.ANSWER_CHECKING_LINE));
+  check("…and says so only while checking", /a specialist is running/.test(state.holdLabel("detached", true, false, false, false)));
+  const chat = readFileSync("app/_components/agent-chat.tsx", "utf8");
+  const respond = chat.slice(chat.indexOf("const respondToInput = async ("), chat.indexOf("// Case (c): the store surfaces"));
+  check(
+    "respondToInput returns the question with a plain reason BEFORE any check when nothing was posted",
+    /if \(outcome\.notSent\) \{\s*answerRejected\(requestIds, inputResponses, "not-sent"\);\s*return;\s*\}/.test(respond) &&
+      respond.indexOf("if (outcome.notSent)") < respond.indexOf("if (answerNeedsCheck(outcome))"),
+  );
+  check(
+    "postAnswer marks both no-POST paths",
+    /return \{ ok: false, status: 0, body: "no session", notSent: "no-session" \}/.test(chat) &&
+      /return \{ ok: false, status: 0, body: "no resume token", notSent: "no-token" \}/.test(chat),
+  );
+  check("the not-sent message tells the person what to do", /Your answer wasn't sent — [^"]*Reload the page/.test(chat));
+  const statusLine = chat.slice(chat.indexOf('"Stopping the earlier reply…"'), chat.indexOf("specialistWorkingLine(workingSpecialists"));
+  check(
+    "the status line says the answer is being checked, ahead of any \"specialist is working\"",
+    /: answerChecking\s*\?[\s\S]*?ANSWER_CHECKING_LINE/.test(statusLine),
+  );
+  check("the queue line is told when an answer is being checked", /holdLabel\(gate\.reason, specialistRunning, attachLive, authExpired, answerChecking\)/.test(chat));
+}
+
+console.log("\n7g. Stopping a parked specialist's resumed reply says so under THAT reply (review of #72/#74):");
+{
+  // Recorded: two parked delegations; cut the stream while the FIRST hand-back streams (turnId "", sequence 1).
+  const all = readFileSync("scripts/fixtures/event-order/two-parked-handbacks.ndjson", "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const cut = all.findIndex((e) => e.type === "message.appended" && e.data.sequence === 1) + 2;
+  const events = all.slice(0, cut);
+  const target = state.stopTarget(events);
+  check("the Stop still aims at the parked turn (what eve's cancel matches), marked resumed", target.turnId === "turn_0" && target.resumed === true);
+  check("…and names the reply's own turn, as the transcript does (turn_<sequence>)", target.replyTurnId === "turn_1");
+  const marker = state.stoppedMarker({ requestIds: [], delegations: state.liveDelegations(events), at: events.length, turnId: target.replyTurnId ?? target.turnId });
+  const reducer = state.withSessionEpochs(defaultMessageReducer());
+  let data = reducer.initial();
+  for (const e of events) data = reducer.reduce(data, e);
+  const renders = (m) => m.parts.some((p) => (p.type === "text" && p.text?.trim()) || p.type === "dynamic-tool");
+  const hosts = state.stoppedNoteHosts(data.messages, state.stoppedTurnNotes([...events, marker]), renders);
+  check("\"Stopped.\" is said under the stopped hand-back reply, not above it", hosts.get("turn_1:assistant") === "Stopped." && hosts.size === 1);
+  const before = state.stoppedNoteHosts(data.messages, state.stoppedTurnNotes([...events, { ...marker, data: { ...marker.data, turnId: "turn_0" } }]), renders);
+  check("(keyed to the parked turn, as before, it sat above the reply, under the specialist's card)", before.get("turn_0:assistant") === "Stopped.");
+  const chat = readFileSync("app/_components/agent-chat.tsx", "utf8");
+  check("the Stop handler keys the marker to the reply's turn", /turnId: target\.replyTurnId \?\? target\.turnId \}/.test(chat));
+  check(
+    "a Stop's marker outlives the hand-back remount that races the cancel's answer (module scope, every instance listens)",
+    /const stopMarkersByChat = new Map<string, TurnEvent\[\]>\(\);/.test(chat) &&
+      /useState<TurnEvent\[\]>\(\(\) => stopMarkersByChat\.get\(chatKey\) \?\? \[\]\)/.test(chat) &&
+      !/setStoppedMarkers\(\(prev\)/.test(chat) &&
+      (chat.match(/recordStopMarker\(\s*chatKey,/g) ?? []).length === 2,
   );
 }
 

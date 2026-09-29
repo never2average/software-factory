@@ -191,4 +191,34 @@ await assert.rejects(
   "unknown customer rejects (single-domain)",
 );
 
+/* -------------------------------------------------------------------------- */
+/* (6) The profile's own fields are columns of Master.xlsx (mold_v1-089)       */
+/* -------------------------------------------------------------------------- */
+
+{
+  const { upsertCustomer } = await import("../agent/lib/system-of-record.ts");
+  const declared = {
+    account: [{ key: "house_view", label: "House view", type: "pick_list", options: ["Positive", "Negative"] }],
+    deployments: [
+      { key: "rating", label: "Rating", type: "pick_list", options: ["Buy", "Hold", "Sell"] },
+      { key: "target_price", label: "Target price", type: "number" },
+    ],
+    implementations: [{ key: "coverage_priority", label: "Coverage priority", type: "text" }],
+  };
+  const acme = await (await import("../agent/lib/system-of-record.ts")).getCustomer("acme-bank");
+  const depId = acme.deployments[0].deploymentId;
+  await upsertCustomer({ id: "acme-bank", custom: { house_view: "Positive" }, deployments: [{ deploymentId: depId, custom: { rating: "Buy", target_price: "1,250" } }], implementation: { custom: { coverage_priority: "Core" } } }, undefined, { declared });
+  const sheetOf = async (domain, name) => (await buildDomainWorkbookSpec({ customerId: "acme-bank", domain, now: NOW, declared })).sheets.find((x) => x.name === name);
+  const dep = await sheetOf("Deployments", "Deployments");
+  assert.deepEqual(dep.columns.slice(-2), ["rating", "target_price"], "the deployments' own fields are the last columns, by key");
+  assert.deepEqual(dep.rows[0].slice(-2), ["Buy", 1250], "…with each row's values (a number stays a number)");
+  const cust = await sheetOf("Customers", "Customers");
+  assert.equal(cust.columns.at(-1), "house_view");
+  assert.equal(cust.rows[0].at(-1), "Positive");
+  const impl = await sheetOf("Implementation", "Implementation");
+  assert.deepEqual([impl.columns.at(-1), impl.rows[0].at(-1)], ["coverage_priority", "Core"]);
+  const none = await buildDomainWorkbookSpec({ customerId: "acme-bank", domain: "Deployments", now: NOW });
+  assert.equal(none.sheets[0].columns.length, dep.columns.length - 2, "a profile that declares none gets the sheet it always got");
+}
+
 console.log("test-workbook-spec: all assertions passed (fallback path, no Postgres).");

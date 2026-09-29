@@ -207,7 +207,7 @@ const upsertCustomerInput = (
 
 export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
   description:
-    "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only provided fields are changed; nested domains (platform, deployments, solutions, implementation, tickets, interactions) are upserted alongside the customer row. Gated on approval since this mutates the team's source of truth.",
+    "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (platform, deployments, solutions, implementation, tickets, interactions) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth.",
   approval: once(),
   inputSchema: upsertCustomerInput,
   async execute(patch, ctx) {
@@ -221,10 +221,10 @@ export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
   },
 }), {
   // A profile's hidden fields are not offered to the model, and a stored hidden value survives its rewrite.
-  recordInput: { existing: async (id, ctx) => getCustomer(id, await orgForSession(ctx as Parameters<typeof orgForSession>[0])) },
+  recordInput: {},
   recordOutput: ["customer"],
   modelDescription: hidesParts
-    ? `Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only provided fields are changed; nested domains (${RECORD_PARTS.filter((k) => !HIDDEN_FIELDS.account.has(k)).join(", ")}) are upserted alongside the customer row. Gated on approval since this mutates the team's source of truth.`
+    ? `Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (${RECORD_PARTS.filter((k) => !HIDDEN_FIELDS.account.has(k)).join(", ")}) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth.`
     : undefined,
 });
 

@@ -39,10 +39,8 @@ import {
   speakFieldValue,
   speakIdentifier,
   speakMessage,
-  patchTouchesHiddenWith,
   pruneRecordSchemaWith,
   pruneRecordWith,
-  restoreHiddenWith,
   type SchemaMap,
 } from "../../agent-vocabulary.ts";
 import { isPostgresError, redactQueryError } from "../../db/query-errors.ts";
@@ -66,10 +64,10 @@ export interface ModelFacingOptions {
   spokenOutput?: string[];
   /**
    * The input IS an account-record patch (upsert_customer). Fields the profile hides (agent-vocabulary:
-   * HiddenFields) are left out of its parameters, and `existing` reads the stored record so a hidden nested value
-   * the model could not see is carried over when it rewrites `deployments[]` or `implementation`.
+   * HiddenFields) are left out of its parameters and dropped from its input. Nothing is read to carry them over: the
+   * system of record changes only the fields a patch names, so a hidden value the model never sent stays as stored.
    */
-  recordInput?: { existing: (id: string, ctx: unknown) => Promise<unknown> };
+  recordInput?: Record<string, never>;
   /** Top-level result keys holding one account record or a list of them: their hidden fields are dropped. */
   recordOutput?: string[];
   /**
@@ -121,12 +119,10 @@ async function runModelFacing(baseName: string, input: unknown, ctx: unknown): P
   let baseInput = inputFromModel(input, entry.map, { opaque: entry.opaqueIn, paths: entry.pathIn, argsKeys: entry.argsIn });
   if (entry.recordIn && HIDDEN_FIELDS.any) {
     // A hidden field is not the model's to write, even when it names one it was never offered: dropped, the same
-    // cut as a record it reads. Then the stored hidden values of any nested row it rewrote are put back.
+    // cut as a record it reads. Nothing is put back from a read: a patch changes only the fields it names, row by
+    // row (agent/lib/system-of-record.ts), so a hidden value the model never sent is never written at all. Copying
+    // the stored ones back from a read made them explicit writes of a stale value (mold_v1-136).
     baseInput = pruneRecordWith(HIDDEN_FIELDS, baseInput);
-    const id = (baseInput as { id?: unknown }).id;
-    if (patchTouchesHiddenWith(HIDDEN_FIELDS, baseInput) && typeof id === "string" && id) {
-      baseInput = restoreHiddenWith(HIDDEN_FIELDS, baseInput, await entry.recordIn.existing(id, ctx));
-    }
   }
   const schema = entry.tool.inputSchema as { safeParse?: (x: unknown) => { success: boolean; data?: unknown; error?: { issues?: { path: PropertyKey[]; message: string }[] } } } | undefined;
   if (schema && typeof schema.safeParse === "function") {

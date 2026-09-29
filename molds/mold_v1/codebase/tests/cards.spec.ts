@@ -18,7 +18,7 @@ test("workspace cards render and select", async ({ page }) => {
   expect(await titles.count()).toBeGreaterThanOrEqual(6);
 
   // A known task title is present.
-  await expect(page.getByText("Wire the RBI circular scraper into the COS data layer")).toBeVisible();
+  await expect(page.getByText("Wire the circular scraper into the assistant's data layer")).toBeVisible();
 
   // Deployment cards render as cards (not a table).
   await expect(page.getByTestId("deploy-grid")).toBeVisible();
@@ -34,7 +34,7 @@ test("workspace cards render and select", async ({ page }) => {
   expect(await sprintCharts.count()).toBeGreaterThanOrEqual(1);
 
   // Implementation cards: the four customers render.
-  for (const c of ["SBI", "ICICI HFC", "CUB", "MLP USA"]) {
+  for (const c of ["Example Bank", "Example Housing Finance", "Example Mutual Bank", "Example Asset Manager"]) {
     await expect(page.getByTestId("impl-customer").filter({ hasText: c })).toBeVisible();
   }
 

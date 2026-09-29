@@ -162,6 +162,13 @@
       "when": 1790900000000,
       "tag": "0022_agent_session_owners",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791000000000,
+      "tag": "0023_provider_launch_approver",
+      "breakpoints": true
     }
   ]
 }

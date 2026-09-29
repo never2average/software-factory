@@ -4,10 +4,11 @@ import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { customers, implementation, solutions } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
-import { orgContextForRequest } from "@/lib/org-context";
+import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
 import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
 import { customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
-import { asCustomValues } from "@/agent/lib/custom-fields";
+import { asCustomValues, customDelta } from "@/agent/lib/custom-fields";
+import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { an, W } from "@/lib/ui-words";
 
@@ -42,11 +43,23 @@ export async function POST(request: NextRequest) {
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
-  const parsed = createSchema.safeParse(await request.json().catch(() => null));
+  const body = await request.json().catch(() => null);
+  const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
   const { custom: customInput, ...data } = parsed.data;
+  // The fields the caller SENT. zod fills the create defaults (stage, risk, progress) into `data`; an update of an
+  // existing rollout must not write those back over its real stage.
+  const sent = new Set(body && typeof body === "object" ? Object.keys(body) : []);
+  // The account must be this workspace's: the foreign key is checked past row-level security, so a create naming
+  // another workspace's account id used to succeed. Absent and not-yours read the same (the 409 below).
+  if (!(await customerInOrg(ctx.orgId, data.customerId))) {
+    return NextResponse.json(
+      { error: `No ${W.account} with that id exists yet, so this record has nothing to attach to. Create the ${W.account} first (POST /api/ops/customers, or customer_create from the CLI).` },
+      { status: 409 },
+    );
+  }
   try {
     // This route is an UPSERT, so whether the custom fields are a create (required ones enforced) or a partial
     // change merged onto the stored ones depends on the row being there. Read inside the caller's scope.
@@ -56,6 +69,7 @@ export async function POST(request: NextRequest) {
     const checked = customForWrite("implementations", customInput, existing ?? null);
     if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
     const written = { ...data, ...(checked.custom ? { custom: checked.custom } : {}) };
+    const delta = checked.custom === undefined ? undefined : customDelta(customInput, checked.custom);
     const values = {
       ...written,
       // Stamp the tenant — a NULL org_id matches no workspace under the
@@ -66,6 +80,12 @@ export async function POST(request: NextRequest) {
       // NOT NULL with no DB default — empty means "no blocker owner yet".
       blockerOwner: "",
     };
+    const update: Record<string, unknown> = {
+      ...Object.fromEntries(Object.entries(data).filter(([k, v]) => k !== "customerId" && v !== undefined && sent.has(k))),
+      ...(delta ? { custom: customMergeSql(implementation.custom, delta, { empty: "object" }) } : {}),
+    };
+    // Naming nothing to change still answers with the row (a no-op SET), as before.
+    if (!Object.keys(update).length) update.customerId = data.customerId;
     // A genuine UPSERT, because that is what the operation is called and what
     // callers reasonably expect. It was a plain INSERT that 409'd on the second
     // call, so correcting a rollout's stage — the single most common thing
@@ -78,9 +98,8 @@ export async function POST(request: NextRequest) {
           target: implementation.customerId,
           // Never blank a field the caller didn't mention; blockerOwner in
           // particular is ours, not theirs, and would wipe a real owner.
-          set: Object.fromEntries(
-            Object.entries(written).filter(([k, v]) => k !== "customerId" && v !== undefined),
-          ),
+          // `custom` only by the keys the body names, merged in SQL onto what is stored at write time.
+          set: update,
         })
         .returning(),
     );

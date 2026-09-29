@@ -21,10 +21,15 @@
  */
 import { and, eq, getTableColumns, ilike, notInArray, or, sql } from "drizzle-orm";
 import type { Table } from "drizzle-orm";
+import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { sampleCustomerStore } from "./sample-data.ts";
 import {
   customerPatchSchema,
   customerReadSchema,
+  deploymentSchema,
+  implementationSchema,
+  platformSchema,
+  solutionSchema,
   customerSchema,
   customerStoreSchema,
   interactionSchema,
@@ -80,6 +85,15 @@ async function scopeFor(customerId: string, orgId?: string | null): Promise<stri
   );
   // Absent everywhere: any scope reads it as absent, so the caller's own "Unknown customer" follows.
   return owner?.orgId ?? DEFAULT_ORG;
+}
+
+/**
+ * The workspace that owns a customer, for a SYSTEM caller with no session (the scripts/fde backfills): found by
+ * asking each workspace in its own scope, never unscoped. DEFAULT_ORG when no workspace has it. A caller that has a
+ * session uses orgForSession instead, and never this.
+ */
+export async function ownerWorkspaceOf(customerId: string): Promise<string> {
+  return getDb() ? scopeFor(customerId) : DEFAULT_ORG;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -468,10 +482,11 @@ export async function getCustomer(id: string, orgId?: string | null): Promise<Cu
 
 /**
  * The profile's custom fields on the records a patch carries (agent/lib/custom-fields.ts), before anything is
- * written: the account's own (`custom`, account_fields.custom_fields) and each area row's. A patch REPLACES
- * `deployments[]` and `implementation` wholesale and merges over the account, but `custom` follows the rule every
- * write path shares: a record that already exists keeps the custom values the patch does not mention, a new one
- * must carry the required ones, an undeclared key is refused. Throws the plain sentences; the model reads them.
+ * written: the account's own (`custom`, account_fields.custom_fields) and each area row's. A patch names the
+ * `deployments[]` rows and the `implementation` fields it changes (customer-schema.ts: deploymentPatchSchema), and
+ * `custom` follows the rule every write path shares: a record that already exists keeps the custom values the
+ * patch does not mention, a new one must carry the required ones, an undeclared key is refused. Throws the plain
+ * sentences; the model reads them.
  */
 export function applyCustomFields(
   patch: CustomerPatch,
@@ -482,22 +497,30 @@ export function applyCustomFields(
   return applyCustomFieldsWithDelta(patch, existing, declared).patch;
 }
 
+/** What a patch changes in each nested row's `custom`, by row (the implementation has one), for the SQL merge. */
+export interface RowCustomDeltas {
+  deployments: Map<string, CustomDelta>;
+  implementation?: CustomDelta;
+}
+
 /**
- * applyCustomFields, plus what the patch CHANGES in the account's `custom` (`accountDelta`, undefined when it
- * names none of it), which writeCustomerToPostgres merges in SQL at write time rather than writing back the whole
- * column read earlier. `custom_append` (long-text additions, the model's way to add to a long note without
- * resending it) is resolved here: into the returned patch's `custom` (what the record reads after the write)
- * and into the delta's `append`, and is never part of the stored record. A model rewriting a long_text value
- * whole may not cut it below half its length (validateCustom's shrinkGuard): it appends, or clears first.
+ * applyCustomFields, plus what the patch CHANGES in each `custom` (`accountDelta` for the account, `rowDeltas` for
+ * each deployments[] row and the implementation; absent where it names none of it), which the write merges in SQL
+ * at write time rather than writing back the whole column read earlier. `custom_append` (long-text additions, the
+ * model's way to add to a long note without resending it) is resolved here: into the returned patch's `custom`
+ * (what the record reads after the write) and into the delta's `append`, and is never part of the stored record.
+ * A model rewriting a long_text value whole may not cut it below half its length (validateCustom's shrinkGuard):
+ * it appends, or clears first. A row the patch removes (`remove: true`) is not checked: it is not written.
  */
 export function applyCustomFieldsWithDelta(
   patch: CustomerPatch,
   existing: Customer | null,
   declared: Partial<Record<CustomFieldArea, CustomFieldSpec[]>> = { account: customFieldsOf("account"), deployments: customFieldsOf("deployments"), implementations: customFieldsOf("implementations") },
-): { patch: CustomerPatch; accountDelta?: CustomDelta } {
+): { patch: CustomerPatch; accountDelta?: CustomDelta; rowDeltas: RowCustomDeltas } {
   const errors: string[] = [];
   let accountDelta: CustomDelta | undefined;
-  const check = (area: CustomFieldArea, what: string, custom: unknown, prev: { custom?: unknown } | undefined, append?: unknown) => {
+  const rowDeltas: RowCustomDeltas = { deployments: new Map() };
+  const check = (area: CustomFieldArea, what: string, custom: unknown, prev: { custom?: unknown } | undefined, append?: unknown, onDelta?: (d: CustomDelta | undefined) => void) => {
     const fields = declared[area] ?? [];
     // Nothing declared and nothing sent: the record is written exactly as it was before custom fields existed.
     if (custom === undefined && append === undefined && !prev?.custom && fields.length === 0) return undefined;
@@ -521,7 +544,7 @@ export function applyCustomFieldsWithDelta(
         for (const k of replacing) accountDelta.set[k] = added.append[k];
       }
       result.values = added.values;
-    }
+    } else if (result.ok) onDelta?.(customDelta(checked, result.values));
     // No values and none stored before: leave `custom` off, so a record nobody gave an own value to reads back as
     // it was written whether or not the profile declares fields (an explicit clear of stored values still writes {}).
     if (result.ok) return Object.keys(result.values).length === 0 && !prev?.custom ? undefined : result.values;
@@ -536,16 +559,21 @@ export function applyCustomFieldsWithDelta(
   else if (patch.custom !== undefined) delete out.custom;
   if (patch.deployments) {
     out.deployments = patch.deployments.map((d) => {
-      const custom = check("deployments", d.deploymentId, d.custom, existing?.deployments?.find((p) => p.deploymentId === d.deploymentId));
+      if (d.remove) return d;
+      const custom = check("deployments", d.deploymentId, d.custom, existing?.deployments?.find((p) => p.deploymentId === d.deploymentId), undefined, (delta) => {
+        if (delta) rowDeltas.deployments.set(d.deploymentId, delta);
+      });
       return custom === undefined ? d : { ...d, custom };
     });
   }
-  if (patch.implementation) {
-    const custom = check("implementations", patch.implementation.rolloutId ?? patch.id, patch.implementation.custom, existing?.implementation);
+  if (patch.implementation && !patch.implementation.remove) {
+    const custom = check("implementations", patch.implementation.rolloutId ?? existing?.implementation?.rolloutId ?? patch.id, patch.implementation.custom, existing?.implementation, undefined, (delta) => {
+      rowDeltas.implementation = delta;
+    });
     if (custom !== undefined) out.implementation = { ...patch.implementation, custom };
   }
   if (errors.length) throw new Error(`Custom fields were not accepted, so nothing was written. ${errors.join(" ")}`);
-  return { patch: out, accountDelta };
+  return { patch: out, accountDelta, rowDeltas };
 }
 
 /** An account whose own values were all cleared has no `custom`, as one that never had any (customers.custom is NULL). */
@@ -557,37 +585,280 @@ function withoutEmptyCustom(customer: Customer): Customer {
   return customer;
 }
 
+/**
+ * The nested parts of an account, each written the same way (review of #70: one rule for every list the model
+ * writes, not "merged" for two and "replaced" for four). A list is matched row by row on its id, a single record by
+ * the account. `custom` is merged by delta on the two areas that carry it.
+ */
+type NestedKey = "platform" | "deployments" | "solutions" | "implementation" | "tickets" | "interactions";
+interface NestedPart {
+  key: NestedKey;
+  /** The row's id field in the entity (and its column property in the table); null for the one-per-account records. */
+  id: string | null;
+  table: typeof platformTable | typeof deploymentsTable | typeof solutionsTable | typeof implementationTable | typeof ticketsTable | typeof interactionsTable;
+  schema: { safeParse: (v: unknown) => { success: boolean; error?: { issues: { path: PropertyKey[] }[] } }; parse: (v: unknown) => unknown };
+  /** How a sentence names one of its rows. */
+  noun: string;
+}
+const NESTED: NestedPart[] = [
+  { key: "platform", id: null, table: platformTable, schema: platformSchema, noun: "platform record" },
+  { key: "deployments", id: "deploymentId", table: deploymentsTable, schema: deploymentSchema, noun: "deployments row" },
+  { key: "solutions", id: "solutionId", table: solutionsTable, schema: solutionSchema, noun: "solutions row" },
+  { key: "implementation", id: null, table: implementationTable, schema: implementationSchema, noun: "implementation record" },
+  { key: "tickets", id: "ticketId", table: ticketsTable, schema: ticketSchema, noun: "tickets row" },
+  { key: "interactions", id: "interactionId", table: interactionsTable, schema: interactionSchema, noun: "interactions row" },
+];
+const NESTED_KEYS = new Set<string>([...NESTED.map((p) => p.key), "custom", "custom_append"]);
+
+type Row = Record<string, unknown>;
+/** A part's rows in a patch (a single record is a list of one). */
+const patchRows = (patch: CustomerPatch, part: NestedPart): Row[] => {
+  const v = (patch as Row)[part.key];
+  if (v === undefined || v === null) return [];
+  return (Array.isArray(v) ? v : [v]) as Row[];
+};
+/** A part's stored rows in a record read earlier. */
+const storedRows = (record: Customer | null, part: NestedPart): Row[] => {
+  const v = record ? (record as Row)[part.key] : undefined;
+  if (v === undefined || v === null) return [];
+  return (Array.isArray(v) ? v : [v]) as Row[];
+};
+const sameRow = (part: NestedPart) => (a: Row) => (b: Row) => (part.id ? a[part.id] === b[part.id] : true);
+const rowName = (part: NestedPart, row: Row) => (part.id ? `${part.id} ${String(row[part.id])}` : `the ${part.noun}`);
+
+/** A patch row's own fields: what it names to change, `null` for a field it clears. Its key and `remove` are not fields. */
+function namedFields(row: Row, key: string | null): Row {
+  const out: Row = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (k === key || k === "remove" || k === "custom" || v === undefined) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/** A stored row with a patch row's named fields applied (null deletes the field), in memory. */
+function mergeRow(prev: Row | undefined, row: Row, key: string | null): Row {
+  const next: Row = { ...(prev ?? {}) };
+  if (key) next[key] = row[key];
+  for (const [k, v] of Object.entries(namedFields(row, key))) {
+    if (v === null) delete next[k];
+    else next[k] = v;
+  }
+  if (row.custom !== undefined) next.custom = row.custom;
+  return next;
+}
+
+/** "a, b and c" */
+const listed = (items: string[]) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
+
+/**
+ * Refuse a patch whose rows cannot be written as named, in sentences, before anything is written: a row named twice,
+ * `remove: true` sent with fields (a delete is only ever asked for on its own), `remove` for a row that is not there,
+ * and a new row without its required fields.
+ */
+function checkRowPatch(patch: CustomerPatch, existing: Customer | null): void {
+  const errors: string[] = [];
+  for (const part of NESTED) {
+    const seen = new Set<unknown>();
+    const stored = storedRows(existing, part);
+    for (const row of patchRows(patch, part)) {
+      const name = rowName(part, row);
+      if (part.id) {
+        if (seen.has(row[part.id])) errors.push(`${name} is in ${part.key}[] more than once; send each row once.`);
+        seen.add(row[part.id]);
+      }
+      const there = stored.some(sameRow(part)(row));
+      if (row.remove) {
+        const extra = Object.keys(row).filter((k) => k !== part.id && k !== "remove" && row[k] !== undefined);
+        if (extra.length) errors.push(`${name}: remove: true deletes the row, so it is sent with nothing else (it also named ${listed(extra)}). To change the row, leave remove out; to delete it, send only ${part.id ? `its ${part.id} and ` : ""}remove: true.`);
+        else if (!there) errors.push(`${name}: there is no such ${part.noun} to remove.`);
+        continue;
+      }
+      if (there) continue;
+      const created = part.schema.safeParse(mergeRow(undefined, row, part.id));
+      if (!created.success) {
+        const missing = listed([...new Set((created.error?.issues ?? []).map((i) => String(i.path[0] ?? "")))].filter(Boolean));
+        errors.push(part.id ? `${name} is a new row, so it needs ${missing} (a row that already exists needs only the fields that change).` : `${patch.id} has no ${part.noun} yet, so a new one needs ${missing}.`);
+      }
+    }
+  }
+  if (errors.length) throw new Error(`Nothing was written. ${errors.join(" ")}`);
+}
+
+/**
+ * The record a patch leaves, computed in memory from the record read before it: the account merged, and every
+ * nested part merged row by row (a named row onto the stored one, a new one appended, a removed one gone, every row
+ * the patch does not name kept). This is the fallback store's write; Postgres applies the same patch in SQL
+ * (writeCustomerPatchToPostgres).
+ */
+export function applyPatchToRecord(existing: Customer | null, patch: CustomerPatch): Customer {
+  checkRowPatch(patch, existing);
+  const base: Row = existing ? { ...existing } : { name: patch.id };
+  for (const [k, v] of Object.entries(patch)) if (!NESTED_KEYS.has(k) && v !== undefined) base[k] = v;
+  if (patch.custom !== undefined) base.custom = patch.custom;
+  for (const part of NESTED) {
+    if ((patch as Row)[part.key] === undefined) continue;
+    const rows = storedRows(existing, part).map((r) => ({ ...r }));
+    for (const row of patchRows(patch, part)) {
+      const at = rows.findIndex(sameRow(part)(row));
+      if (row.remove) {
+        if (at !== -1) rows.splice(at, 1);
+      } else if (at === -1) rows.push(mergeRow(undefined, row, part.id));
+      else rows[at] = mergeRow(rows[at], row, part.id);
+    }
+    if (!rows.length) delete base[part.key];
+    else base[part.key] = part.id ? rows : rows[0];
+  }
+  return withoutEmptyCustom(customerSchema.parse(base));
+}
+
+/** The sentence for an account that is not the caller's to write, whether it is absent or another workspace's. */
+const notYours = (id: string) => `Unknown customer: ${id}`;
+
+/**
+ * Write a validated PATCH to Postgres, changing only what it names, each change applied in SQL onto what is stored
+ * at write time. `existing` is the record read before (in the caller's scope); it decides only whether a row is new.
+ *
+ *  - the customers row: the scalar fields the patch names (a new account is inserted whole); `custom` merged by delta;
+ *  - every nested part (platform, deployments[], solutions[], implementation, tickets[], interactions[]): each named
+ *    row by (customer, its id): its named fields SET (null clears one), `custom` merged by delta where it has one; a
+ *    new row inserted whole; `remove: true` deletes it; a row the patch does not name is untouched.
+ *
+ * THE ACCOUNT MUST BE THE CALLER'S before any nested row is written (review of #70). A nested table's foreign key is
+ * checked past row-level security, so a patch from another workspace naming this account's id, which reads no
+ * account and so takes the "new account" path, would otherwise plant rows under it stamped with its own workspace.
+ * The account row is read back inside this transaction, in the caller's scope; absent, nothing is written.
+ */
+export async function writeCustomerPatchToPostgres(
+  db: Db,
+  patch: CustomerPatch,
+  existing: Customer | null,
+  orgId?: string | null,
+  deltas: { accountCustom?: CustomDelta; rows?: RowCustomDeltas } = {},
+): Promise<void> {
+  const id = patch.id;
+  const created = existing ? null : applyPatchToRecord(null, patch);
+  if (existing) checkRowPatch(patch, existing);
+  const stamp = <T extends Row>(row: T): T => {
+    if (orgId && "orgId" in row) (row as Row).orgId = orgId;
+    return row;
+  };
+  await db.transaction(async (tx) => {
+    // Scoped inside this transaction, as writeCustomerToPostgres is (withOrgDb would open a second one).
+    if (orgId) await tx.execute(sql`select set_config('app.org_id', ${orgId}, true)`);
+
+    // The account row: the scalar fields the patch names, and `custom` only through its delta.
+    const customerSet: Row = {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === "id" || NESTED_KEYS.has(k) || v === undefined) continue;
+      customerSet[k === "name" ? "customerName" : k] = v;
+    }
+    if (deltas.accountCustom) customerSet.custom = customMergeSql(customersTable.custom, deltas.accountCustom);
+    let written: { custom: unknown } | undefined;
+    if (created) {
+      const row = stamp(customerToDbRows(created).customer as Row) as typeof customersTable.$inferInsert;
+      const insert = tx.insert(customersTable).values(row);
+      [written] = await (Object.keys(customerSet).length
+        ? insert.onConflictDoUpdate({ target: customersTable.customerId, set: customerSet })
+        : insert.onConflictDoNothing()
+      ).returning({ custom: customersTable.custom });
+    } else if (Object.keys(customerSet).length) {
+      [written] = await tx.update(customersTable).set(customerSet).where(eq(customersTable.customerId, id)).returning({ custom: customersTable.custom });
+      if (!written) throw new Error(notYours(id));
+    }
+    // The account is the caller's, as this transaction sees it, or nothing below is written (see above).
+    const [mine] = await tx.select({ id: customersTable.customerId }).from(customersTable).where(eq(customersTable.customerId, id)).limit(1);
+    if (!mine) throw new Error(notYours(id));
+    // The length cap, at WRITE time (see writeCustomerToPostgres): the row is locked until commit.
+    for (const key of Object.keys(deltas.accountCustom?.append ?? {})) {
+      const after = (written?.custom as Row | null | undefined)?.[key];
+      if (typeof after === "string" && after.length > LONG_TEXT_LIMIT) {
+        throw new Error(`Custom fields were not accepted, so nothing was written. ${id}: the own field "${key}" would be ${after.length.toLocaleString("en-US")} characters with this addition, over the ${LONG_TEXT_LIMIT.toLocaleString("en-US")}-character limit (text was added to it since it was read). Replace it with a shorter version (null for it in \`custom\` together with the new text in \`custom_append\`), then add to it again.`);
+      }
+    }
+
+    // Every nested part: one statement per named row.
+    for (const part of NESTED) {
+      const t = part.table as unknown as Record<string, PgColumn> & PgTable;
+      const stored = storedRows(existing, part);
+      for (const row of patchRows(patch, part)) {
+        const where = part.id ? and(eq(t.customerId, id), eq(t[part.id], row[part.id] as string)) : eq(t.customerId, id);
+        const name = rowName(part, row);
+        if (row.remove) {
+          const gone = await tx.delete(t).where(where).returning({ id: t.customerId });
+          if (!gone.length) throw new Error(`Nothing was written. ${name}: there is no such ${part.noun} to remove (it was removed after it was read).`);
+          continue;
+        }
+        const set: Row = namedFields(row, part.id);
+        const delta = part.key === "deployments" ? deltas.rows?.deployments.get(String(row.deploymentId)) : part.key === "implementation" ? deltas.rows?.implementation : undefined;
+        if (delta) set.custom = customMergeSql(t.custom, delta, { empty: "object" });
+        if (stored.some(sameRow(part)(row))) {
+          if (!Object.keys(set).length) continue;
+          const [hit] = await tx.update(t).set(set).where(where).returning({ id: t.customerId });
+          if (!hit) throw new Error(`Nothing was written. ${name} of ${id} was removed after it was read; send it again as a new one if it should exist.`);
+        } else {
+          const full = part.schema.parse(mergeRow(undefined, row, part.id)) as Row;
+          const values = "custom" in full || part.key === "deployments" || part.key === "implementation" ? { ...full, custom: asCustomValues(full.custom) } : full;
+          const insertRow = stamp(fullRow(part.table, { customerId: id, ...values }) as Row);
+          const target = part.id ? [t.customerId, t[part.id]] : t.customerId;
+          // Written by someone else since the read: the named fields are applied onto it, as for a stored row.
+          const insert = tx.insert(t).values(insertRow as never);
+          await (Object.keys(set).length ? insert.onConflictDoUpdate({ target, set }) : insert.onConflictDoNothing());
+        }
+      }
+    }
+  });
+}
+
+/**
+ * The patch, validated. A list row sent without its id (`deployments: [{ notes: "x" }]`) used to surface as zod's
+ * raw JSON issue dump; the model reads a sentence instead, naming the row and the id it needs. Every other problem
+ * is reported as before.
+ */
+function parsePatch(patch: CustomerPatch): CustomerPatch {
+  const parsed = customerPatchSchema.safeParse(patch);
+  if (parsed.success) return parsed.data;
+  const noId: string[] = [];
+  for (const issue of parsed.error.issues) {
+    const [list, index, field] = issue.path;
+    const part = NESTED.find((p) => p.key === list && p.id !== null);
+    if (part && typeof index === "number" && field === part.id && (patch as Row)[part.key] && ((patch as Row)[part.key] as Row[])[index]?.[part.id] === undefined) {
+      noId.push(`${part.key}[${index}] has no ${part.id}: every row names its ${part.id}, a new one too.`);
+    }
+  }
+  if (noId.length) throw new Error(`Nothing was written. ${[...new Set(noId)].join(" ")}`);
+  throw parsed.error;
+}
+
 export async function upsertCustomer(
   patch: CustomerPatch,
   orgId?: string | null,
+  /** Tests only: the declared custom fields, when this build's profile declares none. */
+  opts: { declared?: Partial<Record<CustomFieldArea, CustomFieldSpec[]>> } = {},
 ): Promise<Customer> {
-  const parsedPatch = customerPatchSchema.parse(patch);
+  const parsedPatch = parsePatch(patch);
   const db = getDb();
   if (db) {
     // The record being patched is read in the CALLER's workspace. Read across all of them, another workspace's
     // record was merged into this patch and written under the caller's scope; the database refused the write,
     // and the refusal text carried every merged value back to the model.
     const existing = await dbGetCustomer(db, parsedPatch.id, orgId);
-    const validPatch = applyCustomFields(parsedPatch, existing);
-    const merged = withoutEmptyCustom(existing
-      ? customerSchema.parse({ ...existing, ...validPatch })
-      : customerSchema.parse({ name: validPatch.id, ...validPatch }));
-    // Only what the patch changed in `custom`, merged in SQL: never the whole column as read above.
-    const { accountDelta } = applyCustomFieldsWithDelta(parsedPatch, existing);
-    await writeCustomerToPostgres(db, merged, orgId, { accountCustom: accountDelta });
-    return merged;
+    const { patch: validPatch, accountDelta, rowDeltas } = applyCustomFieldsWithDelta(parsedPatch, existing, opts.declared);
+    // Only what the patch names, each change applied in SQL onto what is stored at write time.
+    await writeCustomerPatchToPostgres(db, validPatch, existing, orgId, { accountCustom: accountDelta, rows: rowDeltas });
+    // The record AS STORED after the write, not the one computed from the read: a change someone else made in
+    // between is part of it, and the caller is not told a stale value was kept.
+    const after = await dbGetCustomer(db, parsedPatch.id, orgId);
+    if (!after) throw new Error(`Unknown customer: ${parsedPatch.id}`);
+    return after;
   }
   const store = await readStore();
   const idx = store.customers.findIndex((c) => c.id === parsedPatch.id);
-  const validPatch = applyCustomFields(parsedPatch, idx === -1 ? null : store.customers[idx]);
-  if (idx === -1) {
-    const created = withoutEmptyCustom(customerSchema.parse({ name: validPatch.id, ...validPatch }));
-    store.customers.push(created);
-    await writeStore(store);
-    return created;
-  }
-  const merged = withoutEmptyCustom(customerSchema.parse({ ...store.customers[idx], ...validPatch }));
-  store.customers[idx] = merged;
+  const existing = idx === -1 ? null : store.customers[idx];
+  const validPatch = applyCustomFields(parsedPatch, existing, opts.declared);
+  const merged = applyPatchToRecord(existing, validPatch);
+  if (idx === -1) store.customers.push(merged);
+  else store.customers[idx] = merged;
   await writeStore(store);
   return merged;
 }

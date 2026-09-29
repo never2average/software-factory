@@ -6,6 +6,7 @@ import { getDb, closeDb } from "../../../agent/lib/db/index.ts";
 import { customers } from "../../../agent/lib/db/schema.ts";
 import { eq } from "drizzle-orm";
 import { createDataroomStore } from "../../../agent/lib/dataroom-store.ts";
+import { DEPLOYMENT_PROFILE } from "../../../lib/deployment-profile.generated.ts";
 
 export { getDb, closeDb };
 
@@ -80,4 +81,27 @@ export function schemaStub(title) {
       2,
     ) + "\n"
   );
+}
+
+/**
+ * The fields of `row` a record schema refuses, as one sentence naming each field and what it accepts; null when the
+ * row is valid. Only the fields present are checked (a row that already exists needs only what changes).
+ */
+export function checkValues(schema, row) {
+  const errors = [];
+  for (const [key, value] of Object.entries(row)) {
+    const field = schema.shape[key];
+    if (!field) { errors.push(`${key} is not a field of this record`); continue; }
+    const r = field.safeParse(value);
+    if (r.success) continue;
+    const options = field.unwrap?.().options ?? field.options;
+    errors.push(`${key} "${value}" is not accepted${Array.isArray(options) ? ` (one of: ${options.join(", ")})` : `: ${r.error.issues[0]?.message ?? "invalid"}`}`);
+  }
+  return errors.length ? `${errors.join("; ")}.` : null;
+}
+
+/** The value the deployment profile fixes for a deployments field (a research desk fixes region and environment). */
+export function fixedOr(field, fallback) {
+  const fixed = DEPLOYMENT_PROFILE.domains?.deployments?.fields?.[field]?.fixed;
+  return typeof fixed === "string" ? fixed : fallback;
 }

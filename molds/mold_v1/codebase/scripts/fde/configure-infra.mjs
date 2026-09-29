@@ -4,12 +4,13 @@
 // per-deployment substrate a solution runs on — not a solution itself.
 //
 //   npm run fde:configure-infra -- --customer contoso-bank --version v2.4.0 \
-//     [--region APAC] [--cloud aws]
+//     [--region ap-south-1] [--cloud aws] [--environment prod]
 //
 // See docs/FDE_WORKFLOW.md (stage 4). Signoffs seed as PENDING — the deployment is
 // not done until the four parties sign.
-import { getDb, closeDb, dataroom, getCustomer, writeIfAbsent } from "./lib/customer.mjs";
-import { deployments } from "../../agent/lib/db/schema.ts";
+import { getDb, closeDb, dataroom, writeIfAbsent, checkValues, fixedOr } from "./lib/customer.mjs";
+import { getCustomer as getRecord, ownerWorkspaceOf, upsertCustomer } from "../../agent/lib/system-of-record.ts";
+import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
 // The infrastructure domains under a deployment (dm.md).
@@ -34,7 +35,10 @@ async function main() {
     console.error(`${glyph.bad} No DATABASE_URL — run with --env-file=.env.local.`);
     process.exit(1);
   }
-  if (!(await getCustomer(db, customerId))) {
+  // Read in the account's own workspace (a bare read sees nothing under row-level security).
+  const orgId = await ownerWorkspaceOf(customerId);
+  const record = await getRecord(customerId, orgId);
+  if (!record) {
     console.error(`${glyph.bad} Customer "${customerId}" not found. Create it first (fde:new-customer).`);
     await closeDb();
     process.exit(1);
@@ -42,22 +46,31 @@ async function main() {
 
   console.log(`Configure infra: ${customerId} @ ${version}\n`);
 
-  // 1. The deployments row (the runtime instance).
-  await db
-    .insert(deployments)
-    .values({
-      customerId,
-      deploymentId: version,
-      environment: flag("environment").trim() || "production",
-      region: flag("region").trim() || "unknown",
-      cloudProvider: flag("cloud").trim() || null,
-      deployedVersion: version,
-      releaseStatus: "configuring",
-      healthStatus: "unknown",
-      deployOwnerEmail: fde,
-    })
-    .onConflictDoUpdate({ target: [deployments.customerId, deployments.deploymentId], set: { releaseStatus: "configuring", deployOwnerEmail: fde } });
-  console.log(`${glyph.ok} Upserted deployments row (${customerId}, ${version}).`);
+  // 1. The deployments row (the runtime instance), through the system of record: the schema and the profile's
+  // own-field validator apply, the row is stamped with the account's workspace, and on a row that exists only the
+  // status and owner change. It was a raw INSERT with no workspace and values the schema refuses ("production",
+  // "unknown", "configuring").
+  const stored = record.deployments?.some((d) => d.deploymentId === version);
+  const row = stored
+    ? { deploymentId: version, releaseStatus: "in-progress", deployOwnerEmail: fde }
+    : {
+        deploymentId: version,
+        environment: flag("environment").trim() || fixedOr("environment", "prod"),
+        region: flag("region").trim() || fixedOr("region", ""),
+        ...(flag("cloud").trim() ? { cloudProvider: flag("cloud").trim() } : {}),
+        deployedVersion: version,
+        releaseStatus: "in-progress",
+        healthStatus: "unknown",
+        deployOwnerEmail: fde,
+      };
+  const refused = checkValues(deploymentSchema, row);
+  if (refused) {
+    console.error(`${glyph.bad} Nothing was written. ${refused}`);
+    await closeDb();
+    process.exit(1);
+  }
+  await upsertCustomer({ id: customerId, deployments: [row] }, orgId);
+  console.log(`${glyph.ok} ${stored ? "Updated" : "Created"} deployments row (${customerId}, ${version}).`);
 
   // 2. The infra domain scaffold (blob). Never clobber authored infra.
   const store = dataroom();

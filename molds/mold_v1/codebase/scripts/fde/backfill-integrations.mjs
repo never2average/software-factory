@@ -9,8 +9,9 @@
 // Implementation/{id}/pipelines/{pid}/pipeline_config.json + integromat.json.
 // --from-file takes an array of { pipelineId, summary, config }. See
 // docs/FDE_WORKFLOW.md (stage 5).
-import { getDb, closeDb, dataroom, getCustomer, nowIso, appendInteraction, readFromFile } from "./lib/customer.mjs";
-import { implementation } from "../../agent/lib/db/schema.ts";
+import { getDb, closeDb, dataroom, nowIso, appendInteraction, readFromFile, checkValues } from "./lib/customer.mjs";
+import { getCustomer as getRecord, ownerWorkspaceOf, upsertCustomer } from "../../agent/lib/system-of-record.ts";
+import { implementationSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
 async function main() {
@@ -30,7 +31,10 @@ async function main() {
     console.error(`${glyph.bad} No DATABASE_URL — run with --env-file=.env.local.`);
     process.exit(1);
   }
-  const customer = await getCustomer(db, customerId);
+  // Read in the account's own workspace (a bare read sees nothing under row-level security).
+  const orgId = await ownerWorkspaceOf(customerId);
+  const record = await getRecord(customerId, orgId);
+  const customer = record ? { customerName: record.name } : null;
   if (!customer) {
     console.error(`${glyph.bad} Customer "${customerId}" not found. Create it first (fde:new-customer).`);
     await closeDb();
@@ -45,30 +49,27 @@ async function main() {
 
   console.log(`Backfill integrations: ${customerId}  (${pipelines.length} pipeline(s))\n`);
 
-  // 1. The implementation row (integration-readiness bearing).
-  await db
-    .insert(implementation)
-    .values({
-      customerId,
-      implementationStage: "integration",
-      implementationProgressPct: 0,
-      implementationRiskLevel: "medium",
-      blockerOwner: fde,
-      implementationOwnerEmail: fde,
-      connectorProvisioningStatus: "backfilled",
-      launchScopeSolutionIds: pipelines.map((p) => p.pipelineId),
-      implementationLastUpdatedAt: nowIso(),
-    })
-    .onConflictDoUpdate({
-      target: implementation.customerId,
-      set: {
-        connectorProvisioningStatus: "backfilled",
-        launchScopeSolutionIds: pipelines.map((p) => p.pipelineId),
-        implementationOwnerEmail: fde,
-        implementationLastUpdatedAt: nowIso(),
-      },
-    });
-  console.log(`${glyph.ok} Upserted implementation row (${customerId}).`);
+  // 1. The implementation row (integration-readiness bearing), through the system of record (see
+  // backfill-customizations): schema, own-field validator, the account's workspace, only these fields on an
+  // existing row. The raw INSERT it replaces wrote values the schema does not allow ("integration", "medium",
+  // "backfilled", an email as the blocker owner) and no workspace.
+  const fields = {
+    connectorProvisioningStatus: "Connected",
+    launchScopeSolutionIds: pipelines.map((p) => p.pipelineId),
+    implementationOwnerEmail: fde,
+    implementationLastUpdatedAt: nowIso(),
+  };
+  const row = record.implementation
+    ? fields
+    : { implementationStage: "Integration", implementationProgressPct: 0, implementationRiskLevel: "Yellow", blockerOwner: "None", ...fields };
+  const refused = checkValues(implementationSchema, row);
+  if (refused) {
+    console.error(`${glyph.bad} Nothing was written. ${refused}`);
+    await closeDb();
+    process.exit(1);
+  }
+  await upsertCustomer({ id: customerId, implementation: row }, orgId);
+  console.log(`${glyph.ok} ${record.implementation ? "Updated" : "Created"} implementation row (${customerId}).`);
 
   // 2. Canonical data-room artifacts per pipeline.
   const store = dataroom();

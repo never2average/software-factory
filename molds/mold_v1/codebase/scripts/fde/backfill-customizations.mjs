@@ -2,15 +2,18 @@
 // history into the canonical Deployments/ layout + the `deployments` row.
 //
 //   npm run fde:backfill-customizations -- --customer contoso-bank --version v2.4.0 \
-//     [--region APAC] [--cloud aws] [--summary "GPU inference, custom guardrails"] \
+//     [--region ap-south-1] [--cloud aws] [--summary "GPU inference, custom guardrails"] \
 //     [--from-file customizations.json]
 //
-// Writes/updates ONE `deployments` row (idempotent by customer+deploymentId) and
+// Writes/updates ONE `deployments` row (idempotent by customer+deploymentId; through the system of record, so the
+// schema and the profile's own-field validator apply; --region must be one of the schema's regions unless the
+// profile fixes one; --environment defaults to prod) and
 // materialises Deployments/{id}/{ver}/infrastructure/inference/{customizations.tf,
 // rationale.md} plus the 4-party signoff skeleton. --from-file takes an array of
 // { title, tf, rationale } customizations. See docs/FDE_WORKFLOW.md (stage 4).
-import { getDb, closeDb, dataroom, getCustomer, nowIso, appendInteraction, readFromFile } from "./lib/customer.mjs";
-import { deployments } from "../../agent/lib/db/schema.ts";
+import { getDb, closeDb, dataroom, nowIso, appendInteraction, readFromFile, checkValues, fixedOr } from "./lib/customer.mjs";
+import { getCustomer as getRecord, ownerWorkspaceOf, upsertCustomer } from "../../agent/lib/system-of-record.ts";
+import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
 
 async function main() {
@@ -31,7 +34,10 @@ async function main() {
     console.error(`${glyph.bad} No DATABASE_URL — run with --env-file=.env.local.`);
     process.exit(1);
   }
-  const customer = await getCustomer(db, customerId);
+  // Read in the account's own workspace (a bare read sees nothing under row-level security).
+  const orgId = await ownerWorkspaceOf(customerId);
+  const record = await getRecord(customerId, orgId);
+  const customer = record ? { customerName: record.name } : null;
   if (!customer) {
     console.error(`${glyph.bad} Customer "${customerId}" not found. Create it first (fde:new-customer).`);
     await closeDb();
@@ -40,28 +46,35 @@ async function main() {
 
   console.log(`Backfill customizations: ${customerId} @ ${version}\n`);
 
-  // 1. The deployment row (customization-bearing).
+  // 1. The deployment row (customization-bearing), written through the system of record: the same schema and
+  // own-field validator as every other write path, stamped with the account's workspace, and only the fields named
+  // here changed on a row that already exists. It used to be a raw INSERT with no workspace (refused under row-level
+  // security) and values the schema does not allow ("production", "unknown"), with no own-field check at all.
   const deploymentId = `${version}`;
-  await db
-    .insert(deployments)
-    .values({
-      customerId,
-      deploymentId,
-      environment: flag("environment").trim() || "production",
-      region: flag("region").trim() || "unknown",
-      cloudProvider: flag("cloud").trim() || null,
-      deployedVersion: version,
-      releaseStatus: "deployed",
-      healthStatus: "unknown",
-      deployOwnerEmail: fde,
-      notes: flag("summary").trim() || null,
-      lastDeployAt: nowIso(),
-    })
-    .onConflictDoUpdate({
-      target: [deployments.customerId, deployments.deploymentId],
-      set: { deployedVersion: version, deployOwnerEmail: fde, notes: flag("summary").trim() || null },
-    });
-  console.log(`${glyph.ok} Upserted deployments row (${customerId}, ${deploymentId}).`);
+  const stored = record.deployments?.some((d) => d.deploymentId === deploymentId);
+  const summary = flag("summary").trim();
+  const row = stored
+    ? { deploymentId, deployedVersion: version, deployOwnerEmail: fde, ...(summary ? { notes: summary } : {}) }
+    : {
+        deploymentId,
+        environment: flag("environment").trim() || fixedOr("environment", "prod"),
+        region: flag("region").trim() || fixedOr("region", ""),
+        ...(flag("cloud").trim() ? { cloudProvider: flag("cloud").trim() } : {}),
+        deployedVersion: version,
+        releaseStatus: "deployed",
+        healthStatus: "unknown",
+        deployOwnerEmail: fde,
+        ...(summary ? { notes: summary } : {}),
+        lastDeployAt: nowIso(),
+      };
+  const refused = checkValues(deploymentSchema, row);
+  if (refused) {
+    console.error(`${glyph.bad} Nothing was written. ${refused}`);
+    await closeDb();
+    process.exit(1);
+  }
+  await upsertCustomer({ id: customerId, deployments: [row] }, orgId);
+  console.log(`${glyph.ok} ${stored ? "Updated" : "Created"} deployments row (${customerId}, ${deploymentId}).`);
 
   // 2. The canonical data-room artifacts.
   const store = dataroom();

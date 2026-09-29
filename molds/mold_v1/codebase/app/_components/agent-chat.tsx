@@ -146,6 +146,23 @@ if (typeof window !== "undefined") {
 const stopNotes = new Map<string, string>();
 /** Turn ids this tab asked to stop, by chatKey — so a cancelled turn can say who stopped it. */
 const stoppedHere = new Map<string, Set<string>>();
+/**
+ * A Stop's transcript markers (`client.turn.stopped`), by chatKey — held HERE,
+ * not only in the component, because the Stop's answer and the remount race.
+ * Stopping a parked specialist's resumed reply ends it with a boundary, the live
+ * reader reads that boundary and hands the transcript back (a remount), and the
+ * cancel's 202 is often processed a moment AFTER: the marker was set on the
+ * instance that had just been replaced, never persisted, and gone on reload
+ * (review of #72/#74 — eve sends no `turn.cancelled` for a resumed reply, so the
+ * marker is the only record that the reply was stopped). Every mounted instance
+ * of the chat listens, so the marker reaches whichever one is current.
+ */
+const stopMarkersByChat = new Map<string, TurnEvent[]>();
+const stopMarkerListeners = new Map<string, Set<() => void>>();
+function recordStopMarker(chatKey: string, marker: TurnEvent): void {
+  stopMarkersByChat.set(chatKey, [...(stopMarkersByChat.get(chatKey) ?? []), marker]);
+  for (const listen of stopMarkerListeners.get(chatKey) ?? []) listen();
+}
 /** Re-arm rounds of the live reader after its budget ran out, by `chatKey:turn`. */
 const attachRounds = new Map<string, number>();
 /** chatKey → ordinal of a turn the server reported as not running. */
@@ -266,6 +283,9 @@ import {
   awaitingSpecialists,
   liveDelegations,
   specialistWorkingLine,
+  ANSWER_CHECKING_LINE,
+  answerNeedsCheck,
+  type AnswerPostOutcome,
   stopTarget,
   stoppedFromEvents,
   stoppedMarker,
@@ -1398,7 +1418,17 @@ export function AgentChat({
    * the question does not come back as live, and the tile does not go back to
    * "Running".
    */
-  const [stoppedMarkers, setStoppedMarkers] = useState<TurnEvent[]>([]);
+  const [stoppedMarkers, setStoppedMarkers] = useState<TurnEvent[]>(() => stopMarkersByChat.get(chatKey) ?? []);
+  useEffect(() => {
+    const sync = () => setStoppedMarkers(stopMarkersByChat.get(chatKey) ?? []);
+    const listeners = stopMarkerListeners.get(chatKey) ?? new Set<() => void>();
+    listeners.add(sync);
+    stopMarkerListeners.set(chatKey, listeners);
+    sync();
+    return () => {
+      listeners.delete(sync);
+    };
+  }, [chatKey]);
   const stopped = useMemo(
     () => stoppedFromEvents([...(mergedEvents as readonly TurnEvent[]), ...stoppedMarkers]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1643,7 +1673,7 @@ export function AgentChat({
   const answerRejected = (
     requestIds: readonly string[],
     responses: readonly { requestId: string; optionId?: string; text?: string }[],
-    why: "refused" | "unreachable",
+    why: "refused" | "unreachable" | "not-sent",
   ) => {
     setRejectedRequestIds((prev) => withRequestIds(prev, requestIds));
     setRespondedRequestIds((prev) => withoutRequestIds(prev, requestIds));
@@ -1668,7 +1698,9 @@ export function AgentChat({
       message:
         why === "refused"
           ? "Your answer didn't go through — the server refused it. The question is still open above."
-          : "Your answer didn't reach the server. The question is still open above.",
+          : why === "not-sent"
+            ? "Your answer wasn't sent — this page lost its connection to the conversation. Reload the page, then answer the question again."
+            : "Your answer didn't reach the server. The question is still open above.",
       responses,
       label,
     });
@@ -1766,7 +1798,17 @@ export function AgentChat({
      * specialist resumed by the answer can take a while before the parent
      * stream says anything). Only if nothing arrives is the question restored.
      */
-    if (!outcome.ok && (outcome.status === 0 || outcome.status >= 500)) {
+    /**
+     * NOTHING WAS SENT — no session, or no resume token to send it with. There is
+     * no answer in flight to wait for, so the question comes back at once with a
+     * plain reason (it used to sit a full minute on "Checking whether your answer
+     * reached the server…" first: review of #59).
+     */
+    if (outcome.notSent) {
+      answerRejected(requestIds, inputResponses, "not-sent");
+      return;
+    }
+    if (answerNeedsCheck(outcome)) {
       const sessionId = agent.session?.sessionId ?? liveSessionIdRef.current;
       if (sessionId) {
         const provisional = recordDelivery("", "answer");
@@ -1806,17 +1848,19 @@ export function AgentChat({
   /** POST an answer to the parked session with the freshest resume token. Never throws. */
   const postAnswer = async (
     inputResponses: readonly { requestId: string; optionId?: string; text?: string }[],
-  ): Promise<{ ok: boolean; status: number; body: string }> => {
+  ): Promise<AnswerPostOutcome> => {
     const sessionId = agent.session?.sessionId ?? liveSessionIdRef.current;
-    if (!sessionId) return { ok: false, status: 0, body: "no session" };
+    // NOTHING WAS POSTED in these two: say so (`notSent`), so the caller never
+    // waits a minute for the stream to show an answer that was never sent.
+    if (!sessionId) return { ok: false, status: 0, body: "no session", notSent: "no-session" };
     const continuationToken = freshestToken() ?? agent.session?.continuationToken ?? (await serverFreshestToken(sessionId));
-    if (!continuationToken) return { ok: false, status: 0, body: "no resume token" };
+    if (!continuationToken) return { ok: false, status: 0, body: "no resume token", notSent: "no-token" };
     /**
      * Retried like eve's own client (`postTurnWithRetry`): answering just as the
      * question parks can meet a 500 "target session was not found" — the park
      * is not visible yet — and a moment later the same POST succeeds.
      */
-    let last = { ok: false, status: 0, body: "network" };
+    let last: { ok: boolean; status: number; body: string } = { ok: false, status: 0, body: "network" };
     for (let attempt = 0; attempt < ANSWER_RETRIES; attempt++) {
       try {
         const res = await fetch(`/eve/v1/session/${encodeURIComponent(sessionId)}`, {
@@ -2860,10 +2904,11 @@ export function AgentChat({
       // hold must not outlive the Stop.
       if (body.status === "accepted") setRemoteTurn(false);
       if (body.status === "accepted" && (parkedOn.length > 0 || target.resumed || target.parked)) {
-        setStoppedMarkers((prev) => [
-          ...prev,
-          stoppedMarker({ requestIds: parkedOn, delegations, at: absoluteIndex(events), turnId: target.turnId }),
-        ]);
+        recordStopMarker(
+          chatKey,
+          // The note goes under the reply that was stopped: a resumed hand-back's own turn.
+          stoppedMarker({ requestIds: parkedOn, delegations, at: absoluteIndex(events), turnId: target.replyTurnId ?? target.turnId }),
+        );
         setStopping(false);
       } else if (
         body.status === "accepted" &&
@@ -2874,10 +2919,10 @@ export function AgentChat({
         // eve's `turn.cancelled` may not be in what a later open reads, so the
         // Stop is recorded as a marker: persisted with the chat (client_markers),
         // it says "Stopped." under this turn on every open and every device.
-        setStoppedMarkers((prev) => [
-          ...prev,
+        recordStopMarker(
+          chatKey,
           stoppedMarker({ requestIds: [], delegations: [], at: absoluteIndex(events), turnId: target.turnId }),
-        ]);
+        );
       }
       if (body.status === "no_active_turn") {
         // Nothing is running under this id, yet the transcript never saw the
@@ -4368,9 +4413,9 @@ export function AgentChat({
               Your next message will answer the question above.
             </p>
           ) : null}
-          {answerChecking ? (
+          {answerChecking && !showStop ? (
             <p data-answer-checking role="status" className="mb-2 px-1 text-muted-foreground text-xs">
-              Checking whether your answer reached the server…
+              {ANSWER_CHECKING_LINE}
             </p>
           ) : null}
           {answerError ? (
@@ -4438,6 +4483,11 @@ export function AgentChat({
                     "Your sign-in expired while this reply was running. Sign in again to pick it up — nothing is lost."
                   : stopping
                   ? "Stopping the earlier reply…"
+                  : answerChecking
+                  ? // Not yet known whether the answer landed, so not yet known
+                    // whether anything is running because of it: say what IS
+                    // happening, not "a specialist is working" (review of #59).
+                    ANSWER_CHECKING_LINE
                   : gate.reason === "awaiting-input"
                     ? specialistWaiting
                       ? "A specialist is waiting on your answer above. Answer it, or stop it — its work is discarded and your queued messages send."
@@ -4473,7 +4523,7 @@ export function AgentChat({
                   : gate.reason === "delivering" && owedFromOtherTab
                     ? "Your earlier message is queued and will be sent after this reply."
                     : gate.hold
-                      ? `${holdLabel(gate.reason, specialistRunning, attachLive, authExpired)}${queue.background ? " They are sent even if you close this tab." : ""}`
+                      ? `${holdLabel(gate.reason, specialistRunning, attachLive, authExpired, answerChecking)}${queue.background ? " They are sent even if you close this tab." : ""}`
                       : "Queued — sending next."}
               </p>
               {queued.map((q, i) => {

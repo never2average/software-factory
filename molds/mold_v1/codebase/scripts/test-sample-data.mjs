@@ -9,12 +9,13 @@
  *     and refuses BEFORE connecting otherwise: a real workspace's database is one `npm run seed:postgres` away;
  *   · nothing the model or a workspace reads still names the sample file or its ids (the research specialist's
  *     prompt cited `data/customers.json` and `acme-bank`/`northwind-cap`; seed-ops seeded the connector card with
- *     "customers.json" and sample Slack channels).
+ *     "customers.json" and sample Slack channels), in any prompt, instruction or skill;
+ *   · the /preview/* fixtures (whose chunks ship in every build) name no real institution (review of #62).
  *
  *   npm run test:sample-data
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -65,6 +66,20 @@ for (const f of ["agent/subagents/research/prompt.md", "agent/lib/prompts.genera
   const hit = NAMES.find((re) => re.test(text));
   check(`${f} names neither the sample file nor its ids`, !hit, hit && text.match(hit)?.[0]);
 }
+// Every file the MODEL reads as text: each specialist's prompt, instructions and skills, the root instructions.
+// #62 fixed the research prompt; this holds the rest, so a new prompt cannot bring the sample file back.
+const modelText = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true }).map(String).filter((f) => /\.(md|txt)$/.test(f)).map((f) => join(dir, f)) : []);
+const prompts = [...modelText(join(ROOT, "agent/subagents")), ...modelText(join(ROOT, "agent/instructions")), ...modelText(join(ROOT, "skills"))];
+const promptHits = prompts.flatMap((f) => { const t = readFileSync(f, "utf8"); const re = [/customers\.json/, /people\.json/, ...NAMES.slice(2)].find((r) => r.test(t)); return re ? [`${f.slice(ROOT.length + 1)}: ${t.match(re)[0]}`] : []; });
+check(`no prompt, instruction or skill the model reads names the sample file or its ids (${prompts.length} files)`, prompts.length > 0 && promptHits.length === 0, promptHits.join("; "));
+
+// The /preview/* fixtures 404 in production, but their chunks ship in every build: example names only, never a
+// real institution's or this company's (they showed SBI, ICICI HFC, CUB and MLP USA; review of #62).
+const REAL = /\b(SBI|ICICI|HDFC|CUB|MLP USA|Axis Bank|Kotak|Aavas|onfinance)\b/i;
+const previews = [...modelText(join(ROOT, "app/preview")), ...(existsSync(join(ROOT, "app/preview")) ? readdirSync(join(ROOT, "app/preview"), { recursive: true }).map(String).filter((f) => /\.tsx?$/.test(f)).map((f) => join(ROOT, "app/preview", f)) : []), join(ROOT, "tests/cards.spec.ts"), join(ROOT, "tests/stickloop.spec.ts")].filter(existsSync);
+const previewHits = previews.flatMap((f) => { const m = readFileSync(f, "utf8").match(REAL); return m ? [`${f.slice(ROOT.length + 1)}: ${m[0]}`] : []; });
+check(`the /preview pages and their specs use example names only (${previews.length} files)`, previewHits.length === 0, previewHits.join("; "));
+
 const ops = readFileSync(join(ROOT, "scripts/seed-ops.mjs"), "utf8");
 const opsHit = [/customers\.json/, /people\.json/, /#acme-/, /#northwind-/].find((re) => re.test(ops));
 check("scripts/seed-ops.mjs seeds no sample file name or sample channel onto a connector card", !opsHit, opsHit && ops.match(opsHit)?.[0]);

@@ -33,9 +33,9 @@ import {
 import { cn } from "@/lib/utils";
 import { PdfView } from "./pdf-view";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
-import { jsonForPeople, speakKey } from "@/lib/ui-keys";
+import { jsonForPeople } from "@/lib/ui-keys";
 import { W, an } from "@/lib/ui-words";
-import { listedOwnFields, sameKey, workbookHidden, type WorkbookTable, type WorkbookTableInfo } from "@/lib/workbook-fields";
+import { listedOwnFields, orderPhrase, sameKey, sheetColumnKey, workbookHidden, type WorkbookTable, type WorkbookTableInfo } from "@/lib/workbook-fields";
 import type { CustomFieldSpec } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
 
@@ -2389,12 +2389,12 @@ export function Dataroom({
                 <div className="min-h-0 flex-1 overflow-auto p-3">
                   {sheetCapped ? (
                     <p data-testid="dataroom-truncated" className="mb-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-muted-foreground text-xs">
-                      Showing the first {sheetCapped.rows.toLocaleString("en-US")} of these records, most recent first. The rest
+                      Showing the first {sheetCapped.rows.toLocaleString("en-US")} of these records, {orderPhrase(sheetCapped.order)}. The rest
                       are in the workspace but not shown here.
                     </p>
                   ) : null}
                   <Table
-                    head={[...openSheets[activeSheet].head.map(speakKey), ...(openSheets[activeSheet].own ?? [])]}
+                    head={[...openSheets[activeSheet].head.map((k) => sheetColumnKey(openSheets[activeSheet].name, k)), ...(openSheets[activeSheet].own ?? [])]}
                     rows={sheetUnavailable ? [] : openSheets[activeSheet].rows}
                     empty={emptySheet}
                   />

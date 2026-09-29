@@ -131,7 +131,7 @@ const declared = { deployments: REPORT, implementations: VISIT };
 const dep = (extra) => ({ deploymentId: "Q2FY26-results", ...extra });
 const existing = { id: "hdfc", name: "HDFC", deployments: [dep({ custom: { rating: "Hold", target_price: 900 } })], implementation: { rolloutId: "large-caps", custom: { inspection_date: "2026-01-05" } } };
 
-// A patch replaces deployments[] wholesale; `custom` still merges per record, keyed by deploymentId.
+// A patch names the deployments[] rows it changes; `custom` merges per record, keyed by deploymentId.
 let out = applyCustomFields({ id: "hdfc", deployments: [dep({ custom: { target_price: "1,100" } })] }, existing, declared);
 assert.deepEqual(out.deployments[0].custom, { rating: "Hold", target_price: 1100 });
 out = applyCustomFields({ id: "hdfc", deployments: [dep({ notes: "restated" })] }, existing, declared);
@@ -340,7 +340,8 @@ const walk = (dir) => readdirSync(dir).flatMap((n) => {
   if (n === "node_modules" || n.startsWith(".")) return [];
   return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx|mjs)$/.test(n) ? [p] : [];
 });
-const writers = ["app", "agent", "lib", "services"].flatMap((d) => walk(join(ROOT, d))).filter((f) => WRITES.test(readFileSync(f, "utf8"))).map((f) => f.slice(ROOT.length)).sort();
+// scripts/fde too: its backfills wrote both tables with raw INSERTs, no validator and no workspace (mold_v1-089).
+const writers = ["app", "agent", "lib", "services", "scripts/fde"].flatMap((d) => walk(join(ROOT, d))).filter((f) => WRITES.test(readFileSync(f, "utf8"))).map((f) => f.slice(ROOT.length)).sort();
 assert.deepEqual(writers, [
   "agent/lib/system-of-record.ts",
   "app/api/ops/deployments/[id]/route.ts",
@@ -351,5 +352,17 @@ assert.deepEqual(writers, [
 for (const f of writers) assert.match(readFileSync(join(ROOT, f), "utf8"), VALIDATED, `${f} writes the table, so it validates custom`);
 // …and every reader the API offers returns the values.
 for (const f of ["app/api/ops/deployments/route.ts", "app/api/ops/implementations/route.ts"]) assert.match(readFileSync(join(ROOT, f), "utf8"), /custom: asCustomValues\(/, `${f} returns custom`);
+
+// The backfills write through the system of record (schema + own-field validator + workspace), and say what they refuse.
+for (const f of ["scripts/fde/backfill-customizations.mjs", "scripts/fde/backfill-integrations.mjs", "scripts/fde/configure-infra.mjs"]) {
+  const text = readFileSync(join(ROOT, f), "utf8");
+  assert.match(text, /upsertCustomer\(\{ id: customerId, (deployments|implementation): /, `${f} writes through upsertCustomer`);
+  assert.match(text, /ownerWorkspaceOf\(customerId\)/, `${f} writes in the account's workspace`);
+}
+const { checkValues } = await import("./fde/lib/customer.mjs");
+const { deploymentSchema, implementationSchema } = await import("../agent/lib/customer-schema.ts");
+assert.match(checkValues(deploymentSchema, { environment: "production" }), /environment "production" is not accepted \(one of: prod, staging/);
+assert.match(checkValues(implementationSchema, { blockerOwner: "fde@example.com" }), /blockerOwner "fde@example.com" is not accepted \(one of: Provider, Customer/);
+assert.equal(checkValues(implementationSchema, { implementationStage: "Integration", implementationRiskLevel: "Yellow", blockerOwner: "None", connectorProvisioningStatus: "Connected" }), null, "what backfill-integrations writes is valid");
 
 console.log("custom-fields: all assertions passed");

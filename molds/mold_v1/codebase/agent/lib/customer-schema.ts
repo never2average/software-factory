@@ -577,8 +577,59 @@ export const customerStoreSchema = z.object({
   customers: z.array(customerSchema),
 });
 
+/**
+ * A nested row as a PATCH names it: the row's key, then only the fields to change. Every other field is optional,
+ * and an optional one may be null, which clears it. The system of record writes exactly the fields a row names, in
+ * SQL, onto what is stored at write time (agent/lib/system-of-record.ts), so a field nobody sent keeps whatever is
+ * there now: a value written by someone else between this record's read and its write is not put back.
+ *
+ * A row is deleted only by saying so (`remove: true`); leaving it out of the list keeps it. It used to be that a
+ * patch replaced `deployments[]` and `implementation` whole, so a row the caller did not resend was deleted, long
+ * notes and all, and a field it did not resend was blanked.
+ */
+function rowPatchSchema<T extends z.ZodRawShape>(schema: z.ZodObject<T>, key: string | null, what: string) {
+  const shape: Record<string, z.ZodType> = {};
+  for (const [name, field] of Object.entries(schema.shape) as [string, z.ZodType][]) {
+    if (name === key) shape[name] = field;
+    else if (name === "custom") shape[name] = field;
+    else if (field instanceof z.ZodOptional) shape[name] = (field.unwrap() as z.ZodType).nullable().optional();
+    else shape[name] = field.optional();
+  }
+  shape.remove = z
+    .literal(true)
+    .optional()
+    .describe(`true deletes this ${what}. Leaving it out of the patch never deletes it.`);
+  return z.object(shape);
+}
+
+/** A row patch's type: the key as the row has it, every other field optional, an optional one nullable. */
+type RowPatch<Row, Key extends keyof Row | never> = { [K in Key]: Row[K] } & {
+  [K in Exclude<keyof Row, Key>]?: undefined extends Row[K] ? (K extends "custom" ? Row[K] : Row[K] | null) : Row[K];
+} & { remove?: true };
+
+/** A `deployments[]` entry in a patch: `deploymentId`, then only what changes. */
+export const deploymentPatchSchema = rowPatchSchema(deploymentSchema, "deploymentId", "row") as unknown as z.ZodType<RowPatch<z.infer<typeof deploymentSchema>, "deploymentId">>;
+/** The `implementation` in a patch: only what changes. */
+export const implementationPatchSchema = rowPatchSchema(implementationSchema, null, "record") as unknown as z.ZodType<RowPatch<z.infer<typeof implementationSchema>, never>>;
+/** `platform`, `solutions[]`, `tickets[]`, `interactions[]` in a patch: the same rule as the two record areas (review
+ *  of #70: a model that learned "left out = kept" there must not silently delete tickets or interactions here). */
+export const platformPatchSchema = rowPatchSchema(platformSchema, null, "record") as unknown as z.ZodType<RowPatch<z.infer<typeof platformSchema>, never>>;
+export const solutionPatchSchema = rowPatchSchema(solutionSchema, "solutionId", "row") as unknown as z.ZodType<RowPatch<z.infer<typeof solutionSchema>, "solutionId">>;
+export const ticketPatchSchema = rowPatchSchema(ticketSchema, "ticketId", "row") as unknown as z.ZodType<RowPatch<z.infer<typeof ticketSchema>, "ticketId">>;
+export const interactionPatchSchema = rowPatchSchema(interactionSchema, "interactionId", "row") as unknown as z.ZodType<RowPatch<z.infer<typeof interactionSchema>, "interactionId">>;
+
+/** The one rule every nested list of a patch follows, said once per list in its own id. */
+const listRule = (id: string) => `Rows to add or change, each by its ${id}. Send only the fields that change: the ones you leave out keep their stored values, and null clears one. Rows you leave out are kept; to delete a row send its ${id} with remove: true. A new row needs every required field.`;
+const recordRule = (what: string) => `The ${what} record's fields to change. Send only the fields that change: the ones you leave out keep their stored values, and null clears one. To delete it send remove: true. A new one needs every required field.`;
+
 export const customerPatchSchema = customerSchema.partial().extend({
   id: z.string().min(1),
+  platform: platformPatchSchema.optional().describe(recordRule("platform")),
+  deployments: z.array(deploymentPatchSchema).optional().describe(listRule("deploymentId")),
+  solutions: z.array(solutionPatchSchema).optional().describe(listRule("solutionId")),
+  implementation: implementationPatchSchema.optional().describe(recordRule("implementation")),
+  tickets: z.array(ticketPatchSchema).optional().describe(listRule("ticketId")),
+  interactions: z.array(interactionPatchSchema).optional().describe(listRule("interactionId")),
   // Write-only: text ADDED to the end of the account's long-text own fields (account_fields.custom_fields), so a
   // long note is never resent whole. Resolved by applyCustomFieldsWithDelta (system-of-record.ts), appended in SQL
   // to what is stored at write time; never stored under this key. Offered to the model only when the profile
@@ -616,6 +667,8 @@ export const peopleStoreSchema = z.object({
 
 export type Customer = z.infer<typeof customerSchema>;
 export type CustomerPatch = z.infer<typeof customerPatchSchema>;
+export type DeploymentPatch = z.infer<typeof deploymentPatchSchema>;
+export type ImplementationPatch = z.infer<typeof implementationPatchSchema>;
 export type CustomerStore = z.infer<typeof customerStoreSchema>;
 export type Deployment = z.infer<typeof deploymentSchema>;
 export type Implementation = z.infer<typeof implementationSchema>;

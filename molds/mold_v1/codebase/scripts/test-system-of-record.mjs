@@ -96,6 +96,41 @@ assert.deepEqual(
 );
 assert.equal((await sor.getCustomer("acme-bank")).status, "At Risk");
 
+// --- upsert_customer: a patch names the rows and fields it changes ----------
+// deployments[] rows by deploymentId and the implementation's fields: a row or field left out keeps its stored
+// value, null clears a field, a row goes only with remove: true. (It used to replace both whole: a row not resent
+// was deleted, a field not resent blanked.) Postgres does the same in SQL: scripts/test-record-areas-db.mjs.
+
+const acme = await sor.getCustomer("acme-bank");
+const [dep0] = acme.deployments;
+assert.ok(dep0.region && acme.implementation?.implementationStage, "the fixture has a deployment row and an implementation");
+let patched = await sor.upsertCustomer({ id: "acme-bank", deployments: [{ deploymentId: dep0.deploymentId, notes: "restated" }] });
+assert.deepEqual(patched.deployments, [{ ...dep0, notes: "restated" }], "one field of one row changes; the rest of the row is kept");
+patched = await sor.upsertCustomer({ id: "acme-bank", deployments: [{ deploymentId: "DEP-NEW", environment: "uat", region: "eu-west-1", deployedVersion: "v2", releaseStatus: "in-progress", healthStatus: "unknown" }] });
+assert.deepEqual(patched.deployments.map((d) => d.deploymentId), [dep0.deploymentId, "DEP-NEW"], "a new row is added; the row left out is kept");
+patched = await sor.upsertCustomer({ id: "acme-bank", deployments: [{ deploymentId: dep0.deploymentId, notes: null }] });
+assert.equal(patched.deployments[0].notes, undefined, "null clears a field");
+await assert.rejects(sor.upsertCustomer({ id: "acme-bank", deployments: [{ deploymentId: "DEP-HALF", notes: "x" }] }), /Nothing was written\. deploymentId DEP-HALF is a new row, so it needs environment, region, deployedVersion, releaseStatus and healthStatus/);
+patched = await sor.upsertCustomer({ id: "acme-bank", deployments: [{ deploymentId: "DEP-NEW", remove: true }] });
+assert.deepEqual(patched.deployments.map((d) => d.deploymentId), [dep0.deploymentId], "remove: true deletes exactly that row");
+patched = await sor.upsertCustomer({ id: "acme-bank", implementation: { implementationProgressPct: 42 } });
+assert.deepEqual(patched.implementation, { ...acme.implementation, implementationProgressPct: 42 }, "one implementation field changes; the rest is kept");
+patched = await sor.upsertCustomer({ id: "acme-bank", implementation: { remove: true } });
+assert.equal(patched.implementation, undefined, "remove: true deletes the implementation");
+// The same rule for every other list (review of #70): naming one row keeps the others, and a delete is said on its own.
+const ints = (await sor.getCustomer("acme-bank")).interactions ?? [];
+const [t0] = acme.tickets;
+patched = await sor.upsertCustomer({ id: "acme-bank", tickets: [{ ticketId: t0.ticketId, ticketNextStep: "changed" }], interactions: [] });
+assert.deepEqual(patched.tickets, acme.tickets.map((t) => (t.ticketId === t0.ticketId ? { ...t, ticketNextStep: "changed" } : t)), "one ticket field changes; every other ticket is kept");
+assert.deepEqual(patched.interactions ?? [], ints, "an empty interactions list deletes nothing");
+await assert.rejects(sor.upsertCustomer({ id: "acme-bank", tickets: [{ ticketId: t0.ticketId, remove: true, summary: "x" }] }), /remove: true deletes the row, so it is sent with nothing else \(it also named summary\)/);
+await assert.rejects(sor.upsertCustomer({ id: "acme-bank", deployments: [{ deploymentId: "NOPE", remove: true }] }), /deploymentId NOPE: there is no such deployments row to remove/);
+// A row without its id is a sentence, not zod's JSON issue dump (review of #80).
+await assert.rejects(sor.upsertCustomer({ id: "acme-bank", deployments: [{ notes: "no id" }] }), (e) => e.message === "Nothing was written. deployments[0] has no deploymentId: every row names its deploymentId, a new one too.");
+await sor.upsertCustomer({ id: "acme-bank", tickets: [{ ticketId: t0.ticketId, ticketNextStep: t0.ticketNextStep }] });
+await sor.upsertCustomer({ id: "acme-bank", implementation: acme.implementation, deployments: [{ ...dep0 }] });
+assert.deepEqual(await sor.getCustomer("acme-bank"), { ...acme, status: "At Risk" }, "the record is back as it was");
+
 // --- upsert_customer: create a new record ----------------------------------
 
 const created = await sor.upsertCustomer({ id: "new-co", tier: "Pilot" });

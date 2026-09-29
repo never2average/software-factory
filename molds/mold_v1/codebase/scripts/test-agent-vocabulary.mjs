@@ -325,10 +325,25 @@ async function phaseStamped() {
     assert.equal(kept.deployments[0].deployedVersion, "Q2");
     assert.equal(kept.deployments[0].buildSha, "abc1234");
   });
+  await check("R11 nothing is copied back from a read: a hidden value the model never sent is never written (mold_v1-136)", () => {
+    // The system of record changes only the fields a patch names, so the old carry-over (restoreHiddenWith) only
+    // turned a stored hidden value into an explicit write of what was read, putting back a concurrent change.
+    const src = readFileSync(join(ROOT, "agent/lib/model-facing/tools/model-facing.ts"), "utf8");
+    assert.ok(!/restoreHiddenWith\(/.test(src), "model-facing.ts still re-sends stored hidden values");
+  });
   const hiddenOut = await upsert.upsert_company.execute({ id: "hidden-co", arr: 99 }, ctx);
   await check("R11 a hidden field the model sends anyway is not written, and the write's result does not show it", async () => {
     assert.equal((await sorForHidden.getCustomer("hidden-co")).arr, 5);
     assert.ok(!("arr" in (hiddenOut.company ?? {})), JSON.stringify(hiddenOut));
+  });
+  // The same one level down (review of #80): a hidden field of a nested row the model sends anyway is dropped, the
+  // row's other change lands, and the stored hidden value is untouched.
+  const nestedOut = await upsert.upsert_company.execute({ id: "hidden-co", coverageReports: [{ coverageReportId: "r1", deployedVersion: "Q3", buildSha: "fffffff" }] }, ctx);
+  await check("R11 a hidden NESTED field the model sends anyway is not written, and the result does not show it", async () => {
+    const row = (await sorForHidden.getCustomer("hidden-co")).deployments.find((d) => d.deploymentId === "r1");
+    assert.equal(row.buildSha, "abc1234", JSON.stringify(row));
+    assert.equal(row.deployedVersion, "Q3", "the row's other change landed");
+    assert.ok(!("buildSha" in (nestedOut.company?.coverageReports?.[0] ?? {})), JSON.stringify(nestedOut));
   });
 
   // R12: the account record's OWN fields (account_fields.custom_fields: `notes`, `house_view` in the fixture). Offered
