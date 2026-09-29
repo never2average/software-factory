@@ -134,6 +134,8 @@ def _cancel_deployment(ref, cwd):
     return f"Cancelled {dep_id} on Vercel, so it cannot go live later."
 
 WAITING_STATES = (None, "UNKNOWN", "QUEUED", "INITIALIZING")
+class _DeployStopped(SystemExit):
+    """The watcher's own verdict (already killed and cancelled), as distinct from a SIGTERM's SystemExit."""
 def vercel_deploy(cmd, cwd, label, env=None, timeout=None, stall=None, poll=None, quiet=False):
     """One `vercel deploy`, watched: the deployment it creates is polled on the API, a deployment that sits
     in a waiting state for `stall` seconds or runs past `timeout` is cancelled and the CLI killed, and an
@@ -148,7 +150,7 @@ def vercel_deploy(cmd, cwd, label, env=None, timeout=None, stall=None, poll=None
     def stop(why, cancel=True):
         _kill_tree(p)
         note = _cancel_deployment(dep_id or host, cwd) if cancel and (dep_id or host) else ""
-        return SystemExit(f"{label} failed after {_fmt_s(time.monotonic() - t0)}: {why}. {note}\n" + output().strip()[-1500:])
+        return _DeployStopped(f"{label} failed after {_fmt_s(time.monotonic() - t0)}: {why}. {note}\n" + output().strip()[-1500:])
     try:
         while True:
             try:
@@ -174,10 +176,10 @@ def vercel_deploy(cmd, cwd, label, env=None, timeout=None, stall=None, poll=None
                 raise stop(f"no result within {_fmt_s(timeout)} (deployment {host or 'not created'}, last state {state or 'UNKNOWN'})")
             if not quiet and now - last_note >= 60:
                 print(f"  {label}: {_fmt_s(now - t0)} elapsed, deployment {state or 'not reported yet'}", flush=True); last_note = now
-    except SystemExit:
+    except _DeployStopped:
         raise
     except BaseException:
-        # Ctrl-C / SIGTERM of provision.py mid-deploy: do not leave a --prod deployment running that could
+        # Ctrl-C / SIGTERM (a SystemExit from _on_signal) of provision.py mid-deploy: do not leave a --prod deployment running that could
         # go live after the app is recorded reverted.
         _kill_tree(p)
         if dep_id or host: print("  " + _cancel_deployment(dep_id or host, cwd), flush=True)
@@ -2079,6 +2081,11 @@ def self_test():
         check("a deploy that never creates a deployment is given up on", err and "(not created yet)" in err, err)
         out, err = deploy("unreadable", stall=0.5, poll=0.3, timeout=2)
         check("a state the API cannot report is bounded by the timeout, not called stuck", err and "no result within 2s" in err and "last state UNKNOWN" in err, err)
+        prev = signal.signal(signal.SIGALRM, _on_signal); signal.setitimer(signal.ITIMER_REAL, 1.0)
+        t0 = time.monotonic(); out, err = deploy("stuck", stall=60, poll=0.3, timeout=60)
+        signal.signal(signal.SIGALRM, prev)
+        check("a signal mid-deploy stops the watch at once", err and "SIGALRM" in err and time.monotonic() - t0 < 5, err)
+        check("  ...and cancels the deployment it started", "dpl_fake" in cancelled(), cancelled())
         out, err = deploy("building", stall=1, poll=0.3, timeout=2)
         check("BUILDING is bounded by the overall timeout, not the stall", err and "no result within 2s" in err and "BUILDING" in err, err)
         check("  ...and cancelled", "dpl_fake" in cancelled())
