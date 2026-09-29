@@ -3,7 +3,7 @@
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
   "mold_commit": "324649de221f104eb3cfe7c7e4cefdd5cdf8d3fc",
-  "status": "stamped",
+  "status": "reverted",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
   "model": {
@@ -219,5 +219,10 @@
   "customer_id": "internal",
   "packs": [
     "hfc-research"
-  ]
+  ],
+  "revert": {
+    "reason": "nothing could be read from the deployed app, so the process serving traffic is unproven: HTTP 302, and the body is not a health document ('Protected by Vercel Authentication\\nTo access this deployment')",
+    "lane": "functional",
+    "at": "2026-09-29T09:07:50+00:00"
+  }
 }

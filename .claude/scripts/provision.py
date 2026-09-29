@@ -688,6 +688,21 @@ def owner_email(app_id):
         elif isinstance(x, list): stack.extend(x)
     return None
 
+def stable_url(project, url):
+    """The project's public production address for a deployment URL.
+
+    `vercel deploy --prod` names the one-off deployment (https://<project>-<hash>-<team>.vercel.app), which
+    Vercel Deployment Protection keeps behind a login. Everything the factory records or wires between the
+    apps (NEXT_PUBLIC_EVE_API_URL, TASK_WORKFLOW_SERVICE_URL, WEB_ORIGIN, production_url, the health probes)
+    must use the public alias https://<project>.vercel.app instead: on 2026-09-29 the one-off addresses were
+    recorded and the web app's calls to the agent and workflow service got the login page (HTML), so its
+    health read 503 and chats could not reach the agent."""
+    # Vercel shortens the project name inside a deployment URL (onfinance-hfc-api -> onfinance-hfc-h0kj2jowi-…),
+    # so match any *.vercel.app address that is not the alias itself; a custom domain is left alone.
+    if isinstance(url, str) and re.match(r"^https://[a-z0-9-]+\.vercel\.app/?$", url.strip()) and url.strip().rstrip("/") != f"https://{project}.vercel.app":
+        return f"https://{project}.vercel.app"
+    return url
+
 def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
     pg, blob = ds.get("postgres", {}), ds.get("blob", {})
@@ -1333,7 +1348,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         record_rls(adir, ds, ev)
         # workflow service: its own Next.js app under services/task-workflow
         print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
-        wf_url = run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy")
+        wf_url = stable_url(f"{proj}-workflow", run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy"))
         SHIPPED.append(("workflow", wf_url))
         disconnect_git(f"{proj}-workflow", mold_dir)
         infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
@@ -1348,7 +1363,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
         run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build", kind="build")
-        api_url = run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy")
+        api_url = stable_url(f"{proj}-api", run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy"))
         SHIPPED.append(("api", api_url))
         disconnect_git(f"{proj}-api", mold_dir)
         infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
@@ -1371,7 +1386,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     print("deploying web app")
     # the eve prebuilt output and the build-time env `vercel build` wrote are the api's, not the web app's
     subprocess.run("rm -rf .vercel/output .vercel/static-build .vercel/.env.production.local", shell=True, cwd=mold_dir)
-    url = run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy")
+    url = stable_url(proj, run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy"))
     SHIPPED.append(("web", url))
     disconnect_git(proj, mold_dir)
     # An app with its own domain (domain.py attach/switch) keeps it as its front door: `vercel deploy` always
