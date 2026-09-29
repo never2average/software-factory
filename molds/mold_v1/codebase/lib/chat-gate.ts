@@ -197,7 +197,7 @@ export function sessionGateDecision(input: GateInput): GateDecision {
  *     agent/lib/session-guard.ts), or a delegated child / re-started continuation of one (both inherit the record);
  *   · a workflow, app or cron STEP a person started — workspace-visible, which only a service or the web app's signed
  *     step grant can make a session (lib/session-token-kinds.ts), or legacy journal/app evidence
- *     (lib/session-gate.ts readLegacyOwnership). The run-cancel fan-out reaches these as the service.
+ *     (lib/session-gate.ts readLegacyOwnershipIn). The run-cancel fan-out reaches these as the service.
  *
  * A person's ordinary chat is neither, so no service call reaches it, whatever workspace it names.
  */

@@ -2110,6 +2110,12 @@ export const orgInvites = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Where the invite came from: 'workspace' (the workspace's own settings — the only kind created now) or
+     * 'chat_share' (the pre-#85 thread-share flow). A 'chat_share' invite is never listed, claimed or accepted as a
+     * membership: a chat share makes an outside person a guest of ONE chat, never a member (migration 0026).
+     */
+    origin: text("origin").notNull().default("workspace"),
   },
   (t) => [
     index("org_invites_org_idx").on(t.orgId),

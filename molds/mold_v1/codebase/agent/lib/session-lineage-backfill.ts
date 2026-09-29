@@ -27,6 +27,7 @@
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { agentSessionOwners, chatSessions, chatTranscriptSnapshots } from "./db/schema.ts";
 import type { GateDb } from "../../lib/session-gate.ts";
+import type { SystemGateDb } from "./session-owner-backfill.ts";
 
 type Event = { type?: unknown; data?: { childSessionId?: unknown } | null } | null | undefined;
 
@@ -173,11 +174,15 @@ export interface LineageParent {
 /**
  * Every session the deploy-time backfill should replay, per workspace (each read inside that workspace's RLS scope):
  * roots with a PERSON owner on record, then chats the list mirrors whose owner is not recorded yet (the guard infers
- * and freezes those on the first read — lib/session-gate.ts readLegacyOwnership — and refuses them if the mirror is
- * ambiguous, so a replay can never crown the wrong owner). Service-run steps are not listed: their children are
- * named in workflow_run_journal, which the gate already reads.
+ * and freezes those on the first read — in the replaying token's workspace only, lib/session-gate.ts
+ * readLegacyOwnershipIn — and refuses them if the evidence is ambiguous or unanchored, so a replay can never crown the
+ * wrong owner; run scripts/backfill-session-owners.mjs FIRST so the unanchored ones have records). Service-run steps
+ * are not listed: their children are named in workflow_run_journal, which the gate already reads.
+ *
+ * SYSTEM PATH (a deploy-time script): with no `orgIds` it enumerates every workspace, which is why it takes a
+ * `SystemGateDb`. No request path may call it (npm run check:tenancy).
  */
-export async function listLineageParents(db: GateDb, orgIds?: readonly string[]): Promise<LineageParent[]> {
+export async function listLineageParents(db: SystemGateDb, orgIds?: readonly string[]): Promise<LineageParent[]> {
   const out: LineageParent[] = [];
   const seen = new Set<string>();
   for (const orgId of orgIds ?? (await db.listOrgs())) {

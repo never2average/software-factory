@@ -34,7 +34,7 @@ async function main() {
   // and the artifact (pipeline_config.json). Evals ({run_id}/…), migrations
   // ({migration_id}/…) and background_research ({person_id}/…) are created per
   // run/change, not pre-seeded empty. The authoring recipe lives in the skill.
-  const store = dataroom();
+  const store = dataroom(workspaceFor());
   const base = `Solutions/${version}/pipelines/${id}`;
   const existing = await store.list(base);
   const files = {

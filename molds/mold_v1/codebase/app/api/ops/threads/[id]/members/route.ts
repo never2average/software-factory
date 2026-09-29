@@ -5,10 +5,9 @@ import { z } from "zod";
 import { chatThreadMembers } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordActivity } from "@/lib/ops-activity";
-import { accessFor, callerEmail } from "@/lib/chat-threads";
+import { threadAccess, callerEmail } from "@/lib/chat-threads";
 import { notifyInvite } from "@/lib/platform-notify";
 import { displayTitle } from "@/lib/chat-attachments";
-import { ensureWorkspaceInvite } from "@/lib/org-invites";
 import { CONSUMER_DOMAINS } from "@/lib/ops-auth";
 
 export const runtime = "nodejs";
@@ -32,7 +31,10 @@ interface Ctx {
  * authenticate, and the invite would die without ever saying so.
  *
  * The dialog marks outside-the-company members as external and warns before
- * the first one, so a cross-company share is deliberate rather than a typo.
+ * the first one, so a cross-company share is deliberate rather than a typo. An
+ * outside member is a read-only GUEST of this one chat: they open it through
+ * its link (which names the chat's workspace) and see nothing else of the
+ * workspace, and the chat never appears inside their own.
  */
 function domainOf(email: string): string {
   return email.slice(email.lastIndexOf("@") + 1).toLowerCase();
@@ -62,7 +64,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   }
   const external = inviteeDomain !== domainOf(caller);
   try {
-    const access = await accessFor(db, id, caller);
+    const access = await threadAccess(request, db, id, caller);
     if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     if (access.role !== "owner") {
       return NextResponse.json({ error: "Only the owner can invite members." }, { status: 403 });
@@ -71,22 +73,12 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       return NextResponse.json({ error: "The owner is already on the thread." }, { status: 400 });
     }
     /**
-     * The invitee has to be able to GET IN, so a share brings a workspace invite with it (lib/org-invites.ts):
-     * nothing for someone already in the thread's workspace or already invited to it; otherwise an invite at
-     * the lowest role, with its own email and accept link. Without it the share "succeeded" and the person
-     * could neither sign in nor see the thread.
+     * An invitee from OUTSIDE the chat's workspace becomes a GUEST of this one chat — never a member of the
+     * workspace. They open it through the link below, which names the chat's workspace; the member row written here,
+     * in that workspace, is what admits them, read-only (lib/chat-threads.ts accessFor, lib/session-gate.ts
+     * guestSessionDecision). A share used to bring a WORKSPACE invite with it, and accepting that made the person a
+     * member of everything in the workspace — its data room, its companies, every other workspace-visible chat.
      */
-    // tenancy-ok: org_members / org_invites / orgs are the tenancy control plane (no RLS), read by workspace id.
-    const workspaceInvite = await ensureWorkspaceInvite(db, {
-      orgId: access.thread.orgId,
-      email: invitee,
-      role: "member",
-      inviter: caller,
-      origin: new URL(request.url).origin,
-    });
-    if (workspaceInvite.status === "rate-limited") {
-      return NextResponse.json({ error: workspaceInvite.reason }, { status: 429 });
-    }
     // Upsert: re-inviting a revoked member reactivates them.
     const [row] = await withOrgRls(access.thread.orgId, (tx) =>
       tx
@@ -127,11 +119,11 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       role: parsed.data.role,
       title: displayTitle(access.thread.title, "a chat"),
       threadUrl: access.thread.eveSessionId
-        ? `${new URL(request.url).origin}/?chatSession=${encodeURIComponent(access.thread.eveSessionId)}`
+        ? `${new URL(request.url).origin}/?chatSession=${encodeURIComponent(access.thread.eveSessionId)}&org=${encodeURIComponent(access.thread.orgId)}`
         : undefined,
     });
     return NextResponse.json(
-      { item: { email: row.email, role: row.role, status: row.status, external }, delivery, workspaceInvite },
+      { item: { email: row.email, role: row.role, status: row.status, external }, delivery },
       { status: 201 },
     );
   } catch (e) {
@@ -146,8 +138,9 @@ export async function GET(request: NextRequest, ctx: Ctx) {
   if (!caller) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   const { id } = await ctx.params;
   try {
-    const access = await accessFor(db, id, caller);
-    if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+    const access = await threadAccess(request, db, id, caller);
+    // A guest of the chat is shown the chat, not who else is in its workspace.
+    if (!access || access.guest) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     const rows = await withOrgRls(access.thread.orgId, (tx) =>
       tx.select().from(chatThreadMembers).where(eq(chatThreadMembers.threadId, id)),
     );

@@ -18,7 +18,7 @@
  * (front end) and DATAROOM_PATH_TEMPLATES (here) — so a snapshot can never be
  * reached or clobbered through the ordinary data-room API, only through these
  * modules. They are written at the SAME physical blob key the front end uses
- * (`dataroom/_versions/…`, org in the key rather than the prefix), because the
+ * (`dataroom/orgs/<org>/_versions/<org>/…`: the workspace's own tree), because the
  * review and revert UI is front-end-only and has to find them.
  *
  * APPENDS ARE NOT VERSIONED HERE. The agent's `.jsonl` appends are true appends
@@ -30,21 +30,16 @@ import { and, eq, sql as dsql } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { dataroomChangesets, dataroomFileVersions } from "./db/schema.ts";
 import { getDataroomStore, validateDataroomPath } from "./dataroom-store.ts";
-
-/** Where a snapshot of `path` taken at `at` lives. Not a data-room path. */
-function snapshotKey(orgId: string, path: string, at: number): string {
-  // The full path is kept (slashes and all) so a snapshot is legible in the
-  // blob console when someone is trying to work out what they lost.
-  return `_versions/${orgId}/${at}-${path}`;
-}
+import { snapshotKey } from "../../lib/dataroom-keyspace.ts";
 
 /**
- * The backend addressing the BASE key space (blob `dataroom/…`, local
- * `.dataroom/`) rather than a workspace sub-prefix — snapshot keys already carry
- * their org, and the front end reads them from there.
+ * Where a snapshot is written: the WORKSPACE'S OWN backend (`dataroom/orgs/<org>/…`), under the key the version row
+ * stores (`_versions/<org>/<at>-<path>`, lib/dataroom-keyspace.ts snapshotKey) — the same object the front end's
+ * review and revert UI reads (lib/dataroom-versions.ts). It used to be the store's ROOT, `getDataroomStore(null)`,
+ * beside every other workspace's snapshots and inside the tree the legacy workspace listed.
  */
-function snapshotBackend() {
-  return getDataroomStore(null).backend;
+function snapshotBackend(orgId: string) {
+  return getDataroomStore(orgId).backend;
 }
 
 /**
@@ -121,7 +116,7 @@ export async function recordFileVersion(input: {
     let prevBlobKey: string | null = null;
     if (previous !== null) {
       prevBlobKey = snapshotKey(input.orgId, input.path, Date.now());
-      await snapshotBackend().write(prevBlobKey, previous);
+      await snapshotBackend(input.orgId).write(prevBlobKey, previous);
     }
     await withOrgDb(input.orgId, async (tx) => {
       await tx.insert(dataroomFileVersions).values({

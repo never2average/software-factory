@@ -48,6 +48,7 @@ register(
 
 const { ingestSource, rawSyncRecordSchema } = await import("../agent/lib/syncs.ts");
 const { createLocalDataroomStore } = await import("../agent/lib/dataroom-store.ts");
+const { DEFAULT_ORG } = await import("../agent/lib/org-context.ts");
 
 const SELF = fileURLToPath(import.meta.url);
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -68,7 +69,9 @@ function assert(condition, message) {
 function makeStore() {
   const root = process.env.DATAROOM_TEST_DIR;
   assert(root, "phase processes need DATAROOM_TEST_DIR");
-  const store = createLocalDataroomStore(root);
+  // The default workspace's own tree (`orgs/<id>/`): with no database a sync lands there, and there is no
+  // root-level data room any more (lib/dataroom-keyspace.ts).
+  const store = createLocalDataroomStore(`${root}/orgs/${DEFAULT_ORG}`);
   assert(store.backend.kind === "local", "test must run against the local backend");
   return store;
 }

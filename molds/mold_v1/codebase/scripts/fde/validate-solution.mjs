@@ -7,7 +7,7 @@
 //
 //   npm run fde:validate-solution -- --version v2.4.0 --id pl-collections
 //   npm run fde:validate-solution -- --version v2.4.0 --id collections-agent --kind agent --strict
-import { dataroom } from "./lib/customer.mjs";
+import { dataroom, workspaceFor } from "./lib/customer.mjs";
 import { glyph, flag, hasFlag } from "./lib/fde.mjs";
 
 async function main() {
@@ -20,7 +20,7 @@ async function main() {
   }
   const sub = kind === "agent" ? "agents" : "pipelines";
   const base = `Solutions/${version}/${sub}/${id}`;
-  const store = dataroom();
+  const store = dataroom(workspaceFor());
   const present = await store.list(base);
   if (present.length === 0) {
     console.error(`${glyph.bad} No solution at ${base}. Configure it first (fde:configure-${kind === "agent" ? "agents" : "solution"}).`);

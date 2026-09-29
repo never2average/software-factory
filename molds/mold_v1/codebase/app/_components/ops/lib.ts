@@ -15,7 +15,7 @@ import {
   WorkflowIcon,
 } from "lucide-react";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
-import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
+import { STORAGE_KEYS, readActiveOrg, readStored, removeStored, writeActiveOrg, writeStored } from "@/lib/browser-storage";
 import { an, W } from "@/lib/ui-words";
 import { isStartupRead, sharedGet } from "@/lib/startup-fetch";
 
@@ -484,14 +484,48 @@ export function fmtTokens(r: ApiRun): string | null {
 /** Where the chosen workspace is remembered, for people who belong to several. */
 export const ACTIVE_ORG_KEY = STORAGE_KEYS.activeOrg;
 
+/** The workspace THIS TAB is in (its own choice first; lib/browser-storage.ts readActiveOrg). */
 export function activeOrg(): string | null {
-  return readStored(ACTIVE_ORG_KEY);
+  return readActiveOrg();
 }
 
 export function setActiveOrg(orgId: string | null): void {
   // private mode swallows both; the server just falls back to the default workspace
-  if (orgId) writeStored(ACTIVE_ORG_KEY, orgId);
-  else removeStored(ACTIVE_ORG_KEY);
+  writeActiveOrg(orgId);
+}
+
+/**
+ * Switch this tab to `orgId` — the workspace switcher's path, also taken by a link that names a workspace: this tab's
+ * choice, the default for new tabs, and the server's "last selected" (so a device that names no workspace follows).
+ * The server call is a preference, not a grant: it is refused for a workspace the person is not in.
+ */
+export async function switchWorkspace(orgId: string): Promise<void> {
+  // This TAB always follows (a guest's link names the chat's workspace, and the thread and session routes read it
+  // for that one chat); the default for new tabs and the server's choice change only for a workspace the person is
+  // actually in — the server refuses the rest (404), so a guest's own default workspace is never displaced.
+  writeStored(ACTIVE_ORG_KEY, orgId, "session");
+  const accepted = await opsFetch("/api/ops/me/workspaces/active", { method: "POST", body: JSON.stringify({ orgId }) }).then(
+    () => true,
+    () => false,
+  );
+  if (accepted) setActiveOrg(orgId);
+}
+
+/** A link's `org` parameter, when it is a plausible workspace id (one path segment, the keyspace's alphabet). */
+export function workspaceOfLink(href: string): string | null {
+  try {
+    const org = new URL(href, "http://link.invalid").searchParams.get("org");
+    return org && /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,199}$/.test(org) ? org : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `path` with this tab's workspace named on it (`&org=`), so the link opens in the same workspace anywhere. */
+export function linkInWorkspace(path: string): string {
+  const org = activeOrg();
+  if (!org) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}org=${encodeURIComponent(org)}`;
 }
 
 /**
@@ -503,7 +537,7 @@ export async function opsFetchRaw(path: string, init?: RequestInit): Promise<Res
   const token = authToken();
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string>) };
   if (token) headers.authorization = `Bearer ${token}`;
-  const org = activeOrg();
+  const org = readActiveOrg();
   if (org) headers["x-ops-org"] = org;
   return fetch(path, { ...init, headers });
 }
@@ -524,7 +558,7 @@ export async function opsFetch<T>(path: string, init?: RequestInit): Promise<T> 
    * the caller is actually a member of that workspace, so a hand-edited value
    * in localStorage buys nothing.
    */
-  const org = activeOrg();
+  const org = readActiveOrg();
   if (org) headers["x-ops-org"] = org;
   // A plain GET of a first-screen read is shared with every other caller asking for it now, and with the <head>
   // script's early request (lib/startup-fetch).

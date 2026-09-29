@@ -15,7 +15,7 @@
  *
  * The permission prompt appears only inside `enableNotifications`, which is called from a click: never on load.
  */
-import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
+import { STORAGE_KEYS, readActiveOrg, readStored, removeStored, writeStored } from "@/lib/browser-storage";
 import { notificationFor, type NotifyEvent } from "@/agent/lib/notification-text";
 
 export interface DesktopPrefs {
@@ -281,7 +281,8 @@ export async function notifyFromPage(ev: NotifyEvent, title: string | null): Pro
   const prefs = readPrefs();
   if (!prefs.on || Notification.permission !== "granted") return;
   if (lookingAt(ev.sessionId)) return;
-  const payload = notificationFor(ev, title, prefs.preview);
+  // This tab's own chat, in this tab's workspace: named in the URL like every other notification's.
+  const payload = notificationFor(ev, title, prefs.preview, readActiveOrg());
   try {
     const reg = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration("/") : undefined;
     if (reg?.active) {
@@ -292,7 +293,7 @@ export async function notifyFromPage(ev: NotifyEvent, title: string | null): Pro
     n.onclick = () => {
       window.focus();
       n.close();
-      openChatHandler?.(payload.sessionId);
+      openChatHandler?.(payload.sessionId, payload.url);
     };
   } catch {
     /* a notification is a courtesy; failing to show one changes nothing */
@@ -301,14 +302,14 @@ export async function notifyFromPage(ev: NotifyEvent, title: string | null): Pro
 
 /* ─────────────────────────── the service worker's questions ─────────────────────────── */
 
-let openChatHandler: ((sessionId: string) => void) | null = null;
+let openChatHandler: ((sessionId: string, url: string | null) => void) | null = null;
 let bridged = false;
 
 /**
  * Answer the service worker: which chat this tab shows (so a push about it is not shown), and "open this chat"
  * after a notification click (the shell switches to it; `onOpenChat`).
  */
-export function installNotificationBridge(onOpenChat: (sessionId: string) => void): () => void {
+export function installNotificationBridge(onOpenChat: (sessionId: string, url: string | null) => void): () => void {
   openChatHandler = onOpenChat;
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return () => {};
   const onMessage = (e: MessageEvent) => {
@@ -317,7 +318,9 @@ export function installNotificationBridge(onOpenChat: (sessionId: string) => voi
       const visible = document.visibilityState === "visible" && document.hasFocus();
       e.ports?.[0]?.postMessage({ sessionId: visible ? viewing : null });
     } else if (m?.type === "open-chat" && m.sessionId) {
-      openChatHandler?.(m.sessionId);
+      // The notification's URL too: it names the chat's workspace, which may not be this tab's.
+      const onOpenChat = openChatHandler;
+      if (onOpenChat) onOpenChat(m.sessionId, m.url ?? null);
     }
   };
   if (!bridged) {

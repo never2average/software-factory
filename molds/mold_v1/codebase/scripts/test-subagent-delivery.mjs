@@ -268,6 +268,10 @@ console.log("\n7. Every declared subagent records its runs, once per invocation"
       src.includes("ctx.session.id"),
       `${key} does not pass ctx.session.id — every invocation would share one run_key`,
     );
+    assert.ok(
+      /orgForSession\(ctx\)/.test(src) && (src.match(/workspaceOf\(ctx\)/g) ?? []).length >= 4,
+      `${key} does not name its session's workspace on every call — a workflow name is not unique across workspaces`,
+    );
     passed++;
   }
   console.log(`  ok   ${keys.length} subagents open a run row per invocation, keyed by session, under their own key`);
@@ -531,7 +535,7 @@ console.log("\n10. A run that nobody closes is closed by the clock — and a liv
     check(`the parent-stream recorder watches ${event}`, DELEGATION_EVENT_TYPES.has(event));
   }
   const guard = readFileSync("agent/lib/session-guard.ts", "utf8");
-  check("…and the session guard feeds it every stream it serves", /delegationRunRecorder\(sessionId\)/.test(guard));
+  check("…and the session guard feeds it every stream it serves, in the session's own workspace", /delegationRunRecorder\(sessionId, undefined, ownership\.orgId\)/.test(guard));
   const { createDelegationTracker } = await import("../agent/lib/delegation-failures.ts");
   {
     // THE SWALLOW ITSELF, as the parent recorded it: the child asked a

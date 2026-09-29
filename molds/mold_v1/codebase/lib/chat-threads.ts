@@ -1,9 +1,9 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
-import { acrossOrgsRls, getOpsDb, withOrgRls } from "./ops-db";
+import { getOpsDb, withOrgRls } from "./ops-db";
 import { verifyOpsAuth } from "./ops-auth";
-import { DEFAULT_ORG, resolveOrgForIdentity } from "./org-context";
+import { DEFAULT_ORG, ORG_HEADER, orgContextForRequest } from "./org-context";
 
 /**
  * Shared authorization helpers for the multiplayer chat routes. proxy.ts proves
@@ -23,29 +23,56 @@ export async function callerEmail(request: Request): Promise<string | null> {
 
 export type Access = {
   thread: ThreadRow;
-  /** 'owner' | 'participant' | 'viewer' — the caller's effective role. */
+  /** 'owner' | 'participant' | 'viewer' — the caller's effective role. A guest is always 'viewer'. */
   role: string;
   member: MemberRow | null;
+  /** An outside guest of this one chat (the request named the chat's workspace; the caller is not in it). */
+  guest?: boolean;
 };
 
-/** Load a thread row by id. Exposed so a caller that has other work to overlap
- *  (verifying the bearer token, say) can start this read first. */
 /**
- * Both reads below run INSIDE a workspace's scope. They used to run on the bare handle, which names no
- * workspace: that works while the org_isolation policy fails open and returns NOTHING once it fails closed
- * (the production setting) — so every share, presence and stream call answered "Thread not found" for a
- * thread that was there. A thread id does not say which workspace it lives in, and a member may belong to
- * another company's workspace than the thread (cross-company shares are allowed), so the lookup sweeps the
- * workspaces, each in its own scope; the id is an unguessable uuid and access is still decided by
- * accessFor/accessForThread below, exactly as before. `db` is kept in the signatures for the callers.
+ * WHICH WORKSPACE A THREAD REQUEST IS IN — and, for a guest's link, which one it NAMES.
+ *
+ * A chat lives in one workspace and is visible only in that workspace's context. `orgId` is the request's workspace
+ * (orgContextForRequest: the tab's `x-ops-org` or `?org=`, honoured for a member). `named` is the workspace the request
+ * names when the caller is NOT in it: a guest following the link of one chat shared with them. Every read below is in
+ * one of those two workspaces, by the thread's id — nothing lists or sweeps workspaces (it used to: `acrossOrgsRls`
+ * for every thread load).
  */
-export async function loadThread(_db: OpsDb, threadId: string): Promise<ThreadRow | undefined> {
-  const rows = await acrossOrgsRls((tx) => tx.select().from(chatThreads).where(eq(chatThreads.id, threadId)).limit(1));
+export interface ThreadScope {
+  readonly orgId: string;
+  readonly named: string | null;
+}
+
+const WORKSPACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,199}$/;
+
+export async function threadScope(request: Request): Promise<ThreadScope | null> {
+  const ctx = await orgContextForRequest(request);
+  if (!ctx) return null;
+  let asked: string | null = null;
+  try {
+    asked = new URL(request.url).searchParams.get("org");
+  } catch {
+    asked = null;
+  }
+  asked = (asked || request.headers.get(ORG_HEADER) || "").trim() || null;
+  return { orgId: ctx.orgId, named: asked && asked !== ctx.orgId && WORKSPACE_ID.test(asked) ? asked : null };
+}
+
+/** The rows of workspace `orgId` a thread read may see (the default workspace's pre-tenancy rows have no org). */
+const inWorkspace = (orgId: string) =>
+  orgId === DEFAULT_ORG ? or(eq(chatThreads.orgId, orgId), isNull(chatThreads.orgId)) : eq(chatThreads.orgId, orgId);
+
+/** Load a thread row by id, in workspace `orgId` only. */
+export async function loadThread(_db: OpsDb, threadId: string, orgId: string): Promise<ThreadRow | undefined> {
+  const rows = await withOrgRls(orgId, (tx) =>
+    tx.select().from(chatThreads).where(and(eq(chatThreads.id, threadId), inWorkspace(orgId))).limit(1),
+  );
   return rows[0];
 }
 
-async function loadMember(_db: OpsDb, threadId: string, email: string): Promise<MemberRow | undefined> {
-  const rows = await acrossOrgsRls((tx) =>
+async function loadMember(_db: OpsDb, threadId: string, email: string, orgId: string): Promise<MemberRow | undefined> {
+  const rows = await withOrgRls(orgId, (tx) =>
     tx
       .select()
       .from(chatThreadMembers)
@@ -56,47 +83,44 @@ async function loadMember(_db: OpsDb, threadId: string, email: string): Promise<
 }
 
 /**
- * Resolve the caller's access to a thread. The owner always has full access;
- * everyone else must have a non-revoked member row. Returns null when the
- * thread is missing or the caller has no access.
+ * Resolve the caller's access to a thread, IN THE REQUEST'S WORKSPACE: the owner always has full access; everyone
+ * else must have a non-revoked member row. Returns null when the thread is not in that workspace or the caller has no
+ * access. A thread of any other workspace is simply not found — including for a person who is a member of both while
+ * their current workspace is the other one (they switch workspace; they never peek across).
  *
- * The two reads are issued CONCURRENTLY. Waiting for the thread row before
- * asking for the member row costs a second serial database round trip on
- * exactly the callers that are already slowest — shared threads, which by
- * definition are never opened by their owner. One speculative query that an
- * owner throws away is cheaper than an extra round trip for everyone else.
+ * The GUEST path: when the thread is not in the request's workspace and the request NAMES another (its link), that
+ * one is read — by this thread's id — and a live member row there admits the caller as a read-only GUEST of this one
+ * chat (`role: "viewer"`, `guest: true`). A guest sees the chat and nothing else of that workspace. A member of the
+ * named workspace is never a guest (orgContextForRequest put them IN it, so `named` is null for them).
+ *
+ * The thread and member reads are issued CONCURRENTLY, as before: one speculative member read the owner throws away
+ * is cheaper than a second serial round trip for everyone else.
  */
 export async function accessFor(
   db: OpsDb,
   threadId: string,
   email: string,
+  scope: ThreadScope,
 ): Promise<Access | null> {
-  const [thread, member, org] = await Promise.all([
-    loadThread(db, threadId),
-    loadMember(db, threadId, email),
-    resolveOrgForIdentity(email),
+  const [thread, member] = await Promise.all([
+    loadThread(db, threadId, scope.orgId),
+    loadMember(db, threadId, email, scope.orgId),
   ]);
-  // ownership-guard-ok: `thread` comes from a sweep of every workspace (loadThread), so a real thread is never
-  // hidden here; an absent one is refused by resolveAccess.
-  if (thread && (thread.orgId ?? DEFAULT_ORG) !== org.orgId) return null;
-  return resolveAccess(db, thread, member, threadId, email);
+  if (thread) return resolveAccess(db, thread, member, threadId, email);
+  if (!scope.named) return null;
+  const [guestThread, guestMember] = await Promise.all([
+    loadThread(db, threadId, scope.named),
+    loadMember(db, threadId, email, scope.named),
+  ]);
+  if (!guestThread || guestThread.ownerEmail === email) return null;
+  const access = resolveAccess(db, guestThread, guestMember, threadId, email);
+  return access ? { ...access, role: "viewer", guest: true } : null;
 }
 
-/**
- * The same decision as {@link accessFor} for a caller that has already loaded
- * the thread row. Only reaches the database when the caller is not the owner.
- */
-export async function accessForThread(
-  db: OpsDb,
-  thread: ThreadRow | undefined,
-  email: string,
-): Promise<Access | null> {
-  if (!thread) return null;
-  const org = await resolveOrgForIdentity(email);
-  if ((thread.orgId ?? DEFAULT_ORG) !== org.orgId) return null;
-  if (thread.ownerEmail === email) return { thread, role: "owner", member: null };
-  const member = await loadMember(db, thread.id, email);
-  return resolveAccess(db, thread, member, thread.id, email);
+/** {@link accessFor} for a route: the request's own workspace (and a guest's named one), read from the request. */
+export async function threadAccess(request: Request, db: OpsDb, threadId: string, email: string): Promise<Access | null> {
+  const scope = await threadScope(request);
+  return scope ? accessFor(db, threadId, email, scope) : null;
 }
 
 function resolveAccess(
@@ -109,6 +133,9 @@ function resolveAccess(
   if (!thread) return null;
   if (thread.ownerEmail === email) return { thread, role: "owner", member: null };
   if (!member || member.status === "revoked") return null;
+  // UN-SHARED (archived) is un-shared for everyone but the owner, on every route — not only the stream. DELETE also
+  // revokes the member rows, but a row that escaped that (or a guest re-added since) must not keep the chat.
+  if (thread.archivedAt) return null;
 
   /**
    * Opening the thread IS accepting the invitation.
@@ -136,6 +163,25 @@ function resolveAccess(
     return { thread, role: member.role, member: { ...member, status: "accepted" } };
   }
   return { thread, role: member.role, member };
+}
+
+/**
+ * What a GUEST of the chat (an outside person reading it through its link) is shown: the conversation, and nothing
+ * about the chat's workspace — no owner address, no companies it is about, no member list, no turn holder, no local
+ * keys. The owner is named by a display label at most.
+ */
+export function guestThread(thread: ThreadRow) {
+  const full = publicThread(thread, "viewer", [], true);
+  return {
+    ...full,
+    clientKey: null,
+    ownerEmail: undefined,
+    ownerLabel: "the chat's owner",
+    customers: [],
+    forkedFrom: undefined,
+    turnHolder: null,
+    members: [],
+  };
 }
 
 /** Public projection of a thread — never leaks the continuation token. */

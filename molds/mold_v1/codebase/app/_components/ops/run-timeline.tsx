@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { RunStatusDot } from "./detail";
 import { CustomerMark } from "../customer-mark";
-import { authToken, type WorkflowRunEvent } from "./lib";
+import { authToken, linkInWorkspace, type WorkflowRunEvent } from "./lib";
 import { Chip } from "./primitives";
 import { SURFACE, TYPE } from "./tokens";
 
@@ -72,7 +72,7 @@ export function workflowRunCard(r: WorkflowRunRow): RunCardModel {
     runByLabel: `Run by ${runBy(r.createdBy)}`,
     status: dotStatus(r.status),
     whenIso: r.createdAt,
-    href: openable ? `/?chatWorkflowRun=${encodeURIComponent(r.runId)}` : null,
+    href: openable ? linkInWorkspace(`/?chatWorkflowRun=${encodeURIComponent(r.runId)}`) : null,
     note: openable ? null : "no session",
     dimmed: !openable,
     search: [r.workflowName, r.runId, runBy(r.createdBy), whenLabel(r.createdAt), r.status].join(" "),

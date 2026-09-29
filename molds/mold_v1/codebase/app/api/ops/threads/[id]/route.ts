@@ -5,7 +5,7 @@ import { z } from "zod";
 import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordActivity } from "@/lib/ops-activity";
-import { accessFor, callerEmail, publicThread } from "@/lib/chat-threads";
+import { threadAccess, callerEmail, guestThread, publicThread } from "@/lib/chat-threads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, ctx: Ctx) {
   if (!email) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   const { id } = await ctx.params;
   try {
-    const access = await accessFor(db, id, email);
+    const access = await threadAccess(request, db, id, email);
     if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     // Opening an invite accepts it.
     if (access.member?.status === "invited") {
@@ -39,14 +39,15 @@ export async function GET(request: NextRequest, ctx: Ctx) {
           .where(and(eq(chatThreadMembers.threadId, id), eq(chatThreadMembers.email, email))),
       );
     }
-    const members = await withOrgRls(access.thread.orgId, (tx) =>
+    // A guest sees the chat, never the chat's workspace's people.
+    const members = access.guest ? [] : await withOrgRls(access.thread.orgId, (tx) =>
       tx
         .select()
         .from(chatThreadMembers)
         .where(eq(chatThreadMembers.threadId, id))
         .orderBy(asc(chatThreadMembers.invitedAt)),
     );
-    return NextResponse.json({ item: publicThread(access.thread, access.role, members) });
+    return NextResponse.json({ item: access.guest ? guestThread(access.thread) : publicThread(access.thread, access.role, members) });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
@@ -72,7 +73,7 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
   try {
-    const access = await accessFor(db, id, email);
+    const access = await threadAccess(request, db, id, email);
     if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     // Metadata edits: owner or participant (viewers are read-only).
     if (access.role === "viewer") {
@@ -98,7 +99,7 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
   if (!email) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   const { id } = await ctx.params;
   try {
-    const access = await accessFor(db, id, email);
+    const access = await threadAccess(request, db, id, email);
     if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     if (access.role !== "owner") {
       return NextResponse.json({ error: "Only the owner can delete this thread." }, { status: 403 });

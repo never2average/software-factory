@@ -4,7 +4,7 @@ import { and, eq, gt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { chatPresence, chatThreads } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
-import { accessFor, callerEmail } from "@/lib/chat-threads";
+import { threadAccess, callerEmail } from "@/lib/chat-threads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,8 +60,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   const parsed = bodySchema.safeParse(await request.json().catch(() => ({})));
   const typing = parsed.success ? Boolean(parsed.data.typing) : false;
   try {
-    const access = await accessFor(db, id, email);
-    if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+    const access = await threadAccess(request, db, id, email);
+    if (!access || access.guest) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     await withOrgRls(access.thread.orgId, (tx) =>
       tx
         .insert(chatPresence)
@@ -90,8 +90,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   if (!email) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   const { id } = await ctx.params;
   try {
-    const access = await accessFor(db, id, email);
-    if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+    const access = await threadAccess(request, db, id, email);
+    if (!access || access.guest) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     const [thread] = await withOrgRls(access.thread.orgId, (tx) =>
       tx.select().from(chatThreads).where(eq(chatThreads.id, id)).limit(1),
     );

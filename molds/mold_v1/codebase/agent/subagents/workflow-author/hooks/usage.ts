@@ -25,19 +25,27 @@
  */
 import { defineHook } from "eve/hooks";
 import { finishWorkflowRun, openWorkflowRun, recordWorkflowStep } from "#lib/workflow-usage.js";
+import { orgForSession } from "#lib/org-context.js";
+
+/**
+ * The workspace this run belongs to — the session's own (a delegated child's is its root's). The run is filed there
+ * and only there: a workflow NAME is not unique across workspaces. Never throws (see below).
+ */
+const workspaceOf = (ctx: Parameters<typeof orgForSession>[0]): Promise<string | null> =>
+  orgForSession(ctx).catch(() => null);
 
 const WORKFLOW = "workflow-author";
 
 export default defineHook({
   events: {
     async "turn.started"(event, ctx) {
-      await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id);
+      await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id, await workspaceOf(ctx));
     },
     async "step.completed"(event, ctx) {
-      await recordWorkflowStep(WORKFLOW, event.data.turnId, event.data.usage, ctx.session.id);
+      await recordWorkflowStep(WORKFLOW, event.data.turnId, event.data.usage, ctx.session.id, await workspaceOf(ctx));
     },
     async "turn.completed"(event, ctx) {
-      await finishWorkflowRun(WORKFLOW, event.data.turnId, { status: "success" }, ctx.session.id);
+      await finishWorkflowRun(WORKFLOW, event.data.turnId, { status: "success" }, ctx.session.id, await workspaceOf(ctx));
     },
     async "turn.failed"(event, ctx) {
       await finishWorkflowRun(
@@ -45,6 +53,7 @@ export default defineHook({
         event.data.turnId,
         { status: "failed", error: event.data.message },
         ctx.session.id,
+        await workspaceOf(ctx),
       );
     },
   },

@@ -58,14 +58,25 @@ declare global {
 /**
  * The <head> script. Kept tiny and dependency-free, and wrapped whole in try/catch: anything that throws here would
  * blank the page. It decides "signed in" the way AuthGate's restore does (a stored token whose `exp` is more than a
- * minute away) and sends what `getAuthHeaders()` sends (the bearer and, when chosen, `x-ops-org`).
+ * minute away) and sends what `getAuthHeaders()` sends (the bearer and, when chosen, `x-ops-org` — this tab's
+ * workspace, or the one a `?org=` link names, which the tab adopts here before anything else is read).
  */
 export function startupScript(): string {
   const k = (key: string) => JSON.stringify(key);
   const token = `s.getItem(${k(STORAGE_KEYS.token)})||s.getItem(${k(LEGACY_STORAGE_KEYS[STORAGE_KEYS.token])})`;
-  const org = `s.getItem(${k(STORAGE_KEYS.activeOrg)})||s.getItem(${k(LEGACY_STORAGE_KEYS[STORAGE_KEYS.activeOrg])})`;
+  const orgKey = k(STORAGE_KEYS.activeOrg);
+  // THIS TAB's workspace first (sessionStorage), then the default for new tabs (lib/browser-storage.ts readActiveOrg).
+  const org = `(ss&&ss.getItem(${orgKey}))||s.getItem(${orgKey})||s.getItem(${k(LEGACY_STORAGE_KEYS[STORAGE_KEYS.activeOrg])})`;
+  // A link that names its workspace (`?org=`: a notification, a shared thread, "open as chat") is adopted by THIS TAB
+  // before the first reads go out, so the whole page loads in that workspace. Only a plausible id is taken; the
+  // server still honours it only for a member (a guest of one shared chat reads that chat, nothing else). The
+  // default for new tabs is not touched here: the page's switch (ops/lib switchWorkspace) sets it once the server
+  // accepts the person as a member.
+  const adopt =
+    `var ss=null;try{ss=sessionStorage}catch(e){}` +
+    `try{var q=new URLSearchParams(location.search).get('org');if(q&&ss&&/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,199}$/.test(q))ss.setItem(${orgKey},q)}catch(e){}`;
   return (
-    `try{var s=localStorage,t=${token};if(t){var c=JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));` +
+    `try{var s=localStorage;${adopt}var t=${token};if(t){var c=JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));` +
     `if(c.exp&&c.exp*1000>Date.now()+60000){document.documentElement.setAttribute('data-session','');` +
     `var o=${org}||null,h={Authorization:'Bearer '+t},r=window.__startupReads={};if(o)h['x-ops-org']=o;` +
     `if(location.pathname==='/')${JSON.stringify(STARTUP_READS)}.forEach(function(u){r[u]={token:t,org:o,at:Date.now(),answer:fetch(u,{headers:h}).then(function(x){return x.text().then(function(b){return{status:x.status,body:b}})})}})}}}catch(e){}`

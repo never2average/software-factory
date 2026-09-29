@@ -54,6 +54,7 @@ import {
   tickets as ticketsTable,
 } from "./db/schema.ts";
 import { getDataroomStore } from "./dataroom-store.ts";
+import { DEFAULT_ORG } from "./org-context.ts";
 import { LONG_TEXT_LIMIT, asCustomValues, customDelta, customFieldsOf, replacedKeys, validateAppend, validateCustom, type CustomDelta, type CustomValues } from "./custom-fields.ts";
 import { customMergeSql } from "./custom-merge-sql.ts";
 import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
@@ -1268,8 +1269,9 @@ async function appendInteractionArtifacts(
   if (interactions.length === 0) return;
   try {
     // The workspace's own data room (dataroom/orgs/<org>/Customers/<id>/…). The in-memory fallback, which holds one
-    // workspace and names none, writes the default one's, as it always has.
-    await getDataroomStore(getDb() ? scopeFor(customerId, orgId) : orgId).appendJsonl(
+    // workspace and names none, writes the default one's, as it always has — named explicitly: the store has no
+    // default workspace and refuses a missing one (lib/dataroom-keyspace.ts).
+    await getDataroomStore(getDb() ? scopeFor(customerId, orgId) : orgId || DEFAULT_ORG).appendJsonl(
       `Customers/${customerId}/interactions.jsonl`,
       interactions.length === 1 ? interactions[0] : [...interactions],
       interactionSchema,

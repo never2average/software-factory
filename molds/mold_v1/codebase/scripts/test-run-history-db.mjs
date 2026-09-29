@@ -61,6 +61,7 @@ const check = (label, condition) => {
 };
 
 const ORG = `runhist-test-${process.pid}`;
+const ORG2 = `runhist-test2-${process.pid}`;
 /** The subagent id. Deliberately not one of the real ones, so nothing collides. */
 const SPECIALIST = `run-history-probe-${process.pid}`;
 
@@ -118,9 +119,9 @@ try {
     // defect, executed rather than described: zero events, zero rows.
     for (const wrapped of events.filter((e) => e.type === "subagent.event")) {
       const e = wrapped.data.event;
-      if (e.type === "turn.started") await openWorkflowRun(SPECIALIST, e.data.turnId, childSession);
+      if (e.type === "turn.started") await openWorkflowRun(SPECIALIST, e.data.turnId, childSession, ORG);
       if (e.type === "turn.failed") {
-        await finishWorkflowRun(SPECIALIST, e.data.turnId, { status: "failed" }, childSession);
+        await finishWorkflowRun(SPECIALIST, e.data.turnId, { status: "failed" }, childSession, ORG);
       }
     }
     check("the child's own recorder leaves nothing behind — this is the gap", (await rowFor(key)) === null);
@@ -128,7 +129,7 @@ try {
     // What the PARENT knows: eve handed it a subagent-result flagged isError.
     const result = events.find((e) => e.type === "action.result").data.result;
     assert.equal(result.isError, true, "the recorded stream is not a failed delegation");
-    await recordFailedDelegation(SPECIALIST, childSession, result.output.message);
+    await recordFailedDelegation(SPECIALIST, childSession, result.output.message, undefined, ORG);
     const row = await rowFor(key);
     check("the invocation is in the history at all", row !== null);
     check("filed against the specialist's workflow row", row.automationId === workflowId);
@@ -152,11 +153,11 @@ try {
     // that would produce two rows if the key were not shared.
     const childSession = "wrun_child_started_and_finished";
     const key = delegatedRunKey(workflowId, childSession);
-    await openWorkflowRun(SPECIALIST, "turn_0", childSession);
-    await recordWorkflowStep(SPECIALIST, "turn_0", { inputTokens: 11, outputTokens: 7 }, childSession);
-    await finishWorkflowRun(SPECIALIST, "turn_0", { status: "success" }, childSession);
+    await openWorkflowRun(SPECIALIST, "turn_0", childSession, ORG);
+    await recordWorkflowStep(SPECIALIST, "turn_0", { inputTokens: 11, outputTokens: 7 }, childSession, ORG);
+    await finishWorkflowRun(SPECIALIST, "turn_0", { status: "success" }, childSession, ORG);
     const before = (await rows()).length;
-    await recordFailedDelegation(SPECIALIST, childSession, "a late, wrong opinion about this run");
+    await recordFailedDelegation(SPECIALIST, childSession, "a late, wrong opinion about this run", undefined, ORG);
     const after = await rows();
     check("no second row appears", after.length === before);
     const row = await rowFor(key);
@@ -173,9 +174,9 @@ try {
     // starts anyway. Still one row.
     const childSession = "wrun_parent_first";
     const key = delegatedRunKey(workflowId, childSession);
-    await recordFailedDelegation(SPECIALIST, childSession, "died before starting");
+    await recordFailedDelegation(SPECIALIST, childSession, "died before starting", undefined, ORG);
     const before = (await rows()).length;
-    await openWorkflowRun(SPECIALIST, "turn_0", childSession);
+    await openWorkflowRun(SPECIALIST, "turn_0", childSession, ORG);
     check("the child's open is a no-op", (await rows()).length === before);
     const row = await rowFor(key);
     check("and does not re-open a closed run", row.status === "failed");
@@ -187,19 +188,19 @@ try {
     // close it. Measured live: icici-hfc holds one exactly like it.
     const dead = "wrun_died_mid_turn";
     const deadKey = delegatedRunKey(workflowId, dead);
-    await openWorkflowRun(SPECIALIST, "turn_0", dead);
+    await openWorkflowRun(SPECIALIST, "turn_0", dead, ORG);
     await backdate(deadKey, ABANDONED_RUN_MS + 60_000);
 
     // A run that started a minute ago is doing its job.
     const live = "wrun_still_working";
     const liveKey = delegatedRunKey(workflowId, live);
-    await openWorkflowRun(SPECIALIST, "turn_0", live);
+    await openWorkflowRun(SPECIALIST, "turn_0", live, ORG);
 
     // A run that ENDED long ago must not be touched a second time.
     const done = "wrun_finished_long_ago";
     const doneKey = delegatedRunKey(workflowId, done);
-    await openWorkflowRun(SPECIALIST, "turn_0", done);
-    await finishWorkflowRun(SPECIALIST, "turn_0", { status: "success" }, done);
+    await openWorkflowRun(SPECIALIST, "turn_0", done, ORG);
+    await finishWorkflowRun(SPECIALIST, "turn_0", { status: "success" }, done, ORG);
     await backdate(doneKey, ABANDONED_RUN_MS + 60_000);
 
     const { closed } = await closeAbandonedWorkflowRuns();
@@ -222,8 +223,8 @@ try {
     // common shape, not the exotic one.
     const parked = "wrun_waiting_on_a_person";
     const parkedKey = delegatedRunKey(workflowId, parked);
-    await openWorkflowRun(SPECIALIST, "turn_0", parked);
-    await markDelegationParked(SPECIALIST, parked);
+    await openWorkflowRun(SPECIALIST, "turn_0", parked, ORG);
+    await markDelegationParked(SPECIALIST, parked, ORG);
     await backdate(parkedKey, ABANDONED_RUN_MS * 10);
 
     check(
@@ -236,7 +237,7 @@ try {
     // Answered: it is no longer waiting on anyone, so it becomes sweepable
     // again. Without this the mark would exempt the row for ever and the leak
     // would simply move.
-    await clearDelegationPark(SPECIALIST, parked);
+    await clearDelegationPark(SPECIALIST, parked, ORG);
     check("the mark is cleared when the delegation comes back", (await rowFor(parkedKey)).summary === null);
     const again = await closeAbandonedWorkflowRuns();
     check("and the clock applies again", again.closed === 1 && (await rowFor(parkedKey)).status === "failed");
@@ -328,7 +329,7 @@ try {
           c.close();
         },
       });
-      const served = lineage.noticeDelegations(upstream, async () => {}, { eventTypes: DELEGATION_EVENT_TYPES, handle: delegationRunRecorder(parent) });
+      const served = lineage.noticeDelegations(upstream, async () => {}, { eventTypes: DELEGATION_EVENT_TYPES, handle: delegationRunRecorder(parent, undefined, ORG) });
       return new Response(served).text();
     };
 
@@ -355,15 +356,40 @@ try {
       if (e.data?.childSessionId) e.data.childSessionId = parkedChild;
       return e;
     });
-    await openWorkflowRun(SPECIALIST, "turn_0", parkedChild);
+    await openWorkflowRun(SPECIALIST, "turn_0", parkedChild, ORG);
     await serve(`parent-park-${process.pid}`, parks);
     const parkedRow = await rowFor(delegatedRunKey(workflowId, parkedChild));
     check("a child parked on a question is marked as waiting, so the sweeper spares it", parkedRow?.summary === AWAITING_ANSWER_SUMMARY);
   }
 
+  console.log("\n7. A run is filed in its OWN workspace, never in another's row of the same name");
+  {
+    // Two workspaces both have a specialist of this name. The lookup used to sweep every workspace for the NAME and
+    // take the first match, so one workspace's runs landed in the other's history. Now the run's workspace is named.
+    await db.insert(orgs).values({ orgId: ORG2, name: "Run history probe 2", status: "active" });
+    const [wf2] = await withOrgDb(ORG2, (tx) =>
+      tx.insert(workflows).values({ orgId: ORG2, name: SPECIALIST, description: "Same name, other workspace.", createdBy: "test-run-history-db" }).returning({ id: workflows.id }),
+    );
+    const other = `wrun_other_ws_${process.pid}`;
+    await openWorkflowRun(SPECIALIST, "turn_0", other, ORG2);
+    const inOther = await withOrgDb(ORG2, (tx) => tx.select().from(automationRuns).where(eq(automationRuns.orgId, ORG2)));
+    check("a run in workspace 2 is filed under workspace 2's row", inOther.length === 1 && inOther[0].automationId === wf2.id, inOther.map((r) => r.automationId));
+    check("…and nothing of it lands in workspace 1", !(await rows()).some((r) => r.runKey?.includes(other)));
+    const nowhere = `wrun_no_ws_${process.pid}`;
+    await openWorkflowRun(SPECIALIST, "turn_0", nowhere);
+    const anywhere = [
+      ...(await rows()),
+      ...(await withOrgDb(ORG2, (tx) => tx.select().from(automationRuns).where(eq(automationRuns.orgId, ORG2)))),
+    ];
+    check("a run with no workspace named is recorded nowhere (not in whichever workspace has the name)", !anywhere.some((r) => r.runKey?.includes(nowhere)));
+  }
+
   console.log(`\ntest-run-history-db: ${passed} assertions passed`);
 } finally {
   try {
+    await withOrgDb(ORG2, (tx) => tx.delete(automationRuns).where(eq(automationRuns.orgId, ORG2))).catch(() => {});
+    await withOrgDb(ORG2, (tx) => tx.delete(workflows).where(eq(workflows.orgId, ORG2))).catch(() => {});
+    await db.delete(orgs).where(eq(orgs.orgId, ORG2)).catch(() => {});
     await withOrgDb(ORG, (tx) => tx.delete(automationRuns).where(eq(automationRuns.orgId, ORG)));
     await withOrgDb(ORG, (tx) => tx.delete(workflows).where(eq(workflows.orgId, ORG)));
     await db.delete(orgs).where(eq(orgs.orgId, ORG));

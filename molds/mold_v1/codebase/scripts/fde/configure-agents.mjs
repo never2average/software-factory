@@ -28,7 +28,7 @@ async function main() {
 
   console.log(`Configure agent solution: ${id} @ ${version}\n`);
 
-  const store = dataroom();
+  const store = dataroom(workspaceFor());
   const base = `Solutions/${version}/agents/${id}`;
   const existing = await store.list(base);
   const files = {

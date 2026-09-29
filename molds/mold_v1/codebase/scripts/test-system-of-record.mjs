@@ -159,9 +159,10 @@ await assert.rejects(
   /Unknown customer: no-such-customer/,
 );
 
-// Document-view mirror: Customers/{id}/interactions.jsonl in the data room.
+// Document-view mirror: Customers/{id}/interactions.jsonl in the data room — the default workspace's own tree (no
+// database here, so that is the workspace the account resolves to), never the store's root.
 const mirrored = readFileSync(
-  path.join(process.env.DATAROOM_DIR, "Customers", "acme-bank", "interactions.jsonl"),
+  path.join(process.env.DATAROOM_DIR, "orgs", "org-onfinance", "Customers", "acme-bank", "interactions.jsonl"),
   "utf8",
 );
 assert.deepEqual(JSON.parse(mirrored.trim().split("\n").at(-1)), interaction);

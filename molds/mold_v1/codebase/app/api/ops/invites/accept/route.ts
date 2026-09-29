@@ -48,6 +48,11 @@ export async function POST(request: NextRequest) {
     if (invite.expiresAt.getTime() < Date.now()) {
       return NextResponse.json({ error: "This invite has expired." }, { status: 410 });
     }
+    // An invite a chat share sent (before #85) is not a workspace membership: its guest reads that one chat through
+    // the chat's link. Refused as if it did not exist, so its token opens nothing else of the workspace.
+    if (invite.origin === "chat_share") {
+      return NextResponse.json({ error: "This invite is invalid or already used." }, { status: 404 });
+    }
     if (invite.email.toLowerCase() !== email) {
       return NextResponse.json({ error: "This invite was issued to a different address." }, { status: 403 });
     }

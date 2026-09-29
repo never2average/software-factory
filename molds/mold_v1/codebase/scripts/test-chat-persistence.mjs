@@ -104,7 +104,12 @@ const agentGuard = readFileSync("agent/lib/session-guard.ts", "utf8");
 const agentChannel = readFileSync("agent/channels/eve.ts", "utf8");
 check(
   "per-session paths are gated, not blindly proxied",
-  /permitted\(sessionId, identity\.email, segments\.slice\(1\), request\.method\)/.test(gate),
+  /permitted\(sessionId, identity\.email, ctx\.orgId, segments\.slice\(1\), request\.method(, named)?\)/.test(gate),
+);
+check(
+  // Workspaces are not aware of each other: the proxy's gate reads the ONE workspace the request is in.
+  "…in the workspace the request is in, and no other",
+  /resolveOrgForIdentity\(/.test(gate) && /gateForSession\(email, sessionId, rightFor\(method, rest\), workspace(, named)?\)/.test(gate),
 );
 check(
   // The agent API is its own public deployment: a gate only in the web proxy is one a caller can skip.

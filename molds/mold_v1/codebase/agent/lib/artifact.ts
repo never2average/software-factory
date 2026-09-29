@@ -9,6 +9,7 @@
  * project). The store is private, so the blob is never world-readable.
  */
 import { issueSignedToken, presignUrl, put } from "@vercel/blob";
+import { requireWorkspace } from "../../lib/dataroom-keyspace.ts";
 
 const TYPE_BY_EXT: Record<string, string> = {
   html: "text/html; charset=utf-8",
@@ -29,16 +30,28 @@ const TYPE_BY_EXT: Record<string, string> = {
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
+/** Where a workspace's artifact is filed: `artifacts/orgs/<org_id>/<filename>` (the store adds a random suffix). */
+export function artifactKey(orgId: string, filename: string): string {
+  return `artifacts/orgs/${requireWorkspace(orgId)}/${filename}`;
+}
+
 /** How long a published artifact link stays valid. */
 const LINK_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export interface PublishArtifactInput {
+  /**
+   * The workspace publishing it. Required: an artifact is filed under `artifacts/orgs/<org_id>/`, and the console's
+   * link route (app/api/ops/artifact-link) signs one only for a caller in that workspace. `artifacts/` used to be one
+   * flat namespace shared by every workspace, where possession of a pathname was the only thing scoping a read.
+   */
+  orgId: string;
   filename: string;
   content: string | Buffer;
   contentType?: string;
 }
 
 export async function publishArtifact({
+  orgId,
   filename,
   content,
   contentType,
@@ -53,7 +66,7 @@ export async function publishArtifact({
   const type = contentType ?? TYPE_BY_EXT[ext] ?? "application/octet-stream";
 
   // Store privately — the blob is not world-readable.
-  const blob = await put(`artifacts/${filename}`, content, {
+  const blob = await put(artifactKey(orgId, filename), content, {
     access: "private",
     contentType: type,
     token,

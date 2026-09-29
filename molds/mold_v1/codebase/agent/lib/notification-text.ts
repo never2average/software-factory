@@ -69,13 +69,22 @@ export function genericTitle(kind: NotifyKind, product: string = PRODUCT_NAME): 
 }
 
 /** The notification a person gets for an event. `preview` false: a generic title in the product's name, no body. */
-export function notificationFor(ev: NotifyEvent, title: string | null, preview: boolean): NotificationPayload {
+export function notificationFor(
+  ev: NotifyEvent,
+  title: string | null,
+  preview: boolean,
+  /**
+   * The chat's workspace. Named in the URL, so a click opens the chat in ITS workspace (the page adopts `?org=`)
+   * even from a tab, or for a person, currently in another one — where the session is not found.
+   */
+  orgId?: string | null,
+): NotificationPayload {
   const base = {
     v: 1 as const,
     kind: ev.kind,
     title: preview ? displayTitle(title, "Your chat") : genericTitle(ev.kind),
     tag: notificationTag(ev),
-    url: `/?chatSession=${encodeURIComponent(ev.sessionId)}`,
+    url: `/?chatSession=${encodeURIComponent(ev.sessionId)}${orgId ? `&org=${encodeURIComponent(orgId)}` : ""}`,
     sessionId: ev.sessionId,
   };
   if (!preview) return base;

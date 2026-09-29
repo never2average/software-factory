@@ -398,7 +398,7 @@ async function phaseStamped() {
     assert.ok(!("custom" in (await sorNotes.getCustomer("notes-co"))));
   });
 
-  const store = (await imp("agent/lib/dataroom-store.ts")).getDataroomStore();
+  const store = (await imp("agent/lib/dataroom-store.ts")).getDataroomStore((await imp("agent/lib/org-context.ts")).DEFAULT_ORG);
   await store.write("Deployments/stamp-co/v1/platform/organization.json", "{}\n");
   const read = await dataroom.dataroomReadTool.execute({ path: "Coverage-reports/stamp-co/v1/platform/organization.json" }, ctx);
   await check("a display path reads the stored folder, and comes back displayed", () => assert.deepEqual(read, { path: "Coverage-reports/stamp-co/v1/platform/organization.json", content: "{}\n" }));

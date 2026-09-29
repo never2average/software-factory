@@ -30,8 +30,11 @@ import {
 } from "#lib/customer-schema.ts";
 import {
   createLocalDataroomStore,
+  defaultLocalDataroomRoot,
   type DataroomStore,
 } from "#lib/dataroom-store.ts";
+import { DEFAULT_ORG } from "#lib/org-context.ts";
+import { workspaceDir } from "../lib/dataroom-keyspace.ts";
 import {
   ticketCategorySchema,
   type TicketCategory,
@@ -409,7 +412,10 @@ function totalTickets(): number {
 }
 
 async function main(): Promise<void> {
-  const store = createLocalDataroomStore();
+  // The local workspace's own tree (`.dataroom/orgs/<id>/`), which is where the local agent and web app read it:
+  // there is no root-level data room any more (lib/dataroom-keyspace.ts). SEED_ORG picks another workspace.
+  const org = process.env.SEED_ORG?.trim() || DEFAULT_ORG;
+  const store = createLocalDataroomStore([defaultLocalDataroomRoot(), ...workspaceDir(org).split("/")].join("/"));
   if (store.backend.kind !== "local") {
     throw new Error("seed:dataroom must run against the local backend");
   }

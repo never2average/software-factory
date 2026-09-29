@@ -105,7 +105,7 @@ export const publishArtifactTool = modelFacing("publish_artifact", defineTool({
     } else {
       throw new Error("publish_artifact requires either `content` (text) or `path` (a sandbox file).");
     }
-    const { url, pathname, expiresAt } = await publishArtifact({ filename, content: data, contentType });
+    const { url, pathname, expiresAt } = await publishArtifact({ orgId: await orgForSession(ctx), filename, content: data, contentType });
     // `pathname` is the artifact's STABLE identity; `url` is only a credential
     // that expires. The console re-signs from the pathname when someone opens
     // the artifact later, so a stale link stops being a dead end.
@@ -628,8 +628,8 @@ export const emailListInboxTool = modelFacing("email_list_inbox", defineTool({
       .describe("Only messages newer than this many days."),
     max: z.number().int().min(1).max(50).optional(),
   }),
-  async execute({ max, ...filters }) {
-    return { emails: await listInbox({ ...filters, max: max ?? 10 }) };
+  async execute({ max, ...filters }, ctx) {
+    return { emails: await listInbox({ ...filters, max: max ?? 10 }, await orgForSession(ctx)) };
   },
 }), { opaqueOutput: "*" });
 
@@ -647,8 +647,8 @@ export const emailCreateDraftTool = modelFacing("email_create_draft", defineTool
       .optional()
       .describe("RFC822 Message-ID of the message being replied to (from email_list_inbox)."),
   }),
-  async execute(input) {
-    const draft = await createDraft(input);
+  async execute(input, ctx) {
+    const draft = await createDraft(input, await orgForSession(ctx));
     return { created: true as const, mailbox: draft.mailbox, uid: draft.uid };
   },
 }));

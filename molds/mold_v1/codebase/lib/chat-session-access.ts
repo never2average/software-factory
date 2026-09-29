@@ -1,17 +1,16 @@
 import "server-only";
-import { getOpsDb, listWorkspaceIds, withOrgRls } from "./ops-db";
+import { getOpsDb, withOrgRls } from "./ops-db";
 import type { GateDecision, SessionOwnership, SessionRight } from "./chat-gate";
 import { gateSessionRequest, readTranscriptAccess, type GateDb } from "./session-gate";
-import { DEFAULT_ORG, workspacesOf } from "./org-context";
+import { workspacesOf } from "./org-context";
 
-/** How the WEB reaches the database for the shared gate reads: `withOrgRls` per workspace, the control-plane lists. */
+/**
+ * How the WEB reaches the database for the shared gate reads: `withOrgRls` in the request's workspace, and the
+ * caller's own memberships. There is no workspace list here — a request reads the one workspace it is in.
+ */
 function webGateDb(): GateDb {
   return {
     inOrg: (orgId, fn) => withOrgRls(orgId, fn),
-    async listOrgs() {
-      const ids = await listWorkspaceIds();
-      return ids.length ? ids : [DEFAULT_ORG];
-    },
     orgsOf: (address) => workspacesOf(address),
   };
 }
@@ -46,7 +45,9 @@ export async function accessForSession(
  *
  * One implementation with the agent: the reads are lib/session-gate.ts and the rule is `sessionGateDecision`
  * (lib/chat-gate.ts), and the agent (agent/lib/session-guard.ts) runs the same two in front of the same routes. This
- * function only says how the WEB reaches the database — `withOrgRls` per workspace, and the control-plane lists.
+ * function only says how the WEB reaches the database — `withOrgRls` in the request's workspace (`workspace`, the
+ * caller's resolved workspace: orgContextForRequest), and the caller's own memberships. A session recorded in any
+ * other workspace is not found, and refused like one nobody recorded.
  *
  * Nothing here swallows a database error: the proxy answers 503 on one. It used to fail OPEN, and it used to allow a
  * session nobody had a record of; neither is true any more, because the agent now records every session's owner
@@ -58,9 +59,12 @@ export async function gateForSession(
   email: string,
   sessionId: string,
   right: SessionRight,
+  workspace: string,
+  /** The workspace the request names when it is not `workspace` (a guest's link): read for a guest only. */
+  named: string | null = null,
 ): Promise<GateDecision & { ownership: SessionOwnership | null }> {
   const me = email.trim().toLowerCase();
   if (!me) return { allow: false, reason: "no-caller", ownership: null };
   if (!getOpsDb()) throw new Error("Database not configured");
-  return gateSessionRequest(webGateDb(), { kind: "person", email: me }, sessionId, right);
+  return gateSessionRequest(webGateDb(), { kind: "person", email: me }, sessionId, right, { workspace, named });
 }

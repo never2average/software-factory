@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
-import { and, asc, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, ne } from "drizzle-orm";
 import { orgInvites, orgMembers, orgs } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { tenancyEnabled } from "@/lib/org-context";
@@ -68,6 +68,8 @@ export async function GET(request: NextRequest) {
           and(
             eq(orgInvites.email, email),
             isNull(orgInvites.acceptedAt),
+            // A chat share's invite is not an offer of membership (see migration 0026).
+            ne(orgInvites.origin, "chat_share"),
             // An expired invite is not an offer; showing it as one just moves
             // the dead end later.
             gt(orgInvites.expiresAt, new Date()),

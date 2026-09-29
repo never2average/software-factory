@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
 import { orgInvites, orgMembers } from "@/agent/lib/db/schema";
 import { getOpsDb } from "@/lib/ops-db";
@@ -52,6 +52,8 @@ export async function POST(request: NextRequest) {
           eq(orgInvites.email, email),
           isNull(orgInvites.acceptedAt),
           gt(orgInvites.expiresAt, new Date()),
+          // A chat share's invite is never a membership: its guest reads that one chat through its link.
+          ne(orgInvites.origin, "chat_share"),
         ),
       )
       .orderBy(desc(orgInvites.createdAt))

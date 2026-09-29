@@ -48,10 +48,12 @@ export async function ensureWorkspaceInvite(
   if (member) return { status: "already-member" };
 
   const prior = await db
-    .select({ id: orgInvites.id, expiresAt: orgInvites.expiresAt })
+    .select({ id: orgInvites.id, expiresAt: orgInvites.expiresAt, origin: orgInvites.origin })
     .from(orgInvites)
     .where(and(eq(orgInvites.orgId, input.orgId), eq(orgInvites.email, email), isNull(orgInvites.acceptedAt)));
-  const live = prior.some((p) => p.expiresAt > new Date());
+  // A chat share's invite is not an invite to the workspace (it can never be accepted as one): a real invite
+  // supersedes it rather than being skipped as "already invited".
+  const live = prior.some((p) => p.expiresAt > new Date() && p.origin !== "chat_share");
   if (live && !input.resend) return { status: "already-invited" };
 
   const since = new Date(Date.now() - 60 * 60 * 1000);

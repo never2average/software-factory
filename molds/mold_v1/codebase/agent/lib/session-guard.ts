@@ -47,7 +47,7 @@ import { routeAuth, verifyJwtEcdsa, type AuthFn } from "eve/channels/auth";
 import type { Channel, HttpRouteDefinition, RouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
 import { DEFAULT_ORG, orgForSession } from "./org-context.ts";
 import { agentGateDb, recordChildSession } from "./session-owners.ts";
-import { isServicePrincipal, SERVICE_SCOPE_HEADER, sessionAuthForRequest } from "./service-scope.ts";
+import { isServicePrincipal, SERVICE_SCOPE_HEADER, sessionAuthForRequest, WORKSPACE_PIN_HEADER } from "./service-scope.ts";
 import { localDevAllowed } from "./local-dev.ts";
 import {
   sessionGateDecision,
@@ -57,9 +57,10 @@ import {
   type SessionRight,
 } from "../../lib/chat-gate.ts";
 import {
+  guestSessionDecision,
   readCallerFacts,
-  readLegacyOwnership,
-  readOwnerRecord,
+  readLegacyOwnershipIn,
+  readOwnerRecordIn,
   recordOwner,
   recordTokenHash,
   type GateDb,
@@ -259,22 +260,29 @@ async function probeEvent(
   }
 }
 
+/**
+ * Who owns `sessionId`, as the REQUEST'S workspace records it — that workspace only. A session recorded in any other
+ * workspace is not found here (null → refused as unknown), exactly like one nobody recorded: workspaces are not aware
+ * of each other. It used to be looked up in every workspace (readOwnerRecord / readLegacyOwnership over listOrgs()).
+ * The process cache answers only for the same workspace.
+ */
 async function ownershipOf(
   db: GateDb,
   sessionId: string,
-  preferOrgs: readonly string[],
+  workspace: string | null,
 ): Promise<SessionOwnership | null> {
+  if (!workspace) return null;
   const cached = owners.get(sessionId);
-  if (cached) return cached;
-  const recorded = await readOwnerRecord(db, sessionId, preferOrgs);
+  if (cached) return cached.orgId === workspace ? cached : null;
+  const recorded = await readOwnerRecordIn(db, workspace, sessionId);
   if (recorded) {
     remember(sessionId, recorded);
     return recorded;
   }
-  // A session from before owners were recorded (lib/session-gate.ts readLegacyOwnership). Frozen into a record once
-  // the inference names an owner or proves a workflow step, so rows written later cannot change it; an UNOWNED answer
-  // is never frozen, so the real owner can still reach it once the chat list mirrors it.
-  const legacy = await readLegacyOwnership(db, sessionId);
+  // A session from before owners were recorded, inferred IN THIS WORKSPACE from evidence the agent or the server
+  // wrote here (lib/session-gate.ts readLegacyOwnershipIn). Frozen into a record once the inference names an owner or
+  // proves a workflow step, so rows written later cannot change it; an UNOWNED answer is never frozen.
+  const legacy = await readLegacyOwnershipIn(db, workspace, sessionId);
   if (legacy && (legacy.ownerEmail || legacy.visibility === "workspace")) {
     await recordOwner(db, {
       sessionId,
@@ -289,10 +297,10 @@ async function ownershipOf(
   return legacy;
 }
 
-/** Record a delegated child's owner (its parent's), once. See agent/lib/session-lineage-stream.ts. */
+/** Record a delegated child's owner (its parent's, in its parent's workspace), once. See agent/lib/session-lineage-stream.ts. */
 async function recordChild(db: GateDb, parent: SessionOwnership, parentId: string, childId: string): Promise<void> {
   if (owners.has(childId)) return;
-  const child = await recordChildSession(db, parentId, childId, [parent.orgId]);
+  const child = await recordChildSession(db, parent, parentId, childId);
   if (child) remember(childId, child);
 }
 
@@ -358,8 +366,8 @@ async function recordSkippedLineage(
  * (the guard waits at most LINEAGE_INLINE_MS for that history), or on another instance entirely.
  *
  *   1. A history read already running in this process is awaited (bounded) — the common, same-instance case.
- *   2. Otherwise the parent is looked for in the caller's own workspaces' transcript caches, which is where a client
- *      that holds the child's id got it from. That is only a HINT (a browser writes those rows): the candidate parent
+ *   2. Otherwise the parent is looked for in the transcript caches of the workspace this REQUEST is in (never any
+ *      other), which is where a client that holds the child's id got it from. That is only a HINT (a browser writes those rows): the candidate parent
  *      must be one the caller may READ through this same gate, and the child must appear in eve's OWN history of it.
  *      Then the child inherits the parent's recorded ownership and the request is decided again, as usual.
  *
@@ -370,9 +378,10 @@ async function recoverChildLineage(
   childId: string,
   args: RouteHandlerArgs,
   deps: GuardDeps,
+  workspace: string | null,
 ): Promise<boolean> {
   const db = deps.db();
-  if (!db || caller.kind !== "person" || !caller.email) return false;
+  if (!db || !workspace || caller.kind !== "person" || !caller.email) return false;
   // Per CALLER and child: one person's failed attempt must never delay the real owner's.
   const attempt = `${caller.email}\u0000${childId}`;
   const tried = recoveryTried.get(attempt);
@@ -381,13 +390,12 @@ async function recoverChildLineage(
   recoveryTried.set(attempt, Date.now());
   if (lineageScanning.size) {
     await Promise.race([Promise.allSettled([...lineageScanning.values()]), delay(deps.streamProbeMs)]);
-    if (owners.has(childId) || (await readOwnerRecord(db, childId).catch(() => null))) return true;
+    if (owners.has(childId) || (await readOwnerRecordIn(db, workspace, childId).catch(() => null))) return true;
   }
-  const orgs = await db.orgsOf(caller.email);
-  const candidates = await candidateParents(db, orgs, childId).catch(() => []);
+  const candidates = await candidateParents(db, [workspace], childId).catch(() => []);
   for (const parentId of candidates) {
     if (parentId === childId) continue;
-    const parent = await decide(caller, parentId, "read", args, deps).catch(() => null);
+    const parent = await decide(caller, parentId, "read", args, deps, workspace).catch(() => null);
     if (!parent?.allow || !parent.ownership) continue; // only a parent the caller may read
     const found = await scanForChildren(
       async () => (await args.getSession(parentId).getEventStream({ startIndex: 0 })) as ReadableStream<unknown>,
@@ -416,12 +424,36 @@ function startIndexOf(request: Request): number | undefined {
   return Number.isSafeInteger(n) ? n : undefined;
 }
 
+/**
+ * The workspace a per-session request is IN — the same resolution a new session's owner is recorded under
+ * (`deps.workspaceFor`: the token's own `org` claim when its holder is a member, else the person's current
+ * workspace), or, for a trusted service, the workspace it names (`x-workspace-scope`). Null when there is none (an
+ * identity-less caller, a personal account): the gate then finds no session and refuses.
+ */
+async function requestWorkspace(auth: AuthContext, caller: GateCaller, headers: Headers, deps: GuardDeps): Promise<string | null> {
+  if (caller.kind === "service") return caller.serviceScope ?? null;
+  if (caller.kind === "none" || caller.kind === "local-dev") return null;
+  try {
+    return (await deps.workspaceFor(auth, headers)) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The workspace a person's request NAMES (x-ops-org) when it is not the one they are in: a guest's link. */
+function namedWorkspace(caller: GateCaller, headers: Headers, workspace: string | null): string | null {
+  if (caller.kind !== "person") return null;
+  const named = headers.get(WORKSPACE_PIN_HEADER)?.trim();
+  return named && named !== workspace && /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,199}$/.test(named) ? named : null;
+}
+
 async function decide(
   caller: GateCaller,
   sessionId: string,
   right: SessionRight,
   args: RouteHandlerArgs,
   deps: GuardDeps,
+  workspace: string | null,
 ): Promise<GateDecision & { ownership: SessionOwnership | null; db: GateDb | null }> {
   if (caller.kind === "local-dev" && deps.localDevAllowed()) {
     return { allow: true, reason: "local-dev", role: "local-dev", ownership: null, db: deps.db() };
@@ -429,9 +461,12 @@ async function decide(
   const db = deps.db();
   if (!db) throw new GateUnavailable("no database configured");
   try {
-    const callerOrgs = caller.kind === "person" && caller.email ? await db.orgsOf(caller.email) : [];
-    const ownership = await ownershipOf(db, sessionId, callerOrgs);
-    const facts = await readCallerFacts(db, caller, sessionId, ownership, callerOrgs);
+    // Reachable at all? The workspace resolver reads a failed lookup as "no membership" and answers with a fallback
+    // workspace, where a cached or absent owner would then decide — so a database that is down is caught HERE, as the
+    // 503 it is (it used to surface through the per-request membership read this replaced).
+    await db.ping?.();
+    const ownership = await ownershipOf(db, sessionId, workspace);
+    const facts = await readCallerFacts(db, caller, sessionId, ownership);
     const decision = sessionGateDecision({
       caller,
       sessionId,
@@ -496,7 +531,7 @@ function wrapCreate(route: HttpRouteDefinition, opts: GuardOptions, deps: GuardD
     // Reachable at all? The workspace resolver below reads a failed lookup as "no membership" and answers with a
     // fallback, so a database that is down must be caught HERE, as the 503 it is, before anything is started.
     try {
-      await db.listOrgs();
+      await db.ping?.();
     } catch (error) {
       console.error("[session-guard] database unreachable — not starting a session (503)", {
         error: error instanceof Error ? error.message : String(error),
@@ -591,11 +626,13 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
     if (!sessionId) return route.handler(request, args); // eve answers "Missing session id." itself
     const who = await authenticate(request, opts);
     if (who instanceof Response) return who;
-    const { caller } = who;
+    const { auth, caller } = who;
+    // The ONE workspace this request is in; the gate reads it and no other (workspaces are not aware of each other).
+    const workspace = await requestWorkspace(auth, caller, request.headers, deps);
 
     let decision: Awaited<ReturnType<typeof decide>>;
     try {
-      decision = await decide(caller, sessionId, right, args, deps);
+      decision = await decide(caller, sessionId, right, args, deps, workspace);
     } catch (error) {
       console.error("[session-guard] could not check access — refusing (503)", {
         route: key,
@@ -605,9 +642,22 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
       return unavailable();
     }
     // An unowned CHILD asked for before its parent's history was read (see recoverChildLineage): recover, decide again.
-    if (!decision.allow && decision.reason === "unknown" && (await recoverChildLineage(caller, sessionId, args, deps).catch(() => false))) {
+    if (!decision.allow && decision.reason === "unknown" && (await recoverChildLineage(caller, sessionId, args, deps, workspace).catch(() => false))) {
       try {
-        decision = await decide(caller, sessionId, right, args, deps);
+        decision = await decide(caller, sessionId, right, args, deps, workspace);
+      } catch {
+        return unavailable();
+      }
+    }
+    // A GUEST of one shared chat: the request names the chat's workspace (its link), which the caller is not in. Read
+    // there, by this session's id only, and admitted read-only by the owner's thread membership (lib/session-gate.ts
+    // guestSessionDecision) — never as a member of that workspace, never to write.
+    const named = namedWorkspace(caller, request.headers, workspace);
+    if (!decision.allow && decision.reason === "unknown" && named) {
+      const db = deps.db();
+      try {
+        const guest = db ? await guestSessionDecision(db, caller, sessionId, right, named) : null;
+        if (guest) decision = { ...guest, db };
       } catch {
         return unavailable();
       }
@@ -740,7 +790,7 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
     if (ownership && db) {
       body = noticeDelegations(body, (child) => recordChild(db, ownership, sessionId, child), {
         eventTypes: DELEGATION_EVENT_TYPES,
-        handle: delegationRunRecorder(sessionId),
+        handle: delegationRunRecorder(sessionId, undefined, ownership.orgId),
       });
     }
     // A viewer reads the conversation, never the capability to continue it.

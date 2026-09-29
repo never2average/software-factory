@@ -5,7 +5,7 @@ import { z } from "zod";
 import { chatThreadMembers } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordActivity } from "@/lib/ops-activity";
-import { accessFor, callerEmail } from "@/lib/chat-threads";
+import { threadAccess, callerEmail } from "@/lib/chat-threads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
   try {
-    const access = await accessFor(db, id, caller);
+    const access = await threadAccess(request, db, id, caller);
     if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
 
     // A member accepting their own invite.
@@ -84,7 +84,7 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
   const { id, email: rawEmail } = await ctx.params;
   const target = decodeURIComponent(rawEmail).toLowerCase();
   try {
-    const access = await accessFor(db, id, caller);
+    const access = await threadAccess(request, db, id, caller);
     if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     // Owner revokes anyone; a member may remove themselves (leave).
     if (access.role !== "owner" && target !== caller) {

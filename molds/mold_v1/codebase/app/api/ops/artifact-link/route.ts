@@ -24,10 +24,16 @@ export const dynamic = "force-dynamic";
  * API — for a short-lived GET at the moment it wants to read. Nothing is ever
  * made public, and the store token stays on the server.
  *
- * `artifacts/` is a flat namespace shared by every workspace (the publish tool
- * writes no org prefix), so possession of the unguessable pathname is what
- * scopes a read here, exactly as possession of the signed link did before.
- * Reads outside that namespace — the data room — are refused: those go through
+ * An artifact is filed under its workspace, `artifacts/orgs/<org_id>/…`
+ * (agent/lib/artifact.ts artifactKey), and this route signs one ONLY for a
+ * caller in that workspace: another workspace's artifact is "not found", however
+ * its pathname was learned. `artifacts/` used to be one flat namespace shared by
+ * every workspace, scoped by nothing but possession of the pathname.
+ *
+ * Artifacts published before that are still flat (`artifacts/<name>-<suffix>`)
+ * and name no workspace, so nothing can say whose they are; they stay readable
+ * by their unguessable pathname, as before, and no NEW one is ever written there.
+ * Reads outside `artifacts/` — the data room — are refused: those go through
  * /api/ops/dataroom, which IS org-scoped.
  */
 
@@ -53,8 +59,20 @@ export async function GET(request: NextRequest) {
   if (!path) {
     return NextResponse.json({ error: "Missing or invalid artifact path." }, { status: 400 });
   }
-  if (!path.startsWith(ARTIFACT_PREFIX) || path.includes("..")) {
+  // One canonical spelling, or none: an empty, `.` or `..` segment (`artifacts//orgs/…`, `artifacts/./orgs/…`) or a
+  // percent-encoded dot or slash would reach the workspace check below in a form it does not recognise — and the
+  // blob store would still resolve it. Such a path is refused, never normalised into a match.
+  const segments = path.split("/");
+  if (
+    !path.startsWith(ARTIFACT_PREFIX) ||
+    segments.some((seg) => seg === "" || seg === "." || seg === "..") ||
+    /%2[ef]|%5c/i.test(path)
+  ) {
     return NextResponse.json({ error: "Not a published artifact." }, { status: 400 });
+  }
+  // A workspace's artifact is signed for that workspace only. Another workspace's reads as absent (404, never 403).
+  if (path.startsWith(`${ARTIFACT_PREFIX}orgs/`) && !path.startsWith(`${ARTIFACT_PREFIX}orgs/${ctx.orgId}/`)) {
+    return NextResponse.json({ error: "Artifact not found." }, { status: 404 });
   }
 
   try {

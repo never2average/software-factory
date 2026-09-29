@@ -34,6 +34,7 @@ import {
 } from "#lib/dataroom-schema.js";
 import { getDataroomStore } from "#lib/dataroom-store.js";
 import { getDb } from "#lib/db/index.js";
+import { DEFAULT_ORG } from "#lib/org-context.js";
 import { interactionSchema } from "#lib/customer-schema.js";
 import { recordInteraction } from "#lib/system-of-record.js";
 import { searchGranolaNotes } from "#lib/granola.js";
@@ -318,11 +319,15 @@ const granolaAdapter: Adapter = async ({ input }) => {
 /** email — IMAP inbox summaries; catches EmailNotConfiguredError -> structured skip. */
 const emailAdapter: Adapter = async ({ input, fetchedAt }) => {
   try {
-    const summaries = await listInbox({
-      from: input.query,
-      sinceDays: sinceDaysFrom(input.since),
-      max: 25,
-    });
+    // The sync's own workspace's mailbox, never another's (agent/lib/workspace-mailbox.ts).
+    const summaries = await listInbox(
+      {
+        from: input.query,
+        sinceDays: sinceDaysFrom(input.since),
+        max: 25,
+      },
+      input.orgId ?? null,
+    );
     return {
       skipped: 0,
       items: summaries.map((msg) => ({
@@ -496,7 +501,8 @@ export async function ingestSource(input: IngestInput): Promise<IngestResult> {
   if (!input.orgId && getDb()) {
     return skip(`no workspace was given for ${customerId}: a company id names a company only within a workspace`);
   }
-  const store = getDataroomStore(input.orgId || undefined);
+  // Named explicitly without a database: the store has no default workspace (lib/dataroom-keyspace.ts).
+  const store = getDataroomStore(input.orgId || DEFAULT_ORG);
   const wrapped = output.items.map((item) => {
     const syncId = `SYNC-${nanoid(10)}`;
     const record: RawSyncRecord = {

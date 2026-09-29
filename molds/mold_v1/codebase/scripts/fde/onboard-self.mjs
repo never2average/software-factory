@@ -99,8 +99,13 @@ async function main() {
   // 5. Register the FDE as a first-class People/ roster entry (internal-fde).
   //    Reverses the old "People is external-only" rule FOR INTERNAL FDEs: the
   //    kind:"internal-fde" tag keeps them distinct, and list_fdes reads these.
-  const store = createDataroomStore();
-  if (store.backend?.kind === "vercel-blob") {
+  //    In ONE workspace's data room (`--org <id>` or FDE_ORG): every workspace has its own tree and there is no
+  //    default one to fall back to (lib/dataroom-keyspace.ts).
+  const rosterOrg = (flag("org") || process.env.FDE_ORG || "").trim();
+  const store = rosterOrg ? createDataroomStore({ orgId: rosterOrg }) : null;
+  if (!store) {
+    console.log(`${glyph.warn} Not added to a workspace's People/ roster: pass --org <workspace id> (or set FDE_ORG).`);
+  } else if (store.backend?.kind === "vercel-blob") {
     const slug = personSlug(email);
     const skills = flag("skills").trim() ? flag("skills").split(",").map((s) => s.trim()).filter(Boolean) : [];
     const pod = flag("pod").trim() || null;

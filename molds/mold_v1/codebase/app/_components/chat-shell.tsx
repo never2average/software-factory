@@ -12,7 +12,7 @@ import { ChatSearchDialog } from "./chat-search";
 import type { DataroomTab } from "./dataroom";
 import type { CustomerListItem, CustomerListStatus } from "./customer-search";
 import type { OpsSection } from "./ops-center";
-import { activeOrg, opsFetch } from "./ops/lib";
+import { activeOrg, opsFetch, switchWorkspace, workspaceOfLink } from "./ops/lib";
 import { sharedGet } from "@/lib/startup-fetch";
 import {
   SNAPSHOT_VERSION,
@@ -2189,13 +2189,29 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   openChatRef.current = openChat;
   useEffect(
     () =>
-      installNotificationBridge((sid) => {
+      installNotificationBridge((sid, url) => {
+        // A chat in ANOTHER workspace than this tab's: load its link, which names the workspace — the page then
+        // opens in that workspace (lib/startup-fetch.ts adopts `?org=`) instead of refusing the chat as unknown here.
+        const org = url ? workspaceOfLink(url) : null;
+        if (org && url && org !== activeOrg()) {
+          window.location.assign(url);
+          return;
+        }
         const s = sessionsRef.current.find((x) => x.session?.sessionId === sid || x.id === sid);
         if (s) openChatRef.current(s);
         else void mountEveSession(sid);
       }),
     [mountEveSession],
   );
+
+  /**
+   * A link that names its workspace (`&org=`): the <head> script has already put this tab in it; tell the server too
+   * — the switcher's path — before the chat is opened, so everything this page does from here is in that workspace.
+   */
+  const adoptLinkedWorkspace = useCallback(async (): Promise<void> => {
+    const org = workspaceOfLink(window.location.href);
+    if (org) await switchWorkspace(org);
+  }, []);
 
   // Deep-link: `/?chatSession=<eve session id>` opens that session as a chat
   // (used by the "Open as chat" link on a workflow-run step / app refresh). An
@@ -2213,8 +2229,11 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     } else if (id.startsWith("wrun_")) {
       setAutoBadge({ via: "this run", kind: "workflow-run" });
     }
-    void mountEveSession(id);
-  }, [mountEveSession]);
+    void (async () => {
+      await adoptLinkedWorkspace();
+      await mountEveSession(id);
+    })();
+  }, [mountEveSession, adoptLinkedWorkspace]);
 
   // Deep-link: `/?seed=<instruction>` opens a FRESH chat pre-loaded with the
   // instruction (auto-sent), so a dashboard action button calls the agent back
@@ -2245,6 +2264,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     const kind = params.get("kind");
     if (!runId) return;
     void (async () => {
+      await adoptLinkedWorkspace();
       try {
         const res = await fetch(`/api/ops/workflow-runs/${encodeURIComponent(runId)}`, {
           headers: getAuthHeaders(),
@@ -2268,7 +2288,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         /* run not ready yet */
       }
     })();
-  }, [mountEveSession, getAuthHeaders]);
+  }, [mountEveSession, getAuthHeaders, adoptLinkedWorkspace]);
 
   const deleteChat = useCallback(
     (id: string) => {

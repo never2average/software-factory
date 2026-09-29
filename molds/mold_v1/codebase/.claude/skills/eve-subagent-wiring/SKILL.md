@@ -144,10 +144,11 @@ Rules for this file:
 
 In the Ops Center a workflow named after a subagent **is** that subagent. One row, two jobs:
 
-1. **Run and token accounting.** `hooks/usage.ts` calls `recordWorkflowStep("<key>", ...)`
-   and `agent/lib/workflow-usage.ts` finds the workflow **by name**. No row named `<key>`
-   in the caller's workspace: no `automation_runs` row, no tokens in the Ops Center, and no
-   error, because the recorder never throws.
+1. **Run and token accounting.** `hooks/usage.ts` calls `recordWorkflowStep("<key>", …,
+   ctx.session.id, <the session's workspace>)` and `agent/lib/workflow-usage.ts` finds the
+   workflow **by name in that workspace only**. No row named `<key>` in the caller's
+   workspace (or no workspace passed): no `automation_runs` row, no tokens in the Ops Center,
+   and no error, because the recorder never throws.
 2. **Operator override.** `instructions/operator-override.ts` calls
    `loadWorkflowOverride("<key>", orgId)` on every `turn.started`. When the row is enabled,
    has `instructions` text and `instructions_enabled` is true, the text is appended after

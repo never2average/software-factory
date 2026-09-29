@@ -49,6 +49,11 @@ export async function POST(request: NextRequest) {
    * then reporting "not found" the instant the agent tried to read it.
    */
   const org = await orgContextForRequest(request);
+  // No workspace, no write. This used to write with `org?.orgId`, and an undefined workspace meant the store's ROOT
+  // — the prefix that holds every workspace's tree (lib/dataroom-keyspace.ts).
+  if (!org?.orgId) {
+    return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
+  }
   if (!blobToken()) {
     return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
   }
@@ -73,7 +78,7 @@ export async function POST(request: NextRequest) {
   }
 
   const bytes = Buffer.from(await file.arrayBuffer());
-  await writeDataroomFile(path, bytes, file.type || undefined, org?.orgId);
+  await writeDataroomFile(path, bytes, file.type || undefined, org.orgId);
 
   return NextResponse.json({ ok: true, path, name: safeFilename(file.name), size: file.size });
 }

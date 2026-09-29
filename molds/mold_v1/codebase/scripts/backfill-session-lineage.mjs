@@ -22,7 +22,7 @@
  *
  * Secrets are read from the environment by name and never printed.
  */
-import { agentGateDb } from "../agent/lib/session-owners.ts";
+import { agentSystemGateDb } from "../agent/lib/session-owner-backfill.ts";
 import { closeDb } from "../agent/lib/db/index.ts";
 import { backfillLineage, listLineageParents } from "../agent/lib/session-lineage-backfill.ts";
 import { mintQueueDeliveryToken } from "../lib/auth-session.ts";
@@ -40,7 +40,7 @@ function fail(message) {
   process.exit(2);
 }
 
-const db = agentGateDb();
+const db = agentSystemGateDb();
 if (!db) fail("DATABASE_URL is not set.");
 if (!dryRun && !agentUrl) fail("NEXT_PUBLIC_EVE_API_URL (the agent's URL) is not set.");
 if (!dryRun && !process.env.AUTH_JWT_PRIVATE_KEY) fail("AUTH_JWT_PRIVATE_KEY is not set (needed to sign the owner's read token).");

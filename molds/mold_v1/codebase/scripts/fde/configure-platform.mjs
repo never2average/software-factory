@@ -39,7 +39,7 @@ async function main() {
   console.log(`Configure platform version: ${version}\n`);
 
   // 1. The version contract (blob, shared). Never clobber authored schemas.
-  const store = dataroom();
+  const store = dataroom(workspaceFor());
   const existing = await store.list(`Platform/${version}`);
   let wrote = 0;
   for (const name of DESIGN_SCHEMAS) {

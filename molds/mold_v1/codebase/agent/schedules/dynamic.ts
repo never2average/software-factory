@@ -50,6 +50,7 @@ import { isSystemCronActive } from "#lib/system-cron-store.js";
 import { getDb } from "#lib/db/index.js";
 import { orgs } from "#lib/db/schema.js";
 import { withServiceScope } from "#lib/service-scope.js";
+import { mailboxFor } from "#lib/workspace-mailbox.js";
 
 /**
  * Which of these claimed rules belong to a SUSPENDED workspace — the dispatcher
@@ -175,17 +176,26 @@ async function runClaim(
  * on-call only on a breach) still does useful work without it and must NOT be
  * gated — those degrade gracefully at the tool.
  */
-const CONNECTOR_ONLY_RULES: Array<{ name: string; env: string[]; connector: string }> = [
-  { name: "email-ticket-intake", env: ["IMAP_HOST", "IMAP_USER", "IMAP_PASSWORD"], connector: "email (IMAP)" },
+const CONNECTOR_ONLY_RULES: Array<{ name: string; connector: string; configured: (orgId: string) => Promise<string | null> }> = [
+  {
+    name: "email-ticket-intake",
+    connector: "email (IMAP)",
+    // The RULE'S OWN workspace's mailbox (its gmail connector, or the deployment mailbox bound to it by
+    // IMAP_WORKSPACE) — agent/lib/workspace-mailbox.ts. The deployment's IMAP_* env alone no longer makes a
+    // workspace's intake runnable: that mailbox is not every workspace's.
+    configured: async (orgId) => {
+      const lookup = await mailboxFor(orgId);
+      return lookup.mailbox ? null : lookup.reason;
+    },
+  },
 ];
 
-/** If a claimed rule is connector-only and its connector is unconfigured, the
- *  missing env — else null (run it normally). */
-function blockingConnector(claim: ClaimedRule): { connector: string; missing: string[] } | null {
+/** If a claimed rule is connector-only and its connector is unconfigured for the rule's workspace, why — else null. */
+async function blockingConnector(claim: ClaimedRule): Promise<{ connector: string; missing: string[] } | null> {
   const gate = CONNECTOR_ONLY_RULES.find((g) => g.name === claim.name);
   if (!gate) return null;
-  const missing = gate.env.filter((n) => !process.env[n]?.trim());
-  return missing.length > 0 ? { connector: gate.connector, missing } : null;
+  const reason = await gate.configured(claim.orgId).catch((e) => String(e?.message ?? e));
+  return reason ? { connector: gate.connector, missing: [reason] } : null;
 }
 
 /** Advance a connector-only rule without running it, recording a benign skip. */
@@ -194,7 +204,7 @@ async function skipClaim(
   block: { connector: string; missing: string[] },
 ): Promise<void> {
   const ranAt = new Date();
-  const reason = `Skipped "${claim.name}" — ${block.connector} not configured (missing ${block.missing.join(", ")}).`;
+  const reason = `Skipped "${claim.name}" — ${block.connector} not configured: ${block.missing.join(", ")}`;
   console.log(`[dynamic-schedule] rule ${claim.id} (${claim.name}) skipped: ${reason}`);
   // Advance the schedule so it stays on cadence and resumes once the secret
   // lands; record a no-op run so the feed shows why nothing was posted.
@@ -241,8 +251,7 @@ export default defineSchedule({
             }
             // Skip a connector-only rule whose connector is unconfigured rather
             // than fire an agent turn that just errors on the missing secret.
-            const block = blockingConnector(claim);
-            return block ? skipClaim(claim, block) : runClaim(claim, receive, appAuth);
+            return blockingConnector(claim).then((block) => (block ? skipClaim(claim, block) : runClaim(claim, receive, appAuth)));
           }),
         );
       })(),

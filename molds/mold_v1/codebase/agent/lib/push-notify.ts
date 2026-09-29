@@ -63,7 +63,7 @@ export async function notify(
     const targets = await deps.recipients(ev.sessionId, owner);
     await Promise.all(
       targets.map(async (t) => {
-        const res = await deps.send(t, notificationFor(ev, t.title, t.preview), vapid);
+        const res = await deps.send(t, notificationFor(ev, t.title, t.preview, owner.orgId), vapid);
         if (res.gone) {
           out.removed += 1;
           await deps.forget(t).catch(() => undefined);

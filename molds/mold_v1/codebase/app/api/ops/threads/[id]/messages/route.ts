@@ -4,7 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { chatThreads, chatTurnAuthors } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
-import { accessFor, callerEmail } from "@/lib/chat-threads";
+import { threadAccess, callerEmail } from "@/lib/chat-threads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   }
 
   try {
-    const access = await accessFor(db, id, email);
+    const access = await threadAccess(request, db, id, email);
     if (!access) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     if (access.role === "viewer") {
       return NextResponse.json({ error: "View-only members can't send. Ask the owner for participant access." }, { status: 403 });

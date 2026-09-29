@@ -107,12 +107,29 @@ export function withServiceScope<T extends AuthLike>(auth: T, orgId: string | nu
 }
 
 /**
- * The session auth for an inbound eve HTTP message (agent/channels/eve.ts `onMessage`). A service caller's
- * {@link SERVICE_SCOPE_HEADER} becomes its workspace; every other caller has the attribute stripped, whatever
- * its token or its headers say.
+ * The header a PERSON's request names its workspace with: the web app's per-tab workspace (the same header the Ops API
+ * reads — lib/org-context.ts ORG_HEADER), passed through the /eve proxy.
+ */
+export const WORKSPACE_PIN_HEADER = "x-ops-org";
+
+/**
+ * The session auth for an inbound eve HTTP message (agent/channels/eve.ts `onMessage`, and the session guard's
+ * workspace resolution). A service caller's {@link SERVICE_SCOPE_HEADER} becomes its workspace; every other caller has
+ * that attribute stripped, whatever its token or its headers say.
+ *
+ * A person's {@link WORKSPACE_PIN_HEADER} becomes the token's `org` attribute — unless the token already names one
+ * (a workflow step's or a queue delivery's token is bound to its workspace, and a header never overrides that). It is
+ * a preference, not a grant: `orgForSession` honours an `org` only for a workspace the caller is a member of, and
+ * otherwise resolves as before. Without it the agent used the workspace the person selected LAST, so a second tab on
+ * another workspace had its chats recorded in — and refused by — the wrong one.
  */
 export function sessionAuthForRequest<T extends AuthLike>(caller: T | null, headers: Headers): T | null {
   if (!caller) return null;
-  if (!isServicePrincipal(caller)) return withoutServiceScope(caller);
+  if (!isServicePrincipal(caller)) {
+    const person = withoutServiceScope(caller);
+    const pin = headers.get(WORKSPACE_PIN_HEADER)?.trim();
+    if (!pin || attrOf(person, "org")) return person;
+    return { ...person, attributes: { ...(person.attributes ?? {}), org: pin } };
+  }
   return withServiceScope(caller, headers.get(SERVICE_SCOPE_HEADER)?.trim() || null);
 }

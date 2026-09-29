@@ -228,9 +228,13 @@ let storeOrg;
 let storeCached = null;
 function currentStore() {
   if (!hasBlob) return null;
+  // No workspace selected, no direct store: the data-room tools go through the Ops API instead, which resolves the
+  // workspace from your identity server-side. `orgId: undefined` used to build a store on the blob ROOT, which holds
+  // every workspace's tree (lib/dataroom-keyspace.ts); the store now refuses that, and so does this.
+  if (!OPS_ORG) return null;
   if (storeCached && storeOrg === OPS_ORG) return storeCached;
   storeOrg = OPS_ORG;
-  storeCached = createDataroomStore({ orgId: OPS_ORG ?? undefined });
+  storeCached = createDataroomStore({ orgId: OPS_ORG });
   return storeCached;
 }
 const backend = hasBlob ? "vercel-blob" : "none";

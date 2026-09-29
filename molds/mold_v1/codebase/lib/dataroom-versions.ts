@@ -2,7 +2,8 @@ import "server-only";
 
 import { and, desc, eq, gt, isNull, sql as dsql } from "drizzle-orm";
 import { dataroomChangesets, dataroomFileVersions } from "@/agent/lib/db/schema";
-import { readDataroomFile, writeDataroomFile } from "@/lib/dataroom-blob";
+import { readDataroomFile, readSnapshotObject, writeDataroomFile, writeSnapshotObject } from "@/lib/dataroom-blob";
+import { snapshotKey } from "@/lib/dataroom-keyspace";
 import { withOrgRls } from "@/lib/ops-db";
 
 /**
@@ -19,17 +20,13 @@ import { withOrgRls } from "@/lib/ops-db";
  *     reviewable and revertible as the single act they actually were;
  *   - a FILE VERSION snapshots the previous bytes before each overwrite.
  *
- * Snapshots live in the blob store beside the data room under `_versions/`,
- * which `isSafeDataroomPath` rejects — so a snapshot can never be reached or
- * clobbered through the ordinary data-room API, only through here.
+ * Snapshots live in the WORKSPACE'S OWN tree under `_versions/<org>/…`
+ * (lib/dataroom-keyspace.ts snapshotKey), which `isSafeDataroomPath` rejects
+ * and every listing skips — so a snapshot can never be reached or clobbered
+ * through the ordinary data-room API, only through here. They used to be
+ * written at the store's ROOT (`dataroom/_versions/<org>/…`), beside every
+ * other workspace's; scripts/migrate-dataroom-root.mjs moves those in.
  */
-
-/** Where a snapshot of `path` taken at `at` lives. Not a data-room path. */
-function snapshotKey(orgId: string, path: string, at: number): string {
-  // The full path is kept (slashes and all) so a snapshot is legible in the
-  // blob console when someone is trying to work out what they lost.
-  return `_versions/${orgId}/${at}-${path}`;
-}
 
 export interface OpenChangesetInput {
   orgId: string;
@@ -95,9 +92,7 @@ export async function recordFileVersion(input: {
     let prevBlobKey: string | null = null;
     if (previous !== null) {
       prevBlobKey = snapshotKey(input.orgId, input.path, Date.now());
-      // Snapshots are written with the org's own prefix logic bypassed: the key
-      // already carries the org, and `_versions/` is outside the data room.
-      await writeDataroomFile(prevBlobKey, previous, "text/plain", null);
+      await writeSnapshotObject(prevBlobKey, previous, input.orgId);
     }
     await withOrgRls(input.orgId, async (tx) => {
       await tx.insert(dataroomFileVersions).values({
@@ -249,10 +244,10 @@ export async function changesetDiff(orgId: string, id: string): Promise<FileDiff
         .orderBy(dataroomFileVersions.createdAt)
         .limit(1),
     );
-    const before = row.prevBlobKey ? await readDataroomFile(row.prevBlobKey, null) : null;
+    const before = row.prevBlobKey ? await readSnapshotObject(row.prevBlobKey, orgId) : null;
     const after = next
       ? next.prevBlobKey
-        ? await readDataroomFile(next.prevBlobKey, null)
+        ? await readSnapshotObject(next.prevBlobKey, orgId)
         : null // the next write created it, so this one had left it absent
       : await readDataroomFile(row.path, orgId);
     out.push({ path: row.path, action: row.action, before, after });
@@ -276,7 +271,7 @@ export async function readSnapshot(orgId: string, id: string, path: string): Pro
       .limit(1),
   );
   if (!row?.key) return null;
-  return await readDataroomFile(row.key, null);
+  return await readSnapshotObject(row.key, orgId);
 }
 
 export interface RevertResult {
@@ -318,7 +313,7 @@ export async function revertChangeset(
     seen.add(row.path);
     try {
       if (row.prevBlobKey) {
-        const previous = await readDataroomFile(row.prevBlobKey, null);
+        const previous = await readSnapshotObject(row.prevBlobKey, orgId);
         if (previous === null) throw new Error("snapshot is missing from the blob store");
         await writeDataroomFile(row.path, previous, "text/markdown", orgId);
         result.restored.push(row.path);

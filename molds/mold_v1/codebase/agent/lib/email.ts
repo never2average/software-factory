@@ -15,16 +15,18 @@
  * this file: don't. Sending must be a human action in their mail client. Any
  * change here should go through review (see CODEOWNERS).
  *
- * Configuration (env, e.g. a shared FDE ops mailbox or an app-password inbox):
- *   IMAP_HOST, IMAP_PORT (default 993), IMAP_SECURE (default true),
- *   IMAP_USER, IMAP_PASSWORD, IMAP_DRAFTS_MAILBOX (default "Drafts").
+ * Configuration: the CALLING WORKSPACE'S OWN mailbox (agent/lib/workspace-mailbox.ts) — its `gmail` connector's
+ * IMAP_* secrets, or the deployment's IMAP_* env mailbox only for the workspace IMAP_WORKSPACE binds it to. A
+ * workspace never reads, lists or drafts into another workspace's mailbox.
  */
 import { ImapFlow, type SearchObject } from "imapflow";
+import { mailboxFor } from "./workspace-mailbox.ts";
 
 export class EmailNotConfiguredError extends Error {
-  constructor() {
+  constructor(reason?: string) {
     super(
-      "IMAP is not configured. Set IMAP_HOST, IMAP_USER, and IMAP_PASSWORD (and optionally IMAP_PORT/IMAP_SECURE/IMAP_DRAFTS_MAILBOX) in .env.local.",
+      reason ??
+        "IMAP is not configured. Set IMAP_HOST, IMAP_USER, and IMAP_PASSWORD (and optionally IMAP_PORT/IMAP_SECURE/IMAP_DRAFTS_MAILBOX) in .env.local.",
     );
     this.name = "EmailNotConfiguredError";
   }
@@ -39,26 +41,13 @@ interface ImapConfig {
   draftsMailbox: string;
 }
 
-function readConfig(): ImapConfig | null {
-  const host = process.env.IMAP_HOST;
-  const user = process.env.IMAP_USER;
-  const pass = process.env.IMAP_PASSWORD;
-  if (!host || !user || !pass) return null;
-  return {
-    host,
-    user,
-    pass,
-    port: Number(process.env.IMAP_PORT ?? 993),
-    secure: (process.env.IMAP_SECURE ?? "true") !== "false",
-    draftsMailbox: process.env.IMAP_DRAFTS_MAILBOX ?? "Drafts",
-  };
-}
-
 async function withClient<T>(
+  orgId: string | null | undefined,
   fn: (client: ImapFlow, cfg: ImapConfig) => Promise<T>,
 ): Promise<T> {
-  const cfg = readConfig();
-  if (!cfg) throw new EmailNotConfiguredError();
+  const lookup = await mailboxFor(orgId);
+  if (!lookup.mailbox) throw new EmailNotConfiguredError(lookup.reason);
+  const cfg: ImapConfig = lookup.mailbox;
   const client = new ImapFlow({
     host: cfg.host,
     port: cfg.port,
@@ -92,8 +81,12 @@ export interface ListInboxInput {
 }
 
 /** Read the inbox over IMAP. Returns the newest matching messages first. */
-export async function listInbox(input: ListInboxInput): Promise<EmailSummary[]> {
-  return withClient(async (client) => {
+export async function listInbox(
+  input: ListInboxInput,
+  /** The caller's workspace: its own mailbox is read, and no other. */
+  orgId: string | null,
+): Promise<EmailSummary[]> {
+  return withClient(orgId, async (client) => {
     const lock = await client.getMailboxLock("INBOX");
     try {
       const criteria: SearchObject = {};
@@ -167,8 +160,10 @@ function buildMime(input: DraftInput): string {
  */
 export async function createDraft(
   input: DraftInput,
+  /** The caller's workspace: the draft goes into its own mailbox, and no other. */
+  orgId: string | null,
 ): Promise<{ mailbox: string; uid?: number }> {
-  return withClient(async (client, cfg) => {
+  return withClient(orgId, async (client, cfg) => {
     const mime = buildMime(input);
     const res = await client.append(cfg.draftsMailbox, mime, ["\\Draft"]);
     return { mailbox: cfg.draftsMailbox, uid: res ? res.uid : undefined };

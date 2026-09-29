@@ -145,7 +145,7 @@ export const browserScreenshotTool = modelFacing("browser_screenshot", defineToo
     const row = await requireSession(sessionRef, ctx);
     const png = await pageScreenshot(row, fullPage ?? false);
     const filename = `${(label ?? "screenshot").replace(/[^a-z0-9-]+/gi, "-")}.png`;
-    const artifact = await publishArtifact({ filename, content: png, contentType: "image/png" });
+    const artifact = await publishArtifact({ orgId: row.orgId, filename, content: png, contentType: "image/png" });
     void recordAudit({ automationType: "browser", automationId: row.id, actor: row.principalId, orgId: row.orgId, event: `Captured screenshot ${filename}` });
     return { url: artifact.url, filename, expiresAt: artifact.expiresAt };
   },

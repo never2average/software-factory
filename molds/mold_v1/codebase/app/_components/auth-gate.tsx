@@ -6,7 +6,7 @@ import { EmailSignIn } from "./email-sign-in";
 import { Spinner } from "@/components/ui/spinner";
 import { sharedGet } from "@/lib/startup-fetch";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
-import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
+import { STORAGE_KEYS, readActiveOrg, readStored, removeStored, writeActiveOrg, writeStored } from "@/lib/browser-storage";
 import { clearAllPending } from "@/lib/chat-queue";
 import { clearDesktopPrefs, forgetThisDevice } from "./desktop-notify";
 import { forgetQueueCache } from "./use-chat-queue";
@@ -166,7 +166,8 @@ export function AuthGate() {
     if (!tokenRef.current) return {};
     const headers: Record<string, string> = { Authorization: `Bearer ${tokenRef.current}` };
     try {
-      const org = readStored(STORAGE_KEYS.activeOrg);
+      // This TAB's workspace (lib/browser-storage.ts readActiveOrg): two tabs may be on two workspaces.
+      const org = readActiveOrg();
       if (org) headers["x-ops-org"] = org;
     } catch {
       /* private mode — the server falls back to the default workspace */
@@ -230,6 +231,8 @@ export function AuthGate() {
     forgetQueueCache();
     // A Stop's markers, notes and "stopped here" turns are one person's (mold_v1-141).
     forgetStopState();
+    // The chosen workspace is this person's: the next one to sign in on this browser starts from their own.
+    writeActiveOrg(null);
     window.google?.accounts.id.disableAutoSelect();
     restoredRef.current = false;
     tokenRef.current = null;

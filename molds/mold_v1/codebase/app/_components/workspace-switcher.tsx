@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon, ChevronDownIcon, MailIcon } from "lucide-react";
 import { OrgMark } from "./org-mark";
 import { cn } from "@/lib/utils";
-import { activeOrg, opsFetch, setActiveOrg } from "./ops/lib";
+import { activeOrg, opsFetch, switchWorkspace } from "./ops/lib";
 
 /**
  * Which workspace you are in, and the way out of it.
@@ -92,18 +92,9 @@ export function WorkspaceSwitcher() {
   }, [open]);
 
   const switchTo = async (orgId: string) => {
-    setActiveOrg(orgId);
-    // Tell the SERVER too, not just this browser. The agent re-resolves your
-    // workspace from your identity on every turn and never sees the client's
-    // X-Ops-Org header — so without this the console switches and chat does
-    // not, and you get one tenant on screen while the agent answers from
-    // another. Awaited: the reload below must not race the write.
-    await opsFetch("/api/ops/me/workspaces/active", {
-      method: "POST",
-      body: JSON.stringify({ orgId }),
-    }).catch(() => {
-      /* the local switch still stands; the agent keeps its previous workspace */
-    });
+    // This tab's workspace, the default for new tabs, and the server's "last selected" (a device that names no
+    // workspace follows it). Awaited: the reload below must not race the write.
+    await switchWorkspace(orgId);
     // A hard reload, deliberately. Every panel in the app has already fetched
     // its own tenant-scoped data; re-rendering with a new header would leave
     // stale rows from the previous workspace on screen, which for a tenancy

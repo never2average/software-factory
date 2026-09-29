@@ -52,32 +52,45 @@ to `null`: no addendum, never an exception (`agent/lib/workflow-override.ts`).
 
 ```ts
 import { defineHook } from "eve/hooks";
-import { finishWorkflowRun, recordWorkflowStep } from "#lib/workflow-usage.js";
+import { finishWorkflowRun, openWorkflowRun, recordWorkflowStep } from "#lib/workflow-usage.js";
+import { orgForSession } from "#lib/org-context.js";
+
+/** The session's own workspace (a delegated child's is its root's). Never throws. */
+const workspaceOf = (ctx: Parameters<typeof orgForSession>[0]): Promise<string | null> =>
+  orgForSession(ctx).catch(() => null);
 
 const WORKFLOW = "<key>";
 
 export default defineHook({
   events: {
-    async "step.completed"(event) {
-      await recordWorkflowStep(WORKFLOW, event.data.turnId, event.data.usage);
+    async "turn.started"(event, ctx) {
+      await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id, await workspaceOf(ctx));
     },
-    async "turn.completed"(event) {
-      await finishWorkflowRun(WORKFLOW, event.data.turnId, { status: "success" });
+    async "step.completed"(event, ctx) {
+      await recordWorkflowStep(WORKFLOW, event.data.turnId, event.data.usage, ctx.session.id, await workspaceOf(ctx));
     },
-    async "turn.failed"(event) {
-      await finishWorkflowRun(WORKFLOW, event.data.turnId, {
-        status: "failed",
-        error: event.data.message,
-      });
+    async "turn.completed"(event, ctx) {
+      await finishWorkflowRun(WORKFLOW, event.data.turnId, { status: "success" }, ctx.session.id, await workspaceOf(ctx));
+    },
+    async "turn.failed"(event, ctx) {
+      await finishWorkflowRun(
+        WORKFLOW,
+        event.data.turnId,
+        { status: "failed", error: event.data.message },
+        ctx.session.id,
+        await workspaceOf(ctx),
+      );
     },
   },
 });
 ```
 
-What it does: every model step upserts one `automation_runs` row keyed
-`<workflow id>:<turn id>` and adds its tokens; `turn.completed` closes it. The workflow is
-found **by name**, so with no `workflows` row named `<key>` nothing is recorded and nothing
-fails (`agent/lib/workflow-usage.ts`). `provisionWorkspace` seeds that row for every
+What it does: `turn.started` opens one `automation_runs` row per invocation (keyed by the
+workflow id, the session id and the turn id), every model step adds its tokens, and
+`turn.completed` / `turn.failed` close it. The workflow is found **by name in the session's
+own workspace** — a name is not unique across workspaces, and the recorder never looks in
+another one — so with no `workflows` row named `<key>` there, or no workspace passed, nothing
+is recorded and nothing fails (`agent/lib/workflow-usage.ts`). `provisionWorkspace` seeds that row for every
 declared subagent when a workspace is created; an existing workspace needs it added once
 (eve-subagent-wiring, section 3). The recorder never throws, because eve escalates a thrown
 hook to `turn.failed`.

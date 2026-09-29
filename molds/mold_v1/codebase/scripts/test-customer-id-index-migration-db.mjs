@@ -131,6 +131,9 @@ try {
     check("0025 drops the four customer_id indexes", present(after).length === 0, after);
     check("…and no other index on the four tables", JSON.stringify(after) === JSON.stringify(before.filter((x) => !DROPPED.some((n) => x.startsWith(`${n}:`)))), { before, after });
     check("…and no row is lost or changed", (await fingerprint(db)) === f0);
+    // The deploy runs the WHOLE journal before its drift step: any entry after 0025 (0026 adds org_invites.origin)
+    // is applied too, so the plan below compares the database the deploy would really leave behind.
+    await applyRange(db, entry(TAG).idx, Math.max(...journal.entries.map((e) => e.idx)));
     const plan = driftPlan(url);
     check("after 0025 the drift dry run plans NOTHING to apply", !plan.error && plan.apply.length === 0, plan.error ? plan : plan.apply);
     check("…and nothing the deploy would refuse (no data loss, no index drop)", !plan.error && plan.refused.length === 0, plan.refused);

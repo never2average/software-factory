@@ -11,9 +11,17 @@
  *
  * Relative imports with their extensions: the agent's bundler, Next's and plain node (the tests) all load this.
  *
+ * ONE WORKSPACE PER REQUEST. Workspaces are not aware of each other: every read here is made in the ONE workspace the
+ * request is in — the caller's, resolved before the gate runs — and nothing here lists the workspaces or looks a
+ * session up in any other. A session recorded in another workspace is simply not found (and refused, 404) exactly
+ * like a session nobody recorded. It used to be looked up in EVERY workspace (`readOwnerRecord`, `readLegacyOwnership`
+ * over `listOrgs()`), so a request made in workspace B read workspace A's scope to decide. The cross-workspace
+ * inference that the legacy (pre-#66) sessions still need is a SYSTEM backfill now, run once by the factory
+ * (agent/lib/session-owner-backfill.ts, scripts/backfill-session-owners.mjs), never on a person's request.
+ *
  * tenancy-ok: every tenant-table statement runs inside `deps.inOrg(orgId, …)` (the workspace's RLS scope). The
- * only reads outside one are `org_members` via `deps.orgsOf` / `deps.isMember` — the tenancy control plane, which
- * carries no RLS (scripts/bootstrap-test-db.mjs EXEMPT) — and the workspace LIST, which is the same.
+ * only reads outside one are `org_members` via `deps.orgsOf` — the tenancy control plane, which carries no RLS
+ * (scripts/bootstrap-test-db.mjs EXEMPT), and only the CALLER's own memberships.
  */
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -38,14 +46,19 @@ import {
 
 type Tx = PostgresJsDatabase<typeof schema>;
 
-/** The database, as each side reaches it. */
+/**
+ * The database, as each side reaches it on a REQUEST path. There is deliberately no way to list the workspaces here:
+ * a request reads the one workspace it is in (see the header). The system paths that must enumerate workspaces (the
+ * owner backfill) take a `SystemGateDb` (agent/lib/session-owner-backfill.ts), which no request handler may reach —
+ * `npm run check:tenancy` fails if one does.
+ */
 export interface GateDb {
   /** Run `fn` inside workspace `orgId`'s RLS scope (withOrgDb / withOrgRls). */
   inOrg<T>(orgId: string, fn: (tx: Tx) => Promise<T>): Promise<T>;
-  /** Every workspace id (the `orgs` control plane). */
-  listOrgs(): Promise<string[]>;
-  /** The workspaces `email` belongs to (`org_members`, control plane). Tried first, so an owner is found in one read. */
+  /** The workspaces `email` belongs to (`org_members`, control plane): the CALLER's own memberships, nobody else's. */
   orgsOf(email: string): Promise<string[]>;
+  /** Is the database reachable at all? Throws when it is not (the create route answers 503 before starting anything). */
+  ping?(): Promise<void>;
 }
 
 const norm = (value: string | null | undefined): string => (value ?? "").trim().toLowerCase();
@@ -72,107 +85,119 @@ export async function readOwnerRecordIn(
   };
 }
 
-/** A session's recorded owner, found in whichever workspace holds it (the row is unique across all of them). */
-export async function readOwnerRecord(
-  db: GateDb,
+/** What one workspace holds about a session from before owners were recorded (read inside that workspace's scope). */
+export interface LegacyEvidence {
+  readonly orgId: string;
+  /** An `agent_session_scopes` row IN this workspace (written by the agent, from a verified token). */
+  readonly scoped: boolean;
+  /** Owners of shared threads on it (a thread row anybody can write — never an anchor, only an owner hint). */
+  readonly threadOwners: readonly string[];
+  /** People with a chat-list row for it in this workspace (browser-written — never an anchor). */
+  readonly claimants: readonly string[];
+  /** A workflow / app / cron step names it here (server-written). */
+  readonly step: boolean;
+}
+
+/** Read one workspace's evidence about `sessionId`, inside that workspace's RLS scope. */
+export async function readLegacyEvidenceIn(
+  db: Pick<GateDb, "inOrg">,
+  orgId: string,
   sessionId: string,
-  preferOrgs: readonly string[] = [],
-): Promise<SessionOwnership | null> {
-  const orgs = [...new Set([...preferOrgs, ...(await db.listOrgs())])];
-  for (const orgId of orgs) {
-    const found = await readOwnerRecordIn(db, orgId, sessionId);
-    if (found) return found;
-  }
-  return null;
+): Promise<LegacyEvidence> {
+  return db.inOrg(orgId, async (tx) => {
+    const [scope] = await tx
+      .select({ sessionId: agentSessionScopes.sessionId, orgId: agentSessionScopes.orgId })
+      .from(agentSessionScopes)
+      .where(eq(agentSessionScopes.sessionId, sessionId))
+      .limit(1);
+    const threads = await tx
+      .select({ ownerEmail: chatThreads.ownerEmail, orgId: chatThreads.orgId })
+      .from(chatThreads)
+      .where(eq(chatThreads.eveSessionId, sessionId));
+    const mirrors = await tx
+      .select({ ownerEmail: chatSessions.ownerEmail, orgId: chatSessions.orgId })
+      .from(chatSessions)
+      .where(eq(chatSessions.eveSessionId, sessionId));
+    const [journal] = await tx
+      .select({ runId: workflowRunJournal.runId, orgId: workflowRunJournal.orgId })
+      .from(workflowRunJournal)
+      .where(or(eq(workflowRunJournal.sessionId, sessionId), eq(workflowRunJournal.childSessionId, sessionId)))
+      .limit(1);
+    const [app] = journal
+      ? []
+      : await tx.select({ id: apps.id, orgId: apps.orgId }).from(apps).where(eq(apps.lastSessionId, sessionId)).limit(1);
+    const [version] = journal || app
+      ? []
+      : await tx
+          .select({ id: appVersions.id, orgId: appVersions.orgId })
+          .from(appVersions)
+          .where(eq(appVersions.sessionId, sessionId))
+          .limit(1);
+    // Each piece counts for THIS workspace only when its own org_id says so — not merely because the scope let the
+    // row through (a policy that is permissive, or a row read on a wider handle, must not move evidence between
+    // workspaces).
+    const here = <T extends { orgId: string | null }>(rows: T[]) => rows.filter((r) => r.orgId === orgId);
+    return {
+      orgId,
+      scoped: Boolean(scope && scope.orgId === orgId),
+      threadOwners: [...new Set(here(threads).map((t) => norm(t.ownerEmail)).filter(Boolean))],
+      claimants: [...new Set(here(mirrors).map((m) => norm(m.ownerEmail)).filter(Boolean))],
+      step: Boolean((journal && journal.orgId === orgId) || (app && app.orgId === orgId) || (version && version.orgId === orgId)),
+    };
+  });
 }
 
 /**
- * OWNERSHIP OF A SESSION CREATED BEFORE THE AGENT RECORDED OWNERS, inferred from the rows that existed then.
+ * The ownership one workspace's evidence proves, or null. Each kind of row is trusted for exactly one thing:
  *
- * Weaker evidence than a record, so each kind of row is trusted for exactly one thing:
- *
- *   · `agent_session_scopes` anchors the WORKSPACE, and nothing else. It was written by the agent from a verified
- *     token, but it was last-writer-wins and any signed-in caller could post into any session while the hole was
- *     open, so its `principal_email` names whoever spoke LAST — possibly a colleague who was never the owner. It is
- *     never read as an owner, and never as evidence that a session is the workspace's.
- *   · The OWNER comes only from the chat rows: the shared thread's owner, else the ONLY person with a
- *     `chat_sessions` row for it (two claimants prove nothing) IN THE ANCHOR'S WORKSPACE — a claimant in any other
- *     workspace is ignored, and since mold_v1-140 the mirror refuses to file one (lib/chat-sessions-mirror rule 4).
- *   · WORKSPACE visibility (colleagues may read) comes only from positive evidence that the session was a workflow,
- *     app or cron step: a `workflow_run_journal` step naming it (as its session or its child session), or an app /
- *     app version whose last run it was.
- *   · With no scope row at all (sessions older than migration 0016), whichever single workspace holds any of that
- *     evidence is the anchor; evidence in two workspaces is a conflict, and a conflict is refused.
- *
- * Anything else is UNOWNED (null): refused to everyone, and — because the guard freezes only an answer that names an
- * owner or a step — still reachable by its real owner the moment the chat list mirrors it.
+ *   · the thread owner (one), else the ONLY claimant with a chat row, names the OWNER — two claimants prove nothing;
+ *   · a workflow / app / cron step makes the session WORKSPACE-visible (colleagues may read);
+ *   · `agent_session_scopes.principal_email` is never read as an owner: it was last-writer-wins while any signed-in
+ *     caller could post into any session.
  */
-export async function readLegacyOwnership(db: GateDb, sessionId: string): Promise<SessionOwnership | null> {
-  const orgs = await db.listOrgs();
-  type Evidence = { orgId: string; scoped: boolean; threadOwners: string[]; claimants: string[]; step: boolean };
-  const found: Evidence[] = [];
-  for (const orgId of orgs) {
-    const evidence = await db.inOrg(orgId, async (tx) => {
-      const [scope] = await tx
-        .select({ sessionId: agentSessionScopes.sessionId, orgId: agentSessionScopes.orgId })
-        .from(agentSessionScopes)
-        .where(eq(agentSessionScopes.sessionId, sessionId))
-        .limit(1);
-      const threads = await tx
-        .select({ ownerEmail: chatThreads.ownerEmail })
-        .from(chatThreads)
-        .where(eq(chatThreads.eveSessionId, sessionId));
-      const mirrors = await tx
-        .select({ ownerEmail: chatSessions.ownerEmail, orgId: chatSessions.orgId })
-        .from(chatSessions)
-        .where(eq(chatSessions.eveSessionId, sessionId));
-      const [journal] = await tx
-        .select({ runId: workflowRunJournal.runId })
-        .from(workflowRunJournal)
-        .where(or(eq(workflowRunJournal.sessionId, sessionId), eq(workflowRunJournal.childSessionId, sessionId)))
-        .limit(1);
-      const [app] = journal
-        ? []
-        : await tx.select({ id: apps.id }).from(apps).where(eq(apps.lastSessionId, sessionId)).limit(1);
-      const [version] = journal || app
-        ? []
-        : await tx.select({ id: appVersions.id }).from(appVersions).where(eq(appVersions.sessionId, sessionId)).limit(1);
-      return {
-        orgId,
-        // Each piece counts for THIS workspace only when its own org_id says so — not merely because the scope let
-        // the row through (a policy that is permissive, or a row read on a wider handle, must not move a claimant
-        // or an anchor between workspaces). A claimant counts only in the scope row's workspace (mold_v1-140).
-        scoped: Boolean(scope && scope.orgId === orgId),
-        threadOwners: [...new Set(threads.map((t) => norm(t.ownerEmail)).filter(Boolean))],
-        claimants: [...new Set(mirrors.filter((m) => m.orgId === orgId).map((m) => norm(m.ownerEmail)).filter(Boolean))],
-        step: Boolean(journal || app || version),
-      };
-    });
-    if (evidence.scoped || evidence.threadOwners.length || evidence.claimants.length || evidence.step) found.push(evidence);
-  }
-  const anchored = found.filter((e) => e.scoped);
-  const chosen = anchored.length === 1 ? anchored[0] : anchored.length === 0 && found.length === 1 ? found[0] : null;
-  if (!chosen) return null;
-
+export function ownershipFromEvidence(evidence: LegacyEvidence): SessionOwnership | null {
   const ownerEmail =
-    chosen.threadOwners.length > 0
-      ? chosen.threadOwners.length === 1
-        ? chosen.threadOwners[0]
+    evidence.threadOwners.length > 0
+      ? evidence.threadOwners.length === 1
+        ? evidence.threadOwners[0]
         : null
-      : chosen.claimants.length === 1
-        ? chosen.claimants[0]
+      : evidence.claimants.length === 1
+        ? evidence.claimants[0]
         : null;
-  if (!ownerEmail && !chosen.step) return null;
+  if (!ownerEmail && !evidence.step) return null;
   return {
-    orgId: chosen.orgId,
+    orgId: evidence.orgId,
     ownerEmail,
     ownerPrincipal: null,
     ownerKind: ownerEmail ? "person" : "step",
-    visibility: chosen.step ? "workspace" : "owner",
+    visibility: evidence.step ? "workspace" : "owner",
     rootSessionId: null,
     tokenSha256: null,
     source: "legacy",
   };
+}
+
+/**
+ * OWNERSHIP OF A SESSION CREATED BEFORE THE AGENT RECORDED OWNERS (#66), inferred IN ONE WORKSPACE — the request's.
+ *
+ * Only when that workspace holds SERVER-written evidence that the session is its own: the agent's scope row, or a
+ * workflow / app / cron step. Chat-list rows and thread rows are written by browsers, so on their own they anchor
+ * nothing: a member of workspace B could file one in B for a session of A, and B's own evidence would then name them.
+ * With an anchor, the owner is read from this workspace's rows only ({@link ownershipFromEvidence}), so nothing any
+ * other workspace holds can change the answer — and nothing any other workspace holds is read.
+ *
+ * A legacy session with no anchor (older than migration 0016, and never a step) is UNOWNED on the request path. The
+ * factory's one-time owner backfill (agent/lib/session-owner-backfill.ts) records those — reading across workspaces,
+ * as a system job, never as part of a person's request — and from then on the record decides.
+ */
+export async function readLegacyOwnershipIn(
+  db: Pick<GateDb, "inOrg">,
+  orgId: string,
+  sessionId: string,
+): Promise<SessionOwnership | null> {
+  const evidence = await readLegacyEvidenceIn(db, orgId, sessionId);
+  if (!evidence.scoped && !evidence.step) return null;
+  return ownershipFromEvidence(evidence);
 }
 
 /**
@@ -242,29 +267,37 @@ export async function readCallerFacts(
   return { ownership, membership, callerInWorkspace };
 }
 
-/** The recorded owner, else the legacy inference. */
+/** The owner recorded in `orgId`, else the in-workspace legacy inference — `orgId` only, never another workspace. */
 export async function readOwnership(
-  db: GateDb,
+  db: Pick<GateDb, "inOrg">,
   sessionId: string,
-  preferOrgs: readonly string[] = [],
+  orgId: string,
 ): Promise<SessionOwnership | null> {
-  return (await readOwnerRecord(db, sessionId, preferOrgs)) ?? (await readLegacyOwnership(db, sessionId));
+  if (!orgId) return null;
+  return (await readOwnerRecordIn(db, orgId, sessionId)) ?? (await readLegacyOwnershipIn(db, orgId, sessionId));
 }
 
 /**
- * The whole gate for a caller the web proxy has identified: read, then decide. The agent composes the same pieces
- * itself (it adds a cache and eve's subagent lineage), and both end in `sessionGateDecision`.
+ * The whole gate for a caller the web proxy has identified, IN THE WORKSPACE THE REQUEST IS IN: read, then decide. The
+ * agent composes the same pieces itself (it adds a cache and eve's subagent lineage), and both end in
+ * `sessionGateDecision`.
  */
 export async function gateSessionRequest(
   db: GateDb,
   caller: GateCaller,
   sessionId: string,
   right: SessionRight,
-  opts: { localDevAllowed?: boolean } = {},
+  opts: {
+    readonly workspace: string | null;
+    /** The workspace the request NAMES (x-ops-org / ?org=), when it is not `workspace`: a guest's link. */
+    readonly named?: string | null;
+    readonly localDevAllowed?: boolean;
+  },
 ): Promise<GateDecision & { ownership: SessionOwnership | null }> {
-  const callerOrgs = caller.kind === "person" && caller.email ? await db.orgsOf(norm(caller.email)) : [];
-  const ownership = await readOwnership(db, sessionId, callerOrgs);
-  const facts = await readCallerFacts(db, caller, sessionId, ownership, callerOrgs);
+  // The request's workspace, and no other: a session held anywhere else is not found here (refused as unknown).
+  const workspace = opts?.workspace ?? null;
+  const ownership = workspace ? await readOwnership(db, sessionId, workspace) : null;
+  const facts = await readCallerFacts(db, caller, sessionId, ownership);
   const decision = sessionGateDecision({
     caller,
     sessionId,
@@ -274,7 +307,40 @@ export async function gateSessionRequest(
     callerInWorkspace: facts.callerInWorkspace,
     localDevAllowed: opts.localDevAllowed ?? false,
   });
+  if (!decision.allow && decision.reason === "unknown" && opts.named && opts.named !== workspace) {
+    const guest = await guestSessionDecision(db, caller, sessionId, right, opts.named);
+    if (guest) return guest;
+  }
   return { ...decision, ownership };
+}
+
+/**
+ * A GUEST OF ONE CHAT: someone outside the chat's workspace whom its owner shared it with.
+ *
+ * A chat lives in one workspace and is visible only in that workspace's context. An outside person invited to it
+ * opens it through its link, and every request of theirs NAMES the chat's workspace (`named`) — which is the only
+ * workspace this reads, by the session's id. They are admitted only by a live membership of a thread the OWNER
+ * shared on it (readMembership, in that workspace), and only to READ: a guest never sends, answers or cancels,
+ * whatever role the invite named, because a turn they started would run the agent with their identity. Someone who
+ * IS a member of the named workspace is never a guest: they switch workspace (the switcher's path) and are then
+ * gated as a member. Returns null when the named workspace admits no guest; the caller's own refusal then stands.
+ */
+export async function guestSessionDecision(
+  db: GateDb,
+  caller: GateCaller,
+  sessionId: string,
+  right: SessionRight,
+  named: string,
+): Promise<(GateDecision & { ownership: SessionOwnership | null }) | null> {
+  const me = norm(caller.email);
+  if (caller.kind !== "person" || !me || !named) return null;
+  if ((await db.orgsOf(me)).includes(named)) return null;
+  const ownership = await readOwnership(db, sessionId, named);
+  if (!ownership) return null;
+  const membership = await readMembership(db, ownership, sessionId, me);
+  if (!membership) return null;
+  if (right !== "read") return { allow: false, reason: "read-only", ownership };
+  return { allow: true, reason: "member", role: "viewer", ownership };
 }
 
 /**

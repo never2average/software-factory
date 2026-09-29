@@ -183,6 +183,13 @@
       "when": 1791300000000,
       "tag": "0025_drop_redundant_customer_id_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791400000000,
+      "tag": "0026_org_invite_origin",
+      "breakpoints": true
     }
   ]
 }

@@ -7,8 +7,9 @@
  * built directly on `@vercel/blob`. It mirrors the BlobDataroomBackend
  * conventions exactly:
  *
- *   - objects live under the `dataroom/` key prefix; logical paths are the
- *     dm.md paths relative to that prefix
+ *   - each workspace's objects live under its own `dataroom/orgs/<id>/` key
+ *     prefix (lib/dataroom-keyspace.ts); logical paths are the dm.md paths
+ *     relative to that prefix, and every function here REQUIRES the workspace
  *   - the store is PRIVATE: reads go through a short-lived presigned GET
  *     (issueSignedToken + presignUrl), never a public URL
  *   - append-part objects under `{path}.appends/` collapse onto the logical
@@ -22,30 +23,15 @@ import "server-only";
 import { list as listBlobs, put } from "@vercel/blob";
 
 import { presignBlobRead } from "@/lib/blob-read";
+import { isListedPath, isOwnSnapshotKey, workspaceBlobPrefix } from "@/lib/dataroom-keyspace";
 
-const STORE_PREFIX = "dataroom";
 /**
- * Org #1 — its data room is the legacy root (no per-org sub-prefix).
- *
- * TWO ids, and that is not tidiness. The workspace row is `org-onfinance-ai`
- * while this constant was `org-onfinance`, so the two never matched: a caller
- * holding the real workspace id addressed `orgs/org-onfinance-ai/` and a caller
- * passing nothing addressed the root. Org #1's data room was split across two
- * prefixes — its 223 customer files in one, its chat uploads in the other —
- * and each half looked complete to whoever read it.
- *
- * THIS MAPPING IS DUPLICATED in agent/lib/dataroom-store.ts,
- * agent/lib/org-blob.ts and lib/dataroom-blob.ts (bundler boundaries keep them
- * apart). They must stay in lockstep — `npm run check:gates` enforces it.
+ * A workspace's Blob prefix: `dataroom/orgs/<id>`, for EVERY workspace, and a thrown error for none. The mapping is
+ * lib/dataroom-keyspace.ts — shared with the agent's store, no longer a hand-kept twin. It used to map workspace #1
+ * AND a missing id to the root `dataroom/`, which contains every other workspace's `orgs/<id>/` tree.
  */
-const LEGACY_ROOT_ORGS = new Set(["org-onfinance", "org-onfinance-ai"]);
-const isLegacyRootOrg = (orgId?: string | null): boolean => !orgId || LEGACY_ROOT_ORGS.has(orgId);
-/**
- * The Blob store prefix for a workspace: onfinance → "dataroom" (unchanged),
- * others → "dataroom/orgs/{id}". Twin of agent/lib/dataroom-store.ts's mapping.
- */
-function storePrefixForOrg(orgId?: string | null): string {
-  return isLegacyRootOrg(orgId) ? STORE_PREFIX : `${STORE_PREFIX}/orgs/${orgId}`;
+function storePrefixForOrg(orgId: string | null | undefined): string {
+  return workspaceBlobPrefix(orgId);
 }
 /** Marker directory holding immutable append parts for one logical file. */
 const APPENDS_MARKER = ".appends/";
@@ -96,12 +82,13 @@ function ensureTrailingNewline(text: string): string {
 export async function writeDataroomFile(
   path: string,
   body: Buffer | string,
-  contentType?: string,
-  orgId?: string | null,
+  contentType: string | undefined,
+  orgId: string,
 ): Promise<void> {
+  const prefix = storePrefixForOrg(orgId);
   const token = blobToken();
   if (!token) throw new Error("BLOB_READ_WRITE_TOKEN is not set");
-  await put(`${storePrefixForOrg(orgId)}/${path}`, body, {
+  await put(`${prefix}/${path}`, body, {
     access: "private",
     token,
     addRandomSuffix: false,
@@ -136,16 +123,17 @@ async function fetchObject(token: string, pathname: string): Promise<string | nu
  * Every logical dm.md file path in the Blob data room, sorted. Append-part
  * objects collapse onto their logical path. [] when the token is unset.
  */
-export async function listDataroomPaths(orgId?: string | null): Promise<string[]> {
+export async function listDataroomPaths(orgId: string): Promise<string[]> {
+  const prefix = storePrefixForOrg(orgId);
   const token = blobToken();
   if (!token) return [];
-  const prefix = storePrefixForOrg(orgId);
   const logical = new Set<string>();
   for (const pathname of await listObjectPathnames(token, `${prefix}/`)) {
     let rel = pathname.slice(prefix.length + 1);
     const marker = rel.indexOf(APPENDS_MARKER);
     if (marker !== -1) rel = rel.slice(0, marker);
-    if (rel.length > 0) logical.add(rel);
+    // Never a snapshot and never a nested `orgs/` tree, whatever is in the prefix (lib/dataroom-keyspace.ts).
+    if (isListedPath(rel)) logical.add(rel);
   }
   return [...logical].sort();
 }
@@ -154,10 +142,10 @@ export async function listDataroomPaths(orgId?: string | null): Promise<string[]
  * Full logical content of one dm.md file (base object + any append parts, in
  * append order), or null when it does not exist / the token is unset.
  */
-export async function readDataroomFile(path: string, orgId?: string | null): Promise<string | null> {
+export async function readDataroomFile(path: string, orgId: string): Promise<string | null> {
+  const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
   const token = blobToken();
   if (!token) return null;
-  const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
   const [base, partPathnames] = await Promise.all([
     fetchObject(token, objectPathname),
     listObjectPathnames(token, `${objectPathname}${APPENDS_MARKER}`).then((parts) => parts.sort()),
@@ -187,11 +175,11 @@ export async function readDataroomFile(path: string, orgId?: string | null): Pro
  */
 export async function statDataroomObject(
   path: string,
-  orgId?: string | null,
+  orgId: string,
 ): Promise<{ size: number } | null> {
+  const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
   const token = blobToken();
   if (!token) return null;
-  const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
   const page = await listBlobs({ token, prefix: objectPathname, limit: 1000 });
   const hit = page.blobs.find((blob) => blob.pathname === objectPathname);
   return hit ? { size: hit.size } : null;
@@ -214,11 +202,11 @@ export async function statDataroomObject(
  */
 export async function openDataroomObject(
   path: string,
-  orgId?: string | null,
+  orgId: string,
 ): Promise<Response | null> {
+  const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
   const token = blobToken();
   if (!token) return null;
-  const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
   const { url } = await presignBlobRead(token, objectPathname, READ_LINK_TTL_MS);
   const response = await fetch(url, { cache: "no-store" });
   if (response.status === 404) return null;
@@ -226,6 +214,22 @@ export async function openDataroomObject(
     throw new Error(`blob read failed for "${objectPathname}": HTTP ${response.status}`);
   }
   return response;
+}
+
+/**
+ * A version SNAPSHOT (lib/dataroom-versions.ts), in the workspace's OWN tree: `dataroom/orgs/<id>/_versions/<id>/…`.
+ * The key is the version row's `prev_blob_key`; one that is not this workspace's snapshot is refused rather than
+ * resolved. Snapshots used to be written and read at the ROOT (`dataroom/_versions/<id>/…`, "prefix logic bypassed"),
+ * beside every other workspace's.
+ */
+export async function readSnapshotObject(key: string, orgId: string): Promise<string | null> {
+  if (!isOwnSnapshotKey(orgId, key)) throw new Error(`"${key.slice(0, 120)}" is not a snapshot of this workspace`);
+  return readDataroomFile(key, orgId);
+}
+
+export async function writeSnapshotObject(key: string, body: string, orgId: string): Promise<void> {
+  if (!isOwnSnapshotKey(orgId, key)) throw new Error(`"${key.slice(0, 120)}" is not a snapshot of this workspace`);
+  await writeDataroomFile(key, body, "text/plain", orgId);
 }
 
 /** Parse a .jsonl body into records; skips blank lines, throws on bad JSON. */

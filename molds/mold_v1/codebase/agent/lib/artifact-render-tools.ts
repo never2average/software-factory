@@ -91,7 +91,7 @@ export const renderAccountReportTool = modelFacing("render_account_report", defi
       filename = `${customerId}-account-report-${now.slice(0, 10)}.html`;
     }
 
-    const { url, pathname, expiresAt } = await publishArtifact({ filename, content: html });
+    const { url, pathname, expiresAt } = await publishArtifact({ orgId, filename, content: html });
     return {
       published: true as const,
       url,

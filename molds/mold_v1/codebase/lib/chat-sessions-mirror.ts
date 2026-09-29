@@ -18,15 +18,22 @@
  *     schema rejected the WHOLE sync (400) for one chat with many answers, and
  *     titles, archive state and new chats then stopped syncing everywhere.
  *     Markers are now trimmed per chat (`capMarkers`), never refused.
- *  4. ONE SESSION, ONE WORKSPACE (mold_v1-140). Rule 1 refused a duplicate
- *     claim only inside the caller's workspace, so a member of ANOTHER
- *     workspace could file a row for someone's legacy (pre-0016, no scope row)
- *     session; when the owner then deleted their chat, that row was the only
- *     claimant left and legacy inference named its filer the owner. A claim
- *     for an eve session that already has a `chat_sessions` row or an
- *     `agent_session_scopes` row in any OTHER workspace is now refused, read
- *     across every workspace the way the session gate reads (`across`: each
- *     workspace inside its own scope).
+ *  4. A ROW NAMES A SESSION ONLY IF THE AGENT SAYS IT IS YOURS, HERE. A row
+ *     for an eve session is written only when the agent's own owner record for
+ *     that session (agent_session_owners, written at creation — #66) is in THIS
+ *     workspace and names THIS caller. Nothing about any other workspace is
+ *     read: a session recorded elsewhere is simply not found here, and refused
+ *     like one nobody recorded. A session from before the record (legacy) is
+ *     accepted only on evidence inside this workspace — the in-workspace legacy
+ *     inference (lib/session-gate.ts readLegacyOwnershipIn, anchored by the
+ *     agent's scope row or a step) naming the caller, or the caller's OWN
+ *     existing row for it here (an update, not a new claim).
+ *     mold_v1-140 met the same need — a member of another workspace must not
+ *     file a row for someone's session and so become its inferred owner — by
+ *     SCANNING every other workspace for the session (`sessionsHeldElsewhere`).
+ *     That read workspace A's rows on every request made in workspace B, and it
+ *     missed the owner record altogether: B could file a row for A's RECORDED
+ *     session, after which A's own owner was refused hers.
  *  3. EITHER DEPLOY ORDER IS SAFE. `client_markers` arrives with migration 0020;
  *     code that names a missing column fails every query (500, and the sidebar
  *     stops syncing). The column is looked up once (re-checked every minute
@@ -34,9 +41,15 @@
  */
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { boolean, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
-import { agentSessionScopes, appVersions, apps, chatSessions, chatThreads, workflowRunJournal } from "../agent/lib/db/schema.ts";
+import { agentSessionOwners, chatSessions, chatThreads } from "../agent/lib/db/schema.ts";
 import { capMarkers, MARKERS_MAX_BYTES_SERVER } from "./chat-turn-state.ts";
-import { readLegacyOwnership, readOwnerRecord, recordOwner, type GateDb } from "./session-gate.ts";
+import {
+  ownershipFromEvidence,
+  readLegacyEvidenceIn,
+  readOwnerRecordIn,
+  recordOwner,
+  type GateDb,
+} from "./session-gate.ts";
 
 /**
  * `chat_sessions` as it is BEFORE migration 0020 — every column but
@@ -155,36 +168,43 @@ export async function readMirrorRows(
   );
 }
 
-/** How the mirror reads OTHER workspaces (rule 4): the gate's own reader — the workspace list, and each one's scope. */
-export type AcrossWorkspaces = Pick<GateDb, "inOrg" | "listOrgs">;
-
 /**
- * The eve sessions among `sessionIds` that another workspace already holds: a `chat_sessions` row or an
- * `agent_session_scopes` row anywhere but `orgId` (rule 4).
+ * Rule 4: which of `sessionIds` may `email` file (or keep) a chat row for in workspace `orgId`? Reads THIS workspace
+ * only, by session id: the owner records (one query for the whole batch), else — for a legacy session with no record
+ * that the caller has no row for yet — the in-workspace evidence.
  */
-export async function sessionsHeldElsewhere(
-  across: AcrossWorkspaces,
+async function sessionsOfCaller(
+  inOrg: InOrg,
   orgId: string,
+  email: string,
   sessionIds: readonly string[],
+  ownRows: ReadonlySet<string>,
 ): Promise<Set<string>> {
-  const held = new Set<string>();
-  if (!sessionIds.length) return held;
-  const others = [...new Set(await across.listOrgs())].filter((o) => o !== orgId);
-  for (const other of others) {
-    const found = await across.inOrg(other, async (tx: Tx) => {
-      const rows = (await tx
-        .select({ eveSessionId: chatSessions.eveSessionId })
-        .from(chatSessions)
-        .where(inArray(chatSessions.eveSessionId, [...sessionIds]))) as { eveSessionId: string | null }[];
-      const scopes = (await tx
-        .select({ sessionId: agentSessionScopes.sessionId })
-        .from(agentSessionScopes)
-        .where(inArray(agentSessionScopes.sessionId, [...sessionIds]))) as { sessionId: string }[];
-      return [...rows.map((r) => r.eveSessionId), ...scopes.map((r) => r.sessionId)];
-    });
-    for (const id of found) if (id) held.add(id);
+  const allowed = new Set<string>();
+  if (!sessionIds.length) return allowed;
+  const records = (await inOrg((tx) =>
+    tx
+      .select({ sessionId: agentSessionOwners.sessionId, orgId: agentSessionOwners.orgId, ownerEmail: agentSessionOwners.ownerEmail })
+      .from(agentSessionOwners)
+      .where(and(eq(agentSessionOwners.orgId, orgId), inArray(agentSessionOwners.sessionId, [...sessionIds]))),
+  )) as { sessionId: string; orgId: string; ownerEmail: string | null }[];
+  const recorded = new Map(records.map((r) => [r.sessionId, r]));
+  const here = { inOrg: <T>(o: string, fn: (tx: Tx) => Promise<T>) => (o === orgId ? inOrg(fn) : Promise.reject(new Error("one workspace per request"))) };
+  for (const id of sessionIds) {
+    const record = recorded.get(id);
+    if (record) {
+      if (record.orgId === orgId && (record.ownerEmail ?? "").trim().toLowerCase() === email) allowed.add(id);
+      continue;
+    }
+    // No record here. The caller's own existing row for this very session is an update, not a new claim.
+    if (ownRows.has(id)) {
+      allowed.add(id);
+      continue;
+    }
+    const evidence = await readLegacyEvidenceIn(here, orgId, id);
+    if ((evidence.scoped || evidence.step) && ownershipFromEvidence(evidence)?.ownerEmail === email) allowed.add(id);
   }
-  return held;
+  return allowed;
 }
 
 /** Write the caller's chat list. Returns how many rows were refused as somebody else's. */
@@ -194,12 +214,10 @@ export async function writeMirrorRows(
     readonly orgId: string;
     readonly email: string;
     readonly sessions: readonly MirrorRowInput[];
-    /** Rule 4: required, so a caller cannot skip the cross-workspace check by leaving it out. */
-    readonly across: AcrossWorkspaces;
   },
 ): Promise<{ readonly refused: number }> {
-  const { orgId, email, sessions, across } = input;
-  if (!across) throw new Error("writeMirrorRows: `across` (the cross-workspace reader) is required");
+  const { orgId, sessions } = input;
+  const email = input.email.trim().toLowerCase();
   /**
    * A thread somebody else owns is never one of your chats — whether it was
    * shared (a `chat_threads` row), already mirrored by someone else under its
@@ -224,11 +242,15 @@ export async function writeMirrorRows(
         .from(chatSessions)
         .where(inArray(chatSessions.eveSessionId, sessionIds)),
     );
+    const mine = new Set<string>();
     for (const c of claimed as { eveSessionId: string | null; ownerEmail: string }[]) {
       if (c.eveSessionId && c.ownerEmail.toLowerCase() !== email) foreignSessions.add(c.eveSessionId);
+      else if (c.eveSessionId) mine.add(c.eveSessionId);
     }
-    // Rule 4: held in another workspace — by anyone, the caller included (a session belongs to one workspace).
-    for (const id of await sessionsHeldElsewhere(across, orgId, sessionIds)) foreignSessions.add(id);
+    // Rule 4: the agent's record (or, for a legacy session, this workspace's evidence) must say it is the caller's.
+    const undecided = [...new Set(sessionIds)].filter((id) => !foreignSessions.has(id));
+    const callers = await sessionsOfCaller(inOrg, orgId, email, undecided, mine);
+    for (const id of undecided) if (!callers.has(id)) foreignSessions.add(id);
   }
   const ids = sessions.map((s) => s.id);
   if (ids.length) {
@@ -307,71 +329,40 @@ export async function writeMirrorRows(
 /**
  * A DELETED CHAT'S SESSION CANNOT CHANGE HANDS (review of #59; mold_v1-122).
  *
- * Deleting a chat removes its `chat_sessions` row. For every session created since
- * #66 that changes nothing about who owns it: the agent recorded the owner in
- * `agent_session_owners` before it handed the id out, the record is insert-only
- * (`recordOwner`), nothing deletes it, and the gate reads it first. But a session
- * from BEFORE #66 that nobody has opened since has no record — its owner is
- * inferred (`readLegacyOwnership`) from the chat rows, and the mirror only refuses
- * a row that another person's EXISTING row or thread already claims. Once the
- * owner's row is gone, a colleague who knows the id (it is in `?chatSession=`
- * links) could file their own row for it, become its only claimant, and be read —
- * and then frozen by the agent's guard — as its owner.
+ * Deleting a chat removes its `chat_sessions` row. For every session created since #66 that changes nothing about who
+ * owns it: the agent recorded the owner in `agent_session_owners` before it handed the id out, the record is
+ * insert-only (`recordOwner`), nothing deletes it, and the gate reads it first. A session from BEFORE #66 that nobody
+ * has opened since may have no record — its owner is inferred from rows that include the chat list, and once the
+ * owner's row is gone the inference could change. So before the row goes, ownership is made a RECORD.
  *
- * So before the row goes, ownership is made a RECORD: the owner as inferred while
- * the owner's row still exists (the same freeze the guard applies on first
- * access), or — when nothing names one — a TOMBSTONE, a record with no owner,
- * which every person is refused.
+ * IN THIS WORKSPACE ONLY, and only on evidence this workspace holds (review of #77, and workspaces are not aware of
+ * each other). A record is written only when the session is anchored HERE by server-written evidence (the agent's
+ * scope row, or a workflow / app / cron step) AND the deleter is the only person with a chat row for it here: then the
+ * owner inferred while that row still exists is frozen ("frozen"), or — when the evidence names nobody — a TOMBSTONE,
+ * a record with no owner, which every person is refused ("tombstone"; safe, because the anchor says the session is
+ * this workspace's). Anything else deletes the caller's row and records nothing ("skipped"): a session with no anchor
+ * here may be another workspace's, and a record written here must never lock its owner out there. The factory's owner
+ * backfill (agent/lib/session-owner-backfill.ts) decides those, as a system job. A session that already has a record
+ * here is left alone ("recorded").
  *
- * ONLY WHEN THE DELETER HOLDS ALL THE EVIDENCE (review of #77). A record is
- * permanent, and the mirror refuses a duplicate claim only inside the CALLER's
- * workspace: a member of another workspace could file a row for someone's legacy
- * session in their own workspace and DELETE it, recording a tombstone that locked
- * the real owner out for good. So a record is written only when every piece of
- * ownership evidence (a scope row, a shared thread, a chat row, a workflow/app
- * step) is in the caller's workspace AND the caller is the only person with a chat
- * row for it there. Otherwise the caller's own row is simply deleted and nothing
- * is recorded ("skipped"): the evidence that remains decides, as it did before.
- * A session that already has a record is left alone ("recorded").
+ * It used to gather the evidence from EVERY workspace (the session's record, its scope row, its chat rows, its steps),
+ * on a person's DELETE.
  */
 export async function recordOwnershipBeforeDelete(
-  db: GateDb,
+  db: Pick<GateDb, "inOrg">,
   input: { readonly sessionId: string; readonly orgId: string; readonly email: string },
 ): Promise<"recorded" | "frozen" | "tombstone" | "skipped"> {
   const { sessionId, orgId } = input;
   const me = input.email.trim().toLowerCase();
-  if (await readOwnerRecord(db, sessionId, [orgId])) return "recorded";
-  const orgs = [...new Set([orgId, ...(await db.listOrgs())])];
-  for (const org of orgs) {
-    const evidence = await db.inOrg(org, async (tx: Tx) => {
-      const claimants = (
-        (await tx
-          .select({ ownerEmail: chatSessions.ownerEmail })
-          .from(chatSessions)
-          .where(eq(chatSessions.eveSessionId, sessionId))) as { ownerEmail: string }[]
-      ).map((r) => r.ownerEmail.trim().toLowerCase());
-      const [scope] = await tx.select({ id: agentSessionScopes.sessionId }).from(agentSessionScopes).where(eq(agentSessionScopes.sessionId, sessionId)).limit(1);
-      const [thread] = await tx.select({ id: chatThreads.id }).from(chatThreads).where(eq(chatThreads.eveSessionId, sessionId)).limit(1);
-      const [journal] = await tx
-        .select({ runId: workflowRunJournal.runId })
-        .from(workflowRunJournal)
-        .where(or(eq(workflowRunJournal.sessionId, sessionId), eq(workflowRunJournal.childSessionId, sessionId)))
-        .limit(1);
-      const [app] = await tx.select({ id: apps.id }).from(apps).where(eq(apps.lastSessionId, sessionId)).limit(1);
-      const [version] = await tx.select({ id: appVersions.id }).from(appVersions).where(eq(appVersions.sessionId, sessionId)).limit(1);
-      return { claimants, other: Boolean(scope || thread || journal || app || version) };
-    });
-    if (org !== orgId) {
-      if (evidence.claimants.length || evidence.other) return "skipped";
-    } else if (evidence.claimants.length !== 1 || evidence.claimants[0] !== me) {
-      return "skipped";
-    }
-  }
-  const legacy = await readLegacyOwnership(db, sessionId);
+  if (await readOwnerRecordIn(db, orgId, sessionId)) return "recorded";
+  const evidence = await readLegacyEvidenceIn(db, orgId, sessionId);
+  if (!evidence.scoped && !evidence.step) return "skipped";
+  if (evidence.claimants.length !== 1 || evidence.claimants[0] !== me) return "skipped";
+  const legacy = ownershipFromEvidence(evidence);
   if (legacy && (legacy.ownerEmail || legacy.visibility === "workspace")) {
     await recordOwner(db, {
       sessionId,
-      orgId: legacy.orgId,
+      orgId,
       ownerEmail: legacy.ownerEmail,
       ownerPrincipal: null,
       ownerKind: legacy.ownerKind,

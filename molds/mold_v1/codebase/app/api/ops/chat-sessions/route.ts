@@ -7,8 +7,8 @@ import {
   chatThreads,
   chatTranscriptSnapshots,
 } from "@/agent/lib/db/schema";
-import { getOpsDb, listWorkspaceIds, withOrgRls } from "@/lib/ops-db";
-import { orgContextForRequest, workspacesOf } from "@/lib/org-context";
+import { getOpsDb, withOrgRls } from "@/lib/ops-db";
+import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { isEmptyStore } from "@/lib/pg-error";
 import { readMirrorRows, recordOwnershipBeforeDelete, writeMirrorRows, type InOrg } from "@/lib/chat-sessions-mirror";
@@ -197,14 +197,8 @@ export async function POST(request: NextRequest) {
     const { refused } = await writeMirrorRows(inOrg, {
       orgId: ctx.orgId,
       email,
-      // One session, one workspace: a claim another workspace already holds is refused (mold_v1-140).
-      across: {
-        inOrg: (orgId, fn) => withOrgRls(orgId, fn),
-        async listOrgs() {
-          const ids = await listWorkspaceIds();
-          return ids.length ? ids : [ctx.orgId];
-        },
-      },
+      // A row names an eve session only when the agent's owner record for it, in THIS workspace, names the caller
+      // (rule 4). Nothing about any other workspace is read.
       sessions: parsed.data.sessions.map((s) => ({
         ...s,
         clientMarkers: Array.isArray(s.clientMarkers) ? s.clientMarkers : null,
@@ -269,14 +263,8 @@ export async function DELETE(request: NextRequest) {
        * session is left claimable.
        */
       await recordOwnershipBeforeDelete(
-        {
-          inOrg: (orgId, fn) => withOrgRls(orgId, fn),
-          async listOrgs() {
-            const ids = await listWorkspaceIds();
-            return ids.length ? ids : [ctx.orgId];
-          },
-          orgsOf: (address) => workspacesOf(address),
-        },
+        // This workspace's scope, and no other (workspaces are not aware of each other).
+        { inOrg: (orgId, fn) => (orgId === ctx.orgId ? withOrgRls(orgId, fn) : Promise.reject(new Error("one workspace per request"))) },
         { sessionId: eveSessionId, orgId: ctx.orgId, email },
       );
       await withOrgRls(ctx.orgId, (tx) =>

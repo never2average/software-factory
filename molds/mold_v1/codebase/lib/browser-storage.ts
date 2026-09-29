@@ -168,3 +168,23 @@ export function removeStored(key: string, area: StorageArea = "local"): void {
     /* nothing to do: there is no storage to clear */
   }
 }
+
+/**
+ * THE WORKSPACE THIS TAB IS IN. Each tab keeps its own (sessionStorage), so two tabs can sit on two workspaces; the
+ * last one chosen anywhere (localStorage) is only the default a NEW tab starts from. It used to be localStorage alone,
+ * shared by every tab: switching in one tab silently moved the other's requests to the new workspace.
+ */
+export function readActiveOrg(): string | null {
+  return readStored(STORAGE_KEYS.activeOrg, "session") ?? readStored(STORAGE_KEYS.activeOrg);
+}
+
+/** Choose this tab's workspace, and make it the default for tabs opened from now on. */
+export function writeActiveOrg(orgId: string | null): void {
+  if (orgId) {
+    writeStored(STORAGE_KEYS.activeOrg, orgId, "session");
+    writeStored(STORAGE_KEYS.activeOrg, orgId);
+  } else {
+    removeStored(STORAGE_KEYS.activeOrg, "session");
+    removeStored(STORAGE_KEYS.activeOrg);
+  }
+}

@@ -112,30 +112,21 @@ check(
  * session disagree — which is how this was found. */
 check("the MCP sends the selected workspace on Ops API calls", /"x-ops-org":\s*OPS_ORG/.test(mcp));
 
-/* Org #1's data room must have ONE prefix. The workspace row is
- * `org-onfinance-ai` and the legacy-root constant was `org-onfinance`, so the
- * two never matched: callers resolving the real id got an empty per-org tree
- * while callers passing nothing got the real one. 223 customer files in one
- * half, every chat upload in the other, each half looking complete to whoever
- * was reading it. */
-/* THREE files carry this mapping — bundler boundaries keep the web app and the
- * agent from sharing a module — and fixing one of them is what produced the
- * split in the first place: the agent-side store was aliased, the web-side
- * twin was not, so the console read a tree the agent no longer wrote to. Check
- * all three together; a mapping that is right in two places out of three is
- * the bug, not a partial fix. */
-for (const f of [
-  "agent/lib/dataroom-store.ts",
-  "agent/lib/org-blob.ts",
-  "lib/dataroom-blob.ts",
-]) {
+/* Every workspace's data room has ONE prefix of its own, and nothing lives at
+ * the root (lib/dataroom-keyspace.ts). This used to be a lockstep check on
+ * three hand-kept copies of a "legacy root" mapping — org #1's two ids, and a
+ * MISSING id, mapped to `dataroom/`, the prefix that contains every other
+ * workspace's `orgs/<id>/` tree, so the legacy workspace's listing (and a
+ * caller that lost its workspace) saw everybody's files. The mapping now lives
+ * in one importable module; the stores must use it, and no copy may return. */
+for (const f of ["agent/lib/dataroom-store.ts", "lib/dataroom-blob.ts"]) {
   const src = decomment(readFileSync(f, "utf8"));
   check(
-    `${f} aliases both of org #1's ids to one data-room tree`,
-    /LEGACY_ROOT_ORGS = new Set\(\[[^\]]*"org-onfinance"[^\]]*"org-onfinance-ai"[^\]]*\]\)/.test(src) &&
-      !/orgId === LEGACY_ROOT_ORG\b/.test(src),
+    `${f} maps a workspace to its prefix through lib/dataroom-keyspace.ts, with no legacy root`,
+    /dataroom-keyspace/.test(src) && /workspaceBlobPrefix\(/.test(src) && !/LEGACY_ROOT_ORGS?\b/.test(src),
   );
 }
+check("the agent's old copy of the mapping (agent/lib/org-blob.ts) is gone", !existsSync("agent/lib/org-blob.ts"));
 
 /* Every endpoint behind useOpsList() must answer with `items`.
  *
@@ -257,7 +248,6 @@ for (const f of [
   const LEGITIMATE = [
     /DEFAULT_ORG = "org-onfinance"/,
     /DEFAULT_DOMAIN = "onfinance\.in"/,
-    /LEGACY_ROOT_ORGS? =/,
     /isOnfinanceIdentity/,
     /claims: \{ hd: \["onfinance\.in"\] \}/,
   ];

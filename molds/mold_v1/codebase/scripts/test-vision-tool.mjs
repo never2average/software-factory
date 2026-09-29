@@ -661,12 +661,14 @@ check(
 console.log("\nAn image is readable only by someone who can already read it:");
 
 const { getDataroomStore } = await import("../agent/lib/dataroom-store.ts");
+// No database here, so a session resolves to the default workspace — whose tree is `orgs/<id>/` like every other's.
+const { DEFAULT_ORG } = await import("../agent/lib/org-context.ts");
 
 // A real image at a real data-room path, written through the store itself.
-const store = getDataroomStore();
+const store = getDataroomStore(DEFAULT_ORG);
 const IMAGE_PATH = "Uploads/priya-example-in/scan.png";
-await fs.mkdir(join(process.env.DATAROOM_DIR, "Uploads/priya-example-in"), { recursive: true });
-await fs.writeFile(join(process.env.DATAROOM_DIR, IMAGE_PATH), png(500));
+await fs.mkdir(join(process.env.DATAROOM_DIR, "orgs", DEFAULT_ORG, "Uploads/priya-example-in"), { recursive: true });
+await fs.writeFile(join(process.env.DATAROOM_DIR, "orgs", DEFAULT_ORG, IMAGE_PATH), png(500));
 
 const ctx = ctxWith(fakeSandbox(join(WORK, "sb-dr")));
 {

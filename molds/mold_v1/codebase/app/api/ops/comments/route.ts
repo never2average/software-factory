@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
         to,
         subject: `${author} mentioned you on ${label ?? `${entityType} ${entityId}`}`,
         body: `${author} mentioned you in a comment on ${entityType} ${entityId}:\n\n${body}`,
-      }).catch(() => {});
+      }, ctx.orgId).catch(() => {});
     }
     return NextResponse.json(
       { item: { id: item.id, author, body, mentions, at: item.createdAt.toISOString() } },

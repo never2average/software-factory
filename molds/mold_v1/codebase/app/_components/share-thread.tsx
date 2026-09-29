@@ -69,7 +69,7 @@ function ShareDialog({
   const [ownerEmail, setOwnerEmail] = useState<string | null>(null);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   /** Per-invite delivery, keyed by email — "did this person actually get told". */
-  const [delivery, setDelivery] = useState<Record<string, { delivered: boolean; reason?: string; workspaceInvited?: boolean }>>({});
+  const [delivery, setDelivery] = useState<Record<string, { delivered: boolean; reason?: string }>>({});
   /**
    * Am I the owner of this thread, or someone it was shared with?
    *
@@ -158,25 +158,12 @@ function ShareDialog({
       setBusy(true);
       setError(null);
       try {
-        const res = await opsFetch<{
-          delivery?: { delivered: boolean; reason?: string };
-          workspaceInvite?: { status: string; delivered?: boolean; reason?: string };
-        }>(
+        const res = await opsFetch<{ delivery?: { delivered: boolean; reason?: string } }>(
           `/api/ops/threads/${threadId}/members`,
           { method: "POST", body: JSON.stringify({ email: target, role: targetRole }) },
         );
-        // A person outside the workspace is invited to it as well (they could not sign in otherwise); say so, and
-        // say it when that second email did not go out, because then they still cannot get in.
-        const invited = res?.workspaceInvite?.status === "sent" || res?.workspaceInvite?.status === "resent";
-        const inviteFailed = invited && res?.workspaceInvite?.delivered === false;
-        if (res?.delivery) {
-          setDelivery((d) => ({
-            ...d,
-            [target]: inviteFailed
-              ? { delivered: false, reason: `The workspace invite could not be emailed: ${res.workspaceInvite?.reason ?? "unknown reason"}` }
-              : { ...res.delivery!, workspaceInvited: invited },
-          }));
-        }
+        // Someone outside the workspace becomes a read-only guest of this one chat, reached through its link.
+        if (res?.delivery) setDelivery((d) => ({ ...d, [target]: res.delivery! }));
         await loadMembers(threadId);
         setQuery("");
         inputRef.current?.focus();
@@ -311,7 +298,7 @@ function ShareDialog({
                     Invite <span className="font-medium">{typedEmail}</span>
                     {typedIsExternal ? (
                       <span className="ml-1.5 text-2xs text-amber-600 dark:text-amber-400">
-                        outside @{myDomain} — they&apos;ll read the whole thread
+                        outside @{myDomain} — a guest: they can read this chat from its link, nothing else
                       </span>
                     ) : null}
                   </span>
@@ -364,7 +351,7 @@ function ShareDialog({
                   notice={
                     delivery[m.email]
                       ? delivery[m.email].delivered
-                        ? { text: delivery[m.email].workspaceInvited ? "emailed · invited to the workspace" : "emailed", ok: true }
+                        ? { text: "emailed", ok: true }
                         : { text: "not emailed", ok: false, title: delivery[m.email].reason }
                       : undefined
                   }

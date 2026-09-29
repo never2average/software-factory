@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOpsDb } from "@/lib/ops-db";
-import { accessForThread, callerEmail, loadThread } from "@/lib/chat-threads";
+import { callerEmail, threadAccess } from "@/lib/chat-threads";
 import { boundedReplay, withoutContinuationTokens } from "@/lib/chat-replay-stream";
 
 export const runtime = "nodejs";
@@ -10,7 +10,7 @@ export const maxDuration = 300;
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
 
 /**
- * tenancy-ok: the only reads are loadThread() and accessForThread(), which
+ * tenancy-ok: the only read is threadAccess() (the request's workspace, or a guest's named one), which
  * resolve and enforce the caller's access to ONE thread — accessFor refuses a
  * thread whose workspace is not the caller's (lib/chat-threads.ts). Past that
  * point this route is a stream proxy and touches no tenant table.
@@ -60,23 +60,19 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   const authHeader = request.headers.get("authorization");
   const { id } = await ctx.params;
 
-  // Verifying the bearer can cost a network fetch of Google's JWKS on a cold
-  // container; the thread row does not depend on the answer, so start reading it
-  // now rather than after. `catch` keeps an unhandled rejection off the 401 path.
-  const threadPromise = loadThread(db, id);
-  threadPromise.catch(() => undefined);
-
   const email = await callerEmail(request);
   if (!email || !authHeader) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
-  const access = await accessForThread(db, await threadPromise, email);
+  // The thread is read in the REQUEST's workspace (or, for a guest's link, the one it names) — which needs the
+  // verified caller first, so the read can no longer start before the token check.
+  const access = await threadAccess(request, db, id, email);
   if (!access) return NextResponse.json({ error: "You don't have access to this thread." }, { status: 403 });
   /**
    * UN-SHARING has to end the stream too.
    *
    * `DELETE /api/ops/threads/:id` un-shares by stamping `archived_at`, and
-   * `accessForThread` never looked at it — so every member kept reading the
+   * the access check never looked at it — so every member kept reading the
    * live conversation of a thread its owner had taken back. The route now
    * revokes the member rows as well, which is what makes this real for a caller
    * who has already loaded the page; this is the second half, for the thread

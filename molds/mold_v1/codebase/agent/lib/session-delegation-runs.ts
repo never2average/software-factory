@@ -50,9 +50,9 @@ import { clearDelegationPark, markDelegationParked, recordFailedDelegation } fro
 
 /** The database writes a settled or parked delegation turns into (agent/lib/workflow-usage.ts). */
 export interface DelegationRunWriters {
-  recordFailedDelegation(name: string, childSessionId: string, message?: string, at?: Date): Promise<void>;
-  markDelegationParked(name: string, childSessionId: string): Promise<void>;
-  clearDelegationPark(name: string, childSessionId: string): Promise<void>;
+  recordFailedDelegation(name: string, childSessionId: string, message: string | undefined, at: Date | undefined, orgId: string | null): Promise<void>;
+  markDelegationParked(name: string, childSessionId: string, orgId: string | null): Promise<void>;
+  clearDelegationPark(name: string, childSessionId: string, orgId: string | null): Promise<void>;
 }
 
 const writers: DelegationRunWriters = { recordFailedDelegation, markDelegationParked, clearDelegationPark };
@@ -77,11 +77,13 @@ function stampOf(event: StreamEvent): Date | undefined {
 
 /**
  * The recorder for one read of `parentSessionId`'s stream. The id is the one the guard serves — the path's — never a
- * field of the event. Feed it every parsed event; it ignores what it does not need.
+ * field of the event. Feed it every parsed event; it ignores what it does not need. `orgId` is the workspace the
+ * parent session is recorded in (the guard's decided ownership): the runs are filed there, and only there.
  */
 export function delegationRunRecorder(
   parentSessionId: string,
   write: DelegationRunWriters = writers,
+  orgId: string | null = null,
 ): (event: StreamEvent) => Promise<void> {
   // This read's own tracker (see the header). Delegations are keyed by (parent, turn, call); `parked` matches on the
   // parent prefix, so a question still finds every delegation this read has outstanding.
@@ -97,16 +99,16 @@ export function delegationRunRecorder(
       else if (type === "subagent.called") tracker.called(inTurn(data), data as SubagentCalledData);
       else if (type === "input.requested") {
         for (const parked of tracker.parked(parentSessionId, data as InputRequestedData)) {
-          await write.markDelegationParked(parked.name, parked.childSessionId);
+          await write.markDelegationParked(parked.name, parked.childSessionId, orgId);
         }
       } else if (type === "action.result") {
         const settled = tracker.settled(inTurn(data), data as ActionResultData);
         if (!settled) return;
         if (settled.failed) {
           // Filed at eve's own time for it: a replay of an old conversation must not date an old failure today.
-          await write.recordFailedDelegation(settled.name, settled.childSessionId, settled.message, stampOf(event));
+          await write.recordFailedDelegation(settled.name, settled.childSessionId, settled.message, stampOf(event), orgId);
         }
-        else await write.clearDelegationPark(settled.name, settled.childSessionId);
+        else await write.clearDelegationPark(settled.name, settled.childSessionId, orgId);
       }
     } catch (error) {
       console.error("[delegation-runs] could not record a delegation from the parent's stream", {

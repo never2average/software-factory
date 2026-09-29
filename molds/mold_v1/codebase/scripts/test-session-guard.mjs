@@ -278,7 +278,7 @@ const create = async (token, message = "hello", headers = {}, via = channel) => 
 };
 const stream = (id, token, via = channel) => call("GET", `/eve/v1/session/${encodeURIComponent(id)}/stream`, { token, via });
 const post = (id, token, body, via = channel) => call("POST", `/eve/v1/session/${encodeURIComponent(id)}`, { token, body, via });
-const cancel = (id, token) => call("POST", `/eve/v1/session/${encodeURIComponent(id)}/cancel`, { token, body: {} });
+const cancel = (id, token, via = channel) => call("POST", `/eve/v1/session/${encodeURIComponent(id)}/cancel`, { token, body: {}, via });
 
 try {
   /* ---- the database, as production has it ---------------------------------------------------------------- */
@@ -341,6 +341,94 @@ try {
   check("the owner answers an approval (200)", ownAnswer.status === 200, ownAnswer.status);
   const ownCancel = await cancel(S, T.alice);
   check("the owner cancels (202)", ownCancel.status === 202 && sessions.get(S).cancelled === 1, ownCancel.status);
+
+  /* ---- workspaces are not aware of each other ------------------------------------------------------------- */
+
+  // The SAME guard over a database that records which workspace scopes each request enters (and whether it lists
+  // workspaces). A request from workspace B must read B and nothing else — it used to look the session up in EVERY
+  // workspace (readOwnerRecord / readLegacyOwnership: list the workspaces, then read each one's scope).
+  console.log("\nWorkspaces are not aware of each other: the guard reads the caller's workspace only:");
+  {
+    const { eveChannel: eveCh } = await import("eve/channels/eve");
+    const { jwtEcdsa: jwtDoor } = await import("eve/channels/auth");
+    const guardMod = await import("../agent/lib/session-guard.ts");
+    const touched = [];
+    const watched = () => {
+      const real = guardMod.agentGateDb();
+      return real && {
+        ...real,
+        inOrg: (orgId, fn) => (touched.push(orgId), real.inOrg(orgId, fn)),
+        listOrgs: async () => (touched.push("<every workspace>"), real.listOrgs ? real.listOrgs() : []),
+      };
+    };
+    const emailDoor = [jwtDoor({ algorithm: "ES256", publicKey: process.env.AUTH_JWT_PUBLIC_KEY, issuer: "delivered", audiences: ["delivered-app"], claims: { kind: ["email-session"] } })];
+    const seen = guardMod.guardSessionRoutes(eveCh({ auth: emailDoor }), { auth: emailDoor, deps: { db: watched } });
+    const onlyIn = (org) => touched.length > 0 && touched.every((o) => o === org);
+    for (const [label, token, org, expect] of [
+      ["a member of workspace B reading A's session", T.carol, ORG_B, 404],
+      ["a colleague in A reading it", T.bob, ORG_A, 404],
+      ["its owner reading it", T.alice, ORG_A, 200],
+    ]) {
+      guardMod.clearSessionGuardCache();
+      touched.length = 0;
+      const r = await stream(S, token, seen);
+      check(`${label}: ${expect}`, r.status === expect, r.status);
+      check(`…entering workspace ${org === ORG_A ? "A" : "B"}'s scope only, never listing workspaces`, onlyIn(org), touched);
+    }
+    guardMod.clearSessionGuardCache();
+    touched.length = 0;
+    const c = await cancel(S, T.carol, seen);
+    check("a member of B cancelling A's session: 404, reading B only", c.status === 404 && onlyIn(ORG_B), { status: c.status, touched });
+  }
+
+  /* ---- one person, two workspaces, two tabs ------------------------------------------------------------- */
+
+  // A person in two workspaces with a tab open on each. The web app names the tab's workspace on every call
+  // (x-ops-org, honoured only for a member); the agent used to ignore it and resolve the workspace from whichever
+  // the person last SELECTED, so the second tab's chats were recorded in — and gated by — the other workspace.
+  console.log("\nOne person in two workspaces, two tabs: the agent uses the workspace the request names:");
+  {
+    const DUO = "duo@guard-a.test";
+    await admin`INSERT INTO org_members (org_id, email, role, last_selected_at) VALUES (${ORG_A}, ${DUO}, 'member', now()), (${ORG_B}, ${DUO}, 'member', now() - interval '1 day')`;
+    const duo = await emailToken(DUO);
+    const tabB = { "x-ops-org": ORG_B };
+    const tabA = { "x-ops-org": ORG_A };
+    const made = await create(duo, "a chat in the B tab", tabB);
+    check("the B tab starts a chat (202)", made.status === 202 && Boolean(made.sessionId), made.status);
+    const [rec] = await admin`SELECT org_id FROM agent_session_owners WHERE session_id = ${made.sessionId ?? ""}`;
+    check("…recorded in workspace B, the one the tab names (not the last selected, A)", rec?.org_id === ORG_B, rec);
+    const streamIn = (headers) => call("GET", `/eve/v1/session/${encodeURIComponent(made.sessionId)}/stream`, { token: duo, headers });
+    check("the B tab reads it (200)", (await streamIn(tabB)).status === 200);
+    check("the A tab does not (404): it is B's chat", (await streamIn(tabA)).status === 404);
+    const [before] = await admin`SELECT count(*)::int AS n FROM agent_session_owners WHERE org_id = ${ORG_A}`;
+    const carolPin = await create(T.carol, "Carol names a workspace she is not in", tabA);
+    const [carolRec] = await admin`SELECT org_id FROM agent_session_owners WHERE session_id = ${carolPin.sessionId ?? ""}`;
+    const [after] = await admin`SELECT count(*)::int AS n FROM agent_session_owners WHERE org_id = ${ORG_A}`;
+    check("a header naming a workspace the caller is NOT in is ignored (Carol's chat stays in B)", carolRec?.org_id === ORG_B && after.n === before.n, carolRec);
+  }
+
+  /* ---- an outside guest of one shared chat ---------------------------------------------------------------- */
+
+  // A chat lives in one workspace. Someone from ANOTHER workspace invited to it is a guest of that one chat: they reach
+  // it through its link, whose requests name the chat's workspace, and the thread membership row there admits them —
+  // read-only. The same person without the link (their own workspace) finds nothing, and no one uninvited does.
+  console.log("\nAn outside guest reads the one shared chat through its link — read-only, and nothing without it:");
+  {
+    const GST = "gst@guard-b.test";
+    await admin`INSERT INTO org_members (org_id, email, role) VALUES (${ORG_B}, ${GST}, 'member')`;
+    const [th] = await admin`INSERT INTO chat_threads (org_id, eve_session_id, title, owner_email) VALUES (${ORG_A}, ${S}, 'shared with a guest', ${ALICE}) RETURNING id`;
+    await admin`INSERT INTO chat_thread_members (org_id, thread_id, email, role, status, invited_by) VALUES (${ORG_A}, ${th.id}, ${GST}, 'participant', 'accepted', ${ALICE})`;
+    const gst = await emailToken(GST);
+    const viaLink = await call("GET", `/eve/v1/session/${encodeURIComponent(S)}/stream`, { token: gst, headers: { "x-ops-org": ORG_A } });
+    check("the guest, naming the chat's workspace, reads it (200) — without the continuation token", viaLink.status === 200 && viaLink.text.includes("HUNTER2") && !viaLink.text.includes(s1.ct), viaLink.status);
+    const gPost = await call("POST", `/eve/v1/session/${encodeURIComponent(S)}`, { token: gst, headers: { "x-ops-org": ORG_A }, body: { message: "a guest writes", continuationToken: s1.ct } });
+    check("…never sends into it (404), whatever role the invite named", gPost.status === 404, gPost.status);
+    check("…and from their own workspace (no link) finds nothing (404)", (await stream(S, gst)).status === 404);
+    const carolLink = await call("GET", `/eve/v1/session/${encodeURIComponent(S)}/stream`, { token: T.carol, headers: { "x-ops-org": ORG_A } });
+    check("an uninvited member of B naming A finds nothing (404)", carolLink.status === 404, carolLink.status);
+    await admin`DELETE FROM chat_thread_members WHERE thread_id = ${th.id}`;
+    await admin`DELETE FROM chat_threads WHERE id = ${th.id}`;
+  }
 
   /* ---- a continuation token is bound to its session ------------------------------------------------------ */
 

@@ -8,7 +8,7 @@
 // This is the COMPUTED projection of DATAROOM_PATH_TEMPLATES (the dm.md grammar)
 // onto one folder — no hidden file is stored; the graph is derived on demand, so
 // it can never drift from the spec. See docs/FDE_WORKFLOW.md.
-import { getDb, closeDb, dataroom, nowIso } from "./lib/customer.mjs";
+import { getDb, closeDb, dataroom, workspaceFor, nowIso } from "./lib/customer.mjs";
 import { buildContextGraph } from "./lib/context-graph.mjs";
 import { glyph, flag } from "./lib/fde.mjs";
 
@@ -18,9 +18,9 @@ async function main() {
     console.error(`${glyph.bad} --path "<Domain/…>" (or --customer <id>) is required.`);
     process.exit(1);
   }
-  // The workspace's own data room and records (--org / FDE_ORG); none reads the default workspace's tree, without
-  // DB edges (a company id names a company only within a workspace).
-  const orgId = (flag("org") || process.env.FDE_ORG || "").trim() || undefined;
+  // The workspace's own data room and records (--org / FDE_ORG, required): every workspace's data room is its own and
+  // there is no default tree to fall back to (lib/dataroom-keyspace.ts).
+  const orgId = workspaceFor();
   const store = dataroom(orgId);
   const db = getDb();
   const g = await buildContextGraph(store, db, path, nowIso(), orgId);

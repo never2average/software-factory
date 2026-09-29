@@ -23,6 +23,7 @@ import {
   useOpsList,
   type ApiRun,
   type AutomationType,
+  linkInWorkspace,
 } from "./lib";
 import {
   EnabledToggle,
@@ -568,7 +569,7 @@ function automationRunCard(run: ApiRun, type: AutomationType, id: string): RunCa
     status: run.status,
     whenIso: run.startedAt,
     href: openable
-      ? `/?chatWorkflowRun=${encodeURIComponent(run.workflowRunId!)}&auto=${encodeURIComponent(run.startedAt)}`
+      ? linkInWorkspace(`/?chatWorkflowRun=${encodeURIComponent(run.workflowRunId!)}&auto=${encodeURIComponent(run.startedAt)}`)
       : null,
     note,
     dimmed: routed && !openable,

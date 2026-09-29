@@ -270,8 +270,10 @@ async function collectResults(root, vocab) {
   const results = [];
   // One file already in the room, written where STORAGE puts it (the model never names this path).
   const store = await import(pathToFileURL(join(AGENT, "lib", "dataroom-store.ts")).href);
-  await store.getDataroomStore().write(`Customers/${SEED_ID}/context.md`, "# Surface Probe Co\n");
-  await store.getDataroomStore().write("People/sam-example-com/identity.json", JSON.stringify({ kind: "internal-fde", email: "sam@example.com", name: "Sam" }));
+  // No database: a session resolves to the default workspace, and its data room is `orgs/<id>/` like any other's.
+  const { DEFAULT_ORG } = await import(pathToFileURL(join(AGENT, "lib", "org-context.ts")).href);
+  await store.getDataroomStore(DEFAULT_ORG).write(`Customers/${SEED_ID}/context.md`, "# Surface Probe Co\n");
+  await store.getDataroomStore(DEFAULT_ORG).write("People/sam-example-com/identity.json", JSON.stringify({ kind: "internal-fde", email: "sam@example.com", name: "Sam" }));
   const byBase = new Map();
   for (const t of root.tools) byBase.set(t.baseName ?? t.name, t);
   for (const [base, build] of PROBES) {

@@ -74,37 +74,39 @@ export function __resetWorkflowIdCache(): void {
 }
 
 /**
- * Resolve a workflow by NAME, and return its workspace with it.
+ * Resolve a workflow by NAME in ONE workspace — the one the run belongs to — and return it with that workspace.
  *
- * The usage row it feeds is workspace-scoped, and a name is not unique across
- * workspaces — two teams may each have a "daily-standup". Returning the id
- * alone meant the caller had no workspace to file the usage under.
+ * A name is not unique across workspaces: two teams may each have a "research" row. This used to SWEEP every workspace
+ * for the name and take the first match, so every workspace's runs of a same-named specialist were filed under
+ * whichever workspace answered first — another workspace's run history, read and written from a person's turn.
+ * The caller now names the workspace (the session's: `orgForSession(ctx)` in the hooks, the parent's recorded owner in
+ * the session guard), and a run with no workspace is simply not recorded. Workspaces are not aware of each other.
  */
-async function workflowIdFor(name: string): Promise<{ id: string; orgId: string } | null> {
-  const cached = idCache.get(name);
+async function workflowIdFor(name: string, orgId: string | null | undefined): Promise<{ id: string; orgId: string } | null> {
+  if (!orgId) return null;
+  const key = `${orgId}\u0000${name}`;
+  const cached = idCache.get(key);
   if (cached) return cached;
   if (cached === null) {
-    const since = missAt.get(name) ?? 0;
+    const since = missAt.get(key) ?? 0;
     if (Date.now() - since < NEGATIVE_TTL_MS) return null;
-    idCache.delete(name);
+    idCache.delete(key);
   }
   const db = getDb();
   if (!db) return null;
-  // A name is not unique across workspaces and the caller has only the name,
-  // so this sweeps: cross-workspace by construction, scoped per workspace.
-  const rows = await acrossOrgDbs((tx) =>
+  const rows = await withOrgDb(orgId, (tx) =>
     tx
       .select({ id: workflows.id, orgId: workflows.orgId })
       .from(workflows)
-      .where(eq(workflows.name, name))
+      .where(and(eq(workflows.orgId, orgId), eq(workflows.name, name)))
       .limit(1),
   );
   const found = rows[0] ? { id: rows[0].id, orgId: rows[0].orgId } : null;
-  idCache.set(name, found);
+  idCache.set(key, found);
   if (found === null) {
-    missAt.set(name, Date.now());
+    missAt.set(key, Date.now());
     console.warn(
-      `[workflow-usage] no workflows row named "${name}" in any workspace — this subagent's runs are not being recorded. Fix: npm run fde:seed-subagent-rows -- --org <org_id>`,
+      `[workflow-usage] no workflows row named "${name}" in workspace ${orgId} — this subagent's runs there are not being recorded. Fix: npm run fde:seed-subagent-rows -- --org ${orgId}`,
     );
   }
   return found;
@@ -211,12 +213,14 @@ export async function recordFailedDelegation(
   message?: string,
   /** When eve reported the failure (the event's `meta.at`), so a replayed stream files it at its own time, not now. */
   at?: Date,
+  /** The workspace the delegation ran in (the parent session's). Without one nothing is recorded. */
+  orgId?: string | null,
 ): Promise<void> {
   try {
     if (!name || !childSessionId) return;
     const db = getDb();
     if (!db) return;
-    const wf = await workflowIdFor(name);
+    const wf = await workflowIdFor(name, orgId);
     if (!wf) return;
     await withOrgDb(wf.orgId, (tx) =>
       tx
@@ -275,12 +279,22 @@ function isEmpty(usage: StepUsage | undefined): boolean {
  * `turn.failed` / `session.failed` close it. `onConflictDoNothing` keeps this
  * idempotent across a replayed step.
  */
-export async function openWorkflowRun(name: string, turnId: string, sessionId?: string): Promise<void> {
+export async function openWorkflowRun(
+  name: string,
+  turnId: string,
+  sessionId?: string,
+  /**
+   * The workspace the run belongs to (the session's: `orgForSession(ctx)`). Without one NOTHING is recorded — a hook
+   * written before this parameter existed (a pack's copy of hooks/usage.ts) compiles and records nothing until it
+   * passes it, rather than filing its runs in whichever workspace has a row of that name.
+   */
+  orgId?: string | null,
+): Promise<void> {
   try {
     if (!turnId) return;
     const db = getDb();
     if (!db) return;
-    const wf = await workflowIdFor(name);
+    const wf = await workflowIdFor(name, orgId);
     if (!wf) return;
     await withOrgDb(wf.orgId, (tx) =>
       tx
@@ -315,12 +329,13 @@ export async function recordWorkflowStep(
   turnId: string,
   usage: StepUsage | undefined,
   sessionId?: string,
+  orgId?: string | null,
 ): Promise<void> {
   try {
     if (isEmpty(usage) || !turnId) return;
     const db = getDb();
     if (!db) return;
-    const wf = await workflowIdFor(name);
+    const wf = await workflowIdFor(name, orgId);
     if (!wf) return;
     const workflowId = wf.id;
 
@@ -378,12 +393,13 @@ export async function finishWorkflowRun(
   turnId: string,
   outcome: { status: "success" | "failed"; error?: string },
   sessionId?: string,
+  orgId?: string | null,
 ): Promise<void> {
   try {
     if (!turnId) return;
     const db = getDb();
     if (!db) return;
-    const wf = await workflowIdFor(name);
+    const wf = await workflowIdFor(name, orgId);
     if (!wf) return;
     const runKey = runKeyFor(wf.id, sessionId, turnId);
     await withOrgDb(wf.orgId, (tx) =>
@@ -549,8 +565,8 @@ export async function closeAbandonedWorkflowRuns(options?: {
  * Scoped to `status = "running"`: a question whose run has already ended
  * changes nothing, and a closed run must never be annotated as waiting.
  */
-export async function markDelegationParked(name: string, childSessionId: string): Promise<void> {
-  await setDelegationSummary(name, childSessionId, AWAITING_ANSWER_SUMMARY);
+export async function markDelegationParked(name: string, childSessionId: string, orgId?: string | null): Promise<void> {
+  await setDelegationSummary(name, childSessionId, AWAITING_ANSWER_SUMMARY, orgId);
 }
 
 /**
@@ -560,20 +576,21 @@ export async function markDelegationParked(name: string, childSessionId: string)
  * then died mid-turn would otherwise keep the mark and be exempt from the
  * sweep for ever, which is the very leak this pair is here to close.
  */
-export async function clearDelegationPark(name: string, childSessionId: string): Promise<void> {
-  await setDelegationSummary(name, childSessionId, null);
+export async function clearDelegationPark(name: string, childSessionId: string, orgId?: string | null): Promise<void> {
+  await setDelegationSummary(name, childSessionId, null, orgId);
 }
 
 async function setDelegationSummary(
   name: string,
   childSessionId: string,
   summary: string | null,
+  orgId: string | null | undefined,
 ): Promise<void> {
   try {
     if (!name || !childSessionId) return;
     const db = getDb();
     if (!db) return;
-    const wf = await workflowIdFor(name);
+    const wf = await workflowIdFor(name, orgId);
     if (!wf) return;
     await withOrgDb(wf.orgId, (tx) =>
       tx

@@ -5,28 +5,17 @@
  * customer email — because a multi-step tool chain was unreliable to drive from a
  * prompt. The cron now just calls run_email_intake and summarises the result.
  *
- * Self-contained IMAP read (mirrors agent/lib/email.ts config) so it needs no
- * change to the draft-only email module. Degrades to a no-op when IMAP is unset.
+ * It reads the CALLING WORKSPACE'S OWN mailbox (agent/lib/workspace-mailbox.ts) and matches senders against that
+ * workspace's companies only — so one workspace's mail can never become a ticket in another. It used to read one
+ * deployment-wide inbox (IMAP_* env) from whichever workspace ran it, and route that inbox's mail by matching the
+ * caller's companies. Degrades to a no-op (with the reason) when the workspace has no mailbox.
  */
 import { ImapFlow, type SearchObject } from "imapflow";
 import { nanoid } from "nanoid";
 import { createTicket, matchCustomerByEmail } from "./system-of-record.ts";
 import type { Ticket } from "./customer-schema.ts";
 import { UNASSIGNED_OWNER_EMAIL } from "./unassigned.ts";
-
-function imapConfig(): { host: string; user: string; pass: string; port: number; secure: boolean } | null {
-  const host = process.env.IMAP_HOST;
-  const user = process.env.IMAP_USER;
-  const pass = process.env.IMAP_PASSWORD;
-  if (!host || !user || !pass) return null;
-  return {
-    host,
-    user,
-    pass,
-    port: Number(process.env.IMAP_PORT ?? 993),
-    secure: (process.env.IMAP_SECURE ?? "true") !== "false",
-  };
-}
+import { mailboxFor } from "./workspace-mailbox.ts";
 
 /** Best-effort plain-text body from a raw RFC822 source. Never throws. */
 function extractPlainText(source?: Buffer): string | undefined {
@@ -93,13 +82,14 @@ export interface EmailIntakeResult {
  */
 export async function runEmailIntake(
   /**
-   * `orgId`: the caller's workspace. The inbox is the deployment's, but only that workspace's customers can match
-   * and only its records receive a ticket; mail from any other workspace's customer reads as unmatched.
+   * `orgId`: the caller's workspace. Its OWN mailbox is read, only its companies can match, and only its records
+   * receive a ticket. Without a workspace nothing is read.
    */
   opts: { sinceDays?: number; max?: number; orgId?: string | null } = {},
 ): Promise<EmailIntakeResult> {
-  const cfg = imapConfig();
-  if (!cfg) return { read: 0, skipped: 0, staged: [], unmatched: [], note: "IMAP is not configured." };
+  const lookup = await mailboxFor(opts.orgId);
+  if (!lookup.mailbox) return { read: 0, skipped: 0, staged: [], unmatched: [], note: lookup.reason };
+  const cfg = lookup.mailbox;
 
   const emails: RawEmail[] = [];
   const client = new ImapFlow({

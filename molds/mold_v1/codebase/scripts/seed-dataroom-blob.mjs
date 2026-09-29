@@ -12,7 +12,7 @@
 // single clean Blob object (no append parts). Re-running overwrites in place,
 // so the seed is idempotent-ish.
 //
-// Run: npm run seed:dataroom-blob   (node --experimental-strip-types)
+// Run: npm run seed:dataroom-blob -- --org <workspace id>   (node --experimental-strip-types)
 
 import { getDataroomStore } from "../agent/lib/dataroom-store.ts";
 
@@ -23,7 +23,15 @@ if (!process.env.BLOB_READ_WRITE_TOKEN) {
   process.exit(1);
 }
 
-const store = getDataroomStore();
+// ONE workspace's data room: `--org <id>` (or SEED_ORG). There is no default workspace to seed into — the store's
+// root is no workspace's (lib/dataroom-keyspace.ts).
+const orgArg = process.argv.indexOf("--org");
+const SEED_ORG = (orgArg > -1 ? process.argv[orgArg + 1] : process.env.SEED_ORG ?? "").trim();
+if (!SEED_ORG) {
+  console.error("seed-dataroom-blob: name the workspace to seed: --org <workspace id> (or SEED_ORG).");
+  process.exit(1);
+}
+const store = getDataroomStore(SEED_ORG);
 if (store.backend.kind !== "vercel-blob") {
   console.error(
     `seed-dataroom-blob: expected the vercel-blob backend, got "${store.backend.kind}".`,

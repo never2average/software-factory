@@ -34,9 +34,9 @@ export function slugify(name) {
 }
 
 /**
- * The live blob data room of a workspace (dataroom/orgs/<org>/…; the default workspace's legacy root when none is
- * named, which is only for the shared, version-scoped trees such as Platform/{ver}). Throws if BLOB_READ_WRITE_TOKEN
- * points nowhere real.
+ * The live blob data room of ONE workspace (dataroom/orgs/<org>/…). There is no shared or default tree: a missing
+ * workspace throws (lib/dataroom-keyspace.ts), so version-scoped trees such as Platform/{ver} are each workspace's
+ * own too — pass `workspaceFor()`. Throws if BLOB_READ_WRITE_TOKEN points nowhere real.
  */
 export function dataroom(orgId) {
   const store = createDataroomStore({ orgId });

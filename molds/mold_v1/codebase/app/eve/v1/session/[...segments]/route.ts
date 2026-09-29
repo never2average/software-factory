@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { gateForSession } from "@/lib/chat-session-access";
 import { rightFor } from "@/lib/chat-gate";
 import { verifyOpsAuth } from "@/lib/ops-auth";
+import { ORG_HEADER, resolveOrgForIdentity } from "@/lib/org-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,7 +60,10 @@ const AGENT = process.env.NEXT_PUBLIC_EVE_API_URL ?? "https://fde-agent-api.verc
 /** Headers worth forwarding upstream. Hop-by-hop and host headers are dropped. */
 function forwardHeaders(request: NextRequest): Headers {
   const out = new Headers();
-  for (const name of ["authorization", "content-type", "accept"]) {
+  // x-ops-org: the workspace THIS TAB is in. The agent takes a person's workspace from it (only one they are a member
+  // of — agent/lib/service-scope.ts sessionAuthForRequest, checked by orgForSession), so the gate there reads the same
+  // workspace this proxy just did, whichever workspace the person selected last in another tab.
+  for (const name of ["authorization", "content-type", "accept", ORG_HEADER]) {
     const value = request.headers.get(name);
     if (value) out.set(name, value);
   }
@@ -83,11 +87,13 @@ function forwardHeaders(request: NextRequest): Headers {
 async function permitted(
   sessionId: string,
   email: string,
+  workspace: string,
   rest: string[],
   method: string,
+  named: string | null = null,
 ): Promise<"forward" | "refuse" | "unavailable"> {
   try {
-    const decision = await gateForSession(email, sessionId, rightFor(method, rest));
+    const decision = await gateForSession(email, sessionId, rightFor(method, rest), workspace, named);
     if (decision.allow) return "forward";
     if (!decision.ownership && decision.reason === "unknown") return "forward";
     // Someone reaching for a conversation that is not theirs is worth a record, whether it is an attack or a bug.
@@ -120,7 +126,13 @@ async function proxy(request: NextRequest, segments: string[]): Promise<Response
    */
   const sessionId = segments[0];
   if (sessionId) {
-    const verdict = await permitted(sessionId, identity.email, segments.slice(1), request.method);
+    // The ONE workspace this request is in (a pinned x-ops-org / ?org= only when the caller is a member of it). The
+    // gate reads that workspace and no other: a session recorded anywhere else is "unknown" here.
+    const asked = request.nextUrl.searchParams.get("org") || request.headers.get(ORG_HEADER) || null;
+    const ctx = await resolveOrgForIdentity(identity.email, identity.hostedDomain, asked);
+    // A workspace the request names but the caller is not in: a guest's link to one shared chat (read-only).
+    const named = asked && asked !== ctx.orgId ? asked : null;
+    const verdict = await permitted(sessionId, identity.email, ctx.orgId, segments.slice(1), request.method, named);
     if (verdict === "refuse") {
       return NextResponse.json({ error: "Session not found.", ok: false }, { status: 404 });
     }

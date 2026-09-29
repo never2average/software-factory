@@ -44,6 +44,7 @@ import {
   type JsonValue,
 } from "./dataroom-schema.ts";
 import { EXTRA_DATAROOM_PATH_TEMPLATES } from "./subagent-registry.generated.ts";
+import { isListedPath, requireWorkspace, workspaceBlobPrefix, workspaceDir } from "../../lib/dataroom-keyspace.ts";
 
 // ---------------------------------------------------------------------------
 // Path grammar — the dm.md tree as validated templates
@@ -399,7 +400,8 @@ export class LocalDataroomBackend implements DataroomBackend {
       if (!entry.isFile()) continue;
       const abs = nodePath.join(entry.parentPath, entry.name);
       const rel = nodePath.relative(this.rootDir, abs).split(nodePath.sep).join("/");
-      if (underPrefix(rel, prefix)) paths.push(rel);
+      // Never a snapshot, never a nested `orgs/` tree (lib/dataroom-keyspace.ts isListedPath).
+      if (isListedPath(rel) && underPrefix(rel, prefix)) paths.push(rel);
     }
     return paths.sort();
   }
@@ -424,7 +426,7 @@ const READ_LINK_TTL_MS = 5 * 60 * 1000;
 export interface BlobDataroomBackendOptions {
   /** Defaults to process.env.BLOB_READ_WRITE_TOKEN. */
   token?: string;
-  /** Object-key prefix inside the blob store. Defaults to "dataroom". */
+  /** Object-key prefix inside the blob store — a workspace's `dataroom/orgs/<id>`. Required. */
   storePrefix?: string;
 }
 
@@ -443,7 +445,10 @@ export class BlobDataroomBackend implements DataroomBackend {
       );
     }
     this.token = token;
-    this.storePrefix = (options.storePrefix ?? "dataroom").replace(/\/+$/, "");
+    // No default: the prefix IS the workspace (lib/dataroom-keyspace.ts). A backend built without one used to be
+    // the whole store's root, which contains every workspace's tree.
+    if (!options.storePrefix) throw new Error("BlobDataroomBackend requires a storePrefix (a workspace's: workspaceBlobPrefix(orgId)).");
+    this.storePrefix = options.storePrefix.replace(/\/+$/, "");
   }
 
   private objectPathname(path: string): string {
@@ -571,7 +576,7 @@ export class BlobDataroomBackend implements DataroomBackend {
       // Collapse append-part objects onto their logical file path.
       const marker = rel.indexOf(APPENDS_MARKER);
       if (marker !== -1) rel = rel.slice(0, marker);
-      if (rel.length > 0 && underPrefix(rel, prefix)) logical.add(rel);
+      if (isListedPath(rel) && underPrefix(rel, prefix)) logical.add(rel);
     }
     return [...logical].sort();
   }
@@ -735,86 +740,64 @@ export interface CreateDataroomStoreOptions {
   backend?: DataroomBackend;
   /** Blob token override (defaults to process.env.BLOB_READ_WRITE_TOKEN). */
   blobToken?: string;
-  /** Local root override (defaults to $DATAROOM_DIR, then ./.dataroom). */
+  /** Local root override (defaults to $DATAROOM_DIR, then ./.dataroom). The workspace's tree is `orgs/<id>` under it. */
   localRootDir?: string;
   /**
-   * Which workspace's data room. Org #1 (`onfinance`, the default) keeps the
-   * LEGACY ROOT layout — the dm.md tree directly under the store prefix, no
-   * copy — so its bytes are untouched. Every other org's tree lives under
-   * `orgs/{org_id}/…` with the identical structure. See agent/lib/org-blob.ts.
+   * WHICH WORKSPACE'S DATA ROOM. Required: every workspace, the first one included, lives under its own
+   * `orgs/<org_id>/` prefix, and there is no default. It used to be optional, and "none" meant the ROOT — which is
+   * where workspace #1 lived and which contains every other workspace's `orgs/<id>/` tree, so a caller that lost its
+   * workspace on the way read and listed everybody's files. See lib/dataroom-keyspace.ts.
    */
   orgId?: string | null;
 }
 
 /**
- * Org #1 — its data room is the legacy root (no per-org sub-prefix).
- *
- * TWO ids, and that is not tidiness. The workspace row is `org-onfinance-ai`
- * while this constant was `org-onfinance`, so the two never matched: callers
- * that resolved the real workspace id got `dataroom/orgs/org-onfinance-ai/`
- * and callers that passed nothing got `dataroom/`. Org #1's data room was
- * split across two prefixes — 223 customer files in one, every chat upload in
- * the other — and each half looked complete to whoever was reading it.
- *
- * Both ids alias to the legacy root. A new workspace is unaffected: it has
- * exactly one id and gets exactly one tree.
+ * The local-filesystem root for a workspace: `<base>/orgs/<id>` (mirror of the Blob layout). The same nesting the
+ * blob driver had: the legacy workspace was `<base>` itself, and `<base>` contains `orgs/`.
  */
-const LEGACY_ROOT_ORGS = new Set(["org-onfinance", "org-onfinance-ai"]);
-const isLegacyRootOrg = (orgId?: string | null) => !orgId || LEGACY_ROOT_ORGS.has(orgId);
-/** Kept for the cache key: every alias must collapse to ONE entry. */
-const LEGACY_ROOT_ORG = "org-onfinance";
+function localRootForOrg(base: string, orgId: string): string {
+  return nodePath.join(base, ...workspaceDir(orgId).split("/"));
+}
 
 /**
- * The Blob store prefix for a workspace, layered under the base "dataroom" key
- * space: onfinance → "dataroom" (unchanged), others → "dataroom/orgs/{id}".
+ * Local-filesystem store rooted EXACTLY at `rootDir` — no workspace layer. For tests and fixtures that own a scratch
+ * directory; application code goes through {@link createDataroomStore} / {@link getDataroomStore} with a workspace.
  */
-function blobStorePrefixForOrg(orgId?: string | null): string {
-  return isLegacyRootOrg(orgId) ? "dataroom" : `dataroom/orgs/${orgId}`;
-}
-
-/** The local-filesystem root for a workspace (mirror of the Blob layout). */
-function localRootForOrg(base: string, orgId?: string | null): string {
-  return isLegacyRootOrg(orgId) ? base : nodePath.join(base, "orgs", orgId as string);
-}
-
-/** Local-filesystem store rooted at `rootDir` (default: $DATAROOM_DIR or ./.dataroom). */
 export function createLocalDataroomStore(rootDir?: string): DataroomStore {
   return new DataroomStore(new LocalDataroomBackend(rootDir));
 }
 
-/** Vercel Blob store (throws without a token). */
-export function createBlobDataroomStore(options: BlobDataroomBackendOptions = {}): DataroomStore {
-  return new DataroomStore(new BlobDataroomBackend(options));
+/** Vercel Blob store for one workspace (throws without a token or a workspace). */
+export function createBlobDataroomStore(options: BlobDataroomBackendOptions & { orgId: string }): DataroomStore {
+  return new DataroomStore(new BlobDataroomBackend({ ...options, storePrefix: workspaceBlobPrefix(options.orgId) }));
 }
 
 /**
- * Build a store, picking the backend automatically: Vercel Blob when a
- * BLOB_READ_WRITE_TOKEN is available (production — same plumbing as
- * artifact.ts), local `.dataroom/` filesystem otherwise (dev/tests).
+ * Build ONE WORKSPACE's store, picking the backend automatically: Vercel Blob when a BLOB_READ_WRITE_TOKEN is
+ * available (production — same plumbing as artifact.ts), the local `.dataroom/orgs/<id>/` filesystem otherwise
+ * (dev/tests). Throws when no workspace is named (lib/dataroom-keyspace.ts requireWorkspace).
  */
 export function createDataroomStore(options: CreateDataroomStoreOptions = {}): DataroomStore {
   if (options.backend) return new DataroomStore(options.backend);
+  const orgId = requireWorkspace(options.orgId);
   const token = options.blobToken ?? process.env.BLOB_READ_WRITE_TOKEN;
   if (token) {
-    return new DataroomStore(
-      new BlobDataroomBackend({ token, storePrefix: blobStorePrefixForOrg(options.orgId) }),
-    );
+    return new DataroomStore(new BlobDataroomBackend({ token, storePrefix: workspaceBlobPrefix(orgId) }));
   }
   const base = options.localRootDir ?? defaultLocalDataroomRoot();
-  return new DataroomStore(new LocalDataroomBackend(localRootForOrg(base, options.orgId)));
+  return new DataroomStore(new LocalDataroomBackend(localRootForOrg(base, orgId)));
 }
 
-/** One cached store per workspace (keyed by org; the default org is 'onfinance'). */
+/** One cached store per workspace. */
 const storeByOrg = new Map<string, DataroomStore>();
 
 /**
- * Process-wide shared store for a workspace, with automatic backend selection
- * (cached per org). Called with no argument it returns org #1's store — the
- * legacy-root data room — so existing single-org callers are byte-for-byte
- * unchanged. Pass an `orgId` to reach another workspace's `orgs/{id}/` tree.
+ * Process-wide shared store for ONE workspace, with automatic backend selection (cached per workspace). The
+ * workspace is required — `getDataroomStore()` with no argument used to return workspace #1's legacy-root store,
+ * which listed every workspace's files; it now throws, like every other door without a workspace.
  */
-export function getDataroomStore(orgId?: string | null): DataroomStore {
-  const key = isLegacyRootOrg(orgId) ? LEGACY_ROOT_ORG : (orgId as string);
+export function getDataroomStore(orgId: string | null | undefined): DataroomStore {
+  const key = requireWorkspace(orgId);
   let store = storeByOrg.get(key);
   if (!store) {
     store = createDataroomStore({ orgId: key });

@@ -756,6 +756,76 @@ if (guardHits.length) {
   process.exitCode = 1;
 }
 
+/* ---- surface 5: cross-workspace readers reachable from a person's request -- */
+
+/**
+ * WORKSPACES ARE NOT AWARE OF EACH OTHER. No code a person's request runs may list the workspaces or read every
+ * workspace's scope: `acrossOrgDbs`, `acrossOrgsRls`, `listWorkspaceIds`, a `.listOrgs()` reader, or a bare
+ * `select … from(orgs)`. A cron, a backfill or a deploy step may. The analysis is function-level and follows imports,
+ * re-exports and dynamic imports from every request entry point (route handlers, pages, the proxy, model tools, agent
+ * channels / hooks / instructions) — scripts/lib/cross-workspace-reach.mjs, whose header says exactly what it covers.
+ *
+ * A reader still reachable from a request must be named below, with the reason it is not a person reading another
+ * workspace — or with the change that is removing it. Anything else fails the run. An entry that is no longer
+ * reached is reported so the list shrinks (a warning, so a parallel branch that removes one does not break the other).
+ */
+const CROSS_WORKSPACE_KNOWN = [
+  [
+    "agent/lib/session-scope.ts#inheritedScope",
+    "RESOLUTION, not a read of another workspace's data: which workspace an eve-internal session is in (a subagent's " +
+      "child, a service continuation) — one org id, looked up by an eve-issued session id that no person supplies, " +
+      "and it becomes that session's scope. FOLLOW-UP: a control-plane session→workspace row written with the scope, " +
+      "so this is a point read instead of a sweep.",
+  ],
+  [
+    "app/api/ops/orgs/route.ts#GET",
+    "CONTROL PLANE: a PLATFORM ADMIN's workspace switcher lists workspace ids and names (platform staff, " +
+      "app/api/ops/platform-admins); a member sees only their own memberships. No tenant row is read.",
+  ],
+  [
+    "setup/fde-cli.mjs#<module>",
+    "A DISPATCHER, not a reader: `import(target)` loads one of setup/'s own program files (COMMANDS: login, mcp, " +
+      "install-skills), each of which is a request entry point scanned here in its own right.",
+  ],
+  [
+    "setup/fde-mcp.mjs#<module>",
+    "A DISPATCHER, not a reader: `import(DEPLOYMENT.modules.login)` loads setup/'s own sign-in module (fde-login), " +
+      "itself a request entry point scanned here in its own right.",
+  ],
+];
+{
+  const { analyse } = await import("./lib/cross-workspace-reach.mjs");
+  const { findings, roots } = await analyse({ root: process.cwd() });
+  const known = new Map(CROSS_WORKSPACE_KNOWN);
+  const unexplained = findings.filter((f) => !known.has(`${f.file}#${f.decl}`));
+  const reached = new Map();
+  for (const f of findings) {
+    const k = `${f.file}#${f.decl}`;
+    reached.set(k, (reached.get(k) ?? 0) + 1);
+  }
+  console.log(`\ncross-workspace readers reachable from a person's request (${roots} entry points):`);
+  for (const [k, reason] of CROSS_WORKSPACE_KNOWN) {
+    if (reached.has(k)) console.log(`  known: ${k} — ${reached.get(k)} entry point(s). ${reason}`);
+  }
+  for (const [k] of CROSS_WORKSPACE_KNOWN) {
+    if (!reached.has(k)) console.log(`  no longer reached — delete it from CROSS_WORKSPACE_KNOWN: ${k}`);
+  }
+  if (unexplained.length) {
+    console.error(`\n✗ ${unexplained.length} path(s) from a person's request to a cross-workspace reader:`);
+    for (const f of unexplained) {
+      console.error(`  cross-workspace ${f.file}:${f.line} ${f.reader} in ${f.decl} ← ${f.root} (via ${f.via.join(" → ")})`);
+    }
+    console.error(
+      "\n  Read the ONE workspace the request is in (withOrgDb / withOrgRls with the caller's workspace). A job that\n" +
+        "  must see every workspace is a cron, a backfill or a deploy step (scripts/lib/cross-workspace-reach.mjs\n" +
+        "  SYSTEM_ENTRIES), never a request.",
+    );
+    process.exitCode = 1;
+  } else {
+    console.log("  ✓ nothing else: every other request path reads one workspace");
+  }
+}
+
 /* ---- report -------------------------------------------------------------- */
 
 const line = (label, r, extra) =>

@@ -103,6 +103,19 @@ jobs:
         if: always()
         run: npm run test:sor
 
+      # Every workspace's data room is its own prefix (dataroom/orgs/<id>/), a missing workspace id throws, and the
+      # legacy workspace no longer lists the others' trees. Both drivers and every door, against an in-memory blob
+      # store answering the real @vercel/blob client; plus the one-time move of the root (lib/dataroom-keyspace.ts).
+      - name: Data room isolation (every door, both drivers, the root's migration)
+        if: always()
+        run: npm run test:dataroom-isolation
+
+      # A link to a chat names its workspace and the tab adopts it; each tab keeps its own workspace and names it on
+      # every request, the /eve proxy included (the agent side is in test:session-guard, isolation job).
+      - name: Deep links and tabs carry their workspace
+        if: always()
+        run: npm run test:workspace-deep-link
+
       - name: Workbook spec
         if: always()
         run: npm run test:workbook-spec
@@ -418,6 +431,13 @@ jobs:
       - name: Tenancy ownership-guard rule (syntax tree, fixtures both ways)
         if: always()
         run: npm run test:check-tenancy
+
+      # Workspaces are not aware of each other: check:tenancy (above) fails when a cross-workspace reader
+      # (acrossOrgDbs, acrossOrgsRls, listWorkspaceIds, .listOrgs(), a bare select from orgs) is reachable from a
+      # person's request — function-level, through imports and dynamic imports. These fixtures hold the rule both ways.
+      - name: Tenancy cross-workspace-reader rule (request paths vs system paths, fixtures both ways)
+        if: always()
+        run: npm run test:check-cross-workspace
 
       # What a PERSON reads comes from the deployment profile. The gate before this looked for "FDE" in four source
       # folders and skipped generated files, so a research deployment (companies / analysts / coverage reports)
@@ -763,6 +783,43 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:chat-sessions-mirror-db
+
+      # A workspace reads its OWN mailbox: its gmail connector, or the deployment's IMAP_* mailbox only when
+      # IMAP_WORKSPACE binds it to that workspace. Intake and list_inbox from any other workspace never connect to it
+      # (a stand-in mail server counts connections). connector_secrets is RLS-strict, so this runs as app_rw.
+      - name: Email intake and inbox read the workspace's own mailbox, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:workspace-mailbox-db
+
+      # A chat lives in one workspace and is visible only there: the real thread routes, the session gate and the
+      # notification recipients, for a member of that workspace, a member of both currently in the other, an
+      # outside guest following the chat's link (read-only, nothing else of the workspace), and an uninvited person.
+      - name: A chat is visible only in its own workspace (guests read-only via its link), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:thread-visibility-db
+
+      # An invite a chat share sent before #85 (origin 'chat_share', migration 0026) is never listed, claimed or
+      # accepted as a workspace membership; a workspace invite still is. The operator's tool marks or expires them.
+      - name: Chat-share invites never make a guest a member, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:chat-share-invites-db
+
+      # The root migration attributes a company's files by each workspace's own customers table (read in its scope).
+      - name: Data room root migration attribution, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:migrate-attribution-db
 
       # THE CHAT QUEUE MOVED TO THE SERVER (closing a tab no longer loses a queued message), and the devices people
       # asked to be notified on. Database facts only: that both tables are owner-only AND workspace-scoped (the
