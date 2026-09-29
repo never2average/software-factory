@@ -111,7 +111,18 @@ try {
     // read_only: provision.py probes through the dry run's own URL first, and refuses to plan through a
     // connection that is not actually read-only (a pooler can drop startup options silently).
     const [{ ro }] = await sql`SELECT current_setting('transaction_read_only') AS ro`;
-    out = { public_tables: n, org_scoped: (await TABLES(sql)).length, app_role: await roleExists(sql), read_only: ro === "on" };
+    // Every primary key as it stands: drizzle-kit's push re-emits DROP/ADD for composite keys it already
+    // has (same name, same columns). provision.py sets those pairs aside only when this confirms they match.
+    const pkRows = await sql`SELECT con.conname AS name, cl.relname AS t,
+        array_agg(a.attname ORDER BY k.ord) AS cols
+      FROM pg_constraint con
+      JOIN pg_class cl ON cl.oid = con.conrelid JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+      CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
+      JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum
+      WHERE con.contype = 'p' AND ns.nspname = 'public'
+      GROUP BY con.conname, cl.relname`;
+    const pks = Object.fromEntries(pkRows.map((r) => [r.name, { table: r.t, cols: r.cols }]));
+    out = { public_tables: n, org_scoped: (await TABLES(sql)).length, app_role: await roleExists(sql), read_only: ro === "on", pks };
   } else if (action === "hold") {
     // No app role yet means no app has ever connected: there is nobody to hold the window against.
     if (!(await roleExists(sql))) out = { held: false, reason: `no ${APP_ROLE} role yet` };

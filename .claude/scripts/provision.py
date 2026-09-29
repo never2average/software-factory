@@ -1335,6 +1335,26 @@ def _split_push(stmts):
     """(apply, set_aside): schema drift to apply, and what push would do to unmodelled security."""
     return [x for x in stmts if not SET_ASIDE.match(x)], [x for x in stmts if SET_ASIDE.match(x)]
 
+_PK_DROP = re.compile(r'^\s*ALTER\s+TABLE\s+"([^"]+)"\s+DROP\s+CONSTRAINT\s+"([^"]+)"', re.I)
+_PK_ADD = re.compile(r'^\s*ALTER\s+TABLE\s+"([^"]+)"\s+ADD\s+CONSTRAINT\s+"([^"]+)"\s+PRIMARY\s+KEY\s*\(([^)]*)\)', re.I)
+
+def _unchanged_pks(todo, pks):
+    """Split out drizzle-kit's re-emitted primary keys: a DROP CONSTRAINT "n" followed by ADD CONSTRAINT "n"
+    PRIMARY KEY(...) on the same table, where the live key "n" already has exactly those columns in that order.
+    push --force used to apply these pairs silently on every deploy; once a key has dependants (fde-agent
+    #84's two-column foreign keys to customers) the DROP is refused (2BP01) and the deploy stops. A pair
+    whose columns differ from the live key is a real change and stays in the plan. Returns (todo, unchanged)."""
+    keep, same, i = [], [], 0
+    while i < len(todo):
+        d, a = _PK_DROP.match(todo[i]), (_PK_ADD.match(todo[i + 1]) if i + 1 < len(todo) else None)
+        if d and a and d.group(1) == a.group(1) and d.group(2) == a.group(2):
+            cols = [c.strip().strip('"') for c in a.group(3).split(",") if c.strip()]
+            live = (pks or {}).get(d.group(2))
+            if live and live.get("table") == d.group(1) and list(live.get("cols") or []) == cols:
+                same += [todo[i], todo[i + 1]]; i += 2; continue
+        keep.append(todo[i]); i += 1
+    return keep, same
+
 def _refused(todo, notes):
     """The plan's statements that must not be applied on a live database, as one plain sentence, or ""."""
     loss = [x for x in todo if DATA_LOSS.search(x)]
@@ -1402,13 +1422,16 @@ def apply_drift(sh, run, url, mode, hint):
                      "(options=-c default_transaction_read_only=on), so schema drift cannot be planned safely here; "
                      f"nothing was changed. It said: {_node_err(p)}")
         sys.exit(f"could not connect to the database for the schema check; nothing was changed. It said: {_node_err(p)}")
-    if not json.loads(line).get("read_only"):
+    probe = json.loads(line)
+    if not probe.get("read_only"):
         sys.exit("the database accepted the read-only connection option but did not apply it (a pooler that drops "
                  "startup options?), so the schema check could write; nothing was changed. Use the direct admin URL.")
     r = sh("npx drizzle-kit push --strict --verbose", {"DATABASE_URL": ro})
     try: plan, notes = _push_plan(r.stdout + r.stderr, r.returncode)
     except DryRunError as e: sys.exit(str(e) + ".")
     todo, aside = _split_push(plan)
+    todo, same = _unchanged_pks(todo, probe.get("pks"))
+    if same: print(f"  schema drift: {len(same) // 2} primary key(s) drizzle re-emits unchanged (same name, same columns as live) set aside")
     refused = _refused(todo, notes)
     if refused: sys.exit(refused + ". The deploy stopped before applying any of it; nothing was changed by this step.")
     drops = sum(1 for x in aside if re.match(r"\s*DROP\s+POLICY", x, re.I))
