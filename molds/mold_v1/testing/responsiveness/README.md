@@ -47,7 +47,7 @@ call, which matters because the operator has to be able to argue with a failure.
 | cumulative layout shift | **CLS ≤ 0.10** | The Core Web Vitals "good" boundary. Above 0.10 Google classifies the page as needing improvement. Must be exceeded on **all three** runs — see "Repeat and confirm". |
 | tap target size | **24 × 24 CSS px** | WCAG 2.2 SC 2.5.8 *Target Size (Minimum)*, Level AA — including its exceptions, see below. |
 | tap target, advisory | 44 × 44 CSS px | SC 2.5.5 *Target Size (Enhanced)*, Level AAA, and the Apple/Google platform guidance. **Reported, never failed** — failing a whole application on a AAA criterion nobody committed to would be dishonest. |
-| interaction latency | **INP ≤ 200ms** | The Core Web Vitals "good" boundary for Interaction to Next Paint. Measured from real `PerformanceEventTiming` entries, which include the paint after the handler, not just handler time. Must be exceeded on **all three** runs — see "Repeat and confirm". |
+| interaction latency | **INP ≤ 200ms** | The Core Web Vitals "good" boundary for Interaction to Next Paint. Measured from real `PerformanceEventTiming` entries, which include the paint after the handler, not just handler time. Graded on the **median of 3-5 samples** — see "Repeat and confirm". |
 
 Viewports: **320×800** (the WCAG reflow width), **390×844** (iPhone 14/15), **820×1180** (iPad Air,
 portrait), **1440×900** (a common laptop). The three touch viewports get `hasTouch`/`isMobile` and
@@ -62,18 +62,28 @@ runs in four crossed a 200ms budget by 4%, and each of those would have reverted
 filed a task, and told a non-technical operator their app had been pulled out of service. That is a
 shared 4-vCPU box running headless chromium, not a responsiveness defect.
 
-So a timing row is re-measured up to **3 times** and fails only when the budget is exceeded on **every**
-run. Cost is zero on a healthy row: the repeat only happens after a sample lands over budget. Every
-sample is printed —
+So a CLS row is re-measured up to **3 times** and fails only when the budget is exceeded on **every**
+run. Cost is zero on a healthy row: the repeat only happens after a sample lands over budget.
 
-    | interaction /workspace click @ desktop-1440 | pass | 4 in-page click(s) · INP=224/32ms over 2 runs, best 32ms (budget 200ms) |
-    | interaction / keyboard @ desktop-1440       | fail | INP over budget 200ms on all 3 runs: 704/704/704ms over 3 runs, best 704ms |
+INP moved further (mold_v1-083: 32-376ms on an unchanged page), and "best of three" let one lucky
+sample decide a row just as surely as one unlucky sample used to. So an INP row takes **at least 3 and
+at most 5 samples** and is graded on their **median**: it stops as soon as a majority of the five is
+already on one side of the budget, so a healthy row costs exactly three page loads and only a split row
+pays for five. The row prints the median, the p75, and every sample with the VM's 1-minute load average
+beside it (`ms@load1`), plus a `noise:` note when the load reached the CPU count or the samples spread by
+more than half the budget. `RESP_INP_MIN` / `RESP_INP_MAX` change the sample counts; past
+`RESP_SAMPLING_SOFT_S` (default 540s) of wall time a run stops buying extra samples so it can never run
+into the check's `timeout_s`, and the row says so. `node responsive.mjs --self-test` checks the
+statistic without a browser —
+
+    | interaction / chat click @ desktop-1440   | pass | 4 in-page click(s) · INP median 44ms, p75 130ms over 4 sample(s) [32@3.1, 376@4.4, 40@3.0, 48@2.8 (ms@load1)] (budget 200ms, median graded) · noise: load reached 4.4 on 4 CPUs while sampling, so these numbers include the VM's own contention; samples spread 344ms: noisy, graded on the median, not the worst |
+    | interaction / keyboard @ desktop-1440     | fail | INP median over budget · 6 Tab press(es) over 2 rendered control(s) · INP median 704ms, p75 704ms over 3 sample(s) [704@0.6, 704@0.5, 704@0.5 (ms@load1)] (budget 200ms, median graded) |
 
 — so a borderline application stays visible instead of being smoothed away, and the operator can see
 exactly what the verdict was built from. This is not a softened budget: a genuinely slow interaction
 cannot come in under 200ms on a repeat, and a real 0.17 CLS reproduces at 0.17 three times running.
 Both were verified against local pages built with exactly those defects. What it *does* stop flagging
-is a budget missed by a hair on one run in three, which is named in `not_covered`.
+is a CLS budget missed by a hair on one run in three, or an INP budget missed on a minority of samples, both named in `not_covered`.
 
 ## Two judgement calls worth arguing with
 
