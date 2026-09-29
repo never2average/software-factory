@@ -67,7 +67,7 @@ def main(a):
     need = int(a[a.index("--min-remaining") + 1]) if "--min-remaining" in a else 0
     how = (f"Run the check through the factory's session helper, which signs one for the application's own FDE "
            f"identity (python3 .claude/scripts/lib/session.py <app_id> -- …, as lane.json does); if it says why it "
-           f"cannot, sign in to the app yourself, copy that browser's `fde-google-token` value out of localStorage, "
+           f"cannot, sign in to the app yourself, copy that browser's `workspace-google-token` value out of localStorage, "
            f"and re-run with it in {env}.")
 
     tok = (os.environ.get(env) or "").strip()

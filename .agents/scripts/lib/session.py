@@ -12,7 +12,7 @@ not try), or the app's OWN "email-session" token: ES256, signed with the app's A
 {email, kind:"email-session", sub, iss:"delivered", aud:"delivered-app", iat, exp}. verifyOpsAuth checks THAT
 kind first and asks nothing else of it — the emailed six-digit code gates only the route that mints
 (app/api/auth/email/verify), not the token. The browser's "signed in" is the same token under localStorage
-`fde-google-token` (app/_components/auth-gate.tsx admits `kind === "email-session"`). So for an application whose
+`workspace-google-token` (legacy `fde-google-token`; app/_components/auth-gate.tsx admits `kind === "email-session"`). So for an application whose
 private key the factory itself generated and holds by name, the factory can sign a session and it is a real one:
 the same bytes the app's own verify route would return to that person after a code.
 
@@ -121,7 +121,7 @@ def private_key(app_id, infra):
         if raw is None:
             die(f"{app_id}: {where} has no {KEY}, so nothing can sign a session for this app. --verify-db mints the "
                 f"pair into that file (the same one the vercel lane mints): python3 .claude/scripts/provision.py "
-                f"{app_id} --verify-db. Or sign in to the app yourself and pass that browser's fde-google-token as "
+                f"{app_id} --verify-db. Or sign in to the app yourself and pass that browser's workspace-google-token as "
                 f"the lane's session variable.")
         pem = pem_of(raw)
         if not pem: die(f"{app_id}: {KEY} in {where} is neither a PEM nor base64 of one. Regenerate the pair.")
