@@ -50,6 +50,28 @@ export interface GateDb {
 
 const norm = (value: string | null | undefined): string => (value ?? "").trim().toLowerCase();
 
+/** A session's recorded owner IN ONE WORKSPACE (inside its RLS scope), or null. */
+export async function readOwnerRecordIn(
+  db: Pick<GateDb, "inOrg">,
+  orgId: string,
+  sessionId: string,
+): Promise<SessionOwnership | null> {
+  const [row] = await db.inOrg(orgId, (tx) =>
+    tx.select().from(agentSessionOwners).where(eq(agentSessionOwners.sessionId, sessionId)).limit(1),
+  );
+  if (!row || row.orgId !== orgId) return null;
+  return {
+    orgId: row.orgId,
+    ownerEmail: row.ownerEmail ? norm(row.ownerEmail) : null,
+    ownerPrincipal: row.ownerPrincipal,
+    ownerKind: row.ownerKind,
+    visibility: row.visibility,
+    rootSessionId: row.rootSessionId,
+    tokenSha256: row.tokenSha256,
+    source: row.parentSessionId ? "lineage" : "record",
+  };
+}
+
 /** A session's recorded owner, found in whichever workspace holds it (the row is unique across all of them). */
 export async function readOwnerRecord(
   db: GateDb,
@@ -58,21 +80,8 @@ export async function readOwnerRecord(
 ): Promise<SessionOwnership | null> {
   const orgs = [...new Set([...preferOrgs, ...(await db.listOrgs())])];
   for (const orgId of orgs) {
-    const [row] = await db.inOrg(orgId, (tx) =>
-      tx.select().from(agentSessionOwners).where(eq(agentSessionOwners.sessionId, sessionId)).limit(1),
-    );
-    if (row) {
-      return {
-        orgId: row.orgId,
-        ownerEmail: row.ownerEmail ? norm(row.ownerEmail) : null,
-        ownerPrincipal: row.ownerPrincipal,
-        ownerKind: row.ownerKind,
-        visibility: row.visibility,
-        rootSessionId: row.rootSessionId,
-        tokenSha256: row.tokenSha256,
-        source: row.parentSessionId ? "lineage" : "record",
-      };
-    }
+    const found = await readOwnerRecordIn(db, orgId, sessionId);
+    if (found) return found;
   }
   return null;
 }
@@ -262,6 +271,47 @@ export async function gateSessionRequest(
     localDevAllowed: opts.localDevAllowed ?? false,
   });
   return { ...decision, ownership };
+}
+
+/**
+ * MAY THIS PERSON READ (or replace) THE CACHED TRANSCRIPT of a session, in workspace `orgId`? — the rule behind
+ * /api/ops/chat-snapshots and /api/ops/chat-replay (lib/chat-session-access.ts `accessForSession`).
+ *
+ * It used to decide ownership from the chat LIST: the caller owned an unshared session when they were the only person
+ * with a `chat_sessions` row for it in the workspace. Those rows are written by the browser, so a colleague who knew
+ * an id could be that sole claimant for a session whose real owner had not mirrored it (a new chat, a step, a
+ * delegated child, a session the owner deleted from their list) and read or overwrite its cached transcript — the
+ * most complete copy of a conversation stored anywhere. A thread row was trusted the same way, whoever wrote it.
+ *
+ * Now it is the gate's own answer on the agent's record (agent_session_owners, written at creation, never by a
+ * client): READ when the session gate would let this person read the stream — the recorded owner, a live member of a
+ * thread the OWNER shared, a colleague on a workspace-visible step — and WRITE only for the recorded owner (see
+ * lib/chat-snapshot.ts snapshotAccess for why nobody else may replace it). No record in this workspace, no access:
+ * a session from before owners were recorded gets one the first time its owner opens it through the gate, and until
+ * then the open simply falls back to the replay.
+ */
+export async function readTranscriptAccess(
+  db: GateDb,
+  orgId: string,
+  email: string,
+  sessionId: string,
+): Promise<{ read: boolean; write: boolean }> {
+  const me = norm(email);
+  if (!me || !orgId || !sessionId) return { read: false, write: false };
+  const ownership = await readOwnerRecordIn(db, orgId, sessionId);
+  if (!ownership) return { read: false, write: false };
+  const caller: GateCaller = { kind: "person", email: me };
+  const facts = await readCallerFacts(db, caller, sessionId, ownership);
+  const decision = sessionGateDecision({
+    caller,
+    sessionId,
+    right: "read",
+    ownership,
+    membership: facts.membership,
+    callerInWorkspace: facts.callerInWorkspace,
+    localDevAllowed: false,
+  });
+  return { read: decision.allow, write: decision.allow && decision.role === "owner" };
 }
 
 /** The row the agent writes when it creates (or first resolves) a session. Never overwrites an existing owner. */

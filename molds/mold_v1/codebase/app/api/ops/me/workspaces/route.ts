@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
 import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import { orgInvites, orgMembers, orgs } from "@/agent/lib/db/schema";
-import { getOpsDb } from "@/lib/ops-db";
+import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { tenancyEnabled } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { attentionCounts } from "@/lib/workspace-attention";
@@ -99,8 +99,9 @@ export async function GET(request: NextRequest) {
      * in cannot tell you about the one you are not.
      */
     const attention: Record<string, number> = await attentionCounts(
-      db,
       memberRows.map((m) => m.orgId),
+      // Each of the caller's own workspaces counted inside its RLS scope (lib/workspace-attention.ts).
+      (orgId, fn) => withOrgRls(orgId, fn),
     ).catch(() => ({}) as Record<string, number>);
     return NextResponse.json({
       email,

@@ -21,6 +21,25 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { register } from "node:module";
+import { pathToFileURL } from "node:url";
+
+// The web app's `@/` alias and extensionless imports, so lib/chat-session-access.ts (the transcript cache rule) is
+// loaded as the app loads it — the same resolver scripts/test-agent-vocabulary.mjs uses.
+register(
+  "data:text/javascript," +
+    encodeURIComponent(`
+      const ROOT = ${JSON.stringify(pathToFileURL(process.cwd() + "/").href)};
+      export async function resolve(s, c, n) {
+        if (s.startsWith("@/")) s = ROOT + s.slice(2);
+        try { return await n(s, c); } catch (e) {
+          if (s.endsWith(".js")) return await n(s.slice(0, -3) + ".ts", c);
+          if (!/\\.[cm]?[jt]sx?$/.test(s)) return await n(s + ".ts", c);
+          throw e;
+        }
+      }`),
+  import.meta.url,
+);
 import { SignJWT, exportJWK, exportSPKI, generateKeyPair } from "jose";
 import postgres from "postgres";
 
@@ -35,6 +54,7 @@ if (!adminUrl || !appUrl) {
 
 const { privateKey: esPriv, publicKey: esPub } = await generateKeyPair("ES256", { extractable: true });
 process.env.AUTH_JWT_PUBLIC_KEY = await exportSPKI(esPub);
+process.env.NEXT_PUBLIC_EVE_API_URL = "https://agent-delegate.guard.test"; // lib/workflow-delegate.ts reads it at import
 delete process.env.GOOGLE_CLIENT_ID;
 
 // The front-end's production Vercel OIDC token — the trusted service — signed here, its discovery and JWKS answered
@@ -82,12 +102,13 @@ const VIC = "vic@guard-a.test"; // viewer on it
 const REX = "rex@guard-a.test"; // revoked from it
 
 const admin = postgres(adminUrl, { prepare: false, onnotice: () => {} });
-const TABLES = ["agent_session_owners", "agent_session_scopes", "chat_sessions", "chat_threads", "chat_thread_members"];
+const TABLES = ["agent_session_owners", "agent_session_scopes", "chat_sessions", "chat_threads", "chat_thread_members", "chat_transcript_snapshots"];
 const saved = new Map();
 const cleanup = async () => {
   await admin`DELETE FROM chat_thread_members WHERE org_id IN (${ORG_A}, ${ORG_B})`;
   await admin`DELETE FROM chat_threads WHERE org_id IN (${ORG_A}, ${ORG_B})`;
   await admin`DELETE FROM chat_sessions WHERE org_id IN (${ORG_A}, ${ORG_B})`;
+  await admin`DELETE FROM chat_transcript_snapshots WHERE org_id IN (${ORG_A}, ${ORG_B})`;
   await admin`DELETE FROM agent_session_scopes WHERE org_id IN (${ORG_A}, ${ORG_B})`;
   await admin`DELETE FROM workflow_run_journal WHERE org_id IN (${ORG_A}, ${ORG_B})`;
   await admin`DELETE FROM org_members WHERE org_id IN (${ORG_A}, ${ORG_B})`;
@@ -126,15 +147,36 @@ const handle = (id, token) => ({
     return eventStream(id, opts?.startIndex);
   },
 });
+/**
+ * eve's event stream. Like eve's, a LIVE session's stream never ends (`s.live`: after its events it waits for more,
+ * forever), and a long history takes time to read (`s.delayMs` per event) — so the guard's history reads meet their
+ * idle and deadline paths here as they do in production.
+ */
 function eventStream(id, startIndex) {
   const s = sessions.get(id);
   if (!s) throw new Error("run not found");
   const from = startIndex === undefined ? 0 : startIndex < 0 ? Math.max(0, s.events.length + startIndex) : startIndex;
-  const items = s.events.slice(from);
+  if (!s.live && !s.delayMs) {
+    const items = s.events.slice(from);
+    return new ReadableStream({
+      start(c) {
+        for (const e of items) c.enqueue(e);
+        c.close();
+      },
+    });
+  }
+  let i = from;
   return new ReadableStream({
-    start(c) {
-      for (const e of items) c.enqueue(e);
-      c.close();
+    async pull(c) {
+      for (;;) {
+        if (i < s.events.length) {
+          if (s.delayMs) await new Promise((r) => setTimeout(r, s.delayMs));
+          c.enqueue(s.events[i++]);
+          return;
+        }
+        if (!s.live) return c.close();
+        await new Promise((r) => setTimeout(r, 20)); // a live tail: wait for the next event, forever
+      }
     },
   });
 }
@@ -169,7 +211,8 @@ const routeAgent = {
 const channel = (await import("../agent/channels/eve.ts")).default;
 const HOST = "https://agent-api.guard.test"; // NOT loopback: eve's localDev() must not be what lets anyone in
 
-function match(method, path, via = channel) {
+function match(method, pathAndQuery, via = channel) {
+  const path = pathAndQuery.split("?")[0];
   for (const route of via.routes) {
     if (route.method !== method) continue;
     const names = [];
@@ -180,7 +223,7 @@ function match(method, path, via = channel) {
   return null;
 }
 
-async function call(method, path, { token, body, headers = {}, host = HOST, via = channel } = {}) {
+async function call(method, path, { token, body, headers = {}, host = HOST, via = channel, peekMs } = {}) {
   const hit = match(method, path, via);
   assert.ok(hit, `no route for ${method} ${path}`);
   const request = new Request(`${host}${path}`, {
@@ -205,7 +248,21 @@ async function call(method, path, { token, body, headers = {}, host = HOST, via 
     __eveRouteAgent: routeAgent,
   };
   const res = await hit.route.handler(request, args);
-  const text = await res.text();
+  // A live stream never ends: `peekMs` reads what arrives in that long, then hangs up, as a tail probe does.
+  let text = "";
+  if (peekMs !== undefined && res.body) {
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    const stopAt = Date.now() + peekMs;
+    for (;;) {
+      const left = stopAt - Date.now();
+      if (left <= 0) break;
+      const next = await Promise.race([reader.read(), new Promise((r) => setTimeout(() => r(null), left))]);
+      if (!next || next.done) break;
+      text += dec.decode(next.value, { stream: true });
+    }
+    void reader.cancel().catch(() => undefined);
+  } else text = await res.text();
   let json = null;
   try {
     json = JSON.parse(text);
@@ -407,6 +464,174 @@ try {
   sessions.get(s2.sessionId).events.push({ type: "subagent.called", data: { childSessionId: ghostChild, sessionId: s2.sessionId } });
   check("a stranger's read of someone else's parent is refused, and records nothing", (await stream(s2.sessionId, T.carol)).status === 404 && (await stream(ghostChild, T.bob)).status === 404);
 
+  /* ---- children delegated BEFORE lineage was recorded (mold_v1-133) ------------------------------------- */
+
+  console.log("\nA child delegated BEFORE lineage was recorded (#66), its parent reopened from the transcript cache:");
+  // The parent announced the child long ago, before the guard recorded lineage; the chat now reopens from its cached
+  // transcript and streams only what is new (startIndex > 0), so the announcement never passes the guard again.
+  const old = await create(T.alice, "an old conversation that delegated");
+  const OC = newSession("subagent:pre-66-child");
+  sessions.get(OC).events.unshift({ type: "message.completed", data: { message: "PRE66-CHILD-SECRET" } });
+  sessions.get(old.sessionId).events.push(
+    { type: "subagent.called", data: { callId: "call_old", childSessionId: OC, name: "research", sessionId: old.sessionId } },
+    { type: "subagent.completed", data: { callId: "call_old", childSessionId: OC } },
+    { type: "message.completed", data: { message: "done" } },
+  );
+  const cursor = sessions.get(old.sessionId).events.length;
+  check("before anything, the child is refused even to its owner (the reported 404)", (await stream(OC, T.alice)).status === 404);
+  const tail = await call("GET", `/eve/v1/session/${old.sessionId}/stream?startIndex=${cursor}`, { token: T.carol });
+  check("a stranger's read of the parent from its cursor is refused (404)…", tail.status === 404);
+  check("…and records nothing: the child is still refused to its owner", (await stream(OC, T.alice)).status === 404);
+  const resumed = await call("GET", `/eve/v1/session/${old.sessionId}/stream?startIndex=${cursor}`, { token: T.alice });
+  check("the owner reopens the parent from the cache's cursor (200, the announcement NOT in what is streamed)", resumed.status === 200 && !resumed.text.includes(OC), resumed.status);
+  const [oldRow] = await admin`SELECT owner_email, parent_session_id, org_id FROM agent_session_owners WHERE session_id = ${OC}`;
+  check("…and the skipped history was read server-side: the child now has the parent's owner on record", oldRow?.owner_email === ALICE && oldRow?.parent_session_id === old.sessionId && oldRow?.org_id === ORG_A, oldRow);
+  const oc = await stream(OC, T.alice);
+  check("the owner opens the child (200)", oc.status === 200 && oc.text.includes("PRE66-CHILD-SECRET"), oc.status);
+  check("…and nobody else does: not a colleague (404), not another workspace (404)", (await stream(OC, T.bob)).status === 404 && (await stream(OC, T.carol)).status === 404);
+  const tailed = await create(T.alice, "another old conversation");
+  const OT = newSession("subagent:pre-66-tail-child");
+  sessions.get(tailed.sessionId).events.push({ type: "subagent.called", data: { childSessionId: OT, sessionId: tailed.sessionId } }, { type: "message.completed", data: { message: "x" } });
+  await call("GET", `/eve/v1/session/${tailed.sessionId}/stream?startIndex=-1`, { token: T.alice });
+  // A tail read never waits for the history (it is a latency-sensitive probe); the children land moments later.
+  let tailChild = 404;
+  for (let i = 0; i < 25 && tailChild !== 200; i++) {
+    tailChild = (await stream(OT, T.alice)).status;
+    if (tailChild !== 200) await new Promise((r) => setTimeout(r, 40));
+  }
+  check("a read from the TAIL (startIndex=-1) records the history's children too, in the background", tailChild === 200, tailChild);
+
+  console.log("\nThe one-time deploy backfill (scripts/backfill-session-lineage.mjs), replaying each root as its owner:");
+  const lineage = await import("../agent/lib/session-lineage-backfill.ts").catch((e) => ({ missing: String(e) }));
+  check("agent/lib/session-lineage-backfill.ts exists", !lineage.missing, lineage.missing);
+  if (!lineage.missing) {
+    const quiet = await create(T.alice, "a conversation nobody has reopened since");
+    const QC = newSession("subagent:quiet-child");
+    sessions.get(quiet.sessionId).events.push({ type: "subagent.called", data: { childSessionId: QC, sessionId: quiet.sessionId } });
+    // Bob's parent: its child must go to BOB, never to whoever runs the backfill or owns the other parents.
+    const bobs = await create(T.bob, "Bob's delegating chat");
+    const BC = newSession("subagent:bobs-child");
+    sessions.get(bobs.sessionId).events.push({ type: "subagent.called", data: { childSessionId: BC, sessionId: bobs.sessionId } });
+    const { agentGateDb } = await import("../agent/lib/session-owners.ts");
+    const parents = await lineage.listLineageParents(agentGateDb(), [ORG_A, ORG_B]);
+    check("it lists the owned roots (not the children) with their owners", parents.some((p) => p.sessionId === quiet.sessionId && p.ownerEmail === ALICE) && parents.some((p) => p.sessionId === bobs.sessionId && p.ownerEmail === BOB) && !parents.some((p) => p.sessionId === OC), parents.length);
+    const replay = async (p) => {
+      const r = await call("GET", `/eve/v1/session/${encodeURIComponent(p.sessionId)}/stream?startIndex=0`, { token: await queueToken(p.ownerEmail, p.sessionId, p.orgId, { act: "read" }) });
+      return { status: r.status, body: new Response(r.text).body };
+    };
+    const first = await lineage.backfillLineage(parents, replay, { idleMs: 50 });
+    check("every root replays through the guard as its owner, none fails", first.failed === 0 && first.replayed >= 2, first);
+    const [qr] = await admin`SELECT owner_email, parent_session_id FROM agent_session_owners WHERE session_id = ${QC}`;
+    const [br] = await admin`SELECT owner_email, parent_session_id FROM agent_session_owners WHERE session_id = ${BC}`;
+    check("the quiet child is Alice's, under its parent", qr?.owner_email === ALICE && qr?.parent_session_id === quiet.sessionId, qr);
+    check("Bob's child is Bob's", br?.owner_email === BOB && br?.parent_session_id === bobs.sessionId, br);
+    check("…so Alice opens hers (200) and not Bob's (404)", (await stream(QC, T.alice)).status === 200 && (await stream(BC, T.alice)).status === 404);
+    const [{ n: before }] = await admin`SELECT count(*)::int AS n FROM agent_session_owners WHERE org_id IN (${ORG_A}, ${ORG_B})`;
+    const again = await lineage.backfillLineage(parents, replay, { idleMs: 50 });
+    const [{ n: after }] = await admin`SELECT count(*)::int AS n FROM agent_session_owners WHERE org_id IN (${ORG_A}, ${ORG_B})`;
+    check("running it again changes nothing (idempotent)", again.failed === 0 && after === before, { before, after });
+    const forged = await lineage.backfillLineage([{ orgId: ORG_A, sessionId: quiet.sessionId, ownerEmail: BOB }], replay, { idleMs: 50 });
+    check("a replay as someone who does not own the parent is refused and records nothing", forged.refused === 1 && forged.replayed === 0, forged);
+
+    // #75 review: the backfill replayed roots only, so a GRANDCHILD delegated before #66 — announced on its parent
+    // child's stream — was never reached.
+    const G = await create(T.alice, "a root whose specialist delegated again");
+    const GC = newSession("subagent:child");
+    const GGC = newSession("subagent:grandchild");
+    sessions.get(G.sessionId).events.push({ type: "subagent.called", data: { childSessionId: GC, sessionId: G.sessionId } });
+    sessions.get(GC).events.push({ type: "subagent.called", data: { childSessionId: GGC, sessionId: GC } });
+    const deep = await lineage.backfillLineage([{ orgId: ORG_A, sessionId: G.sessionId, ownerEmail: ALICE }], replay, { idleMs: 50 });
+    const [ggr] = await admin`SELECT owner_email, parent_session_id FROM agent_session_owners WHERE session_id = ${GGC}`;
+    check("the backfill follows each child it finds: a pre-#66 GRANDCHILD is Alice's, under its parent child", ggr?.owner_email === ALICE && ggr?.parent_session_id === GC, { ggr, deep });
+    check("…and Alice opens it (200) while a colleague does not (404)", (await stream(GGC, T.alice)).status === 200 && (await stream(GGC, T.bob)).status === 404);
+
+    // #75 review, item 6: a pre-#66 chat with no owner record is refused by the cached-transcript and fast-replay
+    // routes (the client falls back to a slower direct stream). The backfill's replay freezes its owner from the
+    // chat list the way the guard's legacy rule does, and from then on those routes serve it.
+    const LG = newSession("eve:legacy-cached");
+    sessions.get(LG).events.push({ type: "message.received", data: { message: "legacy cached chat" } });
+    park(LG);
+    await admin`INSERT INTO chat_sessions (id, org_id, owner_email, eve_session_id, title) VALUES ('guard-legacy-cached', ${ORG_A}, ${ALICE}, ${LG}, 'old cached chat')`;
+    await admin`INSERT INTO agent_session_scopes (session_id, org_id, principal_email) VALUES (${LG}, ${ORG_A}, ${ALICE})`;
+    const { accessForSession } = await import("../lib/chat-session-access.ts");
+    const beforeFill = await accessForSession(ORG_A, ALICE, LG);
+    check("before the backfill, a pre-#66 chat with no owner record is refused by the transcript routes", !beforeFill.read && !beforeFill.write, beforeFill);
+    const legacyParents = (await lineage.listLineageParents(agentGateDb(), [ORG_A])).filter((p) => p.sessionId === LG);
+    check("…the backfill lists it (from the chat list)", legacyParents.length === 1 && legacyParents[0].ownerEmail === ALICE, legacyParents);
+    await lineage.backfillLineage(legacyParents, replay, { idleMs: 50 });
+    const afterFill = await accessForSession(ORG_A, ALICE, LG);
+    check("…and after it the cached-transcript and fast-replay routes serve it to its owner", afterFill.read && afterFill.write, afterFill);
+    check("…and to nobody else", !(await accessForSession(ORG_A, BOB, LG)).read);
+
+    // #75 review, item 5. A tail read's history scan that hits its deadline must not mark the session scanned: the
+    // next read resumes from where it stopped. Uses a guarded channel whose history read is bounded at 300 ms, over a
+    // parent whose long history arrives slowly and whose stream never ends (a live tail).
+    console.log("\nThe guard's history reads on a slow, never-ending stream (idle and deadline paths):");
+    const { eveChannel: eveCh } = await import("eve/channels/eve");
+    const { jwtEcdsa: jwtDoor } = await import("eve/channels/auth");
+    const { guardSessionRoutes: guardRoutes } = await import("../agent/lib/session-guard.ts");
+    const emailDoor = [jwtDoor({ algorithm: "ES256", publicKey: process.env.AUTH_JWT_PUBLIC_KEY, issuer: "delivered", audiences: ["delivered-app"], claims: { kind: ["email-session"] } })];
+    const fast = guardRoutes(eveCh({ auth: emailDoor }), { auth: emailDoor, deps: { streamProbeMs: 300 } });
+    const D = await create(T.alice, "a long conversation, still live");
+    const DC = newSession("subagent:late-child");
+    for (let i = 0; i < 38; i++) sessions.get(D.sessionId).events.push({ type: "message.appended", data: { i } });
+    sessions.get(D.sessionId).events.push({ type: "subagent.called", data: { childSessionId: DC, sessionId: D.sessionId } });
+    sessions.get(D.sessionId).events.push({ type: "message.completed", data: { message: "still going" } });
+    Object.assign(sessions.get(D.sessionId), { live: true, delayMs: 25 });
+    let tails = 0;
+    let lateChild = null;
+    for (; tails < 8 && !lateChild; tails++) {
+      await call("GET", `/eve/v1/session/${D.sessionId}/stream?startIndex=-1`, { token: T.alice, via: fast, peekMs: 30 });
+      await new Promise((r) => setTimeout(r, 400)); // the background history read, cut at its 300 ms deadline
+      [lateChild] = await admin`SELECT owner_email FROM agent_session_owners WHERE session_id = ${DC}`;
+    }
+    check("a tail scan cut by its deadline is resumed by the next tail read, until the late child is on record", lateChild?.owner_email === ALICE && tails > 1, { tails, lateChild });
+
+    const I = await create(T.alice, "a parked conversation, caught up");
+    const IC = newSession("subagent:idle-child");
+    sessions.get(I.sessionId).events.push({ type: "subagent.called", data: { childSessionId: IC, sessionId: I.sessionId } });
+    Object.assign(sessions.get(I.sessionId), { live: true });
+    await call("GET", `/eve/v1/session/${I.sessionId}/stream?startIndex=-1`, { token: T.alice, via: fast, peekMs: 30 });
+    await new Promise((r) => setTimeout(r, 250)); // idle after the backlog (75 ms quiet), well inside the deadline
+    check("a tail scan that goes quiet has caught up, and recorded the child", (await admin`SELECT 1 FROM agent_session_owners WHERE session_id = ${IC}`).length === 1);
+
+    // The rail asks for a child a moment after its parent was served from a cursor: the guard waited at most 400 ms
+    // for the skipped history, and this one takes longer. The child route awaits the read instead of refusing.
+    console.log("\nA child asked for before its parent's history was read:");
+    const H = await create(T.alice, "a conversation reopened from the cache");
+    const HC = newSession("subagent:rail-child");
+    for (let i = 0; i < 14; i++) sessions.get(H.sessionId).events.push({ type: "message.appended", data: { i } });
+    sessions.get(H.sessionId).events.push({ type: "subagent.called", data: { childSessionId: HC, sessionId: H.sessionId } });
+    for (let i = 0; i < 6; i++) sessions.get(H.sessionId).events.push({ type: "message.appended", data: { i } });
+    const hCursor = sessions.get(H.sessionId).events.length;
+    Object.assign(sessions.get(H.sessionId), { delayMs: 40 }); // ~0.9 s of history before the cursor
+    const reopened = await call("GET", `/eve/v1/session/${H.sessionId}/stream?startIndex=${hCursor}`, { token: T.alice });
+    check("the parent is served from its cursor without waiting for all of its history (200)", reopened.status === 200);
+    const rail = await stream(HC, T.alice);
+    check("the rail's immediate read of the child waits for that history read and gets the child (200), not a 404", rail.status === 200, rail.status);
+    delete sessions.get(H.sessionId).delayMs;
+
+    // On ANOTHER instance there is no read to wait for: the parent is found from the caller's own transcript cache
+    // (a hint a browser wrote), checked against the gate and against eve's own history of it.
+    const R = await create(T.alice, "a conversation whose child only the cache knows");
+    const RC = newSession("subagent:cached-child");
+    sessions.get(R.sessionId).events.push({ type: "subagent.called", data: { childSessionId: RC, sessionId: R.sessionId } });
+    const snap = (org, owner, sid, events) =>
+      admin`INSERT INTO chat_transcript_snapshots (org_id, eve_session_id, owner_email, version, event_index, events)
+            VALUES (${org}, ${sid}, ${owner}, 1, ${events.length}, ${JSON.stringify(events)}::jsonb)`;
+    await snap(ORG_A, ALICE, R.sessionId, sessions.get(R.sessionId).events);
+    check("a colleague asking for that child gets 404 — he may not read its parent — and records nothing", (await stream(RC, T.bob)).status === 404 && (await admin`SELECT 1 FROM agent_session_owners WHERE session_id = ${RC}`).length === 0);
+    check("another workspace gets 404", (await stream(RC, T.carol)).status === 404);
+    check("its owner, on a cold instance, gets the child (200): parent found in her cache, confirmed in eve's history", (await stream(RC, T.alice)).status === 200);
+    // A forged cache row: Bob's own session "announces" Alice's still-unrecorded child.
+    const bobsOwn = await create(T.bob, "Bob's chat");
+    const R2 = await create(T.alice, "another of Alice's");
+    const R2C = newSession("subagent:unrecorded-child");
+    sessions.get(R2.sessionId).events.push({ type: "subagent.called", data: { childSessionId: R2C, sessionId: R2.sessionId } });
+    await snap(ORG_A, BOB, bobsOwn.sessionId, [{ type: "subagent.called", data: { childSessionId: R2C } }]);
+    check("a cache row that claims someone else's child for the caller's own session gets 404 (eve's history of it disagrees)", (await stream(R2C, T.bob)).status === 404 && (await admin`SELECT 1 FROM agent_session_owners WHERE session_id = ${R2C}`).length === 0);
+  }
+
   /* ---- workflow delegate and service principals ------------------------------------------------------ */
 
   console.log("\nThe workflow delegate (lib/workflow-delegate.ts) and the platform's own service token:");
@@ -437,20 +662,195 @@ try {
 
   process.env.VERCEL_ENV = "production";
   const svc = await serviceToken();
-  const cronStep = await create(svc, "cron step", { "x-workspace-scope": ORG_A });
+  const inA = { "x-workspace-scope": ORG_A };
+  const svcCall = (method, id, verb = "", headers = inA, body = method === "POST" ? {} : undefined) =>
+    call(method, `/eve/v1/session/${encodeURIComponent(id)}${verb}`, { token: svc, body, headers });
+  const cronStep = await create(svc, "cron step", inA);
   check("the front-end's production token starts a step for workspace A (202)", cronStep.status === 202, cronStep);
-  check("…reads it back (200)", (await stream(cronStep.sessionId, svc)).status === 200);
+  check("…reads it back, naming the workspace (200)", (await svcCall("GET", cronStep.sessionId, "/stream")).status === 200);
   check("…and it is visible to workspace A's members (200)", (await stream(cronStep.sessionId, T.bob)).status === 200);
   check("…read-only: a member may not cancel it directly (404)", (await cancel(cronStep.sessionId, T.bob)).status === 404);
   check(
     "…the run-cancel route's fan-out (service token, scoped to the run's workspace) cancels it (202)",
-    (await call("POST", `/eve/v1/session/${cronStep.sessionId}/cancel`, { token: svc, body: {}, headers: { "x-workspace-scope": ORG_A } })).status === 202,
+    (await svcCall("POST", cronStep.sessionId, "/cancel")).status === 202,
   );
-  check("…and so does it for a person's step in that workspace (202)", (await call("POST", `/eve/v1/session/${step.sessionId}/cancel`, { token: svc, body: {}, headers: { "x-workspace-scope": ORG_A } })).status === 202);
+  check("…and so does it for a person's step in that workspace (202)", (await svcCall("POST", step.sessionId, "/cancel")).status === 202);
   check("…and to nobody outside it (404)", (await stream(cronStep.sessionId, T.carol)).status === 404);
-  check("the service reads a person's chat (resume, relay) (200)", (await stream(S, svc)).status === 200);
-  const wrongScope = await call("GET", `/eve/v1/session/${S}/stream`, { token: svc, headers: { "x-workspace-scope": ORG_B } });
-  check("…but not while naming ANOTHER workspace than the session's (404)", wrongScope.status === 404, wrongScope.status);
+
+  // mold_v1-130: the service used to be admitted to ANY session in the workspace it named, and to ANY session at all
+  // when it named none — so the front-end's token read, steered and cancelled a person's private chat.
+  console.log("\nA service principal acts only on the sessions it runs, and only while naming their workspace:");
+  const cancelledBefore = sessions.get(S).cancelled;
+  const deliveredBefore = sessions.get(S).delivered.length;
+  const noHeader = await call("GET", `/eve/v1/session/${S}/stream`, { token: svc });
+  check("with NO workspace header it reads nobody's chat (404, not one byte)", noHeader.status === 404 && !noHeader.text.includes("HUNTER2"), noHeader.status);
+  const sameOrg = await svcCall("GET", S, "/stream");
+  check("naming the chat's OWN workspace it still may not read a person's private chat (404)", sameOrg.status === 404 && !sameOrg.text.includes("HUNTER2"), sameOrg.status);
+  check(
+    "…nor post into it, answer its approval or cancel it (404, nothing delivered, turn untouched)",
+    (await svcCall("POST", S, "", inA, { message: "svc", continuationToken: s1.ct })).status === 404 &&
+      (await svcCall("POST", S, "", inA, { inputResponses: [{ requestId: "r1", optionId: "approve" }], continuationToken: s1.ct })).status === 404 &&
+      (await svcCall("POST", S, "/cancel")).status === 404 &&
+      sessions.get(S).cancelled === cancelledBefore &&
+      sessions.get(S).delivered.length === deliveredBefore,
+  );
+  check("…nor another person's legacy chat (404)", (await svcCall("GET", L, "/stream")).status === 404);
+  check("…nor a subagent child of a person's chat (404)", (await svcCall("GET", C, "/stream")).status === 404);
+  // TRANSITION (remove after 2026-10-13): a pre-mold_v1-130 web app sends the header only on a step's create, and the
+  // agent deploys first. Its headerless stream reads and cancels still reach the steps the platform runs — in the
+  // step's own workspace — and nothing else.
+  const cancelsBefore = sessions.get(cronStep.sessionId).cancelled;
+  check("an OLD web app's headerless stream read of its own step still works (200)", (await call("GET", `/eve/v1/session/${cronStep.sessionId}/stream`, { token: svc })).status === 200);
+  check("…and its headerless cancel of a step (202)", (await call("POST", `/eve/v1/session/${cronStep.sessionId}/cancel`, { token: svc, body: {} })).status === 202 && sessions.get(cronStep.sessionId).cancelled === cancelsBefore + 1);
+  check("…and of a person's workflow step (202)", (await call("POST", `/eve/v1/session/${step.sessionId}/cancel`, { token: svc, body: {} })).status === 202);
+  check("…but never a headerless POST into a step (404)", (await call("POST", `/eve/v1/session/${cronStep.sessionId}`, { token: svc, body: { message: "steer", continuationToken: cronStep.ct } })).status === 404);
+  check(
+    "…and never a person's chat, headerless: not its stream, not its cancel (404)",
+    (await call("GET", `/eve/v1/session/${S}/stream`, { token: svc })).status === 404 &&
+      (await call("POST", `/eve/v1/session/${S}/cancel`, { token: svc, body: {} })).status === 404,
+  );
+  const wrongScope = await svcCall("GET", cronStep.sessionId, "/stream", { "x-workspace-scope": ORG_B });
+  check("…and while naming ANOTHER workspace than the step's (404)", wrongScope.status === 404, wrongScope.status);
+  const bareCreate = await create(svc, "a step for no workspace in particular");
+  check("a service may not START a session without naming its workspace (403, nothing started)", bareCreate.status === 403 && !bareCreate.sessionId, bareCreate.status);
+  check("a pre-deploy workflow step (journal evidence) is the service's to cancel (202)", (await svcCall("POST", W, "/cancel")).status === 202);
+  check("…and its journalled child's to read (200)", (await svcCall("GET", Wc, "/stream")).status === 200);
+
+  // The workflow delegate end to end: lib/workflow-delegate.ts, with its fetch pointed at THIS guarded channel.
+  console.log("\nThe workflow delegate (lib/workflow-delegate.ts), through the guarded channel:");
+  const AGENT = process.env.NEXT_PUBLIC_EVE_API_URL;
+  const seen = [];
+  let onStreamOpen = null;
+  /** `oldWeb`: the pre-mold_v1-130 web app, which named the workspace on a step's CREATE only. */
+  let oldWeb = false;
+  const beforeDelegate = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (!request.url.startsWith(AGENT)) return beforeDelegate(input, init);
+    const path = new URL(request.url).pathname;
+    const hit = match(request.method, path);
+    if (!hit) return new Response("no route", { status: 404 });
+    const headers = new Headers(request.headers);
+    if (oldWeb && path !== "/eve/v1/session") headers.delete("x-workspace-scope");
+    const guarded = new Request(`${HOST}${path}${new URL(request.url).search}`, { method: request.method, headers, body: request.method === "GET" ? undefined : await request.text() });
+    const args = { send, cancel: async () => ({ status: "no_active_turn" }), getSession: (id) => handle(id, ""), receive: async () => { throw new Error("not used"); }, params: hit.params, waitUntil: () => {}, requestIp: null, __eveRouteAgent: routeAgent };
+    const res = await hit.route.handler(guarded, args);
+    seen.push({ method: request.method, path, scope: headers.get("x-workspace-scope"), grant: headers.has("x-session-visibility-grant"), status: res.status });
+    if (path === "/eve/v1/session" && res.ok) {
+      // What eve does next for a step: the orchestrator delegates, and its specialist answers in the child.
+      const body = await res.clone().json();
+      const child = newSession("subagent:delegate-child");
+      sessions.get(child).events.push({ type: "message.completed", data: { message: "CHILD-ANSWER-7" } }, { type: "turn.completed", data: {} });
+      sessions.get(body.sessionId).events.push(
+        { type: "subagent.called", data: { callId: "call_d", childSessionId: child, name: "research", sessionId: body.sessionId } },
+        { type: "turn.completed", data: {} },
+      );
+    }
+    if (path.endsWith("/stream")) onStreamOpen?.();
+    return res;
+  };
+  const createdBy = () => seen.find((r) => r.path === "/eve/v1/session");
+  const { exportPKCS8 } = await import("jose");
+  const signingKey = await exportPKCS8(esPriv);
+  try {
+    const { makeDelegate } = await import("../lib/workflow-delegate.ts");
+    for (const web of ["NEW", "OLD"]) {
+      oldWeb = web === "OLD";
+      seen.length = 0;
+      try {
+      const answer = await makeDelegate(svc, 5_000, undefined, undefined, ORG_A, "step")("summarise the quarter", "research");
+      check(`${web} web app: a service step runs to its answer, read from the delegated child's own session`, answer === "CHILD-ANSWER-7", { answer, seen });
+      check(
+        `…every call it made was admitted${oldWeb ? " (headerless after the create: the transition door)" : ", each naming the workspace"}`,
+        seen.filter((r) => r.path.endsWith("/stream")).length >= 2 && seen.every((r) => r.status < 300 && (oldWeb ? r.path !== "/eve/v1/session" || r.scope === ORG_A : r.scope === ORG_A)),
+        seen,
+      );
+      seen.length = 0;
+      const abort = new AbortController();
+      onStreamOpen = () => abort.abort(new Error("run cancelled"));
+      await makeDelegate(svc, 5_000, abort.signal, undefined, ORG_A, "step")("a step the run cancels").catch(() => undefined);
+      onStreamOpen = null;
+      for (let i = 0; i < 50 && !seen.some((r) => r.path.endsWith("/cancel")); i++) await new Promise((r) => setTimeout(r, 20));
+      const stop = seen.find((r) => r.path.endsWith("/cancel"));
+      check(`…a run aborted mid-step cancels its session (202)${oldWeb ? ", headerless" : ", naming the workspace"}`, stop?.status === 202 && (oldWeb ? stop.scope === null : stop.scope === ORG_A), seen);
+      } catch (error) {
+        check(`${web} web app: the workflow delegate runs a service step`, false, String(error?.message ?? error));
+      } finally {
+        onStreamOpen = null;
+      }
+    }
+    oldWeb = false;
+
+    // A PERSON's step: made the workspace's with the web app's signed grant, so the run can cancel and resume it.
+    console.log("\nA person's delegate: steps take the signed grant, private requests none, and no grant means no step:");
+    process.env.AUTH_JWT_PRIVATE_KEY = signingKey;
+    seen.length = 0;
+    await makeDelegate(T.alice, 5_000, undefined, undefined, ORG_A, "step")("a person's workflow step");
+    const personStep = createdBy();
+    check("a person's STEP is created with the signed grant (202)", personStep?.grant === true && personStep.status === 202, seen);
+    const [stepRow] = await admin`SELECT session_id, visibility FROM agent_session_owners WHERE owner_email = ${ALICE} ORDER BY created_at DESC LIMIT 1`;
+    check("…so it is workspace-visible", stepRow?.visibility === "workspace", stepRow);
+    check("…and the run's service fan-out may cancel it (202)", (await svcCall("POST", stepRow.session_id, "/cancel")).status === 202);
+    seen.length = 0;
+    await makeDelegate(T.alice, 5_000, undefined, undefined, ORG_A, "private")("summarise this person's accounts");
+    check("a PRIVATE request (account summary, workflow author) sends no grant", createdBy()?.grant === false && createdBy()?.status === 202, seen);
+    const [privRow] = await admin`SELECT session_id, visibility FROM agent_session_owners WHERE owner_email = ${ALICE} ORDER BY created_at DESC LIMIT 1`;
+    check("…so it stays the owner's alone", privRow?.visibility === "owner", privRow);
+    check(
+      "…no colleague reads it and no service call reaches it (404)",
+      (await stream(privRow.session_id, T.bob)).status === 404 &&
+        (await svcCall("GET", privRow.session_id, "/stream")).status === 404 &&
+        (await svcCall("POST", privRow.session_id, "/cancel")).status === 404,
+    );
+    delete process.env.AUTH_JWT_PRIVATE_KEY;
+    seen.length = 0;
+    let refused = null;
+    try {
+      await makeDelegate(T.alice, 5_000, undefined, undefined, ORG_A, "step")("a step the web app cannot sign for");
+    } catch (error) {
+      refused = error;
+    }
+    check(
+      "a person's STEP the web app cannot sign a grant for is REFUSED loudly, before anything is started",
+      refused?.name === "StepGrantUnavailable" || /step grant/i.test(String(refused?.message)),
+      String(refused),
+    );
+    check("…no session was created for it", !seen.some((r) => r.path === "/eve/v1/session"), seen);
+    seen.length = 0;
+    await makeDelegate(svc, 5_000, undefined, undefined, ORG_A, "step")("a service step needs no grant");
+    check("…while a service step needs no grant and still starts (202)", createdBy()?.status === 202, seen);
+  } catch (error) {
+    check("the workflow delegate could be driven", false, String(error?.stack ?? error));
+  } finally {
+    onStreamOpen = null;
+    oldWeb = false;
+    delete process.env.AUTH_JWT_PRIVATE_KEY;
+    globalThis.fetch = beforeDelegate;
+  }
+
+  /* ---- the transcript cache rule (lib/chat-session-access.ts accessForSession) ---------------------------- */
+
+  // mold_v1-129(b): the cache behind /api/ops/chat-snapshots and /api/ops/chat-replay decided an unshared session's
+  // owner from the chat LIST — the sole in-workspace `chat_sessions` claimant — which the browser writes.
+  console.log("\nThe transcript cache (accessForSession) decides on the agent's owner record, not the chat list:");
+  {
+    // The REAL function the two routes call, as the web app loads it (withOrgRls, as app_rw, fail-closed).
+    const { accessForSession } = await import("../lib/chat-session-access.ts");
+    const cache = (email, id, org = ORG_A) => accessForSession(org, email, id);
+    const same = (got, read, write) => got.read === read && got.write === write;
+    const fresh = await create(T.alice, "a chat the list has not mirrored yet");
+    await admin`INSERT INTO chat_sessions (id, org_id, owner_email, eve_session_id, title) VALUES ('guard-claim', ${ORG_A}, ${BOB}, ${fresh.sessionId}, 'mine now')`;
+    const claimed = await cache(BOB, fresh.sessionId);
+    check("a colleague who is the SOLE chat-list claimant of Alice's session reads nothing and writes nothing", same(claimed, false, false), claimed);
+    check("…while Alice, with no list row at all, reads and writes her own", same(await cache(ALICE, fresh.sessionId), true, true), await cache(ALICE, fresh.sessionId));
+    check("the owner of a shared session reads and writes", same(await cache(ALICE, S), true, true));
+    check("its participant and viewer READ (the stream hands them the same) and never write", same(await cache(PAT, S), true, false) && same(await cache(VIC, S), true, false));
+    check("a revoked member gets nothing", same(await cache(REX, S), false, false));
+    check("a thread Bob wrote on Alice's session gives Bob and his invitee nothing", same(await cache(BOB, S), false, false) && same(await cache(CAROL, S), false, false));
+    check("a colleague reads a workspace-visible step, never writes it", same(await cache(BOB, step.sessionId), true, false));
+    check("another workspace's scope finds nothing, owner or not", same(await cache(ALICE, S, ORG_B), false, false) && same(await cache(CAROL, S, ORG_B), false, false));
+    check("a session nobody has a record of is nobody's", same(await cache(ALICE, "wrun_nobody_knows"), false, false));
+  }
 
   /* ---- token kinds ----------------------------------------------------------------------------------- */
 

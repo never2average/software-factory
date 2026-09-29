@@ -14,7 +14,7 @@
  * the one channel that cannot mix two sessions up.
  *
  * WHY NOT A MODULE-LEVEL QUEUE. A warm serverless instance serves many sessions
- * at once. `agent/hooks/delegation-runs.ts` documents what that costs: keyed on
+ * at once. `agent/lib/delegation-failures.ts` documents what that costs: keyed on
  * a call id alone, one session's failure was filed against another session's
  * live child. A process-wide "last empty response" would file one person's
  * incident under another person's workspace, which is a tenancy bug wearing a

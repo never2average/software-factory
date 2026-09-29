@@ -37,7 +37,7 @@
  * The surface is `app lib` now. A checker aimed at the wrong directory is worth
  * less than no checker, because it is also a claim.
  *
- * WHAT WIDENING IT FOUND, AND WHAT THE BASELINE OF 1 IS.
+ * WHAT WIDENING IT FOUND, AND WHAT THE BASELINE OF 1 WAS.
  *
  * Two files, and they are not the same kind of thing.
  *
@@ -45,16 +45,14 @@
  *     unscoped statement is an existence probe that discards the row; every
  *     real read and write already runs inside withOrgRls.
  *
- *   lib/workspace-attention.ts — REAL DEBT, recorded as debt rather than
+ *   lib/workspace-attention.ts — WAS REAL DEBT, recorded as debt rather than
  *     waved through with a marker. It counts "things needing attention" per
- *     workspace for the workspace SWITCHER, which is genuinely a question no
- *     single workspace can answer — but it asks it with six grouped queries on
- *     the bare handle, so under the fail-closed policy every count comes back
- *     zero and the switcher confidently shows nothing to do. A `tenancy-ok:`
- *     marker saying "cross-workspace by design" would be true and would also
- *     conceal that it does not work; the baseline of 1 says the same thing
- *     without the reassurance. The fix is the `acrossOrgsRls` shape, and it is
- *     a correctness bug, not a leak.
+ *     workspace for the workspace SWITCHER, and asked it with six grouped
+ *     queries on the bare handle, so under the fail-closed policy every count
+ *     came back zero. A `tenancy-ok:` marker saying "cross-workspace by design"
+ *     would have been true and would also have concealed that it did not work.
+ *     Fixed in mold_v1-099 (each workspace counted inside its own scope,
+ *     scripts/test-workspace-attention-db.mjs), and the web baseline is 0.
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -271,22 +269,320 @@ const service = classify(
  * both read "I could not see it" as "it is fine".
  *
  * The right shape is the read itself inside the caller's scope: then absence IS
- * the answer. So these fail outright, with no baseline:
+ * the answer. So these fail outright, with no baseline.
  *
- *   `x?.orgId &&` / `x?.org_id !==` …   an optional-chained ownership guard;
- *   `x ? x.orgId … : true`              a guard that admits a row it did not see;
- *   `orgForCustomer(` in a model tool   the workspace taken from a model-supplied
- *                                       id instead of the caller's session.
+ * READ FROM THE SYNTAX TREE, NOT BY REGEX (mold_v1-119). The first version was
+ * three line regexes, and each of these walked past them: an aliased
+ * `orgForCustomer` import, `const owner = row?.orgId; if (owner && …)`,
+ * `row != null && row.orgId !== …`, `if (!row) return true`, `rows.length === 0
+ * || rows[0].orgId === …`, `row?.["orgId"]`, and the same guards on `workspaceId`.
+ * This parses every file with the TypeScript compiler (already a dependency) and
+ * looks for the SHAPE, whatever it is spelled like. An "ownership read" is an
+ * access to orgId / org_id / workspaceId / workspace_id, by `.` or by `["…"]`. The
+ * shapes, each of which passes when row-level security hides the row:
+ *
+ *   PRESENCE   `row?.orgId && row.orgId !== …`, `row != null && …`, `rows.length > 0
+ *              && …`, `owner && owner !== …` (owner = row?.orgId), and the block form
+ *              `if (row) { if (row.orgId !== …) return … }`: a refusal on a MISMATCH
+ *              that a hidden row never reaches;
+ *   ABSENCE    `!row || row.orgId === …`, `rows.length === 0 || rows[0].orgId === …`,
+ *              `row ? row.orgId === … : true`, `!row ? true : …`: a MATCH that a
+ *              hidden row satisfies;
+ *   EARLY      `if (!row) return true` in a function whose answer is otherwise
+ *              "the owner matches";
+ *
+ * Polarity is what makes a guard unsound, so it is what is checked: `row?.orgId !==
+ * orgId` alone refuses a hidden row (undefined is not the caller's workspace) and is
+ * sound; `row && row.orgId === orgId` admits only a row it saw, and is sound too.
+ *   TOOL       a model tool (a file calling `modelFacing(`) that calls
+ *              orgForCustomer / orgForCustomerId under ANY local name — alias,
+ *              namespace, destructured `import()` — taking its workspace from a
+ *              model-supplied id instead of the caller's session.
  *
  * A guard over a table WITHOUT row-level security (orgs, the control plane) sees
  * every row and is sound; mark it `ownership-guard-ok: <reason>` on the line or
  * one of the two above.
  */
-const GUARD_SHAPES = [
-  [/\?\.org_?[iI]d\s*(?:&&|!==?|===?)/, "optional-chained ownership guard (a row RLS hid reads as undefined and passes)"],
-  [/&&\s*\(?\s*\w+\.org_?[iI]d\b[^;\n]*!==/, "`x && x.orgId !== …` guard (a row RLS hid is falsy and passes)"],
-  [/\?\s*\(?\s*\w+\.org_?[iI]d\b[^;\n]*:\s*true\b/, "`row ? row.orgId … : true` guard (admits a row it could not see)"],
-];
+const { default: ts } = await import("typescript");
+
+const ORG_KEY = /^(?:org_?id|workspace_?id)$/i;
+const ORG_RESOLVERS = new Set(["orgForCustomer", "orgForCustomerId"]);
+
+/** The org-id property an access expression reads, or null. */
+function ownershipKey(node) {
+  if (ts.isPropertyAccessExpression(node) && ORG_KEY.test(node.name.text)) return node.name.text;
+  if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && ORG_KEY.test(node.argumentExpression.text)) {
+    return node.argumentExpression.text;
+  }
+  return null;
+}
+
+/** Source text with optional-chaining and non-null marks removed, so `row?.x` and `row!.x` name the same base as `row.x`. */
+const canon = (node, sf) => node.getText(sf).replace(/\?\./g, ".").replace(/!(?=[.[])/g, "").replace(/\.\[/g, "[").replace(/\s+/g, "");
+
+/** Strip parentheses, `as`, `!` and `satisfies` wrappers. */
+function bare(node) {
+  let n = node;
+  while (n && (ts.isParenthesizedExpression(n) || ts.isAsExpression(n) || ts.isNonNullExpression(n) || ts.isSatisfiesExpression?.(n))) n = n.expression;
+  return n;
+}
+
+
+
+const NULLISH = (n) => n.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(n) && n.text === "undefined");
+const ZERO = (n) => ts.isNumericLiteral(n) && Number(n.text) === 0;
+const ONE = (n) => ts.isNumericLiteral(n) && Number(n.text) === 1;
+const isLength = (n) => ts.isPropertyAccessExpression(n) && n.name.text === "length";
+
+/**
+ * If `cond` tests that something is PRESENT (true when it is there), the canonical base it tests; else null.
+ * `row`, `row != null`, `row !== undefined`, `Boolean(row)`, `!!row`, `rows.length`, `rows.length > 0`, `rows.length >= 1`,
+ * `rows.length !== 0`, `rows[0]`.
+ */
+function presenceOf(cond, sf) {
+  const c = bare(cond);
+  if (ts.isPrefixUnaryExpression(c) && c.operator === ts.SyntaxKind.ExclamationToken) return absenceOf(c.operand, sf, true);
+  if (ts.isCallExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === "Boolean" && c.arguments.length === 1) {
+    return presenceOf(c.arguments[0], sf);
+  }
+  if (ts.isBinaryExpression(c)) {
+    const op = c.operatorToken.kind;
+    const [l, r] = [bare(c.left), bare(c.right)];
+    if ((op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) && (NULLISH(r) || NULLISH(l))) {
+      return subject(NULLISH(r) ? l : r, sf);
+    }
+    if (isLength(l)) {
+      if ((op === ts.SyntaxKind.GreaterThanToken && ZERO(r)) || (op === ts.SyntaxKind.GreaterThanEqualsToken && ONE(r)) || ((op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken) && ZERO(r))) {
+        return canon(l.expression, sf);
+      }
+    }
+    return null;
+  }
+  if (isLength(c)) return canon(c.expression, sf);
+  if (ts.isIdentifier(c) || ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c)) return subject(c, sf);
+  return null;
+}
+
+/** What a presence / absence test is ABOUT: the row, when the thing tested is the row's owner (`row?.orgId`). */
+function subject(node, sf) {
+  const n = bare(node);
+  return ownershipKey(n) ? canon(n.expression, sf) : canon(n, sf);
+}
+
+/**
+ * If `cond` tests that something is ABSENT, the canonical base; else null. `!row`, `row == null`, `row === undefined`,
+ * `!rows.length`, `rows.length === 0`, `rows.length < 1`, `rows.length <= 0`. (`negated`: called on the operand of `!`.)
+ */
+function absenceOf(cond, sf, negated = false) {
+  if (negated) return presenceOf(cond, sf);
+  const c = bare(cond);
+  if (ts.isPrefixUnaryExpression(c) && c.operator === ts.SyntaxKind.ExclamationToken) return presenceOf(c.operand, sf);
+  if (ts.isBinaryExpression(c)) {
+    const op = c.operatorToken.kind;
+    const [l, r] = [bare(c.left), bare(c.right)];
+    if ((op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken) && (NULLISH(r) || NULLISH(l))) {
+      return subject(NULLISH(r) ? l : r, sf);
+    }
+    if (isLength(l)) {
+      if (((op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken) && ZERO(r)) || (op === ts.SyntaxKind.LessThanToken && ONE(r)) || (op === ts.SyntaxKind.LessThanEqualsToken && ZERO(r))) {
+        return canon(l.expression, sf);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The ownership COMPARISONS inside `node` that are about `base` (the row, an element or member of it — rows[0],
+ * rows.at(0), result.row — or a variable holding its owner): "match" for === / ==, "mismatch" for !== / !=.
+ */
+function ownerComparisons(node, base, sf, tainted) {
+  const out = new Set();
+  if (!base) return out;
+  const about = (b) => b === base || b.startsWith(`${base}[`) || b.startsWith(`${base}.`);
+  // Anywhere in the operand — `(row.orgId ?? DEFAULT_ORG)`, `String(row.orgId)`, `row.orgId.trim()`, a tainted
+  // variable — but not inside a nested function.
+  const isOwnerOfBase = (e) => {
+    const x = bare(e);
+    if (ownershipKey(x) && about(canon(x.expression, sf))) return true;
+    if (ts.isIdentifier(x) && tainted.has(x.text)) return x.text === base || about(tainted.get(x.text));
+    if (ts.isFunctionLike(x)) return false;
+    let hit = false;
+    ts.forEachChild(x, (c) => {
+      if (!hit && isOwnerOfBase(c)) hit = true;
+    });
+    return hit;
+  };
+  const visit = (n) => {
+    if (ts.isBinaryExpression(n) && COMPARE.has(n.operatorToken.kind) && (isOwnerOfBase(n.left) || isOwnerOfBase(n.right))) {
+      const k = n.operatorToken.kind;
+      out.add(k === ts.SyntaxKind.EqualsEqualsToken || k === ts.SyntaxKind.EqualsEqualsEqualsToken ? "match" : "mismatch");
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return out;
+}
+
+/** Comparison operators that make an ownership read a guard. */
+const COMPARE = new Set([
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+]);
+
+
+const isTrue = (n) => bare(n)?.kind === ts.SyntaxKind.TrueKeyword;
+
+/** Does `stmt` hold an `if (<owner mismatch on base>) return/throw …`? */
+function refusesOnMismatch(stmt, base, sf, tainted) {
+  let found = false;
+  const exits = (s) => s && (ts.isReturnStatement(s) || ts.isThrowStatement(s) || (ts.isBlock(s) && s.statements.some(exits)));
+  const visit = (n) => {
+    if (found || ts.isFunctionLike(n)) return;
+    if (ts.isIfStatement(n) && exits(n.thenStatement) && ownerComparisons(n.expression, base, sf, tainted).has("mismatch")) found = true;
+    else ts.forEachChild(n, visit);
+  };
+  visit(stmt);
+  return found;
+}
+/** Does this statement (or block) do nothing but `return true`? */
+function returnsTrue(stmt) {
+  if (!stmt) return false;
+  if (ts.isBlock(stmt)) return stmt.statements.length === 1 && returnsTrue(stmt.statements[0]);
+  return ts.isReturnStatement(stmt) && Boolean(stmt.expression) && isTrue(stmt.expression);
+}
+
+/** Local names this file gives orgForCustomer / orgForCustomerId (and namespaces that carry them). */
+function resolverNames(sf) {
+  const names = new Set(ORG_RESOLVERS);
+  const namespaces = new Set();
+  const visit = (n) => {
+    if (ts.isImportDeclaration(n) && n.importClause?.namedBindings) {
+      const b = n.importClause.namedBindings;
+      if (ts.isNamedImports(b)) {
+        for (const el of b.elements) if (ORG_RESOLVERS.has((el.propertyName ?? el.name).text)) names.add(el.name.text);
+      } else if (ts.isNamespaceImport(b)) namespaces.add(b.name.text);
+    }
+    if (ts.isVariableDeclaration(n) && n.initializer) {
+      if (ts.isObjectBindingPattern(n.name)) {
+        for (const el of n.name.elements) {
+          const from = el.propertyName ?? el.name;
+          if (ts.isIdentifier(from) && ORG_RESOLVERS.has(from.text) && ts.isIdentifier(el.name)) names.add(el.name.text);
+        }
+      } else if (ts.isIdentifier(n.name)) {
+        const init = bare(n.initializer);
+        const inner = ts.isAwaitExpression(init) ? bare(init.expression) : init;
+        if (ts.isIdentifier(inner) && names.has(inner.text)) names.add(n.name.text);
+        if (ts.isPropertyAccessExpression(inner) && ORG_RESOLVERS.has(inner.name.text)) names.add(n.name.text);
+        if (ts.isCallExpression(inner) && inner.expression.kind === ts.SyntaxKind.ImportKeyword) namespaces.add(n.name.text);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { names, namespaces };
+}
+
+/** Every unsound ownership guard in one file's source, as [line (1-based), why]. */
+function unsoundGuards(file, src) {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const lines = src.split("\n");
+  const hits = new Map();
+  const flag = (node, why) => {
+    const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line;
+    if ([lines[line], lines[line - 1], lines[line - 2]].some((l) => /ownership-guard-ok:\s*\S/.test(l ?? ""))) return;
+    const key = `${line}:${why}`;
+    if (!hits.has(key)) hits.set(key, [line + 1, why]);
+  };
+
+  // Variables holding a possibly-hidden owner: `const owner = row?.orgId`, `const o = row && row.orgId`.
+  // `const owner = row?.orgId`, `= row?.["org_id"] ?? null`, `= row && row.orgId`: the variable IS the row's owner.
+  const tainted = new Map();
+  const ownerValue = (e) => {
+    let x = bare(e);
+    if (ts.isAwaitExpression(x)) x = bare(x.expression);
+    if (ownershipKey(x)) return canon(x.expression, sf);
+    if (ts.isBinaryExpression(x) && (x.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken || x.operatorToken.kind === ts.SyntaxKind.BarBarToken)) {
+      return ownerValue(x.left);
+    }
+    if (ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) return ownerValue(x.right);
+    return null;
+  };
+  const collect = (n) => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
+      const base = ownerValue(n.initializer);
+      if (base) tainted.set(n.name.text, base);
+    }
+    ts.forEachChild(n, collect);
+  };
+  collect(sf);
+
+  const isTool = /\bmodelFacing\(/.test(src);
+  const resolvers = isTool ? resolverNames(sf) : null;
+
+  const visit = (n) => {
+    if (ts.isBinaryExpression(n)) {
+      const op = n.operatorToken.kind;
+      // PRESENCE — `row?.orgId && row.orgId !== …`, `row != null && …`, `rows.length > 0 && rows[0].orgId !== …`,
+      // `owner && owner !== …`: false when the row is hidden, so the "mismatch" never fires.
+      if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
+        const base = presenceOf(n.left, sf);
+        if (base && ownerComparisons(n.right, base, sf, tainted).has("mismatch")) {
+          flag(n, `\`${n.left.getText(sf).trim()} && …\` ownership guard (a row RLS hid makes it false, and it passes)`);
+        }
+      }
+      // ABSENCE — `!row || row.orgId === …`, `rows.length === 0 || rows[0].orgId === …`: true when hidden, a "match".
+      if (op === ts.SyntaxKind.BarBarToken) {
+        const base = absenceOf(n.left, sf);
+        if (base && ownerComparisons(n.right, base, sf, tainted).has("match")) {
+          flag(n, `\`${n.left.getText(sf).trim()} || …\` ownership guard (admits a row it could not see)`);
+        }
+      }
+    }
+    // ABSENCE, as a ternary — `row ? row.orgId === … : true`, `!row ? true : …`.
+    if (ts.isConditionalExpression(n)) {
+      const present = presenceOf(n.condition, sf);
+      const absent = absenceOf(n.condition, sf);
+      if (
+        (present && isTrue(n.whenFalse) && ownerComparisons(n.whenTrue, present, sf, tainted).has("match")) ||
+        (absent && isTrue(n.whenTrue) && ownerComparisons(n.whenFalse, absent, sf, tainted).has("match"))
+      ) {
+        flag(n, "`row ? row.orgId … : true` guard (admits a row it could not see)");
+      }
+    }
+    // EARLY — `if (!row) return true` in a function whose answer is otherwise "the owner matches".
+    if (ts.isIfStatement(n) && returnsTrue(n.thenStatement)) {
+      const base = absenceOf(n.expression, sf);
+      let fn = n.parent;
+      while (fn && !ts.isFunctionLike(fn) && !ts.isSourceFile(fn)) fn = fn.parent;
+      if (base && fn && !ts.isSourceFile(fn) && ownerComparisons(fn, base, sf, tainted).has("match")) {
+        flag(n, `\`if (${n.expression.getText(sf).trim()}) return true\` before an ownership match (admits a row it could not see)`);
+      }
+    }
+    // PRESENCE, as a block — `if (row) { if (row.orgId !== orgId) return null; }` / `if (owner) { … throw … }`: the
+    // refusal sits inside a branch a hidden row never enters.
+    if (ts.isIfStatement(n) && !n.elseStatement) {
+      const base = presenceOf(n.expression, sf);
+      if (base && refusesOnMismatch(n.thenStatement, base, sf, tainted)) {
+        flag(n, `\`if (${n.expression.getText(sf).trim()}) { …refuse on a mismatch… }\` (a row RLS hid skips the refusal)`);
+      }
+    }
+    // TOOL — the workspace taken from a model-supplied customer id, under any name.
+    if (resolvers && ts.isCallExpression(n)) {
+      const callee = bare(n.expression);
+      const direct = ts.isIdentifier(callee) && resolvers.names.has(callee.text);
+      const viaNs = (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+        ORG_RESOLVERS.has(ts.isPropertyAccessExpression(callee) ? callee.name.text : ts.isStringLiteralLike(callee.argumentExpression) ? callee.argumentExpression.text : "");
+      if (direct || viaNs) flag(n, "a model tool takes its workspace from a customer id (use orgForSession(ctx))");
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return [...hits.values()].sort((a, b) => a[0] - b[0]);
+}
+
 const guardFiles = [
   ...(existsSync("agent") ? walk("agent") : []),
   ...(existsSync("lib") ? walk("lib") : []),
@@ -296,18 +592,7 @@ const guardFiles = [
 ].filter((f) => !f.includes("node_modules") && !f.endsWith(".generated.ts"));
 const guardHits = [];
 for (const f of guardFiles) {
-  const lines = readFileSync(f, "utf8").split("\n");
-  const isTool = lines.some((l) => /\bmodelFacing\(/.test(l));
-  lines.forEach((line, i) => {
-    const code = line.replace(/\/\/.*$/, "");
-    if (/^\s*(\*|\/\*)/.test(line)) return; // doc comments describe the shape; they do not run it
-    const excused = [line, lines[i - 1] ?? "", lines[i - 2] ?? ""].some((l) => /ownership-guard-ok:\s*\S/.test(l));
-    if (excused) return;
-    for (const [re, why] of GUARD_SHAPES) if (re.test(code)) guardHits.push(`${f}:${i + 1}  ${why}`);
-    if (isTool && /\borgForCustomerI?d?\(/.test(code)) {
-      guardHits.push(`${f}:${i + 1}  a model tool takes its workspace from a customer id (use orgForSession(ctx))`);
-    }
-  });
+  for (const [line, why] of unsoundGuards(f, readFileSync(f, "utf8"))) guardHits.push(`${f}:${line}  ${why}`);
 }
 console.log(`ownership guards: ${guardFiles.length} files scanned · unsound guards: ${guardHits.length}`);
 if (guardHits.length) {

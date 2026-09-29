@@ -394,6 +394,13 @@ jobs:
         if: always()
         run: npm run check:tenancy
 
+      # The ownership-guard rule inside check:tenancy, run over guards it must catch (every shape the regex version
+      # missed: aliased orgForCustomer, a variable holding row?.orgId, `row != null &&`, `if (!row) return true`,
+      # `rows.length === 0 ||`, bracket access, workspaceId) and sound code it must leave alone.
+      - name: Tenancy ownership-guard rule (syntax tree, fixtures both ways)
+        if: always()
+        run: npm run test:check-tenancy
+
       # What a PERSON reads comes from the deployment profile. The gate before this looked for "FDE" in four source
       # folders and skipped generated files, so a research deployment (companies / analysts / coverage reports)
       # shipped a bundle saying "List the FDE (forward-deployed engineer) roster with live load" and "Customer DMs":
@@ -677,6 +684,16 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
           npm run test:workbook-route-db
+
+      # THE WORKSPACE SWITCHER'S COUNTS. lib/workspace-attention.ts counted every workspace at once on the bare
+      # handle, so under the fail-closed policy every count was 0. Seeds known numbers in two workspaces, flips the
+      # six tables' policies to fail-closed, and asks the module as app_rw: each workspace inside its own scope.
+      - name: Workspace attention counts, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          npm run test:workspace-attention-db
 
       - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
         if: always()

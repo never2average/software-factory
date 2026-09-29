@@ -545,8 +545,14 @@ def check_delegation_recorder(r, root):
     Checked here, beside check_usage_hook, for the same reason that one is: this is a contract about run
     history that must hold for the specialists that ship in a pack, and a rule kept anywhere a pack cannot be
     seen is the mistake #43 was written to stop repeating.
+
+    WHERE it is recorded (mold_v1-129). Not an authored hook: in eve 0.25.1 no hook ever receives
+    `subagent.called` (the action-dispatch step hands it to the channel adapter only; see
+    scripts/test-subagent-delivery.mjs section 10), so a hook subscribed to it never learns a child and writes
+    nothing. The recorder is agent/lib/session-delegation-runs.ts, fed from the parent's stream by the session
+    guard (agent/lib/session-guard.ts), the one place `subagent.called` is observable.
     """
-    rel = "agent/hooks/delegation-runs.ts"
+    rel = "agent/lib/session-delegation-runs.ts"
     path = os.path.join(root, rel)
     if not r.check(os.path.isfile(path),
                    "%s is missing - a delegation that dies before turn.started leaves NO run history, for every "
@@ -561,6 +567,14 @@ def check_delegation_recorder(r, root):
     r.check('"input.requested"' in src and "markDelegationParked" in src,
             "%s does not mark a parked delegation - the abandoned-run sweeper would close a specialist that is still "
             "waiting for an answer" % rel)
+    guard = os.path.join(root, "agent/lib/session-guard.ts")
+    r.check(os.path.isfile(guard) and "delegationRunRecorder(" in read(guard),
+            "agent/lib/session-guard.ts does not feed %s from the parent's stream - nothing else ever sees "
+            "subagent.called" % rel)
+    hook = os.path.join(root, "agent/hooks/delegation-runs.ts")
+    r.check(not (os.path.isfile(hook) and '"subagent.called"' in read(hook)),
+            "agent/hooks/delegation-runs.ts subscribes to subagent.called, which no authored hook receives in eve "
+            "0.25.1 - it records nothing; record from the parent's stream (%s)" % rel)
 
 
 def run(root, keys, as_json, timeout, out=sys.stdout):
@@ -637,12 +651,13 @@ def _fixture(root, key, broken=False):
 
 
 def _root_hooks(root):
-    """The root agent's parent-side run recorder, as a complete codebase carries it (agent/hooks/ is never
-    supplied by a pack, which is the point of checking it there)."""
-    _write(os.path.join(root, "agent/hooks/delegation-runs.ts"),
-           'events: { "subagent.called"(e, ctx) {},\n'
-           '  async "input.requested"(e, ctx) { await markDelegationParked(); },\n'
-           '  async "action.result"(e, ctx) { await recordFailedDelegation(); } }\n')
+    """The root agent's parent-side run recorder, as a complete codebase carries it (agent/lib/ and the session
+    guard are never supplied by a pack, which is the point of checking them there)."""
+    _write(os.path.join(root, "agent/lib/session-delegation-runs.ts"),
+           'const TYPES = new Set(["actions.requested", "subagent.called", "input.requested", "action.result"]);\n'
+           'if (type === "input.requested") await write.markDelegationParked();\n'
+           'if (type === "action.result") await write.recordFailedDelegation();\n')
+    _write(os.path.join(root, "agent/lib/session-guard.ts"), 'handle: delegationRunRecorder(sessionId)\n')
 
 
 def _generated(root, keys, templates=(), labels=None, summaries=None):
@@ -707,19 +722,26 @@ def self_test():
                   "agent/subagents/bad-one/tools/web_search.ts does not gate",
                   "agent/subagents/bad-one/tools/read_image.ts does not gate",
                   # The half no subagent can record about itself, and which no pack supplies.
-                  "agent/hooks/delegation-runs.ts is missing"]:
+                  "agent/lib/session-delegation-runs.ts is missing"]:
             cases.append(("the registry reports: " + e, any(e in f for f in registry.failures), registry.failures))
         # A root hook that watches the delegation but never marks a park would let the abandoned-run sweeper
         # close a specialist that is still waiting for an answer.
-        _write(os.path.join(tmp, "agent/hooks/delegation-runs.ts"),
-               'events: { "subagent.called"(e, ctx) {}, async "action.result"(e, ctx) { await recordFailedDelegation(); } }\n')
+        _write(os.path.join(tmp, "agent/lib/session-delegation-runs.ts"),
+               'const TYPES = new Set(["subagent.called", "action.result"]); await write.recordFailedDelegation();\n')
         half = check_registry(tmp)
         cases.append(("a recorder that never marks a parked delegation is reported",
                       any("does not mark a parked delegation" in f for f in half.failures), half.failures))
+        cases.append(("a recorder the session guard does not feed is reported",
+                      any("does not feed" in f for f in half.failures), half.failures))
         _root_hooks(tmp)
         whole = check_registry(tmp)
         cases.append(("a complete parent-side recorder passes",
-                      not any("delegation-runs.ts" in f for f in whole.failures), whole.failures))
+                      not any("delegation-runs.ts" in f or "does not feed" in f for f in whole.failures), whole.failures))
+        _write(os.path.join(tmp, "agent/hooks/delegation-runs.ts"), 'events: { "subagent.called"(e, ctx) {} }\n')
+        dead = check_registry(tmp)
+        cases.append(("an authored hook on subagent.called (never delivered in eve 0.25.1) is reported",
+                      any("no authored hook receives" in f for f in dead.failures), dead.failures))
+        os.remove(os.path.join(tmp, "agent/hooks/delegation-runs.ts"))
         cases.append(("a folder without agent.ts is not a subagent", "stray-folder" not in declared_keys(tmp), declared_keys(tmp)))
         cases.append(("default scope skips subagents without sandbox/workspace",
                       default_keys(tmp) == ["bad-one", "good-one", "unbuilt-one"], default_keys(tmp)))

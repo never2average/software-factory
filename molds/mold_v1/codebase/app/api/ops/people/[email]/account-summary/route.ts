@@ -56,7 +56,7 @@ async function generate(prompt: string, bearer: string, orgId: string): Promise<
       /* provider/model unavailable — fall through to the agent */
     }
   }
-  const delegate = makeDelegate(bearer, undefined, undefined, undefined, orgId);
+  const delegate = makeDelegate(bearer, undefined, undefined, undefined, orgId, "private");
   return (await delegate(prompt)).trim();
 }
 

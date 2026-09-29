@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
         const outcome = await runWorkflowScript(js, {
           // Read your own inputs — see lib/workflow-data.ts.
           data: workflowDataFor(s.orgId),
-          delegate: makeDurableDelegate(makeDelegate(bearer, undefined, control.signal, undefined, s.orgId), journal, 3, control.signal),
+          delegate: makeDurableDelegate(makeDelegate(bearer, undefined, control.signal, undefined, s.orgId, "step"), journal, 3, control.signal),
           args: s.args,
           signal: control.signal,
         });

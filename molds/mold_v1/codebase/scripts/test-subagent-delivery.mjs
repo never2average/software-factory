@@ -339,12 +339,12 @@ console.log("\n9. A specialist that dies before its first turn still leaves a ru
   const { existsSync } = await import("node:fs");
   check(
     "there is a parent-side recorder for a delegation that never started",
-    existsSync("agent/lib/delegation-failures.ts") && existsSync("agent/hooks/delegation-runs.ts"),
+    existsSync("agent/lib/delegation-failures.ts") && existsSync("agent/lib/session-delegation-runs.ts"),
   );
   const { createDelegationTracker } = await import("../agent/lib/delegation-failures.ts");
   const { delegatedRunKey, runKeyFor } = await import("../agent/lib/workflow-usage.ts");
 
-  /** The hook's own event loop (agent/hooks/delegation-runs.ts), minus the database. */
+  /** The recorder's own event loop (agent/lib/session-delegation-runs.ts), minus the database. */
   function drive(events) {
     const tracker = createDelegationTracker();
     // ctx.session.id in the parent — which is what `subagent.called` also
@@ -524,10 +524,14 @@ console.log("\n10. A run that nobody closes is closed by the clock — and a liv
   // The mark is set from the PARENT's stream, because the specialists that park
   // in production ship in a pack with their own hooks/usage.ts — the blind spot
   // section 8 exists for.
-  const hook = readFileSync("agent/hooks/delegation-runs.ts", "utf8");
-  for (const event of ["subagent.called", "input.requested", "action.result"]) {
-    check(`the root agent's hook watches ${event}`, hook.includes(`"${event}"`));
+  // Not an authored hook: in eve 0.25.1 no hook ever receives `subagent.called` (section 10), so the recorder is fed
+  // from the parent's stream as the session guard serves it.
+  const { DELEGATION_EVENT_TYPES } = await import("../agent/lib/session-delegation-runs.ts");
+  for (const event of ["actions.requested", "subagent.called", "input.requested", "action.result"]) {
+    check(`the parent-stream recorder watches ${event}`, DELEGATION_EVENT_TYPES.has(event));
   }
+  const guard = readFileSync("agent/lib/session-guard.ts", "utf8");
+  check("…and the session guard feeds it every stream it serves", /delegationRunRecorder\(sessionId\)/.test(guard));
   const { createDelegationTracker } = await import("../agent/lib/delegation-failures.ts");
   {
     // THE SWALLOW ITSELF, as the parent recorded it: the child asked a
@@ -577,6 +581,88 @@ console.log("\n10. A run that nobody closes is closed by the clock — and a liv
       tracker.parked("parent-B", { requests: [{ requestId: "r3", action: { callId: "c-proxied" } }] }).length === 0,
     );
   }
+}
+
+// mold_v1-129(a). agent/hooks/delegation-runs.ts subscribed to `subagent.called` and no row it should have written
+// ever appeared. The cause is in eve itself, so it is asserted against the INSTALLED eve: the event is built and
+// written by the action-dispatch step, which hands it to the channel adapter only — authored hooks are dispatched by
+// the turn step alone — and a channel cannot subscribe to it either. If a later eve delivers it to hooks, this
+// section fails and says so, and the hook route becomes an option again.
+console.log("\n10. eve 0.25.1 never hands `subagent.called` to an authored hook");
+{
+  const { createRequire } = await import("node:module");
+  const { dirname, join } = await import("node:path");
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const src = (p) => readFileSync(join(eveRoot, "dist/src", p), "utf8");
+  const version = JSON.parse(readFileSync(join(eveRoot, "package.json"), "utf8")).version;
+  const dispatch = src("execution/dispatch-runtime-actions-step.js");
+  const steps = src("execution/workflow-steps.js");
+  const channel = src("public/definitions/channel.js");
+  check(`(eve ${version})`, typeof version === "string");
+  check(
+    "`subagent.called` is written by the action-dispatch step, through the channel adapter",
+    /callAdapterEventHandler\([^,]+,createSubagentCalledEvent\(/.test(dispatch),
+  );
+  check("…which never dispatches authored hooks", !dispatch.includes("dispatchStreamEventHooks"));
+  check("authored hooks are dispatched by the turn step's own events", steps.includes("dispatchStreamEventHooks"));
+  const eventTypes = /const eventTypes=Object\.keys\(\{([^}]*)\}\)/.exec(channel)?.[1] ?? "";
+  check("a channel's `events` cannot subscribe to it either", eventTypes.length > 0 && !eventTypes.includes("subagent.called"));
+  const { existsSync } = await import("node:fs");
+  check("so no hook pretends to record from it", !existsSync("agent/hooks/delegation-runs.ts"));
+}
+
+// #75 review: call ids are per-turn counters, and a replay of an OLD turn runs beside a live read of the current
+// one. One process-wide tracker let them overwrite each other: an old failure was filed against the LIVE child
+// (dated in the past, pre-empting its own row) and the live child's outcome was lost.
+console.log("\n11. A replay and a live read of one parent never cross their delegations");
+{
+  const { delegationRunRecorder } = await import("../agent/lib/session-delegation-runs.ts");
+  const writes = [];
+  const w = {
+    recordFailedDelegation: async (name, child, _msg, at) => void writes.push(["failed", child, at?.toISOString()]),
+    markDelegationParked: async (name, child) => void writes.push(["parked", child]),
+    clearDelegationPark: async (name, child) => void writes.push(["clear", child]),
+  };
+  const P = "wrun_parent";
+  const CALL = "call_000000000000000000000002";
+  const called = (child, turnId, at) => ({ type: "subagent.called", data: { callId: CALL, childSessionId: child, name: "research", turnId }, meta: { at } });
+  const failed = (turnId, at) => ({ type: "action.result", data: { turnId, result: { callId: CALL, kind: "subagent-result", isError: true, output: { message: "boom" } } }, meta: { at } });
+  const ok = (turnId) => ({ type: "action.result", data: { turnId, result: { callId: CALL, kind: "subagent-result", isError: false, output: "fine" } } });
+  for (const withTurns of [true, false]) {
+    const t = (turn) => (withTurns ? turn : undefined);
+    const label = withTurns ? "" : " (events without turn ids)";
+    writes.length = 0;
+    const live = delegationRunRecorder(P, w);
+    const replay = delegationRunRecorder(P, w);
+    await live(called("wrun_NEW", t("turn_2"), "2026-09-29T07:00:00Z"));
+    await replay(called("wrun_OLD", t("turn_1"), "2026-09-20T07:00:00Z"));
+    await replay(failed(t("turn_1"), "2026-09-20T07:00:05Z"));
+    await live(ok(t("turn_2")));
+    check(`the replay's old failure is filed against the OLD child, at its own date${label}`, writes.some((x) => x[0] === "failed" && x[1] === "wrun_OLD" && x[2] === "2026-09-20T07:00:05.000Z"));
+    check(`…and never against the live child${label}`, !writes.some((x) => x[0] === "failed" && x[1] === "wrun_NEW"));
+    check(`…while the live child's own completion is still seen${label}`, writes.some((x) => x[0] === "clear" && x[1] === "wrun_NEW"));
+    writes.length = 0;
+    const live2 = delegationRunRecorder(P, w);
+    const replay2 = delegationRunRecorder(P, w);
+    await replay2(called("wrun_OLD2", t("turn_1"), "2026-09-20T07:00:00Z"));
+    await live2(called("wrun_NEW2", t("turn_2"), "2026-09-29T07:10:00Z"));
+    await replay2(failed(t("turn_1"), "2026-09-20T07:00:05Z"));
+    await live2(failed(t("turn_2"), "2026-09-29T07:10:05Z"));
+    check(
+      `reverse interleave: each failure is filed against its own child, at its own date${label}`,
+      writes.length === 2 &&
+        writes.some((x) => x[1] === "wrun_OLD2" && x[2] === "2026-09-20T07:00:05.000Z") &&
+        writes.some((x) => x[1] === "wrun_NEW2" && x[2] === "2026-09-29T07:10:05.000Z"),
+      writes,
+    );
+  }
+  // One read from index 0 over two turns that reuse the call id: each result settles its own turn's child.
+  writes.length = 0;
+  const one = delegationRunRecorder(P, w);
+  await one(called("wrun_T1", "turn_1"));
+  await one(called("wrun_T2", "turn_2")); // turn 1's delegation never came back (abandoned)
+  await one(failed("turn_2", "2026-09-29T08:00:00Z"));
+  check("within one read, a reused call id in a later turn settles the later turn's child", writes.length === 1 && writes[0][1] === "wrun_T2", writes);
 }
 
 console.log(`\ntest-subagent-delivery: ${passed} assertions passed`);

@@ -181,7 +181,7 @@ function briefly(message: string | undefined): string {
 /**
  * RECORD AN INVOCATION THE CHILD NEVER GOT TO RECORD ITSELF.
  *
- * Called from the PARENT's side (agent/hooks/delegation-runs.ts) when eve hands
+ * Called from the PARENT's side (agent/lib/session-delegation-runs.ts, fed from the parent's stream) when eve hands
  * back a `SUBAGENT_EXECUTION_FAILED` delegation result. Everything else in this
  * module is driven by the child's own turn events, and a child that dies during
  * bootstrap emits none — so before this, such an invocation left no row at all
@@ -209,6 +209,8 @@ export async function recordFailedDelegation(
   name: string,
   childSessionId: string,
   message?: string,
+  /** When eve reported the failure (the event's `meta.at`), so a replayed stream files it at its own time, not now. */
+  at?: Date,
 ): Promise<void> {
   try {
     if (!name || !childSessionId) return;
@@ -224,7 +226,7 @@ export async function recordFailedDelegation(
           automationType: "workflow",
           automationId: wf.id,
           status: "failed",
-          startedAt: new Date(),
+          startedAt: at && !Number.isNaN(at.getTime()) ? at : new Date(),
           runKey: delegatedRunKey(wf.id, childSessionId),
           error: briefly(message),
           inputTokens: 0,
@@ -539,7 +541,7 @@ export async function closeAbandonedWorkflowRuns(options?: {
 /**
  * Mark a delegated run as WAITING for a person, so the sweeper leaves it alone.
  *
- * Called from the parent's side (agent/hooks/delegation-runs.ts) when eve
+ * Called from the parent's side (agent/lib/session-delegation-runs.ts) when eve
  * proxies a child's question onto the parent's stream. Parent-side because the
  * specialists that park in production ship in a pack and carry their own
  * `hooks/usage.ts`; the root agent's hooks do not, so this reaches all of them.

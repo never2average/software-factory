@@ -21,7 +21,9 @@
  *     only a participant may send, answer an approval, or cancel;
  *   · for a WORKSPACE-visible session (a workflow/app/cron step), any member of the session's workspace — to READ;
  *   · a trusted SERVICE principal (agent/lib/service-scope.ts `isServicePrincipal`: eve's schedule app principal,
- *     the front-end's production OIDC token) — refused only when it names a DIFFERENT workspace than the session's;
+ *     the front-end's production OIDC token) — only while it NAMES the session's workspace (`x-workspace-scope`), and
+ *     only on a session the platform itself runs there: one a service started, or a workflow/app/cron step (a
+ *     workspace-visible session: see {@link serviceMayAct}), and their delegated children. Never a person's chat;
  *   · a SESSION-BOUND token (see `SESSION_BOUND_TOKEN_KIND`) for exactly the session it is bound to;
  *   · `eve dev`'s local-dev principal, only where local development is allowed at all.
  *
@@ -84,6 +86,8 @@ export type GateReason =
   | "unknown"
   /** A service named a different workspace than the session's. */
   | "wrong-workspace"
+  /** A service named no workspace at all. */
+  | "no-workspace"
   /** A session-bound token presented for another session. */
   | "wrong-session"
   /** A session-bound token used for what its `act` does not allow (a post token reading the stream). */
@@ -108,6 +112,16 @@ export interface GateInput {
   readonly callerInWorkspace: boolean;
   /** Is local development allowed in this process at all (agent/lib/local-dev.ts)? */
   readonly localDevAllowed: boolean;
+  /**
+   * TRANSITION — REMOVE AFTER 2026-10-13 (follow-up task: "drop the headerless service door", mold_v1-130).
+   *
+   * Set by the agent's guard for a stream READ or a CANCEL only. The web app before mold_v1-130 sent
+   * `x-workspace-scope` on a step's create alone, and provisioning deploys the agent before the web app, so for the
+   * minutes between them — or for good, if the web deploy then fails — its service stream reads and cancels carry no
+   * header. When set, a headerless service is admitted to a session that passes {@link serviceMayAct}, in the
+   * session's own recorded workspace; never to a person's chat, never to post into anything, never to create.
+   */
+  readonly headerlessServiceTransition?: boolean;
 }
 
 export interface GateDecision {
@@ -144,9 +158,20 @@ export function sessionGateDecision(input: GateInput): GateDecision {
   }
 
   if (caller.kind === "service") {
-    if (!ownership) return { allow: false, reason: "unknown" };
+    // It used to be refused only when it named a DIFFERENT workspace: naming none admitted it to every session of
+    // every workspace, and naming one to every person's private chat in it (mold_v1-130).
     const named = caller.serviceScope?.trim();
-    if (named && named !== ownership.orgId) return { allow: false, reason: "wrong-workspace" };
+    if (!named) {
+      // TRANSITION — remove after 2026-10-13 (see GateInput.headerlessServiceTransition): the workspace is the
+      // session's own, and only a session the platform runs qualifies.
+      if (input.headerlessServiceTransition && ownership && serviceMayAct(ownership)) {
+        return { allow: true, reason: "service", role: "service" };
+      }
+      return { allow: false, reason: "no-workspace" };
+    }
+    if (!ownership) return { allow: false, reason: "unknown" };
+    if (named !== ownership.orgId) return { allow: false, reason: "wrong-workspace" };
+    if (!serviceMayAct(ownership)) return { allow: false, reason: "not-yours" };
     return { allow: true, reason: "service", role: "service" };
   }
 
@@ -177,6 +202,21 @@ export function sessionGateDecision(input: GateInput): GateDecision {
     return right === "read" ? { allow: true, reason: "workspace", role: "workspace" } : { allow: false, reason: "read-only" };
   }
   return { allow: false, reason: "not-yours" };
+}
+
+/**
+ * Is this a session the PLATFORM runs, which its service identity may therefore act on (read, steer, cancel)?
+ *
+ *   · one a service STARTED (`ownerKind` "service": a cron, app refresh or on-demand run step, recorded at creation by
+ *     agent/lib/session-guard.ts), or a delegated child / re-started continuation of one (both inherit the record);
+ *   · a workflow, app or cron STEP a person started — workspace-visible, which only a service or the web app's signed
+ *     step grant can make a session (lib/session-token-kinds.ts), or legacy journal/app evidence
+ *     (lib/session-gate.ts readLegacyOwnership). The run-cancel fan-out reaches these as the service.
+ *
+ * A person's ordinary chat is neither, so no service call reaches it, whatever workspace it names.
+ */
+export function serviceMayAct(ownership: SessionOwnership): boolean {
+  return ownership.ownerKind === "service" || ownership.visibility === "workspace";
 }
 
 /**

@@ -143,14 +143,57 @@ check(
 );
 check("…and to nobody else", !gate({ ownership: { ...OWNED, visibility: "workspace" }, callerInWorkspace: false }).allow);
 check("…while a private chat is not open to the workspace", !gate({ callerInWorkspace: true }).allow);
+/*
+ * A SERVICE is the platform acting for ONE workspace, on the sessions it runs there. It used to be admitted to ANY
+ * session in the workspace it named — and to ANY session at all when it named none — so the front-end's token read a
+ * person's private chat just by leaving the header off (mold_v1-130).
+ */
+const STEP = { ...OWNED, ownerEmail: null, ownerPrincipal: "svc", ownerKind: "service", visibility: "workspace" };
+const svc = (serviceScope) => ({ kind: "service", email: null, principalId: "svc", serviceScope });
 check(
-  "a trusted service is admitted to a known session",
-  gate({ caller: { kind: "service", email: null, serviceScope: null } }).allow,
+  "a trusted service, naming the session's workspace, is admitted to a step it started there (read and write)",
+  gate({ caller: svc("org-a"), ownership: STEP }).allow && gate({ caller: svc("org-a"), ownership: STEP, right: "write" }).allow,
+);
+check(
+  "…and to a person's workflow/app step (workspace-visible), which the run-cancel fan-out must reach",
+  gate({ caller: svc("org-a"), ownership: { ...OWNED, visibility: "workspace" }, right: "write" }).allow,
+);
+check(
+  "…and to a step's delegated child (lineage carries the step's origin)",
+  gate({ caller: svc("org-a"), ownership: { ...STEP, rootSessionId: "wrun_root", source: "lineage" }, right: "write" }).allow,
+);
+check(
+  "a service naming NO workspace is refused — even its own step",
+  (() => {
+    const d = gate({ caller: svc(null), ownership: STEP });
+    return !d.allow && d.reason === "no-workspace";
+  })(),
+);
+check(
+  "a service is refused a person's PRIVATE chat, even in the workspace it names",
+  (() => {
+    const d = gate({ caller: svc("org-a") });
+    const w = gate({ caller: svc("org-a"), right: "write" });
+    return !d.allow && d.reason === "not-yours" && !w.allow;
+  })(),
+);
+check("…and with no header at all (the old any-workspace door)", !gate({ caller: svc(null) }).allow && !gate({ caller: svc("") }).allow);
+// TRANSITION — remove after 2026-10-13: the agent sets this for a headerless stream read or cancel only.
+check(
+  "TRANSITION: a headerless service read/cancel reaches a step the platform runs, in the step's own workspace",
+  gate({ caller: svc(null), ownership: STEP, headerlessServiceTransition: true }).allow &&
+    gate({ caller: svc(null), ownership: STEP, right: "write", headerlessServiceTransition: true }).allow,
+);
+check(
+  "…and never a person's private chat, nor anything unrecorded",
+  !gate({ caller: svc(null), headerlessServiceTransition: true }).allow &&
+    !gate({ caller: svc(null), ownership: null, headerlessServiceTransition: true }).allow &&
+    !gate({ caller: svc("   "), headerlessServiceTransition: true }).allow,
 );
 check(
   "…refused one naming a different workspace than the session's",
   (() => {
-    const d = gate({ caller: { kind: "service", email: null, serviceScope: "org-b" } });
+    const d = gate({ caller: svc("org-b"), ownership: STEP });
     return !d.allow && d.reason === "wrong-workspace";
   })(),
 );
@@ -319,11 +362,15 @@ check("…the agent answers 503 too", /unavailable\(\)/.test(agentGuard) && /sta
 check("every gate read runs inside a workspace scope", /inOrg: \(orgId, fn\) => withOrgRls\(orgId, fn\)/.test(accessLib) && !/\bdb\s*\.\s*select\(\)\.from\(chat/.test(sharedReads));
 check("the gate's member lookup filters revoked rows", /ne\(chatThreadMembers\.status, "revoked"\)/.test(sharedReads));
 check("…and counts only threads the session's OWNER shared", /lower\(\$\{chatThreads\.ownerEmail\}\) = \$\{owner\}/.test(sharedReads));
-check("the transcript rule ignores an un-shared thread", /isNull\(chatThreads\.archivedAt\)/.test(accessLib));
+// The transcript cache (chat-snapshots, chat-replay) is the session gate's own decision now (mold_v1-129): it used to
+// crown the sole chat-list claimant, a row the browser writes. Behaviour: scripts/test-session-guard.mjs.
+const transcriptRule = sharedReads.slice(sharedReads.indexOf("export async function readTranscriptAccess"));
+check("the transcript rule is the gate's (readTranscriptAccess)", /readTranscriptAccess\(webGateDb\(\), orgId, email, sessionId\)/.test(accessLib));
 check(
-  "…and reads EVERY mirror row for the session, not only the caller's",
-  /claimants\.size === 1 && claimants\.has\(me\)/.test(accessLib),
+  "…decided on the agent's owner record, never the chat list",
+  /readOwnerRecordIn\(db, orgId, sessionId\)/.test(transcriptRule) && !/chatSessions/.test(transcriptRule.slice(0, transcriptRule.indexOf("\n}\n"))) && !/claimants/.test(accessLib),
 );
+check("…and it ignores an un-shared thread (the membership read skips archived threads)", /isNull\(chatThreads\.archivedAt\)/.test(sharedReads));
 // The write itself lives in lib/chat-sessions-mirror.ts (shared with its database test); the route calls it.
 const sessionsMirror = src("lib/chat-sessions-mirror.ts");
 check(

@@ -109,7 +109,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // Routed to the `workflow-author` subagent: the specialist that knows the
     // sandbox's globals, its bans and its limits, and that lints and reviews a
     // script as well as writing one. It has no tools by design.
-    const delegate = makeDelegate(bearer, undefined, undefined, undefined, ctx.orgId);
+    const delegate = makeDelegate(bearer, undefined, undefined, undefined, ctx.orgId, "private");
     // The override only counts when the operator has actually switched it on —
     // the same gate loadWorkflowOverride() applies before it reaches a subagent.
     const override =

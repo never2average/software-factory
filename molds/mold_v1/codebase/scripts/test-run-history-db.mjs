@@ -299,6 +299,68 @@ try {
     }
   }
 
+  console.log("\n8. The same rows, recorded from the PARENT'S STREAM as the session guard serves it (mold_v1-129)");
+  {
+    // In eve 0.25.1 no authored hook receives `subagent.called` (test-subagent-delivery section 10), so the hook
+    // that called the writers above never learned a child and never wrote a row. The guard's own pass over the
+    // parent's stream does: the real stream wrapper (agent/lib/session-lineage-stream.ts) and the real recorder.
+    const lineage = await import("../agent/lib/session-lineage-stream.ts");
+    const recorderModule = await import("../agent/lib/session-delegation-runs.ts").catch((e) => ({ missing: String(e) }));
+    check("there is a recorder the guard feeds from the stream", !recorderModule.missing);
+    const { DELEGATION_EVENT_TYPES, delegationRunRecorder } = recorderModule;
+    /** A recorded fixture as the NDJSON eve serves, its specialist renamed to this test's probe. */
+    const ndjson = (name, rewrite = (e) => e) =>
+      readFileSync(`scripts/fixtures/subagent-delivery/${name}.ndjson`, "utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => {
+          const e = JSON.parse(line);
+          if (e.type === "subagent.called") e.data.name = SPECIALIST;
+          if (e.type === "action.result" && e.data?.result?.subagentName) e.data.result.subagentName = SPECIALIST;
+          return JSON.stringify(rewrite(e));
+        });
+    /** Serve it the way the guard does — in arbitrary chunks — and drain it as a reader would. */
+    const serve = async (parent, lines) => {
+      const bytes = new TextEncoder().encode(lines.join("\n") + "\n");
+      const upstream = new ReadableStream({
+        start(c) {
+          for (let i = 0; i < bytes.length; i += 97) c.enqueue(bytes.slice(i, i + 97));
+          c.close();
+        },
+      });
+      const served = lineage.noticeDelegations(upstream, async () => {}, { eventTypes: DELEGATION_EVENT_TYPES, handle: delegationRunRecorder(parent) });
+      return new Response(served).text();
+    };
+
+    // A child that died before turn.started, on a fresh child id so section 1's row is not what is found.
+    const failedChild = `wrun_stream_fail_${process.pid}`;
+    const fails = ndjson("child-fails", (e) => {
+      if (e.data?.childSessionId) e.data.childSessionId = failedChild;
+      return e;
+    });
+    const text = await serve(`parent-fail-${process.pid}`, fails);
+    check("every byte of the stream still reaches the reader", text.trim().split("\n").length === fails.length);
+    const failed = await rowFor(delegatedRunKey(workflowId, failedChild));
+    check("the delegation that never started is in the history", failed !== null);
+    check("as a failure, with eve's cause", failed?.status === "failed" && String(failed?.error).includes("Sandbox bootstrap failed"));
+    const stamped = JSON.parse(fails.find((l) => l.includes('"action.result"'))).meta?.at;
+    check("dated when eve reported it, not when the stream was read", stamped && failed?.startedAt?.toISOString() === new Date(stamped).toISOString());
+    await serve(`parent-fail-${process.pid}`, fails);
+    const all = (await rows()).filter((r) => r.runKey === delegatedRunKey(workflowId, failedChild));
+    check("a second reader of the same stream (another tab, a replay) adds no second row", all.length === 1);
+
+    // A child parked on a question: its own row is open, and must be marked as waiting from the parent's stream.
+    const parkedChild = `wrun_stream_park_${process.pid}`;
+    const parks = ndjson("child-parks-never-answered", (e) => {
+      if (e.data?.childSessionId) e.data.childSessionId = parkedChild;
+      return e;
+    });
+    await openWorkflowRun(SPECIALIST, "turn_0", parkedChild);
+    await serve(`parent-park-${process.pid}`, parks);
+    const parkedRow = await rowFor(delegatedRunKey(workflowId, parkedChild));
+    check("a child parked on a question is marked as waiting, so the sweeper spares it", parkedRow?.summary === AWAITING_ANSWER_SUMMARY);
+  }
+
   console.log(`\ntest-run-history-db: ${passed} assertions passed`);
 } finally {
   try {

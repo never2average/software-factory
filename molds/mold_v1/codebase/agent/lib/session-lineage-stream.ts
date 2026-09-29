@@ -13,28 +13,47 @@
  * eve's action-dispatch step, which runs no hooks — only turn-step events reach them), and the child's own
  * `session.started` carries no `invocation`/parent in this version (harness/emission.js passes only `runtime`).
  *
+ * This sees only the lines it forwards. A child announced in history the reader skips (a chat reopened from its
+ * transcript cache streams from its cursor), or before #66, is picked up by the guard's server-side read of that
+ * history and by the deploy-time backfill (agent/lib/session-lineage-backfill.ts).
+ *
  * Every other line — and every byte — is forwarded unchanged. A failed record is logged and the line still goes
  * out: the child is then simply refused later (fail closed), which is better than a stalled transcript.
  */
 export function noticeDelegations(
   upstream: ReadableStream<Uint8Array>,
   onChild: (childSessionId: string) => Promise<void>,
+  /**
+   * Also handed each parsed event whose type is in `eventTypes` — the delegation run recorder
+   * (agent/lib/session-delegation-runs.ts), which needs `subagent.called` and no authored hook ever receives it.
+   */
+  onEvent?: { readonly eventTypes: ReadonlySet<string>; readonly handle: (event: { type?: unknown; data?: unknown; meta?: unknown }) => Promise<void> },
 ): ReadableStream<Uint8Array> {
   const reader = upstream.getReader();
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let partial = "";
 
+  // Cheap pre-filter: only a line naming one of the wanted types is parsed at all.
+  const wanted = ["subagent.called", ...(onEvent?.eventTypes ?? [])];
   const inspect = async (line: string) => {
-    if (!line.includes("subagent.called")) return;
+    if (!wanted.some((type) => line.includes(type))) return;
+    let event: { type?: string; data?: { childSessionId?: unknown } };
     try {
-      const event = JSON.parse(line) as { type?: string; data?: { childSessionId?: unknown } };
+      event = JSON.parse(line) as typeof event;
+    } catch {
+      return;
+    }
+    try {
       const child = event?.type === "subagent.called" ? event.data?.childSessionId : undefined;
       if (typeof child === "string" && child) await onChild(child);
     } catch (error) {
       console.error("[session-guard] could not record a delegated child session", {
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+    if (onEvent && typeof event?.type === "string" && onEvent.eventTypes.has(event.type)) {
+      await onEvent.handle(event).catch(() => undefined);
     }
   };
 

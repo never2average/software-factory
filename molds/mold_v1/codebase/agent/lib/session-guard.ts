@@ -77,6 +77,8 @@ import { claimsOf, consumePostInDb, postClaimOf, type PostClaim } from "./queue-
 import { sessionPublicKeyPem } from "./session-public-key.ts";
 import { withoutContinuationTokens } from "../../lib/chat-replay-stream.ts";
 import { noticeDelegations } from "./session-lineage-stream.ts";
+import { candidateParents, scanForChildren } from "./session-lineage-backfill.ts";
+import { DELEGATION_EVENT_TYPES, delegationRunRecorder } from "./session-delegation-runs.ts";
 
 type AuthContext = Exclude<Awaited<ReturnType<typeof routeAuth>>, Response>;
 type Handler = HttpRouteDefinition["handler"];
@@ -199,9 +201,29 @@ function remember(sessionId: string, ownership: SessionOwnership) {
   if (owners.size >= MAX_OWNERS) owners.delete(owners.keys().next().value as string);
   owners.set(sessionId, ownership);
 }
+/**
+ * How far into each session's history this process has already looked for delegations (mold_v1-133), so the skipped
+ * part of a stream is read server-side at most once per process — and a scan already running is shared, not repeated.
+ */
+/**
+ * Per session: how many of its events this process has already looked through for delegations (`cursor` — every
+ * child before it is on record), and when a scan last CAUGHT UP with its live tail (`caughtUpAt`). A scan cut short
+ * by its deadline moves the cursor but does not count as caught up, so the next read resumes where it stopped.
+ */
+const lineageState = new Map<string, { cursor: number; caughtUpAt?: number }>();
+const lineageScanning = new Map<string, Promise<void>>();
+const MAX_SCANNED = 5_000;
+/** A tail read re-checks a caught-up session's new events at most this often (tail probes arrive every few seconds). */
+const TAIL_RESCAN_MS = 60_000;
+/** (caller, child id) pairs this process has already tried to recover a parent for, and failed (recoverChildLineage). */
+const recoveryTried = new Map<string, number>();
+const RECOVERY_RETRY_MS = 60_000;
 /** For tests: forget everything cached. */
 export function clearSessionGuardCache(): void {
   owners.clear();
+  lineageState.clear();
+  lineageScanning.clear();
+  recoveryTried.clear();
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
@@ -274,12 +296,133 @@ async function recordChild(db: GateDb, parent: SessionOwnership, parentId: strin
   if (child) remember(childId, child);
 }
 
+/**
+ * Children announced in the part of a session's history a caller is about to SKIP (a stream opened at `startIndex`
+ * > 0 — the chat reopens from its transcript cache and streams only what is new — or from the tail), recorded
+ * before the stream is served. The #66 live path only sees lines it forwards, so a child delegated before #66, or
+ * announced while nobody streamed the parent through the guard, stayed unowned and was refused to its own owner.
+ *
+ * Reads eve's own history of THIS session (never anything a client wrote) from index 0, once per process, bounded
+ * (agent/lib/session-lineage-backfill.ts). The child inherits this session's recorded ownership and nothing else, so
+ * it reaches exactly who may read this session. A scan that fails or times out records what it found and is retried
+ * by a later read.
+ */
+async function recordSkippedLineage(
+  args: RouteHandlerArgs,
+  sessionId: string,
+  startIndex: number | undefined,
+  ownership: SessionOwnership,
+  db: GateDb,
+  deps: GuardDeps,
+): Promise<void> {
+  if (startIndex === undefined || startIndex === 0) return; // the stream itself passes every line (noticeDelegations)
+  const until = startIndex > 0 ? startIndex : undefined;
+  const state = lineageState.get(sessionId);
+  const cursor = state?.cursor ?? 0;
+  if (until !== undefined && cursor >= until) return;
+  if (until === undefined && state?.caughtUpAt !== undefined && Date.now() - state.caughtUpAt < TAIL_RESCAN_MS) return;
+  const running = lineageScanning.get(sessionId);
+  if (running) return running;
+  const scan = (async () => {
+    // Resume where this process last stopped: only the part not yet looked at is read.
+    const result = await scanForChildren(
+      async () => (await args.getSession(sessionId).getEventStream({ startIndex: cursor })) as ReadableStream<unknown>,
+      { until: until === undefined ? undefined : until - cursor, idleMs: deps.streamProbeMs / 4, totalMs: deps.streamProbeMs },
+    );
+    for (const child of result.children) {
+      await recordChild(db, ownership, sessionId, child).catch((error) =>
+        console.error("[session-guard] could not record a delegated child session found in history", {
+          sessionId,
+          child,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+    if (result.stop === "error") return;
+    if (lineageState.size >= MAX_SCANNED && !lineageState.has(sessionId)) {
+      lineageState.delete(lineageState.keys().next().value as string);
+    }
+    const caughtUp = until === undefined && (result.stop === "idle" || result.stop === "end");
+    lineageState.set(sessionId, {
+      cursor: Math.max(cursor + result.reached, state?.cursor ?? 0),
+      caughtUpAt: caughtUp ? Date.now() : state?.caughtUpAt,
+    });
+  })().finally(() => lineageScanning.delete(sessionId));
+  lineageScanning.set(sessionId, scan);
+  return scan;
+}
+
+/**
+ * A CHILD this guard has no owner for, asked for by a person: before refusing, find its parent and read the parent's
+ * history once (#75 review). The rail can ask for a child a moment after its parent's stream was served from a cursor
+ * (the guard waits at most LINEAGE_INLINE_MS for that history), or on another instance entirely.
+ *
+ *   1. A history read already running in this process is awaited (bounded) — the common, same-instance case.
+ *   2. Otherwise the parent is looked for in the caller's own workspaces' transcript caches, which is where a client
+ *      that holds the child's id got it from. That is only a HINT (a browser writes those rows): the candidate parent
+ *      must be one the caller may READ through this same gate, and the child must appear in eve's OWN history of it.
+ *      Then the child inherits the parent's recorded ownership and the request is decided again, as usual.
+ *
+ * Tried once per caller and child id per process per minute, so an id nobody can resolve costs one bounded attempt.
+ */
+async function recoverChildLineage(
+  caller: GateCaller,
+  childId: string,
+  args: RouteHandlerArgs,
+  deps: GuardDeps,
+): Promise<boolean> {
+  const db = deps.db();
+  if (!db || caller.kind !== "person" || !caller.email) return false;
+  // Per CALLER and child: one person's failed attempt must never delay the real owner's.
+  const attempt = `${caller.email}\u0000${childId}`;
+  const tried = recoveryTried.get(attempt);
+  if (tried !== undefined && Date.now() - tried < RECOVERY_RETRY_MS) return false;
+  if (recoveryTried.size >= MAX_SCANNED) recoveryTried.delete(recoveryTried.keys().next().value as string);
+  recoveryTried.set(attempt, Date.now());
+  if (lineageScanning.size) {
+    await Promise.race([Promise.allSettled([...lineageScanning.values()]), delay(deps.streamProbeMs)]);
+    if (owners.has(childId) || (await readOwnerRecord(db, childId).catch(() => null))) return true;
+  }
+  const orgs = await db.orgsOf(caller.email);
+  const candidates = await candidateParents(db, orgs, childId).catch(() => []);
+  for (const parentId of candidates) {
+    if (parentId === childId) continue;
+    const parent = await decide(caller, parentId, "read", args, deps).catch(() => null);
+    if (!parent?.allow || !parent.ownership) continue; // only a parent the caller may read
+    const found = await scanForChildren(
+      async () => (await args.getSession(parentId).getEventStream({ startIndex: 0 })) as ReadableStream<unknown>,
+      { idleMs: deps.streamProbeMs / 4, totalMs: deps.streamProbeMs, stopAt: childId },
+    );
+    if (!found.children.includes(childId)) continue; // eve's own history does not name it: the hint was wrong
+    await recordChild(db, parent.ownership, parentId, childId);
+    recoveryTried.delete(attempt);
+    return true;
+  }
+  return false;
+}
+
+/** How long a stream opened from a cursor waits for the skipped history to be read before it is served anyway. */
+const LINEAGE_INLINE_MS = 400;
+const delay = (ms: number) =>
+  new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    (t as { unref?: () => void }).unref?.();
+  });
+
+function startIndexOf(request: Request): number | undefined {
+  const raw = new URL(request.url).searchParams.get("startIndex");
+  if (raw === null || !/^-?\d+$/.test(raw)) return undefined;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
 async function decide(
   caller: GateCaller,
   sessionId: string,
   right: SessionRight,
   args: RouteHandlerArgs,
   deps: GuardDeps,
+  key = "",
 ): Promise<GateDecision & { ownership: SessionOwnership | null; db: GateDb | null }> {
   if (caller.kind === "local-dev" && deps.localDevAllowed()) {
     return { allow: true, reason: "local-dev", role: "local-dev", ownership: null, db: deps.db() };
@@ -298,7 +441,14 @@ async function decide(
       membership: facts.membership,
       callerInWorkspace: facts.callerInWorkspace,
       localDevAllowed: deps.localDevAllowed(),
+      // TRANSITION — remove after 2026-10-13: a pre-mold_v1-130 web app's headerless stream reads and cancels.
+      headerlessServiceTransition: key === STREAM_ROUTE || key === CANCEL_ROUTE,
     });
+    if (decision.allow && caller.kind === "service" && !caller.serviceScope) {
+      console.warn(
+        `[session-guard] admitted a HEADERLESS service ${key} on ${sessionId} (workspace ${ownership?.orgId}) — transition door, remove after 2026-10-13; the web app should send x-workspace-scope`,
+      );
+    }
     return { ...decision, ownership, db };
   } catch (error) {
     throw new GateUnavailable(error instanceof Error ? error.message : String(error));
@@ -336,6 +486,15 @@ function wrapCreate(route: HttpRouteDefinition, opts: GuardOptions, deps: GuardD
     if (caller.kind === "session-bound" || caller.kind === "none") {
       logDenied("(new)", caller, caller.kind === "none" ? "no-caller" : "wrong-session", CREATE_ROUTE);
       return notFound();
+    }
+    // A service acts for ONE workspace and must say which. Without the header its session resolved to an empty
+    // fallback workspace, and it is the header that later admits it back to the session (lib/chat-gate.ts).
+    if (caller.kind === "service" && !caller.serviceScope) {
+      logDenied("(new)", caller, "no-workspace", CREATE_ROUTE);
+      return Response.json(
+        { error: `A service call must name the workspace it acts for (${SERVICE_SCOPE_HEADER}).`, ok: false },
+        { status: 403, headers: noStore },
+      );
     }
     const db = deps.db();
     if (!db) {
@@ -444,7 +603,7 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
 
     let decision: Awaited<ReturnType<typeof decide>>;
     try {
-      decision = await decide(caller, sessionId, right, args, deps);
+      decision = await decide(caller, sessionId, right, args, deps, key);
     } catch (error) {
       console.error("[session-guard] could not check access — refusing (503)", {
         route: key,
@@ -452,6 +611,14 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
         error: error instanceof Error ? error.message : String(error),
       });
       return unavailable();
+    }
+    // An unowned CHILD asked for before its parent's history was read (see recoverChildLineage): recover, decide again.
+    if (!decision.allow && decision.reason === "unknown" && (await recoverChildLineage(caller, sessionId, args, deps).catch(() => false))) {
+      try {
+        decision = await decide(caller, sessionId, right, args, deps);
+      } catch {
+        return unavailable();
+      }
     }
     if (!decision.allow) {
       logDenied(sessionId, caller, decision.reason, key);
@@ -557,12 +724,33 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
       }
     }
 
+    const { ownership, db } = decision;
+    // Children announced in the history this reader skips get their owner on record first (mold_v1-133).
+    if (key === STREAM_ROUTE && ownership && db) {
+      // Bounded: the reopen-from-cache path and the tail probes are latency-sensitive. A cursor read waits at most
+      // LINEAGE_INLINE_MS for the (usually instant) history read; a tail read never waits. Either way the read
+      // finishes in the background (waitUntil), so the children are on record moments later at worst.
+      const startIndex = startIndexOf(request);
+      const scan = recordSkippedLineage(args, sessionId, startIndex, ownership, db, deps).catch(() => undefined);
+      try {
+        args.waitUntil?.(scan);
+      } catch {
+        /* no request lifetime to extend (tests, local) */
+      }
+      if (startIndex !== undefined && startIndex > 0) await Promise.race([scan, delay(LINEAGE_INLINE_MS)]);
+    }
     const response = await route.handler(request, args);
     if (key !== STREAM_ROUTE || !response.ok || !response.body) return response;
     let body = response.body as ReadableStream<Uint8Array>;
     // Every delegation this stream announces gets its child's owner on record before the announcement goes out.
-    const { ownership, db } = decision;
-    if (ownership && db) body = noticeDelegations(body, (child) => recordChild(db, ownership, sessionId, child));
+    // …and each delegation's run history (a child that died before its first turn, a child parked on a question) is
+    // recorded from the same pass: `subagent.called` reaches no authored hook in eve 0.25.1 (session-delegation-runs.ts).
+    if (ownership && db) {
+      body = noticeDelegations(body, (child) => recordChild(db, ownership, sessionId, child), {
+        eventTypes: DELEGATION_EVENT_TYPES,
+        handle: delegationRunRecorder(sessionId),
+      });
+    }
     // A viewer reads the conversation, never the capability to continue it.
     if (decision.role === "viewer") body = withoutContinuationTokens(body);
     return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });

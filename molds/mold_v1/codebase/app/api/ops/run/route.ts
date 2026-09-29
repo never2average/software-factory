@@ -190,7 +190,7 @@ export async function POST(request: NextRequest) {
           // Read your own inputs — see lib/workflow-data.ts.
           data: workflowDataFor(orgId),
         args: coerced.args,
-        delegate: makeDurableDelegate(makeDelegate(bearer, undefined, control.signal, undefined, orgId), journal, 3, control.signal),
+        delegate: makeDurableDelegate(makeDelegate(bearer, undefined, control.signal, undefined, orgId, "step"), journal, 3, control.signal),
         signal: control.signal,
       });
       cancelled = control.signal.aborted;

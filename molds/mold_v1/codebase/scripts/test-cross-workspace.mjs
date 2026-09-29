@@ -219,6 +219,15 @@ console.log("\n2b. A service-started turn carries the workspace it acts for");
     }
   }
   check(`(${delegateCalls} makeDelegate calls found)`, delegateCalls >= 7, delegateCalls);
+  // What each delegate's sessions ARE (mold_v1-130 review): only a genuine run/app/cron step is made the workspace's
+  // (the signed grant, service-actable); a person's private request through the bridge stays theirs.
+  const PRIVATE = ["app/api/ops/people/[email]/account-summary/route.ts", "app/api/ops/workflows/[id]/author/route.ts"];
+  for (const file of callers) {
+    for (const call of callsOf(readFileSync(file, "utf8"), "makeDelegate")) {
+      const want = PRIVATE.includes(file) ? "private" : "step";
+      check(`${file}: makeDelegate(…, "${want}")`, new RegExp(`,\\s*"${want}"\\s*\\)$`).test(call.trim()), call.replace(/\s+/g, " ").slice(-60));
+    }
+  }
 }
 
 /* ---- 2c. errors: real causes survive, and 42501 is neutral -------------- */

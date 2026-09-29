@@ -145,29 +145,67 @@ function requestSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([timeout, signal]) : timeout;
 }
 
-async function cancelEveSession(sessionId: string, bearer: string): Promise<void> {
+/**
+ * The headers of every call a step makes on the agent. The workspace goes on ALL of them, not only the create: the
+ * agent admits the service token to a session only while it names that session's workspace (lib/chat-gate.ts), so a
+ * stream read or a cancel without it is refused. Ignored on a person's token.
+ */
+function agentHeaders(bearer: string, orgId: string | null | undefined, extra: Record<string, string> = {}): Record<string, string> {
+  return { ...extra, authorization: `Bearer ${bearer}`, ...(orgId ? { [SERVICE_SCOPE_HEADER]: orgId } : {}) };
+}
+
+async function cancelEveSession(sessionId: string, bearer: string, orgId: string | null | undefined): Promise<void> {
   await fetch(`${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/cancel`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    headers: agentHeaders(bearer, orgId, { "content-type": "application/json" }),
     body: "{}",
     signal: AbortSignal.timeout(10_000),
   }).catch(() => undefined);
 }
 
-/**
- * The grant for a step created with a PERSON's token, or null. The email is read from the bearer's payload without
- * verifying it: the agent verifies the bearer itself and honours the grant only when the two emails match, so a
- * wrong guess here costs nothing but the grant.
- */
-async function workspaceStepGrant(bearer: string): Promise<string | null> {
+/** The email a bearer names (unverified: the agent verifies the bearer itself), or null — a service token names none. */
+function bearerEmail(bearer: string): string | null {
   try {
     const payload = JSON.parse(Buffer.from(bearer.split(".")[1] ?? "", "base64url").toString("utf8")) as {
       email?: unknown;
     };
-    return typeof payload.email === "string" && payload.email ? await mintWorkspaceStepGrant(payload.email) : null;
+    return typeof payload.email === "string" && payload.email ? payload.email : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * What a delegate's sessions ARE, which decides who else may act on them (lib/chat-gate.ts):
+ *
+ *   step     a workflow run's, an app refresh's or a cron's step. WORKSPACE-visible: colleagues read it on the run
+ *            timeline, and the platform's service identity may cancel or resume it (the run-cancel fan-out, the
+ *            durable resume cron). Started with a person's token, that takes the web app's signed step grant.
+ *   private  anything else a person asks the agent for through this bridge (the workflow author, the account
+ *            summary). OWNER-visible, like the person's own chat: no grant is sent, so no colleague and no service
+ *            call reaches it.
+ */
+export type DelegateVisibility = "step" | "private";
+
+/** Thrown when a person's STEP cannot be made the workspace's: the step is not started (see makeDelegate). */
+export class StepGrantUnavailable extends Error {}
+
+/**
+ * The grant a person's STEP is created with. A step started with a person's token and NO grant would be private to
+ * that person — so the run-cancel fan-out and the durable resume, which reach steps as the service, would be refused
+ * on it, and a colleague's run timeline would show nothing. That used to happen silently whenever the web app could
+ * not sign (no AUTH_JWT_PRIVATE_KEY); now the step is refused instead, loudly, before anything is started.
+ */
+async function workspaceStepGrant(bearer: string): Promise<string | null> {
+  const email = bearerEmail(bearer);
+  if (!email) return null; // the service token: a session a service starts is the workspace's already
+  const grant = await mintWorkspaceStepGrant(email).catch(() => null);
+  if (!grant) {
+    throw new StepGrantUnavailable(
+      "This workflow step could not be started: the web app cannot sign the workspace step grant (AUTH_JWT_PRIVATE_KEY is not configured), and a step without it could not be cancelled or resumed by the run.",
+    );
+  }
+  return grant;
 }
 
 export function makeDelegate(
@@ -183,6 +221,8 @@ export function makeDelegate(
    * person's token, whose own membership decides.
    */
   orgId?: string | null,
+  /** A run/app/cron STEP (workspace-visible) or a PRIVATE request (owner-visible); the safe side by default. */
+  visibility: DelegateVisibility = "private",
 ): StepDelegate {
   return async function delegate(
     prompt: string,
@@ -197,7 +237,7 @@ export function makeDelegate(
     // The browser subagent's steps get the longer budget.
     const effectiveTimeout = subagent === "browser" ? Math.max(timeoutMs, BROWSER_STEP_TIMEOUT_MS) : timeoutMs;
 
-    const grant = await workspaceStepGrant(bearer);
+    const grant = visibility === "step" ? await workspaceStepGrant(bearer) : null;
     const started = await fetch(`${AGENT_URL}/eve/v1/session`, {
       method: "POST",
       headers: {
@@ -223,7 +263,7 @@ export function makeDelegate(
     // Eve cancellation is cooperative and durable. The session's stream remains
     // the source of truth (`turn.cancelled` -> `session.waiting`); aborting our
     // local fetch alone would merely detach and leave the turn running.
-    const onAbort = () => void cancelEveSession(sessionId, bearer);
+    const onAbort = () => void cancelEveSession(sessionId, bearer, orgId);
     signal?.addEventListener("abort", onAbort, { once: true });
 
     // Read the turn's NDJSON stream and keep the LAST finalized assistant text:
@@ -239,7 +279,7 @@ export function makeDelegate(
     // final message, read from its session.
     const finish = async (): Promise<string> => {
       if (answer.trim() || !childSessionId) return answer;
-      const child = await readSessionAnswer(childSessionId, bearer).catch(() => "");
+      const child = await readSessionAnswer(childSessionId, bearer, orgId).catch(() => "");
       return child || answer;
     };
 
@@ -254,7 +294,7 @@ export function makeDelegate(
         const stream = await fetch(
           `${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=${streamIndex}`,
           {
-            headers: { authorization: `Bearer ${bearer}` },
+            headers: agentHeaders(bearer, orgId),
             signal: requestSignal(effectiveTimeout, signal),
           },
         );
@@ -317,9 +357,9 @@ export function makeDelegate(
  * turn doesn't echo it. Bounded so a still-running child mounts at its current
  * state rather than hanging forever.
  */
-async function readSessionAnswer(sessionId: string, bearer: string): Promise<string> {
+async function readSessionAnswer(sessionId: string, bearer: string, orgId: string | null | undefined): Promise<string> {
   const res = await fetch(`${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=0`, {
-    headers: { authorization: `Bearer ${bearer}` },
+    headers: agentHeaders(bearer, orgId),
     signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
   });
   if (!res.ok || !res.body) return "";
