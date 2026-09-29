@@ -33,15 +33,18 @@
  *            indexes the mold creates outside schema.ts), in ONE transaction that also ENABLEs and
  *            FORCEs RLS on any org-scoped table it created (not in `off` mode). `ALTER TYPE ... ADD VALUE` runs first on
  *            its own, because a value added inside a transaction cannot be used until it commits.
- *   release  drop `factory_deploy_guard` everywhere, in one transaction. Run only after rls-cover
+ *            It also withholds the app role's DEFAULT privileges on new tables, so a table created
+ *            mid-chain is unreadable until the next hold (provision.py re-runs hold after the journal,
+ *            the drift apply and the task-workflow migration; it is idempotent).
+ *   release  drop `factory_deploy_guard` everywhere and restore the default grant, in one transaction. Run only after rls-cover
  *            exited 0, so the permissive policies are strict again before the guard goes. A chain
  *            that dies before this leaves the guard in place: stricter, never wider.
  *
- * ADMIN_URL travels in the environment, never in argv. Prints one JSON line; no secret in it.
+ * ADMIN_URL and SCHEMA_SQL travel in the environment, never in argv. Prints one JSON line; no secret in it.
  *   exit 0  done    exit 1  it ran and failed    exit 2  misuse    exit 3  could not run at all
  */
 import postgres from "postgres";
-import { q, why } from "./rls-policy.mjs";
+import { q, why, orgPredicate } from "./rls-policy.mjs";
 
 const url = process.env.ADMIN_URL;
 const action = process.env.ACTION || "";
@@ -55,12 +58,14 @@ if (!["fail_closed", "on", "off"].includes(mode)) { console.error(`RLS_MODE=${mo
 // on a table rls-cover will never give a policy (that would lock the app out of it for good).
 if (mode === "off" && ["hold", "release"].includes(action)) { console.error(`ACTION=${action} with RLS_MODE=off`); process.exit(2); }
 
-// The same three names and the same two predicates as rls-cover.mjs: the guard must never be stricter
-// than where rls-cover leaves the table (that would be an outage) nor looser (that would be the window).
-const CONTROL_PLANE = new Set(["orgs", "org_members", "org_invites"]);
-const STRICT = `(org_id = current_setting('app.org_id', true))`;
-const OPEN = `(coalesce(current_setting('app.org_id', true), '') = '' OR org_id = current_setting('app.org_id', true))`;
-const pred = (t) => (mode === "fail_closed" && !CONTROL_PLANE.has(t) ? STRICT : OPEN);
+// The predicate rls-cover.mjs converges each table to, imported from the module both use: the guard must
+// never be stricter (an outage) nor looser (the window it exists to close). --self-test checks the import.
+const pred = (t) => orgPredicate(mode, t);
+// The DML the bootstrap grants app_rw on every future table (ALTER DEFAULT PRIVILEGES). Withheld while
+// held, so a table the journal or a drift apply CREATES mid-chain (possibly backfilled from rows that
+// exist) is not readable by the serving app before the next hold guards it; the bootstrap and release
+// both grant it back.
+const DEFAULT_DML = "SELECT, INSERT, UPDATE, DELETE";
 
 const sql = postgres(url, { ssl: "require", prepare: false, max: 1, connect_timeout: 20, onnotice: () => {} });
 const TABLES = (s) => s`
@@ -97,27 +102,35 @@ async function inTx(fn) {
   }
 }
 
+const committedOutside = [];   // `ALTER TYPE ... ADD VALUE` cannot share the transaction, so it commits first
 try {
   let out;
   if (action === "probe") {
     const [{ n }] = await sql`SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
                                WHERE ns.nspname = 'public' AND c.relkind = 'r'`;
-    out = { public_tables: n, org_scoped: (await TABLES(sql)).length, app_role: await roleExists(sql) };
+    // read_only: provision.py probes through the dry run's own URL first, and refuses to plan through a
+    // connection that is not actually read-only (a pooler can drop startup options silently).
+    const [{ ro }] = await sql`SELECT current_setting('transaction_read_only') AS ro`;
+    out = { public_tables: n, org_scoped: (await TABLES(sql)).length, app_role: await roleExists(sql), read_only: ro === "on" };
   } else if (action === "hold") {
     // No app role yet means no app has ever connected: there is nobody to hold the window against.
     if (!(await roleExists(sql))) out = { held: false, reason: `no ${APP_ROLE} role yet` };
-    else out = { held: true, mode, ...(await inTx((tx) => close(tx, true))) };
+    else out = { held: true, mode, ...(await inTx(async (tx) => {
+      await tx.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ${DEFAULT_DML} ON TABLES FROM ${q(APP_ROLE)}`);
+      return close(tx, true);
+    })) };
   } else if (action === "release") {
     out = await inTx(async (tx) => {
       const rows = await tx`SELECT tablename AS t FROM pg_policies WHERE schemaname = 'public' AND policyname = ${GUARD}`;
       for (const { t } of rows) await tx.unsafe(`DROP POLICY ${GUARD} ON ${q(t)}`);
+      if (await roleExists(tx)) await tx.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ${DEFAULT_DML} ON TABLES TO ${q(APP_ROLE)}`);
       return { released: rows.length };
     });
   } else {
     const stmts = JSON.parse(Buffer.from(process.env.SCHEMA_SQL || "", "base64").toString("utf8") || "[]");
     const addValue = stmts.filter((s) => /^\s*ALTER\s+TYPE\s[\s\S]*\sADD\s+VALUE\b/i.test(s));
     const rest = stmts.filter((s) => !addValue.includes(s));
-    for (const s of addValue) await sql.unsafe(s);
+    for (const s of addValue) { await sql.unsafe(s); committedOutside.push(s); }
     // No guard here: hold already put one on every table that existed, and a table this creates is
     // empty and, with RLS on and no permissive policy yet, closed to the app role until rls-cover.
     out = { applied: stmts.length, ...(await inTx(async (tx) => {
@@ -127,9 +140,14 @@ try {
   }
   console.log(JSON.stringify({ action, ...out }));
 } catch (e) {
-  // A failed statement inside `apply` or `hold` rolled its whole transaction back: nothing changed.
   // A SQLSTATE outside the connection/auth classes means the database answered and refused a statement.
   const ran = e && /^[0-9A-Z]{5}$/.test(String(e.code)) && e.code !== "EPIPE" && !/^(08|28|3D|57P0[1-3])/.test(e.code);
-  console.error(`deploy window ${action} ${ran ? "failed" : "could not be measured"} — ` + why(e));
+  // Every transaction here rolled back whole. The one thing that can have committed is an enum value
+  // `apply` added first, outside it — say so, and name it, rather than claim nothing changed.
+  const kept = committedOutside.length
+    ? `; the transaction rolled back, but ${committedOutside.length} enum value addition(s) had already committed on their own: ` +
+      committedOutside.map((x) => x.replace(/\s+/g, " ").slice(0, 120)).join(" | ")
+    : "; the transaction rolled back, nothing was changed";
+  console.error(`deploy window ${action} ${ran ? "failed" : "could not be measured"} — ` + why(e) + (ran || committedOutside.length ? kept : ""));
   process.exit(ran ? 1 : 3);
 } finally { await sql.end({ timeout: 5 }).catch(() => {}); }

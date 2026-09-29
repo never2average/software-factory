@@ -24,7 +24,7 @@ This lane is for LOCAL VERIFICATION on this box — the five testing lanes, a cl
 schema dry run. It is not a deploy target: a Vercel function cannot reach a private docker network,
 and provision.py refuses to pair postgres.provider=self_hosted with target=vercel for that reason.
 """
-import json, os, re, secrets, subprocess, sys
+import json, os, re, secrets, subprocess, sys, tempfile
 
 IMAGE = "postgres:17"; NODE_IMAGE = "node:24-bookworm-slim"; PORT = 6543
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -180,12 +180,20 @@ def run(app_id, cmd, mold_dir, env=None, extra=()):
 
     The mold scripts run INSIDE the network rather than the database being published to them: that is
     the whole point, and it is why `.bootstrap-supabase.mjs`'s hardcoded port 6543 needs no rewriting
-    on this lane. Secret values travel as container env, never as argv."""
+    on this lane. Secret values travel as container env, never as argv: `docker run -e K=V` put the admin
+    URL (and a deploy's SCHEMA_SQL) in the docker client's argv, readable by anyone on the box through ps
+    or /proc/<pid>/cmdline. They go through a 0600 --env-file instead, removed as soon as docker returns."""
     args = ["run", "--rm", "--network", net(app_id), "-v", f"{os.path.abspath(mold_dir)}:/app", "-w", "/app",
             "-e", "NEXT_TELEMETRY_DISABLED=1", "-e", "CI=1", *extra]
-    for k, v in (env or {}).items(): args += ["-e", f"{k}={v}"]
-    args += [NODE_IMAGE, "sh", "-lc", cmd]
-    return _d(*args)
+    fd, envf = tempfile.mkstemp(prefix="localpg-env-")          # mkstemp creates it 0600
+    try:
+        with os.fdopen(fd, "w") as f:
+            for k, v in (env or {}).items():
+                if "\n" in str(v) or "\r" in str(v): raise ValueError(f"{k} holds a line break, which an env file cannot carry")
+                f.write(f"{k}={v}\n")
+        return _d(*args, "--env-file", envf, NODE_IMAGE, "sh", "-lc", cmd)
+    finally:
+        os.remove(envf)
 
 NOT_FOUND = re.compile(r"(?i)no such (object|volume)|network \S+ not found")   # docker's three not-found texts
 
