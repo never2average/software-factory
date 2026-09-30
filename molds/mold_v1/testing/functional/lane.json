@@ -4,6 +4,7 @@
   "order": 10,
   "summary": "Feature-parity of the mold's own surface: data room, syncs, alerts, schedules, rendering, system of record, chat persistence, gates, and the tenant-isolation rows that cannot be satisfied by a status code.",
   "not_covered": [
+    "The mold's own offline tests (the rows with cwd `default_profile`) run on the DEFAULT deployment profile: build/<app_id>.lane-default/ for an app with packs (mold + the packs' code, not their profiles/), else the mold. They pin the default profile's words and fields, so they cannot say whether this app's relabelled wording reads right; the context lane's `vocabulary` row grades what this app's model reads, and the accessibility and responsiveness lanes the pages it renders.",
     "The Playwright card/stickloop specs — the /preview routes they drive are absent from this snapshot (see the `test:cards` row).",
     "Anything behind a signed-in session: these scripts run offline against the mold's own fixtures.",
     "Performance, accessibility and viewport behaviour — the load, accessibility and responsiveness lanes own those."
@@ -11,89 +12,103 @@
   "checks": [
     {
       "name": "test:dataroom",
+      "cwd": "default_profile",
       "run": "timeout -k 30 540 npm run test:dataroom; s=$?; rm -rf .dataroom/__selftest__; rmdir .dataroom 2>/dev/null; exit $s",
       "why": "The data room (dm.md) read/write path is the service surface itself. The script scratches under .dataroom/__selftest__ inside the snapshot; the wrapper removes it after, with the test's own exit status. The test itself runs under `timeout -k 30 N` with N below lanes.py's own limit: lanes.py kills the whole shell on timeout_s, so the cleanup tail would otherwise never run; the inner timeout exits 124 (a fail) and leaves the shell alive to clean up."
     },
     {
       "name": "test:syncs",
+      "cwd": "default_profile",
       "run": "timeout -k 30 540 npm run test:syncs; s=$?; rm -rf .dataroom/__syncs_selftest__; rmdir .dataroom 2>/dev/null; exit $s",
-      "known_defect": "mold_v1-017",
       "why": "Connector syncs normalize interactions; 0 instead of 2 means an ingested account looks empty. The script scratches under .dataroom/__syncs_selftest__ inside the snapshot; the wrapper removes it after, with the test's own exit status. The test itself runs under `timeout -k 30 N` with N below lanes.py's own limit: lanes.py kills the whole shell on timeout_s, so the cleanup tail would otherwise never run; the inner timeout exits 124 (a fail) and leaves the shell alive to clean up."
     },
     {
       "name": "test:alerts",
+      "cwd": "default_profile",
       "run": "npm run test:alerts",
-      "known_defect": "mold_v1-018",
       "why": "Alerts are computed from the customer corpus; the snapshot ships data/customers.json empty."
     },
     {
       "name": "test:schedules",
+      "cwd": "default_profile",
       "run": "npm run test:schedules",
-      "known_defect": "mold_v1-019",
       "why": "A schedule that cannot be parsed cannot be run, so recurring workflows silently stop."
     },
     {
       "name": "test:cron-match",
+      "cwd": "default_profile",
       "run": "npm run test:cron-match",
       "why": "Cron matching decides whether a scheduled workflow fires at all."
     },
     {
       "name": "test:workbook-spec",
+      "cwd": "default_profile",
       "run": "npm run test:workbook-spec",
       "why": "Workbook specs drive the generated artefacts handed to a customer."
     },
     {
       "name": "test:render",
+      "cwd": "default_profile",
       "run": "npm run test:render",
       "why": "Rendering is what the operator actually sees."
     },
     {
       "name": "test:sor",
+      "cwd": "default_profile",
       "run": "npm run test:sor",
       "why": "The system of record is the multiplayer context; a wrong write is a wrong shared truth."
     },
     {
       "name": "test:custom-fields",
+      "cwd": "default_profile",
       "run": "npm run test:custom-fields",
       "why": "An application's own fields on its two record areas go through one validator on every write path; a path that skips it stores values nobody checked."
     },
     {
       "name": "test:browser-security",
+      "cwd": "default_profile",
       "run": "npm run test:browser-security",
       "why": "The optional browser capability must not become an exfiltration path."
     },
     {
       "name": "test:workflow-leases",
+      "cwd": "default_profile",
       "run": "npm run test:workflow-leases",
       "why": "Leases stop two runners executing the same workflow step twice."
     },
     {
       "name": "test:workflow-args",
+      "cwd": "default_profile",
       "run": "npm run test:workflow-args",
       "why": "Custom workflow builder arguments are user input reaching the agent."
     },
     {
       "name": "test:chat-persistence",
+      "cwd": "default_profile",
       "run": "npm run test:chat-persistence",
       "why": "A dropped turn is a lost conversation."
     },
     {
       "name": "test:chat-turn-state",
+      "cwd": "default_profile",
       "run": "npm run test:chat-turn-state",
       "why": "Turn state drives what the operator is allowed to do next."
     },
     {
       "name": "test:chat-attachments",
+      "cwd": "default_profile",
       "run": "npm run test:chat-attachments",
       "why": "Attachments cross the blob boundary."
     },
     {
       "name": "test:email-signin",
+      "cwd": "default_profile",
       "run": "npm run test:email-signin",
       "why": "Sign-in plus org membership is the tenancy boundary at the front door."
     },
     {
       "name": "test:step-context",
+      "cwd": "default_profile",
       "run": "npm run test:step-context",
       "why": "Step context is what each agent step is allowed to see."
     },
