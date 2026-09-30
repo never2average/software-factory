@@ -1,7 +1,7 @@
-// fde:backfill-customizations — reconstruct a customer's deployment/customization
+// operator:backfill-customizations — reconstruct a customer's deployment/customization
 // history into the canonical Deployments/ layout + the `deployments` row.
 //
-//   npm run fde:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
+//   npm run operator:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
 //     [--region ap-south-1] [--cloud aws] [--summary "GPU inference, custom guardrails"] \
 //     [--from-file customizations.json]
 //
@@ -10,11 +10,11 @@
 // profile fixes one; --environment defaults to prod) and
 // materialises Deployments/{id}/{ver}/infrastructure/inference/{customizations.tf,
 // rationale.md} plus the 4-party signoff skeleton. --from-file takes an array of
-// { title, tf, rationale } customizations. See docs/FDE_WORKFLOW.md (stage 4).
+// { title, tf, rationale } customizations. See docs/OPERATOR_WORKFLOW.md (stage 4).
 import { getDb, closeDb, dataroom, workspaceFor, nowIso, appendInteraction, readFromFile, checkValues, fixedOr } from "./lib/customer.mjs";
 import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system-of-record.ts";
 import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
-import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
+import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 
 async function main() {
   const customerId = flag("customer").trim();
@@ -23,8 +23,8 @@ async function main() {
     console.error(`${glyph.bad} --customer <id> and --version <platform_version_id> are required.`);
     process.exit(1);
   }
-  const { email: fde } = resolveIdentity();
-  if (!fde || !isOnfinance(fde)) {
+  const { email: me } = resolveIdentity();
+  if (!me || !isOnfinance(me)) {
     console.error(`${glyph.bad} No @onfinance.in identity — run \`node setup/fde-login.mjs\` or pass --email.`);
     process.exit(1);
   }
@@ -39,7 +39,7 @@ async function main() {
   const record = await getRecord(customerId, orgId);
   const customer = record ? { customerName: record.name } : null;
   if (!customer) {
-    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
+    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
     await closeDb();
     process.exit(1);
   }
@@ -54,7 +54,7 @@ async function main() {
   const stored = record.deployments?.some((d) => d.deploymentId === deploymentId);
   const summary = flag("summary").trim();
   const row = stored
-    ? { deploymentId, deployedVersion: version, deployOwnerEmail: fde, ...(summary ? { notes: summary } : {}) }
+    ? { deploymentId, deployedVersion: version, deployOwnerEmail: me, ...(summary ? { notes: summary } : {}) }
     : {
         deploymentId,
         environment: flag("environment").trim() || fixedOr("environment", "prod"),
@@ -63,7 +63,7 @@ async function main() {
         deployedVersion: version,
         releaseStatus: "deployed",
         healthStatus: "unknown",
-        deployOwnerEmail: fde,
+        deployOwnerEmail: me,
         ...(summary ? { notes: summary } : {}),
         lastDeployAt: nowIso(),
       };
@@ -111,7 +111,7 @@ async function main() {
   await appendInteraction(store, `Customers/${customerId}/interactions.jsonl`, {
     ts: nowIso(),
     type: "customization_backfilled",
-    actor: fde,
+    actor: me,
     summary: `Backfilled ${list.length} customization(s) for ${version}.`,
   });
 

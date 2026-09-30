@@ -171,7 +171,7 @@ const sor = readFileSync("agent/lib/system-of-record.ts", "utf8");
   check("system-of-record: nothing resolves an owner workspace from an id", !/ownerWorkspaceOf|orgForCustomer\(/.test(sor));
   check("system-of-record: no list sweeps every workspace (acrossOrgDbs), and none widens a missing workspace", !/acrossOrgDbs/.test(sor) && /function listScope\(/.test(sor) && (sor.match(/listScope\("/g) ?? []).length === 6);
   check("system-of-record: nothing lists the workspaces that hold an id", !/workspacesHolding/.test(sor));
-  check("scripts/fde/lib/customer.mjs: --org is required and the holders of an id are never named", !/acrossOrgDbs|holding/.test(readFileSync("scripts/fde/lib/customer.mjs", "utf8")));
+  check("scripts/operator/lib/customer.mjs: --org is required and the holders of an id are never named", !/acrossOrgDbs|holding/.test(readFileSync("scripts/operator/lib/customer.mjs", "utf8")));
   check("agent/lib/org-context.ts: orgForCustomer is gone", !/export async function orgForCustomer/.test(readFileSync("agent/lib/org-context.ts", "utf8")));
 }
 check("system-of-record: getCustomer reads in the caller's scope, not across all", /return await dbGetCustomer\(db, id, orgId\)/.test(sor));

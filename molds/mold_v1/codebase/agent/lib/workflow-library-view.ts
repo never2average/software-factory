@@ -2,7 +2,7 @@
  * The workflow library as THIS deployment provisions it (agent/lib/provision-workspace.ts seeds every new
  * workspace from it).
  *
- * The library (scripts/fde/workflows/*.workflow.js, compiled into workflow-library.generated.ts) was written for
+ * The library (scripts/operator/workflows/*.workflow.js, compiled into workflow-library.generated.ts) was written for
  * the base product: its scripts delegate to base specialists and its step prompts name base tools ("Call
  * list_fdes…", "get_customer"). Under a profile:
  *   - a workflow that delegates to a specialist the profile EXCLUDES is not provisioned at all — it would fail

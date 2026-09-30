@@ -110,7 +110,7 @@ function PromptCell({ text }: { readonly text: string | null | undefined }) {
 }
 
 // The only code-authored schedule left. Every operational cron (standup, sweeps,
-// FDE performance, manager brief, all-hands, …) is now a DB schedule_rules row,
+// member performance, manager brief, all-hands, …) is now a DB schedule_rules row,
 // shown + edited in the dynamic rules section below.
 const SYSTEM_CRONS: { name: string; cron: string; cadence: string; description: string }[] = [
   {

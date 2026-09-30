@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * The MCP command — one stdio MCP server that lets a LOCAL coding agent set up the whole
- * FDE control plane in the live web app: the Data Room, Connectors, Workflows,
+ * workspace control plane in the live web app: the Data Room, Connectors, Workflows,
  * and Crons.
  *
  *   node --experimental-strip-types setup/fde-mcp.mjs   (this file's name follows the

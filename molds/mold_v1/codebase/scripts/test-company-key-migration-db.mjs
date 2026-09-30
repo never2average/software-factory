@@ -27,7 +27,7 @@
  * Needs ADMIN_URL (a role that may CREATE DATABASE). Scratch databases carry this process's pid and are dropped in a
  * finally block.
  *
- *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5432/fde_test npm run test:company-key-migration-db
+ *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5432/workspace_test npm run test:company-key-migration-db
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -125,18 +125,18 @@ async function seed(db) {
   await db`insert into orgs (org_id, name, status, created_at) values (${W1}, 'One', 'active', now() - interval '2 years'), (${W2}, 'Two', 'active', now())`;
   const cos = Array.from({ length: 100 }, (_, i) => ({ org: i < 50 ? W1 : W2, id: `co-${String(i + 1).padStart(3, "0")}` }));
   for (const { org, id } of cos) {
-    await db`insert into customers (org_id, customer_id, customer_name, tier, fde_owner, custom) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'fde@mig.test', ${db.json({ notes: `n-${id}` })})`;
+    await db`insert into customers (org_id, customer_id, customer_name, tier, fde_owner, custom) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'owner@mig.test', ${db.json({ notes: `n-${id}` })})`;
     await db`insert into platform (org_id, customer_id, deployment_model, data_residency_constraint, primary_model, enabled_connectors, feature_flags, primary_use_case) values (${org}, ${id}, 'saas', 'none', 'm', '[]', '{}', 'research')`;
     for (const d of ["prod", "uat"]) await db`insert into deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status, custom) values (${org}, ${id}, ${`DEP-${d}`}, ${d}, 'ap-south-1', ${`v-${id}-${d}`}, 'deployed', 'healthy', ${db.json({ rating: "Buy" })})`;
-    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, solution_fde_owner) values (${org}, ${id}, 'SOL-1', 'Research Copilot', '[]', 'live', 'fde@mig.test')`;
+    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, solution_fde_owner) values (${org}, ${id}, 'SOL-1', 'Research Copilot', '[]', 'live', 'owner@mig.test')`;
     await db`insert into implementation (org_id, customer_id, rollout_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner) values (${org}, ${id}, ${`ROLL-${id}`}, 'UAT', 50, 'Green', 'None')`;
     for (const n of [1, 2, 3]) {
-      await db`insert into tickets (org_id, customer_id, ticket_id, summary, ticket_type, ticket_category, ticket_status, ticket_priority, ticket_opened_date, ticket_owner_email, source_channel, last_activity_date, ticket_next_step) values (${org}, ${id}, ${`TCK-${n}`}, ${`t${n} ${id}`}, 'Question', 'Feature Request', 'Open', 'P2-Medium', '2026-09-01', 'fde@mig.test', 'Email', '2026-09-01', 'look')`;
+      await db`insert into tickets (org_id, customer_id, ticket_id, summary, ticket_type, ticket_category, ticket_status, ticket_priority, ticket_opened_date, ticket_owner_email, source_channel, last_activity_date, ticket_next_step) values (${org}, ${id}, ${`TCK-${n}`}, ${`t${n} ${id}`}, 'Question', 'Feature Request', 'Open', 'P2-Medium', '2026-09-01', 'owner@mig.test', 'Email', '2026-09-01', 'look')`;
       await db`insert into interactions (org_id, customer_id, interaction_id, interaction_at, interaction_type, source_system, note) values (${org}, ${id}, ${`INT-${n}`}, '2026-09-01', 'note', 'manual', ${`i${n} ${id}`})`;
     }
-    await db`insert into internal_staff (org_id, customer_id, staff_role, name, employer_org, email) values (${org}, ${id}, 'solution_engineer', 'F', 'Us', 'fde@mig.test')`;
+    await db`insert into internal_staff (org_id, customer_id, staff_role, name, employer_org, email) values (${org}, ${id}, 'solution_engineer', 'F', 'Us', 'owner@mig.test')`;
     await db`insert into customer_stakeholders (org_id, customer_id, stakeholder_role, name, employer_org, email) values (${org}, ${id}, 'champion', 'C', ${id}, ${`c@${id}.test`})`;
-    await db`insert into account_summaries (org_id, key, summary) values (${org}, ${`fde@mig.test|${id}`}, 'brief')`;
+    await db`insert into account_summaries (org_id, key, summary) values (${org}, ${`owner@mig.test|${id}`}, 'brief')`;
   }
   // Looser references: a company id in a column that is not a foreign key (each row carries its own org_id).
   for (const { org, id } of cos.filter((_, i) => i % 10 === 0)) {

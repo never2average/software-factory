@@ -15,13 +15,13 @@ Two layers, one skill:
    data residency, model policy, guardrails, connectors, feature flags.
 
 This is the **contract layer** below `configure-solution` / `configure-agents`. See
-[`docs/FDE_WORKFLOW.md`](../../../docs/FDE_WORKFLOW.md).
+[`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md).
 
 ## Steps
 
 **1. The version contract.**
 ```bash
-npm run fde:configure-platform -- --version v2.4.0
+npm run operator:configure-platform -- --version v2.4.0
 ```
 Scaffolds the seven `design_decisions/*.schemas.json` stubs + architecture
 placeholders under `Platform/v2.4.0/` (never clobbers authored schemas). **Fill the
@@ -30,7 +30,7 @@ stubs** — they are the contract solutions bind to.
 **2. Customer governance (optional).** When a customer's platform settings need
 recording:
 ```bash
-npm run fde:configure-platform -- --version v2.4.0 --customer contoso-bank --org <workspace id> \
+npm run operator:configure-platform -- --version v2.4.0 --customer contoso-bank --org <workspace id> \
   --deployment-model single_tenant --residency in-country \
   --primary-model claude-opus-4.8 --use-case "collections triage"
 ```
@@ -52,6 +52,6 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:configure-platform -- --version <ver> [--customer <id> --org <workspace id> \
+npm run operator:configure-platform -- --version <ver> [--customer <id> --org <workspace id> \
   --deployment-model … --residency … --primary-model … --use-case "…"]
 ```

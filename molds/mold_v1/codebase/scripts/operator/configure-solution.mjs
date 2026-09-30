@@ -1,17 +1,17 @@
-// fde:configure-solution — scaffold a reusable pipeline solution as a self-describing
+// operator:configure-solution — scaffold a reusable pipeline solution as a self-describing
 // "minified solution-manager" under Solutions/{ver}/pipelines/{id}/: its schema
 // (contract), its config (artifact), its recipe (staged authoring), plus evals,
 // migrations and grounding. Optionally, with --customer, upsert the solutions row
 // and seed the customer's Deployments instance from the recipe.
 //
-//   npm run fde:configure-solution -- --version v2.4.0 --id pl-collections \
+//   npm run operator:configure-solution -- --version v2.4.0 --id pl-collections \
 //     --use-case "Collections triage" [--customer contoso-bank --org <workspace id>]
 //
-// See docs/FDE_WORKFLOW.md — a configured solution is validated + eval-gated, not
-// PR-gated; the gate is `fde:validate-solution` + the eval acceptance.
+// See docs/OPERATOR_WORKFLOW.md — a configured solution is validated + eval-gated, not
+// PR-gated; the gate is `operator:validate-solution` + the eval acceptance.
 import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
 import { solutions } from "../../agent/lib/db/schema.ts";
-import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
+import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 
 async function main() {
   const version = flag("version").trim();
@@ -21,8 +21,8 @@ async function main() {
     process.exit(1);
   }
   const useCase = flag("use-case").trim() || "TODO";
-  const { email: fde } = resolveIdentity();
-  if (!fde || !isOnfinance(fde)) {
+  const { email: me } = resolveIdentity();
+  if (!me || !isOnfinance(me)) {
     console.error(`${glyph.bad} No @onfinance.in identity — run \`node setup/fde-login.mjs\` or pass --email.`);
     process.exit(1);
   }
@@ -59,14 +59,14 @@ async function main() {
     // The workspace, named (--org): a company id names a company only within a workspace (mold_v1-118).
     const orgId = workspaceFor();
     if (!(await getCustomer(db, orgId, customerId))) {
-      console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
+      console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
       await closeDb();
       process.exit(1);
     }
     await withOrgDb(orgId, (tx) => tx
       .insert(solutions)
-      .values({ orgId, customerId, solutionId: id, useCase, modulesEnabled: [], solutionStatus: "configuring", solutionFdeOwner: fde })
-      .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, solutionStatus: "configuring", solutionFdeOwner: fde } }));
+      .values({ orgId, customerId, solutionId: id, useCase, modulesEnabled: [], solutionStatus: "configuring", solutionFdeOwner: me })
+      .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, solutionStatus: "configuring", solutionFdeOwner: me } }));
     // Seed the customer's deployment instance from the recipe (dm.md recipe seam).
     const dep = `Deployments/${customerId}/${version}/platform/pipelines/${id}`;
     // In the workspace's own data room: Deployments/{customer_id}/… is per company, and so per workspace.
@@ -77,7 +77,7 @@ async function main() {
     await closeDb();
   }
 
-  console.log(`\n${glyph.info} Define run_configs.schema.json, fill pipeline_config.json steps, then \`npm run fde:validate-solution -- --version ${version} --id ${id}\`.`);
+  console.log(`\n${glyph.info} Define run_configs.schema.json, fill pipeline_config.json steps, then \`npm run operator:validate-solution -- --version ${version} --id ${id}\`.`);
 }
 
 main().catch(async (e) => {

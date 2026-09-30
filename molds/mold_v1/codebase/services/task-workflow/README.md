@@ -1,6 +1,6 @@
 # Task Workflow Service
 
-API-only Next.js microservice that owns task workflow mutations for the FDE
+API-only Next.js microservice that owns task workflow mutations for the
 workspace. It stores immutable definition versions, pins each task to a version,
 validates stage transitions, records an append-only transition ledger, and runs
 stage assignment automation with Vercel Workflow.

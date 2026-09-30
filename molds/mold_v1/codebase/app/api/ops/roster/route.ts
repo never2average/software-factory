@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/ops/roster — the FDE org roster (email, name, team, manager,
+ * GET /api/ops/roster — the org roster (email, name, team, manager,
  * escalation) that the TODOs scope filters and the person dossier resolve
  * against. Live (non-archived) rows only, scoped to the caller's workspace.
  */

@@ -22,7 +22,7 @@
  * Needs ADMIN_URL (a role that may CREATE DATABASE) pointing at a database drizzle-kit push has built (CI's
  * `isolation` job). The scratch database carries this process's pid and is dropped in a finally block.
  *
- *   ADMIN_URL=postgres://postgres:…@127.0.0.1:5432/fde_test npm run test:migrations-db
+ *   ADMIN_URL=postgres://postgres:…@127.0.0.1:5432/workspace_test npm run test:migrations-db
  */
 import { readFileSync } from "node:fs";
 import postgres from "postgres";

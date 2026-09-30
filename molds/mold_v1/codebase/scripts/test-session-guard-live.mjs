@@ -19,12 +19,12 @@
  * verifier and a locally answered JWKS.
  *
  * SETUP (what was run for the PR):
- *   docker run -d --name sessgate-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=fde_test -p 127.0.0.1:55441:5432 postgres:16
+ *   docker run -d --name sessgate-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=workspace_test -p 127.0.0.1:55441:5432 postgres:16
  *   DATABASE_URL=$ADMIN_URL npx drizzle-kit push --force && DATABASE_URL=$ADMIN_URL node scripts/bootstrap-test-db.mjs
  *   openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt > /tmp/sg-priv.pem
  *   openssl ec -in /tmp/sg-priv.pem -pubout > /tmp/sg-pub.pem
  *   node scripts/fake-model-server.mjs --port 8788 --script delegate-plain &
- *   DATABASE_URL=postgres://app_rw:app_rw_test_password@127.0.0.1:55441/fde_test \
+ *   DATABASE_URL=postgres://app_rw:app_rw_test_password@127.0.0.1:55441/workspace_test \
  *   AUTH_JWT_PUBLIC_KEY="$(cat /tmp/sg-pub.pem)" MODEL_PROVIDER=cloudflare CLOUDFLARE_ACCOUNT_ID=test \
  *   CLOUDFLARE_API_TOKEN=test CLOUDFLARE_BASE_URL=http://127.0.0.1:8788/v1 CLOUDFLARE_MODEL_ORCHESTRATOR=@cf/test/orch \
  *   CLOUDFLARE_MODEL_SPECIALIST=@cf/test/spec CLOUDFLARE_MODEL_VISION=@cf/test/vision ENABLE_BROWSER=false \
@@ -32,7 +32,7 @@
  *
  * RUN:
  *   EVE_URL=http://127.0.0.1:3217 AUTH_JWT_PRIVATE_KEY="$(cat /tmp/sg-priv.pem)" \
- *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55441/fde_test \
+ *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55441/workspace_test \
  *   DB_DOWN_CMD="docker stop sessgate-pg" DB_UP_CMD="docker start sessgate-pg" \
  *     node --conditions=react-server --experimental-strip-types scripts/test-session-guard-live.mjs
  */

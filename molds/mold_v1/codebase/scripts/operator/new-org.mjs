@@ -1,11 +1,11 @@
-// fde:new-org — provision a new workspace (org) on the platform.
+// operator:new-org — provision a new workspace (org) on the platform.
 //
-//   npm run fde:new-org -- --name "OnFinance" [--id onfinance] \
+//   npm run operator:new-org -- --name "OnFinance" [--id onfinance] \
 //     [--domain onfinance.in] [--owner priyesh@onfinance.in]
 //
 // Writes ONE `orgs` row (idempotent by id), the owner into `org_members`, adds
 // the owner to `platform_admins`, seeds the built-in recipe catalog into the
-// workspace and installs its workflow library. This is the FDE-assisted door of
+// workspace and installs its workflow library. This is the operator-assisted door of
 // §6 — a thin client of the same tables the self-serve wizard and the
 // provisioning API write. See the Org Onboarding plan.
 //
@@ -15,7 +15,7 @@ import { withOrgDb } from "../../agent/lib/db/index.ts";
 import { orgs, orgMembers, platformAdmins } from "../../agent/lib/db/schema.ts";
 import { BUILTIN_RECIPES, provisionWorkspace } from "../../agent/lib/provision-workspace.ts";
 import { eq } from "drizzle-orm";
-import { glyph, flag, hasFlag, resolveIdentity } from "./lib/fde.mjs";
+import { glyph, flag, hasFlag, resolveIdentity } from "./lib/operator.mjs";
 
 async function main() {
   const name = flag("name").trim();
@@ -70,7 +70,7 @@ async function main() {
     .insert(orgMembers)
     .values({ orgId: id, email: owner, role: "owner", acceptedAt: new Date() })
     .onConflictDoUpdate({ target: [orgMembers.orgId, orgMembers.email], set: { role: "owner" } });
-  await db.insert(platformAdmins).values({ email: owner, addedBy: "fde:new-org" }).onConflictDoNothing();
+  await db.insert(platformAdmins).values({ email: owner, addedBy: "operator:new-org" }).onConflictDoNothing();
   console.log(`${glyph.ok} ${owner} is owner + platform admin.`);
 
   // Steps 3 and 4 write org-scoped tables, and those are different from the

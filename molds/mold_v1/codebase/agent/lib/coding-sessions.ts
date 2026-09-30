@@ -7,7 +7,7 @@
  * conclusion there decides the shape:
  *
  *   - NOT an MCP, and NOT "all historical data". A coding session is worth
- *     capturing only as evidence of what an FDE did for a customer, so this
+ *     capturing only as evidence of what a member did for a customer, so this
  *     produces ONE small record per session — repo, branch, the opening ask,
  *     what tools/files/commands it touched, and a span — not the raw transcript.
  *   - Secrets first. Transcripts are full of tokens, keys and customer data, and

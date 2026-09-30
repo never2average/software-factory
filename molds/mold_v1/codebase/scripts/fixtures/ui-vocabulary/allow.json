@@ -35,9 +35,9 @@
     "why": "A request-validation error listing the export API's accepted `type` values, for a caller that sent none. The UI always sends one."
   },
   {
-    "source": "^lib/org-seed\\.ts$",
-    "literal": ".",
-    "why": "The built-in starter tree, written into a new workspace only when the profile names no dataroom.seed. It documents the base product's stored folders and its coding-agent skills (onboard-customer), whose names do not move; a profile that relabels the domains names its own seed (docs/DEPLOYMENT_PROFILE.md), as the fixture and the hfc-research pack do."
+    "source": "^agent/lib/render-html\\.ts$",
+    "literal": "^Unknown customer: $",
+    "why": "The error renderAccountReport throws for an id outside the caller's workspace. It never reaches the report: the tool's error goes to the model, through the model-facing boundary that speaks it (check:agent-vocabulary), and the cross-workspace tests match it. Every label the reports print comes from the profile (reportWords)."
   },
   {
     "source": "^lib/workflow-runtime\\.ts$",

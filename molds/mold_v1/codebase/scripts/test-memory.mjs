@@ -52,7 +52,7 @@ async function recallForTurn(email, userText) {
 const PERSON_A = "priyesh@onfinance.in";
 const PERSON_B = "lena@onfinance.in";
 
-// --- remember: team, customer, and person scoped facts (saved by FDE A) ----
+// --- remember: team, customer, and person scoped facts (saved by member A) ----
 
 const teamFact = await rememberTool.execute(
   { scope: "team", key: "standup-time", value: "Daily stand-up is 09:30 IST, capped at 30 minutes." },

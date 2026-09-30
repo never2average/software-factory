@@ -31,7 +31,7 @@ import { queueDeliveryAuth } from "../lib/queue-delivery-auth.ts";
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
 const multiTenant = process.env.OPS_MULTI_TENANT === "1";
 
-// The CLI is a first-class client too. `@delivery-agents/cli` signs an FDE in
+// The CLI is a first-class client too. `@delivery-agents/cli` signs a member in
 // through a Google DESKTOP OAuth client, so its ID token carries that client's
 // audience — not the web one. Accepting only the web audience here meant a
 // workflow run started from the CLI died on its first delegated step with a

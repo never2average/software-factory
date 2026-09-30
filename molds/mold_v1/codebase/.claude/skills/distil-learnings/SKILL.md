@@ -1,6 +1,6 @@
 ---
 name: distil-learnings
-description: Turn recorded coding sessions into runbooks a new joiner can follow, and share them so the team stops rediscovering the same things. Use when someone says "capture what we learned", "write this up", "why does everyone hit this", "onboard the new FDE faster", or after a painful incident. Uploads sessions (one or thousands) via the fde-control MCP, runs a server-side distillation job, and lands markdown runbooks in Learnings/runbooks/ with the best pointers in team memory. Sibling of onboard-self (a person) and backfill-* (history).
+description: Turn recorded coding sessions into runbooks a new joiner can follow, and share them so the team stops rediscovering the same things. Use when someone says "capture what we learned", "write this up", "why does everyone hit this", "onboard the new engineer faster", or after a painful incident. Uploads sessions (one or thousands) via the fde-control MCP, runs a server-side distillation job, and lands markdown runbooks in Learnings/runbooks/ with the best pointers in team memory. Sibling of onboard-self (a person) and backfill-* (history).
 ---
 
 # Distil learnings into runbooks

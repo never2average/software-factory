@@ -66,7 +66,7 @@ const peopleStore = peopleStoreSchema.parse(
 
 /**
  * Folder-safe person id derived from the person's email (the join key). Two
- * people.json rows that share an email (e.g. one FDE assigned to two accounts)
+ * people.json rows that share an email (e.g. one member assigned to two accounts)
  * collapse to a single People/{person_id}/ folder.
  */
 function personIdFromEmail(email: string): string {

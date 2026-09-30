@@ -692,7 +692,7 @@ check(
 );
 
 /* The harness has to keep measuring the thing that was fixed. */
-const harness = readFileSync("scripts/fde/thread-open-perf.mjs", "utf8");
+const harness = readFileSync("scripts/operator/thread-open-perf.mjs", "utf8");
 console.log("\nThe harness measures both terms:");
 check("time spent waiting on quiet windows is its own number", /quietMs \+= performance\.now\(\) - waitedFrom/.test(harness));
 check("…and its own column", /"quiet",/.test(harness));

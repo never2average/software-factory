@@ -1,1 +1,1 @@
-export { listFdesTool as default } from "#lib/tools.js";
+export { listMembersTool as default } from "#lib/tools.js";

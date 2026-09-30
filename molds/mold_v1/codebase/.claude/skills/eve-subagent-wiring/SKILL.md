@@ -161,21 +161,21 @@ Rows are per workspace (`workflows.org_id` is NOT NULL and row-level security ke
 (`agent/lib/provision-workspace.ts:152`) inserts one `trigger: "on delegation"` row per key
 in `SUBAGENT_KEYS`, with `SUBAGENT_SUMMARIES[key]` as the description. It runs from both
 doors: the self-serve wizard (`POST /api/ops/orgs`, `app/api/ops/orgs/route.ts:228`) and
-`npm run fde:new-org` (`scripts/fde/new-org.mjs:85`). It is idempotent by
+`npm run operator:new-org` (`scripts/operator/new-org.mjs:85`). It is idempotent by
 `(name, org_id)`.
 
-**An existing workspace does not**, until someone adds it. `npm run fde:seed-workflows`
+**An existing workspace does not**, until someone adds it. `npm run operator:seed-workflows`
 does **not** do this: it installs only the scripted library from
-`scripts/fde/workflows/*.workflow.js` and never calls `provisionWorkspace`. The real options
+`scripts/operator/workflows/*.workflow.js` and never calls `provisionWorkspace`. The real options
 (the first is the supported one):
 
 | How | Command or clicks | Notes |
 |---|---|---|
-| **Backfill (use this)** | `npm run fde:seed-subagent-rows -- --org <org_id>` | `scripts/fde/seed-subagent-rows.mjs` calls `seedSubagentWorkflowRows` (`agent/lib/provision-workspace.ts`), the same function `provisionWorkspace` uses. Idempotent; inserts the missing rows and touches nothing else. Needs `DATABASE_URL` in `.env.local`. |
+| **Backfill (use this)** | `npm run operator:seed-subagent-rows -- --org <org_id>` | `scripts/operator/seed-subagent-rows.mjs` calls `seedSubagentWorkflowRows` (`agent/lib/provision-workspace.ts`), the same function `provisionWorkspace` uses. Idempotent; inserts the missing rows and touches nothing else. Needs `DATABASE_URL` in `.env.local`. |
 | Ops Center | Workflows panel, the new-workflow wizard: trigger "On delegation" (the preselected choice), name exactly `<key>` | no terminal; the right choice for an operator |
 | API | `POST /api/ops/workflows` with `{"name":"<key>","description":"<summary>","trigger":"on delegation"}` as a signed-in member of that workspace | schema: `app/api/ops/workflows/route.ts:12` |
 | MCP | `workflow_create` (name and description; its trigger defaults to `on delegation`) | `setup/fde-mcp.mjs:1447`, for an engineer already connected |
-| Re-provision (avoid) | `npm run fde:new-org -- --name "<existing display name>" --id <org_id> --domain <existing domain> --owner <owner email> --force` | re-runs `provisionWorkspace` (adds every missing row, skips present ones). It also **rewrites the `orgs` row** from the flags: omit `--domain` and the Google hosted domain is set to null. Pass every value as it is today. Needs `DATABASE_URL` in `.env.local`. |
+| Re-provision (avoid) | `npm run operator:new-org -- --name "<existing display name>" --id <org_id> --domain <existing domain> --owner <owner email> --force` | re-runs `provisionWorkspace` (adds every missing row, skips present ones). It also **rewrites the `orgs` row** from the flags: omit `--domain` and the Google hosted domain is set to null. Pass every value as it is today. Needs `DATABASE_URL` in `.env.local`. |
 
 Rows whose trigger is `on delegation` are deliberately **left out of the Workflows list**
 (`app/_components/ops/workflows-panel.tsx:1392`: they are delegation targets, not runnable
@@ -215,7 +215,7 @@ None of these is required for a subagent to work, show up and be accounted for.
 | File:line | What | When to touch it |
 |---|---|---|
 | `agent/lib/customer-schema.ts:30` | `TICKET_CATEGORY_ROUTING` | only if a ticket category should triage to the new subagent (the categories are a closed enum) |
-| `scripts/fde/workflows/*.workflow.js` | library workflows naming `{ subagent: "..." }` | when shipping a scripted workflow that uses it; then `npm run build:workflow-library` |
+| `scripts/operator/workflows/*.workflow.js` | library workflows naming `{ subagent: "..." }` | when shipping a scripted workflow that uses it; then `npm run build:workflow-library` |
 | `scripts/gen-subagent-meta.mjs:37-43` | lib files searched for a re-exported tool's description | when a tool comes from a new `agent/lib/*-tools.ts`; cosmetic (the Control Panel shows the tool with no description) |
 | `scripts/subagent-shared/<family>/targets.json` | which subagents carry a shared helper family | if its scripts import one (eve-sandbox-workspace) |
 | `AGENTS.md` "Capability flags" | the named `web_search` sites | if a subagent shipped **in the base app** declares `web_search`; a pack documents its own |

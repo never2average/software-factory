@@ -1,6 +1,6 @@
 /**
  * The TODO tools: `upsert_todo`, `list_todos`, `hide_todo` (re-exported from
- * snake_case files under `agent/tools/`). A todo is the FDE team's internal
+ * snake_case files under `agent/tools/`). A todo is the team's internal
  * checklist item — NOT a customer ticket (that's `create_ticket`). It can hang
  * off a Deployment/Implementation (the epic analog) and link to a related
  * object. Relative `.ts` specifiers, same as app-tools.ts.

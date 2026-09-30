@@ -10,7 +10,7 @@
  * to the fail-closed shape, and asks lib/workspace-attention.ts — as app_rw — for both. It restores the policies and
  * removes its rows afterwards.
  *
- *   ADMIN_URL=postgres://…admin… DATABASE_URL=postgres://app_rw:…@…/fde_test npm run test:workspace-attention-db
+ *   ADMIN_URL=postgres://…admin… DATABASE_URL=postgres://app_rw:…@…/workspace_test npm run test:workspace-attention-db
  */
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";

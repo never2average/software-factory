@@ -1,4 +1,4 @@
-# FDE Data Room — sheet-packaging view (derived from `dm.md`)
+# Data Room — sheet-packaging view (derived from `dm.md`)
 
 > **`dm.md` at the repository root is the CANONICAL data model.** It defines
 > the seven top-level domains, their folder trees, and every artifact path.
@@ -470,7 +470,7 @@ root-cause/remediation fields, postmortem fields, `tags`,
 
 **Ticket categories.** Every ticket is classified into exactly one canonical
 `ticket_category` (required). This is the triage taxonomy — coarser than the
-free-form `ticket_type` — and it routes the ticket to the right FDE specialist:
+free-form `ticket_type` — and it routes the ticket to the right specialist:
 
 | `ticket_category`                 | Routes to (specialist) |
 | --------------------------------- | ---------------------- |

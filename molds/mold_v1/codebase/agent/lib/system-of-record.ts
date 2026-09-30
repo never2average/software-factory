@@ -68,7 +68,7 @@ export type FollowUp = Ticket;
  * then an id held only by another workspace is simply not found — row-level security and the key are the check.
  *
  * A caller that names none (undefined, null or empty) is refused, never given "whoever holds this id". That used to
- * be the fallback for a system path with no session (a seed script, a sync, the scripts/fde backfills), found by
+ * be the fallback for a system path with no session (a seed script, a sync, the scripts/operator backfills), found by
  * asking each workspace for the owner; with the same id in two workspaces it would pick one of them. Those paths now
  * carry their workspace explicitly (`--org`, the sync's own orgId).
  */
@@ -1104,7 +1104,7 @@ export async function listUrgentTickets(
 }
 
 /**
- * Reassign a customer's durable FDE owner: update `customers.fde_owner` and upsert
+ * Reassign a customer's durable owner: update `customers.fde_owner` and upsert
  * the `internal_staff` solution_engineer row, in one call. Returns the previous +
  * new owner so the caller can log the change. Requires Postgres.
  */

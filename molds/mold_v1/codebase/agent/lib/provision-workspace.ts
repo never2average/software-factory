@@ -4,10 +4,10 @@
  * Creating an org used to write four things — the org row, the owner's
  * membership, a platform-admin row, and the global recipe catalog — and stop.
  * The workspace that came out had no workflows at all, so the first thing a new
- * customer saw was an empty product, and the only fix was an FDE remembering to
- * run `fde:seed-workflows` by hand against the right `--org`.
+ * customer saw was an empty product, and the only fix was an operator remembering to
+ * run `operator:seed-workflows` by hand against the right `--org`.
  *
- * Both creation paths (the `fde:new-org` CLI and the self-serve wizard's
+ * Both creation paths (the `operator:new-org` CLI and the self-serve wizard's
  * POST /api/ops/orgs) call this, so they cannot drift apart. That is also why
  * the recipe catalog lives HERE and not in the CLI: for a while the CLI seeded
  * recipes and the wizard did not, so a self-serve workspace had an onboarding
@@ -159,7 +159,7 @@ export async function provisionWorkspace(
  * and what its operator override is read from, so a subagent without one runs unrecorded and cannot be tuned.
  * Discovered from the generated registry, not listed: a subagent added as a directory, or by a pack, gets its
  * row the next time this runs. provisionWorkspace calls it for a new workspace; for an EXISTING workspace run
- * `npm run fde:seed-subagent-rows -- --org <id>`, which touches nothing else.
+ * `npm run operator:seed-subagent-rows -- --org <id>`, which touches nothing else.
  *
  * `db` must already be scoped to `orgId` (withOrgDb / withOrgRls), as for provisionWorkspace.
  */

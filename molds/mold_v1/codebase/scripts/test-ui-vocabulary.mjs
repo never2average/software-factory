@@ -15,9 +15,27 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { register } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+
+// The web app's `@/` alias and extensionless imports, and Next's `server-only` guard (a no-op outside a client
+// bundle), so a server module such as lib/org-seed.ts loads here as it does in a route.
+register(
+  "data:text/javascript," +
+    encodeURIComponent(`
+      const ROOT = ${JSON.stringify(pathToFileURL(process.cwd() + "/").href)};
+      export async function resolve(s, c, n) {
+        if (s === "server-only") return { url: "data:text/javascript,export {}", shortCircuit: true };
+        if (s.startsWith("@/")) s = ROOT + s.slice(2);
+        try { return await n(s, c); } catch (e) {
+          if (!/\\.[cm]?[jt]sx?$/.test(s)) return await n(s + ".ts", c);
+          throw e;
+        }
+      }`),
+  import.meta.url,
+);
 
 const ROOT = process.cwd();
 const STAMPED = process.argv.includes("--stamped");
@@ -41,6 +59,11 @@ const imp = (rel) =>
     () => new Proxy({}, { get: (_t, k) => (k === "then" ? undefined : () => { throw new Error(`${rel} is missing (or does not load)`); }) }),
   );
 const zodIssue = (path, message) => ({ name: "ZodError", issues: [{ path, message }] });
+/** The base product's member words, read from the default profile (not written here: check:neutral-names counts the
+ *  role word), which a relabelled deployment's people must never read. */
+const BASE_VOCAB = JSON.parse(readFileSync(join(ROOT, "profiles/00-default.json"), "utf8")).vocabulary;
+const [BASE_MEMBER, BASE_MEMBERS] = [BASE_VOCAB.member.singular, BASE_VOCAB.member.plural];
+const ROLE_WORD = new RegExp(`\\b(${BASE_MEMBER}|${BASE_MEMBERS})\\b|forward-deployed`, "i");
 const RECORD = { customerId: "acme", deploymentId: "dep-1", implementationStage: "UAT", rolloutId: "r-1", deployment_model: "k8s", fdeOwner: "a@x.io", note: "the customer asked for a deployment" };
 
 async function relabelled() {
@@ -169,6 +192,38 @@ async function relabelled() {
       for (const o of view.options(key)) assert.deepEqual(baseWords(o.label), [], `${key} option ${o.value} -> ${o.label}`);
     }
   });
+
+  const seed = await imp("lib/org-seed.ts");
+  await check("10 a new workspace's built-in data-room README is in the profile's words: no base role or record word but the skills' real names", () => {
+    // The fixture names its own seed; with none (dataroom.seed null) the built-in tree is written, in the profile's words.
+    const builtIn = { ...DEPLOYMENT_PROFILE, dataroom: { ...DEPLOYMENT_PROFILE.dataroom, seed: null } };
+    const files = seed.starterFiles("org-1", "Acme", builtIn);
+    assert.deepEqual(files.map(([p]) => p), ["README.md", "Customers/README.md", "People/README.md"]);
+    for (const [path, body] of files) assert.doesNotMatch(body, ROLE_WORD, `${path} carries the base role word`);
+    // A skill is called by its slug (`onboard-customer`), which does not move; nothing else may carry a base word.
+    for (const [path, body] of files) assert.deepEqual(baseWords(body.replace(/\*\*onboard-customer\*\*/g, "")), [], `${path} carries a base word`);
+    const all = files.map(([, b]) => b).join("\n");
+    assert.match(all, /^Companies\/\{company_id\}\/$/m, "the tree shows the profile's folder and id");
+    assert.match(all, /^Coverage-reports\/\{company_id\}\//m);
+    assert.doesNotMatch(all, /^Tickets\//m, "a record area the profile hides is not in the tree");
+    assert.match(all, /^# Acme — data room$/m, "the workspace's own name is kept as it is");
+    assert.match(all, /the agent and the analyst team/);
+    assert.match(all, /curated by the analyst\n/);
+    assert.match(all, /Analysts are recorded as team memories/);
+    // And the seed this deployment actually writes (the profile's own).
+    for (const [path, body] of seed.starterFiles("org-1", "Acme")) assert.doesNotMatch(body, ROLE_WORD, `${path} carries the base role word`);
+  });
+  await check("11 the published HTML reports label the account, its owner and the record areas in the profile's words", async () => {
+    delete process.env.DATABASE_URL;
+    delete process.env.POSTGRES_URL;
+    const render = await imp("agent/lib/render-html.ts");
+    const html = await render.renderDataroomSummary({ now: "2026-07-10T12:00:00Z" });
+    assert.doesNotMatch(html, ROLE_WORD);
+    assert.deepEqual(baseWords(html), [], "the summary carries no base record word");
+    assert.match(html, /<h2>Companies<\/h2>/);
+    assert.match(html, /<th>Covering Analyst<\/th>/);
+    assert.equal(render.ownerHeading(), "Covering Analyst");
+  });
 }
 
 async function defaults() {
@@ -231,6 +286,22 @@ async function defaults() {
     // array), 13 (P5 String()), 14 (P6 Map), 19 (P3 prop) are the known misses: move a line into `caught` when the rule
     // learns its route.
     assert.deepEqual([...new Set(caught)].sort((a, b) => a - b), [29]);
+  });
+
+  const seed = await imp("lib/org-seed.ts");
+  await check("D a new workspace's built-in data-room README reads exactly as before", async () => {
+    // Byte-identical to the tree before it took the profile's words (sha256 of the pre-change output, aaec6b9).
+    const { createHash } = await import("node:crypto");
+    assert.equal(createHash("sha256").update(JSON.stringify(seed.starterFiles("org-1", "Acme"))).digest("hex"), "991a1d36007cec5dc527d98e6619d68f11b216f61a783ad4963e585744bb81fb");
+    const files = Object.fromEntries(seed.starterFiles("org-1", "Acme"));
+    assert.deepEqual(Object.keys(files), ["README.md", "Customers/README.md", "People/README.md"]);
+    assert.ok(files["README.md"].includes(`Everything the agent and the ${BASE_MEMBER} team\nknow about this account`));
+    assert.ok(files["README.md"].includes(`account context, curated by the ${BASE_MEMBER}\n`));
+    assert.ok(files["People/README.md"].includes(`Internal staff do **not** belong here. ${BASE_MEMBERS} are recorded as team memories via the\n`));
+  });
+  await check("D the published HTML reports keep the base owner heading", async () => {
+    const render = await imp("agent/lib/render-html.ts");
+    assert.equal(render.ownerHeading(), BASE_VOCAB.owner.replace(/\bowner\b/, "Owner"));
   });
 }
 

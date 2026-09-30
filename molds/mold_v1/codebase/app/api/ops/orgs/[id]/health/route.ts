@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/ops/orgs/{id}/health — org READINESS (the six setup checks).
  *
- * This is `fde:doctor` for a workspace, and it is the SINGLE SOURCE OF TRUTH for
+ * This is `operator:doctor` for a workspace, and it is the SINGLE SOURCE OF TRUTH for
  * the onboarding checklist: checks turn green here or not at all. Both onboarding
  * branches (manual + agent-runs-the-recipes) poll this, so the round-trip — a
  * remote agent's run ticking a check green — is verified, never asserted.

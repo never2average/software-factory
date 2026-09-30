@@ -1,17 +1,17 @@
-// fde:configure-platform — author a platform VERSION's design-decision schemas +
+// operator:configure-platform — author a platform VERSION's design-decision schemas +
 // reference architecture (the contract every solution binds to). Optionally, with
 // --customer, upsert that customer's platform-governance row.
 //
-//   npm run fde:configure-platform -- --version v2.4.0
-//   npm run fde:configure-platform -- --version v2.4.0 --customer contoso-bank --org <workspace id> \
+//   npm run operator:configure-platform -- --version v2.4.0
+//   npm run operator:configure-platform -- --version v2.4.0 --customer contoso-bank --org <workspace id> \
 //     --deployment-model single_tenant --residency in-country --primary-model claude-opus-4.8 \
 //     --use-case "collections triage"
 //
 // Version-scoped writes go to Platform/{ver}/ (shared, blob-only). The per-customer
-// governance row is the `platform` table. See docs/FDE_WORKFLOW.md (stage 3).
+// governance row is the `platform` table. See docs/OPERATOR_WORKFLOW.md (stage 3).
 import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
 import { platform } from "../../agent/lib/db/schema.ts";
-import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
+import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 
 // The seven design-decision schemas that make up the platform contract (dm.md).
 const DESIGN_SCHEMAS = [
@@ -30,8 +30,8 @@ async function main() {
     console.error(`${glyph.bad} --version <platform_version_id> is required (e.g. v2.4.0).`);
     process.exit(1);
   }
-  const { email: fde } = resolveIdentity();
-  if (!fde || !isOnfinance(fde)) {
+  const { email: me } = resolveIdentity();
+  if (!me || !isOnfinance(me)) {
     console.error(`${glyph.bad} No @onfinance.in identity — run \`node setup/fde-login.mjs\` or pass --email.`);
     process.exit(1);
   }
@@ -60,7 +60,7 @@ async function main() {
     }
     const orgId = workspaceFor();
     if (!(await getCustomer(db, orgId, customerId))) {
-      console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
+      console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
       await closeDb();
       process.exit(1);
     }

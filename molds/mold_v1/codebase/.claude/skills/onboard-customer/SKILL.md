@@ -1,27 +1,27 @@
 ---
 name: onboard-customer
-description: Create a new customer account in the system of record and seed its context in the data room. Use when starting a new customer, an FDE says "onboard <customer>", "set up a new account", "create the customer", "add <company>", or when you need a Customers/{id}/ workspace to exist before doing research, deployment, or backfills. Requires you to be onboarded first (see the onboard-self skill). Walks the FDE through naming/slugging the account, choosing tier/vertical/region, assigning owners, and seeding context.md — writing the customers row, the internal_staff assignment, and the data-room workspace.
+description: Create a new customer account in the system of record and seed its context in the data room. Use when starting a new customer, an engineer says "onboard <customer>", "set up a new account", "create the customer", "add <company>", or when you need a Customers/{id}/ workspace to exist before doing research, deployment, or backfills. Requires you to be onboarded first (see the onboard-self skill). Walks the engineer through naming/slugging the account, choosing tier/vertical/region, assigning owners, and seeding context.md — writing the customers row, the internal_staff assignment, and the data-room workspace.
 ---
 
 # Onboard a customer
 
 Create the account so every later stage (research, deploy, migrate, operate) has a
 `customers` row and a `Customers/{id}/` workspace to write into. This is **stage 1**
-of the FDE lifecycle — see [`docs/FDE_WORKFLOW.md`](../../../docs/FDE_WORKFLOW.md).
+of the operator lifecycle — see [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md).
 
 You must be onboarded yourself first (`onboard-self`), so your `@onfinance.in`
-identity is the account's FDE owner.
+identity is the account's owner (`fde_owner`, shown under the deployment's own owner label).
 
 ## Working style
 
 One step at a time. Everything writes to the **live** system of record and data
-room. Confirm the slug with the FDE before creating — the id is permanent and is the
+room. Confirm the slug with the engineer before creating — the id is permanent and is the
 folder name under `Customers/`, `Deployments/`, `Implementation/`, `Tickets/`.
 
 ## The steps
 
 **1. Name and slug.** Get the display name. The id defaults to a lowercase-kebab
-slug (`Contoso Bank` → `contoso-bank`); let the FDE override with `--id` if they
+slug (`Contoso Bank` → `contoso-bank`); let the engineer override with `--id` if they
 have a house convention. Confirm before proceeding.
 
 **2. Account facts.** Gather tier (Enterprise / Mid-Market / …), vertical, region,
@@ -30,7 +30,7 @@ become `TODO` in `context.md`.
 
 **3. Create.** Run:
 ```bash
-npm run fde:new-customer -- --name "Contoso Bank" --tier Enterprise --org <workspace id> \
+npm run operator:new-customer -- --name "Contoso Bank" --tier Enterprise --org <workspace id> \
   --vertical banking --region APAC \
   --business-owner cfo@contoso.com --technical-owner cto@contoso.com
 ```
@@ -62,12 +62,12 @@ WRITE:
 
 - Never invent a different id for an existing customer — check first; reuse the slug.
 - Never write customer content outside its `Customers/{id}/` subtree.
-- Never put the FDE (yourself) under `People/` — that tree is external stakeholders
+- Never put yourself (the engineer) under `People/` — that tree is external stakeholders
   only; you're recorded via `internal_staff` + your `onboard-self` team memory.
 
 ## Quick reference
 
 ```bash
-npm run fde:new-customer -- --name "…" --tier … --org <workspace id> --vertical … --region … \
+npm run operator:new-customer -- --name "…" --tier … --org <workspace id> --vertical … --region … \
   [--id …] [--business-owner …] [--technical-owner …] [--force]
 ```

@@ -9,13 +9,13 @@ The **per-deployment substrate** — what a configured solution runs *on*. Scaff
 the eight infrastructure domains under
 `Deployments/{customer}/{ver}/infrastructure/` and the 4-party signoff chain, and
 upserts the `deployments` row. Customer-scoped (unlike the shared `Platform/{ver}/`
-architecture). See [`docs/FDE_WORKFLOW.md`](../../../docs/FDE_WORKFLOW.md) (stage 4).
+architecture). See [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md) (stage 4).
 
 ## Steps
 
 **1. Scaffold.**
 ```bash
-npm run fde:configure-infra -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
+npm run operator:configure-infra -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
   --region APAC --cloud aws
 ```
 Upserts the `deployments` row and writes `customizations.tf` + `rationale.md` under
@@ -47,5 +47,5 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:configure-infra -- --customer <id> --org <workspace id> --version <ver> [--region … --cloud …]
+npm run operator:configure-infra -- --customer <id> --org <workspace id> --version <ver> [--region … --cloud …]
 ```

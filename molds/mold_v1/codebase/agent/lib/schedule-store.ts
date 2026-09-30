@@ -1,5 +1,5 @@
 /**
- * Durable dynamic-schedule rule engine for the FDE agent.
+ * Durable dynamic-schedule rule engine for the agent.
  *
  * POSTGRES IS THE SOURCE OF RECORD. When a `DATABASE_URL` (or `POSTGRES_URL`)
  * is configured, schedule rules persist in the `schedule_rules` table (see

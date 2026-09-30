@@ -209,7 +209,7 @@ export async function POST(request: NextRequest) {
     /**
      * Install the recipe catalog and the workflow library. A workspace with no
      * workflows is not a workspace anyone can use, and until now the only way
-     * to get them was an FDE remembering to run `fde:seed-workflows --org <id>`
+     * to get them was an operator remembering to run `operator:seed-workflows --org <id>`
      * by hand.
      *
      * Inside the new workspace's RLS scope, not on the unscoped handle above:
@@ -217,7 +217,7 @@ export async function POST(request: NextRequest) {
      * `recipes` and `workflows` fail closed, so as app_rw the unscoped insert
      * was refused — caught below as a "best-effort" failure — and every
      * self-serve workspace came out with an empty library. Same shape as
-     * `fde:new-org`, which is the other door onto these tables.
+     * `operator:new-org`, which is the other door onto these tables.
      *
      * Best-effort on purpose: the workspace itself is already created and
      * usable, so a seeding failure must not turn a successful signup into a

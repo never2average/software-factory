@@ -30,10 +30,11 @@
  * new can learn them. Everything else fails: the old ones may stand, a new one
  * may not be born.
  *
- * Deliberately NOT covered: `scripts/fde/**`, the `npm run fde:*` script names
- * and `scripts/fde/lib/fde.mjs`. That is the factory operator's own tooling,
- * ~1,200 further occurrences, and its rename is one separate, deliberate change.
- * Nothing an analyst or their coding assistant ever touches lives there.
+ * The operator tooling (scripts/operator/, `npm run operator:*`) is walked like
+ * the rest of scripts/: its own environment variables are read through
+ * LEGACY_OPERATOR_ENV (scripts/operator/lib/operator.mjs), neutral name first.
+ * Its old npm script names are kept as aliases in package.json, which this gate
+ * does not read; scripts/check-neutral-names.mjs lists them as contracts.
  */
 import { advertisedToolNames, declaredAliases, servedTools, tableValues, walkSources } from "./lib/wire-names.mjs";
 import { envNamesIn, identifierCarriesBaseWord, storageKeysIn, BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";

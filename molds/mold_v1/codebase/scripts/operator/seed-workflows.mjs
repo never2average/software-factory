@@ -1,10 +1,10 @@
-// fde:seed-workflows — install the FDE workflow library into the `workflows`
-// table from scripts/fde/workflows/*.workflow.js. Each file is a workflow SCRIPT
+// operator:seed-workflows — install the workflow library into the `workflows`
+// table from scripts/operator/workflows/*.workflow.js. Each file is a workflow SCRIPT
 // (export const meta + phase()/agent()/parallel()/pipeline()); we read it as
 // text and store it. Idempotent: upserts by workflow name.
 //
-//   npm run fde:seed-workflows -- --org <id>   # install/update for one workspace
-//   npm run fde:seed-workflows -- --list       # just print what would be seeded
+//   npm run operator:seed-workflows -- --org <id>   # install/update for one workspace
+//   npm run operator:seed-workflows -- --list       # just print what would be seeded
 //
 // The library is PER-WORKSPACE. Every row carries an org_id, because the
 // workflows table is org-scoped and RLS keys on `org_id = current_setting(...)`:
@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { getDb, closeDb } from "../../agent/lib/db/index.ts";
 import { orgs, workflows } from "../../agent/lib/db/schema.ts";
 import { and, eq, notInArray } from "drizzle-orm";
-import { flag, glyph, hasFlag } from "./lib/fde.mjs";
+import { flag, glyph, hasFlag } from "./lib/operator.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dir = join(here, "workflows");
@@ -110,7 +110,7 @@ async function main() {
     }
   }
   // Prune system-seeded workflows whose file was removed (keeps the library in
-  // sync with scripts/fde/workflows/ — a removed .workflow.js drops its row).
+  // sync with scripts/operator/workflows/ — a removed .workflow.js drops its row).
   const names = items.map((it) => it.name);
   const orphans = await db
     .delete(workflows)

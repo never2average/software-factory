@@ -97,7 +97,7 @@ async function customerEdges(db, orgId, customerId) {
 /**
  * The full context graph for a folder: what it must contain (from dm.md), what it
  * actually contains, what's missing, and its live edges. Pure data — a caller
- * prints it, writes it, or validates against it (fde:doctor).
+ * prints it, writes it, or validates against it (operator:doctor).
  */
 export async function buildContextGraph(store, db, folderPath, stampIso, orgId) {
   const req = folderRequirements(folderPath);

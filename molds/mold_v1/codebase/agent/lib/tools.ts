@@ -394,7 +394,7 @@ export const getOncallTool = modelFacing("get_oncall", defineTool({
   },
 }));
 
-export const listFdesTool = modelFacing("list_fdes", defineTool({
+export const listMembersTool = modelFacing("list_fdes", defineTool({
   description:
     "List the FDE (forward-deployed engineer) roster with live load. Reads every People/{id}/identity.json marked kind:'internal-fde' and joins the accounts each owns (customers.fde_owner) plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.",
   inputSchema: z.object({}),
@@ -403,7 +403,7 @@ export const listFdesTool = modelFacing("list_fdes", defineTool({
     const store = getDataroomStore(org);
     const paths = await store.list("People");
     const identityPaths = paths.filter((p) => /^People\/[^/]+\/identity\.json$/.test(p));
-    const fdes: Array<Record<string, unknown> & { email?: string; slug: string }> = [];
+    const members: Array<Record<string, unknown> & { email?: string; slug: string }> = [];
     await Promise.all(
       identityPaths.map(async (p) => {
         try {
@@ -411,7 +411,7 @@ export const listFdesTool = modelFacing("list_fdes", defineTool({
           if (!content) return;
           const id = JSON.parse(content) as Record<string, unknown>;
           if (id.kind !== "internal-fde") return;
-          fdes.push({ ...id, slug: p.split("/")[1] });
+          members.push({ ...id, slug: p.split("/")[1] });
         } catch {
           /* skip unreadable */
         }
@@ -428,7 +428,7 @@ export const listFdesTool = modelFacing("list_fdes", defineTool({
       cur.openTickets += c.openTickets;
       load.set(owner, cur);
     }
-    const roster = fdes.map((f) => {
+    const roster = members.map((f) => {
       const email = typeof f.email === "string" ? f.email.toLowerCase() : "";
       const l = load.get(email) ?? { accounts: 0, openTickets: 0 };
       return { ...f, accountsOwned: l.accounts, openTickets: l.openTickets };
@@ -499,7 +499,7 @@ export const createTicketTool = modelFacing("create_ticket", defineTool({
 }));
 
 /** Placeholder owner for a draft when none is resolved — a human assigns the
- *  real FDE when promoting the draft, so intake never fails on owner lookup. */
+ *  real member when promoting the draft, so intake never fails on owner lookup. */
 
 export const runEmailIntakeTool = modelFacing("run_email_intake", defineTool({
   description:

@@ -1,19 +1,20 @@
-// fde:doctor — walk the data room and check each customer's folders against their
+// operator:doctor — walk the data room and check each customer's folders against their
 // dm.md context graph: missing required files, dangling [[edges]]. Advisory by
 // default; --strict exits non-zero if anything is missing (a CI / finish gate).
 //
-//   npm run fde:doctor                      # every workspace's customers, each against its own data room
-//   npm run fde:doctor -- --org <workspace id> [--customer contoso-bank]
-//   npm run fde:doctor -- --strict
+//   npm run operator:doctor                      # every workspace's customers, each against its own data room
+//   npm run operator:doctor -- --org <workspace id> [--customer contoso-bank]
+//   npm run operator:doctor -- --strict
 //
 // Like solution-manager's doctor.ts, but structural and dm.md-driven — it reads
 // the same DATAROOM_PATH_TEMPLATES the store validates writes against. See
-// docs/FDE_WORKFLOW.md and the context-graph library.
+// docs/OPERATOR_WORKFLOW.md and the context-graph library.
 import { getDb, closeDb, dataroom, nowIso, withOrgDb } from "./lib/customer.mjs";
 import { customers, orgs } from "../../agent/lib/db/schema.ts";
 import { eq } from "drizzle-orm";
 import { buildContextGraph } from "./lib/context-graph.mjs";
-import { glyph, flag, hasFlag } from "./lib/fde.mjs";
+import { glyph, flag, hasFlag, operatorEnv } from "./lib/operator.mjs";
+import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 
 async function main() {
   const db = getDb();
@@ -24,7 +25,7 @@ async function main() {
   // Per workspace: a company is keyed by (org_id, customer_id) and its folders live in its workspace's data room
   // (mold_v1-118). --org names one; without it every workspace is checked, each in its own scope and data room.
   const only = flag("customer").trim();
-  const named = (flag("org") || process.env.FDE_ORG || "").trim();
+  const named = (flag("org") || operatorEnv("WORKSPACE_ORG")).trim();
   if (only && !named) {
     console.error(`${glyph.bad} --customer needs --org <workspace id>: a company id names a company only within a workspace.`);
     process.exit(1);
@@ -89,7 +90,7 @@ async function doctorWorkspace(db, orgId, only) {
     const dangling = owned
       .filter((c) => c.fdeOwner && !rosterEmails.has(c.fdeOwner.toLowerCase()))
       .map((c) => `${c.customerId}→${c.fdeOwner}`);
-    console.log(`\nRoster — ${rosterEmails.size} FDE(s) on file`);
+    console.log(`\nRoster — ${rosterEmails.size} ${DEPLOYMENT_PROFILE.vocabulary.member.plural} on file`);
     if (unassigned.length) {
       rosterProblems += unassigned.length;
       console.log(`${glyph.warn} unassigned accounts (no fde_owner): ${unassigned.join(", ")}`);

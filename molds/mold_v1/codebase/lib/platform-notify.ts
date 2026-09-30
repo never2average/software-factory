@@ -53,7 +53,7 @@ export async function notifyInvite(notice: InviteNotice): Promise<InviteDelivery
   else lines.push("", `Open ${PRODUCT_NAME} and look under “Shared with you”.`);
   const text = lines.join("\n");
   // The product is named: this email arrives from someone the reader may not know, about an app they may
-  // never have opened, and it used to say only "the FDE app".
+  // never have opened, and it used to name only the base product's role, never the product.
   const subject = `${notice.inviter} shared a chat thread with you on ${PRODUCT_NAME}`;
   const html = renderBrandedEmail({
     heading: "A chat thread was shared with you",

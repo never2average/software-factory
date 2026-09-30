@@ -7,7 +7,7 @@ description: Reconstruct a customer's deployment and customization history into 
 
 Reconstruct what was customized in a customer's deployment(s) into the canonical
 `Deployments/{id}/{version}/…` layout and the `deployments` system-of-record row.
-This is **stage 4** — see [`docs/FDE_WORKFLOW.md`](../../../docs/FDE_WORKFLOW.md).
+This is **stage 4** — see [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md).
 
 Use it when a deployment happened but its customizations were never recorded, or
 before an upgrade/audit that needs the current customized state captured.
@@ -15,7 +15,7 @@ before an upgrade/audit that needs the current customized state captured.
 ## Working style
 
 One version at a time. Gather the real customizations from wherever they live
-(terraform, PRs, `Deployments/syncs/{github,aws}`, the FDE's memory) before writing —
+(terraform, PRs, `Deployments/syncs/{github,aws}`, the owning engineer's memory) before writing —
 don't invent config. The signoff chain is a **gate**: the skill seeds it as
 `PENDING`, it is not done until the four parties actually sign.
 
@@ -29,12 +29,12 @@ terraform/config (`tf`), and the `rationale` (why). One or many.
 
 **3. Backfill.** Single customization via flags:
 ```bash
-npm run fde:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
+npm run operator:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
   --region APAC --cloud aws --summary "GPU inference + custom guardrails"
 ```
 Many at once via a JSON file (`[{ "title", "tf", "rationale" }, …]`):
 ```bash
-npm run fde:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
+npm run operator:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
   --from-file customizations.json
 ```
 This upserts the `deployments` row, writes `customizations.tf` + `rationale.md`
@@ -65,6 +65,6 @@ WRITE (per `Deployments/{id}/{version}/infrastructure/inference/`):
 ## Quick reference
 
 ```bash
-npm run fde:backfill-customizations -- --customer <id> --org <workspace id> --version <ver> \
+npm run operator:backfill-customizations -- --customer <id> --org <workspace id> --version <ver> \
   [--region …] [--cloud …] [--summary "…"] [--from-file customizations.json]
 ```

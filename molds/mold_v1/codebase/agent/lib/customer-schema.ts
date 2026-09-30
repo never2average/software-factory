@@ -26,7 +26,7 @@ export const ticketCategorySchema = z.enum([
 ]);
 export type TicketCategory = z.infer<typeof ticketCategorySchema>;
 
-/** Which FDE specialist a category routes to for triage. */
+/** Which specialist a category routes to for triage. */
 export const TICKET_CATEGORY_ROUTING: Record<TicketCategory, string> = {
   "Feature Request": "follow-ups",
   "Bug Report": "deployment",
@@ -347,7 +347,7 @@ export const ticketSchema = z.object({
     "Escalation",
   ]),
   // Canonical request classification. Every ticket is sorted into exactly one of
-  // these five; it drives triage routing to the right FDE specialist.
+  // these five; it drives triage routing to the right specialist.
   ticketCategory: ticketCategorySchema,
   ticketStatus: ticketStatusSchema,
   ticketPriority: z.enum(["P0-Critical", "P1-High", "P2-Medium", "P3-Low"]),

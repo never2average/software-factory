@@ -52,15 +52,15 @@ ok(
 
 const transcript = [
   JSON.stringify({ type: "ai-title", aiTitle: "Fix the deploy pipeline", sessionId: "sess-1" }),
-  JSON.stringify({ type: "user", sessionId: "sess-1", cwd: "/Users/fde/acme-platform", gitBranch: "main", timestamp: "2026-07-14T10:00:00Z", message: { role: "user", content: "This session is being continued from a previous conversation…" } }),
+  JSON.stringify({ type: "user", sessionId: "sess-1", cwd: "/Users/alex/acme-platform", gitBranch: "main", timestamp: "2026-07-14T10:00:00Z", message: { role: "user", content: "This session is being continued from a previous conversation…" } }),
   JSON.stringify({ type: "user", timestamp: "2026-07-14T10:01:00Z", message: { role: "user", content: [{ type: "text", text: "Deploy acme to prod with token ghp_" + "z".repeat(36) }] } }),
   JSON.stringify({ type: "assistant", timestamp: "2026-07-14T10:02:00Z", message: { role: "assistant", content: [
     { type: "tool_use", name: "Bash", input: { command: "vercel deploy --prod --token xoxb-111-secretsecret" } },
-    { type: "tool_use", name: "Edit", input: { file_path: "/Users/fde/acme-platform/vercel.json" } },
+    { type: "tool_use", name: "Edit", input: { file_path: "/Users/alex/acme-platform/vercel.json" } },
   ] } }),
   JSON.stringify({ type: "assistant", timestamp: "2026-07-14T10:05:00Z", message: { role: "assistant", content: [
     { type: "tool_use", name: "Bash", input: { command: "git push origin main" } },
-    { type: "tool_use", name: "Write", input: { file_path: "/Users/fde/acme-platform/README.md" } },
+    { type: "tool_use", name: "Write", input: { file_path: "/Users/alex/acme-platform/README.md" } },
   ] } }),
   "   ",
   "{ this is not json",
@@ -76,7 +76,7 @@ ok("REDACTS the secret in the opening ask", !s.opening?.includes("ghp_"), s.open
 ok("spans first→last timestamp", s.startedAt === "2026-07-14T10:00:00Z" && s.endedAt === "2026-07-14T10:05:00Z");
 ok("counts the human turns", s.userTurns === 2, String(s.userTurns));
 ok("counts tools", s.tools.Bash === 2 && s.tools.Edit === 1 && s.tools.Write === 1, JSON.stringify(s.tools));
-ok("collects files touched", s.filesTouched.includes("/Users/fde/acme-platform/vercel.json"));
+ok("collects files touched", s.filesTouched.includes("/Users/alex/acme-platform/vercel.json"));
 ok("keeps only command HEADS, not payloads", s.commandHeads.includes("vercel deploy") && s.commandHeads.includes("git push"), JSON.stringify(s.commandHeads));
 ok("no secret survives anywhere in the summary", !JSON.stringify(s).includes("secretsecret") && !JSON.stringify(s).includes("ghp_zzz"), JSON.stringify(s).slice(0, 200));
 ok("tolerates blank and non-JSON lines", true);

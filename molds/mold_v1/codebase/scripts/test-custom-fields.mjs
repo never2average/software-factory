@@ -341,8 +341,8 @@ const walk = (dir) => readdirSync(dir).flatMap((n) => {
   if (n === "node_modules" || n.startsWith(".")) return [];
   return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx|mjs)$/.test(n) ? [p] : [];
 });
-// scripts/fde too: its backfills wrote both tables with raw INSERTs, no validator and no workspace (mold_v1-089).
-const writers = ["app", "agent", "lib", "services", "scripts/fde"].flatMap((d) => walk(join(ROOT, d))).filter((f) => WRITES.test(readFileSync(f, "utf8"))).map((f) => f.slice(ROOT.length)).sort();
+// scripts/operator too: its backfills wrote both tables with raw INSERTs, no validator and no workspace (mold_v1-089).
+const writers = ["app", "agent", "lib", "services", "scripts/operator"].flatMap((d) => walk(join(ROOT, d))).filter((f) => WRITES.test(readFileSync(f, "utf8"))).map((f) => f.slice(ROOT.length)).sort();
 assert.deepEqual(writers, [
   "agent/lib/system-of-record.ts",
   "app/api/ops/deployments/[id]/route.ts",
@@ -355,19 +355,19 @@ for (const f of writers) assert.match(readFileSync(join(ROOT, f), "utf8"), VALID
 for (const f of ["app/api/ops/deployments/route.ts", "app/api/ops/implementations/route.ts"]) assert.match(readFileSync(join(ROOT, f), "utf8"), /custom: asCustomValues\(/, `${f} returns custom`);
 
 // The backfills write through the system of record (schema + own-field validator + workspace), and say what they refuse.
-for (const f of ["scripts/fde/backfill-customizations.mjs", "scripts/fde/backfill-integrations.mjs", "scripts/fde/configure-infra.mjs"]) {
+for (const f of ["scripts/operator/backfill-customizations.mjs", "scripts/operator/backfill-integrations.mjs", "scripts/operator/configure-infra.mjs"]) {
   const text = readFileSync(join(ROOT, f), "utf8");
   assert.match(text, /upsertCustomer\(\{ id: customerId, (deployments|implementation): /, `${f} writes through upsertCustomer`);
-  // The workspace is NAMED (--org / FDE_ORG), never taken from the company id: two workspaces may hold the same id
+  // The workspace is NAMED (--org / WORKSPACE_ORG), never taken from the company id: two workspaces may hold the same id
   // (mold_v1-118).
   assert.match(text, /const orgId = workspaceFor\(\)/, `${f} writes in the workspace it was given`);
   assert.match(text, /upsertCustomer\(\{ id: customerId, (deployments|implementation): [^)]*\}, orgId\)/, `${f} writes in that workspace`);
   assert.doesNotMatch(text, /ownerWorkspaceOf/, `${f} does not take the workspace from the id`);
 }
-const { checkValues } = await import("./fde/lib/customer.mjs");
+const { checkValues } = await import("./operator/lib/customer.mjs");
 const { deploymentSchema, implementationSchema } = await import("../agent/lib/customer-schema.ts");
 assert.match(checkValues(deploymentSchema, { environment: "production" }), /environment "production" is not accepted \(one of: prod, staging/);
-assert.match(checkValues(implementationSchema, { blockerOwner: "fde@example.com" }), /blockerOwner "fde@example.com" is not accepted \(one of: Provider, Customer/);
+assert.match(checkValues(implementationSchema, { blockerOwner: "owner@example.com" }), /blockerOwner "owner@example.com" is not accepted \(one of: Provider, Customer/);
 assert.equal(checkValues(implementationSchema, { implementationStage: "Integration", implementationRiskLevel: "Yellow", blockerOwner: "None", connectorProvisioningStatus: "Connected" }), null, "what backfill-integrations writes is valid");
 
 console.log("custom-fields: all assertions passed");

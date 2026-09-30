@@ -1,5 +1,5 @@
 /**
- * Multi-player long-term memory for the FDE agent.
+ * Multi-player long-term memory for the agent.
  *
  * POSTGRES IS THE SOURCE OF RECORD. When a `DATABASE_URL` (or `POSTGRES_URL`)
  * is configured, memories persist in the `memories` table (see

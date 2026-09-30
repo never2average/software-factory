@@ -547,6 +547,22 @@ jobs:
         if: always()
         run: npm run test:wire-names
 
+      # The rest of the tree, which none of the gates above walks: the base product's role word may appear only
+      # as a listed contract (a column, a variable, a bin, a script name, each with its migration plan), under a
+      # per-file ceiling that equals today's count, or under an exempt path. A new identifier, file name or
+      # comment carrying it fails, and so does a ceiling left higher than the file needs.
+      - name: Neutral names (no new occurrence of the base role word outside the contracts)
+        if: always()
+        run: npm run test:neutral-names && npm run check:neutral-names
+
+      # The operator tooling moved to scripts/operator/ (npm run operator:*) with every old name kept: each old npm
+      # script runs the same file, both old lib import paths re-export the new modules, the four variables are read
+      # neutral-first with the old name as a fallback, and the member-profile memory key is written neutral and read
+      # both ways. Offline; no database.
+      - name: Operator tooling (old script names, import paths, env names and memory key still work)
+        if: always()
+        run: npm run test:operator-tooling
+
       # The profile generator's rules (including custom_fields) and the per-turn briefing. It existed and was not
       # wired in; the custom-field checks below lean on it, so both run.
       - name: Deployment profile (generator rules, briefing)
@@ -601,7 +617,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: fde_test
+          POSTGRES_DB: workspace_test
         ports: ["5432:5432"]
         # Without this the job races the container and fails on connect.
         options: >-
@@ -610,7 +626,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/fde_test
+      ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/workspace_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -653,7 +669,7 @@ jobs:
         run: ADMIN_URL="$ADMIN_URL" npm run test:customer-id-index-migration-db
 
       - name: Cross-tenant isolation
-        run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" node scripts/test-org-isolation.mjs
+        run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" node scripts/test-org-isolation.mjs
 
       # The chat access holes all rested on ONE database fact: under the
       # production fail-closed policy an unscoped read returns zero rows, and
@@ -667,7 +683,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           node scripts/test-chat-access-db.mjs
 
       # WHOSE SESSION IS IT — enforced by the AGENT, for every caller. The agent API is its own public deployment,
@@ -684,7 +700,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:session-guard
 
       # THE CROSS-WORKSPACE READ, against the production policy: for every by-id reader and writer the model can
@@ -695,7 +711,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:cross-workspace-db
 
       # TWO WORKSPACES HOLD THE SAME COMPANY ID (mold_v1-118), through the agent's write and read paths and every
@@ -706,7 +722,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:shared-company-id-db
 
       # THE RUN HISTORY, which is two database facts and nothing else. That a
@@ -720,7 +736,7 @@ jobs:
       - name: Subagent run history, against a real Postgres
         if: always()
         run: |
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:run-history-db
 
       # THE ACCOUNT RECORD'S OWN FIELDS (account_fields.custom_fields). Two database facts: that
@@ -733,7 +749,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:account-custom-fields-db
 
       # The two record areas (deployments[], implementation) written by upsert_customer: only the rows and fields
@@ -743,7 +759,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:record-areas-db
 
       # WHO OWNS A CHAT IN THE LIST MIRROR. The upsert conflicts on the row id
@@ -764,7 +780,7 @@ jobs:
           cp scripts/fixtures/agent-vocabulary/50-relabelled.json profiles/
           npm run build
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:workbook-route-db
 
       # THE WORKSPACE SWITCHER'S COUNTS. lib/workspace-attention.ts counted every workspace at once on the bare
@@ -774,14 +790,14 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:workspace-attention-db
 
       - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:chat-sessions-mirror-db
 
       # A workspace reads its OWN mailbox: its gmail connector, or the deployment's IMAP_* mailbox only when
@@ -791,7 +807,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:workspace-mailbox-db
 
       # A chat lives in one workspace and is visible only there: the real thread routes, the session gate and the
@@ -801,7 +817,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:thread-visibility-db
 
       # An invite a chat share sent before #85 (origin 'chat_share', migration 0026) is never listed, claimed or
@@ -810,7 +826,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:chat-share-invites-db
 
       # The root migration attributes a company's files by each workspace's own customers table (read in its scope).
@@ -818,7 +834,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:migrate-attribution-db
 
       # THE CHAT QUEUE MOVED TO THE SERVER (closing a tab no longer loses a queued message), and the devices people
@@ -830,7 +846,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:chat-queue-db
 
       # deployment_upsert (MCP) posts to POST /api/ops/deployments, which was insert-only: a record could be created
@@ -839,7 +855,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:deployment-upsert-db
 
       # The same over HTTP (reuses the relabelling build above): the Ops API, the workbook route, the export and the
@@ -848,7 +864,7 @@ jobs:
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \
-          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:shared-company-id-http-db
 
 # NOT RUN HERE, deliberately:

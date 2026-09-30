@@ -1,4 +1,4 @@
-// fde:thread-open-perf — measure what "opening a thread" actually costs in the
+// operator:thread-open-perf — measure what "opening a thread" actually costs in the
 // deployed app, phase by phase, from a laptop.
 //
 // Opening a chat is not one request. The browser lists threads through the Ops
@@ -16,10 +16,10 @@
 //   /api/ops/chat-replay (tail)            the NEW open, phase 2: what is new
 //   /api/ops/threads/:id/stream (shared)   delta = membership check + 2nd hop
 //
-//   npm run fde:thread-open-perf                    # unauthenticated baseline
-//   npm run fde:thread-open-perf -- --token "$T"    # + the thread-open phases
-//   npm run fde:thread-open-perf -- --token-file ~/.fde-token --runs 3 --json
-//   npm run fde:thread-open-perf -- --owned <threadId> --shared <threadId>
+//   npm run operator:thread-open-perf                    # unauthenticated baseline
+//   npm run operator:thread-open-perf -- --token "$T"    # + the thread-open phases
+//   npm run operator:thread-open-perf -- --token-file ~/.workspace-token --runs 3 --json
+//   npm run operator:thread-open-perf -- --owned <threadId> --shared <threadId>
 //
 // TWO TERMS, REPORTED SEPARATELY, because they have different fixes.
 //
@@ -38,9 +38,9 @@
 // app/_components/chat-shell.tsx — including its SEGMENTS and its quiet windows.
 // Keep the two in step.
 import { readFileSync } from "node:fs";
-import { glyph, flag, hasFlag } from "./lib/fde.mjs";
+import { glyph, flag, hasFlag, opsUrl, operatorEnv } from "./lib/operator.mjs";
 
-const FRONT = (process.env.FDE_OPS_URL ?? "https://fde-agent.vercel.app").replace(/\/$/, "");
+const FRONT = opsUrl();
 const AGENT = (process.env.NEXT_PUBLIC_EVE_API_URL ?? "https://fde-agent-api.vercel.app").replace(/\/$/, "");
 
 // chat-shell's own bounds. Named here so a drift between the two is visible.
@@ -301,16 +301,16 @@ function readToken() {
       process.exit(1);
     }
   }
-  return (process.env.FDE_GOOGLE_TOKEN ?? "").trim();
+  return operatorEnv("WORKSPACE_GOOGLE_TOKEN");
 }
 
 const HOW_TO_GET_A_TOKEN =
   `  Sign in at ${FRONT}, open the browser console and run:\n` +
   `    copy(localStorage.getItem("workspace-google-token") || localStorage.getItem("fde-google-token"))\n` +
   `  then pass it (Google ID tokens live ~1h, so re-copy when it expires):\n` +
-  `    npm run fde:thread-open-perf -- --token "<paste>"\n` +
-  `  or:  FDE_GOOGLE_TOKEN=<paste> npm run fde:thread-open-perf\n` +
-  `  or:  npm run fde:thread-open-perf -- --token-file ~/.fde-token`;
+  `    npm run operator:thread-open-perf -- --token "<paste>"\n` +
+  `  or:  WORKSPACE_GOOGLE_TOKEN=<paste> npm run operator:thread-open-perf\n` +
+  `  or:  npm run operator:thread-open-perf -- --token-file ~/.workspace-token`;
 
 /** Unauthenticated, always runs: is the platform itself slow today? */
 async function baseline(json) {

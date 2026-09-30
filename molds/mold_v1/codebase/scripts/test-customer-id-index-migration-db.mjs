@@ -20,7 +20,7 @@
  * Needs ADMIN_URL (a role that may CREATE DATABASE). Scratch databases carry this process's pid and are dropped in a
  * finally block.
  *
- *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5432/fde_test npm run test:customer-id-index-migration-db
+ *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5432/workspace_test npm run test:customer-id-index-migration-db
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -75,11 +75,11 @@ async function seed(db) {
   for (let i = 0; i < 40; i++) {
     const org = i < 20 ? W1 : W2;
     const id = `co-${String(i + 1).padStart(3, "0")}`;
-    await db`insert into customers (org_id, customer_id, customer_name, tier, fde_owner) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'fde@idx.test')`;
+    await db`insert into customers (org_id, customer_id, customer_name, tier, fde_owner) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'owner@idx.test')`;
     for (const d of ["prod", "uat"]) await db`insert into deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status) values (${org}, ${id}, ${`DEP-${d}`}, ${d}, 'ap-south-1', ${`v-${id}`}, 'deployed', 'healthy')`;
-    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, solution_fde_owner) values (${org}, ${id}, 'SOL-1', 'Research', '[]', 'live', 'fde@idx.test')`;
+    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, solution_fde_owner) values (${org}, ${id}, 'SOL-1', 'Research', '[]', 'live', 'owner@idx.test')`;
     for (const n of [1, 2]) {
-      await db`insert into tickets (org_id, customer_id, ticket_id, summary, ticket_type, ticket_category, ticket_status, ticket_priority, ticket_opened_date, ticket_owner_email, source_channel, last_activity_date, ticket_next_step) values (${org}, ${id}, ${`TCK-${n}`}, ${`t${n}`}, 'Question', 'Feature Request', 'Open', 'P2-Medium', '2026-09-01', 'fde@idx.test', 'Email', '2026-09-01', 'look')`;
+      await db`insert into tickets (org_id, customer_id, ticket_id, summary, ticket_type, ticket_category, ticket_status, ticket_priority, ticket_opened_date, ticket_owner_email, source_channel, last_activity_date, ticket_next_step) values (${org}, ${id}, ${`TCK-${n}`}, ${`t${n}`}, 'Question', 'Feature Request', 'Open', 'P2-Medium', '2026-09-01', 'owner@idx.test', 'Email', '2026-09-01', 'look')`;
       await db`insert into interactions (org_id, customer_id, interaction_id, interaction_at, interaction_type, source_system, note) values (${org}, ${id}, ${`INT-${n}`}, '2026-09-01', 'note', 'manual', ${`i${n}`})`;
     }
   }

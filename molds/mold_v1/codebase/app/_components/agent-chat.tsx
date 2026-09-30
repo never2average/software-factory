@@ -4999,7 +4999,7 @@ function useStarterCards(
         if (cancelled) return;
 
         const copy = DEPLOYMENT_PROFILE.chat.starter_cards;
-        /** The FDE who owns the account, as a contact the card can hover. */
+        /** The member who owns the account, as a contact the card can hover. */
         const ownerOf = (c: StarterCustomer) =>
           c.fdeOwner
             ? {

@@ -51,7 +51,7 @@ assert.ok(!report.includes("<script"), "report contains NO script tag (zero JS)"
 
 assert.ok(report.includes("Acme Bank"), "report names the customer");
 assert.ok(report.includes("TCK-1001"), "report lists the overdue ticket");
-assert.ok(report.includes("priyesh@example.com"), "report surfaces the FDE owner");
+assert.ok(report.includes("priyesh@example.com"), "report surfaces the account owner");
 
 for (const heading of ["Open Follow-Ups", "Recent Interactions", "Deployments", "Platform"]) {
   assert.ok(report.includes(heading), `report has the '${heading}' section`);
@@ -99,5 +99,92 @@ assert.ok(summary.includes("</html>"), "summary closes the html element");
 assert.ok(!summary.includes("<script"), "summary contains NO script tag");
 assert.ok(summary.includes("Acme Bank"), "summary includes the first customer");
 assert.ok(summary.includes("Northwind Capital"), "summary includes the second customer");
+
+/* -------------------------------------------------------------------------- */
+/* Every label speaks the deployment profile's words                           */
+/* -------------------------------------------------------------------------- */
+
+// The base product's words, read from the default profile rather than written here (the role word is counted by
+// check:neutral-names): the member, and the owner heading as the report has always titled it.
+const { readFileSync } = await import("node:fs");
+const { createHash } = await import("node:crypto");
+const BASE_VOCAB = JSON.parse(readFileSync(new URL("../profiles/00-default.json", import.meta.url), "utf8")).vocabulary;
+const BASE_OWNER_HEADING = BASE_VOCAB.owner.replace(/\bowner\b/, "Owner");
+/** The base product's record and role words, as whole tokens (camelCase humps and `-`/`_` are boundaries). */
+const BASE_WORDS = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", BASE_VOCAB.member.singular.toLowerCase(), BASE_VOCAB.member.plural.toLowerCase()]);
+const baseWords = (t) => [...String(t).matchAll(/[A-Za-z0-9]+/g)].flatMap((m) => m[0].split(/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/)).filter((p) => BASE_WORDS.has(p.toLowerCase()));
+/** The text of a report's LABELS: headings, column heads, meta keys, the sub line, empty states, totals, title. Data
+ *  (names, ids, ticket text, enum values in cells) is printed as stored and is not a label. */
+const labels = (html) =>
+  [...html.matchAll(/<(title|h2|th|p class="(?:sub|empty|totals)"|span class="k")>([\s\S]*?)<\/(?:title|h2|th|p|span)>/g)]
+    .map((m) => m[2].replace(/<[^>]+>/g, " "))
+    .concat(/Summary<\/h1>/.test(html) ? [html.match(/<h1>([^<]*)<\/h1>/)[1]] : []);
+
+// The default profile reads exactly as before: byte-identical to the renderer before any label came from the
+// profile (sha256 of its output on this fixture store at NOW, taken from the pre-change code at aaec6b9).
+const sha = (s) => createHash("sha256").update(s).digest("hex");
+const northwind = await renderAccountReport({ customerId: "northwind-cap", now: NOW });
+assert.equal(sha(report), "192658e7cace6094f1d968b9ab4b3c5d05a3745c0c305dd9a96114c7612cd93f", "default profile: the account report is byte-identical to the pre-change renderer");
+assert.equal(sha(northwind), "47e28d0e4b10a46da54511a6496360b221f9ecf08736c80af123084d693c6c67", "default profile: a second account report is byte-identical to the pre-change renderer");
+assert.equal(sha(summary), "d28cee03efd509a9889e0a08dabf17729ef58534fb50efc73cde25b3c9141d41", "default profile: the data-room summary is byte-identical to the pre-change renderer");
+assert.ok(report.includes(`<span class="k">${BASE_OWNER_HEADING}</span>`), "default profile: the report's owner label is unchanged");
+assert.ok(summary.includes(`<th>${BASE_OWNER_HEADING}</th>`), "default profile: the summary's owner column is unchanged");
+
+// A relabelled profile (the hfc-research pack's, scripts/fixtures/agent-vocabulary/50-relabelled.json), merged by
+// the real generator, shows a person none of the base product's words in either report.
+const { spawnSync } = await import("node:child_process");
+const { cpSync, mkdtempSync, rmSync } = await import("node:fs");
+const { tmpdir } = await import("node:os");
+const { join } = await import("node:path");
+const REPO = new URL("..", import.meta.url).pathname;
+function mergedProfile(extra) {
+  const dir = mkdtempSync(join(tmpdir(), "render-profiles-"));
+  try {
+    cpSync(join(REPO, "profiles/00-default.json"), join(dir, "00-default.json"));
+    cpSync(join(REPO, "scripts/fixtures/agent-vocabulary/50-relabelled.json"), join(dir, "50-relabelled.json"));
+    const r = spawnSync(process.execPath, ["scripts/gen-deployment-profile.mjs", "--print"], { cwd: REPO, env: { ...process.env, PROFILES_DIR: dir }, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return extra ? extra(JSON.parse(r.stdout)) : JSON.parse(r.stdout);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const relabelled = mergedProfile();
+const relabelledReports = [
+  await renderAccountReport({ customerId: "acme-bank", now: NOW, profile: relabelled }),
+  await renderAccountReport({ customerId: "northwind-cap", now: NOW, profile: relabelled }),
+];
+const relabelledSummary = await renderDataroomSummary({ now: NOW, profile: relabelled });
+for (const html of relabelledReports) {
+  assert.ok(labels(html).length >= 20, "the label extractor sees the report's labels");
+  assert.deepEqual(baseWords(labels(html).join("\n")), [], "relabelled profile: no label of the account report carries a base word");
+}
+// The summary carries no stored free text: the whole document, data included, is free of them.
+assert.deepEqual(baseWords(relabelledSummary), [], "relabelled profile: the data-room summary carries no base word anywhere");
+const [relabelledReport] = relabelledReports;
+assert.ok(relabelledReport.includes('<span class="k">Covering Analyst</span>'), "relabelled profile: the owner label is the profile's owner word");
+assert.ok(relabelledReport.includes("<h2>Coverage Reports</h2>"), "relabelled profile: the deployment section is the profile's record area");
+assert.ok(relabelledReport.includes("<th>Coverage Report</th><th>Environment</th><th>Period / Basis</th><th>Status</th><th>Data Quality</th>"), "relabelled profile: the deployment columns are the profile's field labels");
+assert.ok(!relabelledReport.includes("Platform Summary"), "relabelled profile: the Platform area it hides is left out");
+assert.ok(relabelledSummary.includes("<h1>Research Room Summary</h1>"), "relabelled profile: the summary is titled with the profile's room");
+assert.ok(relabelledSummary.includes("<p class=\"sub\">All companies · "), "relabelled profile: the summary's sub line names the profile's accounts");
+assert.ok(relabelledSummary.includes("<h2>Companies</h2>") && relabelledSummary.includes("<th>Company</th>"), "relabelled profile: the summary's section and column name the profile's accounts");
+assert.ok(relabelledSummary.includes("<th>Covering Analyst</th>"), "relabelled profile: the owner column is the profile's owner word");
+assert.match(relabelledSummary, /<p class="totals">2 companies · /, "relabelled profile: the totals line counts the profile's accounts");
+
+// Empty states and the words behind them.
+const { ownerHeading, reportWords } = await import("../agent/lib/render-html.ts");
+const w = reportWords(relabelled);
+assert.equal(w.deployments, "coverage reports", "relabelled profile: \"No coverage reports on record.\"");
+assert.deepEqual(baseWords(Object.values(w).filter((x) => typeof x === "string").join("\n")), [], "relabelled profile: no report word is a base word");
+// A profile that renames the deployment area but shows Platform calls the install's model what it is.
+const withPlatform = reportWords(mergedProfile((p) => ({ ...p, dataroom: { ...p.dataroom, domains: { ...p.dataroom.domains, Platform: { label: "Platform", visible: true } } } })));
+assert.equal(withPlatform.platform, true);
+assert.equal(withPlatform.deploymentModel, "Hosting Model", "deployment area renamed: the platform's deployment model is its hosting model");
+
+// A profile that renames the member but keeps the base owner label still reads its own member word.
+const memberOnly = mergedProfile((p) => ({ ...p, vocabulary: { ...p.vocabulary, owner: BASE_VOCAB.owner } }));
+assert.equal(ownerHeading(memberOnly), "Analyst Owner", "member renamed, owner label kept: the member word is spoken");
+assert.equal(ownerHeading(), BASE_OWNER_HEADING, "default profile: the heading is the base one");
 
 console.log("test-render: all assertions passed (fallback path, no Postgres).");

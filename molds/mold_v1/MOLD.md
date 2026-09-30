@@ -1,7 +1,7 @@
 # mold_v1
 
 **Status:** active
-**Source:** github.com/never2average/fde-agent @ 76563f0 (`main`, snapshot 2026-09-29; PRs #13-#82, #84-#86): subagent packs, CI checks, deployment profile, subagent workspace inheritance + thread sharing + PDF viewer + per-role models, settings on the active workspace + Invite agents)
+**Source:** github.com/never2average/fde-agent @ 5919f99 (`main`, snapshot 2026-09-30; PRs #13-#82, #84-#89): subagent packs, CI checks, deployment profile, subagent workspace inheritance + thread sharing + PDF viewer + per-role models, settings on the active workspace + Invite agents)
 
 **Node:** 24.x (package.json engines; VM and Vercel project both on 24)
 **Target model:** GLM 5.2 via OpenAI-compatible provider
@@ -16,7 +16,7 @@
 
 | Surface | Where in codebase |
 |---|---|
-| dm.md (data-room tree) | `codebase/dm.md`, `codebase/docs/FDE_WORKFLOW.md` |
+| dm.md (data-room tree) | `codebase/dm.md`, `codebase/docs/OPERATOR_WORKFLOW.md` |
 | browser (optional) | `ENABLE_BROWSER` build-time flag, browser subagent |
 | web search (optional) | `ENABLE_WEB_SEARCH` build-time flag (Exa) |
 | primary_context | `codebase/agent/instructions/`, memory + prompt-context |

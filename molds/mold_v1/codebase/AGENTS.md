@@ -13,15 +13,16 @@ procedure to connect your coding agent to the data room over MCP, put data in,
 and build subagent-driven workflows. It begins with a live health check
 (`/api/ops/health`) so you know the platform is up before you touch it.
 
-## Working as an FDE
+## Working as an operator
 
-Forward-Deployed Engineers operate this platform through a set of guided **skills**
+The engineers who run this platform for a customer (operators) work through a set of guided **skills**
 in [`.claude/skills/`](.claude/skills/), backed by scripts in
-[`scripts/fde/`](scripts/fde/) (`npm run fde:*`). The lifecycle — and where every
-kind of work lands in the data room — is [`docs/FDE_WORKFLOW.md`](docs/FDE_WORKFLOW.md).
+[`scripts/operator/`](scripts/operator/) (`npm run operator:*`; each command's older name still runs the same
+file). The lifecycle — and where every
+kind of work lands in the data room — is [`docs/OPERATOR_WORKFLOW.md`](docs/OPERATOR_WORKFLOW.md).
 
 Start with the **`onboard-self`** skill (get yourself signed in, wired, and recorded
-as an FDE) before any customer work. Then `onboard-customer`, and the backfill
+as a team member) before any customer work. Then `onboard-customer`, and the backfill
 skills for reconstructing customization and integration history.
 
 ## Customising the eve agents
@@ -45,7 +46,7 @@ A vertical (a set of subagents for one line of work) ships as a **subagent pack*
 dropped in, no fork, no edits to base files. See
 [`docs/SUBAGENT_PACKS.md`](docs/SUBAGENT_PACKS.md).
 
-What a deployment is *for* (the product name, what a "customer" and an "FDE" are called,
+What a deployment is *for* (the product name, what a "customer" and a team member are called,
 which data-room domains show and under what label, the starter tree, the chat's opening
 lines, a short per-turn briefing for the model) is a **deployment profile**: JSON files
 added under `profiles/`, never an edit to a component. See
@@ -54,7 +55,9 @@ domains, the agent's model reads only its words: tool names, parameters, results
 prompts and the roster are translated at the tool boundary (`agent/lib/agent-vocabulary.ts`),
 storage never moves, and `npm run check:agent-vocabulary` proves both halves. What a PERSON reads (the UI, the
 ops API's messages, the client bundle) takes the same words from `lib/ui-words.ts`, and
-`npm run check:ui-vocabulary` proves it. Every tool is
+`npm run check:ui-vocabulary` proves it. The rest of the tree (identifiers, file names, comments, docs) is held by
+`npm run check:neutral-names`: the base product's role word may appear only as a listed contract with its
+migration plan, under a per-file ceiling, or under an exempt path (`scripts/neutral-names.allow.json`). Every tool is
 exported through `modelFacing(...)`; the root prompt is `agent/prompt-*.md`, rendered by
 `agent/instructions.ts`, and a base specialist's is its `prompt.md`.
 

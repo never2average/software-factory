@@ -7,7 +7,7 @@ description: Scaffold a reusable pipeline solution as a self-describing "minifie
 
 A configured solution is a **self-contained, independently versionable, eval-gated
 unit** — a *minified solution-manager*. The key idea: the "solution-manager" is the
-central machine (these `fde:*` scripts); each solution is the **data** that machine
+central machine (these `operator:*` scripts); each solution is the **data** that machine
 runs — a schema (contract) + a config (artifact) + evals (the gate) + migrations
 (change history) + grounding. Don't fork the machine into each solution; keep it
 central and make each solution self-describing.
@@ -15,13 +15,13 @@ central and make each solution self-describing.
 This maps `OnFinance/solution-manager` onto your data model:
 `pipeline.schema.json` → `run_configs.schema.json`; `solution.json` →
 `pipeline_config.json`; the PR gate → **eval acceptance + the deployment signoff**,
-not git. See [`docs/FDE_WORKFLOW.md`](../../../docs/FDE_WORKFLOW.md).
+not git. See [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md).
 
 ## Steps
 
 **1. Scaffold the instance.**
 ```bash
-npm run fde:configure-solution -- --version v2.4.0 --id pl-collections \
+npm run operator:configure-solution -- --version v2.4.0 --id pl-collections \
   --use-case "Collections triage"
 ```
 Writes the contract (`run_configs.schema.json`, `integromat.schema.json`) and the
@@ -36,7 +36,7 @@ platform version's `pipeline_config` design decision), then fill
 
 **3. Register + seed a customer (optional).**
 ```bash
-npm run fde:configure-solution -- --version v2.4.0 --id pl-collections \
+npm run operator:configure-solution -- --version v2.4.0 --id pl-collections \
   --use-case "Collections triage" --customer contoso-bank
 ```
 Upserts the `solutions` row and seeds
@@ -45,7 +45,7 @@ dm.md recipe seam — the deployment instance).
 
 **4. Gate it.**
 ```bash
-npm run fde:validate-solution -- --version v2.4.0 --id pl-collections --strict
+npm run operator:validate-solution -- --version v2.4.0 --id pl-collections --strict
 ```
 
 ## Where this reads / writes
@@ -57,13 +57,13 @@ WRITE:
 ## Never
 
 - Never fork validate/eval logic into the solution — the solution is data; the
-  machine (`fde:*`) stays central.
+  machine (`operator:*`) stays central.
 - Never fabricate pipeline steps — leave them empty until grounded.
 - Never claim a solution done without passing `validate-solution` + eval acceptance.
 
 ## Quick reference
 
 ```bash
-npm run fde:configure-solution -- --version <ver> --id <pid> --use-case "…" [--customer <id> --org <workspace id>]
-npm run fde:validate-solution  -- --version <ver> --id <pid> [--strict]
+npm run operator:configure-solution -- --version <ver> --id <pid> --use-case "…" [--customer <id> --org <workspace id>]
+npm run operator:validate-solution  -- --version <ver> --id <pid> [--strict]
 ```

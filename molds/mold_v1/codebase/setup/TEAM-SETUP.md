@@ -1,6 +1,6 @@
-# Team setup — the FDE control-plane MCP
+# Team setup — the workspace control-plane MCP
 
-This folder is what a new engineer runs to point their coding agent at the FDE
+This folder is what a new engineer runs to point their coding agent at the
 platform and set the whole thing up from their editor: the **Data Room**,
 **Connectors**, **Workflows**, and **Crons**. Work through it top to bottom; it
 takes about ten minutes.

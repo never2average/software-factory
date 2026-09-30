@@ -1,5 +1,5 @@
 /**
- * The FDE roster tools: `list_roster`, `upsert_roster_member` (re-exported from
+ * The roster tools: `list_roster`, `upsert_roster_member` (re-exported from
  * snake_case files under `agent/tools/`). The roster is the org graph — who is
  * on which team and who they report to — that powers the "me / my reportees /
  * my team / everyone" scope filters in the TODOs workspace. Keyed by email

@@ -19,8 +19,8 @@
  * live under a throwaway workspace carrying this process's pid, removed in a finally block. Needs ADMIN_URL and
  * DATABASE_URL (the app_rw url); without them it skips.
  *
- * Run:  ADMIN_URL=postgres://postgres:…@127.0.0.1:5432/fde_test \
- *       DATABASE_URL=postgres://app_rw:…@127.0.0.1:5432/fde_test npm run test:record-areas-db
+ * Run:  ADMIN_URL=postgres://postgres:…@127.0.0.1:5432/workspace_test \
+ *       DATABASE_URL=postgres://app_rw:…@127.0.0.1:5432/workspace_test npm run test:record-areas-db
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";

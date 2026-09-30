@@ -1,4 +1,4 @@
-// Migration: FDE org roster. Adds `people_roster` (email PK, name, team,
+// Migration: org roster. Adds `people_roster` (email PK, name, team,
 // manager_email) that powers the "me / my reportees / my team / everyone"
 // scope filters. Backfills distinct (email, name) from internal_staff so the
 // roster isn't empty — team + manager_email start null for an operator (or the
@@ -33,7 +33,7 @@ await sql`
 await sql`CREATE INDEX IF NOT EXISTS people_roster_team_idx ON people_roster (team)`;
 await sql`CREATE INDEX IF NOT EXISTS people_roster_manager_idx ON people_roster (manager_email)`;
 
-// Backfill the FDE emails we already know about (internal_staff), lowercased,
+// Backfill the member emails we already know about (internal_staff), lowercased,
 // so the scope dropdown has people to resolve against. Don't clobber teams/
 // managers already set.
 const backfill = await sql`

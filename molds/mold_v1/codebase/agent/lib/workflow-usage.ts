@@ -57,7 +57,7 @@ const idCache = new Map<string, { id: string; orgId: string } | null>();
  * A MISS is remembered only briefly, a HIT for the life of the process.
  *
  * The row for a subagent that ships in a pack is created out of band, by
- * `npm run fde:seed-subagent-rows -- --org <id>` (docs/SUBAGENT_PACKS.md), which
+ * `npm run operator:seed-subagent-rows -- --org <id>` (docs/SUBAGENT_PACKS.md), which
  * runs AFTER the deploy that introduced the subagent. Caching the miss for ever
  * meant a warm instance that had already been delegated to once went on
  * returning null until it was recycled — so seeding the rows fixed nothing that
@@ -106,7 +106,7 @@ async function workflowIdFor(name: string, orgId: string | null | undefined): Pr
   if (found === null) {
     missAt.set(key, Date.now());
     console.warn(
-      `[workflow-usage] no workflows row named "${name}" in workspace ${orgId} — this subagent's runs there are not being recorded. Fix: npm run fde:seed-subagent-rows -- --org ${orgId}`,
+      `[workflow-usage] no workflows row named "${name}" in workspace ${orgId} — this subagent's runs there are not being recorded. Fix: npm run operator:seed-subagent-rows -- --org ${orgId}`,
     );
   }
   return found;

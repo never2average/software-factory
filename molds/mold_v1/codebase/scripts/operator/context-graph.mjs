@@ -1,16 +1,16 @@
-// fde:context-graph — show the dm.md context graph for a data-room folder: what it
+// operator:context-graph — show the dm.md context graph for a data-room folder: what it
 // must contain, what's present, what's missing, and its live [[edges]].
 //
-//   npm run fde:context-graph -- --path "Customers/contoso-bank"
-//   npm run fde:context-graph -- --customer contoso-bank --org <workspace id>   # shorthand for Customers/<id>
-//   npm run fde:context-graph -- --path "Deployments/contoso-bank/v2.4.0/infrastructure/inference"
+//   npm run operator:context-graph -- --path "Customers/contoso-bank"
+//   npm run operator:context-graph -- --customer contoso-bank --org <workspace id>   # shorthand for Customers/<id>
+//   npm run operator:context-graph -- --path "Deployments/contoso-bank/v2.4.0/infrastructure/inference"
 //
 // This is the COMPUTED projection of DATAROOM_PATH_TEMPLATES (the dm.md grammar)
 // onto one folder — no hidden file is stored; the graph is derived on demand, so
-// it can never drift from the spec. See docs/FDE_WORKFLOW.md.
+// it can never drift from the spec. See docs/OPERATOR_WORKFLOW.md.
 import { getDb, closeDb, dataroom, workspaceFor, nowIso } from "./lib/customer.mjs";
 import { buildContextGraph } from "./lib/context-graph.mjs";
-import { glyph, flag } from "./lib/fde.mjs";
+import { glyph, flag } from "./lib/operator.mjs";
 
 async function main() {
   const path = flag("path").trim() || (flag("customer").trim() ? `Customers/${flag("customer").trim()}` : "");
@@ -18,7 +18,7 @@ async function main() {
     console.error(`${glyph.bad} --path "<Domain/…>" (or --customer <id>) is required.`);
     process.exit(1);
   }
-  // The workspace's own data room and records (--org / FDE_ORG, required): every workspace's data room is its own and
+  // The workspace's own data room and records (--org / WORKSPACE_ORG, required): every workspace's data room is its own and
   // there is no default tree to fall back to (lib/dataroom-keyspace.ts).
   const orgId = workspaceFor();
   const store = dataroom(orgId);

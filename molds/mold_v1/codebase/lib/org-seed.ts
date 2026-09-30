@@ -1,10 +1,30 @@
 import { writeDataroomFile } from "@/lib/dataroom-blob";
-import { DEPLOYMENT_PROFILE, fillProfileText } from "@/lib/deployment-profile.generated";
+import { DEPLOYMENT_PROFILE, fillProfileText, type DeploymentProfile } from "@/lib/deployment-profile.generated";
+
+import { createVocabulary, speakWith, verbatimWith, type Vocabulary, type VocabularyProfile } from "../agent/lib/agent-vocabulary.ts";
+
+/**
+ * The built-in tree is written in the base product's words and spoken in the profile's (agent/lib/agent-vocabulary.ts,
+ * the translation the model's text goes through): record words, stored folders at the head of a path, identifiers
+ * such as `customer_id`, and the member word. The identity under the default profile. What is not ours to rename is
+ * kept verbatim: the workspace's own name and id, and the coding-agent skills' names, which are real slugs.
+ */
+type Speak = { v: Vocabulary; keep: (text: string) => string; members: string; member: string };
+const upperFirst = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);
+function speaker(profile: DeploymentProfile): Speak {
+  const v = createVocabulary(profile as VocabularyProfile);
+  return {
+    v,
+    keep: (text) => verbatimWith(v, text),
+    member: verbatimWith(v, profile.vocabulary.member.singular),
+    members: verbatimWith(v, upperFirst(profile.vocabulary.member.plural)),
+  };
+}
 
 /**
  * A brand-new workspace used to land completely empty: the wizard finished, the
  * console opened, and every panel said "nothing here yet". That reads as broken
- * rather than new, and it leaves the first FDE with no example of the tree
+ * rather than new, and it leaves the first member with no example of the tree
  * conventions in docs/FDE_WORKFLOW.md — which is precisely the knowledge the
  * data room depends on and the hardest thing to infer from an empty bucket.
  *
@@ -12,23 +32,30 @@ import { DEPLOYMENT_PROFILE, fillProfileText } from "@/lib/deployment-profile.ge
  * document that explains the tree it sits in and disappears the moment real
  * work replaces it. Nothing here invents customers, people, or metrics.
  */
-function readme(orgId: string, name: string): string {
-  return `# ${name} — data room
+function readme(orgId: string, name: string, profile: DeploymentProfile): string {
+  const { v, keep, member } = speaker(profile);
+  // A record area the profile hides has no folder to describe.
+  const shown = (domain: string) => profile.dataroom.domains[domain]?.visible !== false;
+  // Spoken here as well as below: the tree's lines are text a person reads (speaking is idempotent).
+  const tree = speakWith(v, [
+    "Customers/{customer_id}/",
+    `  context.md              account context, curated by the ${member}`,
+    "  interactions.jsonl      append-only log of touchpoints",
+    "  agreements/             MSAs, order forms",
+    ...(shown("Deployments") ? ["Deployments/{customer_id}/{platform_version_id}/"] : []),
+    ...(shown("Implementation") ? ["Implementation/{customer_id}/"] : []),
+    ...(shown("Tickets") ? ["Tickets/{feat|bug|docs}/{customer_id}/..."] : []),
+    "People/{person_id}/       EXTERNAL people only — stakeholders and contacts",
+  ].join("\n"));
+  return speakWith(v, `# ${keep(name)} — data room
 
-This is the workspace's system of record. Everything the agent and the FDE team
+This is the workspace's system of record. Everything the agent and the ${member} team
 know about this account lives here as plain files.
 
 ## The tree
 
 \`\`\`
-Customers/{customer_id}/
-  context.md              account context, curated by the FDE
-  interactions.jsonl      append-only log of touchpoints
-  agreements/             MSAs, order forms
-Deployments/{customer_id}/{platform_version_id}/
-Implementation/{customer_id}/
-Tickets/{feat|bug|docs}/{customer_id}/...
-People/{person_id}/       EXTERNAL people only — stakeholders and contacts
+${tree}
 \`\`\`
 
 Two rules the whole room depends on:
@@ -39,20 +66,22 @@ Two rules the whole room depends on:
 
 ## Getting started
 
-- Run the **onboard-customer** skill to create your first customer subtree.
+- Run the **${keep("onboard-customer")}** skill to create your first customer subtree.
 - Bulk imports should open a **changeset** first, so the writes can be reviewed
   as one batch and reverted together if the import is wrong.
 - Connectors (Slack, Drive, GitHub, or your own MCP server) are configured under
   Connectors in the console; credentials are encrypted per workspace.
 
-Workspace id: \`${orgId}\`
-`;
+Workspace id: \`${keep(orgId)}\`
+`);
 }
 
-const CUSTOMERS_README = `# Customers
+function customersReadme(profile: DeploymentProfile): string {
+  const { v, keep } = speaker(profile);
+  return speakWith(v, `# Customers
 
 One subtree per customer, keyed by \`customer_id\`. Create them with the
-**onboard-customer** skill rather than by hand — it also creates the matching
+**${keep("onboard-customer")}** skill rather than by hand — it also creates the matching
 database rows, so the console and the data room stay in agreement.
 
     Customers/acme/context.md
@@ -61,17 +90,21 @@ database rows, so the console and the data room stay in agreement.
 
 \`context.md\` is the document the agent reads first when asked about an account.
 Keep it current; it is worth more than any other file in the tree.
-`;
+`);
+}
 
-const PEOPLE_README = `# People
+function peopleReadme(profile: DeploymentProfile): string {
+  const { v, keep, members } = speaker(profile);
+  return speakWith(v, `# People
 
 External people only — customer stakeholders, champions, procurement contacts.
 One subtree per person, keyed by \`person_id\`.
 
-Internal staff do **not** belong here. FDEs are recorded as team memories via the
-**onboard-self** skill, which keeps employee records out of customer-shared
+Internal staff do **not** belong here. ${members} are recorded as team memories via the
+**${keep("onboard-self")}** skill, which keeps employee records out of customer-shared
 context.
-`;
+`);
+}
 
 /**
  * Write the starter tree. Best-effort by design: a workspace that exists with an
@@ -89,17 +122,19 @@ function seedContentType(path: string): string {
 /**
  * The files a new workspace starts with. A deployment profile may name its own (dataroom.seed): those REPLACE the
  * built-in tree, with {workspace}, {org_id} and {product} filled in. With no seed in the profile the built-in tree
- * below is written exactly as before.
+ * below is written in the profile's words (see `speaker`) — under the default profile exactly as before. The paths
+ * written are the stored ones.
+ * `profile` defaults to this deployment's; tests pass another.
  */
-function starterFiles(orgId: string, name: string): [string, string][] {
-  const seed = DEPLOYMENT_PROFILE.dataroom.seed;
+export function starterFiles(orgId: string, name: string, profile: DeploymentProfile = DEPLOYMENT_PROFILE): [string, string][] {
+  const seed = profile.dataroom.seed;
   if (Array.isArray(seed)) {
     return seed.map((f): [string, string] => [f.path, fillProfileText(f.content, { workspace: name, org_id: orgId })]);
   }
   return [
-    ["README.md", readme(orgId, name)],
-    ["Customers/README.md", CUSTOMERS_README],
-    ["People/README.md", PEOPLE_README],
+    ["README.md", readme(orgId, name, profile)],
+    ["Customers/README.md", customersReadme(profile)],
+    ["People/README.md", peopleReadme(profile)],
   ];
 }
 

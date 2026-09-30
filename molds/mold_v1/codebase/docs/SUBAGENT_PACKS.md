@@ -73,7 +73,7 @@ subagent, named exactly `<key>`. Workspaces created after the pack is applied ge
 automatically (`provisionWorkspace`). For older ones, run this once per workspace:
 
 ```
-npm run fde:seed-subagent-rows -- --org <org_id>
+npm run operator:seed-subagent-rows -- --org <org_id>
 ```
 
 The command is idempotent and touches nothing else. The alternatives are in "The `workflows` row" in

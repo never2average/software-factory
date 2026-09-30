@@ -10,14 +10,14 @@ parallel to `pipelines/`, with the same "minified solution-manager" discipline b
 agent-shaped file set: a data-platform schema, a run-config contract, a `recipe.md`
 (+ `recipe/` seed folder the agent instantiates before its first run), and eval
 `dataset.jsonl` / `benchmark.jsonl`. Same eval gate as pipelines. See
-[`docs/FDE_WORKFLOW.md`](../../../docs/FDE_WORKFLOW.md) and the `configure-solution`
+[`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md) and the `configure-solution`
 skill for the shared philosophy (central machine, self-describing instances).
 
 ## Steps
 
 **1. Scaffold.**
 ```bash
-npm run fde:configure-agents -- --version v2.4.0 --id collections-agent \
+npm run operator:configure-agents -- --version v2.4.0 --id collections-agent \
   --use-case "Autonomous collections triage"
 ```
 Writes `dataplatform.schemas.json`, `run_configs.schema.json`, `recipe.md`,
@@ -31,7 +31,7 @@ Writes `dataplatform.schemas.json`, `run_configs.schema.json`, `recipe.md`,
 
 **3. Register + seed a customer (optional).**
 ```bash
-npm run fde:configure-agents -- --version v2.4.0 --id collections-agent \
+npm run operator:configure-agents -- --version v2.4.0 --id collections-agent \
   --use-case "…" --customer contoso-bank
 ```
 Upserts the `solutions` row (marked as an agent) and seeds
@@ -39,7 +39,7 @@ Upserts the `solutions` row (marked as an agent) and seeds
 
 **4. Gate.**
 ```bash
-npm run fde:validate-solution -- --version v2.4.0 --id collections-agent --kind agent --strict
+npm run operator:validate-solution -- --version v2.4.0 --id collections-agent --kind agent --strict
 ```
 
 ## Where this reads / writes
@@ -57,6 +57,6 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:configure-agents   -- --version <ver> --id <agent> --use-case "…" [--customer <id> --org <workspace id>]
-npm run fde:validate-solution  -- --version <ver> --id <agent> --kind agent [--strict]
+npm run operator:configure-agents   -- --version <ver> --id <agent> --use-case "…" [--customer <id> --org <workspace id>]
+npm run operator:validate-solution  -- --version <ver> --id <agent> --kind agent [--strict]
 ```

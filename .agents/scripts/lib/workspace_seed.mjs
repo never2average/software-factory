@@ -12,7 +12,7 @@ const [seedPath, customersPath] = process.argv.slice(2);
 const seed = JSON.parse(readFileSync(seedPath, "utf8"));
 const customers = customersPath ? JSON.parse(readFileSync(customersPath, "utf8")).customers : [];
 
-const { getDb, withOrgDb, closeDb } = await lib("agent/lib/db/index.ts").then(async (m) => ({ ...m, closeDb: (await lib("scripts/fde/lib/customer.mjs")).closeDb }));
+const { getDb, withOrgDb, closeDb } = await lib("agent/lib/db/index.ts").then(async (m) => ({ ...m, closeDb: (await lib("scripts/operator/lib/customer.mjs")).closeDb }));
 const schema = await lib("agent/lib/db/schema.ts");
 const { provisionWorkspace } = await lib("agent/lib/provision-workspace.ts");
 const { writeCustomerToPostgres } = await lib("agent/lib/system-of-record.ts");

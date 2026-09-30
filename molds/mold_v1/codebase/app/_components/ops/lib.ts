@@ -244,7 +244,7 @@ export interface ApiRefImplementation {
   custom?: Record<string, string | number>;
 }
 
-/** One FDE roster row — the org graph the TODO scope filters resolve against. */
+/** One roster row — the org graph the TODO scope filters resolve against. */
 export interface ApiRosterMember {
   email: string;
   name: string | null;

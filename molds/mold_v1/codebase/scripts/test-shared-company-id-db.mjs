@@ -25,8 +25,8 @@
  * Needs ADMIN_URL (policy DDL, seeding orgs) and DATABASE_URL (app_rw); without them it skips. Rows live under
  * pid-suffixed workspaces, removed in a finally block, and every policy is restored exactly.
  *
- *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5432/fde_test \
- *   DATABASE_URL=postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test \
+ *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5432/workspace_test \
+ *   DATABASE_URL=postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test \
  *   npm run test:shared-company-id-db
  */
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";

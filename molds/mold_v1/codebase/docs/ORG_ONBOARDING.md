@@ -52,7 +52,7 @@ Two doors, one engine (the provisioning API — nothing writes tables directly):
   "agents run the recipes") → invite operators (deterministic setup email,
   previewed before send) / the six setup checks. Both branches read the same
   `GET /api/ops/orgs/{id}/health` — the round-trip is the product.
-- **FDE-assisted** — the `onboard-org` skill + `npm run fde:new-org`. The path
+- **Operator-assisted** — the `onboard-org` skill + `npm run operator:new-org`. The path
   for enterprise / deployment-per-tenant orgs.
 
 Creating a workspace is **platform-admin only** (`platform_admins`). The org

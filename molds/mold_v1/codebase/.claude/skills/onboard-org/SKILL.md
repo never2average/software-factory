@@ -1,6 +1,6 @@
 ---
 name: onboard-org
-description: Provision a brand-new organization (workspace) on the platform — the tenant layer ABOVE customers/roster/connectors. Use when a new company adopts the platform ("set up <company> as a workspace", "onboard a new org", "create a tenant", "provision OnFinance"), before any customer work. Creates the orgs row, the owner membership + platform admin, seeds the recipe catalog, and points you at the readiness checklist. This is the FDE-assisted door; the self-serve wizard writes the same tables. Sibling of onboard-self (a person) and onboard-customer (a customer account).
+description: Provision a brand-new organization (workspace) on the platform — the tenant layer ABOVE customers/roster/connectors. Use when a new company adopts the platform ("set up <company> as a workspace", "onboard a new org", "create a tenant", "provision OnFinance"), before any customer work. Creates the orgs row, the owner membership + platform admin, seeds the recipe catalog, and points you at the readiness checklist. This is the operator-assisted door; the self-serve wizard writes the same tables. Sibling of onboard-self (a person) and onboard-customer (a customer account).
 ---
 
 # Onboard an organization (workspace)
@@ -38,7 +38,7 @@ admin**. Defaults to your signed-in identity.
 **4. Create.** Run:
 
 ```
-npm run fde:new-org -- --name "OnFinance" [--id onfinance] [--domain onfinance.in] [--owner you@company.com]
+npm run operator:new-org -- --name "OnFinance" [--id onfinance] [--domain onfinance.in] [--owner you@company.com]
 ```
 
 This writes the `orgs` row, the owner into `org_members`, adds the owner to
@@ -69,4 +69,4 @@ is operational.
 
 The skill, the self-serve wizard, and the console are all thin clients of the
 same provisioning API and tables — none writes tables in a way the others don't.
-FDE-assisted (this skill) is the path for enterprise / deployment-per-tenant orgs.
+Operator-assisted (this skill) is the path for enterprise / deployment-per-tenant orgs.

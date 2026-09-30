@@ -14,6 +14,12 @@
  * `prefers-color-scheme` media query and a system font stack. Every interpolated
  * data value is routed through `escapeHtml` (exported for the injection test).
  *
+ * Every label a person reads that names one of the base product's words (the account, its owner, the deployment
+ * record area, the data room) comes from the deployment profile (`reportWords`), the owner through the same
+ * vocabulary the model's text goes through (agent/lib/agent-vocabulary.ts): the default profile reads exactly as
+ * before, a relabelled one reads its own words, and a record area the profile hides (Platform) is left out. Data
+ * values (names, ids, enum values) are printed as stored. A caller may pass another profile (tests do).
+ *
  * Keep the relative `.ts` import specifiers below: plain
  * `node --experimental-strip-types` does not resolve the `#lib/*.js` subpath
  * aliases the offline test relies on.
@@ -21,6 +27,82 @@
 import { getCustomer, listCustomers, listFollowUps } from "./system-of-record.ts";
 import { computeStandupDigest, type FollowUpAlert } from "./alerts.ts";
 import type { Customer } from "./customer-schema.ts";
+import { createVocabulary, speakWith, VOCABULARY, type VocabularyProfile } from "./agent-vocabulary.ts";
+import { DEPLOYMENT_PROFILE } from "./deployment-profile.generated.ts";
+
+/* -------------------------------------------------------------------------- */
+/* The profile's words                                                         */
+/* -------------------------------------------------------------------------- */
+
+/** "Covering analyst" -> "Covering Analyst": the report's labels are title case ("Health Score", "Open Tickets"). */
+const titleCase = (label: string): string => label.replace(/(^|\s)([a-z])/g, (_m, sp: string, c: string) => sp + c.toUpperCase());
+
+/**
+ * The heading over an account's owner, in the profile's words: the profile's `vocabulary.owner` in title case,
+ * then spoken, so a profile that renames the member but keeps the base owner label still reads its own member word.
+ * Under the default profile this is exactly the base heading.
+ */
+export function ownerHeading(profile: VocabularyProfile = DEPLOYMENT_PROFILE as VocabularyProfile): string {
+  const vocabulary = profile === DEPLOYMENT_PROFILE ? VOCABULARY : createVocabulary(profile);
+  return speakWith(vocabulary, titleCase(profile.vocabulary.owner));
+}
+
+const upperFirst = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);
+/** "Coverage reports" -> "coverage reports", "Deployments" -> "deployments"; an acronym ("KPIs") stays as it is. */
+const lowerFirst = (s: string): string => (/^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s);
+
+/** The labels both reports print, in a profile's words. Under the default profile, exactly the base labels. */
+export interface ReportWords {
+  /** "Customer" / "Customers" / "customers": the account, as a column, a section and in a sentence. */
+  Account: string;
+  Accounts: string;
+  accounts: string;
+  /** The account's owner, as the profile names it (title case). */
+  owner: string;
+  /** The deployment record area: its section, its id column, and "No deployments on record." */
+  Deployments: string;
+  Deployment: string;
+  deployments: string;
+  /** The deployment table's other columns: the profile's field labels, title case ("Release Status"). */
+  environment: string;
+  version: string;
+  releaseStatus: string;
+  health: string;
+  /** Show the platform section: false when the profile hides the Platform area. */
+  platform: boolean;
+  /** The platform's hosting model. "Deployment" there means the software install, so once the profile names its
+   *  deployment record area something else, the install is called what it is: hosting. */
+  deploymentModel: string;
+  /** The data room ("Data Room"), as the profile names its root. */
+  room: string;
+}
+
+/** The report labels a profile implies. Exported for tests. */
+export function reportWords(profile: VocabularyProfile = DEPLOYMENT_PROFILE as VocabularyProfile): ReportWords {
+  const account = profile.vocabulary.account;
+  const dep = profile.domains.deployments;
+  const field = (key: string, base: string) => {
+    const label = (dep.fields as Record<string, { label?: string } | undefined>)[key]?.label;
+    return titleCase(typeof label === "string" && label.trim() ? label : base);
+  };
+  const relabelledDeployments = dep.label.plural.trim().toLowerCase() !== "deployments";
+  return {
+    Account: upperFirst(account.singular),
+    Accounts: upperFirst(account.plural),
+    accounts: lowerFirst(account.plural),
+    owner: ownerHeading(profile),
+    Deployments: titleCase(dep.label.plural),
+    Deployment: titleCase(dep.label.singular),
+    deployments: lowerFirst(dep.label.plural),
+    environment: field("environment", "Environment"),
+    version: field("deployedVersion", "Version"),
+    releaseStatus: field("releaseStatus", "Release Status"),
+    health: field("healthStatus", "Health"),
+    platform: profile.dataroom.domains.Platform?.visible !== false,
+    deploymentModel: `${relabelledDeployments ? "Hosting" : titleCase(dep.label.singular)} Model`,
+    room: titleCase(profile.dataroom.root_label || "Data Room"),
+  };
+}
 
 /* -------------------------------------------------------------------------- */
 /* Escaping + small HTML primitives                                           */
@@ -225,10 +307,10 @@ ${rows}
 </section>`;
 }
 
-function deploymentsSection(customer: Customer): string {
+function deploymentsSection(customer: Customer, w: ReportWords): string {
   const deployments = customer.deployments ?? [];
   if (deployments.length === 0) {
-    return `<section><h2>Deployments</h2><p class="empty">No deployments on record.</p></section>`;
+    return `<section><h2>${escapeHtml(w.Deployments)}</h2><p class="empty">No ${escapeHtml(w.deployments)} on record.</p></section>`;
   }
   const rows = deployments
     .map(
@@ -242,10 +324,10 @@ function deploymentsSection(customer: Customer): string {
     )
     .join("\n");
   return `<section>
-<h2>Deployments</h2>
+<h2>${escapeHtml(w.Deployments)}</h2>
 <div class="tablewrap">
 <table>
-<thead><tr><th>Deployment</th><th>Environment</th><th>Version</th><th>Release Status</th><th>Health</th></tr></thead>
+<thead><tr><th>${escapeHtml(w.Deployment)}</th><th>${escapeHtml(w.environment)}</th><th>${escapeHtml(w.version)}</th><th>${escapeHtml(w.releaseStatus)}</th><th>${escapeHtml(w.health)}</th></tr></thead>
 <tbody>
 ${rows}
 </tbody>
@@ -254,7 +336,7 @@ ${rows}
 </section>`;
 }
 
-function platformSection(customer: Customer): string {
+function platformSection(customer: Customer, w: ReportWords): string {
   const p = customer.platform;
   if (!p) {
     return `<section><h2>Platform Summary</h2><p class="empty">No platform record.</p></section>`;
@@ -262,7 +344,7 @@ function platformSection(customer: Customer): string {
   return `<section>
 <h2>Platform Summary</h2>
 <div class="meta">
-${metaItem("Deployment Model", p.deploymentModel)}
+${metaItem(w.deploymentModel, p.deploymentModel)}
 ${metaItem("Data Residency", p.dataResidencyConstraint)}
 ${metaItem("Primary Model", p.primaryModel)}
 ${metaItem("Governance Status", p.aiGovernanceStatus)}
@@ -281,9 +363,13 @@ export async function renderAccountReport(opts: {
   now: Date | string;
   /** The caller's workspace: a customer outside it is "Unknown customer". */
   orgId?: string | null;
+  /** The deployment profile whose words the labels take. Defaults to this deployment's. */
+  profile?: VocabularyProfile;
 }): Promise<string> {
   const customer = await getCustomer(opts.customerId, opts.orgId);
+  // A tool error, read by the model (the model-facing boundary speaks it), never printed in the report.
   if (!customer) throw new Error(`Unknown customer: ${opts.customerId}`);
+  const w = reportWords(opts.profile);
 
   // Reuse the alerts ranking (overdue-first) scoped to this customer.
   const digest = await computeStandupDigest({ now: opts.now, topPerCustomer: 1000, orgId: opts.orgId });
@@ -298,7 +384,7 @@ ${metaItem("Tier", customer.tier)}
 ${metaItem("Lifecycle Stage", customer.lifecycleStage)}
 ${metaItem("Status", customer.status)}
 ${metaItem("Health Score", customer.healthScore)}
-${metaItem("FDE Owner", customer.fdeOwner)}
+${metaItem(w.owner, customer.fdeOwner)}
 </div>
 </header>`;
 
@@ -306,8 +392,8 @@ ${metaItem("FDE Owner", customer.fdeOwner)}
     header,
     followUpsSection(alerts),
     interactionsSection(customer),
-    deploymentsSection(customer),
-    platformSection(customer),
+    deploymentsSection(customer, w),
+    ...(w.platform ? [platformSection(customer, w)] : []),
     `<footer>Deterministic report from the system of record · ${escapeHtml(
       escapeHtml(customer.id),
     )}</footer>`,
@@ -322,19 +408,22 @@ ${metaItem("FDE Owner", customer.fdeOwner)}
 
 /**
  * Render a deterministic, self-contained HTML index across all customers:
- * name, tier, lifecycle, status, FDE owner, open-ticket count, and overdue
+ * name, tier, lifecycle, status, owner, open-ticket count, and overdue
  * count (from the alerts engine), plus a totals line.
  */
 export async function renderDataroomSummary(opts: {
   now: Date | string;
   /** The caller's workspace: the index lists its customers only. */
   orgId?: string | null;
+  /** The deployment profile whose words the labels take. Defaults to this deployment's. */
+  profile?: VocabularyProfile;
 }): Promise<string> {
   const [customers, digest, followUps] = await Promise.all([
     listCustomers(opts.orgId),
     computeStandupDigest({ now: opts.now, orgId: opts.orgId }),
     listFollowUps(undefined, opts.orgId),
   ]);
+  const w = reportWords(opts.profile);
   const overdueByCustomer = new Map<string, number>();
   for (const s of digest.sections) overdueByCustomer.set(s.customerId, s.overdueCount);
 
@@ -353,21 +442,21 @@ export async function renderDataroomSummary(opts: {
     .join("\n");
 
   const header = `<header class="report">
-<h1>Data Room Summary</h1>
-<p class="sub">All customers · Generated ${escapeHtml(utcDate(opts.now))} (UTC)</p>
+<h1>${escapeHtml(w.room)} Summary</h1>
+<p class="sub">All ${escapeHtml(w.accounts)} · Generated ${escapeHtml(utcDate(opts.now))} (UTC)</p>
 </header>`;
 
   const table = `<section>
-<h2>Customers</h2>
+<h2>${escapeHtml(w.Accounts)}</h2>
 <div class="tablewrap">
 <table>
-<thead><tr><th>Customer</th><th>Tier</th><th>Lifecycle</th><th>Status</th><th>FDE Owner</th><th>Open Tickets</th><th>Overdue</th></tr></thead>
+<thead><tr><th>${escapeHtml(w.Account)}</th><th>Tier</th><th>Lifecycle</th><th>Status</th><th>${escapeHtml(w.owner)}</th><th>Open Tickets</th><th>Overdue</th></tr></thead>
 <tbody>
 ${rows}
 </tbody>
 </table>
 </div>
-<p class="totals">${customers.length} customers · ${followUps.length} open follow-ups · ${
+<p class="totals">${customers.length} ${escapeHtml(w.accounts)} · ${followUps.length} open follow-ups · ${
     digest.totals.overdue
   } overdue · ${digest.totals.dueSoon} due soon.</p>
 </section>`;
@@ -376,5 +465,5 @@ ${rows}
     "\n",
   );
 
-  return documentShell("Data Room Summary", body);
+  return documentShell(`${w.room} Summary`, body);
 }

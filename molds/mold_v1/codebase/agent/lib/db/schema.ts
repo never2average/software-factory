@@ -1,5 +1,5 @@
 /**
- * Drizzle Postgres schema for the FDE system of record.
+ * Drizzle Postgres schema for the system of record.
  *
  * Mirrors the canonical Zod contracts in `agent/lib/customer-schema.ts` and
  * the sheet column contracts in `docs/data-model.md` (snake_case columns,
@@ -881,7 +881,7 @@ export const appVersions = pgTable(
 );
 
 /**
- * An operator TODO — the FDE team's lightweight internal action list. This is
+ * An operator TODO — the team's lightweight internal action list. This is
  * DELIBERATELY NOT the `tickets` system: no customer FK, no SLA, no ITSM fields.
  * A flat checklist that optionally hangs off a platform "epic" (a Deployment or
  * Implementation) and can point at a related object (a ticket, customer, app…).
@@ -915,7 +915,7 @@ export const cycles = pgTable("cycles", {
 });
 
 /**
- * The FDE org roster — who's on which team and who they report to. Powers the
+ * The org roster — who's on which team and who they report to. Powers the
  * "me / my reportees / my team / everyone" scope filters in the TODOs
  * workspace. Keyed by email (the same email that appears as an owner on
  * tickets/deployments/implementations). Backfilled from internal_staff; team +

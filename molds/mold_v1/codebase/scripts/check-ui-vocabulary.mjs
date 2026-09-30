@@ -17,7 +17,7 @@
  * whole tokens where `_`, `-`, `/`, `.` and a camelCase hump are boundaries too:
  *
  *   1. SOURCE TEXT (static, the copy after `build:generated`): every piece of text a person can read in app/,
- *      components/ and lib/ — JSX text; any string or template piece with a space in it; the value of a visible
+ *      components/ and lib/, and in the agent's person-facing HTML reports (agent/lib/render-html.ts) — JSX text; any string or template piece with a space in it; the value of a visible
  *      JSX attribute (title, placeholder, aria-label, alt, label, hint, …) or of a visible object key (label,
  *      header, description, error, …) — and every string of the generated subagent roster. Text handed to
  *      speak() / speakPrompt() / speakMessage() is translated at runtime by the agent's vocabulary and is not
@@ -158,11 +158,14 @@ const VISIBLE_ATTRS = new Set(["title", "placeholder", "aria-label", "aria-descr
 const VISIBLE_KEYS = new Set(["label", "header", "title", "description", "placeholder", "hint", "summary", "help", "blurb", "empty", "heading", "detail", "error", "message", "reason", "tooltip", "subtitle", "caption", "purpose", "note"]);
 const SPOKEN_CALLS = new Set(["speak", "speakPrompt", "speakMessage", "speakWith", "speakPromptWith", "speakMessageWith"]);
 
+/** Agent files whose text a PERSON reads (not the model): the HTML reports the agent publishes as artifacts. */
+const PERSON_FACING_AGENT = ["agent/lib/render-html.ts"];
+
 function sourceText(dir, only = null) {
   const ts = createRequire(join(ROOT, "package.json"))("typescript");
   const out = [];
   const walk = (d) => (existsSync(d) ? readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? (n === "node_modules" ? [] : walk(p)) : /\.(tsx?|mts)$/.test(n) && !/\.d\.ts$/.test(n) ? [p] : []; }) : []);
-  for (const file of only ?? ["app", "components", "lib"].flatMap((d) => walk(join(dir, d)))) {
+  for (const file of only ?? ["app", "components", "lib"].flatMap((d) => walk(join(dir, d))).concat(PERSON_FACING_AGENT.map((f) => join(dir, f)).filter(existsSync))) {
     const rel = relative(dir, file);
     const generated = rel.endsWith(".generated.ts");
     // The profile's own words (and the default domains it is compared with) are the deployment's: not scanned.
@@ -432,7 +435,7 @@ try {
 
   const src = sourceText(copy);
   const srcBad = report(`${label}, SOURCE TEXT a person reads`, src, (b) => `${b.line}: [${b.kind}] "${b.words.join('", "')}" in ${JSON.stringify(b.text.replace(/\s+/g, " ").slice(0, 160))}`);
-  if (!srcBad) console.log(`check-ui-vocabulary: ${label} — source text a person reads (app/, components/, lib/, the subagent roster) carries no base word`);
+  if (!srcBad) console.log(`check-ui-vocabulary: ${label} — source text a person reads (app/, components/, lib/, the agent's HTML reports, the subagent roster) carries no base word`);
 
   const enums = await enumLabels(copy);
   if (!report(`${label}, ENUM VALUES as a person reads them`, enums, (b) => `"${b.words.join('", "')}" in ${JSON.stringify(b.text)}`)) {

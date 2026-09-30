@@ -27,8 +27,8 @@
  * Without the URLs it skips. Its rows live under two throwaway workspaces carrying this process's pid, removed in a
  * finally block, and every grant or rename it makes is put back.
  *
- *   ADMIN_URL=postgres://postgres:…@127.0.0.1:5432/fde_test \
- *   DATABASE_URL=postgres://app_rw:…@127.0.0.1:5432/fde_test npm run test:workbook-route-db [-- --dir <built checkout>]
+ *   ADMIN_URL=postgres://postgres:…@127.0.0.1:5432/workspace_test \
+ *   DATABASE_URL=postgres://app_rw:…@127.0.0.1:5432/workspace_test npm run test:workbook-route-db [-- --dir <built checkout>]
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

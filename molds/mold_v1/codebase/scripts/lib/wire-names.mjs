@@ -114,14 +114,12 @@ export function tableValues(relPath, tableName) {
 /**
  * The source the gate walks.
  *
- * `scripts/fde/**` is out: it is the factory operator's own tooling, about 1,200
- * further occurrences, and its rename is one deliberate change tracked on its
- * own. Nothing an analyst or their assistant ever touches is in there. `docs/**`
- * is out because it is prose, and prose has to be ABLE to say what the old name
- * was.
+ * The operator tooling (scripts/operator/) is walked with the rest of scripts/
+ * since it moved there with neutral names. `docs/**` is out because it is prose,
+ * and prose has to be ABLE to say what the old name was.
  */
 export const WALK_DIRS = ["app", "agent", "components", "lib", "setup", "scripts"];
-export const WALK_SKIP = new Set(["node_modules", ".git", ".next", "dist", "fixtures", "fde"]);
+export const WALK_SKIP = new Set(["node_modules", ".git", ".next", "dist", "fixtures"]);
 const SOURCE = /\.(ts|tsx|mjs|js|jsx)$/;
 
 /** Every source file the gate reads, as { path (repo-relative), text }. */

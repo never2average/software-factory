@@ -1,4 +1,4 @@
-// fde:sandbox — check (and repair) the Vercel Sandbox TEMPLATES the deployed
+// operator:sandbox — check (and repair) the Vercel Sandbox TEMPLATES the deployed
 // agent needs. Every eve agent node (root + each subagent) runs its bash tools
 // in a sandbox created from a named template snapshot in the Vercel project.
 // The template key is derived from the sandbox source + eve version, and a
@@ -15,8 +15,8 @@
 // half-failed prewarm leaves prod with a missing template and no way back.
 // This script closes that gap from a laptop.
 //
-//   npm run fde:sandbox -- --check     # report which templates are missing (exit 1 if any)
-//   npm run fde:sandbox                # build the missing ones (idempotent; existing are reused)
+//   npm run operator:sandbox -- --check     # report which templates are missing (exit 1 if any)
+//   npm run operator:sandbox                # build the missing ones (idempotent; existing are reused)
 //
 // Credentials: run against the AGENT API project, not the front-end one.
 //   mkdir -p /tmp/eve-link && cd /tmp/eve-link
@@ -27,7 +27,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { glyph, hasFlag, flag } from "./lib/fde.mjs";
+import { glyph, hasFlag, flag } from "./lib/operator.mjs";
 
 // The eve agent's Vercel project (fde-agent-api). The template key is scoped by
 // project id, so pointing at the front-end project computes keys nobody uses.
@@ -65,7 +65,7 @@ async function main() {
    * `--env-file` as OUR flag, not node's.
    *
    * The message below tells you to re-run "with --env-file pointing at it", but
-   * that is a node flag: `npm run fde:sandbox -- --env-file x` hands it to this
+   * that is a node flag: `npm run operator:sandbox -- --env-file x` hands it to this
    * script, node never sees it, and you get the same error again. Reading it
    * here makes the instruction true.
    */
@@ -96,7 +96,7 @@ async function main() {
         `  Link a scratch dir, pull one, and point this at it:\n` +
         `    mkdir -p /tmp/eve-link && (cd /tmp/eve-link && \\\n` +
         `      npx vercel link --yes --project fde-agent-api && npx vercel env pull)\n` +
-        `    npm run fde:sandbox -- --check --env-file /tmp/eve-link/.env.local`,
+        `    npm run operator:sandbox -- --check --env-file /tmp/eve-link/.env.local`,
     );
     process.exit(1);
   }
@@ -180,7 +180,7 @@ async function main() {
   if (check && missing > 0) {
     console.error(
       `${glyph.bad} ${missing} template(s) missing. The deployed agent's bash tools will fail with\n` +
-        `  "Sandbox template … is not provisioned". Run: npm run fde:sandbox`,
+        `  "Sandbox template … is not provisioned". Run: npm run operator:sandbox`,
     );
     process.exit(1);
   }

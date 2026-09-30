@@ -157,7 +157,7 @@ export function redactQueryError(error: unknown, queryString?: string): Error {
   return new DatabaseQueryError(`${sentence} (ref ${ref})`, ref, cause);
 }
 
-const INSTALLED = Symbol.for("fde.queryErrorRedaction");
+const INSTALLED = Symbol.for("workspace.queryErrorRedaction");
 
 /**
  * Wrap PgPreparedQuery.prototype.queryWithCache once per module instance. Idempotent. Returns whether the wrap is

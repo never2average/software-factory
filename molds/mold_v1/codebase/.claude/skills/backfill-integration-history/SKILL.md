@@ -7,7 +7,7 @@ description: Reconstruct a customer's pipeline and integration (Integromat) hist
 
 Reconstruct a customer's data pipelines and integrations into the canonical
 `Implementation/{id}/…` layout and the `implementation` system-of-record row. This
-is **stage 5** — see [`docs/FDE_WORKFLOW.md`](../../../docs/FDE_WORKFLOW.md).
+is **stage 5** — see [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md).
 
 Use it when pipelines/integrations exist operationally but were never recorded, or
 before an eval / go-live review that needs the integration surface captured.
@@ -15,8 +15,8 @@ before an eval / go-live review that needs the integration surface captured.
 ## Working style
 
 Gather the real pipelines (from `Deployments/syncs`, the Integromat account, the
-FDE's knowledge) before writing. Each `pipeline_config.json` starts as a skeleton —
-its `steps` are the FDE's to fill; don't invent them.
+owning engineer's knowledge) before writing. Each `pipeline_config.json` starts as a skeleton —
+its `steps` are the owning engineer's to fill; don't invent them.
 
 ## The steps
 
@@ -27,12 +27,12 @@ its `steps` are the FDE's to fill; don't invent them.
 
 **3. Backfill.** Single pipeline via flags:
 ```bash
-npm run fde:backfill-integrations -- --customer contoso-bank --org <workspace id> \
+npm run operator:backfill-integrations -- --customer contoso-bank --org <workspace id> \
   --pipeline pl-collections --summary "Collections ETL via Integromat"
 ```
 Many via a JSON file (`[{ "pipelineId", "summary", "config" }, …]`):
 ```bash
-npm run fde:backfill-integrations -- --customer contoso-bank --org <workspace id> \
+npm run operator:backfill-integrations -- --customer contoso-bank --org <workspace id> \
   --from-file integrations.json
 ```
 This upserts the `implementation` row (stage `integration`, the pipeline ids as its
@@ -64,6 +64,6 @@ WRITE:
 ## Quick reference
 
 ```bash
-npm run fde:backfill-integrations -- --customer <id> --org <workspace id> \
+npm run operator:backfill-integrations -- --customer <id> --org <workspace id> \
   [--pipeline <pid>] [--summary "…"] [--from-file integrations.json]
 ```

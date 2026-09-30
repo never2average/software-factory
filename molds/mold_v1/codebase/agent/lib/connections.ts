@@ -93,7 +93,7 @@ export const githubConnection = defineMcpClientConnection({
 
 /**
  * Slack: the agent posts stand-up summaries and follow-up nudges and reads
- * customer channels. App-scoped so it acts as the FDE bot.
+ * customer channels. App-scoped so it acts as the workspace's bot.
  */
 export const slackConnection = defineMcpClientConnection({
   url: process.env.SLACK_MCP_URL ?? "https://slack-mcp.example.com/mcp",

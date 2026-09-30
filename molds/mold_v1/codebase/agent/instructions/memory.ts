@@ -11,7 +11,7 @@
  *     current turn's user message (matched by id, email, or known name).
  *
  * Because the store is shared, the agent recalls facts across sessions AND
- * across teammates: anything one FDE `remember`s is recalled for everyone.
+ * across teammates: anything one member `remember`s is recalled for everyone.
  * Resolving on `turn.started` (not `session.started`) means a fact saved
  * earlier in the same session is already recalled on the next turn.
  *

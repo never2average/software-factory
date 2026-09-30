@@ -1,14 +1,14 @@
-// fde:validate-solution — the shared hard gate for a configured solution. Reads a
+// operator:validate-solution — the shared hard gate for a configured solution. Reads a
 // Solutions/{ver}/{pipelines|agents}/{id}/ instance and checks it is well-formed:
 // the contract schema parses, the artifact/recipe exists, no TODO markers remain,
 // and evals are seeded. Advisory by default; `--strict` exits non-zero on any
 // hard failure (for CI / a finish gate). Dependency-free — no ajv (package.json
 // is frozen); this is structural validation + a doctor-style lint.
 //
-//   npm run fde:validate-solution -- --version v2.4.0 --id pl-collections
-//   npm run fde:validate-solution -- --version v2.4.0 --id collections-agent --kind agent --strict
+//   npm run operator:validate-solution -- --version v2.4.0 --id pl-collections
+//   npm run operator:validate-solution -- --version v2.4.0 --id collections-agent --kind agent --strict
 import { dataroom, workspaceFor } from "./lib/customer.mjs";
-import { glyph, flag, hasFlag } from "./lib/fde.mjs";
+import { glyph, flag, hasFlag } from "./lib/operator.mjs";
 
 async function main() {
   const version = flag("version").trim();
@@ -23,7 +23,7 @@ async function main() {
   const store = dataroom(workspaceFor());
   const present = await store.list(base);
   if (present.length === 0) {
-    console.error(`${glyph.bad} No solution at ${base}. Configure it first (fde:configure-${kind === "agent" ? "agents" : "solution"}).`);
+    console.error(`${glyph.bad} No solution at ${base}. Configure it first (operator:configure-${kind === "agent" ? "agents" : "solution"}).`);
     process.exit(1);
   }
 

@@ -45,7 +45,7 @@ export async function seedFixtureStore() {
   process.env.WORKSPACE_PEOPLE_SEED ??= PEOPLE_FIXTURE;
 
   // Keep every write out of the repo. Do this before the store module loads.
-  process.chdir(mkdtempSync(join(tmpdir(), "fde-fixture-")));
+  process.chdir(mkdtempSync(join(tmpdir(), "workspace-fixture-")));
 
   const { customers } = JSON.parse(await readFile(FIXTURE, "utf8"));
   const { upsertCustomer } = await import("../../agent/lib/system-of-record.ts");

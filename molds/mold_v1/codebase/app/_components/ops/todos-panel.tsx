@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * TODOs — the FDE team's internal action list. Deliberately NOT the tickets
+ * TODOs — the team's internal action list. Deliberately NOT the tickets
  * system: a flat, fast checklist. Quick-add + inline check/priority/hide in the
  * list; a side panel edits the rest — notes, due, assignee, and the container
  * (a Deployment/Implementation "epic") and link (a related object) via pickers.
@@ -133,7 +133,7 @@ const IMPLEMENTATION_SORTS = [
 ] as const;
 
 /**
- * Resolves the "me / my reportees / my team / everyone" filter against the FDE
+ * Resolves the "me / my reportees / my team / everyone" filter against the
  * roster (email → team + manager). Multi-select: `scopes` is a set of picks and
  * `inScope(ownerEmail)` passes if the owner matches ANY of them. Empty (or
  * "everyone") = no filter.

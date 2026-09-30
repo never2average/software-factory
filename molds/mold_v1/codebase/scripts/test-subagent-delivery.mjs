@@ -299,7 +299,7 @@ console.log("\n7. Every declared subagent records its runs, once per invocation"
   const usage = readFileSync("agent/lib/workflow-usage.ts", "utf8");
   check(
     "a missing workflows row is a warning naming the fix, not silence",
-    usage.includes("fde:seed-subagent-rows"),
+    usage.includes("operator:seed-subagent-rows"),
   );
   check("a lookup MISS expires", usage.includes("NEGATIVE_TTL_MS"));
 }

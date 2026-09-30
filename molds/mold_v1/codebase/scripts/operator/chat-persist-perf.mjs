@@ -1,4 +1,4 @@
-// fde:chat-persist-perf — what ONE persist costs the main thread during a
+// operator:chat-persist-perf — what ONE persist costs the main thread during a
 // streaming turn, before and after, measured rather than reasoned about.
 //
 // The chat froze while it SAVED. Three costs, all synchronous, all sitting
@@ -30,14 +30,14 @@
 // delta, so a turn that ends in a 60 KB table is tens of megabytes of JSON long
 // before anything tries to persist it.
 //
-//   npm run fde:chat-persist-perf
-//   npm run fde:chat-persist-perf -- --events 3963 --table-kb 7   # the operator's real thread
-//   npm run fde:chat-persist-perf -- --quota-mb 0 --persists 12
-//   npm run fde:chat-persist-perf -- --json
+//   npm run operator:chat-persist-perf
+//   npm run operator:chat-persist-perf -- --events 3963 --table-kb 7   # the operator's real thread
+//   npm run operator:chat-persist-perf -- --quota-mb 0 --persists 12
+//   npm run operator:chat-persist-perf -- --json
 import { createHash } from "node:crypto";
 import { createEventDeduper, dedupeEvents } from "../../lib/chat-snapshot.ts";
 import { createPersistWriter } from "../../lib/chat-persist.ts";
-import { glyph, flag, hasFlag } from "./lib/fde.mjs";
+import { glyph, flag, hasFlag } from "./lib/operator.mjs";
 
 const EVENTS = Math.max(10, Number(flag("events")) || 1500);
 /**
@@ -55,7 +55,7 @@ const QUOTA = QUOTA_MB > 0 ? QUOTA_MB * 1024 * 1024 : Infinity;
 
 /** Fixed, so the two paths build byte-identical rows and the comparison means something. */
 const BASE_AT = 1_780_000_000_000;
-const KEY = "fde-chats:perf@onfinance.in:default";
+const KEY = "workspace-chats:perf@onfinance.in:default";
 
 const ms = (n) => `${n.toFixed(1)}ms`;
 const mb = (n) => `${(n / 1_048_576).toFixed(1)}MB`;
@@ -75,7 +75,7 @@ function bigTable(kb) {
   let out = "| customer | tier | stage | owner | ARR | health | last touch |\n|---|---|---|---|---|---|---|\n";
   let i = 0;
   while (out.length < kb * 1024) {
-    out += `| customer-${i} | enterprise | pilot | fde-${i % 7}@onfinance.in | $${(i * 1237) % 900000} | ${i % 3 ? "green" : "amber"} | 2026-0${(i % 9) + 1}-1${i % 9} |\n`;
+    out += `| customer-${i} | enterprise | pilot | member-${i % 7}@onfinance.in | $${(i * 1237) % 900000} | ${i % 3 ? "green" : "amber"} | 2026-0${(i % 9) + 1}-1${i % 9} |\n`;
     i++;
   }
   return out;

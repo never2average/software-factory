@@ -24,7 +24,7 @@
  * builds; without DATABASE_URL it skips rather than failing, so the offline
  * job is unaffected.
  *
- * Run:  DATABASE_URL=postgres://app_rw:…@127.0.0.1:5432/fde_test npm run test:run-history-db
+ * Run:  DATABASE_URL=postgres://app_rw:…@127.0.0.1:5432/workspace_test npm run test:run-history-db
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

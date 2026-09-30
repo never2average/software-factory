@@ -99,7 +99,7 @@ function isolatedOrgFor(email: string, hostedDomain?: string | null): string {
  * Resolve the org for a verified identity. Order:
  *   1. If tenancy isn't live → DEFAULT_ORG (fail-safe; single-org world).
  *   2. Explicit membership row (email → org + role) wins — covers per-email
- *      invitees on any domain, and our own FDEs assisting a tenant.
+ *      invitees on any domain, and our own operators assisting a tenant.
  *   3. Else the Google hosted-domain (`hd`) → org lookup.
  *   4. Else: OnFinance identities → DEFAULT_ORG; any OTHER work email → its own
  *      isolated empty workspace (never DEFAULT_ORG, so we don't leak OnFinance
@@ -196,7 +196,7 @@ export async function orgContextForRequest(request: Request): Promise<OrgContext
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!identity) return null;
   // A caller may pin a workspace with ?org= or an X-Ops-Org request header
-  // (dual-org FDEs assisting a tenant); membership is still required.
+  // (dual-org operators assisting a tenant); membership is still required.
   const url = safeUrl(request.url);
   const preferOrg =
     url?.searchParams.get("org") || request.headers.get(ORG_HEADER) || null;

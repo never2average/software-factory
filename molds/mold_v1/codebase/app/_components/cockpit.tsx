@@ -1125,7 +1125,7 @@ function SubagentList({
 /** How many people render before the list collapses behind "Show all N". */
 const PEOPLE_CAP = 8;
 
-/** "FDE owner · Axis Bank, Tata Capital +3" — or just the role(s) when unattributed. */
+/** "<owner label> · Axis Bank, Tata Capital +3" — or just the role(s) when unattributed. */
 function personSub(p: PersonItem): string | null {
   const role = p.roles.join(", ");
   if (p.accounts.length === 0) return role || null;

@@ -23,8 +23,8 @@
  *
  * Needs ADMIN_URL (DDL) and DATABASE_URL (the app_rw url); without them it skips, so the offline job is unaffected.
  *
- * Run:  ADMIN_URL=postgres://postgres:…@127.0.0.1:5432/fde_test \
- *       DATABASE_URL=postgres://app_rw:…@127.0.0.1:5432/fde_test npm run test:account-custom-fields-db
+ * Run:  ADMIN_URL=postgres://postgres:…@127.0.0.1:5432/workspace_test \
+ *       DATABASE_URL=postgres://app_rw:…@127.0.0.1:5432/workspace_test npm run test:account-custom-fields-db
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

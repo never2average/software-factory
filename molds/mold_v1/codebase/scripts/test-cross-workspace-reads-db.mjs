@@ -24,8 +24,8 @@
  * one the isolation test needs) and restores each exactly afterwards. Rows live under pid-suffixed ids and are
  * removed in a finally block. Needs ADMIN_URL (policy DDL) and DATABASE_URL (app_rw); without them it skips.
  *
- *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5432/fde_test \
- *   DATABASE_URL=postgres://app_rw:app_rw_test_password@127.0.0.1:5432/fde_test \
+ *   ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5432/workspace_test \
+ *   DATABASE_URL=postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test \
  *   npm run test:cross-workspace-db
  */
 import assert from "node:assert/strict";

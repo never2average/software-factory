@@ -1,17 +1,17 @@
-// fde:configure-infra — scaffold a customer deployment's infrastructure substrate
+// operator:configure-infra — scaffold a customer deployment's infrastructure substrate
 // under Deployments/{customer}/{ver}/infrastructure/ across the eight domains, plus
 // the 4-party signoff skeleton, and upsert the deployments row. This is the
 // per-deployment substrate a solution runs on — not a solution itself.
 //
-//   npm run fde:configure-infra -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
+//   npm run operator:configure-infra -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
 //     [--region ap-south-1] [--cloud aws] [--environment prod]
 //
-// See docs/FDE_WORKFLOW.md (stage 4). Signoffs seed as PENDING — the deployment is
+// See docs/OPERATOR_WORKFLOW.md (stage 4). Signoffs seed as PENDING — the deployment is
 // not done until the four parties sign.
 import { getDb, closeDb, dataroom, workspaceFor, writeIfAbsent, checkValues, fixedOr } from "./lib/customer.mjs";
 import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system-of-record.ts";
 import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
-import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/fde.mjs";
+import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 
 // The infrastructure domains under a deployment (dm.md).
 const DOMAINS = ["network", "compute", "storage", "inference", "agents", "database", "observability", "autoscale"];
@@ -24,8 +24,8 @@ async function main() {
     console.error(`${glyph.bad} --customer <id> and --version <platform_version_id> are required.`);
     process.exit(1);
   }
-  const { email: fde } = resolveIdentity();
-  if (!fde || !isOnfinance(fde)) {
+  const { email: me } = resolveIdentity();
+  if (!me || !isOnfinance(me)) {
     console.error(`${glyph.bad} No @onfinance.in identity — run \`node setup/fde-login.mjs\` or pass --email.`);
     process.exit(1);
   }
@@ -39,7 +39,7 @@ async function main() {
   const orgId = workspaceFor();
   const record = await getRecord(customerId, orgId);
   if (!record) {
-    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (fde:new-customer).`);
+    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
     await closeDb();
     process.exit(1);
   }
@@ -52,7 +52,7 @@ async function main() {
   // "unknown", "configuring").
   const stored = record.deployments?.some((d) => d.deploymentId === version);
   const row = stored
-    ? { deploymentId: version, releaseStatus: "in-progress", deployOwnerEmail: fde }
+    ? { deploymentId: version, releaseStatus: "in-progress", deployOwnerEmail: me }
     : {
         deploymentId: version,
         environment: flag("environment").trim() || fixedOr("environment", "prod"),
@@ -61,7 +61,7 @@ async function main() {
         deployedVersion: version,
         releaseStatus: "in-progress",
         healthStatus: "unknown",
-        deployOwnerEmail: fde,
+        deployOwnerEmail: me,
       };
   const refused = checkValues(deploymentSchema, row);
   if (refused) {

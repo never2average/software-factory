@@ -4,7 +4,7 @@
  *
  * Two of them, and only two: everything else prefixed `FDE_` is read by the
  * published npm package (see `LEGACY_ENV_NAMES` in setup/fde-tools.mjs, a
- * disjoint set) or by the factory operator's own tooling under `scripts/fde/`.
+ * disjoint set) or by the factory operator's own tooling under `scripts/operator/`.
  * These two are different because deployed server code reads them, so a plain
  * rename is a configuration change somebody has to make on a running project
  * before the next deploy, not a text edit:

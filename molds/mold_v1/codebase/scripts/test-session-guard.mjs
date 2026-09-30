@@ -15,7 +15,7 @@
  * It runs unchanged against `main`, which is how it was shown to fail there first.
  *
  * Run (CI's isolation job has both urls):
- *   ADMIN_URL=postgres://…admin… DATABASE_URL=postgres://app_rw:…@…/fde_test npm run test:session-guard
+ *   ADMIN_URL=postgres://…admin… DATABASE_URL=postgres://app_rw:…@…/workspace_test npm run test:session-guard
  *
  * The live-HTTP companion, against a running `eve dev`, is scripts/test-session-guard-live.mjs (run by hand).
  */
