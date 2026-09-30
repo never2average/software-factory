@@ -63,16 +63,17 @@
           },
           "run": {
             "type": "string",
-            "description": "One shell command. Placeholders: {app_id} {root} {mold} {codebase} {testing} {lane} {date} {url} {report}."
+            "description": "One shell command. Placeholders: {app_id} {root} {mold} {codebase} {default_codebase} {testing} {lane} {date} {url} {report}."
           },
           "cwd": {
             "type": "string",
             "enum": [
               "codebase",
+              "default_profile",
               "testing",
               "root"
             ],
-            "description": "Default codebase = molds/<mold_id>/codebase."
+            "description": "Default codebase. `codebase` is what THIS application ships: build/<app_id>.lane/ (mold + packs, the app's own deployment profile) for an app with packs, else molds/<mold_id>/codebase. `default_profile` is where the mold's OWN offline tests run: build/<app_id>.lane-default/ (mold + the packs' code, the DEFAULT profile) for an app with packs, else molds/<mold_id>/codebase. The mold's tests pin the default profile's words and fields, so on a relabelling pack's profile they fail by design (mold_v1-146/147); grade the app's own words with a `codebase` check."
           },
           "timeout_s": {
             "type": "integer",

@@ -11,7 +11,10 @@ section, shared sandbox helpers). An application names its packs in application.
   apply <app>      copy the app's packs into build/<app_id>/ (created from the mold if it is not there yet),
                    then run the mold's own generators there; refuses if a pack file would REPLACE a mold file
   verify <app>     the mold's own subagent checks inside build/<app_id>/
-  lane-copy <app>  build/<app_id>.lane/: mold + packs, no brand, rebuilt from scratch (what the test lanes grade)
+  lane-copy <app>  the two copies the test lanes grade, both rebuilt from scratch and unbranded:
+                     build/<app_id>.lane/          mold + packs (the app's code AND its profile's words)
+                     build/<app_id>.lane-default/  mold + packs WITHOUT the packs' profiles/: the default profile,
+                                                   which is what the mold's own offline tests are written against
 
 Molds stay general-purpose checkpoints: nothing here ever writes under molds/. A mold supports packs when its
 codebase discovers subagents (scripts/gen-subagent-meta.mjs writes agent/lib/subagent-registry.generated.ts);
@@ -81,15 +84,29 @@ def supports_packs(codebase):
 def conflicts(files, codebase):
     return [f for f in files if os.path.lexists(os.path.join(codebase, f))]
 
-def apply(app_id, lane=False):
+PACK_PROFILE = re.compile(r"^profiles/")
+GENERATED_PROFILE = ("lib/deployment-profile.generated.ts", "agent/lib/deployment-profile.generated.ts")
+
+def apply(app_id, lane=False, default_profile=False):
     """lane=True builds build/<app_id>.lane/ instead: the mold plus the packs and NO brand, always from scratch.
     The test lanes run the mold's source checks there. Those checks grade source hygiene (one of them refuses any
     customer's name in code every customer sees), and the brand overlay writes the product name into that code on
     purpose — so grading the branded copy fails an application whose product is named after its operator. The
-    brand has its own check (branding.py check); the deployed copy stays build/<app_id>/."""
+    brand has its own check (branding.py check); the deployed copy stays build/<app_id>/.
+
+    default_profile=True (with lane) builds build/<app_id>.lane-default/: the same, minus every file a pack adds
+    under profiles/. The mold's offline unit and contract tests (npm run test:*) are written against the DEFAULT
+    profile — scripts/test-deployment-profile.mjs says so in as many words, and upstream CI runs them on nothing
+    else — so a pack that relabels the vocabulary or declares its own record fields fails them by design: the
+    wording "deployment's profile" becomes "workspace's profile", a pinned 38-column workbook gains the pack's
+    field, a tool's result speaks `companyId` where the test reads `customerId` (onfinance_hfc, mold_v1-146/147).
+    Those rows measured the pack's profile against the mold's fixtures, not the product. This copy still carries
+    the pack's CODE, so those tests also run over its subagents and helpers; the profile's own words are graded
+    where they mean something (the pack-mode vocabulary gate, the rendered and live checks). The generated
+    profile here must come out byte-identical to the mold's, or the copy is not the default and the build stops."""
     app = app_docs(app_id); packs = app.get("packs") or []
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
-    build = os.path.join(ROOT, "build", app_id + (".lane" if lane else ""))
+    build = os.path.join(ROOT, "build", app_id + ((".lane-default" if default_profile else ".lane") if lane else ""))
     if lane and os.path.isdir(build): shutil.rmtree(build)
     if not packs: print(f"{app_id}: no packs; nothing to apply"); return 0
     errs = [e for p in packs for e in check_pack(p)]
@@ -113,6 +130,7 @@ def apply(app_id, lane=False):
         import branding
         branding.build_copy(os.path.basename(build), mold_dir)
         print(f"build copy created: {os.path.relpath(build, ROOT)}/ (from {app['mold_id']})")
+    if default_profile: seen = {f: p for f, p in seen.items() if not PACK_PROFILE.match(f)}
     for f, p in sorted(seen.items()):
         dest = os.path.join(build, f); os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copyfile(os.path.join(PACKS, p, "files", f), dest)
@@ -123,8 +141,21 @@ def apply(app_id, lane=False):
         r = subprocess.run(cmd, cwd=build, capture_output=True, text=True)
         if r.returncode:
             print((r.stdout + r.stderr).strip(), file=sys.stderr); sys.exit(f"{' '.join(cmd)} failed in {os.path.relpath(build, ROOT)}/")
-    print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)); shared helpers synced, subagent registry regenerated")
+    if default_profile:
+        drift = [g for g in GENERATED_PROFILE if os.path.exists(os.path.join(mold_dir, g)) and
+                 (not os.path.exists(os.path.join(build, g)) or open(os.path.join(build, g), "rb").read() != open(os.path.join(mold_dir, g), "rb").read())]
+        if drift: sys.exit(f"{os.path.relpath(build, ROOT)}/ was built without the packs' profiles, yet {', '.join(drift)} differs from "
+                           f"{app['mold_id']}'s: a pack changed the deployment profile some other way, so this copy is not the default profile "
+                           f"and the mold's own tests cannot be graded in it.")
+    print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)"
+          + ("; its profiles/ left out, so it reads in the default profile" if default_profile else "")
+          + "); shared helpers synced, subagent registry regenerated")
     return 0
+
+def lane_copies(app_id):
+    """Both copies the lanes grade: build/<app_id>.lane/ (mold + packs) and build/<app_id>.lane-default/ (mold + packs,
+    default profile). See apply()."""
+    return apply(app_id, lane=True) or apply(app_id, lane=True, default_profile=True)
 
 def verify(app_id):
     build = os.path.join(ROOT, "build", app_id)
@@ -161,7 +192,7 @@ def main(a):
     if a[0] == "check":
         errs = check_pack(a[1]); [print(e) for e in errs]; print("ok" if not errs else f"{len(errs)} problem(s)"); return 1 if errs else 0
     if a[0] == "apply": return apply(a[1])
-    if a[0] == "lane-copy": return apply(a[1], lane=True)
+    if a[0] == "lane-copy": return lane_copies(a[1])
     if a[0] == "verify": return verify(a[1])
     sys.exit(__doc__)
 

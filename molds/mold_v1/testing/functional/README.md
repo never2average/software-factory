@@ -3,6 +3,22 @@
 Existing: Playwright `codebase/tests/cards.spec.ts`, `stickloop.spec.ts` (`npm run test:cards`), plus the `test:*` node scripts (dataroom, syncs, alerts, schedules, render, sor, browser-security).
 Covers: feature-parity checks for the Claude Code web surface, FDE skills, workflow builder.
 
+## Which copy a check runs in (mold_v1-146/147)
+
+The mold's own offline tests (`npm run test:*`, `cwd: "default_profile"` in [`lane.json`](lane.json)) are written
+against the DEFAULT deployment profile: they pin its wording, its tool arguments and its record fields, and upstream
+CI runs them on nothing else. For an application with packs they therefore run in `build/<app_id>.lane-default/`
+(the mold plus the packs' code, WITHOUT the packs' `profiles/`), rebuilt by `packs.py lane-copy` every run; for one
+without packs, in the mold. Run on a relabelling profile they failed by design, not because anything was broken:
+on onfinance_hfc `test:custom-fields` read "workspace's profile" for "deployment's", `test:workbook-spec` counted the
+pack's `notes` column (39, pinned 38), `test:schedules` read `customerId` from a result the model is shown as
+`companyId`, and `test-vision-tool.mjs` looked for a zod `.shape` on a tool whose schema the model is given as JSON
+Schema. Each was probed on the pack build and the product was right.
+
+Checks that grade what THIS application ships keep `cwd: "codebase"` (`build/<app_id>.lane/`, the app's own
+profile): its subagents and shared helpers, its tenancy scan, its rendered cards, its live URL — and, in the context
+lane, `vocabulary`, the agent-vocabulary gate in pack mode over what its model reads.
+
 ## Tenant isolation (mold_v1-015, rewritten for mold_v1-016)
 
     python3 molds/mold_v1/testing/functional/tenant-isolation.py <app_id>
