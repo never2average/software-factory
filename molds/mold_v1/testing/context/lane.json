@@ -5,24 +5,49 @@
   "summary": "Primary context assembly, memory persistence, the quality/hardening bundle, cross-org isolation of multiplayer context, and — for a clone — the regression verdict against the deployment it replicates.",
   "not_covered": [
     "Model quality: these checks prove what reaches the model, not what the model then says.",
-    "Live cross-org traffic — test:org-isolation measures a database, the functional lane's rls rows measure the deployed one."
+    "Live cross-org traffic — test:org-isolation measures a database, the functional lane's rls rows measure the deployed one.",
+    "The mold's own tests here (cwd `default_profile`) run on the DEFAULT deployment profile, since they pin its words and fields; this app's own profile is graded by the `vocabulary` row (what its model reads), not by them."
   ],
   "checks": [
     {
       "name": "test:prompt-context",
+      "cwd": "default_profile",
       "run": "npm run test:prompt-context",
       "why": "Primary context is the corpus the agent answers from; the wrong assembly is a wrong answer with a confident tone."
     },
     {
       "name": "test:memory",
+      "cwd": "default_profile",
       "run": "npm run test:memory",
       "why": "Memory persistence is what makes the second conversation cheaper than the first."
     },
     {
       "name": "test:qm-hardening",
+      "cwd": "default_profile",
       "run": "npm run test:qm-hardening",
       "timeout_s": 1200,
       "why": "The mold's own hardening bundle over context, memory, browser security, leases, step context, sign-in, gates and chat."
+    },
+    {
+      "name": "vocabulary",
+      "run": "PYTHONDONTWRITEBYTECODE=1 python3 {testing}/context/pack-vocabulary.py {app_id}",
+      "timeout_s": 600,
+      "why": "The rows above run the mold's own tests on the DEFAULT profile, because they pin its words; this row grades THIS app's. For each of its packs, the mold's agent-vocabulary gate in pack mode (npm run check:agent-vocabulary -- --pack packs/<id> --allow <its vocabulary-allow.json>) renders everything the model reads under the pack's own profile — prompts, briefing, every tool's name and parameters, every subagent, real offline tool results — and fails on any base word (customer, deployment, implementation, rollout, FDE) left in it; an app without packs is graded on the default surface. A leak here is an agent reasoning in the base product's words about this app's records.",
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "vocabulary (pack [a-z0-9-]+|default profile \\(no packs\\)): pass|vocabulary: not measured"
+        ],
+        "stdout_not": [
+          "vocabulary [^\\n]*: fail"
+        ],
+        "skip_on": [
+          {
+            "stdout": "vocabulary: not measured",
+            "else": "This mold has no agent-vocabulary gate (npm run check:agent-vocabulary), so nothing measured what the model reads in this app's words. Refresh the mold from source per {mold}/MOLD.md, then re-run: python3 .claude/scripts/lanes.py {app_id} --lane context"
+          }
+        ]
+      }
     },
     {
       "name": "test:org-isolation",
