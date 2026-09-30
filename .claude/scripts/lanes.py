@@ -35,11 +35,19 @@ live. A lane folder outside the five is therefore announced on stdout, never sil
   every check RAN and passed                                     -> pass
   otherwise (>=1 check skipped by a precondition)                -> skipped
 
+Where a check runs (its `cwd`): an application with packs is graded in two unbranded copies that packs.py
+lane-copy rebuilds every run. `codebase` is build/<app_id>.lane/ (mold + packs, the app's own profile): what this
+app ships, so its subagent, vocabulary, rendered-page and live checks go there. `default_profile` is
+build/<app_id>.lane-default/ (mold + packs' code, the DEFAULT profile): the mold's own offline tests, which are
+written against that profile and would otherwise fail on any pack that relabels a word (mold_v1-146/147). Without
+packs both are the mold's codebase.
+
 `pass` is never printed next to a command that did not execute — that is the exact failure
 functional/tenant-isolation.py was written to stop, and it is why `skipped` is the fallback rather
-than `pass`. `known_defect` is an annotation, never a mute: the three known mold defects still fail
-the functional lane and still revert the app; the flag only links their task ids and stops a duplicate
-being filed. This runner is the ONLY writer of `testing.<lane>`; the only status it may write is
+than `pass`. `known_defect` is an annotation, never a mute: a check tagged with a known mold defect still fails
+its lane and still reverts the app; the flag only links the task id and stops a duplicate being filed. Untag it
+when the task is done, or a new failure of the same check is filed under a fixed defect (mold_v1-019 on
+2026-09-30). This runner is the ONLY writer of `testing.<lane>`; the only status it may write is
 `reverted`. Promotion stays with the operator.
 
 Reports are EVIDENCE, so they are write-once. Each is named `<app_id>-<date>T<hhmmss>Z.md` for the UTC
@@ -57,7 +65,7 @@ import factory   # _check for lane.json; `add` is SHELLED OUT, never re-implemen
 TODAY = datetime.date.today().isoformat()
 LANES = ["functional", "context", "load", "accessibility", "responsiveness"]   # the contract's order
 DEFAULT_ORDER = {n: (i + 1) * 10 for i, n in enumerate(LANES)}
-CWDS = ("codebase", "testing", "root")
+CWDS = ("codebase", "default_profile", "testing", "root")
 
 def stamps():
     """Per LANE, not per process. Two lanes of one ordered run finish at different times, and the report
@@ -189,7 +197,8 @@ def run_check(c, docs, ctx):
     for p in c.get("requires", []):
         e = unmet(p, docs, ctx)
         if e: return dict(res, status="skipped", reason=e)
-    cwd = {"codebase": ctx["codebase"], "testing": ctx["testing"], "root": ROOT}[c.get("cwd", "codebase")]
+    cwd = {"codebase": ctx["codebase"], "default_profile": ctx["default_codebase"], "testing": ctx["testing"],
+           "root": ROOT}[c.get("cwd", "codebase")]
     t = c.get("timeout_s", 600)
     try:
         r = subprocess.run(res["cmd"], shell=True, cwd=cwd, capture_output=True, text=True, timeout=t, env=env)
@@ -256,11 +265,19 @@ def context(app_id, lane, mold_id, docs, report):
     # The UNBRANDED copy (packs.py lane-copy): source checks grade the mold plus the packs; the brand overlay
     # writes the product name into shared code on purpose and has its own check (branding.py check).
     codebase = os.path.join(ROOT, "build", app_id + ".lane") if app.get("packs") else os.path.join(mold, "codebase")
+    # cwd "default_profile": where the mold's OWN offline tests run. They are written against the default deployment
+    # profile (upstream CI runs them on nothing else), so a pack's profile — relabelled vocabulary, its own record
+    # fields — fails them by design, measuring the pack's words against the mold's fixtures rather than the product
+    # (mold_v1-146/147). build/<app_id>.lane-default/ is the mold plus the packs' CODE with the default profile
+    # (packs.py lane-copy); an app without packs has no other profile, so it is the mold itself. Checks that grade
+    # what THIS app ships — its subagents, its words, its rendered pages, its live URL — keep cwd "codebase".
+    default_codebase = os.path.join(ROOT, "build", app_id + ".lane-default") if app.get("packs") else os.path.join(mold, "codebase")
     # What the page <title> must carry: the app's own brand, else the mold's default name.
     rules = os.path.join(mold, "branding", "rules.json")
     default_name = json.load(open(rules)).get("product_name_default", "") if os.path.exists(rules) else ""
     product_name = ((app.get("surface") or {}).get("branding") or {}).get("product_name") or default_name
-    return {"app_id": app_id, "root": ROOT, "mold": mold, "codebase": codebase, "product_name": re.escape(product_name),
+    return {"app_id": app_id, "root": ROOT, "mold": mold, "codebase": codebase, "default_codebase": default_codebase,
+            "product_name": re.escape(product_name),
             "testing": os.path.join(mold, "testing"), "lane": lane, "date": TODAY, "url": url, "report": report}
 
 def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet_lane, not_run,
@@ -373,9 +390,11 @@ def main(a):
         docs[name] = load(p)
     mold_id = docs["application"].get("mold_id") or die(f"{app_id}/application.json has no mold_id. Nothing ran.")
     if docs["application"].get("packs") and "--list" not in sys.argv:
-        # Rebuilt every run, so the lane never grades a stale copy of a pack.
+        # Rebuilt every run, so the lane never grades a stale copy of a pack. Two copies: build/<app_id>.lane/
+        # (mold + packs, cwd "codebase") and build/<app_id>.lane-default/ (the same, default profile, cwd
+        # "default_profile") — see context().
         r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/packs.py"), "lane-copy", app_id], capture_output=True, text=True)
-        if r.returncode: die(f"{app_id} has packs and its lane copy could not be built: {(r.stdout + r.stderr).strip()[-400:]} Nothing ran.")
+        if r.returncode: die(f"{app_id} has packs and its lane copies could not be built: {(r.stdout + r.stderr).strip()[-400:]} Nothing ran.")
     commit = docs["application"].get("mold_commit") or next((m.get("source", {}).get("commit", "?") for m in
              load(os.path.join(ST, "factory.json"))["molds"] if m["mold_id"] == mold_id), "?")
     specs = {l: read_spec(l, mold_id) for l in LANES}
