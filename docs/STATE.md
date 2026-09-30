@@ -2,7 +2,7 @@
 
 Four files under `state/application/<app_id>/`, validated by the schemas in `state/application/app_id/` (`factory.py validate` walks nested objects and arrays). Secrets appear by name only.
 
-`application.surface` has one block per service-surface item in `state/factory.json`. Every field maps to something the mold_v1 codebase reads: a table, an env flag, or an `fde:*` script argument. Nothing here is interpreted; if the mold has no knob for it, the schema says so.
+`application.surface` has one block per service-surface item in `state/factory.json`. Every field maps to something the mold_v1 codebase reads: a table, an env flag, or an `operator:*` script argument. Nothing here is interpreted; if the mold has no knob for it, the schema says so.
 
 ## surface.dm.md
 | Field | Mold |
@@ -19,7 +19,7 @@ Physical wiring (backend, blob prefix, platform version ids, seed source) lives 
 | `browser.local` | `BROWSER_LOCAL` runtime env |
 
 ## workspace (not a surface item)
-Tenancy and people. `org` is the `orgs` row (`fde:new-org`); `fde_self` the operator identity (`fde:onboard-self`, also the `--email` every configure script runs as); `members` are `org_members` (`owner`, `admin`, `engineer`, `member`); `platform_admins` who may create orgs; `roster` is `people_roster` with `manager_email` as the reporting line and `escalations[]` as the fan-out; `customers` map to `fde:new-customer` plus `internal_staff` and `customer_stakeholders`.
+Tenancy and people. `org` is the `orgs` row (`operator:new-org`); `fde_self` the operator identity (`operator:onboard-self`, also the `--email` every configure script runs as); `members` are `org_members` (`owner`, `admin`, `engineer`, `member`); `platform_admins` who may create orgs; `roster` is `people_roster` with `manager_email` as the reporting line and `escalations[]` as the fan-out; `customers` map to `operator:new-customer` plus `internal_staff` and `customer_stakeholders`.
 
 ## surface.primary_context
 What the agent knows. For an fde-agent that is customer agreements, product offerings and rollout case studies, not the org row.
@@ -47,8 +47,8 @@ Default processes for mold_v1: sprint_planning (cycles, todos, task definition),
 ## surface.custom_workflow_builder
 | Field | Mold |
 |---|---|
-| `library.install` | the 13 scripts in `scripts/fde/workflows/`, installed by `provisionWorkspace` on `new-org`; `listed` keeps only `names` |
-| `scripts[]` | extra `workflows` rows; give `file` for system-owned ones because `fde:seed-workflows` prunes rows without a backing file |
+| `library.install` | the 13 scripts in `scripts/operator/workflows/`, installed by `provisionWorkspace` on `new-org`; `listed` keeps only `names` |
+| `scripts[]` | extra `workflows` rows; give `file` for system-owned ones because `operator:seed-workflows` prunes rows without a backing file |
 | `definitions[]` | `workflow_definitions` state machines (`entity`, `stages[].assign`, `transitions[].migrate`); one `is_default` per entity |
 
 ## datastores.postgres
@@ -102,7 +102,7 @@ fixture accepts a loopback `MOLD_V1_LANE_URL` instead — `docs/RUNBOOK.md` §7)
 `application.capabilities` is the source; `infrastructure.runtime_env` is what provision.py writes to the target (`OPS_MULTI_TENANT`, `ENABLE_*`, `MODEL_PROVIDER`). Never edit `runtime_env` by hand.
 
 ## clone_of
-Set when the app replicates an existing deployment. `datastores.postgres.snapshot.cleared_sealed_rows` records the `connector_secrets` / `browser_credentials` rows the restore dropped: they were sealed under the source app's `OPS_SECRETS_KEY`, which is minted per app and never copied (`docs/HOW_IT_WORKS.md`, Secrets). A non-clone app restores nothing and starts with no connectors; enter them in the app. `datastores.postgres.snapshot` and `datastores.blob.snapshot` say where the data came from; `clone_of.regression` records the diff run against the source. Read-back tools in the mold (`fde:doctor`, `validate-solution`, `context-graph`) print prose, so the regression harness queries Postgres and blob directly.
+Set when the app replicates an existing deployment. `datastores.postgres.snapshot.cleared_sealed_rows` records the `connector_secrets` / `browser_credentials` rows the restore dropped: they were sealed under the source app's `OPS_SECRETS_KEY`, which is minted per app and never copied (`docs/HOW_IT_WORKS.md`, Secrets). A non-clone app restores nothing and starts with no connectors; enter them in the app. `datastores.postgres.snapshot` and `datastores.blob.snapshot` say where the data came from; `clone_of.regression` records the diff run against the source. Read-back tools in the mold (`operator:doctor`, `validate-solution`, `context-graph`) print prose, so the regression harness queries Postgres and blob directly.
 
 ## Brief hints that fill these blocks
 `workspace: <name>`, `fde: <email>`, `members: a@x, b@x`, `primary context: customer agreements, product offerings, rollout case studies`, `multiplayer: sprint planning, onboarding, escalation handling`, `accounts are called patients`, `clone of live`, `fresh database` / `shared database`, `single workspace`, `workflows: all|none`, plus `neon` / `supabase` / `self-host the postgres`, and the older `vercel|vm`, `no web search`, `no browser`, `customer: <id>`, `domain: <host>`, `mold_v2`. Everything the brief does not say takes the mold default or a confirmed factory default; nothing is guessed.

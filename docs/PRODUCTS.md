@@ -62,7 +62,7 @@ per workspace: `docs/COST_MODEL.md` (Cloudflare path only; the gateway path is n
 | stamped | state filled against all four schemas; mold builds on the VM | both apps of `delivered` were stamped; `dover` has none |
 | lanes_passing | all five lanes pass; every lane has a harness | all five harnesses exist (load's `stress.py` landed with mold_v1-024); no app has all five passing — the replica is `reverted` on the accessibility lane |
 | deployed | production URL on Vercel; secrets by name only; the app's inference provider (GLM 5.2 on Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway) configured and smoke-tested | the replica is deployed at `claudecode-web-opal.vercel.app` but predates the RLS gate (mold_v1-026) |
-| released | onboarding path works end to end (`fde:onboard-self`, `fde:new-org`, `fde:new-customer`); docs + pricing/packaging decided; inference budget per workspace known | docs exist as of this file; the onboarding path has not been executed end to end on a stamped app; pricing is a placeholder in the cost model |
+| released | onboarding path works end to end (`operator:onboard-self`, `operator:new-org`, `operator:new-customer`); docs + pricing/packaging decided; inference budget per workspace known | docs exist as of this file; the onboarding path has not been executed end to end on a stamped app; pricing is a placeholder in the cost model |
 
 Both products are at `defined`: a stage only moves when the tasks that carry it close, and no task has.
 
