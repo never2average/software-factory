@@ -142,6 +142,7 @@
     "test:workspace-deep-link": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-workspace-deep-link.mjs",
     "test:thread-visibility-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-thread-visibility-db.mjs",
     "test:chat-share-invites-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-chat-share-invites-db.mjs",
+    "test:guest-signin-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-guest-signin-db.mjs",
     "test:workspace-mailbox-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-workspace-mailbox-db.mjs",
     "test:chat-sessions-mirror-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-sessions-mirror-db.mjs",
     "test:web-push": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-web-push.mjs",

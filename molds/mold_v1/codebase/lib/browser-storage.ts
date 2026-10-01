@@ -63,6 +63,11 @@ export const STORAGE_KEYS = {
    * the server may push is the subscription row; this is what a hidden tab's own notifier reads. Cleared on sign-out.
    */
   desktopNotifications: "workspace-desktop-notifications",
+  /**
+   * In sessionStorage, for the length of a Google sign-in redirect: the address (path and query) the person was on, so
+   * they come back to it — a shared chat's link above all — rather than to the bare home page Google returns to.
+   */
+  signInReturn: "workspace-sign-in-return",
 } as const;
 
 /**
@@ -75,6 +80,7 @@ export const STORAGE_KEYS_SINCE_RENAME: ReadonlySet<string> = new Set([
   STORAGE_KEYS.chatOwed,
   STORAGE_KEYS.desktopNotifications,
   STORAGE_KEYS.lastChat,
+  STORAGE_KEYS.signInReturn,
 ]);
 
 /**

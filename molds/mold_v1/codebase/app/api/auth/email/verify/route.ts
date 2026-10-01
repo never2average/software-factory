@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, eq, desc, gt, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
-import { loginCodes } from "@/agent/lib/db/schema";
+import { loginCodes, orgInvites, orgMembers } from "@/agent/lib/db/schema";
+import { guestInviteFor, guestRefusal, markGuestArrived } from "@/lib/guest-invite";
+import { guestLinkOf } from "@/lib/guest-invite-rules";
 import { getOpsDb } from "@/lib/ops-db";
 import { emailSignInConfigured, mintSessionToken, SESSION_TTL_SECONDS } from "@/lib/auth-session";
 import { loginCodeMatches } from "@/lib/login-code";
@@ -21,11 +23,19 @@ export const dynamic = "force-dynamic";
  * workspace: membership is read from the database on every request, so an
  * invitee still has to redeem their invite, and someone who leaves a workspace
  * loses access immediately even though their token is still valid.
+ *
+ * FROM A CHAT'S LINK (`org`, `chat` in the body), the invite is checked again here, after the code: it may have been
+ * withdrawn or have expired in the ten minutes since the code was sent. A guest whose invite is still good is signed in
+ * and the invite counts as opened (lib/guest-invite.ts markGuestArrived); one whose invite is not is told why and gets
+ * no token. Someone who already belongs to a workspace, or holds a workspace invite, signs in as before.
  */
 
 const schema = z.object({
   email: z.string().trim().toLowerCase().email(),
   code: z.string().trim().regex(/^\d{6}$/, "The code is six digits."),
+  /** The chat link's workspace and chat, when a guest signs in from it. */
+  org: z.string().max(200).optional(),
+  chat: z.string().max(200).optional(),
 });
 
 /** Wrong code, expired code, no code — all one message. Which of the three it
@@ -75,6 +85,31 @@ export async function POST(request: NextRequest) {
     // Single use. Consume FIRST: if minting somehow fails afterwards the code is
     // spent and they request another, which is the safe direction to fail in.
     await db.update(loginCodes).set({ consumedAt: new Date() }).where(eq(loginCodes.id, row.id));
+    const link = guestLinkOf(parsed.data);
+    if (link) {
+      const guest = await guestInviteFor(link, email);
+      if (guest.state === "live") {
+        await markGuestArrived(guest.orgId, guest.threadId, email);
+      } else {
+        const [member] = await db.select({ orgId: orgMembers.orgId }).from(orgMembers).where(eq(orgMembers.email, email)).limit(1);
+        const [invite] = member
+          ? []
+          : await db
+              .select({ orgId: orgInvites.orgId })
+              .from(orgInvites)
+              .where(
+                and(
+                  eq(orgInvites.email, email),
+                  isNull(orgInvites.acceptedAt),
+                  gt(orgInvites.expiresAt, new Date()),
+                  ne(orgInvites.origin, "chat_share"),
+                ),
+              )
+              .limit(1);
+        // Not a guest of this chat any more, and nothing else to sign in to: say why, and hand out nothing.
+        if (!member && !invite) return NextResponse.json({ error: guestRefusal(guest.state) }, { status: 403 });
+      }
+    }
     const token = await mintSessionToken(email);
     return NextResponse.json({ token, email, expiresIn: SESSION_TTL_SECONDS });
   } catch (e) {

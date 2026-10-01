@@ -1,9 +1,10 @@
 import "server-only";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "./ops-db";
 import { verifyOpsAuth } from "./ops-auth";
 import { DEFAULT_ORG, ORG_HEADER, orgContextForRequest } from "./org-context";
+import { guestInviteLive, normalEmail } from "./guest-invite-rules";
 
 /**
  * Shared authorization helpers for the multiplayer chat routes. proxy.ts proves
@@ -76,7 +77,8 @@ async function loadMember(_db: OpsDb, threadId: string, email: string, orgId: st
     tx
       .select()
       .from(chatThreadMembers)
-      .where(and(eq(chatThreadMembers.threadId, threadId), eq(chatThreadMembers.email, email)))
+      // Compared without capital letters: a Google sign-in may spell the address differently from the invite.
+      .where(and(eq(chatThreadMembers.threadId, threadId), sql`lower(${chatThreadMembers.email}) = ${normalEmail(email)}`))
       .limit(1),
   );
   return rows[0];
@@ -113,6 +115,9 @@ export async function accessFor(
     loadMember(db, threadId, email, scope.named),
   ]);
   if (!guestThread || guestThread.ownerEmail === email) return null;
+  // A guest's invite must still be good: not withdrawn, and opened or sent within the last two weeks
+  // (lib/guest-invite-rules.ts — the same rule the guest sign-in doors apply).
+  if (!guestMember || !guestInviteLive(guestMember)) return null;
   const access = resolveAccess(db, guestThread, guestMember, threadId, email);
   return access ? { ...access, role: "viewer", guest: true } : null;
 }
@@ -158,7 +163,7 @@ function resolveAccess(
       // ["invited", "accepted"], so inventing "active" here silently removed
       // the thread from "Shared with you" the instant someone opened it.
       .set({ status: "accepted", acceptedAt: new Date() })
-      .where(and(eq(chatThreadMembers.threadId, threadId), eq(chatThreadMembers.email, email))))
+      .where(and(eq(chatThreadMembers.threadId, threadId), sql`lower(${chatThreadMembers.email}) = ${normalEmail(email)}`)))
       .catch(() => undefined);
     return { thread, role: member.role, member: { ...member, status: "accepted" } };
   }

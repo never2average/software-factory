@@ -59,6 +59,7 @@ import {
 import {
   guestSessionDecision,
   readCallerFacts,
+  openedIfAdmitted,
   readLegacyOwnershipIn,
   readOwnerRecordIn,
   recordOwner,
@@ -476,6 +477,8 @@ async function decide(
       callerInWorkspace: facts.callerInWorkspace,
       localDevAllowed: deps.localDevAllowed(),
     });
+    // Reading (or taking part in) a shared chat through the agent's own routes is opening it (lib/session-gate.ts).
+    await openedIfAdmitted(db, decision, ownership, facts.membership, sessionId, caller.email);
     return { ...decision, ownership, db };
   } catch (error) {
     throw new GateUnavailable(error instanceof Error ? error.message : String(error));

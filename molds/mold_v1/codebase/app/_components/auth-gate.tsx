@@ -11,6 +11,7 @@ import { clearAllPending } from "@/lib/chat-queue";
 import { clearDesktopPrefs, forgetThisDevice } from "./desktop-notify";
 import { forgetQueueCache } from "./use-chat-queue";
 import { forgetStopState } from "./chat-stop-state";
+import { guestLinkOf, type GuestLink } from "@/lib/guest-invite-rules";
 
 // Minimal typing for the Google Identity Services client we load at runtime.
 declare global {
@@ -53,6 +54,24 @@ const TOKEN_KEY = STORAGE_KEYS.token;
 export const INVITE_RESULT_KEY = STORAGE_KEYS.inviteResult;
 
 const NONCE_KEY = STORAGE_KEYS.nonce;
+const RETURN_KEY = STORAGE_KEYS.signInReturn;
+
+/**
+ * The shared chat this page was opened for, when it is a chat's link (`/?chatSession=…&org=…`), or null.
+ *
+ * Someone a chat was shared with arrives here signed out. They are a GUEST of that one chat: they sign in with the
+ * address the invite went to — by Google or by an emailed code — and land on the chat. Both doors send the link's
+ * workspace and chat to the server, which checks the invite before signing them in (app/api/auth/guest/google,
+ * app/api/auth/email/*).
+ */
+function chatLinkOnPage(): GuestLink | null {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    return guestLinkOf({ org: q.get("org"), chat: q.get("chatSession") });
+  } catch {
+    return null;
+  }
+}
 
 interface Claims {
   email?: string;
@@ -138,6 +157,9 @@ export function AuthGate() {
   const [picture, setPicture] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gisReady, setGisReady] = useState(false);
+  /** The shared chat this page was opened for (its link), read once the page is in the browser. */
+  const [chatLink, setChatLink] = useState<GuestLink | null>(null);
+  useEffect(() => setChatLink(chatLinkOnPage()), []);
   /** Whether this identity belongs to any workspace yet. */
   const [orgState, setOrgState] = useState<"unknown" | "ok" | "none">("unknown");
   const tokenRef = useRef<string | null>(null);
@@ -223,6 +245,41 @@ export function AuthGate() {
     }
   }, []);
 
+  /**
+   * A Google sign-in. On a shared chat's link it goes through the GUEST door first: the server accepts it only when the
+   * Google account's verified address is the one the chat was shared with, and answers with the same kind of sign-in
+   * the emailed code gives (app/api/auth/guest/google). Anywhere else — or for a Google Workspace account that is not
+   * the invited address, such as a member of the chat's own workspace opening its link — it is the ordinary Google
+   * sign-in, exactly as before.
+   */
+  const acceptGoogle = useCallback(
+    async (credential: string) => {
+      const link = chatLinkOnPage();
+      if (!link) return applyToken(credential);
+      const isWorkspaceAccount = Boolean(decodeJwt(credential).hd);
+      try {
+        const res = await fetch("/api/auth/guest/google", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ credential, org: link.org, chat: link.chat }),
+        });
+        const data = (await res.json().catch(() => null)) as { token?: string; error?: string; reason?: string } | null;
+        if (res.ok && data?.token) return applyToken(data.token);
+        // A member of the chat's own workspace (not a guest): their ordinary Google sign-in. Also the fallback for a
+        // work account where guest sign-in is not set up — exactly the sign-in it had before.
+        if (isWorkspaceAccount && (data?.reason === "member" || data?.reason === "not-configured")) return applyToken(credential);
+        endSessionFrame();
+        setError(data?.error ?? "That Google sign-in didn't work. Try again, or use “Email me a code”.");
+      } catch {
+        endSessionFrame();
+        setError("Could not reach the server. Check your connection and try again.");
+      }
+    },
+    [applyToken],
+  );
+  const acceptGoogleRef = useRef(acceptGoogle);
+  acceptGoogleRef.current = acceptGoogle;
+
   const signOut = useCallback(() => {
     // Desktop notifications: this device stops receiving the person's notifications. Asked BEFORE the sign-in is
     // dropped — the server needs it to know whose device row to delete — and not waited for.
@@ -260,7 +317,13 @@ export function AuthGate() {
     if (!window.location.hash.includes("id_token=")) return;
     const params = new URLSearchParams(window.location.hash.slice(1));
     const idToken = params.get("id_token");
-    history.replaceState(null, "", window.location.pathname + window.location.search);
+    // Back to the address the person left for Google from (a shared chat's link keeps its chat and workspace). Google
+    // returns to the bare home page, which is the one address its console lists; only a same-site path is restored.
+    const back = readStored(RETURN_KEY, "session");
+    removeStored(RETURN_KEY, "session");
+    const restore = back && back.startsWith("/") && !back.startsWith("//") ? back : window.location.pathname + window.location.search;
+    history.replaceState(null, "", restore);
+    setChatLink(chatLinkOnPage());
     if (!idToken) return;
     const expected = readStored(NONCE_KEY, "session");
     removeStored(NONCE_KEY, "session");
@@ -269,7 +332,7 @@ export function AuthGate() {
       return;
     }
     restoredRef.current = true; // don't re-prompt One Tap over a fresh session
-    applyToken(idToken);
+    void acceptGoogleRef.current(idToken);
   }, [applyToken]);
 
   // Restore a still-valid token across refreshes (before Google even loads).
@@ -303,7 +366,7 @@ export function AuthGate() {
         if (cancelled || !window.google) return;
         window.google.accounts.id.initialize({
           client_id: CLIENT_ID,
-          callback: (r) => applyToken(r.credential),
+          callback: (r) => void acceptGoogleRef.current(r.credential),
           auto_select: true,
         });
         if (buttonRef.current) {
@@ -413,6 +476,12 @@ export function AuthGate() {
             setOrgState("ok");
             return;
           }
+          // A GUEST of a shared chat, arriving from its link: they came to read that chat, not to start a workspace
+          // of their own. Straight to the chat, and nothing is created for them.
+          if (chatLinkOnPage()) {
+            setOrgState("ok");
+            return;
+          }
           setOrgState("none");
           window.location.replace("/onboard");
         } else {
@@ -442,6 +511,8 @@ export function AuthGate() {
     const nonce = crypto.randomUUID();
     // private mode swallows this; the token is still signature-verified server-side
     writeStored(NONCE_KEY, nonce, "session");
+    // Come back to this address (a shared chat's link above all), not to the bare home page Google returns to.
+    writeStored(RETURN_KEY, window.location.pathname + window.location.search, "session");
     const p = new URLSearchParams({
       client_id: CLIENT_ID,
       redirect_uri: window.location.origin,
@@ -532,6 +603,14 @@ export function AuthGate() {
         <p className="mt-2 text-center text-muted-foreground text-sm leading-relaxed">
           {fillProfileText(DEPLOYMENT_PROFILE.product.tagline)}
         </p>
+        {chatLink ? (
+          <div data-guest-invite className="mt-6 w-full rounded-xl border border-border bg-card px-4 py-3 text-center">
+            <p className="font-medium text-sm">Someone shared a chat with you</p>
+            <p className="mt-1 text-muted-foreground text-xs leading-relaxed">
+              Sign in with the email address the invite was sent to. Use Google, or get a one-time code by email.
+            </p>
+          </div>
+        ) : null}
 
         {/* ONE control, and it is ours.
          *
@@ -594,10 +673,12 @@ export function AuthGate() {
          * gets redeemed by someone on gmail.com or any domain without a Google
          * Workspace. Kept visually secondary to Google, which remains the path
          * for everyone with a work account. */}
-        <EmailSignIn onToken={applyToken} />
+        <EmailSignIn onToken={applyToken} chatLink={chatLink} />
 
         <p className="mt-3.5 text-center text-2xs text-muted-foreground">
-          Work Google accounts sign in directly. Any other address needs an invite.
+          {chatLink
+            ? "You will see only the chat that was shared with you."
+            : "Work Google accounts sign in directly. Any other address needs an invite."}
         </p>
       </div>
 

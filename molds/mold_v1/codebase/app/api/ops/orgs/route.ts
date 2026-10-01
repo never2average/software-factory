@@ -133,6 +133,22 @@ export async function POST(request: NextRequest) {
   // Self-serve: any verified work identity can create a workspace and become its
   // owner. Platform admins can too. The privileged action is claiming a DOMAIN
   // (which auto-joins everyone from it), so that — not creation — is gated.
+  //
+  // A WORK identity: a Google Workspace sign-in (`hd`), or someone who already
+  // belongs to a workspace. An emailed-code sign-in proves only an address, and
+  // the code is sent to invitees and to GUESTS of one shared chat — a guest
+  // must never turn that into a workspace of their own (a membership, a data
+  // room, the agent). Self-serve onboarding is Google-only, as the code door says.
+  if (!identity.hostedDomain) {
+    const email = identity.email.toLowerCase();
+    const [member] = await db.select({ orgId: orgMembers.orgId }).from(orgMembers).where(eq(orgMembers.email, email)).limit(1);
+    if (!member && !(await isPlatformAdmin(db, email))) {
+      return NextResponse.json(
+        { error: "A new workspace needs a Google Workspace sign-in. Signing in with an emailed code only opens what you were invited to." },
+        { status: 403 },
+      );
+    }
+  }
   const domain = parsed.data.googleHostedDomain || null;
   if (domain) {
     // You may only claim the domain you actually sign in from — no vacuuming a

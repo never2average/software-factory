@@ -829,6 +829,16 @@ jobs:
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:chat-share-invites-db
 
+      # A guest of one shared chat signs in from its link with an emailed code OR with Google (verified address must be
+      # the invited one), lands on that chat, and gets nothing else: no membership, no workspace, no other chat, no
+      # sidebar, no other workspace, nothing from a withdrawn or expired invite — asserted for both doors.
+      - name: A chat's guest signs in by code or Google and gets only that chat, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:guest-signin-db
+
       # The root migration attributes a company's files by each workspace's own customers table (read in its scope).
       - name: Data room root migration attribution, against a real Postgres
         if: always()

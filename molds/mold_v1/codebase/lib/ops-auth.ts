@@ -22,6 +22,8 @@ import { W } from "@/lib/ui-words";
  * Web Crypto, no Node built-ins.
  */
 const GOOGLE_JWKS = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
+/** Google's signing keys. Only a test replaces them ({@link __setGoogleKeysForTest}), with keys it made itself. */
+let googleKeys: Parameters<typeof jwtVerify>[1] = GOOGLE_JWKS;
 
 /**
  * The OAuth clients whose ID tokens we accept — a token's `aud` must be one of
@@ -200,7 +202,7 @@ export async function verifyOpsAuth(
   const audiences = acceptedAudiences();
   if (audiences.length === 0) return fail(detail, "no-audience-configured");
   try {
-    const { payload } = await jwtVerify(bearer, GOOGLE_JWKS, {
+    const { payload } = await jwtVerify(bearer, googleKeys, {
       issuer: ["https://accounts.google.com", "accounts.google.com"],
       audience: audiences,
     });
@@ -235,4 +237,39 @@ export async function verifyOpsAuth(
   } catch {
     return null;
   }
+}
+
+/**
+ * A Google ID token's VERIFIED address, whatever kind of Google account it is — for the one door that needs it: a GUEST
+ * of one shared chat signing in with Google (app/api/auth/guest/google).
+ *
+ * The same signature, issuer and audience checks as {@link verifyOpsAuth}. What it does not require is a Workspace
+ * (`hd`) account: the guest door accepts a Google sign-in ONLY when this address is the invited one, and then hands
+ * back our own email-session token for that address, so no Google token is ever admitted here on its own. Returns
+ * null for anything Google did not sign for one of our clients, or whose address Google has not verified.
+ */
+export async function verifiedGoogleAddress(
+  credential: string | null | undefined,
+): Promise<{ email: string; hostedDomain?: string } | null> {
+  const token = credential?.trim();
+  const audiences = acceptedAudiences();
+  if (!token || audiences.length === 0) return null;
+  try {
+    const { payload } = await jwtVerify(token, googleKeys, {
+      issuer: ["https://accounts.google.com", "accounts.google.com"],
+      audience: audiences,
+    });
+    // Strictly true: an absent claim is not a verified address.
+    if (payload.email_verified !== true && payload.email_verified !== "true") return null;
+    const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+    if (!email) return null;
+    return { email, ...(typeof payload.hd === "string" ? { hostedDomain: payload.hd } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+/** Test seam: verify Google tokens against keys the test made (a JWKS or key function). Null restores Google's. */
+export function __setGoogleKeysForTest(keys: Parameters<typeof jwtVerify>[1] | null): void {
+  googleKeys = keys ?? GOOGLE_JWKS;
 }

@@ -76,6 +76,25 @@ process.env.OPS_SECRETS_KEY = "a-different-key";
 check("the hash is keyed, not a bare digest", codes.hashLoginCode("a@b.com", code) !== hash);
 process.env.OPS_SECRETS_KEY = "test-secrets-key-not-a-real-one";
 
+/* ---- a guest's invite to one chat: when it is still good ----------------- */
+
+const rules = await import("../lib/guest-invite-rules.ts");
+const day = 86_400_000;
+const now = Date.now();
+check("an invite whose expiry is ahead is good", rules.guestInviteState({ status: "invited", expiresAt: new Date(now + day) }, now) === "live");
+check("an unopened invite past its expiry has expired", rules.guestInviteState({ status: "invited", expiresAt: new Date(now - day) }, now) === "expired");
+check("an opened invite does not expire", rules.guestInviteState({ status: "accepted", expiresAt: new Date(now - 90 * day) }, now) === "live");
+check("a withdrawn invite is withdrawn, however recent", rules.guestInviteState({ status: "revoked", expiresAt: new Date(now + day) }, now) === "revoked");
+check("an invite from before migration 0027 (no expiry) stands", rules.guestInviteState({ status: "invited", expiresAt: null }, now) === "live");
+check("a new share expires two weeks out", Math.abs(rules.guestInviteExpiry(now).getTime() - (now + 14 * day)) < 1000);
+const membersRoute = readFileSync("app/api/ops/threads/[id]/members/route.ts", "utf8");
+check("sharing (and sharing again) stamps the expiry", (membersRoute.match(/expiresAt: guestInviteExpiry\(\)/g) ?? []).length === 2);
+const agentGuard = readFileSync("agent/lib/session-guard.ts", "utf8");
+check("the agent's own session routes count a read as opening the chat", /await openedIfAdmitted\(db, decision, ownership, facts\.membership, sessionId, caller\.email\)/.test(agentGuard));
+check("a chat link needs both its workspace and its chat", rules.guestLinkOf({ org: "org-a" }) === null && rules.guestLinkOf({ org: "org-a", chat: "s1" })?.chat === "s1");
+check("a malformed workspace in a link is ignored", rules.guestLinkOf({ org: "../x", chat: "s1" }) === null);
+check("addresses compare without capital letters", rules.normalEmail(" Guest@Outside.TEST ") === "guest@outside.test");
+
 /* ---- guards that need a database, asserted at the source ---------------- */
 
 const requestRoute = readFileSync("app/api/auth/email/request/route.ts", "utf8");
@@ -83,8 +102,18 @@ const verifyRoute = readFileSync("app/api/auth/email/verify/route.ts", "utf8");
 const proxy = readFileSync("proxy.ts", "utf8");
 
 check(
-  "a code is only sent to an invited or existing member",
-  /if \(!member && !invite\) return NextResponse\.json\(SAME_ANSWER\)/.test(requestRoute),
+  "a code is only sent to an invited or existing member, or a live guest of the chat whose link it came from",
+  /if \(!member && !invite && !guest\) return NextResponse\.json\(SAME_ANSWER\)/.test(requestRoute) &&
+    /guestInviteFor\(link, email\)\)\.state === "live"/.test(requestRoute),
+);
+check(
+  "…a guest's invite is checked again when the code is used",
+  /guestInviteFor\(link, email\)/.test(verifyRoute) && /guestRefusal\(guest\.state\)/.test(verifyRoute),
+);
+const guestGoogleRoute = readFileSync("app/api/auth/guest/google/route.ts", "utf8");
+check(
+  "a guest's Google sign-in is admitted only for the invited address, and answers with our own token",
+  /verifiedGoogleAddress\(/.test(guestGoogleRoute) && /invite\.state !== "live"/.test(guestGoogleRoute) && /mintSessionToken\(google\.email\)/.test(guestGoogleRoute),
 );
 check(
   "the reply is identical either way (no membership oracle)",

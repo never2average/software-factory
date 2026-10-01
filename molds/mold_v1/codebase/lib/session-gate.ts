@@ -43,6 +43,7 @@ import {
   type SessionOwnership,
   type SessionRight,
 } from "./chat-gate.ts";
+import { guestInviteLive } from "./guest-invite-rules.ts";
 
 type Tx = PostgresJsDatabase<typeof schema>;
 
@@ -213,14 +214,14 @@ export async function readMembership(
   ownership: SessionOwnership,
   sessionId: string,
   callerEmail: string,
-): Promise<{ role: string } | null> {
+): Promise<{ role: string; status: string; expiresAt: Date | null } | null> {
   const owner = norm(ownership.ownerEmail);
   const me = norm(callerEmail);
   if (!owner || !me) return null;
   const sessions = [...new Set([sessionId, ownership.rootSessionId].filter((s): s is string => Boolean(s)))];
   const [row] = await db.inOrg(ownership.orgId, (tx) =>
     tx
-      .select({ role: chatThreadMembers.role })
+      .select({ role: chatThreadMembers.role, status: chatThreadMembers.status, expiresAt: chatThreadMembers.expiresAt })
       .from(chatThreadMembers)
       .innerJoin(chatThreads, eq(chatThreads.id, chatThreadMembers.threadId))
       .where(
@@ -239,9 +240,67 @@ export async function readMembership(
   return row ?? null;
 }
 
+/**
+ * READING A SHARED CHAT IS OPENING IT — on every path. The thread routes have always moved an invited member to
+ * "accepted" when they open it (lib/chat-threads.ts resolveAccess); a chat read through the live stream (the web proxy,
+ * the agent's own routes) or its cached transcript did not, so a guest who only ever read it that way stayed
+ * "invited" and their invite would lapse under them (lib/guest-invite-rules.ts). Every gate that admits a caller by a
+ * thread membership calls this. Only rows still "invited" change; best-effort, and never the reason a read fails.
+ */
+export async function markMembershipOpened(
+  db: Pick<GateDb, "inOrg">,
+  ownership: SessionOwnership,
+  sessionId: string,
+  callerEmail: string,
+): Promise<void> {
+  const owner = norm(ownership.ownerEmail);
+  const me = norm(callerEmail);
+  if (!owner || !me) return;
+  const sessions = [...new Set([sessionId, ownership.rootSessionId].filter((s): s is string => Boolean(s)))];
+  await db
+    .inOrg(ownership.orgId, (tx) =>
+      tx
+        .update(chatThreadMembers)
+        .set({ status: "accepted", acceptedAt: new Date() })
+        .where(
+          and(
+            eq(chatThreadMembers.status, "invited"),
+            sql`lower(${chatThreadMembers.email}) = ${me}`,
+            inArray(
+              chatThreadMembers.threadId,
+              tx
+                .select({ id: chatThreads.id })
+                .from(chatThreads)
+                .where(
+                  and(
+                    inArray(chatThreads.eveSessionId, sessions),
+                    isNull(chatThreads.archivedAt),
+                    sql`lower(${chatThreads.ownerEmail}) = ${owner}`,
+                  ),
+                ),
+            ),
+          ),
+        ),
+    )
+    .catch(() => undefined);
+}
+
+/** {@link markMembershipOpened} when a gate has just admitted the caller on a membership that is still "invited". */
+export async function openedIfAdmitted(
+  db: Pick<GateDb, "inOrg">,
+  decision: { allow: boolean },
+  ownership: SessionOwnership | null,
+  membership: { status?: string } | null,
+  sessionId: string,
+  callerEmail: string | null | undefined,
+): Promise<void> {
+  if (!decision.allow || !ownership || membership?.status !== "invited" || !callerEmail) return;
+  await markMembershipOpened(db, ownership, sessionId, callerEmail);
+}
+
 export interface GateFacts {
   readonly ownership: SessionOwnership | null;
-  readonly membership: { role: string } | null;
+  readonly membership: { role: string; status?: string; expiresAt?: Date | null } | null;
   readonly callerInWorkspace: boolean;
 }
 
@@ -311,6 +370,7 @@ export async function gateSessionRequest(
     const guest = await guestSessionDecision(db, caller, sessionId, right, opts.named);
     if (guest) return guest;
   }
+  await openedIfAdmitted(db, decision, facts.ownership, facts.membership, sessionId, caller.email);
   return { ...decision, ownership };
 }
 
@@ -338,8 +398,12 @@ export async function guestSessionDecision(
   const ownership = await readOwnership(db, sessionId, named);
   if (!ownership) return null;
   const membership = await readMembership(db, ownership, sessionId, me);
-  if (!membership) return null;
+  // A guest's invite must still be good: not withdrawn, and opened or not yet expired
+  // (lib/guest-invite-rules.ts — the same rule the guest sign-in doors apply).
+  if (!membership || !guestInviteLive(membership)) return null;
   if (right !== "read") return { allow: false, reason: "read-only", ownership };
+  // Reading it is opening it: from now on the invite does not expire.
+  if (membership.status === "invited") await markMembershipOpened(db, ownership, sessionId, me);
   return { allow: true, reason: "member", role: "viewer", ownership };
 }
 
@@ -381,6 +445,7 @@ export async function readTranscriptAccess(
     callerInWorkspace: facts.callerInWorkspace,
     localDevAllowed: false,
   });
+  await openedIfAdmitted(db, decision, ownership, facts.membership, sessionId, me);
   return { read: decision.allow, write: decision.allow && decision.role === "owner" };
 }
 

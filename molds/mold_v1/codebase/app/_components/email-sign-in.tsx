@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { GuestLink } from "@/lib/guest-invite-rules";
 
 /**
  * Sign in with an emailed code.
@@ -18,7 +19,18 @@ import { useState } from "react";
 
 type Stage = "hidden" | "email" | "code";
 
-export function EmailSignIn({ onToken }: { readonly onToken: (token: string) => void }) {
+export function EmailSignIn({
+  onToken,
+  chatLink = null,
+}: {
+  readonly onToken: (token: string) => void;
+  /**
+   * The shared chat this page was opened for (its link). Sent with both steps, so a GUEST of that chat — someone
+   * outside its workspace, with no workspace invite — gets a code, and the invite is checked again when they use it.
+   */
+  readonly chatLink?: GuestLink | null;
+}) {
+  const linkFields = chatLink ? { org: chatLink.org, chat: chatLink.chat } : {};
   const [stage, setStage] = useState<Stage>("hidden");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -34,7 +46,7 @@ export function EmailSignIn({ onToken }: { readonly onToken: (token: string) => 
       const res = await fetch("/api/auth/email/request", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, ...linkFields }),
       });
       const data = (await res.json().catch(() => null)) as { message?: string; error?: string } | null;
       if (!res.ok) {
@@ -44,7 +56,11 @@ export function EmailSignIn({ onToken }: { readonly onToken: (token: string) => 
       // The server answers identically whether or not the address qualifies —
       // it must not become a way to discover who belongs to which workspace —
       // so the wording here has to stay non-committal too.
-      setNote(data?.message ?? "If that address has an invite, a code is on its way.");
+      setNote(
+        chatLink
+          ? "If the chat was shared with that address, a 6-digit code is on its way. Check your inbox (and spam folder), then type it here."
+          : (data?.message ?? "If that address has an invite, a code is on its way."),
+      );
       setStage("code");
     } catch {
       setError("Could not reach the server.");
@@ -60,7 +76,7 @@ export function EmailSignIn({ onToken }: { readonly onToken: (token: string) => 
       const res = await fetch("/api/auth/email/verify", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, code }),
+        body: JSON.stringify({ email, code, ...linkFields }),
       });
       const data = (await res.json().catch(() => null)) as { token?: string; error?: string } | null;
       if (!res.ok || !data?.token) {
@@ -82,7 +98,7 @@ export function EmailSignIn({ onToken }: { readonly onToken: (token: string) => 
         onClick={() => setStage("email")}
         className="mt-2 min-h-6 cursor-pointer py-1 text-muted-foreground text-xs underline-offset-4 hover:text-foreground hover:underline"
       >
-        Invited by email? Sign in with a code
+        {chatLink ? "Email me a code instead" : "Invited by email? Sign in with a code"}
       </button>
     );
   }

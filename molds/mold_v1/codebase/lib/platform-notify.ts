@@ -49,8 +49,15 @@ export async function notifyInvite(notice: InviteNotice): Promise<InviteDelivery
     `${notice.inviter} shared a chat thread with you: “${notice.title}”.`,
     `You can ${roleWord} it.`,
   ];
-  if (notice.threadUrl) lines.push("", "Open it here:", `  ${notice.threadUrl}`);
-  else lines.push("", `Open ${PRODUCT_NAME} and look under “Shared with you”.`);
+  if (notice.threadUrl) {
+    lines.push(
+      "",
+      "Open it here:",
+      `  ${notice.threadUrl}`,
+      "",
+      "Sign in with this email address: choose Google, or ask for a one-time code by email.",
+    );
+  } else lines.push("", `Open ${PRODUCT_NAME} and look under “Shared with you”.`);
   const text = lines.join("\n");
   // The product is named: this email arrives from someone the reader may not know, about an app they may
   // never have opened, and it used to name only the base product's role, never the product.
@@ -60,7 +67,7 @@ export async function notifyInvite(notice: InviteNotice): Promise<InviteDelivery
     paragraphs: [`${notice.inviter} shared “${notice.title}” with you on ${PRODUCT_NAME}. You can ${roleWord} it.`],
     cta: notice.threadUrl ? { label: "Open the thread", url: notice.threadUrl } : undefined,
     footnote: notice.threadUrl
-      ? "Sign in with this email address. If you are new here, a separate email invites you to the workspace."
+      ? "Sign in with this email address: choose Google, or ask for a one-time code by email."
       : `Open ${PRODUCT_NAME} and look under “Shared with you”.`,
   });
   try {

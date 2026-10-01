@@ -9,6 +9,7 @@ import { threadAccess, callerEmail } from "@/lib/chat-threads";
 import { notifyInvite } from "@/lib/platform-notify";
 import { displayTitle } from "@/lib/chat-attachments";
 import { CONSUMER_DOMAINS } from "@/lib/ops-auth";
+import { guestInviteExpiry } from "@/lib/guest-invite-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,10 +91,12 @@ export async function POST(request: NextRequest, ctx: Ctx) {
           role: parsed.data.role,
           status: "invited",
           invitedBy: caller,
+          // Unopened for two weeks, the invite lapses; sharing again renews it (lib/guest-invite-rules.ts).
+          expiresAt: guestInviteExpiry(),
         })
         .onConflictDoUpdate({
           target: [chatThreadMembers.threadId, chatThreadMembers.email],
-          set: { role: parsed.data.role, status: "invited", invitedBy: caller, invitedAt: new Date(), revokedAt: null },
+          set: { role: parsed.data.role, status: "invited", invitedBy: caller, invitedAt: new Date(), revokedAt: null, expiresAt: guestInviteExpiry() },
         })
         .returning(),
     );

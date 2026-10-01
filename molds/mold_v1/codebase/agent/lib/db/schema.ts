@@ -1561,6 +1561,11 @@ export const chatThreadMembers = pgTable(
     invitedAt: timestamp("invited_at", { withTimezone: true }).notNull().defaultNow(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    /**
+     * When an UNOPENED invite lapses (lib/guest-invite-rules.ts): set to 14 days out each time the chat is shared with
+     * this address. Null for invites sent before migration 0027, which stand — the operator's decision.
+     */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
   },
   (t) => [
     primaryKey({ columns: [t.threadId, t.email] }),
