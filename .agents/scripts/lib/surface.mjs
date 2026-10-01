@@ -23,7 +23,7 @@ const SURFACE = {
   memories:              { key: ["org_id","scope","entity_id","key"], cols: ["sensitivity","version"] },
   workflows:             { key: ["org_id","name"], cols: ["description","trigger","customer_id","steps","instructions","instructions_enabled","enabled","created_by"] },
   workflow_definitions:  { key: ["org_id","id"], cols: ["name","entity","stages","current_version","is_default","archived_at"] },
-  customers:             { key: ["org_id","customer_id"], cols: ["customer_name","tier","lifecycle_stage","status","fde_owner","vertical","account_region","business_owner_email","technical_owner_email"] },
+  customers:             { key: ["org_id","customer_id"], cols: ["customer_name","tier","lifecycle_stage","status","fde_owner","account_owner","vertical","account_region","business_owner_email","technical_owner_email"] },
   internal_staff:        { key: ["org_id","customer_id","staff_role","email"], cols: ["name","employer_org"] },
   customer_stakeholders: { key: ["org_id","customer_id","stakeholder_role","email"], cols: ["name","employer_org"] },
   platform:              { key: ["org_id","customer_id"], cols: ["deployment_model","data_residency_constraint","primary_model","primary_use_case","feature_flags","enabled_connectors"] },
