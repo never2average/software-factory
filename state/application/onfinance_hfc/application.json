@@ -3,7 +3,7 @@
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
   "mold_commit": "e46be40192933421e93807a1919dc70e5a53509e",
-  "status": "stamped",
+  "status": "reverted",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
   "model": {
@@ -219,5 +219,10 @@
   "customer_id": "internal",
   "packs": [
     "hfc-research"
-  ]
+  ],
+  "revert": {
+    "reason": "eve api build failed:\ns/investor-presentations/schemas\nWarning [discover/unsupported-directory]: Ignoring unsupported directory \"scripts/\" in the local subagent root.\n  source: /root/software-factory/build/onfinance_hfc/agent/subagents/investor-presentations/scripts\nWarning [discover/unsupported-directory]: Ignoring unsupported directory \"schemas/\" in the local subagent root.\n  source: /root/softw Replaced in production before it stopped: workflow. Still serving their previous deployment: api, web.",
+    "lane": "functional",
+    "at": "2026-10-01T19:56:46+00:00"
+  }
 }

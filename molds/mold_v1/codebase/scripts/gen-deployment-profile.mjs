@@ -59,6 +59,7 @@ if (!profile.dataroom.domains.Customers.visible) fail("dataroom.domains.Customer
 if (!Array.isArray(profile.chat.hero_lines) || !profile.chat.hero_lines.length || profile.chat.hero_lines.some((l) => typeof l !== "string" || !l.trim())) fail("chat.hero_lines must be a non-empty list of strings");
 if (typeof profile.chat.user_messages.collapse !== "boolean") fail("chat.user_messages.collapse must be true or false");
 if (!Number.isInteger(profile.chat.user_messages.collapsed_lines) || profile.chat.user_messages.collapsed_lines < 2 || profile.chat.user_messages.collapsed_lines > 40) fail("chat.user_messages.collapsed_lines must be a whole number from 2 to 40");
+for (const k of ["owner", "secondary_owner"]) if (typeof profile.vocabulary[k] !== "string" || !profile.vocabulary[k].trim()) fail(`vocabulary.${k} must be a non-empty string`);
 for (const k of ["singular", "plural"]) for (const n of ["account", "member"]) if (typeof profile.vocabulary[n]?.[k] !== "string" || !profile.vocabulary[n][k].trim()) fail(`vocabulary.${n}.${k} must be a non-empty string`);
 if (profile.dataroom.seed !== null) {
   if (!Array.isArray(profile.dataroom.seed)) fail("dataroom.seed must be null (the built-in starter tree) or a list of { path, content }");
@@ -207,11 +208,15 @@ for (const area of Object.keys(AREAS)) {
   const account = zodFields("customerSchema");
   const hidden = profile.account_fields?.hidden;
   if (!Array.isArray(hidden) || hidden.some((k) => typeof k !== "string")) fail("account_fields.hidden must be a list of field keys (empty to hide none)");
+  // An owner field may be named by either of its keys: the record contract's (fdeOwner, aeOwner) or the neutral one
+  // beside it (accountOwner, secondaryOwner; agent/lib/owner-keys.ts). Either hides the one field, and naming both
+  // keys of a pair is naming it twice.
+  const recordKey = (key) => ({ accountOwner: "fdeOwner", secondaryOwner: "aeOwner" })[key] ?? key;
   for (const key of hidden) {
-    if (!(key in account)) fail(`account_fields.hidden: "${key}" is not a field of customerSchema (agent/lib/customer-schema.ts). Known: ${Object.keys(account).join(", ")}`);
+    if (!(recordKey(key) in account)) fail(`account_fields.hidden: "${key}" is not a field of customerSchema (agent/lib/customer-schema.ts). Known: ${Object.keys(account).join(", ")}`);
     if (key === "id" || key === "name") fail(`account_fields.hidden: "${key}" cannot be hidden; every record is found and named by it`);
   }
-  if (new Set(hidden).size !== hidden.length) fail("account_fields.hidden lists a field twice");
+  if (new Set(hidden.map(recordKey)).size !== hidden.length) fail("account_fields.hidden lists a field twice");
   // `custom` is where account_fields.custom_fields live, not a field of its own: a deployment that wants no own
   // fields declares none, and one that hides an own field simply does not declare it.
   if (hidden.includes("custom")) fail('account_fields.hidden: "custom" cannot be hidden; it holds account_fields.custom_fields. Declare no custom fields to have none');
@@ -280,6 +285,8 @@ export interface DeploymentProfile {
     account: { singular: string; plural: string };
     member: { singular: string; plural: string };
     owner: string;
+    /** The label of an account's second owner (the \`ae_owner\` / \`secondary_owner\` field). */
+    secondary_owner: string;
     account_context: string;
   };
   chat: {

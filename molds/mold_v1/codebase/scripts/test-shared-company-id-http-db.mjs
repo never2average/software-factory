@@ -231,6 +231,35 @@ try {
   check("GET workbook returns the owner under both names", wmine?.accountOwner === "original@shared-http.test" && wmine?.fdeOwner === "original@shared-http.test", wmine);
   check("…and B's company is byte-for-byte unchanged", (await snapshot(B)) === bBefore);
 
+  console.log("3c. The second owner, under either name (drizzle/0029_neutral_secondary_owner.sql), in A only");
+  bBefore = await snapshot(B);
+  const s1 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", secondaryOwner: "neutral2@shared-http.test" });
+  const q1 = (await rowOf("customers", A))[0];
+  check("POST customers with secondaryOwner stores it in both columns and returns it under both names", s1.status === 200 && q1?.secondary_owner === "neutral2@shared-http.test" && q1?.ae_owner === "neutral2@shared-http.test" && s1.body?.item?.secondaryOwner === "neutral2@shared-http.test" && s1.body?.item?.aeOwner === "neutral2@shared-http.test", { s1: s1.body, q1 });
+  check("…and leaves the owner as it was, under both of its names", q1?.account_owner === "original@shared-http.test" && q1?.fde_owner === "original@shared-http.test", q1);
+  const s2 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", aeOwner: "original2@shared-http.test" });
+  const q2 = (await rowOf("customers", A))[0];
+  check("POST customers with aeOwner (the original key) stores it in both columns and returns both", s2.status === 200 && q2?.secondary_owner === "original2@shared-http.test" && q2?.ae_owner === "original2@shared-http.test" && s2.body?.item?.secondaryOwner === "original2@shared-http.test" && s2.body?.item?.aeOwner === "original2@shared-http.test", { s2: s2.body, q2 });
+  const s3 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", secondaryOwner: "one@shared-http.test", aeOwner: "two@shared-http.test" });
+  check("…a body naming two different second owners is refused (400) and writes nothing", s3.status === 400 && /same field/.test(String(s3.body?.error)) && (await rowOf("customers", A))[0]?.secondary_owner === "original2@shared-http.test" && (await rowOf("customers", A))[0]?.ae_owner === "original2@shared-http.test", s3);
+  const s4 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", secondaryOwner: "same@shared-http.test", aeOwner: "same@shared-http.test" });
+  check("…the same value under both keys is accepted", s4.status === 200 && (await rowOf("customers", A))[0]?.secondary_owner === "same@shared-http.test" && (await rowOf("customers", A))[0]?.ae_owner === "same@shared-http.test", s4);
+  const s5 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", tier: "Growth" });
+  check("…a body naming neither leaves both as they were", s5.status === 200 && (await rowOf("customers", A))[0]?.secondary_owner === "same@shared-http.test" && (await rowOf("customers", A))[0]?.ae_owner === "same@shared-http.test", s5);
+  const w4 = await call(A, "GET", "/api/ops/workbook");
+  const wsecond = (w4.body?.customers ?? []).find((c) => c.id === ID);
+  // The workbook sends what the build's profile shows: a profile that hides the second owner under either key (the
+  // relabelling fixture hides `aeOwner`) gets neither key; any other gets both, equal.
+  const secondHidden = (P.account_fields?.hidden ?? []).some((k) => k === "aeOwner" || k === "secondaryOwner");
+  check(
+    secondHidden ? "GET workbook leaves the second owner out under BOTH names (this build's profile hides it)" : "GET workbook returns the second owner under both names",
+    !!wsecond && (secondHidden ? !("secondaryOwner" in wsecond) && !("aeOwner" in wsecond) : wsecond.secondaryOwner === "same@shared-http.test" && wsecond.aeOwner === "same@shared-http.test"),
+    wsecond && { secondaryOwner: wsecond.secondaryOwner, aeOwner: wsecond.aeOwner },
+  );
+  const s6 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", aeOwner: null });
+  check("…null under either key clears both", s6.status === 200 && (await rowOf("customers", A))[0]?.secondary_owner === null && (await rowOf("customers", A))[0]?.ae_owner === null, s6);
+  check("…and B's company is byte-for-byte unchanged", (await snapshot(B)) === bBefore);
+
   console.log("4. A delete in one never removes the other's row");
   bBefore = await snapshot(B);
   const x1 = await call(A, "DELETE", `/api/ops/deployments/${encodeURIComponent(DEP)}?customerId=${ID}`);

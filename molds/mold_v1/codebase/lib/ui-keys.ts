@@ -17,6 +17,7 @@
  */
 import { speakIdentifier, VOCABULARY_RELABELLED } from "../agent/lib/agent-vocabulary.ts";
 import { LEGACY_MEMBER, ownerKeyLabel } from "../agent/lib/legacy-member.ts";
+import { secondaryOwnerKeyLabel } from "../agent/lib/owner-keys.ts";
 import { DOMAIN_FIELDS, type DomainArea } from "./deployment-profile.generated.ts";
 import { domainView } from "./profile-domains.ts";
 import { W } from "./ui-words.ts";
@@ -56,7 +57,9 @@ export function speakKey(key: string): string {
 export function humanizeKey(key: string): string {
   // The owner key under any of its names, the stored one (fde_owner) and the neutral one beside it
   // (account_owner, drizzle/0028_neutral_owner_columns.sql): the profile's owner label, under every profile.
-  const owner = ownerKeyLabel(key, W.owner);
+  // The second owner's key under any of its names (ae_owner, and secondary_owner beside it,
+  // drizzle/0029_neutral_secondary_owner.sql): the profile's label for it, under every profile.
+  const owner = ownerKeyLabel(key, W.owner) ?? secondaryOwnerKeyLabel(key, W.secondaryOwner);
   if (owner) return owner;
   return speakKey(key)
     .replace(/([A-Z])/g, " $1")

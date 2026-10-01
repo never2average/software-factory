@@ -205,6 +205,14 @@ try {
   console.log("3. hidden fields");
   const leakedAccount = HIDDEN.account.filter((k) => c1 && k in c1);
   check(`none of the ${HIDDEN.account.length} hidden account fields is in the answer`, c1 && leakedAccount.length === 0, leakedAccount);
+  // The second owner is one field under two keys (drizzle/0029_neutral_secondary_owner.sql): a profile that hides
+  // either hides both; one that hides neither is sent both, equal (C1 was seeded with ae_owner only).
+  const secondHidden = HIDDEN.account.includes("aeOwner") || HIDDEN.account.includes("secondaryOwner");
+  check(
+    secondHidden ? "the hidden second owner is in the answer under neither of its keys" : "the second owner is in the answer under both keys, equal",
+    c1 && (secondHidden ? !("aeOwner" in c1) && !("secondaryOwner" in c1) : c1.aeOwner === "ae@w1.test" && c1.secondaryOwner === "ae@w1.test"),
+    c1 && { aeOwner: c1.aeOwner, secondaryOwner: c1.secondaryOwner },
+  );
   const leakedDep = HIDDEN.deployments.filter((k) => dep && k in dep);
   check(`none of the ${HIDDEN.deployments.length} hidden deployment fields is in the answer`, !dep || leakedDep.length === 0, leakedDep);
   const impl = c1?.implementation;

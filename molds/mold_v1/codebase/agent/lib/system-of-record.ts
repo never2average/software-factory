@@ -42,7 +42,7 @@ import {
   type Ticket,
 } from "./customer-schema.ts";
 import { getDb, withOrgDb, type Db } from "./db/index.ts";
-import { accountOwnerSql, ownerOf, pairOwners, pairSolutionOwners, solutionOwnerOf } from "./db/owner-columns.ts";
+import { accountOwnerSql, ownerOf, pairOwners, pairSolutionOwners, secondaryOwnerOf, solutionOwnerOf } from "./db/owner-columns.ts";
 import {
   customers as customersTable,
   deployments as deploymentsTable,
@@ -237,12 +237,13 @@ async function dbGetCustomer(db: Db, id: string, orgId: string | null | undefine
     ]);
   const row = customerRows[0];
   if (!row) return null;
-  const { customerId, customerName, custom, orgId: _org, accountOwner: _neutral, ...scalar } = row;
+  const { customerId, customerName, custom, orgId: _org, accountOwner: _neutral, secondaryOwner: _neutralSecond, ...scalar } = row;
   const candidate: Record<string, unknown> = {
     id: customerId,
     name: customerName,
-    // The record's one owner: the neutral column, else the original (agent/lib/db/owner-columns.ts).
-    ...stripNulls({ ...scalar, fdeOwner: ownerOf(row) }),
+    // The record's one owner, and its one second owner: the neutral column, else the original
+    // (agent/lib/db/owner-columns.ts). The record contract names them by the original keys.
+    ...stripNulls({ ...scalar, fdeOwner: ownerOf(row), aeOwner: secondaryOwnerOf(row) }),
   };
   // The account's own fields (account_fields.custom_fields): left off when there are none, as on the nested rows.
   const accountCustom = asCustomValues(custom);

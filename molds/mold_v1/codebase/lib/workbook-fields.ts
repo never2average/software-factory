@@ -17,6 +17,7 @@
  */
 import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type CustomFieldSpec } from "./deployment-profile.generated.ts";
 import { speakIdentifier, VOCABULARY_RELABELLED } from "../agent/lib/agent-vocabulary.ts";
+import { neutralSecondaryOwnerKey, withOwnerKeyTwins } from "../agent/lib/owner-keys.ts";
 import { speakKey } from "./ui-keys.ts";
 
 /** The tables a workbook is read from, one answer each. */
@@ -170,9 +171,9 @@ export function workbookHidden(profile: ProfileFields = DEPLOYMENT_PROFILE): Wor
   const area = (fields: Record<string, { hidden?: boolean }> | undefined) =>
     new Set(Object.entries(fields ?? {}).filter(([, f]) => f?.hidden).map(([k]) => k));
   const named = (profile.account_fields?.hidden ?? []).filter((k) => k !== "id" && k !== "name");
-  // The owner is one field under two keys (drizzle/0028_neutral_owner_columns.sql): hiding either hides both.
-  const OWNER_KEYS = ["fdeOwner", "accountOwner"];
-  const accountHidden = named.some((k) => OWNER_KEYS.includes(k)) ? [...new Set([...named, ...OWNER_KEYS])] : named;
+  // Each owner field is one field under two keys (drizzle/0028_neutral_owner_columns.sql,
+  // drizzle/0029_neutral_secondary_owner.sql; agent/lib/owner-keys.ts): hiding either key hides both.
+  const accountHidden = withOwnerKeyTwins(named);
   return {
     account: new Set(accountHidden.filter((k) => !(k in NESTED_TABLES))),
     deployments: area(profile.domains.deployments?.fields),
@@ -203,9 +204,12 @@ const SHEET_AREA: Partial<Record<string, "deployments" | "implementations">> = {
  * `deployment_strategy` whenever a workspace had rows (review of #62). There it is named as the model is given it
  * (`coverage_report_strategy`), so a person and the agent call the column the same thing. Every other sheet, and the
  * default profile, reads exactly as before.
+ *
+ * One column reads differently in every profile: the second owner's stored column `ae_owner` is shown by its neutral
+ * name, `secondary_owner` (drizzle/0029_neutral_secondary_owner.sql); the stored workbook column does not move.
  */
 export function sheetColumnKey(sheet: string, column: string): string {
-  const spoken = speakKey(column);
+  const spoken = neutralSecondaryOwnerKey(speakKey(column));
   const area = SHEET_AREA[sheet];
   if (!VOCABULARY_RELABELLED || !area || spoken !== column) return spoken;
   return Object.keys(DOMAIN_FIELDS[area]).some((k) => sameKey(k, column)) ? speakIdentifier(column) : spoken;

@@ -375,7 +375,7 @@ async function defaultWords() {
   const { W, an } = await import(pathToFileURL(join(ROOT, "lib/ui-words.ts")).href);
   const want = {
     account: "customer", accounts: "customers", Account: "Customer", Accounts: "Customers",
-    member: "member", members: "members", Member: "Member", Members: "Members", owner: "Account owner",
+    member: "member", members: "members", Member: "Member", Members: "Members", owner: "Account owner", secondaryOwner: "Secondary owner",
     deployment: "deployment", deployments: "deployments", Deployment: "Deployment", Deployments: "Deployments",
     implementation: "implementation", implementations: "implementations", Implementation: "Implementation", Implementations: "Implementations",
     rollout: "rollout", rollouts: "rollouts", Rollout: "Rollout", Rollouts: "Rollouts",
@@ -391,6 +391,8 @@ async function defaultWords() {
   // The owner key keeps its stored name, and a person reads the profile's owner label for it, the default included.
   for (const k of ["fdeOwner", "fde_owner"]) if (!LEGACY_OWNER_KEY.test(k) || humanizeKey(k) !== "Account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default owner label "Account owner"`);
   for (const k of ["accountOwner", "account_owner"]) if (humanizeKey(k) !== "Account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default owner label "Account owner"`);
+  // The second owner's key, under its original name and the neutral one beside it, reads the profile's label for it.
+  for (const k of ["aeOwner", "ae_owner", "secondaryOwner", "secondary_owner"]) if (humanizeKey(k) !== "Secondary owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default second-owner label "Secondary owner"`);
   for (const k of ["solutionFdeOwner", "solution_fde_owner", "solutionOwner", "solution_owner"]) if (humanizeKey(k) !== "Solution account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not "Solution account owner"`);
   if (humanizeKey("customerId") !== "Customer Id") wrong.push("humanizeKey changed the default export labels");
   // Stored values that carry the legacy member word keep it in the row and read the profile's member word.

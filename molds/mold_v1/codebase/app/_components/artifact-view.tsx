@@ -17,6 +17,7 @@ import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { LEGACY_MEMBER, ownerKeyLabel } from "@/agent/lib/legacy-member";
+import { secondaryOwnerKeyLabel } from "@/agent/lib/owner-keys";
 import { W } from "@/lib/ui-words";
 import { opsFetch } from "./ops/lib";
 
@@ -105,7 +106,7 @@ function humanizeHeader(raw: unknown): string {
   const s = String(raw ?? "").trim();
   if (!s) return s;
   // The owner column reads the profile's owner label ("Account owner"), as everywhere else (lib/ui-keys.ts).
-  const owner = ownerKeyLabel(s, W.owner);
+  const owner = ownerKeyLabel(s, W.owner) ?? secondaryOwnerKeyLabel(s, W.secondaryOwner);
   if (owner) return owner;
   return s
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")

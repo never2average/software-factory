@@ -680,6 +680,16 @@ jobs:
         if: always()
         run: ADMIN_URL="$ADMIN_URL" npm run test:owner-columns-migration-db
 
+      # NEUTRAL SECOND-OWNER COLUMN (mold_v1-103, PR 7c): drizzle/0029 adds customers.secondary_owner beside
+      # customers.ae_owner (a column named for one line of work's role), copies it and keeps the pair equal by its own
+      # trigger, as 0028 did for the owner. On the live shape with the journal to 0028: the drift plan after it is
+      # empty (no DROP COLUMN, no index drop), a write under either name reads under the other for both pairs (raw
+      # SQL and the app's own paths, with and without the trigger), 0028's trigger is untouched, and row-level
+      # security on customers is still fail-closed.
+      - name: Neutral second-owner column, migration on production-shaped data
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:secondary-owner-migration-db
+
       - name: Cross-tenant isolation
         run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" node scripts/test-org-isolation.mjs
 

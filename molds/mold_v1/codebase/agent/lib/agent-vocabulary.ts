@@ -32,6 +32,7 @@
 import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type DeploymentProfile } from "./deployment-profile.generated.ts";
 import { SUBAGENT_KEYS } from "./subagent-registry.generated.ts";
 import { LEGACY_MEMBER } from "./legacy-member.ts";
+import { withOwnerKeyTwins } from "./owner-keys.ts";
 
 /** The data-room domains whose folder a profile may relabel, by stored name. */
 const DOMAIN_KEYS = ["Customers", "Platform", "Deployments", "Solutions", "Implementation", "Tickets", "People"] as const;
@@ -931,7 +932,9 @@ type HidingProfile = { account_fields?: { hidden?: readonly string[] }; domains:
 export function hiddenFieldsOf(profile: HidingProfile): HiddenFields {
   const area = (fields: Record<string, { hidden?: boolean; fixed?: unknown }> | undefined) =>
     new Set(Object.entries(fields ?? {}).filter(([, f]) => f?.hidden && f.fixed === undefined).map(([k]) => k));
-  const account = new Set((profile.account_fields?.hidden ?? []).filter((k) => k !== "id" && k !== "name"));
+  // An owner field hidden under either of its keys is hidden under both (agent/lib/owner-keys.ts): the record names
+  // it by the original key, a profile may name the neutral one.
+  const account = new Set(withOwnerKeyTwins((profile.account_fields?.hidden ?? []).filter((k) => k !== "id" && k !== "name")));
   const deployments = area(profile.domains.deployments?.fields);
   const implementation = area(profile.domains.implementations?.fields);
   return { account, deployments, implementation, any: account.size + deployments.size + implementation.size > 0 };

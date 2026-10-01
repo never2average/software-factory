@@ -364,6 +364,15 @@ beside `fde_owner`, and `solutions.solution_owner` beside `solution_fde_owner`
 whichever side a statement writes; the app writes both and reads the neutral
 one first. The sheet columns and their names are unchanged.
 
+The second owner has one too: `customers.secondary_owner` beside `ae_owner`
+(drizzle/0029_neutral_secondary_owner.sql), kept equal by its own trigger in
+the same way. `ae_owner` is named for one line of work's role (a sales team's
+account executive); `secondary_owner` says only that it is the account's second
+owner. The Ops API accepts and returns both `aeOwner` and `secondaryOwner`
+(always equal; a body naming two different values is a 400), the record
+contract and the sheet column keep `aeOwner` / `ae_owner`, and the label a
+person reads is the profile's `vocabulary.secondary_owner`.
+
 ### Platform
 
 Grain: one row per customer platform configuration. This sheet is for tenant,

@@ -16,7 +16,8 @@
  *          that was there changed; the neutral column's index is there and the original one still is;
  *        - the drift dry run (`drizzle-kit push --strict --verbose`, split as provision.py splits it) plans NOTHING:
  *          no DROP COLUMN, no DROP INDEX, no truncate, nothing to apply;
- *        - 0028 again changes nothing;
+ *        - 0028 again changes nothing; the journal entries after it (0029) are then applied, as on every live
+ *          database, before the app's own paths run (the app reads every column schema.ts declares);
  *        - a write under either name is read under the other: raw SQL INSERT and UPDATE of fde_owner (as the
  *          factory writes it), of account_owner, of both solution columns, a NULL clearing both, and the app's own
  *          write paths (upsert_customer, reassign owner) as app_rw, read back through the app's reader;
@@ -138,6 +139,8 @@ const pair = async (db, org, id) => (await db`select fde_owner, account_owner fr
 const solPair = async (db, org, id, sid = "SOL-1") => (await db`select solution_fde_owner, solution_owner from solutions where org_id = ${org} and customer_id = ${id} and solution_id = ${sid}`)[0];
 const both = (row, v) => row?.fde_owner === v && row?.account_owner === v;
 const solBoth = (row, v) => row?.solution_fde_owner === v && row?.solution_owner === v;
+/** What a LATER journal entry adds (0029's customers.secondary_owner; scripts/test-secondary-owner-migration-db.mjs proves it): not this migration's to do. */
+const laterEntry = (x) => /ADD COLUMN "secondary_owner"/.test(x);
 const touchesOurs = (x) => TABLES.some((t) => x.includes(`"${t}"`)) || NEW_COLUMNS.some((c) => x.includes(c)) || /owner_idx/.test(x);
 
 /** The deploy's drift step after the journal: nothing to apply, nothing refused, and no DROP COLUMN / DROP INDEX at all. */
@@ -149,7 +152,8 @@ function checkPlan(url, label, { oursOnly = false } = {}) {
     const other = plan.apply.filter((x) => !touchesOurs(x));
     check(`${label}: the drift dry run plans nothing on customers / solutions (${other.length} older unrelated statement(s): ${other.map((x) => x.split("\n")[0].slice(0, 70)).join(" / ") || "none"})`, plan.apply.filter(touchesOurs).length === 0, plan.apply.filter(touchesOurs));
   } else {
-    check(`${label}: the drift dry run plans NOTHING to apply (0028 did the whole change)`, plan.apply.length === 0, plan.apply);
+    const ours = plan.apply.filter((x) => !laterEntry(x));
+    check(`${label}: the drift dry run plans NOTHING to apply (0028 did the whole change; the column 0029 adds is 0029's)`, ours.length === 0, ours);
   }
   check(`${label}: …and nothing the deploy would refuse (no data loss, no index drop)`, plan.refused.length === 0, plan.refused);
   check(`${label}: …and no DROP COLUMN, no truncate, and no DROP INDEX but the one out-of-band index anywhere in the plan`, all.every((x) => !/DROP\s+COLUMN|^\s*truncate/i.test(x)) && all.filter((x) => /DROP\s+INDEX/i.test(x)).every((x) => /workflow_definitions_one_default_idx/.test(x)), all.filter((x) => /DROP|truncate/i.test(x) && !/POLICY/i.test(x)));
@@ -337,6 +341,12 @@ try {
     await applyRange(db, IDX - 1, IDX);
     check("0028 again: nothing changes", (await fingerprint(db, { withNew: true })) === f1 && JSON.stringify(await indexes(db)) === JSON.stringify(idx1));
     await checkPairs(db, "A");
+    // The app only ever runs against the WHOLE journal: its reads name every column schema.ts declares, the ones a
+    // later entry adds included (0029's customers.secondary_owner). So the rest of the journal goes on before the
+    // app's own paths run, and the pairs 0028 made must hold through it.
+    await applyRange(db, IDX, Number.MAX_SAFE_INTEGER);
+    const afterLater = await mismatched(db);
+    check("the journal entries after 0028 leave every owner pair equal", afterLater.customers.length === 0 && afterLater.solutions.length === 0, afterLater);
     await failClosed(db);
     await checkRls(urlOf(name, "app_rw"), "A (fail-closed)");
     await checkAppPaths(urlOf(name, "app_rw"), "A (app paths, fail-closed)");
@@ -353,7 +363,7 @@ try {
     const b = bootstrap(url);
     check("…the journal after it (0014 to 0028) and the bootstrap apply", b.status === 0, (b.stdout + b.stderr).slice(-400));
     const triggers = await db`select tgname from pg_trigger where not tgisinternal and tgrelid in ('public.customers'::regclass, 'public.solutions'::regclass) order by 1`;
-    check("…and the two owner triggers are there", JSON.stringify(triggers.map((r) => r.tgname)) === JSON.stringify(["customers_owner_pair", "solutions_owner_pair"]), triggers);
+    check("…and the two owner triggers are there (beside the one 0029 adds for the second owner)", JSON.stringify(triggers.map((r) => r.tgname)) === JSON.stringify(["customers_owner_pair", "customers_secondary_owner_pair", "solutions_owner_pair"]), triggers);
     await seed(db);
     await checkPairs(db, "B");
     checkPlan(url, "empty database, pushed", { oursOnly: true });

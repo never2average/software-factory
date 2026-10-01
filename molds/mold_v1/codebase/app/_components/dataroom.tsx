@@ -357,6 +357,8 @@ interface Customer {
   status?: string;
   healthScore?: number;
   fdeOwner?: string;
+  /** The account's second owner; the API returns it under both names (secondaryOwner is the neutral one). */
+  secondaryOwner?: string;
   aeOwner?: string;
   arr?: number;
   arrCurrency?: string;
@@ -656,7 +658,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
         c.status,
         c.healthScore != null ? String(c.healthScore) : undefined,
         c.fdeOwner,
-        c.aeOwner,
+        c.secondaryOwner ?? c.aeOwner,
         c.arr != null ? String(c.arr) : undefined,
         c.arrCurrency,
         c.seats != null ? String(c.seats) : undefined,

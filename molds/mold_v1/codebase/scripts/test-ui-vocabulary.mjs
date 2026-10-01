@@ -87,6 +87,8 @@ async function relabelled() {
     assert.equal(keys.humanizeKey("fdeOwner"), "Covering analyst");
     assert.equal(keys.humanizeKey("accountOwner"), "Covering analyst", "the owner's neutral key reads the same label");
     assert.equal(keys.humanizeKey("account_owner"), "Covering analyst");
+    // The second owner: this profile does not name it, so it reads the default's neutral label under both keys.
+    for (const k of ["aeOwner", "ae_owner", "secondaryOwner", "secondary_owner"]) assert.equal(keys.humanizeKey(k), "Secondary owner", k);
   });
 
   const wb = await imp("lib/workbook-fields.ts");
@@ -245,6 +247,33 @@ async function defaults() {
     assert.equal(keys.humanizeKey("accountOwner"), "Account owner", "the owner's neutral key reads the same label");
     assert.equal(keys.humanizeKey("solution_owner"), "Solution account owner");
     assert.equal(keys.humanizeKey("customerId"), "Customer Id");
+  });
+  await check("D the second owner's key reads the profile's label under both names, and its sheet column its neutral name", async () => {
+    for (const k of ["aeOwner", "ae_owner", "secondaryOwner", "secondary_owner"]) assert.equal(keys.humanizeKey(k), "Secondary owner", k);
+    for (const k of ["aeOwner", "ae_owner", "secondaryOwner"]) assert.equal(keys.speakKey(k), k, "the stored key itself never moves");
+    const wbf = await imp("lib/workbook-fields.ts");
+    assert.equal(wbf.sheetColumnKey("Customers", "ae_owner"), "secondary_owner");
+    assert.equal(wbf.sheetColumnKey("Customers", "fde_owner"), "fde_owner");
+    assert.equal(wbf.sheetColumnKey("Customers", "arr"), "arr");
+    const ok = await imp("agent/lib/owner-keys.ts");
+    assert.equal(ok.secondaryOwnerKeyLabel("ae_owner", "Relationship manager"), "Relationship manager", "the label is the profile's");
+    assert.equal(ok.secondaryOwnerKeyLabel("businessOwnerEmail", "x"), null);
+    assert.equal(ok.secondaryOwnerKeyLabel("fdeOwner", "x"), null);
+    // account_fields.hidden: either key of an owner pair hides the field under both keys, here and for the model.
+    const base = { domains: { deployments: {}, implementations: {} } };
+    for (const named of ["aeOwner", "secondaryOwner"]) {
+      const h = wbf.workbookHidden({ ...base, account_fields: { hidden: [named, "arr"] } });
+      assert.deepEqual([...h.account].sort(), ["aeOwner", "arr", "secondaryOwner"], `hidden: ["${named}"]`);
+    }
+    assert.deepEqual([...wbf.workbookHidden({ ...base, account_fields: { hidden: ["accountOwner"] } }).account].sort(), ["accountOwner", "fdeOwner"]);
+    assert.deepEqual([...wbf.workbookHidden({ ...base, account_fields: { hidden: ["arr"] } }).account], ["arr"], "no owner key is added when none is named");
+    const av = await imp("agent/lib/agent-vocabulary.ts");
+    for (const named of ["aeOwner", "secondaryOwner"]) {
+      const h = av.hiddenFieldsOf({ ...base, account_fields: { hidden: [named] } });
+      assert.ok(h.account.has("aeOwner") && h.account.has("secondaryOwner") && h.any, `the model's record loses the field when the profile hides "${named}"`);
+      assert.deepEqual(av.pruneRecordWith(h, { id: "x", aeOwner: "a@b.co", tier: "Growth" }), { id: "x", tier: "Growth" });
+    }
+    assert.equal(av.hiddenFieldsOf({ ...base, account_fields: { hidden: [] } }).any, false);
   });
   const words = await imp("lib/ui-words.ts");
   await check("D a stored value that carries the member's legacy word stays as stored and reads the profile's member word", () => {

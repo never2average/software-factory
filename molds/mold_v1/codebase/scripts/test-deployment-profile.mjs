@@ -279,6 +279,15 @@ bad({ account_fields: { hidden: ["arrr"] } }, /account_fields\.hidden: "arrr" is
 bad({ account_fields: { hidden: ["name"] } }, /account_fields\.hidden: "name" cannot be hidden/);
 bad({ account_fields: { hidden: "arr" } }, /account_fields\.hidden must be a list/);
 assert.equal(generate({ account_fields: { hidden: ["arr", "seats", "platform", "tickets"] } }).status, 0, "hiding real account fields generates");
+// The second owner is hidden by its original key (existing profiles) or by the neutral one beside it; naming both
+// keys names the one field twice.
+assert.equal(generate({ account_fields: { hidden: ["aeOwner", "arr"] } }).status, 0, "aeOwner still hides the second owner");
+assert.equal(generate({ account_fields: { hidden: ["secondaryOwner", "arr"] } }).status, 0, "secondaryOwner hides it too");
+assert.equal(generate({ account_fields: { hidden: ["accountOwner"] } }).status, 0, "the owner's neutral key is accepted the same way");
+bad({ account_fields: { hidden: ["aeOwner", "secondaryOwner"] } }, /account_fields\.hidden lists a field twice/);
+bad({ account_fields: { hidden: ["secondaryOwners"] } }, /account_fields\.hidden: "secondaryOwners" is not a field of customerSchema/);
+bad({ vocabulary: { secondary_owner: "" } }, /vocabulary\.secondary_owner must be a non-empty string/);
+assert.equal(generate({ vocabulary: { secondary_owner: "Relationship manager" } }).status, 0, "a profile names the second owner");
 bad({ domains: { deployments: { fields: { region: { hidden: true, fixed: "mumbai" } } } } }, /fixed: "mumbai" is not a valid value for region/);
 bad({ domains: { deployments: { fields: { region: { fixed: "ap-south-1" } } } } }, /only a hidden field takes a fixed value/);
 bad({ domains: { deployments: { fields: { notes: { options: { a: "b" } } } } } }, /notes is not an enum field/);

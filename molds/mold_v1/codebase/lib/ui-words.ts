@@ -43,6 +43,8 @@ export const W = {
   Members: upperFirst(V.member.plural),
   /** The label of the member responsible for an account ("Account owner"). Also the `fde_owner` field's label. */
   owner: V.owner,
+  /** The label of an account's second owner ("Secondary owner"): the `ae_owner` / `secondary_owner` field's label. */
+  secondaryOwner: V.secondary_owner,
   deployment: DEP.noun,
   deployments: DEP.nouns,
   Deployment: DEP.singular,

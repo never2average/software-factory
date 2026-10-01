@@ -203,6 +203,9 @@ const upsertCustomerSchema = z.object({
   // in both columns (drizzle/0028_neutral_owner_columns.sql).
   accountOwner: z.string().max(200).nullable().optional(),
   fdeOwner: z.string().max(200).nullable().optional(),
+  // The account's second owner, under either name, by the same rule (drizzle/0029_neutral_secondary_owner.sql).
+  secondaryOwner: z.string().max(200).nullable().optional(),
+  aeOwner: z.string().max(200).nullable().optional(),
   businessOwnerEmail: z.string().max(200).nullable().optional(),
   technicalOwnerEmail: z.string().max(200).nullable().optional(),
   // The profile's own fields on the account (`account_fields.custom_fields`): only shape-checked here; which keys
@@ -225,6 +228,9 @@ export async function POST(request: NextRequest) {
   if (named.accountOwner !== undefined && named.fdeOwner !== undefined && named.accountOwner !== named.fdeOwner) {
     // The keys as a person reads them (lib/ui-keys.ts), as every ops API error names a field.
     return NextResponse.json({ error: `${speakKey("accountOwner")} and ${speakKey("fdeOwner")} are the same field (the ${W.owner}); send one, or the same value in both.` }, { status: 400 });
+  }
+  if (named.secondaryOwner !== undefined && named.aeOwner !== undefined && named.secondaryOwner !== named.aeOwner) {
+    return NextResponse.json({ error: `${speakKey("secondaryOwner")} and ${speakKey("aeOwner")} are the same field (the ${W.secondaryOwner}); send one, or the same value in both.` }, { status: 400 });
   }
   const rest = pairOwners(named);
   try {

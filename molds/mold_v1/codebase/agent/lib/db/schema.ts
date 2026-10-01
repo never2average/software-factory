@@ -64,7 +64,11 @@ export const customers = pgTable(
     // both (agent/lib/db/owner-columns.ts), since a database built by `drizzle-kit push` alone has no trigger.
     fdeOwner: text("fde_owner"),
     accountOwner: text("account_owner"),
+    // The account's second owner (an email), under two names kept equal the same way
+    // (drizzle/0029_neutral_secondary_owner.sql). `secondary_owner` is the neutral one the app reads first; `ae_owner`
+    // is the original, named for one line of work's role, kept and never dropped. The app writes both.
     aeOwner: text("ae_owner"),
+    secondaryOwner: text("secondary_owner"),
     arr: doublePrecision("arr"),
     arrCurrency: text("arr_currency"),
     seats: integer("seats"),

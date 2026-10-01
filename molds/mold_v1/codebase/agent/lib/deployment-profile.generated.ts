@@ -7,6 +7,8 @@ export interface DeploymentProfile {
     account: { singular: string; plural: string };
     member: { singular: string; plural: string };
     owner: string;
+    /** The label of an account's second owner (the `ae_owner` / `secondary_owner` field). */
+    secondary_owner: string;
     account_context: string;
   };
   chat: {
@@ -112,6 +114,7 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
       "plural": "members"
     },
     "owner": "Account owner",
+    "secondary_owner": "Secondary owner",
     "account_context": "Customer context"
   },
   "chat": {

@@ -20,6 +20,7 @@ export const DEPLOYMENT = {
       "plural": "members"
     },
     "owner": "Account owner",
+    "secondary_owner": "Secondary owner",
     "account_context": "Customer context"
   },
   "commands": {
