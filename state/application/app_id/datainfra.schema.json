@@ -161,7 +161,7 @@
           "version"
         ]
       },
-      "description": "fde configure-solution (kind pipeline)"
+      "description": "operator:configure-solution (kind pipeline)"
     },
     "agents": {
       "type": "array",
@@ -192,7 +192,7 @@
           "version"
         ]
       },
-      "description": "fde configure-agents (kind agent)"
+      "description": "operator:configure-agents (kind agent)"
     },
     "connectors": {
       "type": "array",
@@ -257,7 +257,7 @@
           "version"
         ]
       },
-      "description": "fde configure-platform; one platform row per customer"
+      "description": "operator:configure-platform; one platform row per customer"
     },
     "deployments": {
       "type": "array",
@@ -295,7 +295,7 @@
           "version"
         ]
       },
-      "description": "fde configure-infra; deployment_id = version"
+      "description": "operator:configure-infra; deployment_id = version"
     }
   }
 }

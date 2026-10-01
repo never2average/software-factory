@@ -48,12 +48,12 @@ Five lines in `briefs/<app_id>.md`. `app_id` is lowercase with underscores. Exam
 ```
 Delivered for Acme's forward-deployed team.
 Deploy on vercel. Fresh database. Product: delivered.
-Workspace: Acme. FDE: you@acme.com. Members: a@acme.com, b@acme.com.
+Workspace: Acme. Operator: you@acme.com. Members: a@acme.com, b@acme.com.
 No browser subagent. Keep web search on.
 Customer: acme.
 ```
 
-Hints the intake understands are listed at the end of `docs/INTAKE.md` (`workspace:`, `fde:`, `members:`,
+Hints the intake understands are listed at the end of `docs/INTAKE.md` (`workspace:`, `operator:`, `members:`,
 `product:`, `customer:`, `domain:`, `fresh database`, `no web search`, `no browser`, `single workspace`, …).
 Anything the brief does not say takes the factory default; nothing is guessed. If a mold has more than one
 product (mold_v1 has `delivered` and `dover`) the brief must say `product: <id>`.
@@ -159,7 +159,7 @@ python3 .claude/scripts/clone.py <app_id> configure
 
 (`configure` is the one `clone.py` step that applies to an app that is not a clone: it writes the workspace,
 members and surface from the app's state into its database, through the app role.) Then open the URL from step
-5, enter the FDE address from the brief, and type the code from the email. It expires in ten minutes. Every
+5, enter the operator address from the brief, and type the code from the email. It expires in ten minutes. Every
 other member from the brief signs in the same way; new people are invited from inside the app.
 
 Connectors (GitHub, Slack, …) are entered inside the app after sign-in; a new app starts with none, because

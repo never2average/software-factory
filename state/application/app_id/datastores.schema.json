@@ -213,7 +213,7 @@
             "fresh",
             "shared_with_live"
           ],
-          "description": "fresh = own database; shared_with_live = the live fde-agent database, crons stripped on deploy"
+          "description": "fresh = own database; shared_with_live = the live source deployment's database, crons stripped on deploy"
         },
         "snapshot": {
           "type": "object",
@@ -221,10 +221,12 @@
             "source": {
               "type": "string",
               "enum": [
+                "live_source_agent",
                 "live_fde_agent",
                 "application",
                 "none"
-              ]
+              ],
+              "description": "live_source_agent = a snapshot of the live source deployment; live_fde_agent is its pre-rename spelling, still accepted for one release"
             },
             "ref": {
               "type": "string"
@@ -321,10 +323,12 @@
             "source": {
               "type": "string",
               "enum": [
+                "live_source_agent",
                 "live_fde_agent",
                 "application",
                 "none"
-              ]
+              ],
+              "description": "live_source_agent = a snapshot of the live source deployment; live_fde_agent is its pre-rename spelling, still accepted for one release"
             },
             "ref": {
               "type": "string"

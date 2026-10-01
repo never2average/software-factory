@@ -19,10 +19,10 @@ Physical wiring (backend, blob prefix, platform version ids, seed source) lives 
 | `browser.local` | `BROWSER_LOCAL` runtime env |
 
 ## workspace (not a surface item)
-Tenancy and people. `org` is the `orgs` row (`operator:new-org`); `fde_self` the operator identity (`operator:onboard-self`, also the `--email` every configure script runs as); `members` are `org_members` (`owner`, `admin`, `engineer`, `member`); `platform_admins` who may create orgs; `roster` is `people_roster` with `manager_email` as the reporting line and `escalations[]` as the fan-out; `customers` map to `operator:new-customer` plus `internal_staff` and `customer_stakeholders`.
+Tenancy and people. `org` is the `orgs` row (`operator:new-org`); `operator_self` the operator identity (read under its pre-rename name `fde_self` for one release) (`operator:onboard-self`, also the `--email` every configure script runs as); `members` are `org_members` (`owner`, `admin`, `engineer`, `member`); `platform_admins` who may create orgs; `roster` is `people_roster` with `manager_email` as the reporting line and `escalations[]` as the fan-out; `customers` map to `operator:new-customer` plus `internal_staff` and `customer_stakeholders`.
 
 ## surface.primary_context
-What the agent knows. For an fde-agent that is customer agreements, product offerings and rollout case studies, not the org row.
+What the agent knows. For the upstream fde-agent that is customer agreements, product offerings and rollout case studies, not the org row.
 
 | Field | Mold |
 |---|---|
@@ -105,4 +105,4 @@ fixture accepts a loopback `MOLD_V1_LANE_URL` instead — `docs/RUNBOOK.md` §7)
 Set when the app replicates an existing deployment. `datastores.postgres.snapshot.cleared_sealed_rows` records the `connector_secrets` / `browser_credentials` rows the restore dropped: they were sealed under the source app's `OPS_SECRETS_KEY`, which is minted per app and never copied (`docs/HOW_IT_WORKS.md`, Secrets). A non-clone app restores nothing and starts with no connectors; enter them in the app. `datastores.postgres.snapshot` and `datastores.blob.snapshot` say where the data came from; `clone_of.regression` records the diff run against the source. Read-back tools in the mold (`operator:doctor`, `validate-solution`, `context-graph`) print prose, so the regression harness queries Postgres and blob directly.
 
 ## Brief hints that fill these blocks
-`workspace: <name>`, `fde: <email>`, `members: a@x, b@x`, `primary context: customer agreements, product offerings, rollout case studies`, `multiplayer: sprint planning, onboarding, escalation handling`, `accounts are called patients`, `clone of live`, `fresh database` / `shared database`, `single workspace`, `workflows: all|none`, plus `neon` / `supabase` / `self-host the postgres`, and the older `vercel|vm`, `no web search`, `no browser`, `customer: <id>`, `domain: <host>`, `mold_v2`. Everything the brief does not say takes the mold default or a confirmed factory default; nothing is guessed.
+`workspace: <name>`, `operator: <email>`, `members: a@x, b@x`, `primary context: customer agreements, product offerings, rollout case studies`, `multiplayer: sprint planning, onboarding, escalation handling`, `accounts are called patients`, `clone of live`, `fresh database` / `shared database`, `single workspace`, `workflows: all|none`, plus `neon` / `supabase` / `self-host the postgres`, and the older `vercel|vm`, `no web search`, `no browser`, `customer: <id>`, `domain: <host>`, `mold_v2`. Everything the brief does not say takes the mold default or a confirmed factory default; nothing is guessed.

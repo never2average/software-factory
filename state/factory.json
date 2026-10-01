@@ -112,7 +112,7 @@
     "vercel_team": "f20170061g-3183s-projects",
     "postgres_scope": "fresh",
     "workspace_name": "OnFinance",
-    "fde_email": "priyesh@onfinance.in",
+    "operator_email": "priyesh@onfinance.in",
     "secret_source_project": "fde-agent",
     "agent_cli_scope": "@onfinance",
     "notify_domain": "useimmaculate.com"
