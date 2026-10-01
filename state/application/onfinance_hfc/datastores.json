@@ -12,7 +12,7 @@
     "admin_url_ref": "DATABASE_URL_UNPOOLED",
     "pooling": "transaction",
     "rls_verified": {
-      "at": "2026-10-01T19:56:46+00:00",
+      "at": "2026-10-01T20:16:01+00:00",
       "backend": "neon",
       "mode": "fail_closed",
       "source": "provision.py bring_up_schema",
@@ -50,8 +50,8 @@
       "cross_org_writable": [],
       "unset_org_rows": 0,
       "open_with_no_org": [],
-      "running_app": "unmeasured",
-      "running_app_detail": "nothing read the app in front of traffic in this step"
+      "running_app": "enforced",
+      "running_app_detail": "SELECT 1 ok \u00b7 role app_rw (RLS enforced)"
     }
   },
   "blob": {
