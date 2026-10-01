@@ -58,8 +58,9 @@ def parse_brief(text):
     # Only a line that STARTS with the label: "Multi-organization: no, one workspace" once named a workspace "no, one workspace".
     m = re.search(r"^\s*(?:workspace|org(?:anisation|anization)?)(?: name)?:\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I | re.M)
     if m: h["workspace_name"] = m.group(1).strip()
-    m = re.search(r"\b(?:fde|owner|operator):\s*(" + EMAIL + ")", t)
-    if m: h["fde_email"] = m.group(1)
+    # "fde:" is the pre-rename label; still read for one release so older briefs keep stamping.
+    m = re.search(r"\b(?:operator|owner|fde):\s*(" + EMAIL + ")", t)
+    if m: h["operator_email"] = m.group(1)
     m = re.search(r"\b(?:members?|team):\s*((?:" + EMAIL + r"[,\s]*)+)", t)
     if m: h["members"] = re.findall(EMAIL, m.group(1))
     m = re.search(r"(?:accounts?|customers?) are called ([a-z]+)|call (?:accounts|customers) ([a-z]+)", t)
@@ -179,7 +180,7 @@ QUESTIONS = [
    lambda d,h,c: h.get("postgres_provider") or d.get("postgres_provider")),
  ("postgres_ref", "datastores.postgres.url_ref", "Name of the secret holding the Postgres URL (e.g. DATABASE_URL). Name only, never the value.", None,
    lambda d,h,c: "DATABASE_URL"),
- ("postgres_scope", "datastores.postgres.scope", "Fresh database for this app, or shared with the live fde-agent data?", ["fresh","shared_with_live"],
+ ("postgres_scope", "datastores.postgres.scope", "Fresh database for this app, or shared with the live source deployment's data?", ["fresh","shared_with_live"],
    lambda d,h,c: h.get("postgres_scope") or d.get("postgres_scope", "fresh")),
  ("blob_provider", "datastores.blob.provider", "Which blob store for the data room?", ["vercel_blob","s3","gcs","azure_blob"],
    lambda d,h,c: d.get("blob_provider")),
@@ -204,8 +205,8 @@ QUESTIONS = [
    lambda d,h,c: c["existing_project"] or (c["product"].get("vercel_project", c["app_id"]) if c["first_app"] else f"{c['product'].get('vercel_project', c['product']['product_id'])}-{slug(c['suffix'])}")),
  ("workspace_name", "application.surface.primary_context.workspace.name", "Workspace (org) display name.", None,
    lambda d,h,c: h.get("workspace_name") or d.get("workspace_name")),
- ("fde_email", "application.surface.multiplayer_context.fde_self.email", "Email of the FDE who owns this workspace (must match the identity domain the mold accepts).", None,
-   lambda d,h,c: h.get("fde_email") or d.get("fde_email")),
+ ("operator_email", "application.workspace.operator_self.email", "Email of the operator who owns this workspace (must match the identity domain the mold accepts).", None,
+   lambda d,h,c: h.get("operator_email") or d.get("operator_email") or d.get("fde_email")),   # fde_email: pre-rename default, read for one release
  ("library", "application.surface.custom_workflow_builder.library.install", "Install the mold's default workflow library?", ["all","none"],
    lambda d,h,c: h.get("library", "all")),
 ]
@@ -272,6 +273,11 @@ def carry_forward(new, old, owned, path=""):
 def keep_measured(app, infra, ds, existing):
     """The carry-forward, plus the three fields intake writes but a later writer knows better."""
     ex_app, ex_inf, ex_ds = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores"))
+    # workspace.fde_self is the pre-rename name of workspace.operator_self: migrate it, never carry both.
+    ex_ws = ex_app.get("workspace") or {}
+    if "fde_self" in ex_ws:
+        ex_ws = dict(ex_ws); legacy = ex_ws.pop("fde_self"); ex_ws.setdefault("operator_self", legacy)
+        ex_app = dict(ex_app, workspace=ex_ws)
     # mold_commit is what is IN FRONT OF TRAFFIC once provision.py deployed it; mint.py compares it with the
     # snapshot to know a redeploy is due, so resetting it to the snapshot's commit would hide a pending deploy.
     if ex_app.get("mold_commit") and ex_app.get("status") not in (None, "planned"): app["mold_commit"] = ex_app["mold_commit"]
@@ -291,7 +297,7 @@ def keep_measured(app, infra, ds, existing):
 def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     d = factory.get("defaults", {}); mold = next(m for m in factory["molds"] if m["mold_id"]==mold_id)
     prod = pick_product(mold_id, hints, existing)
-    org_id = slug(ans["workspace_name"]); fde = ans["fde_email"]
+    org_id = slug(ans["workspace_name"]); owner = ans["operator_email"]
     # Secrets the app needs, by name. "user" = only the user can supply; "derived" = provision.py creates/sets them.
     # The inference half follows the provider (INFERENCE_SECRETS): this used to be a literal Cloudflare
     # list for every app, so a gateway app named two secrets it never reads and could not deploy.
@@ -318,7 +324,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     optional_secrets = []
     user_secrets = user_secrets + [n for n in ("GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID") if n not in user_secrets]
     top_level = ["Customers","Platform","Deployments","Solutions","Implementation","Tickets","People","Uploads"]
-    members = [{"email": fde, "role": "owner"}] + [{"email": e, "role": "member"} for e in hints.get("members", []) if e != fde]
+    members = [{"email": owner, "role": "owner"}] + [{"email": e, "role": "member"} for e in hints.get("members", []) if e != owner]
     corpus = []
     for kind, phrase in (match(hints["corpus"], CORPUS) if hints.get("corpus") else [(k, None) for k in DEFAULT_CORPUS]):
         if kind == "custom": corpus.append({"kind": "custom", "dataroom_path": "Uploads/", "description": phrase, "sync": "manual_entry", "required": True})
@@ -329,8 +335,8 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         else: processes.append({"name": name, "enabled": True, "implemented_by": [{"kind": k, "ref": r} for k, r in PROCESSES[name][1]], **({"label": phrase} if phrase else {})})
     workspace = {
       "org": {"org_id": org_id, "name": ans["workspace_name"], "display_name": ans["workspace_name"], "blob_prefix": f"orgs/{org_id}"},
-      "fde_self": {"email": fde, "name": fde.split("@")[0].replace(".", " ").title(), "title": "Forward-Deployed Engineer", "skills": [], "capacity_target_accounts": 8},
-      "members": members, "platform_admins": [fde], "roster": [{"email": fde}], "customers": []}
+      "operator_self": {"email": owner, "name": owner.split("@")[0].replace(".", " ").title(), "title": "Workspace owner", "skills": [], "capacity_target_accounts": 8},
+      "members": members, "platform_admins": [owner], "roster": [{"email": owner}], "customers": []}
     surface = {
       "dm.md": {"enabled": True, "top_level": top_level, "system_of_record": "postgres"},
       "browser": {"enabled": ans["browser"], "local": False, "default_on_for_agent": ans["browser"]},
@@ -444,8 +450,8 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         ds["postgres"]["admin_url_ref"] = "DATABASE_URL_UNPOOLED"     # migrations on the direct endpoint, runtime on the pooled one
         ds["postgres"]["pooling"] = "transaction"
     if hints.get("clone_of"):
-        ds["postgres"]["snapshot"] = {"source": "live_fde_agent", "ref": hints["clone_of"]["ref"], "method": "pg_dump"}
-        ds["blob"]["snapshot"] = {"source": "live_fde_agent", "ref": hints["clone_of"]["ref"]}
+        ds["postgres"]["snapshot"] = {"source": "live_source_agent", "ref": hints["clone_of"]["ref"], "method": "pg_dump"}
+        ds["blob"]["snapshot"] = {"source": "live_source_agent", "ref": hints["clone_of"]["ref"]}
     ex_ds = existing.get("datastores", {})
     for k in ("snapshot",):
         for s in ("postgres", "blob"):
@@ -499,7 +505,8 @@ def self_test(app_id="onfinance_hfc"):
         if r.returncode: fails.append(f"re-run exited {r.returncode}: {(r.stdout + r.stderr).strip()[-400:]}")
         for nm, old in before.items():
             new = load(os.path.join(tapp, f"{nm}.json"))
-            lost = [p for p, _ in paths(old) if p not in dict(paths(new))]
+            renamed = lambda p: p.replace("workspace.fde_self", "workspace.operator_self", 1)   # migrated on purpose
+            lost = [p for p, _ in paths(old) if renamed(p) not in dict(paths(new))]
             n += 1
             if lost: fails.append(f"{nm}: a same-answers re-run dropped {len(lost)} field(s): {', '.join(lost[:8])}")
         after = {nm: load(os.path.join(tapp, f"{nm}.json")) for nm in ("application", "datastores")}
@@ -548,6 +555,8 @@ def main(a):
     qfile = os.path.join(outdir, "questions.json")
     if os.path.exists(qfile) and not answers:
         prev = load(qfile).get("answers", {}); answers.update(prev)
+    # pre-rename answer id, accepted for one release; answers.json is rewritten under the new id below
+    if "fde_email" in answers: answers.setdefault("operator_email", answers.pop("fde_email"))
     for qid, path, prompt, options, resolve in QUESTIONS:
         if qid in answers: resolved[qid] = coerce(answers[qid]); continue
         v = resolve(d, hints, ctx)

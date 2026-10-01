@@ -1846,7 +1846,7 @@ def verify_db(app_id, mold_dir, ds, adir, infra):
         if len(halves) < 2:
             # The same pair the vercel lane mints (provision_datastores), kept across re-runs like .pg-admin:
             # a re-mint would orphan every session the lanes signed with the old key. It is what lets
-            # lib/session.py sign in as this app's own FDE on this box (mold_v1-040). Kept only as a PAIR:
+            # lib/session.py sign in as this app's own operator identity on this box (mold_v1-040). Kept only as a PAIR:
             # a file holding one half (a partial write, a hand edit) gets BOTH re-minted, because a private
             # key without its public half signs sessions the mold can never verify, and keeping it would
             # print "key pair" for a file that has none.
