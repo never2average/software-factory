@@ -175,7 +175,8 @@ def main(a):
                 sys.exit("set application.surface.primary_context.workspace.org_id to one of them and re-run")
         s = app["surface"]; x = out["surface"]; w = app["workspace"]; xw = out["workspace"]
         w["org"].update(xw["org"]); w.update({k: v for k, v in xw.items() if k != "org" and v})
-        if not any(m["email"] == w["fde_self"]["email"] for m in w["members"]): w["members"].insert(0, {"email": w["fde_self"]["email"], "role": "owner"})
+        me = (w.get("operator_self") or w.get("fde_self") or {})["email"]   # fde_self: pre-rename name, read for one release
+        if not any(m["email"] == me for m in w["members"]): w["members"].insert(0, {"email": me, "role": "owner"})
         pc = s["primary_context"]; xp = x["primary_context"]
         pc["corpus"] = xp.get("corpus", pc["corpus"])
         if xp.get("corpus_files", {}).get("error"): print("blob listing failed on live (" + xp["corpus_files"]["error"] + "); corpus file counts skipped")
@@ -247,10 +248,10 @@ def main(a):
         # connectors rather than connectors that fail at use.
         sealed = node("clear-sealed", dict(base, DATABASE_URL=dst), mold)
         print("  cleared rows sealed with the source key: " + ", ".join(f"{k}={v}" for k, v in sealed.items()))
-        ds["postgres"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW, "method": "pg_dump", "cleared_sealed_rows": sealed}
+        ds["postgres"]["snapshot"] = {"source": "live_source_agent", "ref": LIVE["web"], "taken_at": NOW, "method": "pg_dump", "cleared_sealed_rows": sealed}
         if tok:
             b = node("blobcopy", benv, mold, extra=["--apply"]); print(f"  copied {b['files']} blobs under {prefix}")
-            ds["blob"]["snapshot"] = {"source": "live_fde_agent", "ref": LIVE["web"], "taken_at": NOW}
+            ds["blob"]["snapshot"] = {"source": "live_source_agent", "ref": LIVE["web"], "taken_at": NOW}
         else: ds["blob"]["snapshot"] = {"source": "none"}
         save(os.path.join(adir, "datastores.json"), ds); print("datastores.json updated")
         # A restore is a schema event: it can add rows to tables whose policies were built for a
@@ -267,7 +268,7 @@ def main(a):
         return
 
     if step == "configure":
-        if clone and ds["postgres"].get("snapshot", {}).get("source") == "live_fde_agent":
+        if clone and ds["postgres"].get("snapshot", {}).get("source") in ("live_source_agent", "live_fde_agent"):   # old name read for one release
             print("configure skipped: this app is a clone and its database is a snapshot of live; the surface already matches. Configure is for apps stamped from a brief."); return
         mine = pull_env(proj, mold, proj)
         # The APP role, not the admin one. Surface writes are ordinary application writes and must go
@@ -275,7 +276,10 @@ def main(a):
         # whether the app can actually do them, and hides a missing policy until a user hits it.
         dst = mine.get("DATABASE_URL") or pg_url(mine)
         if not dst: sys.exit(f"no database url for the app; run `python3 .claude/scripts/provision.py {app_id} --deploy` first")
-        out = node("apply", dict(base, DATABASE_URL=dst), mold, stdin=json.dumps({"workspace": app["workspace"], "surface": app["surface"]}))
+        ws = dict(app["workspace"]); me = ws.get("operator_self") or ws.get("fde_self")
+        # surface.mjs still reads workspace.fde_self until its own rename lands; hand it both names for one release.
+        if me: ws["operator_self"] = ws["fde_self"] = me
+        out = node("apply", dict(base, DATABASE_URL=dst), mold, stdin=json.dumps({"workspace": ws, "surface": app["surface"]}))
         bad = {k: v for k, v in out.items() if isinstance(v, str) and v.startswith("ERR")}
         print("applied: " + ", ".join(f"{k}={v}" for k, v in out.items()))
         if bad: sys.exit(1)

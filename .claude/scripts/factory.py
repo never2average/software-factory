@@ -383,6 +383,15 @@ def _lane_specs():
                                 f"the other's result. {LANE_FIX}")
     return errs
 
+def _operator_identity(app_id, docs):
+    """workspace.operator_self names who the app was stamped for. Its pre-rename spelling, fde_self, is still
+    accepted for one release, so the schema requires neither and this requires exactly one of the two."""
+    ws = (docs.get("application") or {}).get("workspace")
+    if not isinstance(ws, dict): return []
+    have = [k for k in ("operator_self", "fde_self") if k in ws]
+    if not have: return [f"{app_id}/application.json.workspace: missing operator_self"]
+    if len(have) == 2: return [f"{app_id}/application.json.workspace: carries both operator_self and its legacy name fde_self; keep operator_self only"]
+    return []
 def _agent_keys(app_id, docs):
     """Which subagents exist differs per application (its mold plus its packs), so the schema only checks the
     key's shape. A key is real only if the app's mold, or one of its packs, has agent/subagents/<key>/agent.ts;
@@ -430,7 +439,7 @@ def cmd_validate(a):
             if os.path.exists(f):
                 docs[name] = load(f); errs += _check(docs[name], load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
             else: errs.append(f"{app}: missing {name}.json")
-        errs += _vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _rls_claim(app, docs) + _agent_keys(app, docs)
+        errs += _vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _rls_claim(app, docs) + _agent_keys(app, docs) + _operator_identity(app, docs)
     errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)

@@ -2,7 +2,7 @@
 """A session for an application the factory provisioned, handed to ONE command by name and never printed.
 
   session.py <app_id> -- <command...>   run <command> with <MOLD>_SESSION_TOKEN (MOLD_V1_SESSION_TOKEN for
-                                        mold_v1) set to a session for the app's own FDE identity; exit as it exits
+                                        mold_v1) set to a session for the app's own operator identity; exit as it exits
   session.py <app_id> --explain         who it would sign in as, with which key, for how long; mints nothing
 
 WHAT A SESSION IS ON THIS MOLD, read from the code rather than assumed (molds/mold_v1/codebase/lib/auth-session.ts,
@@ -16,7 +16,8 @@ kind first and asks nothing else of it — the emailed six-digit code gates only
 private key the factory itself generated and holds by name, the factory can sign a session and it is a real one:
 the same bytes the app's own verify route would return to that person after a code.
 
-WHO IT SIGNS IN AS: application.workspace.fde_self.email — the FDE this application was stamped for, recorded in
+WHO IT SIGNS IN AS: application.workspace.operator_self.email (legacy name fde_self, read for one release) — the
+operator this application was stamped for, recorded in
 state and seeded as its workspace owner. Never a hard-coded person and never an address the factory invents: the
 token proves an email, and membership is read from the app's database on every request (lib/org-context.ts), so
 an identity with no membership sees an empty isolated workspace and the lane's probe says so instead of grading.
@@ -61,7 +62,7 @@ def state(app_id):
     # test fixture against a database that serves nobody: a target=vm app on this box, in a status that
     # says it serves nothing, with no production URL, whose key the FACTORY generated. Any app that could
     # have a real user — a vercel target, a deployed status, a production URL — is refused outright.
-    # Found by the round-4 critic: the first version would have signed for any app's fde_self.
+    # Found by the round-4 critic: the first version would have signed for any app's operator_self.
     st = app.get("status"); tgt = infra.get("target"); purl = (infra.get("vercel") or {}).get("production_url")
     if tgt != "vm" or infra.get("secret_store") != "vm_env_file":
         die(f"{app_id}: target is {tgt!r} — this helper mints a HARNESS session for a local vm fixture only, never "
@@ -70,10 +71,11 @@ def state(app_id):
         die(f"{app_id}: status {st!r}" + (f" with production_url {purl!r}" if purl else "") + " — a session may only be "
             f"minted for a fixture that serves nobody. Nothing was minted.")
     print(f"{app_id}: minting a HARNESS session for the local vm fixture (not a user sign-in)", file=sys.stderr)
-    email = ((app.get("workspace") or {}).get("fde_self") or {}).get("email", "").strip().lower()
+    ws = app.get("workspace") or {}
+    email = (ws.get("operator_self") or ws.get("fde_self") or {}).get("email", "").strip().lower()   # fde_self: pre-rename name
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", email):
-        die(f"{app_id}: application.workspace.fde_self.email is missing, so there is no named person to sign in as. "
-            f"Set it in state/application/{app_id}/application.json (the FDE this app was stamped for) and rerun.")
+        die(f"{app_id}: application.workspace.operator_self.email is missing, so there is no named person to sign in as. "
+            f"Set it in state/application/{app_id}/application.json (the operator this app was stamped for) and rerun.")
     return app.get("mold_id") or die(f"{app_id}: application.json has no mold_id"), email, infra
 
 def contract(mold_id):
