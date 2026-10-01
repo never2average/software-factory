@@ -19,10 +19,10 @@ What the factory needs to know before it can stamp an application, and where eac
 | multi_tenant | application.capabilities.multi_tenant | never (brief hint, default on) | true, false |
 | vercel_project | infrastructure.vercel.project | never (product project for the first app, `<project>-<suffix>` after) | free text |
 | workspace_name | application.workspace.org.name | brief silent and no factory default | free text |
-| fde_email | application.workspace.fde_self.email | brief silent and no factory default | email |
+| operator_email | application.workspace.operator_self.email | brief silent and no factory default | email |
 | library | application.surface.custom_workflow_builder.library.install | never (brief hint, default all) | all, none |
 
-Brief hints recognised: "vercel" / "vm, droplet, self-host"; "neon" / "supabase" / "self-host the postgres, database on the vm, local postgres"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "fde: <email>"; "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none"; "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
+Brief hints recognised: "vercel" / "vm, droplet, self-host"; "neon" / "supabase" / "self-host the postgres, database on the vm, local postgres"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "operator: <email>" (also "owner:", and the pre-rename "fde:" for one release); "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none"; "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
 
 Steady state after the first confirmed intake: zero questions for a five-line brief; everything comes from the brief or defaults. Secrets are always by name; `provision.py` checks presence in the store and lists what the user still has to set.
 
