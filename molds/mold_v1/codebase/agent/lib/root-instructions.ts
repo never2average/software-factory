@@ -4,7 +4,7 @@
  *   agent/prompt-core.md      the neutral rules every deployment keeps: organization scope, delegation,
  *                             deliverables, memory, files and sandboxes, scope, ground rules. Domain words in it
  *                             are spoken in the profile's words (agent/lib/agent-vocabulary.ts).
- *   agent/prompt-persona.md   the base product's persona: the forward-deployed engineering orchestrator, its
+ *   agent/prompt-persona.md   the base product's persona: the operations orchestrator, its
  *                             specialist roster, the customer spreadsheet, the daily stand-up.
  *   agent/prompt-neutral.md   what stands in the persona's place under `persona.base: false`: a plain opening
  *                             and a one-paragraph system of record. The pack's own agent/instructions/50-pack-*.md

@@ -1,7 +1,7 @@
 # The operator workflow
 
-How an engineer who runs this platform for a customer (an operator; a Forward-Deployed
-Engineer in the default deployment) works, and where every kind of
+How an engineer who runs this platform for a customer (an operator; a member of the team in
+the default deployment) works, and where every kind of
 work lands in the data room. This is the backbone the operator **skills** are built on
 — each skill tells the agent *where to read* and *where to write* against the tree
 below, and this doc is the shared map.

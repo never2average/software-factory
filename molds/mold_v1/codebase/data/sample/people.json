@@ -5,7 +5,7 @@
       "customer_id": "acme-bank",
       "staffRole": "solution_engineer",
       "name": "Alex Rivera",
-      "title": "Forward-Deployed Engineer",
+      "title": "Solutions Engineer",
       "employerOrg": "Example Co",
       "email": "alex.rivera@example.com",
       "lastContact": "2026-07-09"
@@ -14,7 +14,7 @@
       "customer_id": "northwind-cap",
       "staffRole": "solution_engineer",
       "name": "Alex Rivera",
-      "title": "Forward-Deployed Engineer",
+      "title": "Solutions Engineer",
       "employerOrg": "Example Co",
       "email": "alex.rivera@example.com",
       "lastContact": "2026-07-09"

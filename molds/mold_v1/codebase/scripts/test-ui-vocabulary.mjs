@@ -40,7 +40,8 @@ register(
 const ROOT = process.cwd();
 const STAMPED = process.argv.includes("--stamped");
 const FIXTURE = join(new URL("..", import.meta.url).pathname, "scripts/fixtures/agent-vocabulary/50-relabelled.json");
-const BASE = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", "fde", "fdes"]);
+const { LEGACY_MEMBER } = await import(pathToFileURL(join(process.cwd(), "agent/lib/legacy-member.ts")).href);
+const BASE = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", LEGACY_MEMBER.singular.toLowerCase(), LEGACY_MEMBER.plural.toLowerCase()]);
 const baseWords = (t) => [...String(t).matchAll(/[A-Za-z0-9]+/g)].flatMap((m) => m[0].split(/(?<=[a-z0-9])(?=[A-Z])/)).filter((p) => BASE.has(p.toLowerCase()));
 let passed = 0;
 const check = async (name, fn) => {
@@ -59,11 +60,11 @@ const imp = (rel) =>
     () => new Proxy({}, { get: (_t, k) => (k === "then" ? undefined : () => { throw new Error(`${rel} is missing (or does not load)`); }) }),
   );
 const zodIssue = (path, message) => ({ name: "ZodError", issues: [{ path, message }] });
-/** The base product's member words, read from the default profile (not written here: check:neutral-names counts the
- *  role word), which a relabelled deployment's people must never read. */
+/** The default profile's member words (what the default deployment's people read), and the member's LEGACY words
+ *  (agent/lib/legacy-member.ts), which no deployment's people may read in text the product writes. */
 const BASE_VOCAB = JSON.parse(readFileSync(join(ROOT, "profiles/00-default.json"), "utf8")).vocabulary;
 const [BASE_MEMBER, BASE_MEMBERS] = [BASE_VOCAB.member.singular, BASE_VOCAB.member.plural];
-const ROLE_WORD = new RegExp(`\\b(${BASE_MEMBER}|${BASE_MEMBERS})\\b|forward-deployed`, "i");
+const ROLE_WORD = new RegExp(`\\b(${LEGACY_MEMBER.singular}|${LEGACY_MEMBER.plural})\\b|forward-deployed`, "i");
 const RECORD = { customerId: "acme", deploymentId: "dep-1", implementationStage: "UAT", rolloutId: "r-1", deployment_model: "k8s", fdeOwner: "a@x.io", note: "the customer asked for a deployment" };
 
 async function relabelled() {
@@ -235,10 +236,24 @@ async function defaults() {
     assert.equal(keys.jsonForPeople({ record: RECORD }, 2), JSON.stringify({ record: RECORD }, null, 2));
     assert.equal(keys.jsonForPeople(RECORD), JSON.stringify(RECORD));
   });
-  await check("D speakKey / humanizeKey are the identity", () => {
+  await check("D speakKey is the identity; the owner key keeps its name and reads the profile's owner label", () => {
     for (const k of ["customer_id", "deployment_model", "deploymentId", "fdeOwner"]) assert.equal(keys.speakKey(k), k);
-    assert.equal(keys.humanizeKey("fdeOwner"), "Fde Owner");
-    assert.equal(keys.humanizeKey("accountOwner"), "Account Owner");
+    assert.equal(keys.humanizeKey("fdeOwner"), "Account owner");
+    assert.equal(keys.humanizeKey("fde_owner"), "Account owner");
+    assert.equal(keys.humanizeKey("solutionFdeOwner"), "Solution account owner");
+    assert.equal(keys.humanizeKey("solution_fde_owner"), "Solution account owner");
+    assert.equal(keys.humanizeKey("accountOwner"), "Account owner", "the owner's neutral key reads the same label");
+    assert.equal(keys.humanizeKey("solution_owner"), "Solution account owner");
+    assert.equal(keys.humanizeKey("customerId"), "Customer Id");
+  });
+  const words = await imp("lib/ui-words.ts");
+  await check("D a stored value that carries the member's legacy word stays as stored and reads the profile's member word", () => {
+    assert.equal(words.storedValueLabel("ownerTeam", LEGACY_MEMBER.singular), "Member");
+    assert.equal(words.storedValueLabel("valueEvidenceStatus", `${LEGACY_MEMBER.singular} Verified`), "Member Verified");
+    assert.equal(words.storedValueLabel("ownerTeam", "Support"), "Support");
+    assert.equal(words.storedValueLabel("valueEvidenceStatus", "Customer Verified"), "Customer Verified");
+    assert.equal(words.storedValueLabel("note", `${LEGACY_MEMBER.singular} Verified`), `${LEGACY_MEMBER.singular} Verified`, "only the two enum fields");
+    assert.equal(words.storedValueLabel("ownerTeam", undefined), undefined);
   });
   const errs = await imp("lib/ops-errors.ts");
   await check("D an ops API error reads exactly as before (`path: message`, String(e))", () => {
@@ -249,12 +264,17 @@ async function defaults() {
   });
   const avail = await imp("lib/workflow-availability.ts");
   const lib = (await imp("agent/lib/workflow-library.generated.ts")).WORKFLOW_LIBRARY;
-  await check("D every library row is available and returned as stored", () => {
+  await check("D every library row is available and returned as stored, its role placeholders in the profile's words", async () => {
+    const { fill } = await imp("agent/lib/agent-vocabulary.ts");
     for (const w of lib) {
       const row = avail.workflowForList({ ...w });
       assert.equal(row.availability.available, true);
-      assert.equal(row.description, w.description);
+      assert.equal(row.description, fill(w.description));
+      assert.doesNotMatch(row.description, /\{(member|members|owner)\}/i, w.name);
     }
+    const assign = lib.find((w) => w.name === "assign-account");
+    assert.match(assign.description, /\{owner\}/, "the library writes a placeholder, never a role word");
+    assert.match(avail.workflowForList({ ...assign }).description, /durable account owner/);
   });
 
   const exp = await imp("lib/record-export.ts");
@@ -263,7 +283,7 @@ async function defaults() {
     assert.equal(exp.exportJson(B), JSON.stringify(B, null, 2));
     const md = exp.bundleToMarkdown("T", B);
     assert.match(md, /- \*\*Container Type:\*\* deployment/);
-    assert.match(md, /- \*\*Fde Owner:\*\* a@x/);
+    assert.match(md, /- \*\*Account owner:\*\* a@x/);
     assert.match(md, /## Comments\n- Author: a · Body: b/);
     assert.match(md, /### S\.json\n```json\n\{\n  "type": "deployment"\n\}\n```/);
   });
@@ -292,15 +312,23 @@ async function defaults() {
   });
 
   const seed = await imp("lib/org-seed.ts");
-  await check("D a new workspace's built-in data-room README reads exactly as before", async () => {
-    // Byte-identical to the tree before it took the profile's words (sha256 of the pre-change output, aaec6b9).
+  await check("D a new workspace's built-in data-room README reads as before, in the default profile's member word", async () => {
+    // With the member's LEGACY words put back (what the default profile said before it spoke neutrally), the tree is
+    // byte-identical to the one before it took the profile's words (sha256 of the pre-change output, aaec6b9); the
+    // default profile's tree differs from that in the member word alone.
     const { createHash } = await import("node:crypto");
-    assert.equal(createHash("sha256").update(JSON.stringify(seed.starterFiles("org-1", "Acme"))).digest("hex"), "991a1d36007cec5dc527d98e6619d68f11b216f61a783ad4963e585744bb81fb");
+    const { DEPLOYMENT_PROFILE } = await imp("lib/deployment-profile.generated.ts");
+    const legacy = { ...DEPLOYMENT_PROFILE, vocabulary: { ...DEPLOYMENT_PROFILE.vocabulary, member: { singular: LEGACY_MEMBER.singular, plural: LEGACY_MEMBER.plural }, owner: LEGACY_MEMBER.owner } };
+    const before = seed.starterFiles("org-1", "Acme", legacy);
+    assert.equal(createHash("sha256").update(JSON.stringify(before)).digest("hex"), "991a1d36007cec5dc527d98e6619d68f11b216f61a783ad4963e585744bb81fb");
+    const swap = (t) => t.replace(new RegExp(`\\b${LEGACY_MEMBER.plural}\\b`, "g"), "Members").replace(new RegExp(`\\b${LEGACY_MEMBER.singular}\\b`, "g"), "member");
+    assert.deepEqual(seed.starterFiles("org-1", "Acme"), before.map(([p, body]) => [p, swap(body)]));
     const files = Object.fromEntries(seed.starterFiles("org-1", "Acme"));
+    for (const [path, body] of Object.entries(files)) assert.doesNotMatch(body, ROLE_WORD, `${path} carries the legacy role word`);
     assert.deepEqual(Object.keys(files), ["README.md", "Customers/README.md", "People/README.md"]);
     assert.ok(files["README.md"].includes(`Everything the agent and the ${BASE_MEMBER} team\nknow about this account`));
     assert.ok(files["README.md"].includes(`account context, curated by the ${BASE_MEMBER}\n`));
-    assert.ok(files["People/README.md"].includes(`Internal staff do **not** belong here. ${BASE_MEMBERS} are recorded as team memories via the\n`));
+    assert.ok(files["People/README.md"].includes(`Internal staff do **not** belong here. ${BASE_MEMBERS.charAt(0).toUpperCase() + BASE_MEMBERS.slice(1)} are recorded as team memories via the\n`));
   });
   await check("D the published HTML reports keep the base owner heading", async () => {
     const render = await imp("agent/lib/render-html.ts");

@@ -2,13 +2,13 @@
   "$comment": "The deployment profile: everything a person or the model READS that is specific to what this deployment is for. These defaults reproduce the product exactly as it was before profiles existed. A deployment changes them by ADDING profiles/NN-<name>.json files (later files win, objects merge deeply, arrays replace); nothing here is edited. Identifiers never change with a profile: database columns, API routes, tool names and data-room path tokens stay as they are. See docs/DEPLOYMENT_PROFILE.md.",
   "product": {
     "name": "Delivered",
-    "tagline": "The operations console for forward-deployed teams.",
-    "description": "{product} — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team."
+    "tagline": "The operations console for teams that run customer work.",
+    "description": "{product} — an operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for your team."
   },
   "vocabulary": {
     "account": { "singular": "customer", "plural": "customers" },
-    "member": { "singular": "FDE", "plural": "FDEs" },
-    "owner": "FDE owner",
+    "member": { "singular": "member", "plural": "members" },
+    "owner": "Account owner",
     "account_context": "Customer context"
   },
   "chat": {
@@ -16,7 +16,7 @@
     "empty_sections": { "urgent": "Urgent tickets", "stalled": "Stalled customers" },
     "user_messages": { "collapse": true, "collapsed_lines": 6 },
     "starter_cards": {
-      "owner_label": "FDE owner",
+      "owner_label": "Account owner",
       "ticket_waiting": "One open ticket is waiting on us.",
       "tickets_waiting": "{count} open tickets are waiting on us.",
       "ticket_badge": "1 open",
@@ -98,7 +98,7 @@
     "briefing": null
   },
   "persona": {
-    "$comment": "base: the root agent's built-in persona (the forward-deployed engineering orchestrator, its specialist roster, the system-of-record and stand-up sections). false drops it: the root prompt keeps only its neutral rules, and a pack's agent/instructions/50-pack-*.md supplies who the agent is.",
+    "$comment": "base: the root agent's built-in persona (the operations orchestrator, its specialist roster, the system-of-record and stand-up sections). false drops it: the root prompt keeps only its neutral rules, and a pack's agent/instructions/50-pack-*.md supplies who the agent is.",
     "base": true
   },
   "specialists": {

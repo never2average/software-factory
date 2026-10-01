@@ -47,6 +47,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { freePort, spawnFakeModel } from "./lib/own-listener.mjs";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 
 let passed = 0;
 const check = (label, condition) => {
@@ -138,7 +139,7 @@ console.log("\nThe override, and the empty-string trap:");
   check("one variable per role", new Set(Object.values(OUTPUT_BUDGET_ENV)).size === 3);
   check(
     "each names its role and carries no product role word",
-    Object.entries(OUTPUT_BUDGET_ENV).every(([role, name]) => name.endsWith(role.toUpperCase()) && !/(^|_)FDE(_|$)/i.test(name)),
+    Object.entries(OUTPUT_BUDGET_ENV).every(([role, name]) => name.endsWith(role.toUpperCase()) && !new RegExp(`(^|_)${BASE_PRODUCT_WORD}(_|$)`, "i").test(name)),
   );
   check("unset means the default", resolveOutputBudget("vision", {}) === DEFAULT_OUTPUT_BUDGET_TOKENS.vision);
   check(

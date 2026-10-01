@@ -4,16 +4,16 @@
  *
  * `check:agent-vocabulary` proves what the MODEL reads. This proves what a person reads: the web UI, the ops API's
  * messages, and every string the built client bundle ships. It exists because the gate before it
- * (`check-vocabulary.mjs`, now folded in here) looked for one word ("FDE") in four source folders and skipped
- * generated files, so a research deployment whose profile says companies / analysts / coverage reports shipped a
- * bundle saying "List the FDE (forward-deployed engineer) roster with live load", "Propose and (on confirmation)
- * set the durable FDE owner for a new or unowned customer" and "Customer DMs": the subagent roster
+ * (`check-vocabulary.mjs`, now folded in here) looked for one word (the member's legacy word, agent/lib/legacy-member.ts)
+ * in four source folders and skipped generated files, so a research deployment whose profile says companies /
+ * analysts / coverage reports shipped a bundle that named the member and the owner by the legacy word in the
+ * roster tool's and the owner workflow's descriptions, and said "Customer DMs": the subagent roster
  * (subagent-meta.generated.ts) and the whole workflow library (pulled into the client through one import) were
  * generated text it never read, and "customer" / "deployment" were never its words to look for.
  *
  * It renders a throwaway copy of this checkout under a RELABELLING profile (scripts/fixtures/agent-vocabulary/
  * 50-relabelled.json, the hfc-research pack's profile, which is what check:agent-vocabulary uses) and fails on any
- * base word — customer(s), deployment(s), implementation(s), rollout(s), FDE(s), forward-deployed — matched as
+ * base word — customer(s), deployment(s), implementation(s), rollout(s), the member's legacy word, forward-deployed — matched as
  * whole tokens where `_`, `-`, `/`, `.` and a camelCase hump are boundaries too:
  *
  *   1. SOURCE TEXT (static, the copy after `build:generated`): every piece of text a person can read in app/,
@@ -39,8 +39,9 @@
  *      and not show the error screen, and a canary page broken on purpose must be caught. Only an allowance marked
  *      `"rendered": true` — text a person is meant to read as it is — excuses a line here.
  *   4. DEFAULT PROFILE (this checkout, when it carries profiles/00-default.json alone): every word lib/ui-words.ts
- *      hands the UI is exactly the base word it replaced, so a deployment that relabels nothing reads byte for
- *      byte what it read before. (The generated roster's default bytes are held by check:generated.)
+ *      hands the UI is the default profile's neutral word (the record words as before; "member", "Account owner"
+ *      for the role), a stored key or value that carries the member's legacy word reads the profile's word, and
+ *      the generated roster names no member by the legacy word. (Its bytes are held by check:generated.)
  *
  * The allow-list is scripts/fixtures/ui-vocabulary/allow.json: { "source": regex over the file path (a page is
  * `page:<path>`), "literal": regex over the text, "why": "…", "rendered"?: true }. An entry without a why is refused; an entry that matched nothing
@@ -63,6 +64,7 @@ import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { clientLiterals } from "./lib/client-literals.mjs";
 import { CANARY, HIDDEN_MARK, PAGE_SPECS, PAGES, renderedText } from "./lib/rendered-text.mjs";
+import { LEGACY_MEMBER, LEGACY_OWNER_KEY } from "../agent/lib/legacy-member.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const argAfter = (flag) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : null);
@@ -78,7 +80,7 @@ const FIXTURE = process.env.UI_VOCABULARY_FIXTURE || join(ROOT, "scripts/fixture
 const ALLOW_BASE = join(ROOT, "scripts/fixtures/ui-vocabulary/allow.json");
 
 /** The base product's words, as whole tokens (lower case). "forward-deployed" splits into forward + deployed. */
-const BASE_WORDS = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", "fde", "fdes"]);
+const BASE_WORDS = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", LEGACY_MEMBER.singular.toLowerCase(), LEGACY_MEMBER.plural.toLowerCase()]);
 
 /** Base words in a text: tokens split at non-alphanumerics and camelCase humps, plus "forward-deployed". */
 export function baseWords(text) {
@@ -373,7 +375,7 @@ async function defaultWords() {
   const { W, an } = await import(pathToFileURL(join(ROOT, "lib/ui-words.ts")).href);
   const want = {
     account: "customer", accounts: "customers", Account: "Customer", Accounts: "Customers",
-    member: "FDE", members: "FDEs", Member: "FDE", Members: "FDEs", owner: "FDE owner",
+    member: "member", members: "members", Member: "Member", Members: "Members", owner: "Account owner",
     deployment: "deployment", deployments: "deployments", Deployment: "Deployment", Deployments: "Deployments",
     implementation: "implementation", implementations: "implementations", Implementation: "Implementation", Implementations: "Implementations",
     rollout: "rollout", rollouts: "rollouts", Rollout: "Rollout", Rollouts: "Rollouts",
@@ -381,12 +383,27 @@ async function defaultWords() {
   };
   const wrong = Object.entries(want).filter(([k, v]) => W[k] !== v).map(([k, v]) => `W.${k} is ${JSON.stringify(W[k])}, the default UI said ${JSON.stringify(v)}`);
   if (Object.keys(W).some((k) => !(k in want))) wrong.push(`lib/ui-words.ts has words this check does not pin: ${Object.keys(W).filter((k) => !(k in want)).join(", ")}`);
-  for (const [w, a] of [["customer", "a"], ["FDE", "an"], ["deployment", "a"], ["implementation", "an"], ["analyst", "an"], ["company", "a"]]) if (an(w) !== a) wrong.push(`an("${w}") is "${an(w)}", not "${a}"`);
+  for (const [w, a] of [["customer", "a"], ["member", "a"], [LEGACY_MEMBER.singular, "an"], ["deployment", "a"], ["implementation", "an"], ["analyst", "an"], ["company", "a"]]) if (an(w) !== a) wrong.push(`an("${w}") is "${an(w)}", not "${a}"`);
   const { speakKey, humanizeKey } = await import(pathToFileURL(join(ROOT, "lib/ui-keys.ts")).href);
   for (const k of ["customer_id", "customerId", "fdeOwner", "fde_owner", "deploymentId", "implementation"]) {
     if (speakKey(k) !== k) wrong.push(`speakKey("${k}") is "${speakKey(k)}" under the default profile`);
   }
-  if (humanizeKey("fdeOwner") !== "Fde Owner" || humanizeKey("customerId") !== "Customer Id") wrong.push("humanizeKey changed the default export labels");
+  // The owner key keeps its stored name, and a person reads the profile's owner label for it, the default included.
+  for (const k of ["fdeOwner", "fde_owner"]) if (!LEGACY_OWNER_KEY.test(k) || humanizeKey(k) !== "Account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default owner label "Account owner"`);
+  for (const k of ["accountOwner", "account_owner"]) if (humanizeKey(k) !== "Account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default owner label "Account owner"`);
+  for (const k of ["solutionFdeOwner", "solution_fde_owner", "solutionOwner", "solution_owner"]) if (humanizeKey(k) !== "Solution account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not "Solution account owner"`);
+  if (humanizeKey("customerId") !== "Customer Id") wrong.push("humanizeKey changed the default export labels");
+  // Stored values that carry the legacy member word keep it in the row and read the profile's member word.
+  const { storedValueLabel } = await import(pathToFileURL(join(ROOT, "lib/ui-words.ts")).href);
+  const legacyVerified = `${LEGACY_MEMBER.singular} Verified`;
+  if (storedValueLabel("ownerTeam", LEGACY_MEMBER.singular) !== "Member") wrong.push(`the stored ownerTeam "${LEGACY_MEMBER.singular}" reads "${storedValueLabel("ownerTeam", LEGACY_MEMBER.singular)}", not "Member"`);
+  if (storedValueLabel("valueEvidenceStatus", legacyVerified) !== "Member Verified") wrong.push(`the stored valueEvidenceStatus "${legacyVerified}" reads "${storedValueLabel("valueEvidenceStatus", legacyVerified)}"`);
+  if (storedValueLabel("summary", legacyVerified) !== legacyVerified) wrong.push("storedValueLabel touched a field it does not own");
+  // The default deployment's own generated text (the roster a person reads) carries no legacy member word as a word.
+  const roster = readFileSync(join(ROOT, "app/_components/subagent-meta.generated.ts"), "utf8");
+  const legacyWord = new RegExp(`(?<![A-Za-z0-9_-])(${LEGACY_MEMBER.singular}|${LEGACY_MEMBER.plural})(?![A-Za-z0-9_-])`, "i");
+  const hit = roster.split("\n").find((l) => legacyWord.test(l));
+  if (hit) wrong.push(`the default roster (subagent-meta.generated.ts) still names the member by its legacy word: ${hit.trim().slice(0, 140)}`);
   return { wrong };
 }
 
@@ -519,7 +536,7 @@ if (!PACK) {
   else if (d.wrong.length) {
     failed = true;
     console.error(`\ncheck-ui-vocabulary: DEFAULT profile — the UI's words are not the ones it had before:\n  ${d.wrong.join("\n  ")}`);
-  } else console.log("check-ui-vocabulary: default profile — every word lib/ui-words.ts hands the UI is exactly the base word it replaced");
+  } else console.log("check-ui-vocabulary: default profile — every word lib/ui-words.ts hands the UI is the profile's neutral default, and the legacy member word reaches no label, stored value or roster line");
 }
 
 if (!STATIC && !failed) {

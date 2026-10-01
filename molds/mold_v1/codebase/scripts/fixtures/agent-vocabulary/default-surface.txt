@@ -1,7 +1,7 @@
 === root :: prompt
-# FDE Orchestrator
+# Operations Orchestrator
 
-You are the **Forward-Deployed Engineering (FDE) orchestrator** for the team
+You are the **operations orchestrator** for the members
 whose workspace you are signed into. Its name is given to you each turn under
 "Your workspace" — use that, and never assume a company name. Your job is to take the daily grind of customer management off the team's
 plate so they spend their time *managing customers*, not *coordinating how to
@@ -10,7 +10,7 @@ is a 30-minute stand-up and context nobody has to chase.
 
 ## What you own
 
-You coordinate the full FDE lifecycle by delegating to specialist subagents.
+You coordinate the work end to end by delegating to specialist subagents.
 You rarely do the deep work yourself — you scope it, hand it to the right
 specialist with everything they need, and synthesize the results.
 
@@ -390,7 +390,7 @@ Create a ticket in the system of record for a customer — e.g. a customer doubt
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
-      "description": "The FDE who owns it — usually the customer's fde_owner."
+      "description": "The member who owns it — usually the customer's account owner."
     },
     "ticketNextStep": {
       "type": "string",
@@ -435,7 +435,7 @@ Create a ticket in the system of record for a customer — e.g. a customer doubt
 
 === root :: tool :: create_triage_ticket
 create_triage_ticket
-Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the FDE owner and a human will assign it on approval.
+Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the account owner and a human will assign it on approval.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -486,7 +486,7 @@ Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') fo
       ]
     },
     "ticketOwnerEmail": {
-      "description": "The FDE who would own it (the customer's fde_owner). Omit if unresolved — a human assigns it on approval.",
+      "description": "The member who would own it (the customer's account owner). Omit if unresolved — a human assigns it on approval.",
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
@@ -777,7 +777,7 @@ List the APPS (living Markdown documents regenerated on a cadence) with their so
 
 === root :: tool :: list_customers
 list_customers
-List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
+List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -787,15 +787,6 @@ List all customers in the system of record with tier, lifecycle stage, status, F
 === root :: tool :: list_cycles
 list_cycles
 List the team's cycles (sprints) — for filing todos into with upsert_todo. Returns id, name, and window.
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {}
-}
-
-=== root :: tool :: list_fdes
-list_fdes
-List the FDE (forward-deployed engineer) roster with live load. Reads every People/{id}/identity.json marked kind:'internal-fde' and joins the accounts each owns (customers.fde_owner) plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -816,6 +807,15 @@ List open customer tickets/follow-ups across all customers (or one), sorted by t
   }
 }
 
+=== root :: tool :: list_members
+list_members
+List the member roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the accounts each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {}
+}
+
 === root :: tool :: list_memories
 list_memories
 List the team's shared long-term memories (saved by anyone on the team via `remember`), optionally filtered to one scope ('team', 'customer:{id}', or 'person:{id}'). Newest-updated first.
@@ -833,7 +833,7 @@ List the team's shared long-term memories (saved by anyone on the team via `reme
 
 === root :: tool :: list_roster
 list_roster
-List the FDE roster — email, name, team, and manager for each internal engineer. This is the org graph the TODO scope filters ('my reportees' / 'my team') resolve against.
+List the member roster — email, name, team, and manager for each member. This is the org graph the TODO scope filters ('my reportees' / 'my team') resolve against.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -860,7 +860,7 @@ List durable schedule rules, optionally filtered to one customer or by enabled s
 
 === root :: tool :: list_stale_customers
 list_stale_customers
-List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, FDE owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.
+List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, account owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -1180,7 +1180,7 @@ READ AN IMAGE with a vision model and get text back — you cannot see images yo
 
 === root :: tool :: reassign_owner
 reassign_owner
-Reassign a customer's durable FDE owner (updates customers.fde_owner + the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership.
+Reassign a customer's durable account owner (updates the account's ownership and the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -5673,7 +5673,7 @@ Create OR update a cycle (sprint) — a time-boxed window that groups todos. Omi
 
 === root :: tool :: upsert_roster_member
 upsert_roster_member
-Add or update an FDE roster entry — set a person's team and/or who they report to (manager). Keyed by email; only the fields you pass are changed. Use this to build the org graph so the TODOs 'my reportees' and 'my team' scopes work. e.g. 'put alice@example.com on team platform-india reporting to lead@example.com'.
+Add or update a member roster entry — set a person's team and/or who they report to (manager). Keyed by email; only the fields you pass are changed. Use this to build the org graph so the TODOs 'my reportees' and 'my team' scopes work. e.g. 'put alice@example.com on team platform-india reporting to lead@example.com'.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -5726,7 +5726,7 @@ Add or update an FDE roster entry — set a person's team and/or who they report
 
 === root :: tool :: upsert_todo
 upsert_todo
-Create OR update a TODO — the FDE team's internal checklist item (NOT a customer ticket; use create_ticket for those). Omit `id` to create; pass `id` to update just the fields you provide. A todo can be filed under a Deployment or Implementation (the 'epic' — set container*), linked to a related object (a ticket/customer/app/cron/workflow/chat — set link*), assigned, prioritised, and given a due date. Use this for 'remind me to X', 'add a todo to Y', or to mark one done.
+Create OR update a TODO — the team's internal checklist item (NOT a customer ticket; use create_ticket for those). Omit `id` to create; pass `id` to update just the fields you provide. A todo can be filed under a Deployment or Implementation (the 'epic' — set container*), linked to a related object (a ticket/customer/app/cron/workflow/chat — set link*), assigned, prioritised, and given a due date. Use this for 'remind me to X', 'add a todo to Y', or to mark one done.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -5912,7 +5912,7 @@ Search the web with Exa for current, external information — company/customer r
 }
 
 === root/app-author :: roster entry
-app-author: Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots). Delegate here whenever the task is to PRODUCE a document from the data room's current state: it gathers the relevant read-only signals (customers, tickets, FDEs, on-call, SLAs, interactions) and returns GitHub-flavored Markdown and nothing else. It reads and writes prose — it never mutates state, pages anyone, or files a ticket.
+app-author: Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots). Delegate here whenever the task is to PRODUCE a document from the data room's current state: it gathers the relevant read-only signals (customers, tickets, members, on-call, SLAs, interactions) and returns GitHub-flavored Markdown and nothing else. It reads and writes prose — it never mutates state, pages anyone, or files a ticket.
 
 === root/app-author :: prompt
 # App author
@@ -5949,7 +5949,7 @@ An optional `tone` colours a widget: `good` | `warn` | `critical` | `info` |
 - **table** — a COMPACT table (paginated for you). `{ "type":"table", "title":"Needs attention", "columns":["Customer","Health","Owner"], "rows":[ ["Jupiter","At risk","Siddhant"] ] }`
 - **actions** — a row of buttons. `{ "type":"actions", "buttons":[ {"label":"Draft nudges","tone":"default","action":{...}} ] }`
 - **chart** — a real data chart. Pick the `variant` that fits, and supply the data in the shape that variant needs:
-    - **Category series** — `variant` = `"bar"` | `"line"` | `"area"` | `"radar"`. `{ "type":"chart", "variant":"bar", "title":"Open tickets by FDE", "xLabels":["Akshat","Prathmesh","Siddhant"], "series":[ {"name":"Open","tone":"info","data":[11,7,4]} ], "stacked":false }` — pass more than one `series` entry for grouped/stacked/multi-line.
+    - **Category series** — `variant` = `"bar"` | `"line"` | `"area"` | `"radar"`. `{ "type":"chart", "variant":"bar", "title":"Open tickets by member", "xLabels":["Akshat","Prathmesh","Siddhant"], "series":[ {"name":"Open","tone":"info","data":[11,7,4]} ], "stacked":false }` — pass more than one `series` entry for grouped/stacked/multi-line.
     - **Part of a whole** — `variant` = `"pie"` | `"donut"` | `"radial"` | `"funnel"`. `{ "type":"chart", "variant":"donut", "title":"By health", "slices":[ {"label":"On track","value":48,"tone":"good"}, {"label":"At risk","value":11,"tone":"warn"}, {"label":"Blocked","value":1,"tone":"critical"} ] }` — use **`funnel`** for a narrowing pipeline (it sorts widest→narrowest for you).
     - **Correlation** — `variant` = `"scatter"`. `{ "type":"chart", "variant":"scatter", "points":[ {"x":12,"y":3}, {"x":30,"y":8} ] }`
     - **A diagram** (not a data chart) — `variant` = `"mermaid"` with a `mermaid` source string. Use this for a **flowchart / sequence / gantt / state / ER** diagram — a routing path, an escalation flow, a process. `{ "type":"chart", "variant":"mermaid", "title":"Escalation path", "mermaid":"flowchart LR\nA[SLA breach] --> B{P0?}\nB -->|yes| C[Page on-call]\nB -->|no| D[Queue]" }`
@@ -5991,7 +5991,7 @@ buttons beats one with a button on every row.
 Compute every number from real data via your read tools. **Be fast — favour the
 LIST tools, which already carry what you need:** `list_customers` (name, stage,
 status, health, owner, open-ticket counts), `list_urgent_tickets`,
-`list_followups`, `list_fdes`, `list_stale_customers`, `get_oncall`. Aggregate
+`list_followups`, `list_members`, `list_stale_customers`, `get_oncall`. Aggregate
 those into the widgets. Only call `get_customer` for the **handful** of accounts
 that genuinely need a detail the list doesn't carry — never per-account across
 the whole book (that's slow and will time the refresh out). A dozen tool calls
@@ -6152,16 +6152,7 @@ Search Granola meeting notes by keyword to pull recent customer-call context and
 
 === root/app-author :: tool :: list_customers
 list_customers
-List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {}
-}
-
-=== root/app-author :: tool :: list_fdes
-list_fdes
-List the FDE (forward-deployed engineer) roster with live load. Reads every People/{id}/identity.json marked kind:'internal-fde' and joins the accounts each owns (customers.fde_owner) plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.
+List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -6180,6 +6171,15 @@ List open customer tickets/follow-ups across all customers (or one), sorted by t
       "type": "string"
     }
   }
+}
+
+=== root/app-author :: tool :: list_members
+list_members
+List the member roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the accounts each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {}
 }
 
 === root/app-author :: tool :: list_schedules
@@ -6202,7 +6202,7 @@ List durable schedule rules, optionally filtered to one customer or by enabled s
 
 === root/app-author :: tool :: list_stale_customers
 list_stale_customers
-List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, FDE owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.
+List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, account owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -6803,7 +6803,7 @@ Get the full record for one customer: platform config, deployments, solutions, i
 
 === root/configuration :: tool :: list_customers
 list_customers
-List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
+List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -7031,7 +7031,7 @@ Create a ticket in the system of record for a customer — e.g. a customer doubt
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
-      "description": "The FDE who owns it — usually the customer's fde_owner."
+      "description": "The member who owns it — usually the customer's account owner."
     },
     "ticketNextStep": {
       "type": "string",
@@ -7288,16 +7288,7 @@ Search Granola meeting notes by keyword to pull recent customer-call context and
 
 === root/customer-context :: tool :: list_customers
 list_customers
-List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {}
-}
-
-=== root/customer-context :: tool :: list_fdes
-list_fdes
-List the FDE (forward-deployed engineer) roster with live load. Reads every People/{id}/identity.json marked kind:'internal-fde' and joins the accounts each owns (customers.fde_owner) plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.
+List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -7316,6 +7307,15 @@ List open customer tickets/follow-ups across all customers (or one), sorted by t
       "type": "string"
     }
   }
+}
+
+=== root/customer-context :: tool :: list_members
+list_members
+List the member roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the accounts each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {}
 }
 
 === root/customer-context :: tool :: list_syncs
@@ -7381,7 +7381,7 @@ Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link 
 
 === root/customer-context :: tool :: reassign_owner
 reassign_owner
-Reassign a customer's durable FDE owner (updates customers.fde_owner + the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership.
+Reassign a customer's durable account owner (updates the account's ownership and the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -11689,7 +11689,7 @@ Create a ticket in the system of record for a customer — e.g. a customer doubt
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
-      "description": "The FDE who owns it — usually the customer's fde_owner."
+      "description": "The member who owns it — usually the customer's account owner."
     },
     "ticketNextStep": {
       "type": "string",
@@ -11817,7 +11817,7 @@ Get the full record for one customer: platform config, deployments, solutions, i
 
 === root/data-migration :: tool :: list_customers
 list_customers
-List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
+List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12353,7 +12353,7 @@ summary. End with the 3–5 things that most need a decision.
 
 ## Chasing follow-ups
 
-- Draft the actual outreach (Gmail reply or Slack nudge) for the FDE to send;
+- Draft the actual outreach (Gmail reply or Slack nudge) for the member to send;
   don't send customer-facing messages without a human approving them.
 - When a follow-up is genuinely closed, mark it done with `resolve_followup`
   (gated on approval) and record the outcome as an interaction so the record stays
@@ -12449,7 +12449,7 @@ Create a ticket in the system of record for a customer — e.g. a customer doubt
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
-      "description": "The FDE who owns it — usually the customer's fde_owner."
+      "description": "The member who owns it — usually the customer's account owner."
     },
     "ticketNextStep": {
       "type": "string",
@@ -12494,7 +12494,7 @@ Create a ticket in the system of record for a customer — e.g. a customer doubt
 
 === root/follow-ups :: tool :: create_triage_ticket
 create_triage_ticket
-Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the FDE owner and a human will assign it on approval.
+Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the account owner and a human will assign it on approval.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12545,7 +12545,7 @@ Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') fo
       ]
     },
     "ticketOwnerEmail": {
-      "description": "The FDE who would own it (the customer's fde_owner). Omit if unresolved — a human assigns it on approval.",
+      "description": "The member who would own it (the customer's account owner). Omit if unresolved — a human assigns it on approval.",
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
@@ -12743,7 +12743,7 @@ Search Granola meeting notes by keyword to pull recent customer-call context and
 
 === root/follow-ups :: tool :: list_customers
 list_customers
-List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
+List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -13577,7 +13577,7 @@ Search Granola meeting notes by keyword to pull recent customer-call context and
 
 === root/research :: tool :: list_customers
 list_customers
-List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
+List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",

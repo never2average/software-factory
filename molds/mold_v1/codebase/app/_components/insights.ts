@@ -296,7 +296,7 @@ function applyToolResult(state: Insights, modelTool: string, out: Record<string,
           sub: [c.lifecycleStage, c.status, c.tier].filter(Boolean).join(" · ") || undefined,
         }),
       };
-      // The owner's label is the deployment's word ("FDE owner" by default, "Covering analyst" on a research
+      // The owner's label is the deployment's word ("Account owner" by default, "Covering analyst" on a research
       // deployment): it is shown next to a person's name and email, where the old product's word read as a
       // status the person had not earned yet.
       addPerson(fieldOf(c, "fdeOwner"), DEPLOYMENT_PROFILE.vocabulary.owner, String(c.name ?? c.id));

@@ -16,6 +16,8 @@ import { CodeBlock } from "@/components/ai-elements/code-block";
 import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { LEGACY_MEMBER, ownerKeyLabel } from "@/agent/lib/legacy-member";
+import { W } from "@/lib/ui-words";
 import { opsFetch } from "./ops/lib";
 
 /** SheetJS, fetched the first time a workbook preview opens (once per page; a failed fetch may be retried). */
@@ -83,9 +85,9 @@ const HEADER_ABBR: Record<string, string> = {
   id: "ID",
   url: "URL",
   api: "API",
-  // A data column such as `fde_owner` keeps its name in the file; only the HEADER a person reads follows the
-  // deployment's word for its members ("FDE" by default, "Analyst" on a research deployment).
-  fde: DEPLOYMENT_PROFILE.vocabulary.member.singular.charAt(0).toUpperCase() + DEPLOYMENT_PROFILE.vocabulary.member.singular.slice(1),
+  // A data column whose name carries the member's legacy word keeps its name in the file; only the HEADER a person
+  // reads follows the deployment's word for its members ("Member" by default, "Analyst" on a research deployment).
+  [LEGACY_MEMBER.singular.toLowerCase()]: DEPLOYMENT_PROFILE.vocabulary.member.singular.charAt(0).toUpperCase() + DEPLOYMENT_PROFILE.vocabulary.member.singular.slice(1),
   sla: "SLA",
   kpi: "KPI",
   poc: "POC",
@@ -102,6 +104,9 @@ const HEADER_ABBR: Record<string, string> = {
 function humanizeHeader(raw: unknown): string {
   const s = String(raw ?? "").trim();
   if (!s) return s;
+  // The owner column reads the profile's owner label ("Account owner"), as everywhere else (lib/ui-keys.ts).
+  const owner = ownerKeyLabel(s, W.owner);
+  if (owner) return owner;
   return s
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")

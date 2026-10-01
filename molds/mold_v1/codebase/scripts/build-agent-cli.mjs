@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  ALLOWED_HOSTS, ALWAYS_ALLOWED_FILES, GENERIC_MODULE_FILES, buildManifest, defaultDeployment, isSemver,
+  ALLOWED_HOSTS, ALWAYS_ALLOWED_FILES, BASE_PRODUCT_WORD, GENERIC_MODULE_FILES, buildManifest, defaultDeployment, isSemver,
   moduleFileNames, moduleSpecifiers, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter,
   renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate,
 } from "./lib/agent-cli.mjs";
@@ -188,8 +188,8 @@ write("dm.md", renderDmMd({ source: readFileSync(join(ROOT, "dm.md"), "utf8"), p
 
 /**
  * A base skill is written for the base product: it names the generic package, the generic
- * package's command names (`npx @delivery-agents/cli fde-login`) and the base product's role
- * ("the fde MCP is wired"). In THIS package all three are this package's own - and a skill
+ * package's command names (`npx @delivery-agents/cli workspace-login`) and the base product's role
+ * (in an older copy of a skill, "the <role word> MCP is wired"). In THIS package all three are this package's own - and a skill
  * description is quoted verbatim into the README, so leaving them would put another company's
  * initials in front of the analyst reading it.
  */
@@ -197,10 +197,10 @@ const GENERIC_COMMANDS = defaultDeployment({ packageName: GENERIC_AGENT_PACKAGE,
 function rebrandBaseSkill(text) {
   let out = text.split(GENERIC_AGENT_PACKAGE).join(name);
   for (const role of Object.keys(commands)) out = out.split(`${name} ${GENERIC_COMMANDS[role]}`).join(`${name} ${commands[role]}`);
-  // "fde" as a word only, never inside an identifier. There is no longer a wire identifier hiding behind it - the tool is workspace_status
+  // The base product's role word as a word only, never inside an identifier. There is no longer a wire identifier hiding behind it - the tool is workspace_status
   // and the variables are WORKSPACE_* (check:wire-names holds that), so this rewrite meets
   // only real prose now.
-  return out.replace(/(?<![A-Za-z0-9_])fde(?![A-Za-z0-9_])/gi, own);
+  return out.replace(new RegExp(`(?<![A-Za-z0-9_])${BASE_PRODUCT_WORD}(?![A-Za-z0-9_])`, "gi"), own);
 }
 for (const s of shippedSkills) {
   cpSync(s.dir, join(OUT, "skills", s.name), { recursive: true, verbatimSymlinks: true });

@@ -1,12 +1,11 @@
 # Deployment profile
 
-The product was written for one use: a forward-deployed engineering (FDE) team looking
-after customers. A **deployment profile** is how a deployment that is for something else
+The product was written for one use: a delivery team looking after customers. A **deployment profile** is how a deployment that is for something else
 (an equity-research desk, a claims team, a support desk) says so **without forking the
 code or editing a component**.
 
 A profile changes what a person or the model **reads**: the product's name, what a
-"customer" and an "FDE" are called, which data-room domains are shown and under what
+"customer" and a "member" are called, which data-room domains are shown and under what
 label, what the two delivery record areas (deployments, implementations) mean and how their
 fields read, the files a new workspace starts with, the chat's opening lines, and a short
 briefing the model receives on every turn. It changes nothing a program keys on.
@@ -38,7 +37,7 @@ fillProfileText("{name} has been quiet for {days} days.", { name, days });   // 
 name; a slot nobody supplied is left as written (so `{customer_id}` inside a seeded README
 survives as literal text).
 
-The rule for new UI copy: if a sentence names the product, a customer, an FDE, a deployment, an
+The rule for new UI copy: if a sentence names the product, a customer, a member, a deployment, an
 implementation, a rollout or a data-room domain, it reads the profile. It never hardcodes the word.
 `lib/ui-words.ts` has every one of them ready (`W.account`, `W.Accounts`, `W.owner`, `W.Deployment`,
 `W.implementations`, `W.install` for "this deployment", `an(word)`, `domainLabel("Customers")`), and
@@ -55,16 +54,16 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
 | Key | Meaning | Default |
 |---|---|---|
 | `product.name` | The display name, everywhere a person sees it: browser title and title template, application name, the sign-in wordmark and copyright line, the onboarding wizard, the invitation and sign-in-code emails (subject, body, the prompt a coding agent is given), the ops-auth "work accounts only" sentence, the roster workbook's author field, the inbox hand-off prompt, and `{product}` in any profile string. Exported as `PRODUCT_NAME`. | `"Delivered"` |
-| `product.tagline` | The line under the wordmark on the sign-in screen. *slots: `{product}`* | `"The operations console for forward-deployed teams."` |
-| `product.description` | The page's meta description. *slots: `{product}`* | `"{product} — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team."` |
+| `product.tagline` | The line under the wordmark on the sign-in screen. *slots: `{product}`* | `"The operations console for teams that run customer work."` |
+| `product.description` | The page's meta description. *slots: `{product}`* | `"{product} — an operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for your team."` |
 
 ### `vocabulary`
 
 | Key | Meaning | Default |
 |---|---|---|
 | `vocabulary.account.singular` / `.plural` | What the thing every record hangs off is called in prose ("the customer's data room", "Search customers…"). Lower-case; the UI capitalises where it needs to. | `"customer"` / `"customers"` |
-| `vocabulary.member.singular` / `.plural` | What a person who works in the console is called. | `"FDE"` / `"FDEs"` |
-| `vocabulary.owner` | The label for the member responsible for an account. | `"FDE owner"` |
+| `vocabulary.member.singular` / `.plural` | What a person who works in the console is called. Base text never spells it: it writes `{member}` / `{members}` (see "Role placeholders" below). | `"member"` / `"members"` |
+| `vocabulary.owner` | The label for the member responsible for an account. Base text writes `{owner}`. | `"Account owner"` |
 | `vocabulary.account_context` | The name of the per-chat "which accounts is this about" control. | `"Customer context"` |
 
 ### `chat`
@@ -75,7 +74,7 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
 | `chat.empty_sections.urgent` / `.stalled` | Headings of the two suggestion groups on an empty chat. | `"Urgent tickets"` / `"Stalled customers"` |
 | `chat.user_messages.collapse` | Whether a long message a person sent starts folded, with a "Show more" button. Short messages are never touched and assistant replies never fold. `true` or `false`. | `true` |
 | `chat.user_messages.collapsed_lines` | How many lines of a folded message stay visible. A whole number from 2 to 40. A desk that pastes filings and tables wants it small; one that writes three-line prompts can turn `collapse` off. | `6` |
-| `chat.starter_cards.owner_label` | Label for the owner on a starter card. | `"FDE owner"` |
+| `chat.starter_cards.owner_label` | Label for the owner on a starter card. | `"Account owner"` |
 | `chat.starter_cards.ticket_waiting` / `.tickets_waiting` | Card summary for one / several open tickets. *slots: `{count}`, `{name}`* | `"One open ticket is waiting on us."` / `"{count} open tickets are waiting on us."` |
 | `chat.starter_cards.ticket_badge` / `.tickets_badge` | The card's badge for one / several open tickets. *slots: `{count}`* | `"1 open"` / `"{count} open"` |
 | `chat.starter_cards.triage_title` / `.triage_prompt` | The action's title, and the prompt sent when it is clicked. *slots: `{name}`, `{count}`* | `"Triage the open tickets"` / `"Triage the open tickets for {name}: what is blocking each one, who owns it, and what should we do next?"` |
@@ -183,7 +182,7 @@ object and whether this is a create or an update, and returns the values to stor
   The body gains `custom: { "<key>": <value> }`; a refusal is a 400 with the sentences;
 - the agent: `upsert_customer` carries `deployments[].custom` / `implementation.custom`
   (`applyCustomFields` in `agent/lib/system-of-record.ts`), and a refusal is the tool's error, written nothing;
-- the MCP tools `deployment_upsert` / `implementation_upsert` (`setup/fde-tools.mjs`), which go through the Ops
+- the MCP tools `deployment_upsert` / `implementation_upsert` (`setup/workspace-tools.mjs`), which go through the Ops
   API. The hosted endpoint (`/api/mcp`) names this deployment's fields in the `custom` input's description; the
   stdio package does not read the profile, so it describes `custom` generically, and the API's refusal of an
   unknown key lists the real ones with their types;
@@ -253,7 +252,7 @@ cannot be cleared.*
 
 | Key | Meaning | Default |
 |---|---|---|
-| `persona.base` | Keep the base product's persona in the root prompt: the forward-deployed engineering orchestrator, its specialist roster, the customer spreadsheet, the daily stand-up (`agent/prompt-persona.md`). `false` drops it: the root prompt keeps only its neutral rules (`agent/prompt-core.md`, opened by `agent/prompt-neutral.md`), and the pack's `agent/instructions/50-pack-*.md` says who the agent is and what the work is. | `true` |
+| `persona.base` | Keep the base product's persona in the root prompt: the operations orchestrator, its specialist roster, the customer spreadsheet, the daily stand-up (`agent/prompt-persona.md`). `false` drops it: the root prompt keeps only its neutral rules (`agent/prompt-core.md`, opened by `agent/prompt-neutral.md`), and the pack's `agent/instructions/50-pack-*.md` says who the agent is and what the work is. | `true` |
 
 ### `specialists`
 
@@ -404,7 +403,7 @@ tool boundary instead: see "How the agent sees it" below.)
 - **The session issuer and audience**: `"delivered"` / `"delivered-app"`
   (`lib/auth-session.ts`; pinned by `scripts/check-gates.mjs`). Renaming the product does
   not re-issue anybody's session.
-- **Package and CLI names**: `@delivery-agents/cli`, `fde-login`, `fde-mcp`,
+- **Package and CLI names**: `@delivery-agents/cli`, `workspace-login`, `workspace-mcp` (and the old names they replaced, still accepted),
   invite tokens' `dlv_inv_` prefix, the `delivered-setup` skill. (The name a coding agent
   files the server under is NOT fixed any more: the instructions people see say
   `claude mcp add --transport http <slug of product.name> <this deployment>/api/mcp`, built
@@ -428,12 +427,29 @@ has a word of its own), the model reads only the profile's words, everywhere
 
 | What the model reads | Base | Relabelled (the hfc-research profile) |
 |---|---|---|
-| tool names | `list_customers`, `get_customer`, `upsert_customer`, `list_fdes`, `read_customer_slas` | `list_companies`, `get_company`, `upsert_company`, `list_analysts`, `read_company_slas` |
+| tool names | `list_customers`, `get_customer`, `upsert_customer`, `list_members`, `read_customer_slas` | `list_companies`, `get_company`, `upsert_company`, `list_analysts`, `read_company_slas` |
 | parameters and result keys | `customerId`, `customer_id`, `fdeOwner`, `deployments[].deploymentId`, `implementation.rolloutId` | `companyId`, `company_id`, `analystOwner`, `coverageReports[].coverageReportId`, `portfolioEntry.portfolioId` |
 | enum values | `Waiting on Customer`, `customer-vpc`, TODO `containerType` `deployment` | `Waiting on Company`, `company-vpc`, `coverageReport` |
 | data-room paths (in and out) | `Customers/acme/…`, `Deployments/…`, `Implementation/…` | `Companies/acme/…`, `Coverage-reports/…`, `Portfolios/…` (the label as a folder name) |
 | memory scopes | `customer:{id}` | `company:{id}` |
-| descriptions, prompts, the per-turn block | "customer", "FDE owner", "deployment" | "company", "covering analyst", "coverage report" |
+| descriptions, prompts, the per-turn block | "customer", "{owner}" (filled: "account owner"), "deployment" | "company", "covering analyst", "coverage report" |
+
+**Role placeholders.** The ROLE words, the member and the account owner, are not translated: base text never spells
+them. It writes a placeholder (`{member}`, `{members}`, `{Member}`, `{Members}`, `{owner}`, `{Owner}`), and every
+boundary that hands base text to the model or a person fills it from the profile, under every profile, the default
+included: `speak()` / `fill()` in `agent/lib/agent-vocabulary.ts` (tool descriptions in `modelFacing`, prompts,
+the provisioned workflow library, a workflow step's prompt, the generated subagent roster) and `W.member` /
+`W.owner` in `lib/ui-words.ts` for the UI. `a {member}` becomes "a member" or "an analyst": the article follows the
+word. `check:agent-vocabulary` fails when a placeholder reaches the model unfilled, or when the default deployment's
+model reads the member's legacy word as a word.
+
+**The member's legacy word.** Before the default profile spoke neutrally it called the member by an acronym,
+now spelled in one place only, `agent/lib/legacy-member.ts`. It survives only where something outside the
+base text already holds it: contract identifiers (the `fdeOwner` key and `fde_owner` column, until the owner column
+moves; the old roster tool name), stored enum values (a ticket's `ownerTeam`, an account's `valueEvidenceStatus`)
+and text older checkouts wrote. Stored rows are never rewritten. A person reads such a value in the profile's
+member word (`storedValueLabel` in `lib/ui-words.ts`; the owner key reads the owner label everywhere,
+`humanizeKey`), and a relabelling profile translates the legacy spelling for the model like any base word.
 
 **The rule: the product's words are translated, user data never is — in either direction.** Product words are
 tool names, parameter and result keys, the value of a field whose schema declares it an enum, the folder at the
@@ -534,7 +550,7 @@ icon and the colour tokens are still files: `app/icon.svg`, `app/globals.css`.)
 
 ## Worked example: an equity-research deployment
 
-Analysts cover listed companies. "Customers" are **companies**, "FDEs" are **analysts**,
+Analysts cover listed companies. "Customers" are **companies**, members are **analysts**,
 the `Customers/` domain is shown as "Companies", the five delivery domains are hidden, and
 a new workspace starts with a tree that explains `filings/`, `lodr/` and `presentations/`.
 

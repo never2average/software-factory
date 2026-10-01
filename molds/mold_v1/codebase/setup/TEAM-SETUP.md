@@ -5,7 +5,7 @@ platform and set the whole thing up from their editor: the **Data Room**,
 **Connectors**, **Workflows**, and **Crons**. Work through it top to bottom; it
 takes about ten minutes.
 
-`fde-mcp.mjs` is one MCP server that writes to the **live** system — the same
+`workspace-mcp.mjs` is one MCP server that writes to the **live** system — the same
 blob store and the same Ops API the browser modal uses. There is no separate
 sandbox, so be deliberate about what you write.
 
@@ -60,11 +60,11 @@ The Connector / Workflow / Cron tools reach the Ops API, which is
 way is to sign in as *yourself*, exactly like `gcloud auth login`:
 
 ```bash
-node setup/fde-login.mjs
+node setup/workspace-login.mjs
 ```
 
 This opens your browser, you pick your `@onfinance.in` account, and it stores a
-refresh token at `~/.config/fde-mcp/credentials.json` (mode 600). From then on the
+refresh token at `~/.config/workspace-mcp/credentials.json` (mode 600). From then on the
 MCP mints a fresh Google ID token per session and presents **your** identity — so
 everything you create in connectors/workflows/crons is attributed to you. This is
 the **only** way in: there is no shared service key, so every action on the Ops
@@ -72,7 +72,7 @@ API traces to a real, named person.
 
 No secret to hunt for: the OAuth client ID and secret are for a Google *desktop*
 client, which Google treats as non-confidential (an installed app can't keep a
-secret), so they're baked into `fde-login.mjs`. They grant nothing on their own —
+secret), so they're baked into `workspace-login.mjs`. They grant nothing on their own —
 every token needs your interactive sign-in and is re-verified by the Ops API. Repo
 access is all you need. Override with `WORKSPACE_OAUTH_CLIENT_ID` /
 `WORKSPACE_OAUTH_CLIENT_SECRET` only if your team mints its own client.
@@ -87,9 +87,9 @@ Add this to your Claude Code MCP config (`~/.claude/mcp.json`, or a project
 ```json
 {
   "mcpServers": {
-    "fde": {
+    "workspace": {
       "command": "node",
-      "args": ["--experimental-strip-types", "setup/fde-mcp.mjs"],
+      "args": ["--experimental-strip-types", "setup/workspace-mcp.mjs"],
       "cwd": "/absolute/path/to/fde-agent",
       "env": {
         "WORKSPACE_OPS_URL": "https://your-deployment.example.com",
@@ -101,17 +101,21 @@ Add this to your Claude Code MCP config (`~/.claude/mcp.json`, or a project
 ```
 
 `BLOB_READ_WRITE_TOKEN` unlocks the Data Room tools. For the Connector / Workflow
-/ Cron tools, identity comes from your `fde-login.mjs` session — the MCP reads the
+/ Cron tools, identity comes from your `workspace-login.mjs` session — the MCP reads the
 stored refresh token and refreshes the ID token per session using the baked-in
 desktop-client credentials, so there's nothing more to configure.
 
 **Required env: `WORKSPACE_OPS_URL`** — your deployment's address. There is no default:
 this codebase is stamped into many applications, and a built-in address sent
-everyone but one product to somebody else's app. `node setup/fde-login.mjs --url
+everyone but one product to somebody else's app. `node setup/workspace-login.mjs --url
 <address>` saves it instead, if you prefer.
 
+An MCP config written before the rename (one running `setup/fde-mcp.mjs`) still
+works unchanged: the old file starts the same server, and a
+sign-in kept in `~/.config/fde-mcp/` is read and copied to the new folder on first use.
+
 Restart your agent. First check `connector_list` works — if it says you're not
-signed in, run `node setup/fde-login.mjs` and retry. You get **19 tools** in four
+signed in, run `node setup/workspace-login.mjs` and retry. You get **19 tools** in four
 groups:
 
 **Data Room** (blob store)
@@ -198,9 +202,10 @@ first.
 
 | File | Purpose |
 | --- | --- |
-| `fde-mcp.mjs` | the stdio MCP server (the host: sign-in, which deployment, blob store) |
-| `fde-tools.mjs` | the tools themselves — shared with the hosted endpoint at `/api/mcp` |
-| `fde-login.mjs` | one-time Google sign-in (`node setup/fde-login.mjs`) — stores your refresh token for per-user Ops API identity |
+| `workspace-mcp.mjs` | the stdio MCP server (the host: sign-in, which deployment, blob store) |
+| `workspace-tools.mjs` | the tools themselves — shared with the hosted endpoint at `/api/mcp` |
+| `workspace-login.mjs` | one-time Google sign-in (`node setup/workspace-login.mjs`) — stores your refresh token for per-user Ops API identity |
+| `fde-mcp.mjs`, `fde-tools.mjs`, `fde-login.mjs`, `fde-cli.mjs`, `fde-install-skill.mjs` | the same five files under the names they had before; each re-exports (and, run directly, runs) its `workspace-*` file, so an MCP config or a note that names the old path keeps working |
 | `test-coding-sessions.mjs` | tests for the redactor + transcript parser (`node --experimental-strip-types setup/test-coding-sessions.mjs`) |
 
 The redactor/parser that `record_coding_session` relies on is

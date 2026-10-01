@@ -27,7 +27,7 @@ delete process.env.VERCEL;
 
 const session = await import("../lib/auth-session.ts");
 const { handleMcpRequest, MAX_BODY_BYTES, MAX_BATCH, MAX_RESULT_CHARS } = await import("../lib/mcp-server.ts");
-const { createTools } = await import("../setup/fde-tools.mjs");
+const { createTools } = await import("../setup/workspace-tools.mjs");
 const { mcpConnect, productSlug } = await import("../lib/mcp-connect.ts");
 
 const ORIGIN = "https://research.example.com";
@@ -90,7 +90,7 @@ check("GET -> 405 with Allow: POST (no server stream, stateless)", res.status ==
 res = await post(rpc(1, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } }));
 body = await res.json();
 check("initialize -> 200 JSON", res.status === 200 && (res.headers.get("content-type") ?? "").includes("application/json"));
-check("serverInfo names the PRODUCT, not 'fde'", body.result.serverInfo.name === "acme-research" && body.result.serverInfo.title === PRODUCT);
+check("serverInfo names the PRODUCT, not the base product's role word", body.result.serverInfo.name === "acme-research" && body.result.serverInfo.title === PRODUCT);
 check("the client's protocol version is echoed when supported", body.result.protocolVersion === "2025-06-18");
 check("instructions name this deployment's address", body.result.instructions.includes(ORIGIN) && body.result.instructions.includes(PRODUCT));
 check("instructions name no other product's address", !/fde-agent\.vercel\.app|useimmaculate/.test(body.result.instructions));
@@ -124,7 +124,7 @@ passed++;
 
 /* …and the stdio package, asked the same question over its real transport. */
 const cliNames = await new Promise((resolve, reject) => {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "setup/fde-mcp.mjs"], {
+  const child = spawn(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "setup/workspace-mcp.mjs"], {
     env: { ...process.env, HOME: "/nonexistent", WORKSPACE_OPS_URL: ORIGIN, BLOB_READ_WRITE_TOKEN: "" },
     stdio: ["pipe", "pipe", "ignore"],
   });
@@ -250,7 +250,7 @@ check("the package alternative spells out WORKSPACE_OPS_URL", c.packageAlternati
 /* ---- source-level: the defaults that caused this stay gone ---------------- */
 
 const decomment = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-for (const f of ["setup/fde-mcp.mjs", "setup/fde-login.mjs", "setup/fde-tools.mjs", "lib/mcp-server.ts", "lib/mcp-connect.ts", "app/onboard/page.tsx", "lib/platform-notify.ts"]) {
+for (const f of ["setup/workspace-mcp.mjs", "setup/workspace-login.mjs", "setup/workspace-tools.mjs", "lib/mcp-server.ts", "lib/mcp-connect.ts", "app/onboard/page.tsx", "lib/platform-notify.ts"]) {
   check(`${f} hardcodes no product's address`, !/fde-agent\.vercel\.app|delivered\.useimmaculate\.com/.test(decomment(readFileSync(f, "utf8"))));
 }
 check("the route authenticates with the Ops API's own verifier", /verifyOpsAuth/.test(readFileSync("app/api/mcp/route.ts", "utf8")));

@@ -120,15 +120,34 @@ const labels = (html) =>
     .map((m) => m[2].replace(/<[^>]+>/g, " "))
     .concat(/Summary<\/h1>/.test(html) ? [html.match(/<h1>([^<]*)<\/h1>/)[1]] : []);
 
-// The default profile reads exactly as before: byte-identical to the renderer before any label came from the
-// profile (sha256 of its output on this fixture store at NOW, taken from the pre-change code at aaec6b9).
+// The renderer is unchanged: under the default profile with the member's LEGACY words put back (what the default
+// profile said before it spoke neutrally, agent/lib/legacy-member.ts), every report is byte-identical to the renderer
+// before any label came from the profile (sha256 of its output on this fixture store at NOW, taken from the
+// pre-change code at aaec6b9). The default profile's output differs from that in the owner label alone.
 const sha = (s) => createHash("sha256").update(s).digest("hex");
+const { LEGACY_MEMBER } = await import("../agent/lib/legacy-member.ts");
+const { spawnSync: spawnDefault } = await import("node:child_process");
+const printedDefault = spawnDefault(process.execPath, ["scripts/gen-deployment-profile.mjs", "--print"], { cwd: new URL("..", import.meta.url).pathname, encoding: "utf8" });
+assert.equal(printedDefault.status, 0, printedDefault.stderr);
+const defaults = JSON.parse(printedDefault.stdout);
+const legacyWords = { ...defaults, vocabulary: { ...defaults.vocabulary, member: { singular: LEGACY_MEMBER.singular, plural: LEGACY_MEMBER.plural }, owner: LEGACY_MEMBER.owner } };
+const LEGACY_OWNER_HEADING = LEGACY_MEMBER.owner.replace(/\bowner\b/, "Owner");
+const legacyReport = await renderAccountReport({ customerId: "acme-bank", now: NOW, profile: legacyWords });
+const legacyNorthwind = await renderAccountReport({ customerId: "northwind-cap", now: NOW, profile: legacyWords });
+const legacySummary = await renderDataroomSummary({ now: NOW, profile: legacyWords });
+assert.equal(sha(legacyReport), "192658e7cace6094f1d968b9ab4b3c5d05a3745c0c305dd9a96114c7612cd93f", "legacy words: the account report is byte-identical to the pre-change renderer");
+assert.equal(sha(legacyNorthwind), "47e28d0e4b10a46da54511a6496360b221f9ecf08736c80af123084d693c6c67", "legacy words: a second account report is byte-identical to the pre-change renderer");
+assert.equal(sha(legacySummary), "d28cee03efd509a9889e0a08dabf17729ef58534fb50efc73cde25b3c9141d41", "legacy words: the data-room summary is byte-identical to the pre-change renderer");
 const northwind = await renderAccountReport({ customerId: "northwind-cap", now: NOW });
-assert.equal(sha(report), "192658e7cace6094f1d968b9ab4b3c5d05a3745c0c305dd9a96114c7612cd93f", "default profile: the account report is byte-identical to the pre-change renderer");
-assert.equal(sha(northwind), "47e28d0e4b10a46da54511a6496360b221f9ecf08736c80af123084d693c6c67", "default profile: a second account report is byte-identical to the pre-change renderer");
-assert.equal(sha(summary), "d28cee03efd509a9889e0a08dabf17729ef58534fb50efc73cde25b3c9141d41", "default profile: the data-room summary is byte-identical to the pre-change renderer");
-assert.ok(report.includes(`<span class="k">${BASE_OWNER_HEADING}</span>`), "default profile: the report's owner label is unchanged");
-assert.ok(summary.includes(`<th>${BASE_OWNER_HEADING}</th>`), "default profile: the summary's owner column is unchanged");
+const swapOwner = (html) => html.split(LEGACY_OWNER_HEADING).join(BASE_OWNER_HEADING);
+assert.equal(report, swapOwner(legacyReport), "default profile: the account report differs from before only in the owner label");
+assert.equal(northwind, swapOwner(legacyNorthwind), "default profile: a second account report differs from before only in the owner label");
+assert.equal(summary, swapOwner(legacySummary), "default profile: the data-room summary differs from before only in the owner label");
+assert.equal(BASE_OWNER_HEADING, "Account Owner");
+assert.ok(report.includes(`<span class="k">${BASE_OWNER_HEADING}</span>`), "default profile: the report's owner label is the profile's");
+assert.ok(summary.includes(`<th>${BASE_OWNER_HEADING}</th>`), "default profile: the summary's owner column is the profile's");
+const legacyRole = new RegExp(`\\b(${LEGACY_MEMBER.singular}|${LEGACY_MEMBER.plural})\\b`);
+for (const html of [report, northwind, summary]) assert.doesNotMatch(labels(html).join("\n"), legacyRole, "default profile: no label carries the legacy member word");
 
 // A relabelled profile (the hfc-research pack's, scripts/fixtures/agent-vocabulary/50-relabelled.json), merged by
 // the real generator, shows a person none of the base product's words in either report.
@@ -182,9 +201,11 @@ const withPlatform = reportWords(mergedProfile((p) => ({ ...p, dataroom: { ...p.
 assert.equal(withPlatform.platform, true);
 assert.equal(withPlatform.deploymentModel, "Hosting Model", "deployment area renamed: the platform's deployment model is its hosting model");
 
-// A profile that renames the member but keeps the base owner label still reads its own member word.
-const memberOnly = mergedProfile((p) => ({ ...p, vocabulary: { ...p.vocabulary, owner: BASE_VOCAB.owner } }));
-assert.equal(ownerHeading(memberOnly), "Analyst Owner", "member renamed, owner label kept: the member word is spoken");
+// A profile that renames the member but kept the LEGACY owner label (an older pack's) still reads its own member word.
+const memberOnly = mergedProfile((p) => ({ ...p, vocabulary: { ...p.vocabulary, owner: LEGACY_MEMBER.owner } }));
+assert.equal(ownerHeading(memberOnly), "Analyst Owner", "member renamed, legacy owner label kept: the member word is spoken");
+// The default owner label names no role at all, so a profile that keeps it reads it as it is.
+assert.equal(ownerHeading(mergedProfile((p) => ({ ...p, vocabulary: { ...p.vocabulary, owner: BASE_VOCAB.owner } }))), "Account Owner");
 assert.equal(ownerHeading(), BASE_OWNER_HEADING, "default profile: the heading is the base one");
 
 console.log("test-render: all assertions passed (fallback path, no Postgres).");

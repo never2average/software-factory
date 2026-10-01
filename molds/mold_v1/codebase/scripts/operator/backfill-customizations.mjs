@@ -25,7 +25,7 @@ async function main() {
   }
   const { email: me } = resolveIdentity();
   if (!me || !isOnfinance(me)) {
-    console.error(`${glyph.bad} No @onfinance.in identity — run \`node setup/fde-login.mjs\` or pass --email.`);
+    console.error(`${glyph.bad} No @onfinance.in identity — run \`node setup/workspace-login.mjs\` or pass --email.`);
     process.exit(1);
   }
 

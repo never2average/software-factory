@@ -20,7 +20,7 @@ import "server-only";
 import { SERVICE_SCOPE_HEADER } from "../agent/lib/service-scope.ts";
 import { SESSION_VISIBILITY_GRANT_HEADER } from "./session-token-kinds.ts";
 import { mintWorkspaceStepGrant } from "./auth-session.ts";
-import { speak } from "../agent/lib/agent-vocabulary.ts";
+import { fill, speak, withCurrentToolNames } from "../agent/lib/agent-vocabulary.ts";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
 
@@ -86,7 +86,10 @@ const MACHINE_READER =
  * workflow, phase, run and customer it is working for even though nothing but
  * text ever crossed the boundary.
  */
-export function composeStepMessage(prompt: string, subagent?: string, ctx?: StepContext): string {
+export function composeStepMessage(stored: string, subagent?: string, ctx?: StepContext): string {
+  // A script stored before a tool was renamed names it by its old name ("Call list_fdes…"), and one seeded raw
+  // carries role placeholders (`{owner}`, `{member}`): both reach the model in this deployment's words.
+  const prompt = withCurrentToolNames(fill(stored));
   const id = identity(ctx);
   // The step's own brief: identity, then who is reading the answer, then the work.
   const task = id ? [id, MACHINE_READER, "", prompt] : [prompt];

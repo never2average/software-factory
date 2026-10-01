@@ -48,7 +48,7 @@ const allowed = (name) => aliases.has(String(name).toLowerCase());
 /* 1. What a connecting assistant is TOLD the tools are called. ------------- */
 for (const name of advertisedToolNames()) {
   if (identifierCarriesBaseWord(name)) {
-    say("setup/fde-tools.mjs", `the tool "${name}" is advertised under the base product's role name ("${BASE_PRODUCT_WORD}"). Advertise a neutral name and keep the old one in \`aliases\`, which tools/call accepts and tools/list never shows.`);
+    say("setup/workspace-tools.mjs", `the tool "${name}" is advertised under the base product's role name ("${BASE_PRODUCT_WORD}"). Advertise a neutral name and keep the old one in \`aliases\`, which tools/call accepts and tools/list never shows.`);
   }
 }
 
@@ -57,7 +57,7 @@ for (const name of advertisedToolNames()) {
 const advertised = new Set(advertisedToolNames());
 for (const tool of servedTools()) {
   for (const alias of tool.aliases ?? []) {
-    if (advertised.has(alias)) say("setup/fde-tools.mjs", `"${alias}" is both advertised and an alias of ${tool.name}; an alias exists to be accepted, never offered`);
+    if (advertised.has(alias)) say("setup/workspace-tools.mjs", `"${alias}" is both advertised and an alias of ${tool.name}; an alias exists to be accepted, never offered`);
   }
 }
 

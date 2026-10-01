@@ -32,7 +32,7 @@ that are left. Read it before "fixing" a list by hand: if a new subagent is miss
 somewhere, the cause is a stale generated file, not a missing list entry.
 
 `<key>` is the directory name: lowercase letters, digits and hyphens, starting with a
-letter, at most 80 characters (`setup/fde-mcp.mjs` and the checker both enforce
+letter, at most 80 characters (`setup/workspace-mcp.mjs` and the checker both enforce
 `^[a-z][a-z0-9-]{0,79}$`). It is also the tool name the root calls, the `workflows` row
 name and `agent_configs.agent_key`, so choose it once.
 
@@ -174,7 +174,7 @@ does **not** do this: it installs only the scripted library from
 | **Backfill (use this)** | `npm run operator:seed-subagent-rows -- --org <org_id>` | `scripts/operator/seed-subagent-rows.mjs` calls `seedSubagentWorkflowRows` (`agent/lib/provision-workspace.ts`), the same function `provisionWorkspace` uses. Idempotent; inserts the missing rows and touches nothing else. Needs `DATABASE_URL` in `.env.local`. |
 | Ops Center | Workflows panel, the new-workflow wizard: trigger "On delegation" (the preselected choice), name exactly `<key>` | no terminal; the right choice for an operator |
 | API | `POST /api/ops/workflows` with `{"name":"<key>","description":"<summary>","trigger":"on delegation"}` as a signed-in member of that workspace | schema: `app/api/ops/workflows/route.ts:12` |
-| MCP | `workflow_create` (name and description; its trigger defaults to `on delegation`) | `setup/fde-mcp.mjs:1447`, for an engineer already connected |
+| MCP | `workflow_create` (name and description; its trigger defaults to `on delegation`) | `setup/workspace-mcp.mjs:1447`, for an engineer already connected |
 | Re-provision (avoid) | `npm run operator:new-org -- --name "<existing display name>" --id <org_id> --domain <existing domain> --owner <owner email> --force` | re-runs `provisionWorkspace` (adds every missing row, skips present ones). It also **rewrites the `orgs` row** from the flags: omit `--domain` and the Google hosted domain is set to null. Pass every value as it is today. Needs `DATABASE_URL` in `.env.local`. |
 
 Rows whose trigger is `on delegation` are deliberately **left out of the Workflows list**
@@ -205,7 +205,7 @@ comes from `AGENT_LABELS`, then `SUBAGENT_LABELS` (`agent/lib/agent-configs.ts:5
 So this text reaches the subagent only through the message the root writes; the
 `workflows` override reaches the subagent's own context. The codebase ships **no**
 `agent_configs` rows: they are per-workspace data. Engineers can set them over MCP
-(`agent_list` and `agent_configure` in `setup/fde-mcp.mjs`), which accepts any
+(`agent_list` and `agent_configure` in `setup/workspace-mcp.mjs`), which accepts any
 well-formed key. See eve-customize-existing-agent for which lever to use.
 
 ## 5. Things that are still yours to consider

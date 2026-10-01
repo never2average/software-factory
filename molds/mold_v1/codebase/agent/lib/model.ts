@@ -40,6 +40,7 @@ import { wrapLanguageModel } from "ai";
 import { createEmptyResponseRecovery, type ModelLike } from "./empty-model-response.ts";
 import { publishEmptyResponse } from "./empty-model-response-log.ts";
 import { createOutputBudget, resolveOutputBudget } from "./model-output-budget.ts";
+import { toolNameAliases } from "./tool-name-aliases.ts";
 import { uniqueToolCallIds } from "./unique-tool-call-ids.ts";
 import type { LanguageModel } from "ai";
 
@@ -345,8 +346,11 @@ export function agentModel(role: AgentRole): LanguageModel {
   // recovery instead and every empty-response row goes on saying `cap=none` while
   // a budget is in force, which is the exact reading that sent the 2026-09-23
   // diagnosis looking for a provider default that did not exist.
+  //
+  // OUTSIDE ALL OF THEM, a tool's old name is renamed to the one this call offered (tool-name-aliases.ts), so a
+  // fallback model's answer is covered too and nothing inside ever sees a name the call did not offer.
   if (providerChoice !== "cloudflare") return id;
-  return wrapLanguageModel({
+  const wrapped = wrapLanguageModel({
     model: cloudflare(id),
     middleware: [
       uniqueToolCallIds,
@@ -360,4 +364,5 @@ export function agentModel(role: AgentRole): LanguageModel {
       }),
     ],
   });
+  return wrapLanguageModel({ model: wrapped, middleware: toolNameAliases });
 }

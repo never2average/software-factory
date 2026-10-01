@@ -22,11 +22,11 @@
  *      so they are listed one by one, each with its kind and its plan. A listed
  *      contract that no longer occurs anywhere FAILS: the list only ever shrinks
  *      to match the tree.
- *   2. The bare WORD in a file whose text legitimately carries it: the default
- *      deployment profile's own vocabulary (translated per profile at the tool
- *      and UI boundary, so a relabelled deployment never shows it), the
- *      vocabulary machinery that translates or gates it, the history of earlier
- *      renames, and prose about the tooling still to move. Each such file has a
+ *   2. The bare WORD in a file whose text legitimately carries it: the one
+ *      definition of the legacy word the machinery and the gates build on
+ *      (agent/lib/legacy-member.ts, BASE_PRODUCT_WORD), and stored values and the
+ *      records that carry them. Base text never does: it writes role placeholders
+ *      (`{member}`, `{owner}`) the deployment profile fills. Each such file has a
  *      CEILING, the exact count today. More fails (a new occurrence); fewer also
  *      fails, with the number to lower it to, so the ceiling follows every
  *      removal down and never leaves room for a new one.
@@ -189,7 +189,7 @@ export function checkTree(root, allow) {
     if (bare) baseCounts.set(path, bare);
     const ceiling = allow.ceilings.get(path);
     if (bare && !ceiling) {
-      problems.push(`${path}:${firstBare.join(",")}: the word "${UP}" (any case) appears ${bare} time(s) in a file with no ceiling. Write "member", "owner" or "operator"; the default profile's own words live in profiles/ and are translated per deployment.`);
+      problems.push(`${path}:${firstBare.join(",")}: the word "${UP}" (any case) appears ${bare} time(s) in a file with no ceiling. Write a role placeholder the profile fills ({member}, {members}, {owner}) or a neutral word ("member", "owner", "operator"); the legacy word is spelled only in agent/lib/legacy-member.ts.`);
     } else if (ceiling && bare > ceiling.count) {
       problems.push(`${path}: the word "${UP}" (any case) appears ${bare} times, over its ceiling of ${ceiling.count} ("${ceiling.group}"). A new occurrence is not allowed; use a neutral word.`);
     } else if (ceiling && bare < ceiling.count) {

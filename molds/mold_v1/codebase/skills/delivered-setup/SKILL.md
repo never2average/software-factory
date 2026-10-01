@@ -1,6 +1,6 @@
 ---
 name: delivered-setup
-description: Set up a Delivered workspace end to end — verify the fde MCP wiring, choose and install a vertical data room, connect the first source, and onboard the first customer. Use when someone is invited to a Delivered workspace, says "set up my Delivered workspace", "finish the Delivered setup checks", "run the Delivered onboarding", or when the fde MCP tools return 401 / are not wired yet.
+description: Set up a Delivered workspace end to end — verify the workspace MCP wiring, choose and install a vertical data room, connect the first source, and onboard the first customer. Use when someone is invited to a Delivered workspace, says "set up my Delivered workspace", "finish the Delivered setup checks", "run the Delivered onboarding", or when the workspace MCP tools return 401 / are not wired yet.
 ---
 
 # Set up a Delivered workspace
@@ -52,7 +52,7 @@ is a read:
 - **Which agent and config.** Which coding agent is running, and where its MCP
   config lives (`~/.claude.json` / `.mcp.json`, `~/.cursor/mcp.json`,
   `.vscode/mcp.json` keyed on `servers`, `~/.codex/config.toml` in TOML).
-- **Is `fde` wired?** Call `connector_list`. A list — *including an empty one* —
+- **Is the workspace MCP wired?** Call `connector_list`. A list — *including an empty one* —
   is a PASS. 401 or "not signed in" means the session is missing; the tool not
   existing at all means the server is not configured.
 - **What already exists.** `connector_list`, `customer_list`, `workflow_list`
@@ -78,7 +78,7 @@ that `workspace_status` reports and stops there: nothing else can proceed, so as
 for the rest is noise. Connected to the workspace's own address (`…/api/mcp`),
 that is a fresh access token (the emailed-code sign-in in the invite, step 2) in
 the MCP config's `Authorization` header; through the npm package it is
-`npx @delivery-agents/cli fde-login`. Never guess an address: the package needs
+`npx @delivery-agents/cli login`. Never guess an address: the package needs
 `WORKSPACE_OPS_URL` set to the workspace's own address and has no default.
 
 Once they approve, run to the end without checking back.
@@ -130,7 +130,7 @@ prevent. The operator can see the same list at `/onboard?step=checks`.
 
 | Symptom | Meaning | Do |
 |---|---|---|
-| 401 on any call | token expired (7 days for an emailed-code token) | Ask the person for a fresh token (invite step 2) and update the `Authorization` header; with the npm package, re-run `npx @delivery-agents/cli fde-login` |
+| 401 on any call | token expired (7 days for an emailed-code token) | Ask the person for a fresh token (invite step 2) and update the `Authorization` header; with the npm package, re-run `npx @delivery-agents/cli login` |
 | Permission denied on a write | acting against a workspace they are not a member of | Report which workspace you targeted; do not retry |
 | A tool times out | the write may have landed | Read current state BEFORE retrying |
 | Empty list from a read | usually a legitimately empty workspace | Not an error — continue |

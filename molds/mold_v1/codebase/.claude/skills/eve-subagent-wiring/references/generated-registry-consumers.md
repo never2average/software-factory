@@ -56,7 +56,7 @@ product subagents to them; write a `subagent.json` instead.
 | `app/_components/ops/workspace-panel.tsx:545` | `CURATED_SUBAGENTS` | curated name, description and display order; a curated key with no directory is dropped (`:558`) |
 | `app/_components/insights.ts:328` | the literal names in `SUBAGENT_NAMES` | kept so attribution survives a stale generated file; `...SUBAGENT_KEYS` follows |
 | `scripts/seed-ops.mjs:35` | `CURATED_WORKFLOWS` | legacy seed copy |
-| `setup/fde-mcp.mjs:355` | `SUBAGENT_IDS` | a hint for listings and messages only. The MCP ships without the codebase, so it cannot read the registry; `SUBAGENT_KEY` (`:354`) accepts any well-formed key (`:686`) and `agent_list` adds any key the workspace has configured (`:664`) |
+| `setup/workspace-mcp.mjs:355` | `SUBAGENT_IDS` | a hint for listings and messages only. The MCP ships without the codebase, so it cannot read the registry; `SUBAGENT_KEY` (`:354`) accepts any well-formed key (`:686`) and `agent_list` adds any key the workspace has configured (`:664`) |
 | `agent/subagents/workflow-author/instructions.md:28` | prose list of seven keys | superseded at build time by `instructions/10-declared-subagents.ts` |
 
 ## Not registries, but they name subagents

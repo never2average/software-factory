@@ -12,7 +12,7 @@ import { W } from "@/lib/ui-words";
  *
  *  - a person with an `@onfinance.in` Google identity, presenting a Google ID
  *    token — from the browser (the app already holds `workspace-google-token`) or from
- *    the setup MCP after `fde-login`. It is verified against Google's JWKS the
+ *    the setup MCP after `workspace-login`. It is verified against Google's JWKS the
  *    same way the agent verifies it (audience = one of our OAuth clients, hosted
  *    domain = onfinance.in), so a forged "hd: onfinance.in" JWT does not pass —
  *    the signature has to be Google's.
@@ -30,12 +30,12 @@ let googleKeys: Parameters<typeof jwtVerify>[1] = GOOGLE_JWKS;
  * these. Two, because two front doors mint tokens for the same @onfinance.in
  * people:
  *   - the WEB One Tap client (NEXT_PUBLIC_GOOGLE_CLIENT_ID), used by the browser;
- *   - the CLI/desktop client used by `fde-mcp login` for the setup MCP.
+ *   - the CLI/desktop client used by `workspace-login` for the setup MCP.
  * Client IDs are public (the web one already ships in the browser bundle), so
  * listing the CLI one here is not a secret — the client SECRET never appears in
  * this repo.
  */
-/** The desktop client `fde-login`/`fde-mcp` use (current, External-consent project). */
+/** The desktop client `workspace-login`/`workspace-mcp` use (current, External-consent project). */
 /**
  * Consumer mail domains. Google does not attach an `hd` claim to these, so the
  * check above already excludes them — this is the second lock, for the case
@@ -63,7 +63,7 @@ export const CONSUMER_DOMAINS = new Set([
 const CLI_CLIENT_ID = "865110163807-dsiua8j7v253dqngcccechjbc4a14scp.apps.googleusercontent.com";
 /**
  * The PREVIOUS desktop client, from the legacy Internal-consent project. Still
- * admitted so an engineer who hasn't re-run `fde-login` isn't cut off mid-flight;
+ * admitted so an engineer who hasn't re-run `workspace-login` isn't cut off mid-flight;
  * drop it once everyone has (their stored refresh token pins them to whichever
  * client minted it).
  */
@@ -198,7 +198,7 @@ export async function verifyOpsAuth(
   if (session) return session;
 
   // A Google ID token, signature-verified against Google — from the browser
-  // (web client) or `fde-login` (CLI client). No other way in.
+  // (web client) or `workspace-login` (CLI client). No other way in.
   const audiences = acceptedAudiences();
   if (audiences.length === 0) return fail(detail, "no-audience-configured");
   try {

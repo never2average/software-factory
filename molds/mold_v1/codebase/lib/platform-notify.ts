@@ -156,7 +156,7 @@ export interface RenderedInvite {
  * unauditable, and "pipe this URL into your coding agent" is the shape security
  * review rejects — reasonably. A published package is a real trust anchor: it
  * pins by version, is immutable once released, and is already the thing they
- * run for fde-login, so it adds no new surface to trust or maintain.
+ * run for workspace-login, so it adds no new surface to trust or maintain.
  *
  * The command hands a path INSIDE the installed package to the skills CLI, so
  * the bytes come from the version they installed and nothing is fetched at

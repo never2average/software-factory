@@ -55,18 +55,33 @@ export function moduleFileNames(own) {
 /** The same map as import specifiers, for deployment.generated.mjs. */
 export const moduleSpecifiers = (fileNames) => Object.fromEntries(Object.entries(fileNames).map(([k, v]) => [k, `./${v}`]));
 
-/** What setup/ itself ships: the base product's own CLI, published as GENERIC_AGENT_PACKAGE. */
-export const GENERIC_MODULE_FILES = { cli: "fde-cli.mjs", login: "fde-login.mjs", mcp: "fde-mcp.mjs", tools: "fde-tools.mjs", installSkills: "fde-install-skill.mjs" };
+/** What setup/ itself ships: the generic CLI, published as GENERIC_AGENT_PACKAGE. */
+export const GENERIC_MODULE_FILES = { cli: "workspace-cli.mjs", login: "workspace-login.mjs", mcp: "workspace-mcp.mjs", tools: "workspace-tools.mjs", installSkills: "workspace-install-skill.mjs" };
 
 /**
- * The folder under ~/.config holding the sign-in, BEFORE it took the deployment's own name.
+ * The generic package's names BEFORE they were neutral, and what each is now. Each old file
+ * stays in setup/ as a one-line re-export of the new one (so `node setup/<old file>` and an
+ * import of it still work), each old bin stays in setup/package.json beside the new one, and
+ * each old command is still answered by the package's entrypoint (`legacyCommands` in the
+ * generic deployment module). A package built for a deployment carries none of them: it was
+ * never published under these names.
+ */
+export const LEGACY_GENERIC_MODULE_FILES = { cli: "fde-cli.mjs", login: "fde-login.mjs", mcp: "fde-mcp.mjs", tools: "fde-tools.mjs", installSkills: "fde-install-skill.mjs" };
+export const GENERIC_COMMANDS = { login: "workspace-login", mcp: "workspace-mcp", installSkills: "workspace-install-skill" };
+export const LEGACY_GENERIC_COMMANDS = { login: "fde-login", mcp: "fde-mcp", installSkills: "fde-install-skill" };
+/** The generic package's own folder under ~/.config. A built package uses its own unscoped name. */
+export const GENERIC_CONFIG_DIR = "workspace-mcp";
+
+/**
+ * The folder under ~/.config holding the sign-in, BEFORE it took the package's own name.
  * Every package wrote `~/.config/fde-mcp/<host>/credentials.json`, so a desk that bought one
  * product found another company's initials in a folder on their laptop. A built package now
  * uses its own unscoped name — the one string the person typed to install it, and the one
  * that cannot fall back to the base product's the way the product slug can; the host segment
- * under it still separates two deployments of one product. This name survives only as the
- * place a sign-in made before the rename is READ from (setup/fde-login.mjs), because the
- * alternative is silently signing everybody out.
+ * under it still separates two deployments of one product. The generic package uses
+ * GENERIC_CONFIG_DIR. This name survives only as the place a sign-in made before the rename
+ * is READ from (setup/workspace-login.mjs), because the alternative is silently signing
+ * everybody out.
  */
 export const LEGACY_CONFIG_DIR = "fde-mcp";
 
@@ -105,6 +120,7 @@ export function renderDeploymentModule(d) {
     mcpEndpoint: d.mcpEndpoint ?? null,
     vocabulary: d.vocabulary,
     commands: d.commands,
+    legacyCommands: d.legacyCommands ?? null,
     modules: d.modules,
     configDir: d.configDir,
     connect: d.connect ?? null,
@@ -115,16 +131,17 @@ export function renderDeploymentModule(d) {
 // file names); a package built for one deployment carries that deployment's own. See
 // docs/AGENT_CLI.md.
 export const DEPLOYMENT = ${JSON.stringify(data, null, 2)};
-export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, commands, modules, configDir, connect } = DEPLOYMENT;
+export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;
 `;
 }
 
 /**
- * What setup/deployment.generated.mjs holds: today's generic package. It is the BASE
- * product's own published CLI, not a deployment's, so its command names, its five file
- * names and its config folder are legitimately the base product's and do not move — moving
- * them would rename the files of a package that is already published, and re-sign-in every
- * engineer using it, to fix a problem it does not have.
+ * What setup/deployment.generated.mjs holds: today's generic package. Its command names, its
+ * five file names and its config folder are neutral (`workspace-*`), and every name it was
+ * published under before still works: the old files are re-exports, the old bins are aliases
+ * in setup/package.json, the old commands are `legacyCommands` (answered by the entrypoint,
+ * never shown in its help), and a sign-in in the old config folder is read and copied over
+ * (LEGACY_CONFIG_DIR), so nobody who already signed in is signed out.
  */
 export function defaultDeployment({ packageName, profile, slug }) {
   return {
@@ -135,9 +152,10 @@ export function defaultDeployment({ packageName, profile, slug }) {
     origin: null,
     mcpEndpoint: null,
     vocabulary: profile.vocabulary,
-    commands: { login: "fde-login", mcp: "fde-mcp", installSkills: "install-skill" },
+    commands: GENERIC_COMMANDS,
+    legacyCommands: LEGACY_GENERIC_COMMANDS,
     modules: moduleSpecifiers(GENERIC_MODULE_FILES),
-    configDir: LEGACY_CONFIG_DIR,
+    configDir: GENERIC_CONFIG_DIR,
     connect: null,
   };
 }
@@ -261,11 +279,11 @@ export function parseSkillFrontmatter(text, where) {
 
 /** Third-party hosts the CLI legitimately names. Everything else that is not --origin is "another deployment". */
 export const ALLOWED_HOSTS = [
-  "accounts.google.com", // fde-login: the Google sign-in page
-  "oauth2.googleapis.com", // fde-login / fde-mcp: token exchange and refresh
-  "mcp.linear.app", // fde-tools: the example in a bring-your-own connector's description
+  "accounts.google.com", // the login module: the Google sign-in page
+  "oauth2.googleapis.com", // the login and mcp modules: token exchange and refresh
+  "mcp.linear.app", // the tools module: the example in a bring-your-own connector's description
   "developers.google.com", // README: Google's note on installed-app client secrets
-  "127.0.0.1", // fde-login: the loopback OAuth callback
+  "127.0.0.1", // the login module: the loopback OAuth callback
   "localhost",
 ];
 /** Reserved for documentation (RFC 2606): never a real deployment. */
@@ -275,12 +293,12 @@ const PLACEHOLDER_EMAILS = new Set(["you@company.com", "name@company.com"]);
 
 /** Files a package always contains, whatever it is called. The five program files are added per build. */
 export const ALWAYS_ALLOWED_FILES = ["package.json", "README.md", "dm.md", "deployment.generated.mjs"];
-/** The generic package in setup/: the four above plus the base product's own five. */
-export const ALLOWED_FILES = [...ALWAYS_ALLOWED_FILES, ...Object.values(GENERIC_MODULE_FILES)];
+/** The generic package in setup/: the four above, its own five, and the five re-exports kept at their old names. */
+export const ALLOWED_FILES = [...ALWAYS_ALLOWED_FILES, ...Object.values(GENERIC_MODULE_FILES), ...Object.values(LEGACY_GENERIC_MODULE_FILES)];
 export const ALLOWED_SKILL_EXTENSIONS = [".md", ".json", ".txt", ".yaml", ".yml", ".csv"];
 
 /**
- * The Google installed-app client secret in fde-login.mjs / fde-mcp.mjs is public by
+ * The Google installed-app client secret in workspace-login.mjs / workspace-mcp.mjs is public by
  * design (Google: "not treated as a secret") and is the client the server verifies.
  * Any OTHER GOCSPX- value is a finding. Compared by digest so the gate does not repeat it.
  */
@@ -362,17 +380,20 @@ export function safetyGate(files, { origin, allowHosts = [], allowEmails = [], f
 
 // ---------------------------------------------------------- the own-name gate
 
-/** The base product's role name: the "FDE" that check-ui-vocabulary.mjs keeps out of UI text (with its other words). */
+/**
+ * The base product's role name, lower case: the member's legacy word (agent/lib/legacy-member.ts) that
+ * check-ui-vocabulary.mjs keeps out of UI text (with its other words). The one place scripts spell it.
+ */
 export const BASE_PRODUCT_WORD = "fde";
 /**
- * "fde" as a WORD. `_` is excluded on both sides because this gate is about the NAME a person
+ * That word as a WORD. `_` is excluded on both sides because this gate is about the NAME a person
  * meets — a file, a bin, a README line, a folder — and check-ui-vocabulary.mjs draws the same line
  * ("identifiers are fine, text a person reads is not"). It used to mean `fde_status` and
  * `FDE_OPS_URL` were exempt outright; they are not any more. `wireNameGate` below covers
  * exactly that remainder — tool names, environment variables, storage keys — because those
  * identifiers ARE a contract, and a contract is changed by migrating it, not by exempting it.
  */
-const BASE_WORD = /(?<![A-Za-z0-9_])fde(?![A-Za-z0-9_])/i;
+const BASE_WORD = new RegExp(`(?<![A-Za-z0-9_])${BASE_PRODUCT_WORD}(?![A-Za-z0-9_])`, "i");
 /** A folder the package writes under ~/.config, when the name is a literal: `.config/x`, `".config", "x"`. */
 const CONFIG_SEGMENT = /\.config["']?\s*[,/]\s*["']?([A-Za-z0-9._-]+)/g;
 
@@ -423,6 +444,7 @@ export function ownNameGate(files, { name }) {
     try { dep = JSON.parse(depText.slice(depText.indexOf("{"), depText.lastIndexOf("};") + 1)); } catch { offenders.push("deployment.generated.mjs: could not be parsed, so the config folder and command names could not be checked"); }
     if (dep && carries(dep.configDir ?? "")) say("deployment.generated.mjs", `the config folder "~/.config/${dep.configDir}/"`);
     for (const [role, cmd] of Object.entries(dep?.commands ?? {})) if (carries(cmd)) say("deployment.generated.mjs", `the ${role} command "${cmd}"`);
+    for (const [role, cmd] of Object.entries(dep?.legacyCommands ?? {})) if (carries(cmd)) say("deployment.generated.mjs", `the ${role} command alias "${cmd}"`);
     for (const [role, mod] of Object.entries(dep?.modules ?? {})) if (carries(mod)) say("deployment.generated.mjs", `the ${role} module "${mod}"`);
   }
 
@@ -446,7 +468,7 @@ export function ownNameGate(files, { name }) {
 /**
  * An identifier "carries the base word" when one of its `_`- or `-`-separated
  * parts IS that word: `fde_status`, `FDE_OPS_URL`, `fde-google-token`. Not
- * `fdeOwner` and not `/api/fde…`: those are spellings nobody reads as a name (check-ui-vocabulary.mjs allow-lists
+ * `fdeOwner` and not an `/api/…` path segment: those are spellings nobody reads as a name (check-ui-vocabulary.mjs allow-lists
  * them in the UI bundle as keys and routes, with the reason).
  */
 export const identifierCarriesBaseWord = (id) =>

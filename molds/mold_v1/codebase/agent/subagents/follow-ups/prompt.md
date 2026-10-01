@@ -21,7 +21,7 @@ summary. End with the 3–5 things that most need a decision.
 
 ## Chasing follow-ups
 
-- Draft the actual outreach (Gmail reply or Slack nudge) for the FDE to send;
+- Draft the actual outreach (Gmail reply or Slack nudge) for the {member} to send;
   don't send customer-facing messages without a human approving them.
 - When a follow-up is genuinely closed, mark it done with `resolve_followup`
   (gated on approval) and record the outcome as an interaction so the record stays

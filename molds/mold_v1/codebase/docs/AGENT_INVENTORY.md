@@ -21,7 +21,7 @@ Every subagent has a standard workspace: `tools/` + `connections/` (eve-native) 
 
 | Workflow | Purpose | Phases | Subagents used |
 | --- | --- | --- | --- |
-| `assign-account` | Propose and (on confirmation) set the durable FDE owner for a new or unowned cu… | Propose | customer-context |
+| `assign-account` | Propose and (on confirmation) set the durable account owner for a new or unowned… | Propose | customer-context |
 | `data-migration-plan` | Plan a customer data migration: source, mapping, volume, validation, rollback. | Plan | data-migration |
 | `eval-regression-triage` | Run a customer's eval suite, interpret regressions, and file fix tickets. | Run + interpret → Triage | evals, follow-ups |
 | `go-live-sprint` | Assess a deployment's readiness, build the go-live runbook, and file blocker ti… | Assess → Runbook → Blockers | deployment, data-migration, evals, follow-ups |

@@ -5,20 +5,28 @@
   "type": "module",
   "license": "UNLICENSED",
   "bin": {
-    "cli": "./fde-cli.mjs",
-    "fde-login": "./fde-login.mjs",
-    "fde-mcp": "./fde-mcp.mjs",
-    "fde-install-skill": "./fde-install-skill.mjs"
+    "cli": "./workspace-cli.mjs",
+    "workspace-login": "./workspace-login.mjs",
+    "workspace-mcp": "./workspace-mcp.mjs",
+    "workspace-install-skill": "./workspace-install-skill.mjs",
+    "fde-login": "./workspace-login.mjs",
+    "fde-mcp": "./workspace-mcp.mjs",
+    "fde-install-skill": "./workspace-install-skill.mjs"
   },
   "files": [
+    "workspace-cli.mjs",
+    "workspace-login.mjs",
+    "workspace-mcp.mjs",
+    "workspace-tools.mjs",
+    "workspace-install-skill.mjs",
     "fde-cli.mjs",
     "fde-login.mjs",
     "fde-mcp.mjs",
     "fde-tools.mjs",
+    "fde-install-skill.mjs",
     "deployment.generated.mjs",
     "dm.md",
     "README.md",
-    "fde-install-skill.mjs",
     "skills"
   ],
   "engines": {
@@ -27,7 +35,7 @@
   "keywords": [
     "mcp",
     "delivered",
-    "fde",
+    "workspace",
     "cli"
   ],
   "publishConfig": {

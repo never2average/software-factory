@@ -16,7 +16,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import * as tools from "../../setup/fde-tools.mjs";
+import * as tools from "../../setup/workspace-tools.mjs";
 
 const { availableTools, createTools } = tools;
 
@@ -62,9 +62,9 @@ export const advertisedToolNames = () => servedTools().map((t) => t.name);
  * Every deliberate backward-compatibility alias in the whole system, derived
  * from the code that honours it. This is the gate's ONLY allowance, and a name
  * is on it only because something really still answers to it:
- *   - `aliases` on a tool definition (setup/fde-tools.mjs) — accepted by
+ *   - `aliases` on a tool definition (setup/workspace-tools.mjs) — accepted by
  *     tools/call, never advertised;
- *   - `LEGACY_ENV_NAMES` (setup/fde-tools.mjs) — the package's old variables;
+ *   - `LEGACY_ENV_NAMES` (setup/workspace-tools.mjs) — the package's old variables;
  *   - `LEGACY_APP_ENV_NAMES` (agent/lib/compat-env.ts) — the two the deployed
  *     app and agent read;
  *   - `LEGACY_STORAGE_KEYS` (lib/browser-storage.ts) — the browser keys.

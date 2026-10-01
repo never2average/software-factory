@@ -31,6 +31,8 @@ import { defineDynamic, defineTool } from "eve/tools";
 import {
   HIDDEN_FIELDS,
   VOCABULARY_RELABELLED,
+  fill,
+  hasRolePlaceholder,
   inputFromModel,
   outputForModel,
   registerModelToolName,
@@ -212,6 +214,10 @@ function guardToolErrors(base: BaseTool): void {
 
 export function modelFacing<T>(baseName: string, tool: T, options: ModelFacingOptions = {}): T {
   guardToolErrors(tool as unknown as BaseTool);
+  // A role placeholder in the description (`{member}`, `{owner}`, agent/lib/agent-vocabulary.ts) is filled from the
+  // profile under EVERY profile, in place: the default deployment's model is handed the tool object itself.
+  const own = tool as unknown as BaseTool;
+  if (typeof own.description === "string" && hasRolePlaceholder(own.description)) own.description = fill(own.description);
   // A record tool under a profile that hides fields is wrapped even without a relabel: the model must not be
   // offered, or shown, a field the deployment does not use. Every other tool, and every tool under the default
   // profile, is returned unwrapped (its errors are still guarded in place above).

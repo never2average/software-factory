@@ -1,11 +1,17 @@
 /**
  * THE AGENT'S VOCABULARY — what the model reads, in the deployment's own words.
  *
- * The base product was written for one use: a forward-deployed engineering team managing customers. Its
- * storage keeps those names (the `customers` table, `customer_id`, the `Customers/` folder) and always will:
- * code, stored data and other systems key on them. A deployment for something else relabels the domains in its
- * profile (profiles/*.json): customers are "companies", deployments are "Coverage reports", implementation is
- * "Portfolios", FDEs are "analysts".
+ * The base product was written for one use: a delivery team managing customers. Its storage keeps those names
+ * (the `customers` table, `customer_id`, the `Customers/` folder) and always will: code, stored data and other
+ * systems key on them. A deployment for something else relabels the domains in its profile (profiles/*.json):
+ * customers are "companies", deployments are "Coverage reports", implementation is "Portfolios", members are
+ * "analysts".
+ *
+ * The ROLE words (the member and the account owner) are not translated: base text never spells them. It writes a
+ * placeholder, `{member}`, `{members}`, `{Member}`, `{Members}`, `{owner}` or `{Owner}`, and every boundary that
+ * hands base text to the model fills it from the profile (fillWith, inside speakWith), under every profile,
+ * default included. What is still translated for the member is only its LEGACY spelling (LEGACY_MEMBER), which
+ * identifiers and stored data already hold.
  *
  * Until this module, that relabelling stopped at the UI. The model was handed `list_customers`, `customer_id`
  * and `Customers/…`, a customer-management persona, and a per-turn note that "the identifiers do not change",
@@ -25,6 +31,7 @@
  */
 import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type DeploymentProfile } from "./deployment-profile.generated.ts";
 import { SUBAGENT_KEYS } from "./subagent-registry.generated.ts";
+import { LEGACY_MEMBER } from "./legacy-member.ts";
 
 /** The data-room domains whose folder a profile may relabel, by stored name. */
 const DOMAIN_KEYS = ["Customers", "Platform", "Deployments", "Solutions", "Implementation", "Tickets", "People"] as const;
@@ -32,14 +39,20 @@ const DOMAIN_KEYS = ["Customers", "Platform", "Deployments", "Solutions", "Imple
 /** What the base product calls things. A term is relabelled when the profile's word differs from these. */
 const BASE = {
   account: { singular: "customer", plural: "customers" },
-  member: { singular: "FDE", plural: "FDEs" },
-  owner: "FDE owner",
+  member: { singular: "member", plural: "members" },
+  owner: "Account owner",
   deployments: { singular: "deployment", plural: "deployments" },
   implementations: { singular: "implementation", plural: "implementations" },
   rollouts: { singular: "rollout", plural: "rollouts" },
 } as const;
 
 type Pair = { singular: string; plural: string };
+
+// The member's legacy spellings (agent/lib/legacy-member.ts): under a profile whose member word is not the base
+// one they are translated to it like any base word; under the default they are data.
+export { LEGACY_MEMBER };
+const LEGACY_WORD = LEGACY_MEMBER.singular.toLowerCase();
+const LEGACY_WORDS = LEGACY_MEMBER.plural.toLowerCase();
 type Case = "lower" | "capital" | "upper";
 
 export interface Vocabulary {
@@ -53,8 +66,10 @@ export interface Vocabulary {
   storedFolders: Map<string, string>;
   /** Stored domain name -> the label people and the model read for it in prose. */
   domainLabels: Map<string, string>;
-  /** "FDE owner" in the profile's words, when relabelled. */
+  /** The legacy owner phrase (LEGACY_MEMBER.owner) in the profile's words, when the member is relabelled. */
   owner: string | null;
+  /** What each role placeholder is filled with: the profile's member words and its owner label. */
+  roles: { member: string; members: string; owner: string };
   /** The memory scope prefix for an account: `customer` by default, derived from the profile's word otherwise. */
   memoryPrefix: string;
   /** Keep the base product's customer-management persona in the root prompt. */
@@ -93,7 +108,14 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
     words.set(base.plural.toLowerCase(), to.plural);
   };
   add(BASE.account, profile.vocabulary.account);
-  add(BASE.member, profile.vocabulary.member);
+  // The member: base text fills `{member}` from the profile, so only the legacy spelling is translated, and only
+  // when this profile's word is not the base one.
+  const m = profile.vocabulary.member;
+  const memberRelabelled = !(sameWord(BASE.member.singular, m.singular) && sameWord(BASE.member.plural, m.plural));
+  if (memberRelabelled) {
+    words.set(LEGACY_WORD, m.singular);
+    words.set(LEGACY_WORDS, m.plural);
+  }
   add(BASE.deployments, profile.domains.deployments.label);
   add(BASE.implementations, profile.domains.implementations.label);
   add(BASE.rollouts, profile.domains.implementations.group_label);
@@ -109,7 +131,7 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
   }
   const storedFolders = new Map([...folders].map(([k, v]) => [v, k]));
 
-  const owner = profile.vocabulary.owner !== BASE.owner && words.has("fde") ? profile.vocabulary.owner : null;
+  const owner = memberRelabelled || !sameWord(profile.vocabulary.owner, BASE.owner) ? profile.vocabulary.owner : null;
   const accountWord = identifierWords(profile.vocabulary.account.singular).join("-") || BASE.account.singular;
   const memoryPrefix = words.has("customer") && !["team", "person"].includes(accountWord) ? accountWord : BASE.account.singular;
   const relabelled = words.size > 0 || folders.size > 0 || domainLabels.size > 0;
@@ -120,6 +142,7 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
     storedFolders,
     domainLabels,
     owner,
+    roles: { member: m.singular, members: m.plural, owner: profile.vocabulary.owner },
     memoryPrefix,
     personaBase: profile.persona?.base !== false,
     excludedSpecialists: [...(profile.specialists?.exclude ?? [])],
@@ -164,9 +187,43 @@ function identifierReplacement(to: string, style: Case, snake: boolean): string 
   return style === "capital" ? pascal : lowerFirst(pascal);
 }
 
+/**
+ * TOOLS RENAMED TO A NEUTRAL NAME, and the name each had before.
+ *
+ * `list_fdes` was the base product's role word on the wire: the model was handed it as a tool name. The tool is
+ * `list_members` now (agent/tools/list_members.ts), and that is the only name any model is shown. The old name is
+ * an ALIAS, never advertised and still understood everywhere this codebase reads a tool name it did not just
+ * issue: a stored transcript's tool call (the chat's labels and insights, the empty-response guard's read-only
+ * proof: baseToolName / baseNameAmong / isReadOnlyTool), and a stored workflow or app prompt that tells the agent
+ * to "call list_fdes" (withCurrentToolNames, applied to every workflow step). eve itself has no hidden-but-callable
+ * tool (a static tool is named by its file and is advertised), so a model that re-issues the old name after
+ * reading it in an old session's history is answered by the SDK's "unavailable tool" error listing the tools it
+ * has, and calls `list_members`.
+ *
+ * Old name -> current base name. Keep every entry until an announced removal: the names are held by stored data.
+ */
+export const TOOL_ALIASES: Readonly<Record<string, string>> = { list_fdes: "list_members" };
+
+/** The current base name for a tool called `name` (an alias resolves to its tool; any other name is itself). */
+export function canonicalToolName(name: string): string {
+  return Object.prototype.hasOwnProperty.call(TOOL_ALIASES, name) ? TOOL_ALIASES[name] : name;
+}
+
+/**
+ * A renamed tool keeps the name a RELABELLED deployment already calls it by: that name was spoken from the old
+ * spelling (`list_fdes` -> `list_analysts`), and its sessions, prompts and stored workflows hold it. So the new
+ * spelling is spoken from the old one when the profile relabels the word in it, and is itself otherwise.
+ */
+const SPOKEN_FROM: Readonly<Record<string, string>> = Object.fromEntries(Object.entries(TOOL_ALIASES).map(([old, now]) => [now, old]));
+
 /** Translate one identifier (`customer_id`, `list_customers`, `deploymentId`, `solutionFdeOwner`). */
 export function speakIdentifierWith(v: Vocabulary, run: string): string {
   if (!v.relabelled || !v.words.size) return run;
+  if (Object.prototype.hasOwnProperty.call(SPOKEN_FROM, run)) {
+    const old = SPOKEN_FROM[run];
+    const spoken = speakIdentifierWith(v, old);
+    return spoken === old ? run : spoken;
+  }
   const { parts, seps } = identifierParts(run);
   if (!parts.some((p) => v.words.has(p.toLowerCase()))) return run;
   const snake = run.includes("_");
@@ -176,8 +233,8 @@ export function speakIdentifierWith(v: Vocabulary, run: string): string {
       const to = v.words.get(p.toLowerCase());
       if (!to) return seps[i] + p;
       let style = caseOf(p);
-      // An acronym ("FDE") inside a mixed-case identifier takes the case of its position, not its own:
-      // `list_FDEs` -> `list_analysts`, `ownerFDE` -> `ownerAnalyst`.
+      // An acronym (the legacy member word) inside a mixed-case identifier takes the case of its position, not its
+      // own: `list_FDEs` -> `list_analysts`, `ownerFDE` -> `ownerAnalyst`.
       if (style === "upper" && !allUpper) style = snake || i === 0 ? "lower" : "capital";
       return seps[i] + identifierReplacement(to, style, snake);
     })
@@ -208,7 +265,7 @@ function proseWord(v: Vocabulary, word: string, text: string, at: number): strin
   // A domain's name standing alone ("Customers", "Implementation") is the domain: say its label.
   if (v.domainLabels.has(word)) return v.domainLabels.get(word)!;
   if (!to) return null;
-  const acronym = key === "fde" || key === "fdes";
+  const acronym = key === LEGACY_WORD || key === LEGACY_WORDS;
   const style: Case = acronym ? (sentenceStart(text, at) ? "capital" : "lower") : caseOf(word);
   if (style === "upper") return to.toUpperCase();
   if (style === "capital") return upperFirst(to);
@@ -235,20 +292,12 @@ function speakPlain(v: Vocabulary, text: string, protectSpecialists = true): str
 
 function speakSegment(v: Vocabulary, text: string, protectSpecialists: boolean): string {
   let out = text;
-  // 1. Phrases whose word-by-word rendering would read wrong.
-  const memberWord = v.words.get("fde");
-  if (memberWord) {
-    const member = v.words.get("fde")!;
-    const members = v.words.get("fdes") ?? `${member}s`;
-    out = out
-      .replace(/\bFDE \(forward-deployed engineer\)/g, () => mark(lowerFirst(member)))
-      .replace(/\bForward-Deployed Engineering \(FDE\)/g, () => mark(upperFirst(member)))
-      .replace(/\b[Ff]orward-deployed engineers\b/g, (m) => mark(m[0] === "F" ? upperFirst(members) : lowerFirst(members)))
-      .replace(/\b[Ff]orward-deployed engineer\b/g, (m) => mark(m[0] === "F" ? upperFirst(member) : lowerFirst(member)));
-    if (v.owner) {
-      const owner = v.owner;
-      out = out.replace(/\bFDE [Oo]wner\b/g, (_m, at: number, whole: string) => mark(sentenceStart(whole, at) ? upperFirst(owner) : lowerFirst(owner)));
-    }
+  // 1. The legacy owner phrase, which word by word would read wrong ("analyst owner"). Only stored text and
+  // contract identifiers still carry the legacy member word; base text fills placeholders instead.
+  if (v.owner && v.words.has(LEGACY_WORD) && !sameWord(v.owner, LEGACY_MEMBER.owner)) {
+    const owner = v.owner;
+    const phrase = new RegExp(`\\b${LEGACY_MEMBER.owner.split(" ")[0]} [Oo]wner\\b`, "g");
+    out = out.replace(phrase, (_m, at: number, whole: string) => mark(sentenceStart(whole, at) ? upperFirst(owner) : lowerFirst(owner)));
   }
   // "this deployment" is the product install, not a record: the install is the workspace to the model.
   if (v.words.has("deployment")) {
@@ -282,6 +331,10 @@ function speakSegment(v: Vocabulary, text: string, protectSpecialists: boolean):
       const prefix = all.slice(0, i).join("").replace(new RegExp(`[${OPEN}${CLOSE}]`, "g"), "");
       return seg.replace(/[A-Za-z0-9_]+/g, (run, at: number) => {
         const { parts } = identifierParts(run);
+        if (Object.prototype.hasOwnProperty.call(SPOKEN_FROM, run)) {
+          const spoken = speakIdentifierWith(v, run);
+          return spoken === run ? run : mark(spoken);
+        }
         if (!parts.some((p) => v.words.has(p.toLowerCase())) && !v.domainLabels.has(run)) return run;
         // A domain's name is the domain wherever it stands, in code or prose; the enum values say the same.
         if (v.domainLabels.has(run)) return mark(v.domainLabels.get(run)!);
@@ -303,10 +356,45 @@ function fixArticles(text: string): string {
   });
 }
 
-/** Text in the deployment's words. The identity under the default profile. */
+/** The role placeholders base text writes instead of a role word. */
+// `${owner}` is a template interpolation in quoted code, never a placeholder.
+const ROLE_PLACEHOLDER = /(?<!\$)\{(member|members|Member|Members|owner|Owner)\}/g;
+/** Does this text hold a role placeholder? */
+export const hasRolePlaceholder = (text: string): boolean => typeof text === "string" && text.includes("{") && new RegExp(ROLE_PLACEHOLDER.source).test(text);
+
+/** Each role placeholder filled from the profile, marked (so speak() leaves the profile's words alone). */
+function fillMarked(v: Vocabulary, text: string): string {
+  if (!text.includes("{")) return text;
+  const r = v.roles;
+  return text.replace(ROLE_PLACEHOLDER, (_m, k: string) => {
+    const word =
+      k === "member" ? lowerFirst(r.member) : k === "members" ? lowerFirst(r.members) : k === "Member" ? upperFirst(r.member)
+        : k === "Members" ? upperFirst(r.members) : k === "owner" ? lowerFirst(r.owner) : upperFirst(r.owner);
+    return mark(word);
+  });
+}
+
+const unmark = (text: string) => text.replace(new RegExp(`[${OPEN}${CLOSE}]`, "g"), "");
+
+/**
+ * Base text with its role placeholders filled from the profile (`a {member}` -> "a member", "an analyst"), and
+ * nothing else changed. speakWith does this first, under every profile.
+ */
+export function fillWith(v: Vocabulary, text: string): string {
+  if (!text || !text.includes("{")) return text;
+  return unmark(fixArticles(fillMarked(v, text)));
+}
+export const fill = (text: string): string => fillWith(VOCABULARY, text);
+
+/**
+ * Text in the deployment's words: role placeholders filled from the profile, then, under a relabelling profile,
+ * every base word translated. Text without a placeholder is the identity under the default profile.
+ */
 export function speakWith(v: Vocabulary, text: string, protectSpecialists = true): string {
-  if (!v.relabelled || !text) return text;
-  return fixArticles(speakPlain(v, text, protectSpecialists)).replace(new RegExp(`[${OPEN}${CLOSE}]`, "g"), "");
+  if (!text) return text;
+  const filled = fillMarked(v, text);
+  if (!v.relabelled) return filled === text ? text : unmark(fixArticles(filled));
+  return unmark(fixArticles(speakPlain(v, filled, protectSpecialists)));
 }
 
 export const speak = (text: string): string => speakWith(VOCABULARY, text);
@@ -680,7 +768,7 @@ export function speakMessageWith(v: Vocabulary, text: string): string {
       const m = /^([(\[{]*)([\s\S]*?)((?:'s)?[)\]},.;:!?]*)$/.exec(p)!;
       const [, lead, core, trail] = m;
       // "customer-facing": an English compound, not an id — its base word is prose.
-      const compound = /^(customers?|Customers?|FDEs?|deployments?|Deployments?)-(facing|owned|side|specific|level|wide|led|managed)$/.exec(core);
+      const compound = new RegExp(`^(customers?|Customers?|${LEGACY_MEMBER.singular}s?|deployments?|Deployments?)-(facing|owned|side|specific|level|wide|led|managed)$`).exec(core);
       if (compound) {
         words.push({ at: out.length, w: compound[1] });
         out.push(`${lead}\u0000${compound[1]}\u0000-${compound[2]}${trail}`);
@@ -756,20 +844,36 @@ export function modelToolName(base: string): string {
   return MODEL_NAMES.get(base) ?? speakIdentifier(base);
 }
 
-/** The base name of a tool the model knows by `name`. */
+/** The base name of a tool the model knows by `name` (an old name, TOOL_ALIASES, resolves to its tool). */
 export function baseToolName(name: string): string {
   for (const [base, model] of MODEL_NAMES) if (model === name) return base;
-  return name;
+  return canonicalToolName(name);
 }
 
 /**
  * Which of `bases` the tool called `name` is — for code outside the agent (the web app reading a transcript)
- * that knows the base names and must recognise their model-facing ones. Returns `name` when none matches.
+ * that knows the base names and must recognise their model-facing ones, and the old names a stored transcript
+ * may hold (TOOL_ALIASES). Returns `name` when none matches.
  */
 export function baseNameAmong(name: string, bases: Iterable<string>, v: Vocabulary = VOCABULARY): string {
-  for (const b of bases) if (b === name || speakIdentifierWith(v, b) === name) return b;
+  const current = canonicalToolName(name);
+  for (const b of bases) if (b === name || b === current || speakIdentifierWith(v, b) === name) return b;
   return name;
 }
+
+/**
+ * Text that tells the agent to call a tool by an old name (a workflow or app prompt stored before the rename:
+ * "Call list_fdes for the roster"), with each old name replaced by the name this deployment's model is given.
+ * Applied to every workflow step's prompt (lib/workflow-delegate.ts), so a stored script keeps working.
+ */
+export function withCurrentToolNamesWith(v: Vocabulary, text: string): string {
+  let out = text;
+  for (const [old, now] of Object.entries(TOOL_ALIASES)) {
+    out = out.replace(new RegExp(`(?<![A-Za-z0-9_])${old}(?![A-Za-z0-9_])`, "g"), () => speakIdentifierWith(v, now));
+  }
+  return out;
+}
+export const withCurrentToolNames = (text: string): string => withCurrentToolNamesWith(VOCABULARY, text);
 
 /** A field of a result the model was given, read by its BASE key (`field(out, "customers")` finds `companies`). */
 export function fieldOf(obj: Record<string, unknown> | null | undefined, baseKey: string, v: Vocabulary = VOCABULARY): unknown {

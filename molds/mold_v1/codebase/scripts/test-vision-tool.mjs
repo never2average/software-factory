@@ -37,6 +37,7 @@ import zlib from "node:zlib";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePort, spawnFakeModel } from "./lib/own-listener.mjs";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 let passed = 0;
@@ -119,7 +120,7 @@ console.log("\nThe tool ships, everywhere it is declared:");
 
 const rootDeclaration = readFileSync(join(ROOT, "agent/tools/read_image.ts"), "utf8");
 check("agent/tools/read_image.ts declares the tool (eve names it from the filename)", rootDeclaration.includes("readImageTool"));
-check("...named read_image, carrying no product role word", !/fde/i.test("read_image"));
+check("...named read_image, carrying no product role word", !new RegExp(BASE_PRODUCT_WORD, "i").test("read_image"));
 
 /**
  * Every declaring site, not just the root one.

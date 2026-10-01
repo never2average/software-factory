@@ -35,11 +35,11 @@
     },
     "internal-fde": {
       "kind": "stored value: People/{id}/identity.json `kind`",
-      "plan": "PR 4 (done): agent/lib/member-kind.ts; readers (list_fdes, operator:doctor) accept `internal-member` and this, operator:onboard-self writes `internal-member`; stored entries are never rewritten"
+      "plan": "PR 4 (done): agent/lib/member-kind.ts; readers (list_members, operator:doctor) accept `internal-member` and this, operator:onboard-self writes `internal-member`; stored entries are never rewritten"
     },
     "list_fdes": {
-      "kind": "eve tool name (file name under agent/tools/, packs' subagent.json, stored transcripts)",
-      "plan": "PR 5 (tool name): advertise the neutral name, keep this one as an eve tool alias so stored transcripts, packs' subagent.json and approvals still resolve"
+      "kind": "eve tool name (file name under agent/tools/ and two specialists' tools/, stored transcripts and workflow prompts)",
+      "plan": "PR 5 (done): the tool is list_members (agent/tools/list_members.ts and the specialists' copies), the only name a model is shown; this one is TOOL_ALIASES in agent/lib/agent-vocabulary.ts, read back everywhere a tool name is (chat labels, insights, the empty-response guard), rewritten in stored workflow prompts, and renamed at the model boundary when a model re-issues it (agent/lib/tool-name-aliases.ts), proved by test:tool-aliases; removed only in a later, announced removal PR"
     },
     "fde_status": {
       "kind": "MCP tool alias",
@@ -119,23 +119,23 @@
     },
     "fde-login": {
       "kind": "package bin and file name",
-      "plan": "PR 3 (package bins): setup/fde-*.mjs become setup/workspace-*.mjs; the bins gain workspace-* names and keep the fde-* ones as aliases"
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR"
     },
     "fde-mcp": {
       "kind": "package bin and file name; the ~/.config/fde-mcp folder a signed-in person already has",
-      "plan": "PR 3 (package bins): setup/fde-*.mjs become setup/workspace-*.mjs; the bins gain workspace-* names and keep the fde-* ones as aliases; the config folder is already read-only legacy (#46, LEGACY_CONFIG_DIR)"
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR; the config folder moved to ~/.config/workspace-mcp, and one made earlier in ~/.config/fde-mcp is still read and copied over (LEGACY_CONFIG_DIR)"
     },
     "fde-install-skill": {
       "kind": "package bin and file name",
-      "plan": "PR 3 (package bins): setup/fde-*.mjs become setup/workspace-*.mjs; the bins gain workspace-* names and keep the fde-* ones as aliases"
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR"
     },
     "fde-cli": {
       "kind": "package file name (bin `cli`)",
-      "plan": "PR 3 (package bins): setup/fde-*.mjs become setup/workspace-*.mjs; the bins gain workspace-* names and keep the fde-* ones as aliases"
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR"
     },
     "fde-tools": {
       "kind": "package module file name",
-      "plan": "PR 3 (package bins): setup/fde-*.mjs become setup/workspace-*.mjs; the bins gain workspace-* names and keep the fde-* ones as aliases"
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR"
     },
     "fde-control": {
       "kind": "MCP server name a coding agent showed before #46",
@@ -240,10 +240,6 @@
       "kind": "legacy prefix named in prose and in a test's env filter",
       "plan": "stays while the aliases it explains exist"
     },
-    "fde_": {
-      "kind": "vocabulary machinery: lib/ui-keys.ts matches `fde_owner` and `fdeOwner` to label them",
-      "plan": "PR 4 (done): lib/ui-keys.ts labels `account_owner` / `accountOwner` the same way beside it"
-    },
     "list_FDEs": {
       "kind": "vocabulary machinery example (acronym casing inside an identifier)",
       "plan": "stays with agent/lib/agent-vocabulary.ts"
@@ -287,78 +283,19 @@
   },
   "base_word": {
     "$comment": "Per file, the exact count of the bare word today, grouped by why it may stay. More fails; fewer fails with the number to lower it to.",
-    "default": {
-      "why": "The default deployment profile's own words. `profiles/00-default.json` names the member \"FDE\" and the owner \"FDE owner\"; the base text a model or a person reads (tool descriptions, prompts, the library workflows under scripts/operator/workflows/, the generated copies of all three, the base product's own setup skill and package README) is written in those words and translated per profile at the tool and UI boundary (agent/lib/agent-vocabulary.ts, lib/ui-words.ts), which check:agent-vocabulary and check:ui-vocabulary prove for a relabelled deployment. Rewording these changes what the default deployment says, so it is not done under a no-behaviour-change rename.",
+    "legacy": {
+      "why": "The member's legacy word itself, spelled once: agent/lib/legacy-member.ts holds it (singular, plural, owner phrase) for the machinery that still meets it in contract identifiers, stored values and older text (the vocabulary translates it under a relabelling profile; the UI shows a stored value in the profile's member word), and scripts/lib/agent-cli.mjs holds BASE_PRODUCT_WORD, the lower-case spelling every gate and test that refuses the word builds its pattern from. Base text never spells it: it writes role placeholders ({member}, {owner}) the profile fills (PR 6).",
       "files": {
-        "agent/lib/deployment-briefing.ts": 4,
-        "agent/lib/deployment-profile.generated.ts": 5,
-        "agent/lib/prompts.generated.ts": 5,
-        "agent/lib/roster-tools.ts": 2,
-        "agent/lib/todo-tools.ts": 1,
-        "agent/lib/tools.ts": 8,
-        "agent/lib/workflow-library.generated.ts": 6,
-        "agent/prompt-persona.md": 3,
-        "agent/subagents/app-author/agent.ts": 1,
-        "agent/subagents/app-author/prompt.md": 1,
-        "agent/subagents/follow-ups/prompt.md": 1,
-        "app/_components/subagent-meta.generated.ts": 12,
-        "app/api/ops/people/[email]/account-summary/route.ts": 1,
-        "docs/AGENT_INVENTORY.md": 1,
-        "docs/DEPLOYMENT_PROFILE.md": 10,
-        "docs/SUBAGENT_PACKS.md": 1,
-        "docs/data-model.md": 1,
-        "lib/deployment-profile.generated.ts": 5,
-        "lib/ui-words.ts": 5,
-        "profiles/00-default.json": 5,
-        "scripts/operator/workflows/assign-account.workflow.js": 3,
-        "scripts/operator/workflows/onboard-account.workflow.js": 2,
-        "scripts/seed-dataroom-blob.mjs": 6,
-        "setup/README.md": 1,
-        "setup/deployment.generated.mjs": 3,
-        "setup/package.json": 1,
-        "setup/skills/delivered-setup/SKILL.md": 3,
-        "skills/delivered-setup/SKILL.md": 3
-      }
-    },
-    "machinery": {
-      "why": "The vocabulary machinery and its gates: the word as data to translate, label or refuse (base-word lists, translation rules, their tests and the negative assertions that prove a relabelled deployment never shows it), and the history of the earlier renames it records.",
-      "files": {
-        ".github/workflows/ci.yml": 3,
-        "agent/instructions/runtime-context.ts": 1,
-        "agent/lib/agent-vocabulary.ts": 16,
-        "app/_components/artifact-view.tsx": 2,
-        "app/_components/insights.ts": 1,
-        "lib/ui-keys.ts": 4,
-        "scripts/build-agent-cli.mjs": 3,
-        "scripts/check-agent-vocabulary.mjs": 4,
-        "scripts/check-ui-vocabulary.mjs": 13,
-        "scripts/gen-deployment-profile.mjs": 1,
-        "scripts/lib/agent-cli.mjs": 5,
-        "scripts/lib/rendered-text.mjs": 2,
-        "scripts/test-agent-cli-build.mjs": 3,
-        "scripts/test-agent-vocabulary.mjs": 7,
-        "scripts/test-deployment-profile.mjs": 2,
-        "scripts/test-email-html.mjs": 1,
-        "scripts/test-mcp-endpoint.mjs": 1,
-        "scripts/test-model-output-budget.mjs": 1,
-        "scripts/test-ui-vocabulary.mjs": 4,
-        "scripts/test-vision-tool.mjs": 1,
-        "scripts/test-wire-names.mjs": 2,
-        "setup/fde-tools.mjs": 2
+        "agent/lib/legacy-member.ts": 3,
+        "scripts/lib/agent-cli.mjs": 1
       }
     },
     "stored": {
-      "why": "Stored enum values (a ticket's `ownerTeam: \"FDE\"`, a value-evidence status `\"FDE Verified\"`) and the sample and fixture records that carry them. Changing a stored value is a data migration; these are left as data and shown through the profile.",
+      "why": "Stored enum values (a ticket's `ownerTeam: \"<legacy word>\"`, a value-evidence status `\"<legacy word> Verified\"`) and the sample and fixture records that carry them. Rows are never rewritten here: changing a stored value is a data migration. A person reads them in the profile's member word (storedValueLabel in lib/ui-words.ts); the model writes them back as stored, like a column name, and check:agent-vocabulary allows exactly these values in a tool schema.",
       "files": {
         "agent/lib/customer-schema.ts": 2,
         "data/__fixtures__/dataroom/tickets.json": 1,
         "data/sample/customers.json": 5
-      }
-    },
-    "operator": {
-      "why": "The MCP server key a new engineer is told to add in setup/TEAM-SETUP.md. The rest of the operator tooling moved in PR 2 (scripts/operator/, `npm run operator:*`, every old script name kept as an alias); this goes with the setup bins in PR 3.",
-      "files": {
-        "setup/TEAM-SETUP.md": 1
       }
     }
   }

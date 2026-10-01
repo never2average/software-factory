@@ -29,6 +29,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -42,7 +43,7 @@ const check = (label, condition) => {
 /* ------------------------------------------------------------------ 1. tools */
 console.log("\nthe tool name, and the alias that keeps a live conversation alive");
 
-const { handleRpc, serverInstructions, compatEnv: pkgCompatEnv, LEGACY_ENV_NAMES } = await import("../setup/fde-tools.mjs");
+const { handleRpc, serverInstructions, compatEnv: pkgCompatEnv, LEGACY_ENV_NAMES } = await import("../setup/workspace-tools.mjs");
 const { advertisedToolNames, servedTools } = await import("./lib/wire-names.mjs");
 
 const tools = servedTools();
@@ -51,7 +52,7 @@ const status = tools.find((t) => t.name === "workspace_status");
 
 check("the orientation tool is advertised as workspace_status", Boolean(status));
 check("it still carries the START HERE description every other tool depends on", status.description.startsWith("START HERE."));
-check("no advertised tool name carries the base product's role word", !names.some((n) => n.split("_").includes("fde")));
+check("no advertised tool name carries the base product's role word", !names.some((n) => n.split("_").includes(BASE_PRODUCT_WORD)));
 check(`all ${names.length} tools are served, so the check is not looking at a subset`, names.length >= 59);
 
 const rpc = { tools, serverInfo: { name: "t", version: "0" }, instructions: "" };
@@ -142,7 +143,7 @@ console.log("\nbrowser storage: an analyst who is signed in stays signed in");
   const { STORAGE_KEYS, LEGACY_STORAGE_KEYS, STORAGE_KEYS_SINCE_RENAME, legacyKeyFor, readStored, writeStored, removeStored } =
     await import("../lib/browser-storage.ts");
 
-  check("the token key no longer carries the base product's role word", !STORAGE_KEYS.token.split("-").includes("fde"));
+  check("the token key no longer carries the base product's role word", !STORAGE_KEYS.token.split("-").includes(BASE_PRODUCT_WORD));
   check(
     "every current key has a declared old spelling (or is declared as introduced after the rename)",
     Object.keys(STORAGE_KEYS).every(

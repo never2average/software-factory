@@ -16,25 +16,30 @@ export const DEPLOYMENT = {
       "plural": "customers"
     },
     "member": {
-      "singular": "FDE",
-      "plural": "FDEs"
+      "singular": "member",
+      "plural": "members"
     },
-    "owner": "FDE owner",
+    "owner": "Account owner",
     "account_context": "Customer context"
   },
   "commands": {
+    "login": "workspace-login",
+    "mcp": "workspace-mcp",
+    "installSkills": "workspace-install-skill"
+  },
+  "legacyCommands": {
     "login": "fde-login",
     "mcp": "fde-mcp",
-    "installSkills": "install-skill"
+    "installSkills": "fde-install-skill"
   },
   "modules": {
-    "cli": "./fde-cli.mjs",
-    "login": "./fde-login.mjs",
-    "mcp": "./fde-mcp.mjs",
-    "tools": "./fde-tools.mjs",
-    "installSkills": "./fde-install-skill.mjs"
+    "cli": "./workspace-cli.mjs",
+    "login": "./workspace-login.mjs",
+    "mcp": "./workspace-mcp.mjs",
+    "tools": "./workspace-tools.mjs",
+    "installSkills": "./workspace-install-skill.mjs"
   },
-  "configDir": "fde-mcp",
+  "configDir": "workspace-mcp",
   "connect": null
 };
-export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, commands, modules, configDir, connect } = DEPLOYMENT;
+export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;

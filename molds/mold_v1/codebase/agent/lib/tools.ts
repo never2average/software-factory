@@ -38,7 +38,7 @@ import { searchExa } from "#lib/exa.js";
 import { publishArtifact } from "#lib/artifact.js";
 import { UNASSIGNED_OWNER_EMAIL as UNASSIGNED_TRIAGE_OWNER } from "./unassigned.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
-import { HIDDEN_FIELDS } from "./agent-vocabulary.ts";
+import { HIDDEN_FIELDS, fill } from "./agent-vocabulary.ts";
 import { customFieldsOf } from "./custom-fields.ts";
 import { isMemberKind } from "./member-kind.ts";
 
@@ -167,7 +167,7 @@ const hidesParts = RECORD_PARTS.some((k) => HIDDEN_FIELDS.account.has(k));
 
 export const listCustomersTool = modelFacing("list_customers", defineTool({
   description:
-    "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.",
+    "List all customers in the system of record with tier, lifecycle stage, status, {owner}, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     return { customers: await listCustomers(await orgForSession(ctx)) };
@@ -305,7 +305,7 @@ export const recordInteractionsTool = modelFacing("record_interactions", defineT
 
 export const listStaleCustomersTool = modelFacing("list_stale_customers", defineTool({
   description:
-    "List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, FDE owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.",
+    "List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, {owner}, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.",
   inputSchema: z.object({
     days: z
       .number()
@@ -395,9 +395,9 @@ export const getOncallTool = modelFacing("get_oncall", defineTool({
   },
 }));
 
-export const listMembersTool = modelFacing("list_fdes", defineTool({
+export const listMembersTool = modelFacing("list_members", defineTool({
   description:
-    "List the FDE (forward-deployed engineer) roster with live load. Reads every People/{id}/identity.json marked kind:'internal-fde' and joins the accounts each owns (customers.fde_owner) plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.",
+    "List the {member} roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the accounts each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const org = await orgForSession(ctx);
@@ -446,7 +446,7 @@ export const listMembersTool = modelFacing("list_fdes", defineTool({
 
 export const reassignOwnerTool = modelFacing("reassign_owner", defineTool({
   description:
-    "Reassign a customer's durable FDE owner (updates customers.fde_owner + the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership.",
+    "Reassign a customer's durable {owner} (updates the account's ownership and the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership.",
   approval: once(),
   inputSchema: z.object({
     customerId: z.string().min(1),
@@ -463,7 +463,7 @@ export const reassignOwnerTool = modelFacing("reassign_owner", defineTool({
           date: new Date().toISOString(),
           type: "note",
           source: "manual",
-          note: `FDE owner reassigned from ${result.previousOwner ?? "(none)"} to ${newOwnerEmail}.`,
+          note: `${fill("{Owner}")} reassigned from ${result.previousOwner ?? "(none)"} to ${newOwnerEmail}.`,
         },
         emailOrUndefined(callerEmail(ctx)),
       ),
@@ -485,7 +485,7 @@ export const createTicketTool = modelFacing("create_ticket", defineTool({
     ticketCategory: z.enum(["Feature Request", "Bug Report", "Data Migration Request", "Configuration Change Request", "Workflow Customization Request"]),
     ticketPriority: z.enum(["P0-Critical", "P1-High", "P2-Medium", "P3-Low"]),
     ticketStatus: z.enum(["Open", "Needs Triage", "In Progress", "Blocked", "Waiting on Customer"]).optional(),
-    ticketOwnerEmail: z.string().email().describe("The FDE who owns it — usually the customer's fde_owner."),
+    ticketOwnerEmail: z.string().email().describe(fill("The {member} who owns it — usually the customer's {owner}.")),
     ticketNextStep: z.string().min(1),
     sourceChannel: z.enum(["Email", "Slack", "Call", "Meeting", "In-App", "Zendesk"]).optional(),
     reportedByEmail: z.string().email().optional(),
@@ -527,7 +527,7 @@ export const matchCustomerByEmailTool = modelFacing("match_customer_by_email", d
 
 export const createTriageTicketTool = modelFacing("create_triage_ticket", defineTool({
   description:
-    "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the FDE owner and a human will assign it on approval.",
+    "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the {owner} and a human will assign it on approval.",
   inputSchema: z.object({
     customerId: z.string().min(1),
     summary: z.string().min(1).describe("One-line ticket title (e.g. the email subject)."),
@@ -535,7 +535,7 @@ export const createTriageTicketTool = modelFacing("create_triage_ticket", define
     ticketType: z.enum(["Bug", "Config Change", "Feature Request", "Access Request", "Data Issue", "Migration", "Question", "Escalation"]),
     ticketCategory: z.enum(["Feature Request", "Bug Report", "Data Migration Request", "Configuration Change Request", "Workflow Customization Request"]),
     ticketPriority: z.enum(["P0-Critical", "P1-High", "P2-Medium", "P3-Low"]),
-    ticketOwnerEmail: z.string().email().optional().describe("The FDE who would own it (the customer's fde_owner). Omit if unresolved — a human assigns it on approval."),
+    ticketOwnerEmail: z.string().email().optional().describe(fill("The {member} who would own it (the customer's {owner}). Omit if unresolved — a human assigns it on approval.")),
     ticketNextStep: z.string().min(1),
     sourceChannel: z.enum(["Email", "Slack", "Call", "Meeting", "In-App", "Zendesk"]).optional(),
     reportedByEmail: z.string().email().optional(),

@@ -1,0 +1,39 @@
+{
+  "$comment": "A conversation stored BEFORE the roster tool was renamed list_members: the chat's own record of it (uiMessages, as the web app keeps a thread) and the model's (modelMessages, as eve replays a session's history to the model). Kept verbatim: scripts/test-tool-aliases.mjs proves both still resolve.",
+  "uiMessages": [
+    { "id": "m1", "role": "user", "parts": [{ "type": "text", "text": "Who owns the most accounts right now?" }] },
+    {
+      "id": "m2",
+      "role": "assistant",
+      "parts": [
+        {
+          "type": "dynamic-tool",
+          "toolName": "list_fdes",
+          "toolCallId": "call_0f1e2d3c4b5a69788796a5b4",
+          "state": "output-available",
+          "input": {},
+          "output": { "roster": [{ "slug": "asha", "email": "asha@example.com", "accountsOwned": 3, "openTickets": 2 }], "count": 1, "unassigned": [], "danglingOwners": [] }
+        },
+        { "type": "text", "text": "Asha owns three accounts with two open tickets." }
+      ]
+    }
+  ],
+  "modelMessages": [
+    { "role": "user", "content": [{ "type": "text", "text": "Who owns the most accounts right now?" }] },
+    { "role": "assistant", "content": [{ "type": "tool-call", "toolCallId": "call_0f1e2d3c4b5a69788796a5b4", "toolName": "list_fdes", "input": {} }] },
+    {
+      "role": "tool",
+      "content": [
+        {
+          "type": "tool-result",
+          "toolCallId": "call_0f1e2d3c4b5a69788796a5b4",
+          "toolName": "list_fdes",
+          "output": { "type": "json", "value": { "roster": [{ "slug": "asha", "email": "asha@example.com", "accountsOwned": 3, "openTickets": 2 }], "count": 1, "unassigned": [], "danglingOwners": [] } }
+        }
+      ]
+    },
+    { "role": "assistant", "content": [{ "type": "text", "text": "Asha owns three accounts with two open tickets." }] },
+    { "role": "user", "content": [{ "type": "text", "text": "Check again." }] }
+  ],
+  "storedWorkflowPrompt": "Choose the best owner for customer acme. Call list_fdes for the roster with live load; pick the least-loaded one."
+}

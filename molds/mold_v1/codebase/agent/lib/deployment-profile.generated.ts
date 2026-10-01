@@ -99,8 +99,8 @@ export interface DomainFieldMeta { type: "enum" | "number" | "text" | "list"; va
 export const DEPLOYMENT_PROFILE: DeploymentProfile = {
   "product": {
     "name": "Delivered",
-    "tagline": "The operations console for forward-deployed teams.",
-    "description": "{product} — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team."
+    "tagline": "The operations console for teams that run customer work.",
+    "description": "{product} — an operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for your team."
   },
   "vocabulary": {
     "account": {
@@ -108,10 +108,10 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
       "plural": "customers"
     },
     "member": {
-      "singular": "FDE",
-      "plural": "FDEs"
+      "singular": "member",
+      "plural": "members"
     },
-    "owner": "FDE owner",
+    "owner": "Account owner",
     "account_context": "Customer context"
   },
   "chat": {
@@ -131,7 +131,7 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
       "collapsed_lines": 6
     },
     "starter_cards": {
-      "owner_label": "FDE owner",
+      "owner_label": "Account owner",
       "ticket_waiting": "One open ticket is waiting on us.",
       "tickets_waiting": "{count} open tickets are waiting on us.",
       "ticket_badge": "1 open",

@@ -4,16 +4,16 @@
  *
  * The library (scripts/operator/workflows/*.workflow.js, compiled into workflow-library.generated.ts) was written for
  * the base product: its scripts delegate to base specialists and its step prompts name base tools ("Call
- * list_fdes…", "get_customer"). Under a profile:
+ * list_members…", "get_customer"). Under a profile:
  *   - a workflow that delegates to a specialist the profile EXCLUDES is not provisioned at all — it would fail
  *     at its first step, and offering it would tell the model about work this deployment does not do;
  *   - every other workflow's name-free text — its description, step names, and the string literals of its script
  *     (the prompts it sends) — is spoken in the profile's words, like any prompt. Code is not touched: the script
  *     still reads `args.customerId`, which trigger_workflow maps the model's `companyId` back to, and still names
  *     its specialists by directory.
- * Identity under the default profile.
+ * Under the default profile only the role placeholders are filled.
  */
-import { speakPromptWith, VOCABULARY, type Vocabulary } from "./agent-vocabulary.ts";
+import { hasRolePlaceholder, speakPromptWith, VOCABULARY, type Vocabulary } from "./agent-vocabulary.ts";
 import { WORKFLOW_LIBRARY, type LibraryWorkflow } from "./workflow-library.generated.ts";
 
 /** The specialists a script delegates to (`agent(…, { subagent: "key" })`). */
@@ -36,9 +36,14 @@ function speakLiterals(v: Vocabulary, script: string): string {
   });
 }
 
-/** One library workflow's name-free text in the profile's words: description, step names, script literals. */
+/**
+ * One library workflow's name-free text in the profile's words: description, step names, script literals. Under
+ * every profile its role placeholders (`{owner}`, `{member}`) are filled; under a relabelling one, every base word
+ * is spoken too. A workflow with neither is returned as it is.
+ */
 export function speakLibraryWorkflow<T extends { description?: string | null; steps?: readonly string[] | null; script?: string | null }>(v: Vocabulary, w: T): T {
-  if (!v.relabelled) return w;
+  const placeholders = [w.description, ...(w.steps ?? []), w.script].some((t) => typeof t === "string" && hasRolePlaceholder(t));
+  if (!v.relabelled && !placeholders) return w;
   return {
     ...w,
     ...(typeof w.description === "string" ? { description: speakPromptWith(v, w.description) } : {}),
@@ -48,7 +53,6 @@ export function speakLibraryWorkflow<T extends { description?: string | null; st
 }
 
 export function deploymentWorkflowLibrary(v: Vocabulary = VOCABULARY, library: readonly LibraryWorkflow[] = WORKFLOW_LIBRARY): LibraryWorkflow[] {
-  if (!v.relabelled && !v.excludedSpecialists.length) return [...library];
   return library
     .filter((w) => !delegatesTo(w.script).some((k) => v.excludedSpecialists.includes(k)))
     .map((w) => speakLibraryWorkflow(v, w));

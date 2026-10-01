@@ -16,7 +16,8 @@
  *
  * The role word is assembled, never written whole, so this file needs no allowance in the neutral-names list.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -101,12 +102,31 @@ for (const [neu, old] of Object.entries(legacyOf)) {
     process.env[`${U}_SELF_EMAIL`] = "old@onfinance.in";
     const argv = process.argv;
     process.argv = argv.filter((a) => a !== "--email");
-    const id = op.resolveIdentity();
-    const hasCreds = existsSync(join(process.env.HOME ?? "", ".config", `${w}-mcp`, "credentials.json"));
-    if (!hasCreds) check("resolveIdentity falls back to the old self-email variable", id.email === "old@onfinance.in" && id.source === `${U}_SELF_EMAIL`, JSON.stringify(id));
+    // No stored sign-in (paths that do not exist), so the variables decide, whatever this machine's HOME holds.
+    const none = { credentialPaths: [join(tmpdir(), "operator-tooling-none", "a.json"), join(tmpdir(), "operator-tooling-none", "b.json")] };
+    const id = op.resolveIdentity(none);
+    check("resolveIdentity falls back to the old self-email variable", id.email === "old@onfinance.in" && id.source === `${U}_SELF_EMAIL`, JSON.stringify(id));
     process.env.WORKSPACE_SELF_EMAIL = "new@onfinance.in";
-    const id2 = op.resolveIdentity();
-    if (!hasCreds) check("resolveIdentity prefers WORKSPACE_SELF_EMAIL", id2.email === "new@onfinance.in" && id2.source === "WORKSPACE_SELF_EMAIL", JSON.stringify(id2));
+    const id2 = op.resolveIdentity(none);
+    check("resolveIdentity prefers WORKSPACE_SELF_EMAIL", id2.email === "new@onfinance.in" && id2.source === "WORKSPACE_SELF_EMAIL", JSON.stringify(id2));
+    // The stored sign-in: the login command's folder today first, then the one it had before the rename.
+    const home = mkdtempSync(join(tmpdir(), "operator-tooling-home-"));
+    try {
+      check("the stored sign-in is read from the new folder first, then the old one",
+        JSON.stringify(op.CREDENTIAL_PATHS.map((p) => p.split("/").slice(-2, -1)[0])) === JSON.stringify(["workspace-mcp", `${w}-mcp`]), JSON.stringify(op.CREDENTIAL_PATHS));
+      const neuPath = join(home, "workspace-mcp", "credentials.json");
+      const oldPath = join(home, `${w}-mcp`, "credentials.json");
+      mkdirSync(join(home, `${w}-mcp`), { recursive: true });
+      writeFileSync(oldPath, JSON.stringify({ email: "signed-in-before@onfinance.in" }));
+      const fromOld = op.resolveIdentity({ credentialPaths: [neuPath, oldPath] });
+      check("a sign-in kept only in the old folder is still who is running this", fromOld.email === "signed-in-before@onfinance.in" && fromOld.source === "workspace-login", JSON.stringify(fromOld));
+      mkdirSync(join(home, "workspace-mcp"), { recursive: true });
+      writeFileSync(neuPath, JSON.stringify({ email: "signed-in-now@onfinance.in" }));
+      const fromNew = op.resolveIdentity({ credentialPaths: [neuPath, oldPath] });
+      check("a sign-in in the new folder wins over the old one", fromNew.email === "signed-in-now@onfinance.in", JSON.stringify(fromNew));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
     process.env[`${U}_OPS_URL`] = "https://old.example/";
     check("opsUrl falls back to the old variable", op.opsUrl() === "https://old.example");
     process.env.WORKSPACE_OPS_URL = "https://new.example";

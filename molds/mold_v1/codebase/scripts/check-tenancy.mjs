@@ -783,13 +783,13 @@ const CROSS_WORKSPACE_KNOWN = [
       "app/api/ops/platform-admins); a member sees only their own memberships. No tenant row is read.",
   ],
   [
-    "setup/fde-cli.mjs#<module>",
+    "setup/workspace-cli.mjs#<module>",
     "A DISPATCHER, not a reader: `import(target)` loads one of setup/'s own program files (COMMANDS: login, mcp, " +
       "install-skills), each of which is a request entry point scanned here in its own right.",
   ],
   [
-    "setup/fde-mcp.mjs#<module>",
-    "A DISPATCHER, not a reader: `import(DEPLOYMENT.modules.login)` loads setup/'s own sign-in module (fde-login), " +
+    "setup/workspace-mcp.mjs#<module>",
+    "A DISPATCHER, not a reader: `import(DEPLOYMENT.modules.login)` loads setup/'s own sign-in module (workspace-login), " +
       "itself a request entry point scanned here in its own right.",
   ],
 ];

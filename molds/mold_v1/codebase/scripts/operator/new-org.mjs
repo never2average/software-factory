@@ -28,7 +28,7 @@ async function main() {
   const { email: identity } = resolveIdentity();
   const owner = (flag("owner").trim() || identity || "").toLowerCase();
   if (!owner) {
-    console.error(`${glyph.bad} No owner — pass --owner <email> or run \`node setup/fde-login.mjs\`.`);
+    console.error(`${glyph.bad} No owner — pass --owner <email> or run \`node setup/workspace-login.mjs\`.`);
     process.exit(1);
   }
 

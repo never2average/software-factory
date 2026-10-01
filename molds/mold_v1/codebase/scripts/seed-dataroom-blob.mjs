@@ -15,6 +15,12 @@
 // Run: npm run seed:dataroom-blob -- --org <workspace id>   (node --experimental-strip-types)
 
 import { getDataroomStore } from "../agent/lib/dataroom-store.ts";
+import { DEPLOYMENT_PROFILE } from "../agent/lib/deployment-profile.generated.ts";
+
+// The role words the seeded files use, from this deployment's profile (never a literal role word).
+const MEMBER = DEPLOYMENT_PROFILE.vocabulary.member.singular;
+const Owner = DEPLOYMENT_PROFILE.vocabulary.owner.charAt(0).toUpperCase() + DEPLOYMENT_PROFILE.vocabulary.owner.slice(1);
+const OWNER = /^[A-Z][a-z]/.test(Owner) ? Owner.charAt(0).toLowerCase() + Owner.slice(1) : Owner;
 
 if (!process.env.BLOB_READ_WRITE_TOKEN) {
   console.error(
@@ -67,7 +73,7 @@ const FILES = {
 ## Working notes
 
 Champion is the VP of Operations; weekly sync every Thursday. Escalations go
-through the FDE owner first — the account is sensitive to surprise emails.`,
+through the ${OWNER} first — the account is sensitive to surprise emails.`,
 
   "Customers/acme-bank/interactions.jsonl": jsonl([
     {
@@ -816,9 +822,9 @@ platform during onboarding, ahead of the incremental production migration.
 
 ## Current assignments
 
-- **acme-bank** — FDE owner; drove the v2.4.0 inference customization and
+- **acme-bank** — ${Owner}; drove the v2.4.0 inference customization and
   owns the TCK-1002 connector work
-- **northwind-capital** — FDE owner for onboarding; running the UAT plan
+- **northwind-capital** — ${Owner} for onboarding; running the UAT plan
 
 ## Working style
 
@@ -860,9 +866,9 @@ the Northwind dedupe bug before their UAT window closes.`,
 
 ## Responsibilities
 
-- **FDE owner, acme-bank** — accountable for the v2.4.0 deployment health,
+- **${Owner}, acme-bank** — accountable for the v2.4.0 deployment health,
   the TCK-1002 connector work, and the infosec re-review conditions
-- **FDE owner, northwind-capital** — runs the onboarding plan, UAT
+- **${Owner}, northwind-capital** — runs the onboarding plan, UAT
   sequencing, and the dedupe-bug remediation (TCK-2031)
 - Owns migration execution for assigned accounts (approach docs, cutover
   windows, rollback rehearsals)
@@ -874,7 +880,7 @@ the Northwind dedupe bug before their UAT window closes.`,
 
 ## Coverage
 
-Backup FDE during PTO: rotation via the solutions-engineering on-call.`,
+Backup ${MEMBER} during PTO: rotation via the solutions-engineering on-call.`,
 };
 
 // ---------------------------------------------------------------------------

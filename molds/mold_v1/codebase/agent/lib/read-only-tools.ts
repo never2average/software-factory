@@ -16,7 +16,7 @@
  * (`get_customer` / `get_company`), derived from the vocabulary at module load — no registry, so
  * no dependence on which module instance loaded the tools first.
  */
-import { speakIdentifier } from "./agent-vocabulary.ts";
+import { TOOL_ALIASES, speakIdentifier } from "./agent-vocabulary.ts";
 
 export const READ_ONLY_BASE_TOOLS: readonly string[] = [
   // this codebase's model-facing tools that only read
@@ -27,7 +27,7 @@ export const READ_ONLY_BASE_TOOLS: readonly string[] = [
   "read_customer_slas",
   "list_triage_tickets",
   "list_urgent_tickets",
-  "list_fdes",
+  "list_members",
   "list_roster",
   "list_followups",
   "list_memories",
@@ -56,7 +56,10 @@ export const READ_ONLY_BASE_TOOLS: readonly string[] = [
   "load_skill",
 ];
 
-const NAMES: ReadonlySet<string> = new Set(READ_ONLY_BASE_TOOLS.flatMap((n) => [n, speakIdentifier(n)]));
+// A tool's old name (TOOL_ALIASES) is read-only exactly when its tool is: a transcript stored before the rename
+// still proves nothing was written by it.
+const ALIASES_OF = (base: string) => Object.entries(TOOL_ALIASES).filter(([, now]) => now === base).map(([old]) => old);
+const NAMES: ReadonlySet<string> = new Set(READ_ONLY_BASE_TOOLS.flatMap((n) => [n, speakIdentifier(n), ...ALIASES_OF(n)]));
 
 export function isReadOnlyTool(name: string): boolean {
   return NAMES.has(name);

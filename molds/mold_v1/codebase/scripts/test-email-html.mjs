@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { renderBrandedEmail } from "../lib/email-html.ts";
 import { PRODUCT_NAME } from "../lib/deployment-profile.generated.ts";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 
 const code = renderBrandedEmail({ heading: `Sign in to ${PRODUCT_NAME}`, paragraphs: ["Enter this code."], code: "123456", footnote: "Expires in 10 minutes." });
 assert.ok(code.includes(PRODUCT_NAME), "the product is named");
@@ -19,5 +20,5 @@ const bad = renderBrandedEmail({ heading: "x", paragraphs: ["y"], cta: { label: 
 assert.ok(!bad.includes("javascript:") && !bad.includes("<a "), "a non-http(s) url never becomes a link");
 // The layout itself names nothing but the profile's product: strip every occurrence of it, then nothing of
 // the original product's wording may remain (the default profile's name IS "Delivered", hence replaceAll).
-assert.ok(!/FDE app|Delivered/.test(renderBrandedEmail({ heading: "h", paragraphs: ["p"] }).replaceAll(PRODUCT_NAME, "")), "no hardcoded product wording in the layout");
+assert.ok(!new RegExp(`${BASE_PRODUCT_WORD.toUpperCase()} app|Delivered`).test(renderBrandedEmail({ heading: "h", paragraphs: ["p"] }).replaceAll(PRODUCT_NAME, "")), "no hardcoded product wording in the layout");
 console.log("test-email-html: all assertions passed");

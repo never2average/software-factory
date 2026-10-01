@@ -12,7 +12,7 @@
  * promise the next request lands on the same instance. Hand-rolled rather than
  * built on @modelcontextprotocol/sdk: the surface is four methods that the
  * stdio package already implements without the SDK (now shared, in
- * setup/fde-tools.mjs), while the SDK brings ~90 transitive packages (express,
+ * setup/workspace-tools.mjs), while the SDK brings ~90 transitive packages (express,
  * hono, cors, ajv, ...) into the app for it. The SDK's own client is used to
  * test interoperability instead (docs/MCP.md).
  *
@@ -28,7 +28,7 @@
  * Relative imports only, and every outside dependency injected: the test drives
  * this exact function in plain node with a mocked Ops API.
  */
-import { availableTools, createTools, handleRpc, PROTOCOL_VERSIONS, serverInstructions } from "../setup/fde-tools.mjs";
+import { availableTools, createTools, handleRpc, PROTOCOL_VERSIONS, serverInstructions } from "../setup/workspace-tools.mjs";
 import { parseClaudeTranscript, sessionToSyncItem } from "../agent/lib/coding-sessions.ts";
 import { productSlug } from "./mcp-connect.ts";
 

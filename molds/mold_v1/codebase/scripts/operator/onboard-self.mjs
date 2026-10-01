@@ -1,6 +1,6 @@
 // operator:onboard-self (also `fde:onboard-self`) — record the running engineer as a team member and report readiness.
 //
-//   npm run operator:onboard-self -- --name "Priyesh" --title "Forward-Deployed Engineer" \
+//   npm run operator:onboard-self -- --name "Priyesh" --title "Solutions Engineer" \
 //     --focus "onboarding, migrations" [--email you@onfinance.in] [--timezone Asia/Kolkata]
 //
 // Idempotent. Writes ONE team-scoped memory (`member-profile:<email>`; a profile
@@ -21,6 +21,8 @@ import { glyph, flag, resolveIdentity, isOnfinance, checkHealth, envReady, opera
 
 /** The deployment's own word for a team member (the default profile's is the base product's role word). */
 const MEMBER = DEPLOYMENT_PROFILE.vocabulary.member.singular;
+/** The member word as a title or the start of a line ("Member", "Analyst"). */
+const Member = MEMBER.charAt(0).toUpperCase() + MEMBER.slice(1);
 
 /** person_id slug for People/ — email-derived, collision-free. */
 function personSlug(email) {
@@ -30,7 +32,7 @@ function personSlug(email) {
 async function main() {
   const { email, source } = resolveIdentity();
   const name = flag("name").trim();
-  const title = flag("title").trim() || "Forward-Deployed Engineer";
+  const title = flag("title").trim() || Member;
   const focus = flag("focus").trim();
   const timezone = flag("timezone").trim();
 
@@ -39,7 +41,7 @@ async function main() {
   // 1. Identity — required, and it must be an @onfinance.in account.
   if (!email) {
     console.error(
-      `${glyph.bad} No identity. Sign in first (\`node setup/fde-login.mjs\`), or pass --email you@onfinance.in.`,
+      `${glyph.bad} No identity. Sign in first (\`node setup/workspace-login.mjs\`), or pass --email you@onfinance.in.`,
     );
     process.exit(1);
   }
@@ -106,7 +108,7 @@ async function main() {
 
   // 5. Register the member as a first-class People/ roster entry (kind MEMBER_KIND, a stored value).
   //    Reverses the old "People is external-only" rule FOR INTERNAL members: the
-  //    kind tag keeps them distinct, and list_fdes reads these (entries written with the
+  //    kind tag keeps them distinct, and list_members reads these (entries written with the
   //    earlier "internal-fde" value too; agent/lib/member-kind.ts).
   //    In ONE workspace's data room (`--org <id>` or WORKSPACE_ORG): every workspace has its own tree and there is no
   //    default one to fall back to (lib/dataroom-keyspace.ts).
@@ -141,7 +143,7 @@ async function main() {
       );
       await store.write(
         `People/${slug}/roles_and_responsibilities.md`,
-        `# Roles & responsibilities — ${name || email}\n\nForward-Deployed Engineer. Owns assigned customer accounts end to end (onboarding, configuration, deployment, migration, evals, follow-ups) and takes on-call rotations for incidents.\n`,
+        `# Roles & responsibilities — ${name || email}\n\n${Member}. Owns assigned customer accounts end to end (onboarding, configuration, deployment, migration, evals, follow-ups) and takes on-call rotations for incidents.\n`,
       );
     }
     console.log(`${glyph.ok} Registered you in the ${MEMBER} roster (People/${slug}/, kind ${MEMBER_KIND}).`);

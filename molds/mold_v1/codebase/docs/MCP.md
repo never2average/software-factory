@@ -25,7 +25,7 @@ Two fixes, both in this change:
 
 1. The app hosts the MCP server itself, so the address is never a setting.
 2. The package has **no default address** any more. It requires `WORKSPACE_OPS_URL`
-   (or an address saved by `fde-login --url`) and fails with a message naming
+   (or an address saved by `workspace-login --url`) and fails with a message naming
    the variable. (That variable was `FDE_OPS_URL`; the old name is still read.)
 
 Since then: **each deployment builds its own package** with its own address, name, skills
@@ -124,15 +124,15 @@ MCP **Streamable HTTP**, stateless, JSON responses.
 **Hand-rolled, not the SDK.** `@modelcontextprotocol/sdk` 1.30 does ship a
 web-standard transport that fits a route handler. It was not adopted because the
 surface is four methods that the stdio package already implemented without the
-SDK — that implementation is now shared (`handleRpc` in `setup/fde-tools.mjs`) —
+SDK — that implementation is now shared (`handleRpc` in `setup/workspace-tools.mjs`) —
 while the SDK adds about ninety transitive packages (express, hono, cors, ajv…)
 to the app. The SDK's *client* is the right tool for checking interoperability
 against a running deployment.
 
 ## Tools
 
-One definition, two hosts. `setup/fde-tools.mjs` holds every tool's name,
-description, schema and handler; the stdio package (`setup/fde-mcp.mjs`) and the
+One definition, two hosts. `setup/workspace-tools.mjs` holds every tool's name,
+description, schema and handler; the stdio package (`setup/workspace-mcp.mjs`) and the
 hosted endpoint (`lib/mcp-server.ts`) each supply only a context — how to call the
 Ops API, who the caller is, which workspace is selected. `npm run
 test:mcp-endpoint` asserts both hosts list identical tools.
@@ -152,7 +152,7 @@ are the wire contract the two hosts share and do not change with the package.
 off the wire. Renaming a tool is a contract change — an assistant reads `tools/list`
 once per connection and then holds those names for the rest of a conversation — so the
 old name is still ACCEPTED by `tools/call` as an unadvertised alias (`aliases` on the
-definition in `setup/fde-tools.mjs`). It is never listed, so nothing new learns it, and
+definition in `setup/workspace-tools.mjs`). It is never listed, so nothing new learns it, and
 `scripts/check-wire-names.mjs` fails the build if any other advertised name, environment
 variable or storage key grows the word back.
 | Customers | `customer_create`, `customer_list` |

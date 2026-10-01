@@ -262,7 +262,7 @@ const PROBES = [
   ["dataroom_read", (t, v) => ({ path: `${v.accountFolder}/${SEED_ID}/no-such-folder/x.bin` })],
   ["dataroom_fetch_to_sandbox", (t, v) => ({ path: `${v.accountFolder}/${SEED_ID}/context.md` })],
   ["read_customer_slas", () => ({})],
-  ["list_fdes", () => ({})],
+  ["list_members", () => ({})],
   ["build_workbook_spec", (t, v) => v.model({ customerId: SEED_ID, domain: "Implementation" })],
 ];
 

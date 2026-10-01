@@ -169,6 +169,7 @@
     "check:first-screen": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check-first-screen.mjs",
     "check:agent-vocabulary": "node scripts/check-agent-vocabulary.mjs",
     "test:agent-vocabulary": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-agent-vocabulary.mjs",
+    "test:tool-aliases": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-tool-aliases.mjs",
     "check:wire-names": "node scripts/check-wire-names.mjs",
     "test:wire-names": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-wire-names.mjs",
     "check:neutral-names": "node scripts/check-neutral-names.mjs",

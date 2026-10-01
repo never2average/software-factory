@@ -95,7 +95,7 @@ console.log("\nTenancy (source):");
 /* Comments stripped: these gates are about what the CODE does, and the comment
  * explaining the bug quotes the very call that caused it. */
 const decomment = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-const mcp = decomment(readFileSync("setup/fde-mcp.mjs", "utf8"));
+const mcp = decomment(readFileSync("setup/workspace-mcp.mjs", "utf8"));
 
 /* Every store the MCP builds must be built FOR a workspace. A bare
  * createDataroomStore() silently means workspace #1. */

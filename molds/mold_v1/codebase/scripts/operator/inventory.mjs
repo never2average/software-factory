@@ -8,6 +8,7 @@ import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSy
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { hasFlag, glyph } from "./lib/operator.mjs";
+import { fill } from "../../agent/lib/agent-vocabulary.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const subagentsDir = join(root, "agent", "subagents");
@@ -69,7 +70,9 @@ const workflows = [];
 for (const f of listDir(workflowsDir).filter((f) => f.endsWith(".workflow.js")).sort()) {
   const src = readFileSync(join(workflowsDir, f), "utf8");
   const name = first(/name:\s*"([^"]+)"/, src);
-  const description = first(/description:\s*"([^"]+)"/, src);
+  // In this deployment's words: the library writes role placeholders ({owner}, {member}) the profile fills.
+  const raw = first(/description:\s*"([^"]+)"/, src);
+  const description = raw === null ? null : fill(raw);
   const phases = [...src.matchAll(/phase\("([^"]+)"\)/g)].map((m) => m[1]);
   const subs = [...new Set([...src.matchAll(/subagent:\s*"([^"]+)"/g)].map((m) => m[1]))];
   workflows.push({ name, description, phases, subs });

@@ -12,6 +12,7 @@
  * Usage: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-profile.mjs
  */
 import assert from "node:assert/strict";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 
 const { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } = await import("../lib/deployment-profile.generated.ts");
 const agentSide = await import("../agent/lib/deployment-profile.generated.ts");
@@ -69,7 +70,7 @@ for (const word of ["company", "companies", "analyst", "analysts", "lead analyst
 // so the block names those and never the base product's: a second vocabulary is one the model reasons in.
 assert.ok(block.includes("`list_companies`") && block.includes("`company_id`"), "the tool and field the model actually has");
 assert.ok(block.includes("`Companies/`"), "the folder the model actually reads and writes");
-assert.doesNotMatch(block, /customer|\bFDE/i, "no base word in a relabelled deployment's block");
+assert.doesNotMatch(block, new RegExp(`customer|\\b${BASE_PRODUCT_WORD}`, "i"), "no base word in a relabelled deployment's block");
 assert.equal(renderDeploymentBriefing(DEPLOYMENT_PROFILE), null, "rendering another profile does not touch the default");
 
 // A briefing alone is enough to render a block.
@@ -228,7 +229,7 @@ for (const word of ["Portfolio", "Portfolios", "Coverage report", "Coverage repo
 for (const id of ["`get_company`", "`upsert_company`", "`coverageReports[]`", "`portfolioEntry`", "`Coverage-reports/`", "`Portfolios/`", "`coverageReportId`", "`portfolioId`", "`runtime`", "`releaseStatus`", "`portfolioEntryStage`", "containerType `coverageReport`", "containerType `portfolioEntry`"]) {
   assert.ok(researchBlock.includes(id), `briefing names ${id}`);
 }
-assert.doesNotMatch(researchBlock, /customer|deployments?\b|\bimplementation|rollout|\bFDE/i, "no base word in a relabelled deployment's block");
+assert.doesNotMatch(researchBlock, new RegExp(`customer|deployments?\\b|\\bimplementation|rollout|\\b${BASE_PRODUCT_WORD}`, "i"), "no base word in a relabelled deployment's block");
 assert.ok(researchBlock.includes('"Published" is `deployed`'), "display word -> stored value");
 assert.ok(researchBlock.includes('"Restated" is `rolled-back`'));
 assert.ok(researchBlock.includes('"KPI table built" is `UAT`'));

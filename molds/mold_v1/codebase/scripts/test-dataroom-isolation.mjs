@@ -260,7 +260,7 @@ console.log("\n4. Every other door to the file store is bound to the caller's wo
   check("the upload route never writes without a workspace (no `org?.orgId` write)", !/writeDataroomFile\([^)]*org\?\.orgId/.test(upload) && /if \(!org\?\.orgId\)/.test(upload));
   const versions = src("agent/lib/dataroom-versions.ts");
   check("the agent's version snapshots are written in the workspace's own tree", !/getDataroomStore\(null\)/.test(versions));
-  const mcp = src("setup/fde-mcp.mjs");
+  const mcp = src("setup/workspace-mcp.mjs");
   check("the MCP server's store needs the selected workspace (no `?? undefined` fallback to the root)", /createDataroomStore\(\{\s*orgId:/.test(mcp) && !/orgId:\s*OPS_ORG\s*\?\?\s*undefined/.test(mcp));
   const seed = src("scripts/seed-dataroom-blob.mjs");
   check("the blob seed script names its workspace", !/getDataroomStore\(\s*\)/.test(seed));

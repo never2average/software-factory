@@ -397,7 +397,7 @@ if (!CHECK_ONLY) for (const target of ["lib/deployment-profile.generated.ts", "a
  */
 if (!CHECK_ONLY) {
   // A kept specialist whose NAME carries a word the profile relabels is still called that by the model.
-  const relabelledWords = [["customer", profile.vocabulary.account.singular], ["deployment", profile.domains.deployments.label.singular], ["implementation", profile.domains.implementations.label.singular], ["fde", profile.vocabulary.member.singular]]
+  const relabelledWords = [["customer", profile.vocabulary.account.singular], ["deployment", profile.domains.deployments.label.singular], ["implementation", profile.domains.implementations.label.singular], ["member", profile.vocabulary.member.singular]]
     .filter(([base, word]) => base !== word.trim().toLowerCase()).map(([base]) => base);
   for (const key of present(SUBAGENTS).filter((k) => !profile.specialists.exclude.includes(k))) {
     const hit = relabelledWords.find((w) => key.split("-").includes(w));

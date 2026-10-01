@@ -112,7 +112,7 @@ function buildPrompt(email: string, c: z.infer<typeof contextSchema>): string {
   const counts = c.counts ?? {};
   return [
     // The product's own words go through speak() (the model reads the profile's words); the names are data.
-    `Write a short, specific briefing on ${person}'s role and work on the "${c.account}" account. ${speak("It renders directly as a summary paragraph in an internal Control Panel (an FDE ops tool).")}`,
+    `Write a short, specific briefing on ${person}'s role and work on the "${c.account}" account. ${speak("It renders directly as a summary paragraph in an internal Control Panel (the {members}' operations tool).")}`,
     "",
     "PERSON: " +
       `${person} (${email})${c.person?.title ? `, ${c.person.title}` : ""}${c.person?.org ? ` at ${c.person.org}` : ""}${c.person?.kind ? ` — ${c.person.kind}` : ""}`,

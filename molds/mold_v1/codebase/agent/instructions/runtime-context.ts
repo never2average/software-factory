@@ -57,7 +57,7 @@ export default defineDynamic({
         /**
          * WHOSE workspace this is — by name, every turn.
          *
-         * The static prompt opens "You are the FDE orchestrator for the
+         * The static prompt used to open "You are the orchestrator for the
          * OnFinance team", which is true of exactly one workspace and wrong in
          * every other. It is not cosmetic: the agent introduces itself with it,
          * so a demo to another company hears the wrong company's name.

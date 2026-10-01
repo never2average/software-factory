@@ -20,7 +20,7 @@ const research = await agent(
 
 phase("Assign owner");
 const assignment = await agent(
-  "Recommend the best FDE owner for customer " + c + ": call list_fdes, pick the least-loaded FDE whose skills match this account's product/regime, and propose the assignment with rationale for a human to confirm (do not force it). Return the recommendation.",
+  "Recommend the best {owner} for customer " + c + ": call list_members, pick the least-loaded {member} whose skills match this account's product/regime, and propose the assignment with rationale for a human to confirm (do not force it). Return the recommendation.",
   { subagent: "customer-context" },
 );
 

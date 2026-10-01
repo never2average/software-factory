@@ -5,6 +5,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { LEGACY_CONFIG_DIR } from "../../lib/agent-cli.mjs";
 
 /** Consistent console vocabulary across every operator script. */
 export const glyph = { ok: "✓", bad: "✗", info: "•", warn: "⚠" };
@@ -22,7 +23,7 @@ export function hasFlag(name) {
 /**
  * The environment the operator tooling reads: the neutral `WORKSPACE_*` name first, then the name it had before
  * (kept working: it is typed into shells and `.env.local` files that nobody re-reads). The first two match the
- * published package's own table (setup/fde-tools.mjs LEGACY_ENV_NAMES); the last two only this tooling reads.
+ * published package's own table (setup/workspace-tools.mjs LEGACY_ENV_NAMES); the last two only this tooling reads.
  */
 export const LEGACY_OPERATOR_ENV = Object.freeze({
   WORKSPACE_ORG: "FDE_ORG",
@@ -62,20 +63,29 @@ export function opsUrl() {
 }
 
 /**
+ * The stored sign-in of the package's login command: its folder today, then the one it had
+ * before the rename (setup/workspace-login.mjs reads both the same way, so somebody who signed
+ * in with an older checkout is still recognised).
+ */
+export const CREDENTIAL_PATHS = [
+  join(homedir(), ".config", "workspace-mcp", "credentials.json"),
+  join(homedir(), ".config", LEGACY_CONFIG_DIR, "credentials.json"),
+];
+
+/**
  * Who is running this. Preference order: explicit --email, then the stored
- * `fde-login` identity (~/.config/fde-mcp/credentials.json), then WORKSPACE_SELF_EMAIL
- * (or its old name).
+ * sign-in (CREDENTIAL_PATHS), then WORKSPACE_SELF_EMAIL (or its old name).
  * Returns { email, name } — name is best-effort from the flag.
  */
-export function resolveIdentity() {
+export function resolveIdentity({ credentialPaths = CREDENTIAL_PATHS } = {}) {
   const flagEmail = flag("email").trim();
   if (flagEmail) return { email: flagEmail, source: "--email" };
 
-  const credPath = join(homedir(), ".config", "fde-mcp", "credentials.json");
-  if (existsSync(credPath)) {
+  for (const credPath of credentialPaths) {
+    if (!existsSync(credPath)) continue;
     try {
       const c = JSON.parse(readFileSync(credPath, "utf8"));
-      if (c.email) return { email: String(c.email), source: "fde-login" };
+      if (c.email) return { email: String(c.email), source: "workspace-login" };
     } catch {
       /* fall through */
     }

@@ -24,7 +24,7 @@
  * failing on this account, and would put an image the workspace never stored
  * into a tool call. scripts/test-vision-tool.mjs holds that as a ratchet.
  *
- * NOT ON THE MCP SURFACE (setup/fde-tools.mjs), deliberately. That surface serves
+ * NOT ON THE MCP SURFACE (setup/workspace-tools.mjs), deliberately. That surface serves
  * a coding assistant running on someone's laptop, over a transport with no
  * `ctx.getSandbox()` — so the pdf render, which is most of this tool's value,
  * could not run there at all. And the assistants that connect to it already read

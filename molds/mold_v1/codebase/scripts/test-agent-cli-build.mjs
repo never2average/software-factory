@@ -17,8 +17,11 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultDeployment, isSemver, moduleFileNames, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter, renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate } from "./lib/agent-cli.mjs";
+import { LEGACY_GENERIC_COMMANDS, defaultDeployment, isSemver, moduleFileNames, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter, renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate } from "./lib/agent-cli.mjs";
 import { declaredAliases } from "./lib/wire-names.mjs";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
+/** The base product's role word as a word (not inside an identifier), built from its one spelling. */
+const ROLE_WORD = new RegExp(`(^|[^A-Za-z0-9_])${BASE_PRODUCT_WORD}([^A-Za-z0-9_]|$)`, "i");
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD = join(ROOT, "scripts/build-agent-cli.mjs");
@@ -152,7 +155,7 @@ try {
     assert.equal(baked.connect.claudeCommand, c.claudeCommand); assert.equal(baked.mcpEndpoint, c.endpoint); assert.equal(baked.slug, c.slug);
     assert.equal(baked.origin, ORIGIN); assert.equal(baked.packageName, NAME); assert.equal(baked.name, baseProfile.product.name);
     assert.deepEqual(baked.vocabulary.account, baseProfile.vocabulary.account);
-    assert.ok(c.packageAlternative.login === `npx ${NAME} login` && !/(?:WORKSPACE|FDE)_OPS_URL/.test(c.packageAlternative.claudeCommand));
+    assert.ok(c.packageAlternative.login === `npx ${NAME} login` && !new RegExp(`(?:WORKSPACE|${BASE_PRODUCT_WORD.toUpperCase()})_OPS_URL`).test(c.packageAlternative.claudeCommand));
     // WORKSPACE_OPS_URL since the wire names became use-case agnostic. The package still READS
     // FDE_OPS_URL, so an instruction copied into a config last month keeps working; what it PRINTS
     // is the neutral name, because what is printed today is what someone runs next year.
@@ -339,7 +342,7 @@ try {
     // The base skill is written for the base product; here every name in it is this package's,
     // because its description is quoted verbatim into the README an analyst reads.
     assert.ok(!text.includes("@delivery-agents/cli") && text.includes(`npx ${NAME} login`));
-    assert.ok(!/(^|[^A-Za-z0-9_])fde([^A-Za-z0-9_]|$)/i.test(text), "no base-product name survives in a shipped base skill");
+    assert.ok(!ROLE_WORD.test(text), "no base-product name survives in a shipped base skill");
   });
   await check("the README leads with the hosted one-liner, then login / mcp / install-skills", () => {
     const t = readFileSync(join(D, "README.md"), "utf8");
@@ -363,7 +366,7 @@ try {
   await check("every shipped file is named after the package, and the five program files are there", () => {
     const onDisk = readdirSync(D).filter((f) => f.endsWith(".mjs")).sort();
     assert.deepEqual(onDisk, [...Object.values(MODULES), "deployment.generated.mjs"].sort());
-    for (const f of builtFiles(D)) assert.ok(!/(^|[^A-Za-z0-9_])fde([^A-Za-z0-9_]|$)/i.test(f.path), `${f.path} names the base product`);
+    for (const f of builtFiles(D)) assert.ok(!ROLE_WORD.test(f.path), `${f.path} names the base product`);
   });
   await check("the credentials folder is this package's own, under the deployment's host", () => {
     const text = readFileSync(join(D, "deployment.generated.mjs"), "utf8");
@@ -454,40 +457,116 @@ try {
     const expected = renderDeploymentModule(defaultDeployment({ packageName: "@delivery-agents/cli", profile: base, slug: productSlug(base.product.name) }));
     assert.equal(readFileSync(join(ROOT, "setup/deployment.generated.mjs"), "utf8"), expected);
   });
-  await check("its pack list is what it was, plus the generated module", () => {
-    assert.deepEqual(packList(join(ROOT, "setup")), ["README.md", "deployment.generated.mjs", "dm.md", "fde-cli.mjs", "fde-install-skill.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-tools.mjs", "package.json", "skills/delivered-setup/SKILL.md"]);
+  // The generic package's names were the base product's until PR 3 of the neutral-names plan.
+  // The new ones are what a person is shown; every old one still works.
+  const NEW_FILES = ["workspace-cli.mjs", "workspace-login.mjs", "workspace-mcp.mjs", "workspace-tools.mjs", "workspace-install-skill.mjs"];
+  const OLD_FILES = ["fde-cli.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-tools.mjs", "fde-install-skill.mjs"];
+  const S = (f) => join(ROOT, "setup", f);
+  await check("its pack list: the five workspace-* files, the five old-name re-exports, the generated module", () => {
+    assert.deepEqual(packList(join(ROOT, "setup")), ["README.md", "deployment.generated.mjs", "dm.md", ...OLD_FILES, "package.json", "skills/delivered-setup/SKILL.md", ...NEW_FILES].sort());
   });
-  await check("it still has no default address and says so", () => {
-    const r = run(join(ROOT, "setup/fde-mcp.mjs"));
+  await check("its bins: workspace-* are the commands, and every old bin still runs the same file", () => {
+    const { bin } = JSON.parse(readFileSync(S("package.json"), "utf8"));
+    assert.deepEqual(bin, {
+      cli: "./workspace-cli.mjs",
+      "workspace-login": "./workspace-login.mjs", "workspace-mcp": "./workspace-mcp.mjs", "workspace-install-skill": "./workspace-install-skill.mjs",
+      "fde-login": "./workspace-login.mjs", "fde-mcp": "./workspace-mcp.mjs", "fde-install-skill": "./workspace-install-skill.mjs",
+    });
+    for (const target of Object.values(bin)) assert.ok(statSync(S(target)).mode & 0o100, `${target} is executable`);
+  });
+  await check("it still has no default address and says so, under the new names", () => {
+    const r = run(S("workspace-mcp.mjs"));
     assert.match(r.stderr, /WORKSPACE_OPS_URL is not set/);
-    const help = run(join(ROOT, "setup/fde-cli.mjs"), ["--help"]);
-    assert.equal(help.status, 0); assert.match(help.stderr, /NO default address/); assert.match(help.stderr, /npx @delivery-agents\/cli fde-login --url <address>/);
-    assert.equal(run(join(ROOT, "setup/fde-cli.mjs")).status, 1, "bare invocation of the generic package is still an error");
-    assert.equal(ready(run(join(ROOT, "setup/fde-mcp.mjs"), [], { WORKSPACE_OPS_URL: OTHER }))[1], OTHER);
-    assert.equal(ready(run(join(ROOT, "setup/fde-mcp.mjs"), [], { FDE_OPS_URL: OTHER }))[1], OTHER, "and under the name that variable had before the rename");
+    assert.match(r.stderr, /^\[workspace-mcp\]/m, "the server names itself by the new command");
+    const help = run(S("workspace-cli.mjs"), ["--help"]);
+    assert.equal(help.status, 0); assert.match(help.stderr, /NO default address/); assert.match(help.stderr, /npx @delivery-agents\/cli workspace-login --url <address>/);
+    assert.match(help.stderr, /npx @delivery-agents\/cli workspace-mcp /);
+    for (const old of Object.values(LEGACY_GENERIC_COMMANDS)) assert.ok(!help.stderr.includes(old), `the help shows only the new names, not ${old}`);
+    assert.equal(run(S("workspace-cli.mjs")).status, 1, "bare invocation of the generic package is still an error");
+    assert.equal(ready(run(S("workspace-mcp.mjs"), [], { WORKSPACE_OPS_URL: OTHER }))[1], OTHER);
+    assert.equal(ready(run(S("workspace-mcp.mjs"), [], { FDE_OPS_URL: OTHER }))[1], OTHER, "and under the name that variable had before the rename");
+    assert.match(run(S("workspace-login.mjs"), ["--help"]).stderr, /^workspace-login - sign in/);
+  });
+  await check("the old file names still run: node setup/fde-mcp.mjs, fde-cli.mjs, fde-login.mjs, fde-install-skill.mjs", () => {
+    assert.equal(ready(run(S("fde-mcp.mjs"), [], { WORKSPACE_OPS_URL: OTHER }))[1], OTHER, "an MCP config naming setup/fde-mcp.mjs starts the same server");
+    assert.equal(run(S("fde-cli.mjs"), ["--help"]).stderr, run(S("workspace-cli.mjs"), ["--help"]).stderr);
+    const login = run(S("fde-login.mjs"), ["--help"]);
+    assert.equal(login.status, 0, login.stderr); assert.equal(login.stderr, run(S("workspace-login.mjs"), ["--help"]).stderr, "run directly, the old login file runs the login command");
+    const skills = run(S("fde-install-skill.mjs"), ["--help"]);
+    assert.equal(skills.status, 0, skills.stderr); assert.match(skills.stderr, /install the Delivered agent skills/);
+  });
+  await check("the dispatcher answers the old command words too, and never shows them", () => {
+    for (const [old, now] of [["fde-login", "workspace-login"], ["fde-install-skill", "workspace-install-skill"]]) {
+      const a = run(S("workspace-cli.mjs"), [old, "--help"]);
+      const b = run(S("workspace-cli.mjs"), [now, "--help"]);
+      assert.equal(a.status, 0, `${old}: ${a.stderr}`); assert.equal(a.stderr, b.stderr, `${old} runs what ${now} runs`);
+    }
+    for (const cmd of ["fde-mcp", "workspace-mcp", "mcp"]) assert.equal(ready(run(S("workspace-cli.mjs"), [cmd], { WORKSPACE_OPS_URL: OTHER }))?.[1], OTHER, cmd);
+    const unknown = run(S("workspace-cli.mjs"), ["nope"]);
+    assert.match(unknown.stderr, /Try: workspace-login, workspace-mcp, workspace-install-skill/);
+  });
+  await check("each old file re-exports exactly the new module's bindings, and importing the old login runs no sign-in", async () => {
+    const pairs = [["fde-tools.mjs", "workspace-tools.mjs"], ["fde-login.mjs", "workspace-login.mjs"]];
+    for (const [old, now] of pairs) {
+      const a = await import(S(old));
+      const b = await import(S(now));
+      assert.deepEqual(Object.keys(a).sort(), Object.keys(b).sort(), `${old} exports what ${now} does`);
+      for (const k of Object.keys(b)) assert.equal(a[k], b[k], `${old}.${k} is the same binding`);
+    }
+    // An import (here, from this test) is not a run: the guard only fires for the file node was asked to run.
+    const { createTools } = await import(S("fde-tools.mjs"));
+    assert.equal(typeof createTools, "function");
+  });
+  await check("installed from the packed tarball, the new bins and the old ones run the same commands", () => {
+    const inst = join(TMP, "generic-install"); mkdirSync(inst);
+    const pack = spawnSync("npm", ["pack", "--json", "--pack-destination", inst], { cwd: join(ROOT, "setup"), encoding: "utf8" });
+    assert.equal(pack.status, 0, pack.stderr);
+    const tgz = join(inst, JSON.parse(pack.stdout)[0].filename);
+    const add = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--offline", "--ignore-scripts", "--prefix", inst, tgz], { encoding: "utf8" });
+    assert.equal(add.status, 0, add.stderr);
+    const binDir = join(inst, "node_modules", ".bin");
+    for (const [old, now] of [["fde-login", "workspace-login"], ["fde-install-skill", "workspace-install-skill"]]) {
+      const a = run(join(binDir, old), ["--help"]);
+      const b = run(join(binDir, now), ["--help"]);
+      assert.equal(b.status, 0, `${now}: ${b.stderr}`); assert.equal(a.status, 0, `${old}: ${a.stderr}`);
+      assert.equal(a.stderr, b.stderr);
+    }
+    for (const cmd of ["fde-mcp", "workspace-mcp"]) assert.equal(ready(run(join(binDir, cmd), [], { WORKSPACE_OPS_URL: OTHER }))?.[1], OTHER, cmd);
   });
   await check("no product word is left in setup/*.mjs outside the generated module", () => {
-    for (const f of ["fde-cli.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-tools.mjs", "fde-install-skill.mjs"]) {
-      const t = readFileSync(join(ROOT, "setup", f), "utf8");
+    for (const f of [...NEW_FILES, ...OLD_FILES]) {
+      const t = readFileSync(S(f), "utf8");
       assert.ok(!/delivery-agents|Delivered|onfinance/i.test(t), `${f} names a product`);
     }
   });
   await check("and no sibling module's FILE NAME either: they come from the generated module", () => {
-    // If a source spelled "./fde-tools.mjs", a package built under another name would import a
-    // file that is not in it. This is what lets the five sources be copied byte for byte.
-    for (const f of ["fde-cli.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-install-skill.mjs"]) {
-      const code = readFileSync(join(ROOT, "setup", f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    // If a source spelled "./workspace-tools.mjs", a package built under another name would import a
+    // file that is not in it. This is what lets the five sources be copied byte for byte. (The
+    // old-name re-exports name their new file; they are never copied into a built package.)
+    for (const f of NEW_FILES.filter((x) => x !== "workspace-tools.mjs")) {
+      const code = readFileSync(S(f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
       const imports = [...code.matchAll(/from\s+"(\.\/[^"]+)"|import\(\s*"(\.\/[^"]+)"/g)].map((m) => m[1] ?? m[2]);
       assert.deepEqual(imports, ["./deployment.generated.mjs"], `${f} imports a sibling by name: ${imports.join(", ")}`);
     }
   });
-  await check("its own sign-in folder is untouched: ~/.config/fde-mcp/, no host segment, no migration", async () => {
-    // The generic package IS the base product's CLI. Renaming its folder would re-sign-in every
-    // engineer using it to fix a problem it does not have (docs/AGENT_CLI.md).
-    const login = await import(join(ROOT, "setup/fde-login.mjs"));
+  await check("its sign-in folder is ~/.config/workspace-mcp/, and a sign-in in the old ~/.config/fde-mcp/ is read and copied over", async () => {
+    const login = await import(S("workspace-login.mjs"));
     const { homedir } = await import("node:os");
-    assert.equal(login.CRED_PATH, join(homedir(), ".config", "fde-mcp", "credentials.json"));
-    assert.equal(login.LEGACY_CRED_PATH, null, "nothing to migrate from");
+    assert.equal(login.CRED_PATH, join(homedir(), ".config", "workspace-mcp", "credentials.json"));
+    assert.equal(login.LEGACY_CRED_PATH, join(homedir(), ".config", "fde-mcp", "credentials.json"));
+    // In a child with its own HOME, through the real default paths: nobody who signed in before is signed out.
+    const home = join(TMP, "generic-home");
+    const legacy = join(home, ".config", "fde-mcp", "credentials.json");
+    mkdirSync(dirname(legacy), { recursive: true });
+    writeFileSync(legacy, JSON.stringify({ email: "before@example.com", refresh_token: "r" }));
+    const probe = `const l = await import(${JSON.stringify(S("fde-login.mjs"))}); process.stdout.write(JSON.stringify(await l.readCredentials()));`;
+    const r = spawnSync(process.execPath, ["--input-type=module", "-e", probe], { encoding: "utf8", env: { ...process.env, HOME: home, USERPROFILE: home } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).email, "before@example.com");
+    const moved = join(home, ".config", "workspace-mcp", "credentials.json");
+    assert.equal(JSON.parse(readFileSync(moved, "utf8")).email, "before@example.com", "copied to the new folder on first use");
+    assert.equal(statSync(moved).mode & 0o777, 0o600);
+    assert.ok(existsSync(legacy), "the old file is left alone, for an older copy of the package");
   });
 
   console.log("probe profile + agent-kit");

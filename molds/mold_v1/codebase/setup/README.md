@@ -8,13 +8,13 @@ Connectors, Workflows and Crons, driven from your editor.
 > invited email address, and cannot point at the wrong app. The invite email and
 > the "Invite your team" screen show the exact command. See `docs/MCP.md` in the
 > platform repo. This package signs you in either way — a work Google account, or
-> a code emailed to you (`fde-login --email <address>`) — and is the only route to
+> a code emailed to you (`workspace-login --email <address>`) — and is the only route to
 > the direct-blob data-room mode.
 
 > **There is no default address.** This same package serves every application
 > built from this codebase, so it cannot know which one is yours. Set
 > `WORKSPACE_OPS_URL` to your deployment's address (the one you open in a browser), or
-> save it once with `fde-login --url <address>`. Without it every tool fails with
+> save it once with `workspace-login --url <address>`. Without it every tool fails with
 > a message naming `WORKSPACE_OPS_URL`. (It used to default to one product's production
 > address, which silently connected everyone else to the wrong app.)
 
@@ -23,8 +23,8 @@ Connectors, Workflows and Crons, driven from your editor.
 > data-room description baked in, so `npx <package> login` needs no configuration. That
 > package is named after itself: the five files below ship as `<package>-login.mjs` and so
 > on, its commands are `login` / `mcp` / `install-skills`, and it keeps its sign-in in
-> `~/.config/<package>/<host>/`. The names on THIS page are the base product's own CLI's and
-> do not move. See `docs/AGENT_CLI.md`. This directory is its source: every product word and the default
+> `~/.config/<package>/<host>/`. The names on THIS page are the generic package's. See
+> `docs/AGENT_CLI.md`. This directory is its source: every product word and the default
 > address live in `deployment.generated.mjs` (here: the generic wording and no address;
 > rewrite it with `npm run build:agent-cli -- --write-default`, never by hand).
 
@@ -32,10 +32,17 @@ Two binaries, zero runtime dependencies, Node 20+.
 
 | | |
 |---|---|
-| `fde-login` | One interactive sign-in: Google, or `--email <address>` for a six-digit code sent to your inbox. Stores the login at `~/.config/fde-mcp/credentials.json` (mode 600). |
-| `fde-mcp` | The MCP server your coding agent talks to. Presents your own login on every call (a fresh Google ID token, or your email session), so every write carries *your* identity — not a shared key. |
+| `workspace-login` | One interactive sign-in: Google, or `--email <address>` for a six-digit code sent to your inbox. Stores the login at `~/.config/workspace-mcp/credentials.json` (mode 600). |
+| `workspace-mcp` | The MCP server your coding agent talks to. Presents your own login on every call (a fresh Google ID token, or your email session), so every write carries *your* identity — not a shared key. |
 
-> `fde-mcp` writes to the **live** platform — the same blob store and Ops API the
+**Older names still work.** Before version 0.12 these were `fde-login`, `fde-mcp` and
+`fde-install-skill`, the files were `fde-*.mjs`, and the sign-in was kept in
+`~/.config/fde-mcp/`. The old commands are still installed beside the new ones, the old files
+still run, and a sign-in in the old folder is read (and copied to the new one), so an MCP
+config written then needs no edit and nobody is signed out. Use the new names in anything
+you write now.
+
+> `workspace-mcp` writes to the **live** platform — the same blob store and Ops API the
 > web console uses. There is no sandbox, so be deliberate about what you write.
 
 ---
@@ -43,10 +50,10 @@ Two binaries, zero runtime dependencies, Node 20+.
 ## 1. Sign in (once)
 
 ```bash
-npx -p @delivery-agents/cli fde-login --url https://your-deployment.example.com
+npx -p @delivery-agents/cli workspace-login --url https://your-deployment.example.com
 ```
 
-`--url` saves your deployment's address next to the credentials so `fde-mcp`
+`--url` saves your deployment's address next to the credentials so `workspace-mcp`
 needs no `WORKSPACE_OPS_URL`. Opens your browser for Google consent, catches the code on `127.0.0.1`, and
 exchanges it with PKCE. Use your **work** Google account — personal Gmail
 addresses aren't admitted.
@@ -54,7 +61,7 @@ addresses aren't admitted.
 **No Google account?** Sign in with a code sent to your inbox instead:
 
 ```bash
-npx -p @delivery-agents/cli fde-login --url https://your-deployment.example.com --email you@company.com
+npx -p @delivery-agents/cli workspace-login --url https://your-deployment.example.com --email you@company.com
 ```
 
 It emails you a six-digit code and asks for it on the terminal. The session it
@@ -82,9 +89,9 @@ Add this to your Claude Code MCP config (`~/.claude/mcp.json`, or a project
 ```json
 {
   "mcpServers": {
-    "fde": {
+    "workspace": {
       "command": "npx",
-      "args": ["-y", "-p", "@delivery-agents/cli", "fde-mcp"],
+      "args": ["-y", "-p", "@delivery-agents/cli", "workspace-mcp"],
       "env": {
         "WORKSPACE_OPS_URL": "https://your-deployment.example.com",
         "BLOB_READ_WRITE_TOKEN": "blob_rw_..."
@@ -120,7 +127,7 @@ so you do not recreate it.
 ### About that token
 
 `BLOB_READ_WRITE_TOKEN` unlocks the **Data Room** tools only. The Connector,
-Workflow and Cron tools authenticate from your `fde-login` session instead — so
+Workflow and Cron tools authenticate from your `workspace-login` session instead — so
 skip the token entirely if you don't need the data room.
 
 It is direct write access to production customer data: never commit it, never
@@ -130,7 +137,7 @@ paste it into a chat or into `dataroom_write`.
 
 | Variable | Purpose |
 |---|---|
-| `WORKSPACE_OPS_URL` | **Required** (unless saved by `fde-login --url`): your deployment's address. No default. |
+| `WORKSPACE_OPS_URL` | **Required** (unless saved by `workspace-login --url`): your deployment's address. No default. |
 | `WORKSPACE_ORG` | Pin the workspace these tools write to. Checked against your membership server-side. |
 | `WEB_ORIGIN` | Address used in links handed back to people. Defaults to `WORKSPACE_OPS_URL`. |
 | `BLOB_READ_WRITE_TOKEN` | Direct-blob mode for the Data Room tools (platform repo only). Without it they go through the Ops API as you. |
@@ -153,13 +160,13 @@ Google's JWKS.
 
 **"WORKSPACE_OPS_URL is not set"** — the server does not know which deployment to talk
 to. Add `"WORKSPACE_OPS_URL": "<your deployment's address>"` to the MCP server's `env`
-block, or run `fde-login --url <address>` once.
+block, or run `workspace-login --url <address>` once.
 
 **`401` / "not signed in"** — the refresh token expired or was revoked. Re-run
-`npx -p @delivery-agents/cli fde-login`.
+`npx -p @delivery-agents/cli workspace-login`.
 
 **"Your email sign-in has expired"** — an emailed-code session lasts 7 days.
-Re-run `fde-login --email <address>`.
+Re-run `workspace-login --email <address>`.
 
 **Data Room tools missing** — `BLOB_READ_WRITE_TOKEN` isn't set in the MCP
 server's `env` block.

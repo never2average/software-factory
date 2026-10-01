@@ -439,14 +439,14 @@ jobs:
         if: always()
         run: npm run test:check-cross-workspace
 
-      # What a PERSON reads comes from the deployment profile. The gate before this looked for "FDE" in four source
-      # folders and skipped generated files, so a research deployment (companies / analysts / coverage reports)
-      # shipped a bundle saying "List the FDE (forward-deployed engineer) roster with live load" and "Customer DMs":
+      # What a PERSON reads comes from the deployment profile. The gate before this looked for one word (the
+      # member's legacy word) in four source folders and skipped generated files, so a research deployment
+      # (companies / analysts / coverage reports) shipped a bundle that named the member roster by the legacy word, and "Customer DMs":
       # the subagent roster and the whole workflow library reached the client as generated text. This builds the
       # app under a relabelling profile and fails on any base word (customer, deployment, implementation, rollout,
-      # FDE) in the source text a person reads, in every string of the built client bundle (mapped back to its
+      # the legacy member word) in the source text a person reads, in every string of the built client bundle (mapped back to its
       # file; allow-listed only with a reason, scripts/fixtures/ui-vocabulary/allow.json) and in the prerendered
-      # pages; and holds the default profile's words to exactly the base words.
+      # pages; and holds the default profile's words to its neutral ones (no legacy member word on any label).
       # Its last pass reads what a person SEES: `next start` of the relabelled build, Chromium over every page and
       # tab (visible text, titles, placeholders, options, hover tooltips), signed in with a locally made token and
       # the ops API faked, so it needs no secret. A code value joined into a sentence ("filed under a
@@ -546,6 +546,9 @@ jobs:
       - name: Wire-name migration (behavioural)
         if: always()
         run: npm run test:wire-names
+      - name: Renamed tools keep their old names (stored transcripts, workflow prompts, the model boundary)
+        if: always()
+        run: npm run test:tool-aliases
 
       # The rest of the tree, which none of the gates above walks: the base product's role word may appear only
       # as a listed contract (a column, a variable, a bin, a script name, each with its migration plan), under a

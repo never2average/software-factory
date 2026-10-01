@@ -58,6 +58,12 @@ check("run id travels inside the task block", task.includes("wfr_abc12345"));
 check("the prompt is inside the task block", task.includes("Check the deploy health."));
 check("forwarding is demanded verbatim", /VERBATIM/.test(routed));
 
+/* ---- role placeholders: a stored script's prompt reaches the model filled ---- */
+// The library writes `{owner}` / `{member}` (never a role word); a row seeded raw is still sent in the profile's words.
+const filled = composeStepMessage("Choose the best {owner} for acme; ask a {member}.", "customer-context", ctx);
+check("a role placeholder in a stored prompt is filled from the profile", filled.includes("Choose the best account owner for acme; ask a member."));
+check("no role placeholder reaches the model", !/\{(member|members|owner)\}/i.test(filled));
+
 /* ---- customer resolution ------------------------------------------------ */
 check("customerId", customerFromArgs({ customerId: "acme" }) === "acme");
 check("customer_id", customerFromArgs({ customer_id: "acme" }) === "acme");

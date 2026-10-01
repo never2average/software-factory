@@ -21,7 +21,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   "app-author": {
     "name": "App Author",
     "summary": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots).",
-    "description": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots). Delegate here whenever the task is to PRODUCE a document from the data room's current state: it gathers the relevant read-only signals (customers, tickets, FDEs, on-call, SLAs, interactions) and returns GitHub-flavored Markdown and nothing else. It reads and writes prose — it never mutates state, pages anyone, or files a ticket.",
+    "description": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots). Delegate here whenever the task is to PRODUCE a document from the data room's current state: it gathers the relevant read-only signals (customers, tickets, members, on-call, SLAs, interactions) and returns GitHub-flavored Markdown and nothing else. It reads and writes prose — it never mutates state, pages anyone, or files a ticket.",
     "skillNames": [],
     "skillsSummary": "",
     "tools": [
@@ -47,15 +47,15 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
-      },
-      {
-        "name": "list_fdes",
-        "description": "List the FDE (forward-deployed engineer) roster with live load. Reads every People/{id}/identity.json marked kind:'internal-fde' and joins the accounts each owns (customers.fde_owner) plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only."
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "list_followups",
         "description": "List open customer tickets/follow-ups across all customers (or one), sorted by the caller. Use this to prep the daily stand-up."
+      },
+      {
+        "name": "list_members",
+        "description": "List the member roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the accounts each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only."
       },
       {
         "name": "list_schedules",
@@ -63,7 +63,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_stale_customers",
-        "description": "List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, FDE owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep."
+        "description": "List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, account owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep."
       },
       {
         "name": "list_syncs",
@@ -137,7 +137,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "publish_artifact",
@@ -198,15 +198,15 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
-      },
-      {
-        "name": "list_fdes",
-        "description": "List the FDE (forward-deployed engineer) roster with live load. Reads every People/{id}/identity.json marked kind:'internal-fde' and joins the accounts each owns (customers.fde_owner) plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only."
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "list_followups",
         "description": "List open customer tickets/follow-ups across all customers (or one), sorted by the caller. Use this to prep the daily stand-up."
+      },
+      {
+        "name": "list_members",
+        "description": "List the member roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the accounts each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only."
       },
       {
         "name": "list_syncs",
@@ -218,7 +218,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "reassign_owner",
-        "description": "Reassign a customer's durable FDE owner (updates customers.fde_owner + the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership."
+        "description": "Reassign a customer's durable account owner (updates the account's ownership and the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership."
       },
       {
         "name": "record_interaction",
@@ -275,7 +275,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "publish_artifact",
@@ -354,7 +354,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "create_triage_ticket",
-        "description": "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the FDE owner and a human will assign it on approval."
+        "description": "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the account owner and a human will assign it on approval."
       },
       {
         "name": "dataroom_list",
@@ -386,7 +386,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "list_followups",
@@ -479,7 +479,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, FDE owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "list_followups",

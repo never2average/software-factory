@@ -258,7 +258,7 @@ assert.equal(customForNewRow({ set: {}, clear: ["a"], append: {} }), null);
 
 // --- the MCP tools: `custom` on both write tools, named from the profile when the host knows it ---------------------
 
-const { createTools } = await import("../setup/fde-tools.mjs");
+const { createTools } = await import("../setup/workspace-tools.mjs");
 const base = { api: async () => ({}), getOrg: () => null, setOrg() {}, identity: async () => null };
 const toolsOf = (ctx) => Object.fromEntries(createTools({ ...base, ...ctx }).map((t) => [t.name, t]));
 const generic = toolsOf({});

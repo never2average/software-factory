@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { freePort, waitForNextStart } from "./own-listener.mjs";
+import { BASE_PRODUCT_WORD } from "./agent-cli.mjs";
 
 /**
  * Every page and tab, each with the text (or CSS selector, `css:`) that proves it RENDERED — a page that shows the
@@ -132,7 +133,7 @@ export const MOCKS = () => ({
   "/api/ops/threads": { threads: [], items: [] },
 });
 
-const BASE = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", "fde", "fdes"]);
+const BASE = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", BASE_PRODUCT_WORD, `${BASE_PRODUCT_WORD}s`]);
 export function baseWordsIn(t) {
   const f = [];
   for (const m of t.matchAll(/[A-Za-z0-9]+/g)) for (const p of m[0].split(/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/)) if (BASE.has(p.toLowerCase())) f.push(p);

@@ -1,7 +1,7 @@
 /**
  * The deployment profile, as the model reads it.
  *
- * The base prompt was written for one use of the product (a forward-deployed engineering team managing
+ * The base prompt was written for one use of the product (a delivery team managing
  * customers). A deployment that uses it for something else says so in profiles/*.json; this renders that as a
  * short per-turn block.
  *
@@ -20,7 +20,8 @@ import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, type CustomFieldSpec, type Deploym
 import { createVocabulary, speakCodeWith, speakWith, verbatimWith, VOCABULARY, type Vocabulary, type VocabularyProfile } from "./agent-vocabulary.ts";
 
 const DEFAULT_ACCOUNT = "customer";
-const DEFAULT_MEMBER = "FDE";
+/** The member's words in the default profile: the base text's role placeholders are filled with these. */
+const DEFAULT_MEMBER = "member";
 
 /**
  * The identifiers of each redefinable area: what the static prompt calls it, the record key on a customer, the
@@ -128,11 +129,6 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE): string |
       `- In this deployment a "customer" is called a **${voc.account.singular}** (plural: ${voc.account.plural}). Say "${voc.account.singular}" to people. The identifiers do not change: tools such as \`list_customers\` and \`get_customer\`, the \`customer_id\` field and the \`Customers/\` data-room folder all refer to ${voc.account.plural}.`,
     );
   }
-  if (voc.member.singular !== DEFAULT_MEMBER) {
-    lines.push(
-      `- The people you work for are **${voc.member.plural}**, not FDEs. Where your instructions say "FDE" or "FDE owner", read "${voc.member.singular}" and "${voc.owner}".`,
-    );
-  }
   const hidden = Object.entries(dataroom.domains).filter(([, d]) => !d.visible).map(([k]) => k);
   if (hidden.length > 0) {
     lines.push(
@@ -162,7 +158,7 @@ function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary): st
       `- Each record you keep is a **${own(voc.account.singular)}** (plural: ${own(voc.account.plural)}). Your tools, their fields and the data room use the same word: \`list_customers\`, \`get_customer\`, \`customer_id\`, \`Customers/\`.`,
     );
   }
-  if (voc.member.singular !== DEFAULT_MEMBER) {
+  if (voc.member.singular.toLowerCase() !== DEFAULT_MEMBER) {
     lines.push(`- The people you work for are **${own(voc.member.plural)}**; the one responsible for a ${own(voc.account.singular)} is its **${own(voc.owner)}**.`);
   }
   const hidden = Object.entries(dataroom.domains).filter(([, d]) => !d.visible).map(([k]) => k);

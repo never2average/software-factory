@@ -470,7 +470,7 @@ Core columns:
 deployment/workflow/connector/model/data-source fields, related ticket IDs,
 external system IDs, `ticket_type`, `ticket_category`,
 status/priority/severity, queue/team/reporting fields, SLA/escalation fields,
-source fields, customer impact fields, AI/FDE classification fields,
+source fields, customer impact fields, AI and owning-team classification fields,
 root-cause/remediation fields, postmortem fields, `tags`,
 `resolution_summary`, `resolved_at`, `ticket_next_step`.
 

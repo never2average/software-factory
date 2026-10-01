@@ -17,6 +17,8 @@ import { getDb, closeDb } from "../../agent/lib/db/index.ts";
 import { orgs, workflows } from "../../agent/lib/db/schema.ts";
 import { and, eq, notInArray } from "drizzle-orm";
 import { flag, glyph, hasFlag } from "./lib/operator.mjs";
+import { VOCABULARY } from "../../agent/lib/agent-vocabulary.ts";
+import { speakLibraryWorkflow } from "../../agent/lib/workflow-library-view.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dir = join(here, "workflows");
@@ -34,7 +36,9 @@ async function main() {
     const script = readFileSync(join(dir, f), "utf8");
     const { name, description, steps } = parse(script);
     if (!name || !description) throw new Error(`${f}: missing name/description in meta`);
-    return { name, description, steps, script };
+    // In this deployment's words: the library writes role placeholders ({owner}, {member}) that the profile fills,
+    // exactly as a new workspace is provisioned (agent/lib/workflow-library-view.ts).
+    return speakLibraryWorkflow(VOCABULARY, { name, description, steps, script });
   });
 
   if (hasFlag("list")) {

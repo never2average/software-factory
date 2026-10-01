@@ -32,7 +32,7 @@ An optional `tone` colours a widget: `good` | `warn` | `critical` | `info` |
 - **table** — a COMPACT table (paginated for you). `{ "type":"table", "title":"Needs attention", "columns":["Customer","Health","Owner"], "rows":[ ["Jupiter","At risk","Siddhant"] ] }`
 - **actions** — a row of buttons. `{ "type":"actions", "buttons":[ {"label":"Draft nudges","tone":"default","action":{...}} ] }`
 - **chart** — a real data chart. Pick the `variant` that fits, and supply the data in the shape that variant needs:
-    - **Category series** — `variant` = `"bar"` | `"line"` | `"area"` | `"radar"`. `{ "type":"chart", "variant":"bar", "title":"Open tickets by FDE", "xLabels":["Akshat","Prathmesh","Siddhant"], "series":[ {"name":"Open","tone":"info","data":[11,7,4]} ], "stacked":false }` — pass more than one `series` entry for grouped/stacked/multi-line.
+    - **Category series** — `variant` = `"bar"` | `"line"` | `"area"` | `"radar"`. `{ "type":"chart", "variant":"bar", "title":"Open tickets by {member}", "xLabels":["Akshat","Prathmesh","Siddhant"], "series":[ {"name":"Open","tone":"info","data":[11,7,4]} ], "stacked":false }` — pass more than one `series` entry for grouped/stacked/multi-line.
     - **Part of a whole** — `variant` = `"pie"` | `"donut"` | `"radial"` | `"funnel"`. `{ "type":"chart", "variant":"donut", "title":"By health", "slices":[ {"label":"On track","value":48,"tone":"good"}, {"label":"At risk","value":11,"tone":"warn"}, {"label":"Blocked","value":1,"tone":"critical"} ] }` — use **`funnel`** for a narrowing pipeline (it sorts widest→narrowest for you).
     - **Correlation** — `variant` = `"scatter"`. `{ "type":"chart", "variant":"scatter", "points":[ {"x":12,"y":3}, {"x":30,"y":8} ] }`
     - **A diagram** (not a data chart) — `variant` = `"mermaid"` with a `mermaid` source string. Use this for a **flowchart / sequence / gantt / state / ER** diagram — a routing path, an escalation flow, a process. `{ "type":"chart", "variant":"mermaid", "title":"Escalation path", "mermaid":"flowchart LR\nA[SLA breach] --> B{P0?}\nB -->|yes| C[Page on-call]\nB -->|no| D[Queue]" }`
@@ -74,7 +74,7 @@ buttons beats one with a button on every row.
 Compute every number from real data via your read tools. **Be fast — favour the
 LIST tools, which already carry what you need:** `list_customers` (name, stage,
 status, health, owner, open-ticket counts), `list_urgent_tickets`,
-`list_followups`, `list_fdes`, `list_stale_customers`, `get_oncall`. Aggregate
+`list_followups`, `list_members`, `list_stale_customers`, `get_oncall`. Aggregate
 those into the widgets. Only call `get_customer` for the **handful** of accounts
 that genuinely need a detail the list doesn't carry — never per-account across
 the whole book (that's slow and will time the refresh out). A dozen tool calls

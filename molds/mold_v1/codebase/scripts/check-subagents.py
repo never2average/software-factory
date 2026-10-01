@@ -44,7 +44,7 @@ GENERATED_REGISTRY = "agent/lib/subagent-registry.generated.ts"
 
 MIN_SKILLS = 6
 SHARED_DIR = "scripts/subagent-shared"
-KEY_OK = re.compile(r"^[a-z][a-z0-9-]{0,79}$")  # the same shape setup/fde-mcp.mjs accepts
+KEY_OK = re.compile(r"^[a-z][a-z0-9-]{0,79}$")  # the same shape setup/workspace-mcp.mjs accepts
 DECL_FIELDS = ("name", "summary", "dataroomPaths")
 # Kept identical to TEMPLATE_OK in scripts/gen-subagent-meta.mjs.
 TEMPLATE_OK = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*(/(\{[a-z_]+\}|[A-Za-z0-9_.{}-]+))*/(\*\*|[A-Za-z0-9_.{}-]+)$")

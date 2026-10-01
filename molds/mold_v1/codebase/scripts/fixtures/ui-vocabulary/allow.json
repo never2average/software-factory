@@ -5,6 +5,11 @@
     "why": "Design previews with mock records (cards, domain forms, stickloop). app/preview/layout.tsx calls notFound() in production, so no person of any deployment reaches them."
   },
   {
+    "source": "^agent/lib/legacy-member\\.ts$",
+    "literal": "^FDE(s| owner)?$",
+    "why": "The member's legacy word as DATA, in the one module that spells it: the UI matches stored values (a ticket's ownerTeam, a value-evidence status) and the stored owner key against it, and shows the profile's member word or owner label in its place (lib/ui-words.ts storedValueLabel, lib/ui-keys.ts humanizeKey). It is never displayed itself; the rendered-page pass and the default-profile pass prove what a person reads."
+  },
+  {
     "source": "^app/_components/ops/workflows-panel\\.tsx$",
     "literal": "subagent: \"customer-context\"",
     "why": "The base starter workflow script, used only when this deployment keeps the customer-context and follow-ups specialists (STARTER_SCRIPT); a specialist is delegated to by its directory name, which never moves. A deployment that excludes either starts from a one-step script naming a specialist it has."
@@ -13,11 +18,6 @@
     "source": "^app/_components/ops/connectors-panel\\.tsx$",
     "literal": "^\\s*on fde-agent-api\\.$",
     "why": "The agent API's Vercel project name in a `vercel env add` instruction: a person must type the name the project really has."
-  },
-  {
-    "source": "^lib/mcp-connect\\.ts$",
-    "literal": "^ (fde-login --url |fde-mcp)$",
-    "why": "The generic agent package's real command names (its bin entries). A command a person copies must be one that exists; a deployment with its own package (npm run build:agent-cli) is shown that package's `login` / `mcp` instead."
   },
   {
     "source": "^app/api/ops/(deployments|implementations)/route\\.ts$",

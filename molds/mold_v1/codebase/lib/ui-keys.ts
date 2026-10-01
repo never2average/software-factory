@@ -4,10 +4,11 @@
  * Keys never move: the API, the database and the workbook keep `customerId`, `customer_id`, `fdeOwner`. Where the UI
  * shows one to a person (a data-room sheet's column header, a Markdown or JSON export, a JSON / JSONL viewer, an API
  * error naming a field), it shows the key the MODEL is given for it (agent/lib/agent-vocabulary.ts: `customer_id` ->
- * `company_id`), so a person and the agent name a column the same way. A key humanised into a label ("Fde Owner")
- * reads the profile's owner label instead. VALUES are never translated: they are data.
+ * `company_id`), so a person and the agent name a column the same way. The owner key, whose name still carries the
+ * member's legacy word (agent/lib/legacy-member.ts), reads the profile's owner label under every profile, the
+ * default included ("Account owner"). VALUES are never translated: they are data.
  *
- * Only keys that name the product's own records are translated. The account and the member ("customer", "FDE") mean
+ * Only keys that name the product's own records are translated. The account and the member ("customer", the legacy member word) mean
  * one thing wherever they appear in a key; "deployment", "implementation" and "rollout" also name other things
  * (`deployment_model`, `deployment_strategy` are a platform's software-deployment settings), so a key carrying one of
  * those is translated only when it is a field of the two record areas (DOMAIN_FIELDS) or one of their ids.
@@ -15,12 +16,14 @@
  * The identity under the default profile.
  */
 import { speakIdentifier, VOCABULARY_RELABELLED } from "../agent/lib/agent-vocabulary.ts";
+import { LEGACY_MEMBER, ownerKeyLabel } from "../agent/lib/legacy-member.ts";
 import { DOMAIN_FIELDS, type DomainArea } from "./deployment-profile.generated.ts";
 import { domainView } from "./profile-domains.ts";
 import { W } from "./ui-words.ts";
 
-/** Base words that mean the account or the member in any key. */
-const ALWAYS = new Set(["customer", "customers", "fde", "fdes"]);
+/** Base words that mean the account or the member in any key (the member by its legacy spelling, which keys keep). */
+const ALWAYS = new Set(["customer", "customers", LEGACY_MEMBER.singular.toLowerCase(), LEGACY_MEMBER.plural.toLowerCase()]);
+
 /** Base words that name a record area only in the areas' own keys. */
 const AREA = new Set(["deployment", "deployments", "implementation", "implementations", "rollout", "rollouts"]);
 /**
@@ -51,8 +54,10 @@ export function speakKey(key: string): string {
 
 /** camelCase key -> "Words Like This", spoken: `customerId` -> "Company Id"; the owner key -> the owner label. */
 export function humanizeKey(key: string): string {
-  // The owner key under either of its names (drizzle/0028_neutral_owner_columns.sql): the profile's owner label.
-  if (VOCABULARY_RELABELLED && /^(fde_?owner|account_?owner)$/i.test(key)) return W.owner;
+  // The owner key under any of its names, the stored one (fde_owner) and the neutral one beside it
+  // (account_owner, drizzle/0028_neutral_owner_columns.sql): the profile's owner label, under every profile.
+  const owner = ownerKeyLabel(key, W.owner);
+  if (owner) return owner;
   return speakKey(key)
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, (c) => c.toUpperCase())

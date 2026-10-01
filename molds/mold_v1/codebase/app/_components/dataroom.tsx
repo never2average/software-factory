@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 import { PdfView } from "./pdf-view";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { jsonForPeople } from "@/lib/ui-keys";
-import { W, an } from "@/lib/ui-words";
+import { W, an, storedValueLabel } from "@/lib/ui-words";
 import { listedOwnFields, orderPhrase, sameKey, sheetColumnKey, workbookHidden, type WorkbookTable, type WorkbookTableInfo } from "@/lib/workbook-fields";
 import type { CustomFieldSpec } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
@@ -680,7 +680,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
         c.successCriteria,
         c.valuePeriodStart,
         c.valuePeriodEnd,
-        c.valueEvidenceStatus,
+        storedValueLabel("valueEvidenceStatus", c.valueEvidenceStatus),
         c.valueEvidenceUrl,
         c.lastBusinessReviewDate,
         c.nextBusinessReviewDate,
@@ -1242,7 +1242,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
         t.ticketPriority,
         t.severity,
         t.supportQueue,
-        t.ownerTeam,
+        storedValueLabel("ownerTeam", t.ownerTeam),
         t.reportedByEmail,
         t.customerContactEmail,
         t.ticketOpenedDate,

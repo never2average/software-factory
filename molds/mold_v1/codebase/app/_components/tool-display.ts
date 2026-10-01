@@ -6,7 +6,7 @@
 import { SUBAGENT_META } from "./subagent-meta.generated";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 // The agent's model-facing tool names follow the profile (`get_company` for `get_customer`): look up by base name.
-import { baseNameAmong, speakIdentifier } from "@/agent/lib/agent-vocabulary";
+import { baseNameAmong, canonicalToolName, modelToolName, speakIdentifier } from "@/agent/lib/agent-vocabulary";
 
 /** What this deployment calls a customer. Tool IDENTIFIERS never change — only the label a person reads. */
 const ACCOUNT = DEPLOYMENT_PROFILE.vocabulary.account;
@@ -75,12 +75,14 @@ export function toolDisplayName(toolName: string): string {
     return name ? `${subagentDisplayName(name)} subagent` : "Subagent";
   }
   // The fallback speaks the deployment's vocabulary too: "update_customer" -> "Update customer" by default,
-  // "Update company" where a profile renames the account noun.
-  const base = baseNameAmong(toolName, Object.keys(KNOWN_NAMES));
+  // "Update company" where a profile renames the account noun. A tool's old name in a stored transcript
+  // (TOOL_ALIASES) is shown as the tool it is now, under the name this deployment's model calls it by.
+  const current = canonicalToolName(toolName) === toolName ? toolName : modelToolName(canonicalToolName(toolName));
+  const base = baseNameAmong(current, Object.keys(KNOWN_NAMES));
   return (
     KNOWN_NAMES[base] ??
     sentenceCase(
-      toolName
+      current
         .replace(/_/g, " ")
         .toLowerCase()
         .replace(/\bcustomers\b/g, ACCOUNT.plural)

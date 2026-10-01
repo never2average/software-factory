@@ -26,7 +26,7 @@ It never publishes.
 | Install | nothing | `npx <package>` |
 | Sign-in | any invited email address (an emailed code) | `login`: a Google Workspace account (browser sign-in); `login --email <address>`: an emailed code |
 | Address | it IS the deployment | baked in at build time |
-| Tools | `setup/fde-tools.mjs` | the same file, copied in as `<package>-tools.mjs` |
+| Tools | `setup/workspace-tools.mjs` | the same file, copied in as `<package>-tools.mjs` |
 | Skills | none | `npx <package> install-skills` |
 
 Both serve the same tools from one definition. The package's help and README **lead with
@@ -92,9 +92,18 @@ deployments' packages would collide on them).
 The base product's own command words — `fde-login`, `fde-mcp`, `fde-install-skill` — were
 accepted by the dispatcher as "older names" and are **not** any more. They were never a bin
 in a built package (PR #28 removed those), nothing this build writes points at them, and a
-package a research desk bought should not answer to another company's command names. The
-generic package in `setup/` still answers to its own `fde-login` and `fde-mcp`, because
-those are its real command names.
+package a research desk bought should not answer to another company's command names.
+
+The generic package in `setup/` is neutral too. Its files are `workspace-cli.mjs`,
+`workspace-login.mjs`, `workspace-mcp.mjs`, `workspace-tools.mjs` and
+`workspace-install-skill.mjs`, and its bins are `workspace-login`, `workspace-mcp` and
+`workspace-install-skill` (plus `cli`, the dispatcher). Everything it was published under
+before still works. Each old `fde-*.mjs` file stays as a one-line re-export of its new file,
+and runs it when run directly. The old bins `fde-login`, `fde-mcp` and `fde-install-skill`
+stay in `setup/package.json` beside the new ones. The dispatcher still accepts the old
+command words (`legacyCommands` in its `deployment.generated.mjs`), and its help never
+shows them. `scripts/test-agent-cli-build.mjs` proves each of these. A built package carries
+none of them.
 
 **Sign-in.** `login` is the Google installed-app flow. `login --email <address>` is for the
 many people with no Google account: it calls `POST /api/auth/email/request` on the
@@ -122,7 +131,9 @@ falls back to the base product's name when a deployment ships the default profil
 on first use, copies what it finds into the new folder (mode 600). The old file is left
 alone: an older copy of the package still installed somewhere keeps working, and a stale
 file costs nothing next to signing someone out with no message. The generic package in
-`setup/` has nothing to migrate — its folder never moved.
+`setup/` moved the same way: it keeps its sign-in in `~/.config/workspace-mcp/` and reads
+one made earlier from `~/.config/fde-mcp/` (`LEGACY_CONFIG_DIR`), copying it over on first
+use.
 
 **`dm.md`.** Hidden data-room domains are removed. A relabelled domain reads
 `Label [Folder]`, for example `Companies [Customers]`: the bracketed name is the real one,
@@ -144,7 +155,7 @@ the only place a pack puts material meant for a coding agent outside the app, an
   To ship one anyway, name it in the optional `agent-kit/kit.json`:
   `{ "include_base_skills": ["delivered-setup"] }`.
 - A base skill that ships is rewritten for this package: the generic package's name, the
-  generic package's command names (`npx @delivery-agents/cli fde-login`) and the base
+  generic package's command names (`npx @delivery-agents/cli workspace-login`) and the base
   product's role word all become this package's. A skill description is quoted verbatim into
   the README, so one left alone would put another company's name in front of the reader.
   Tool names (`workspace_status`, …) are the wire contract and are untouched — and are

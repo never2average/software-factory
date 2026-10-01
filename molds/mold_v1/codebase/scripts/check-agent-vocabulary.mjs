@@ -3,7 +3,7 @@
  * THE AGENT-VOCABULARY GATE — a deployment that renames the base product's domains gets an agent that speaks
  * only its own words.
  *
- * `check:vocabulary` keeps "FDE" out of the UI; `check:wire-names` keeps it out of the identifiers a coding
+ * `check:vocabulary` keeps the base role word out of the UI; `check:wire-names` keeps it out of the identifiers a coding
  * assistant is served. Neither looks at what the eve agent's MODEL reads, and that is where it survived: a
  * research deployment whose profile says Customers are "Companies", Deployments are "Coverage reports" and
  * Implementation is "Portfolios" had a live agent reasoning 'Given the deployment mapping: Customers/ is shown
@@ -18,12 +18,14 @@
  *
  *   1. RELABELLED — profiles/00-default.json + scripts/fixtures/agent-vocabulary/50-relabelled.json (a copy of
  *      the hfc-research pack's profile). No base word may appear anywhere: customer(s), deployment(s),
- *      implementation(s), rollout(s), FDE(s). Matched as whole words case-insensitively, where `_`, `-`, `/`,
+ *      implementation(s), rollout(s), the member's legacy word. Matched as whole words case-insensitively, where `_`, `-`, `/`,
  *      `.` and a camelCase hump are word boundaries too — `customer_id`, `list_customers`, `deploymentId` and
  *      `Customers/` are exactly the leaks this exists for, and a plain \b would pass every one of them.
  *   2. DEFAULT — profiles/00-default.json alone. The rendered prompts, tools and roster must be byte-identical
- *      to scripts/fixtures/agent-vocabulary/default-surface.txt, the snapshot taken BEFORE the vocabulary work.
- *      A deployment that relabels nothing must not pay for the ones that do.
+ *      to scripts/fixtures/agent-vocabulary/default-surface.txt (first taken BEFORE the vocabulary work, re-taken
+ *      when the default profile's role words became neutral). A deployment that relabels nothing must not pay for
+ *      the ones that do. And it reads the member's legacy word nowhere as a word (only inside a contract
+ *      identifier such as a column name), and no role placeholder (`{member}`, `{owner}`) unfilled.
  *
  *   npm run check:agent-vocabulary                    both
  *   npm run check:agent-vocabulary -- --update-baseline   re-snapshot the default surface (a deliberate prompt change)
@@ -41,6 +43,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const FIXTURES = join(ROOT, "scripts", "fixtures", "agent-vocabulary");
@@ -53,8 +56,30 @@ const argAfter = (flag) => (process.argv.includes(flag) ? process.argv[process.a
 const PACK = argAfter("--pack");
 const ALLOW_FILE = argAfter("--allow");
 
-/** The base product's words, as whole tokens. */
-const BASE_WORDS = ["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", "fde", "fdes"];
+/** The base product's words, as whole tokens: the record words and the member's legacy word (BASE_PRODUCT_WORD). */
+const BASE_WORDS = ["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", BASE_PRODUCT_WORD, `${BASE_PRODUCT_WORD}s`];
+/** The member's legacy word standing as a WORD (not inside an identifier such as a column name). */
+const LEGACY_AS_WORD = new RegExp(`(?<![A-Za-z0-9_\\-.])(${BASE_PRODUCT_WORD}s?)(?![A-Za-z0-9_\\-])`, "gi");
+/**
+ * STORED enum values that carry the legacy word (a ticket's `ownerTeam`, an account's `valueEvidenceStatus`,
+ * agent/lib/customer-schema.ts). They are data the model writes back as stored, like a column name, and are moved
+ * only by a data migration; a person reads them in the profile's member word (lib/ui-words.ts storedValueLabel).
+ * A schema line that is exactly one of them is not a word the model is taught.
+ */
+const LEGACY_STORED_VALUES = new Set([BASE_PRODUCT_WORD.toUpperCase(), `${BASE_PRODUCT_WORD.toUpperCase()} Verified`]);
+const isStoredValueLine = (line) => LEGACY_STORED_VALUES.has(line.trim().replace(/^"|",?$|"$/g, ""));
+/** A role placeholder base text writes, which every boundary must fill from the profile. */
+const UNFILLED = /(?<!\$)\{(member|members|Member|Members|owner|Owner)\}/g;
+/** Lines of a surface that carry `re`, with their section, for a report. */
+function linesWith(surface, re) {
+  const out = [];
+  let section = "(start)";
+  for (const line of surface.split("\n")) {
+    if (line.startsWith("=== ")) section = line.slice(4);
+    else if (new RegExp(re.source, re.flags.replace("g", "")).test(line) && !(re === LEGACY_AS_WORD && / :: tool :: /.test(section) && isStoredValueLine(line))) out.push(`[${section}] ${line.trim().slice(0, 200)}`);
+  }
+  return out;
+}
 
 /**
  * Deliberate exceptions: { section: RegExp, phrase: RegExp, why: string }. A hit is allowed only when both
@@ -160,11 +185,27 @@ if (problems.length) {
   }
   if (shown.size > 400) console.error(`  … and ${shown.size - 400} more line(s)`);
 } else {
+  const unfilledR = linesWith(text, UNFILLED);
+  if (unfilledR.length) {
+    failed = true;
+    console.error(`check-agent-vocabulary: ${unfilledR.length} role placeholder(s) reached the model unfilled:\n${unfilledR.slice(0, 40).map((l) => `  - ${l}`).join("\n")}`);
+  }
   console.log(`check-agent-vocabulary: ${PACK ? `pack ${PACK} under its own profile` : "relabelled profile"} — ${sections.length} model-facing sections (${toolCount} tool definitions across the root and ${subagentCount} subagents, prompts, skills, sandbox files, briefing, tool results) carry no base word`);
 }
 
 /* 2. DEFAULT --------------------------------------------------------------------------------------------- */
 const snapshot = PACK ? null : render([], ["--snapshot", "--no-results"]);
+if (!PACK) {
+  const legacy = linesWith(snapshot, LEGACY_AS_WORD);
+  const unfilled = linesWith(snapshot, UNFILLED);
+  if (legacy.length || unfilled.length) {
+    failed = true;
+    if (legacy.length) console.error(`check-agent-vocabulary: DEFAULT profile — the model reads the member's legacy word as a word in ${legacy.length} line(s). Write a role placeholder ({member}, {owner}) the profile fills:\n${legacy.slice(0, 40).map((l) => `  - ${l}`).join("\n")}`);
+    if (unfilled.length) console.error(`check-agent-vocabulary: DEFAULT profile — ${unfilled.length} role placeholder(s) reached the model unfilled:\n${unfilled.slice(0, 40).map((l) => `  - ${l}`).join("\n")}`);
+  } else {
+    console.log("check-agent-vocabulary: default profile — the member's legacy word appears in no model-facing text (only inside contract identifiers), and every role placeholder is filled");
+  }
+}
 if (PACK) {
   console.log(`check-agent-vocabulary: pack mode (${PACK}) — the default-profile snapshot is not compared`);
 } else if (UPDATE) {

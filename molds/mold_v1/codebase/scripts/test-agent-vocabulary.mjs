@@ -39,6 +39,9 @@ register(
 );
 
 const ROOT = process.cwd();
+// The member's legacy words (agent/lib/legacy-member.ts): text stored before the default spoke neutrally, which a
+// relabelling profile still translates. Read from their one spelling, never written here.
+const { LEGACY_MEMBER: L } = await import(pathToFileURL(join(process.cwd(), "agent/lib/legacy-member.ts")).href);
 const FIXTURE = join(new URL("..", import.meta.url).pathname, "scripts/fixtures/agent-vocabulary/50-relabelled.json");
 let passed = 0;
 const check = async (name, fn) => {
@@ -72,8 +75,20 @@ async function phaseUnits() {
 
   console.log("The default profile changes nothing:");
   await check("nothing is relabelled", () => assert.equal(base.relabelled, false));
+  await check("base text's role placeholders are filled with the default profile's neutral words", () => {
+    assert.equal(v.speakWith(base, "The {member} who owns it — usually the customer's {owner}."), "The member who owns it — usually the customer's account owner.");
+    assert.equal(v.speakWith(base, "Ask an {member}; the {Members} decide; {Owner} first."), "Ask a member; the Members decide; Account owner first.");
+    assert.equal(v.fillWith(base, "People/{id}/identity.json and {customer_id}"), "People/{id}/identity.json and {customer_id}", "only the role placeholders");
+    assert.equal(v.hasRolePlaceholder("the {owner}"), true);
+    assert.equal(v.hasRolePlaceholder("People/{id}"), false);
+  });
+  await check("the member's legacy word is data under the default profile: not translated, not a base word", () => {
+    const t = `${L.owner} reassigned; ownerTeam ${L.singular}`;
+    assert.equal(v.speakWith(base, t), t);
+    assert.equal(v.speakIdentifierWith(base, "fdeOwner"), "fdeOwner");
+  });
   await check("speak, identifiers, paths, JSON: all the identity", () => {
-    const t = "List all customers (`customer_id`, Customers/acme, FDE owner, deploymentId).";
+    const t = `List all customers (\`customer_id\`, Customers/acme, ${L.owner}, deploymentId).`;
     assert.equal(v.speakWith(base, t), t);
     assert.equal(v.speakIdentifierWith(base, "list_customers"), "list_customers");
     assert.equal(v.toStoredPathWith(base, "Customers/x"), "Customers/x");
@@ -87,7 +102,7 @@ async function phaseUnits() {
   const ids = {
     list_customers: "list_companies", get_customer: "get_company", upsert_customer: "upsert_company",
     list_stale_customers: "list_stale_companies", match_customer_by_email: "match_company_by_email",
-    read_customer_slas: "read_company_slas", list_fdes: "list_analysts", customer_id: "company_id",
+    read_customer_slas: "read_company_slas", list_fdes: "list_analysts", list_members: "list_analysts", customer_id: "company_id",
     customerId: "companyId", fdeOwner: "analystOwner", solutionFdeOwner: "solutionAnalystOwner",
     deploymentId: "coverageReportId", deployments: "coverageReports", implementation: "portfolioEntry",
     rolloutId: "portfolioId", implementationProgressPct: "portfolioEntryProgressPct", CUSTOMER_ID: "COMPANY_ID",
@@ -97,8 +112,11 @@ async function phaseUnits() {
   const prose = [
     ["Get the full record for one customer.", "Get the full record for one company."],
     ["an implementation and a rollout", "a portfolio entry and a portfolio"],
-    ["The FDE who owns it — usually the customer's FDE owner.", "The analyst who owns it — usually the company's covering analyst."],
-    ["FDE owner of record", "Covering analyst of record"],
+    [`The ${L.singular} who owns it — usually the customer's ${L.owner}.`, "The analyst who owns it — usually the company's covering analyst."],
+    [`${L.owner} of record`, "Covering analyst of record"],
+    // The base text's own role placeholders, filled from the profile (articles follow the word).
+    ["The {member} who owns it — usually the customer's {owner}.", "The analyst who owns it — usually the company's covering analyst."],
+    ["Ask a {member}; the {Members} decide; {Owner} first.", "Ask an analyst; the Analysts decide; Covering analyst first."],
     ["Read Customers/{id}/sla.json and Implementation/{id}/x and Deployments/{customer_id}/", "Read Companies/{id}/sla.json and Portfolios/{id}/x and Coverage-reports/{company_id}/"],
     ["seven domains (Customers, Deployments, Implementation, People)", "seven domains (Companies, Coverage reports, Portfolios, People)"],
     ["scope 'customer:{id}' e.g. 'customer:acme-bank'", "scope 'company:{id}' e.g. 'company:acme-bank'"],
@@ -200,7 +218,7 @@ async function phaseUnits() {
     assert.deepEqual(out, { ticketStatus: "Waiting on Company", summary: "Waiting on Customer", name: "Implementation" });
   });
   await check("R3 nested note/reason/hint/warning are record data: untouched", () => {
-    const rec = { interactions: [{ note: "The customer wants Customers/x", reason: "deployment slipped", hint: "FDE owner", warning: "customer" }] };
+    const rec = { interactions: [{ note: "The customer wants Customers/x", reason: "deployment slipped", hint: L.owner, warning: "customer" }] };
     assert.deepEqual(v.outputForModelWith(voc, rec), rec);
   });
   await check("R3 an error message keeps the ids and names it embeds", () => {
@@ -268,6 +286,9 @@ async function phaseStamped() {
   const upsert = await resolve(tools.upsertCustomerTool);
   await check("upsert_customer is offered as upsert_company only", () => assert.deepEqual(Object.keys(upsert), ["upsert_company"]));
   await check("the static tools keep their file's name and translate too", () => assert.equal(typeof dataroom.dataroomReadTool.execute, "function"));
+  // The roster tool was renamed to list_members (TOOL_ALIASES); a relabelling deployment keeps the name it had.
+  const roster = await resolve(tools.listMembersTool);
+  await check("list_members is offered as list_analysts only, the name this deployment already called it by", () => assert.deepEqual(Object.keys(roster), ["list_analysts"]));
   await upsert.upsert_company.execute({
     id: "stamp-co", name: "Stamp Co", analystOwner: "a@example.com",
     portfolioEntry: { portfolioId: "large-caps", portfolioEntryStage: "Kickoff", portfolioEntryProgressPct: 5, portfolioEntryRiskLevel: "Green", blockerOwner: "Company" },
@@ -349,7 +370,7 @@ async function phaseStamped() {
   // R12: the account record's OWN fields (account_fields.custom_fields: `notes`, `house_view` in the fixture). Offered
   // as `custom` beside the hidden fields' absence, stored and read back VERBATIM (user data: a note that says
   // "Customers/…" or "deployment" is not the product's words), merged per key, and refused when undeclared.
-  const NOTE = "Read Customers/acme/filings/q1.pdf and Deployments/acme/v1 again.\nThe deployment of capital into affordable housing is the customer_id question; FDE owner: n/a; list_customers said 3 customers.";
+  const NOTE = `Read Customers/acme/filings/q1.pdf and Deployments/acme/v1 again.\nThe deployment of capital into affordable housing is the customer_id question; ${L.owner}: n/a; list_customers said 3 customers.`;
   await check("R12 the account's own fields are an upsert_company parameter (`custom`), hidden account fields still are not", () => {
     assert.ok("custom" in props, Object.keys(props).join(","));
     assert.ok(!("arr" in props) && !("seats" in props));
@@ -516,7 +537,7 @@ async function phaseStamped() {
     assert.deepEqual(bad, []);
   });
   await check("R6 no provisioned workflow's text names a base tool or word", () => {
-    const bad = lib.filter((w) => /list_fdes|get_customer|list_customers|upsert_customer|\bcustomers?\b|\bFDE/i.test([w.description, ...w.steps, ...(w.script.match(/"(?:[^"\\]|\\.)*"/g) ?? []).filter((q) => !/^"(deployment|configuration|data-migration|customer-context|research|follow-ups|evals|app-author|browser|workflow-author)"$/.test(q))].join(" "))).map((w) => w.name);
+    const bad = lib.filter((w) => new RegExp(`list_fdes|list_members|get_customer|list_customers|upsert_customer|\\bcustomers?\\b|\\b${L.singular}|\\{(member|members|owner)\\}`, "i").test([w.description, ...w.steps, ...(w.script.match(/"(?:[^"\\]|\\.)*"/g) ?? []).filter((q) => !/^"(deployment|configuration|data-migration|customer-context|research|follow-ups|evals|app-author|browser|workflow-author)"$/.test(q))].join(" "))).map((w) => w.name);
     assert.deepEqual(bad, []);
   });
   await check("R6 a provisioned workflow still reads its args by the base key the run route checks", () => {

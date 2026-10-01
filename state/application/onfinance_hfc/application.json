@@ -2,7 +2,7 @@
   "$schema": "../app_id/application.schema.json",
   "app_id": "onfinance_hfc",
   "mold_id": "mold_v1",
-  "mold_commit": "f83e8d2ad012e404671fd77f3e4782127a5fa578",
+  "mold_commit": "e46be40192933421e93807a1919dc70e5a53509e",
   "status": "stamped",
   "brief": "briefs/onfinance_hfc.md",
   "product_id": "onfinance_hfc_research",
@@ -192,28 +192,28 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-09-30T17:31:59+00:00",
-      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-09-30T173159Z.md"
+      "run_at": "2026-10-01T18:32:11+00:00",
+      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-10-01T183211Z.md"
     },
     "context": {
       "status": "skipped",
-      "run_at": "2026-09-30T17:30:25+00:00",
-      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-09-30T173025Z.md"
+      "run_at": "2026-10-01T18:30:36+00:00",
+      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-10-01T183036Z.md"
     },
     "functional": {
       "status": "skipped",
-      "run_at": "2026-09-30T17:27:37+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-09-30T172737Z.md"
+      "run_at": "2026-10-01T18:27:39+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-10-01T182739Z.md"
     },
     "accessibility": {
       "status": "skipped",
-      "run_at": "2026-09-30T17:33:57+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-09-30T173357Z.md"
+      "run_at": "2026-10-01T18:34:32+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-10-01T183432Z.md"
     },
     "responsiveness": {
       "status": "skipped",
-      "run_at": "2026-09-30T17:34:15+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-09-30T173415Z.md"
+      "run_at": "2026-10-01T18:34:50+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-10-01T183450Z.md"
     }
   },
   "customer_id": "internal",

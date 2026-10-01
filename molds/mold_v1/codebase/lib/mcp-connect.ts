@@ -120,12 +120,17 @@ export function mcpConnect(input: {
           note: `Alternative for Google Workspace accounts: the npm package ${input.agentPackage}. ${origin} is built into it, so it needs no configuration.`,
         }
       : {
-          login: `npx ${GENERIC_AGENT_PACKAGE} fde-login --url ${origin}`,
+          // The package entrypoint's own `login` / `mcp`: neutral, and answered by every
+          // published version of the generic package (the older ones too, whose direct bins
+          // were still named after the base product), so what is printed works whichever
+          // version npx resolves. The direct bins are workspace-login / workspace-mcp now, with
+          // the old names kept as aliases (setup/package.json).
+          login: `npx ${GENERIC_AGENT_PACKAGE} login --url ${origin}`,
           // WORKSPACE_OPS_URL, not the FDE_OPS_URL this used to print: these instructions are
           // copied into an MCP config by hand and then live there for months, so what is printed
           // today is what a person is still running next year. The package reads the old name
           // too (LEGACY_ENV_NAMES), so an instruction already followed keeps working.
-          claudeCommand: `claude mcp add ${slug} --env WORKSPACE_OPS_URL=${origin} -- npx -y -p ${GENERIC_AGENT_PACKAGE} fde-mcp`,
+          claudeCommand: `claude mcp add ${slug} --env WORKSPACE_OPS_URL=${origin} -- npx -y ${GENERIC_AGENT_PACKAGE} mcp`,
           note: `Alternative for Google Workspace accounts: the npm package. It has no built-in address, so WORKSPACE_OPS_URL=${origin} is required.`,
         },
   };
