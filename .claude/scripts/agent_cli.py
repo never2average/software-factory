@@ -23,6 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # before it goes to a public registry.
 ALLOWED = [re.compile(p) for p in (
     r"^package\.json$", r"^README\.md$", r"^dm\.md$", r"^deployment\.generated\.mjs$",
+    # redacted-*.mjs: the file names the mold's own setup/ package ships (upstream redacted), not factory vocabulary.
     r"^redacted-[a-z-]+\.mjs$", r"^skills/[a-z][a-z0-9-]*/[A-Za-z0-9_./-]+$",
 )]
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")

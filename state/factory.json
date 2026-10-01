@@ -112,7 +112,7 @@
     "vercel_team": "your-vercel-team",
     "postgres_scope": "fresh",
     "workspace_name": "redacted",
-    "redacted": "operator@example.com",
+    "operator_email": "operator@example.com",
     "secret_source_project": "redacted",
     "agent_cli_scope": "redacted",
     "notify_domain": "example.com"
