@@ -52,6 +52,8 @@ async function main() {
     accountRegion: flag("region").trim() || null,
     lifecycleStage: "Onboarding",
     status: "On Track",
+    // The owner under both names (drizzle/0028_neutral_owner_columns.sql; agent/lib/db/owner-columns.ts).
+    accountOwner: me,
     fdeOwner: me,
     businessOwnerEmail: flag("business-owner").trim() || null,
     technicalOwnerEmail: flag("technical-owner").trim() || null,

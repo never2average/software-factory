@@ -84,9 +84,11 @@ async function seed(db) {
     }
   }
 }
+/** Rows hashed by value, without the columns a later journal entry adds (0028's neutral owner columns: new, not changed). */
+const LATER_COLUMNS = "- 'account_owner' - 'solution_owner'";
 const fingerprint = async (db) => {
   const out = {};
-  for (const t of ["customers", ...TABLES]) out[t] = (await db.unsafe(`select count(*)::int as n, md5(coalesce(string_agg(to_jsonb(x)::text, '|' order by to_jsonb(x)::text), '')) as h from ${t} x`))[0];
+  for (const t of ["customers", ...TABLES]) out[t] = (await db.unsafe(`select count(*)::int as n, md5(coalesce(string_agg((to_jsonb(x) ${LATER_COLUMNS})::text, '|' order by (to_jsonb(x) ${LATER_COLUMNS})::text), '')) as h from ${t} x`))[0];
   return JSON.stringify(out);
 };
 const indexes = async (db) => (await db`select indexname, indexdef from pg_indexes where schemaname = 'public' and tablename = any(${TABLES}) order by indexname`).map((r) => `${r.indexname}: ${r.indexdef}`);

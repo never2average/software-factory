@@ -14,28 +14,28 @@
   "contracts": {
     "$comment": "Exact names that something outside this repository already holds. Each moves by an additive migration with the old name kept working; the plan says which PR. A name listed here that no longer occurs anywhere fails the check.",
     "fde_owner": {
-      "kind": "database column (customers)",
-      "plan": "PR 4 (owner column): a neutral column added by a journal migration (0015), dual-written and read-with-fallback; the old one is never dropped here"
+      "kind": "database column (customers); the software factory's workspace seeding writes it in raw SQL",
+      "plan": "PR 4 (done): drizzle/0028_neutral_owner_columns.sql added customers.account_owner, copied the values, and a trigger keeps the two equal whichever is written; the app writes both and reads account_owner first (agent/lib/db/owner-columns.ts; test:owner-columns-migration-db). This one is never dropped here; it goes only in a later, announced removal PR once nothing outside names it"
     },
     "solution_fde_owner": {
       "kind": "database column (solutions)",
-      "plan": "PR 4 (owner column): a neutral column added by a journal migration (0015), dual-written and read-with-fallback; the old one is never dropped here"
+      "plan": "PR 4 (done): drizzle/0028_neutral_owner_columns.sql added solutions.solution_owner beside it, kept equal by a trigger; the app writes both and reads solution_owner first. Never dropped here"
     },
     "customers_fde_owner_idx": {
       "kind": "database index",
-      "plan": "PR 4 (owner column): a neutral column added by a journal migration (0015), dual-written and read-with-fallback; the old one is never dropped here; the index on the new column is added beside it, and this one is left for drift to keep empty"
+      "plan": "PR 4 (done): customers_account_owner_idx was added beside it (0028); this one is still declared in schema.ts, because dropping it would be an index drop the deploy's drift step refuses. It goes with the column"
     },
     "fdeOwner": {
       "kind": "Ops API / workbook / sample-data JSON key and Drizzle property of customers.fde_owner",
-      "plan": "PR 4 (owner column): a neutral column added by a journal migration (0015), dual-written and read-with-fallback; the old one is never dropped here; the API writes both keys and reads the new one first"
+      "plan": "PR 4 (done): the Ops API accepts and returns both fdeOwner and accountOwner (always equal) and writes both columns; the agent's record contract and the workbook still name the owner by this key, which the profile translates at the tool and UI boundary (agent/lib/agent-vocabulary.ts, lib/ui-keys.ts); a later PR may move them"
     },
     "solutionFdeOwner": {
       "kind": "Ops API / workbook JSON key and Drizzle property of solutions.solution_fde_owner",
-      "plan": "PR 4 (owner column): a neutral column added by a journal migration (0015), dual-written and read-with-fallback; the old one is never dropped here"
+      "plan": "PR 4 (done): the workbook route returns both solutionFdeOwner and solutionOwner (always equal) and every writer names both; the agent's record contract still names it by this key, translated per profile"
     },
     "internal-fde": {
       "kind": "stored value: People/{id}/identity.json `kind`",
-      "plan": "PR 4: readers accept `internal-member` and this; writers write the new value"
+      "plan": "PR 4 (done): agent/lib/member-kind.ts; readers (list_fdes, operator:doctor) accept `internal-member` and this, operator:onboard-self writes `internal-member`; stored entries are never rewritten"
     },
     "list_fdes": {
       "kind": "eve tool name (file name under agent/tools/, packs' subagent.json, stored transcripts)",
@@ -242,7 +242,7 @@
     },
     "fde_": {
       "kind": "vocabulary machinery: lib/ui-keys.ts matches `fde_owner` and `fdeOwner` to label them",
-      "plan": "PR 4 adds the neutral key beside it"
+      "plan": "PR 4 (done): lib/ui-keys.ts labels `account_owner` / `accountOwner` the same way beside it"
     },
     "list_FDEs": {
       "kind": "vocabulary machinery example (acronym casing inside an identifier)",

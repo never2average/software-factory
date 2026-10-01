@@ -169,7 +169,10 @@ const NESTED_TABLES: Record<string, WorkbookTable> = { platform: "platform", sol
 export function workbookHidden(profile: ProfileFields = DEPLOYMENT_PROFILE): WorkbookHidden {
   const area = (fields: Record<string, { hidden?: boolean }> | undefined) =>
     new Set(Object.entries(fields ?? {}).filter(([, f]) => f?.hidden).map(([k]) => k));
-  const accountHidden = (profile.account_fields?.hidden ?? []).filter((k) => k !== "id" && k !== "name");
+  const named = (profile.account_fields?.hidden ?? []).filter((k) => k !== "id" && k !== "name");
+  // The owner is one field under two keys (drizzle/0028_neutral_owner_columns.sql): hiding either hides both.
+  const OWNER_KEYS = ["fdeOwner", "accountOwner"];
+  const accountHidden = named.some((k) => OWNER_KEYS.includes(k)) ? [...new Set([...named, ...OWNER_KEYS])] : named;
   return {
     account: new Set(accountHidden.filter((k) => !(k in NESTED_TABLES))),
     deployments: area(profile.domains.deployments?.fields),

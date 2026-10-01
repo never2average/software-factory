@@ -3,6 +3,7 @@ import { errorText } from "@/lib/ops-errors";
 import { z } from "zod";
 import { and, desc, eq, inArray, notInArray, asc, sql as dsql } from "drizzle-orm";
 import { customers, interactions, tickets } from "@/agent/lib/db/schema";
+import { accountOwnerSql, pairOwners, withOwnerKeys } from "@/agent/lib/db/owner-columns";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isEmptyStore } from "@/lib/pg-error";
@@ -11,6 +12,7 @@ import { customBodySchema, customForWrite } from "@/lib/ops-domain-fields";
 import { asCustomValues, customDelta, customFieldsOf, type CustomValues } from "@/agent/lib/custom-fields";
 import { customForNewRow, customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { W } from "@/lib/ui-words";
+import { speakKey } from "@/lib/ui-keys";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +36,9 @@ export interface CustomerOption {
   status: string | null;
   healthScore: number | null;
   healthReason: string | null;
+  /** The account's owner (an email). Under both names, always equal: `accountOwner` is the neutral one to read. */
+  accountOwner: string | null;
+  /** The same value as accountOwner, under the original name existing callers read. */
   fdeOwner: string | null;
   openTickets: number;
   lastTouchDate: string | null;
@@ -75,7 +80,8 @@ async function listCustomers(request: NextRequest) {
           status: customers.status,
           healthScore: customers.healthScore,
           healthReason: customers.healthReason,
-          fdeOwner: customers.fdeOwner,
+          // The neutral column, else the original (agent/lib/db/owner-columns.ts); returned under both names below.
+          owner: accountOwnerSql,
           custom: customers.custom,
         })
         .from(customers)
@@ -117,10 +123,12 @@ async function listCustomers(request: NextRequest) {
       }
     }
 
-    const out: CustomerOption[] = rows.map(({ custom, ...r }) => {
+    const out: CustomerOption[] = rows.map(({ custom, owner, ...r }) => {
       const lt = lastTouchByCustomer.get(r.id);
       return {
         ...r,
+        accountOwner: owner,
+        fdeOwner: owner,
         ...listedCustom(custom),
         openTickets: openByCustomer.get(r.id) ?? 0,
         lastTouchDate: lt?.date ?? null,
@@ -191,6 +199,9 @@ const upsertCustomerSchema = z.object({
   vertical: z.string().max(80).nullable().optional(),
   regulatoryProfile: z.string().max(200).nullable().optional(),
   companyDomain: z.string().max(120).nullable().optional(),
+  // The account's owner, under either name (both are accepted; a body naming both must name the same person). Stored
+  // in both columns (drizzle/0028_neutral_owner_columns.sql).
+  accountOwner: z.string().max(200).nullable().optional(),
   fdeOwner: z.string().max(200).nullable().optional(),
   businessOwnerEmail: z.string().max(200).nullable().optional(),
   technicalOwnerEmail: z.string().max(200).nullable().optional(),
@@ -210,7 +221,12 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
-  const { actor, custom: customInput, ...rest } = parsed.data;
+  const { actor, custom: customInput, ...named } = parsed.data;
+  if (named.accountOwner !== undefined && named.fdeOwner !== undefined && named.accountOwner !== named.fdeOwner) {
+    // The keys as a person reads them (lib/ui-keys.ts), as every ops API error names a field.
+    return NextResponse.json({ error: `${speakKey("accountOwner")} and ${speakKey("fdeOwner")} are the same field (the ${W.owner}); send one, or the same value in both.` }, { status: 400 });
+  }
+  const rest = pairOwners(named);
   try {
     return await withOrgRls(ctx.orgId, async (tx) => {
       const [existing] = await tx
@@ -247,7 +263,7 @@ export async function POST(request: NextRequest) {
         orgId: ctx.orgId,
         event: existing ? `Customer ${row.customerId} updated` : `Customer ${row.customerId} created`,
       });
-      return NextResponse.json({ item: row, created: !existing }, { status: existing ? 200 : 201 });
+      return NextResponse.json({ item: withOwnerKeys(row), created: !existing }, { status: existing ? 200 : 201 });
     });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });

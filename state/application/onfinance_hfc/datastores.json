@@ -12,7 +12,7 @@
     "admin_url_ref": "DATABASE_URL_UNPOOLED",
     "pooling": "transaction",
     "rls_verified": {
-      "at": "2026-10-01T06:06:39+00:00",
+      "at": "2026-10-01T10:22:54+00:00",
       "backend": "neon",
       "mode": "fail_closed",
       "source": "provision.py bring_up_schema",
@@ -28,9 +28,10 @@
       "policies_unverified": [],
       "unmeasured": [],
       "probe_table": "account_summaries",
-      "probe_tables": 46,
+      "probe_tables": 45,
       "probe_skipped": [
         "customer_stakeholders:foreign keys",
+        "customers:user triggers",
         "deployments:foreign keys",
         "implementation:foreign keys",
         "interactions:foreign keys",

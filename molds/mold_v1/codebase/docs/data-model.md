@@ -358,6 +358,12 @@ Core columns:
 `last_business_review_date`, `next_business_review_date`, `contract_start`,
 `renewal_date`, `industry_segment`.
 
+The owner column has a neutral twin in the database: `customers.account_owner`
+beside `fde_owner`, and `solutions.solution_owner` beside `solution_fde_owner`
+(drizzle/0028_neutral_owner_columns.sql). A trigger keeps each pair equal
+whichever side a statement writes; the app writes both and reads the neutral
+one first. The sheet columns and their names are unchanged.
+
 ### Platform
 
 Grain: one row per customer platform configuration. This sheet is for tenant,

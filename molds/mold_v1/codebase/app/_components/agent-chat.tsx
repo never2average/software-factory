@@ -4961,6 +4961,8 @@ interface StarterCustomer {
   openTickets: number;
   lastTouchDate: string | null;
   lastTouch: string | null;
+  /** The account's owner; the API returns it under both names (accountOwner is the neutral one). */
+  accountOwner?: string | null;
   fdeOwner: string | null;
   healthReason: string | null;
 }
@@ -5000,10 +5002,11 @@ function useStarterCards(
 
         const copy = DEPLOYMENT_PROFILE.chat.starter_cards;
         /** The member who owns the account, as a contact the card can hover. */
-        const ownerOf = (c: StarterCustomer) =>
-          c.fdeOwner
+        const ownerOf = (c: StarterCustomer) => {
+          const owner = c.accountOwner ?? c.fdeOwner;
+          return owner
             ? {
-                name: c.fdeOwner
+                name: owner
                   .split("@")[0]
                   .split(/[._-]/)
                   .filter(Boolean)
@@ -5011,9 +5014,10 @@ function useStarterCards(
                   .join(" "),
                 role: copy.owner_label,
                 org: c.name,
-                email: c.fdeOwner,
+                email: owner,
               }
             : undefined;
+        };
 
         const daysSinceIso = (iso: string | null): number | null => {
           if (!iso) return null;

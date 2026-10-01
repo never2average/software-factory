@@ -155,10 +155,15 @@ async function seed(db) {
 
 const count = async (db, t) => (await db.unsafe(`select count(*)::int as n from ${t}`))[0].n;
 const counts = async (db) => Object.fromEntries(await Promise.all([...KEYED, ...LOOSE].map(async (t) => [t, await count(db, t)])));
-/** Every row of every table this touches, hashed by its values (not its column order): a changed or lost value shows. */
+/**
+ * Every row of every table this touches, hashed by its values (not its column order): a changed or lost value shows.
+ * The columns a LATER journal entry adds (0028's neutral owner columns, which ride along in apply0024) are left out:
+ * they are new, not changed, and test-owner-columns-migration-db.mjs proves what they hold.
+ */
+const LATER_COLUMNS = "- 'account_owner' - 'solution_owner'";
 const fingerprint = async (db) => {
   const out = {};
-  for (const t of [...KEYED, ...LOOSE]) out[t] = (await db.unsafe(`select md5(coalesce(string_agg(to_jsonb(x)::text, '|' order by to_jsonb(x)::text), '')) as h from ${t} x`))[0].h;
+  for (const t of [...KEYED, ...LOOSE]) out[t] = (await db.unsafe(`select md5(coalesce(string_agg((to_jsonb(x) ${LATER_COLUMNS})::text, '|' order by (to_jsonb(x) ${LATER_COLUMNS})::text), '')) as h from ${t} x`))[0].h;
   return out;
 };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);

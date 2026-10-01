@@ -16,6 +16,7 @@ import { orgContextForRequest } from "@/lib/org-context";
 import { isEmptyStore } from "@/lib/pg-error";
 import { sampleCustomerStore, samplePeople } from "@/agent/lib/sample-data";
 import { W } from "@/lib/ui-words";
+import { withOwnerKeys, withSolutionOwnerKeys } from "@/agent/lib/db/owner-columns";
 import {
   TRUNCATED_MARK,
   WORKBOOK_ORDER,
@@ -187,12 +188,12 @@ export async function GET(request: NextRequest) {
   }
 
   const rowsOf = (t: WorkbookTable) => (read[t].ok ? (read[t] as { rows: Row[] }).rows : []);
-  const byCustomer = (t: WorkbookTable, hiddenKeys: ReadonlySet<string>, listedKeys: ReadonlySet<string>) => {
+  const byCustomer = (t: WorkbookTable, hiddenKeys: ReadonlySet<string>, listedKeys: ReadonlySet<string>, read: (r: Row) => Row = (r) => r) => {
     const by = new Map<string, Row[]>();
     for (const r of rowsOf(t)) {
       const id = String(r.customerId ?? "");
       const list = by.get(id) ?? [];
-      list.push(clean(r, hiddenKeys, listedKeys));
+      list.push(clean(read(r), hiddenKeys, listedKeys));
       by.set(id, list);
     }
     return by;
@@ -200,13 +201,15 @@ export async function GET(request: NextRequest) {
   const platformBy = byCustomer("platform", NONE, NONE);
   const implBy = byCustomer("implementation", hidden.implementation, listed.implementation);
   const depsBy = byCustomer("deployments", hidden.deployments, listed.deployments);
-  const solsBy = byCustomer("solutions", NONE, NONE);
+  // A solution's owner under both names, read with the fallback (agent/lib/db/owner-columns.ts).
+  const solsBy = byCustomer("solutions", NONE, NONE, withSolutionOwnerKeys);
   const tixBy = byCustomer("tickets", NONE, NONE);
   const intsBy = byCustomer("interactions", NONE, NONE);
 
   const out = rowsOf("customers").map((c) => {
     const id = String(c.customerId);
-    const { customerId: _id, customerName, ...rest } = c;
+    // The account's owner under both names, read with the fallback (agent/lib/db/owner-columns.ts).
+    const { customerId: _id, customerName, ...rest } = withOwnerKeys(c);
     return {
       id,
       name: customerName ?? id,

@@ -11,6 +11,8 @@
 // docs/OPERATOR_WORKFLOW.md and the context-graph library.
 import { getDb, closeDb, dataroom, nowIso, withOrgDb } from "./lib/customer.mjs";
 import { customers, orgs } from "../../agent/lib/db/schema.ts";
+import { accountOwnerSql } from "../../agent/lib/db/owner-columns.ts";
+import { isMemberKind } from "../../agent/lib/member-kind.ts";
 import { eq } from "drizzle-orm";
 import { buildContextGraph } from "./lib/context-graph.mjs";
 import { glyph, flag, hasFlag, operatorEnv } from "./lib/operator.mjs";
@@ -78,22 +80,22 @@ async function doctorWorkspace(db, orgId, only) {
     for (const p of rosterPaths) {
       try {
         const id = JSON.parse((await store.read(p)) ?? "{}");
-        if (id.kind === "internal-fde" && typeof id.email === "string") rosterEmails.add(id.email.toLowerCase());
+        if (isMemberKind(id.kind) && typeof id.email === "string") rosterEmails.add(id.email.toLowerCase());
       } catch {
         /* skip */
       }
     }
     const owned = await withOrgDb(orgId, (tx) =>
-      tx.select({ customerId: customers.customerId, fdeOwner: customers.fdeOwner }).from(customers).where(eq(customers.orgId, orgId)),
+      tx.select({ customerId: customers.customerId, owner: accountOwnerSql }).from(customers).where(eq(customers.orgId, orgId)),
     );
-    const unassigned = owned.filter((c) => !c.fdeOwner).map((c) => c.customerId);
+    const unassigned = owned.filter((c) => !c.owner).map((c) => c.customerId);
     const dangling = owned
-      .filter((c) => c.fdeOwner && !rosterEmails.has(c.fdeOwner.toLowerCase()))
-      .map((c) => `${c.customerId}→${c.fdeOwner}`);
+      .filter((c) => c.owner && !rosterEmails.has(c.owner.toLowerCase()))
+      .map((c) => `${c.customerId}→${c.owner}`);
     console.log(`\nRoster — ${rosterEmails.size} ${DEPLOYMENT_PROFILE.vocabulary.member.plural} on file`);
     if (unassigned.length) {
       rosterProblems += unassigned.length;
-      console.log(`${glyph.warn} unassigned accounts (no fde_owner): ${unassigned.join(", ")}`);
+      console.log(`${glyph.warn} unassigned accounts (no owner): ${unassigned.join(", ")}`);
     }
     if (dangling.length) {
       rosterProblems += dangling.length;

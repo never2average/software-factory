@@ -13,6 +13,7 @@
 //   node --experimental-strip-types --env-file=.env.local scripts/operator/onboard-self.mjs -- ...
 import { getDb, closeDb } from "../../agent/lib/db/index.ts";
 import { memories } from "../../agent/lib/db/schema.ts";
+import { MEMBER_KIND } from "../../agent/lib/member-kind.ts";
 import { and, eq, inArray } from "drizzle-orm";
 import { createDataroomStore } from "../../agent/lib/dataroom-store.ts";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
@@ -103,9 +104,10 @@ async function main() {
     console.log(`${glyph.ok} Recorded you as a team member (team memory \`${key}\`).`);
   }
 
-  // 5. Register the member as a first-class People/ roster entry (kind internal-fde, a stored value).
+  // 5. Register the member as a first-class People/ roster entry (kind MEMBER_KIND, a stored value).
   //    Reverses the old "People is external-only" rule FOR INTERNAL members: the
-  //    kind:"internal-fde" tag keeps them distinct, and list_fdes reads these.
+  //    kind tag keeps them distinct, and list_fdes reads these (entries written with the
+  //    earlier "internal-fde" value too; agent/lib/member-kind.ts).
   //    In ONE workspace's data room (`--org <id>` or WORKSPACE_ORG): every workspace has its own tree and there is no
   //    default one to fall back to (lib/dataroom-keyspace.ts).
   const rosterOrg = (flag("org") || operatorEnv("WORKSPACE_ORG")).trim();
@@ -118,7 +120,7 @@ async function main() {
     const pod = flag("pod").trim() || null;
     const capacity = Number(flag("capacity")) || 8;
     const identity = {
-      kind: "internal-fde",
+      kind: MEMBER_KIND,
       email,
       name: name || null,
       title,
@@ -142,7 +144,7 @@ async function main() {
         `# Roles & responsibilities — ${name || email}\n\nForward-Deployed Engineer. Owns assigned customer accounts end to end (onboarding, configuration, deployment, migration, evals, follow-ups) and takes on-call rotations for incidents.\n`,
       );
     }
-    console.log(`${glyph.ok} Registered you in the ${MEMBER} roster (People/${slug}/, kind internal-fde).`);
+    console.log(`${glyph.ok} Registered you in the ${MEMBER} roster (People/${slug}/, kind ${MEMBER_KIND}).`);
   } else {
     console.log(`${glyph.warn} No blob data room (BLOB_READ_WRITE_TOKEN) — skipped the People/ roster entry.`);
   }

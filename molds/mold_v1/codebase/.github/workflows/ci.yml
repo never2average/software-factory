@@ -668,6 +668,15 @@ jobs:
         if: always()
         run: ADMIN_URL="$ADMIN_URL" npm run test:customer-id-index-migration-db
 
+      # NEUTRAL OWNER COLUMNS (mold_v1-103, PR 4): drizzle/0028 adds customers.account_owner and
+      # solutions.solution_owner beside the original owner columns, copies them and keeps each pair equal by a trigger
+      # (the software factory still writes the original in raw SQL). On the live shape with the journal to 0027: the
+      # drift plan after it is empty (no DROP COLUMN, no index drop), a write under either name reads under the other
+      # (raw SQL and the app's own paths), and row-level security on both tables is still fail-closed.
+      - name: Neutral owner columns, migration on production-shaped data
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:owner-columns-migration-db
+
       - name: Cross-tenant isolation
         run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" node scripts/test-org-isolation.mjs
 

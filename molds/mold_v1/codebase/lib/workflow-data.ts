@@ -19,6 +19,7 @@ import {
  */
 import { listDataroomPaths, readDataroomFile } from "@/lib/dataroom-blob";
 import { withOrgRls } from "@/lib/ops-db";
+import { accountOwnerSql } from "@/agent/lib/db/owner-columns";
 import type { WorkflowData } from "@/lib/workflow-runtime";
 
 /**
@@ -68,7 +69,9 @@ export function workflowDataFor(orgId: string): WorkflowData {
             tier: customers.tier,
             lifecycleStage: customers.lifecycleStage,
             status: customers.status,
-            fdeOwner: customers.fdeOwner,
+            // The owner under both names, read with the fallback (agent/lib/db/owner-columns.ts).
+            accountOwner: accountOwnerSql,
+            fdeOwner: accountOwnerSql,
             companyDomain: customers.companyDomain,
           })
           .from(customers)

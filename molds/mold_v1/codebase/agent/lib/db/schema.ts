@@ -58,7 +58,12 @@ export const customers = pgTable(
     lifecycleStage: text("lifecycle_stage"),
     status: text("status"),
     healthScore: doublePrecision("health_score"),
+    // The account's owner (an email), under two names kept equal by a trigger whichever side is written
+    // (drizzle/0028_neutral_owner_columns.sql). `account_owner` is the neutral one the app reads first; `fde_owner` is
+    // the original, which writers outside this repository still name, so it is kept and never dropped. The app writes
+    // both (agent/lib/db/owner-columns.ts), since a database built by `drizzle-kit push` alone has no trigger.
     fdeOwner: text("fde_owner"),
+    accountOwner: text("account_owner"),
     aeOwner: text("ae_owner"),
     arr: doublePrecision("arr"),
     arrCurrency: text("arr_currency"),
@@ -106,6 +111,9 @@ export const customers = pgTable(
      */
     primaryKey({ name: "customers_org_id_customer_id_pk", columns: [t.orgId, t.customerId] }),
     index("customers_fde_owner_idx").on(t.fdeOwner),
+    // Both owner columns are indexed: the original index above is kept (dropping it would be an index drop the
+    // deploy's drift step refuses), and 0028 adds the neutral column's.
+    index("customers_account_owner_idx").on(t.accountOwner),
     index("customers_lifecycle_stage_idx").on(t.lifecycleStage),
   ],
 );
@@ -313,7 +321,11 @@ export const solutions = pgTable(
     expansionStage: text("expansion_stage"),
     expansionPotentialAnnualValueUsd: doublePrecision("expansion_potential_annual_value_usd"),
     expansionConfidencePct: doublePrecision("expansion_confidence_pct"),
+    // The solution's owner under two names kept equal by a trigger (drizzle/0028_neutral_owner_columns.sql), as on
+    // customers. The original stays NOT NULL; the neutral one is nullable so a writer that names only the original
+    // (on a database without the trigger) is never refused, and readers fall back to the original.
     solutionFdeOwner: text("solution_fde_owner").notNull(),
+    solutionOwner: text("solution_owner"),
     lastReviewedDate: text("last_reviewed_date"),
   },
   (t) => [

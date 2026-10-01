@@ -40,6 +40,7 @@ import { UNASSIGNED_OWNER_EMAIL as UNASSIGNED_TRIAGE_OWNER } from "./unassigned.
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { HIDDEN_FIELDS } from "./agent-vocabulary.ts";
 import { customFieldsOf } from "./custom-fields.ts";
+import { isMemberKind } from "./member-kind.ts";
 
 /**
  * The verified caller's email from the session auth, never from the model.
@@ -410,7 +411,7 @@ export const listMembersTool = modelFacing("list_fdes", defineTool({
           const content = await store.read(p);
           if (!content) return;
           const id = JSON.parse(content) as Record<string, unknown>;
-          if (id.kind !== "internal-fde") return;
+          if (!isMemberKind(id.kind)) return;
           members.push({ ...id, slug: p.split("/")[1] });
         } catch {
           /* skip unreadable */

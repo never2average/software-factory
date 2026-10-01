@@ -213,6 +213,24 @@ try {
   check("…A's rows carry every change", aDep?.deployed_version === "A-v3" && aDep?.health_status === "degraded" && (await rowOf("customers", A))[0]?.customer_name === "ABHFL A desk (renamed)" && (await rowOf("implementation", A))[0]?.implementation_risk_level === "Red" && (await rowOf("tickets", A))[0]?.ticket_status === "Resolved", aDep);
   check("…and B's company, deployment, implementation and ticket are byte-for-byte unchanged", (await snapshot(B)) === bBefore);
 
+  console.log("3b. The owner, under either name (drizzle/0028_neutral_owner_columns.sql), in A only");
+  bBefore = await snapshot(B);
+  const o1 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", accountOwner: "neutral@shared-http.test" });
+  const r1 = (await rowOf("customers", A))[0];
+  check("POST customers with accountOwner stores it in both columns and returns it under both names", o1.status === 200 && r1?.account_owner === "neutral@shared-http.test" && r1?.fde_owner === "neutral@shared-http.test" && o1.body?.item?.accountOwner === "neutral@shared-http.test" && o1.body?.item?.fdeOwner === "neutral@shared-http.test", { o1: o1.body, r1 });
+  const o2 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", fdeOwner: "original@shared-http.test" });
+  const r2 = (await rowOf("customers", A))[0];
+  check("POST customers with fdeOwner (the original key) stores it in both columns", o2.status === 200 && r2?.account_owner === "original@shared-http.test" && r2?.fde_owner === "original@shared-http.test", { o2: o2.body, r2 });
+  const o3 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", accountOwner: "one@shared-http.test", fdeOwner: "two@shared-http.test" });
+  check("…a body naming two different owners is refused and writes nothing", o3.status === 400 && (await rowOf("customers", A))[0]?.account_owner === "original@shared-http.test", o3);
+  const l3 = await call(A, "GET", "/api/ops/customers");
+  const mine = (l3.body?.customers ?? []).find((c) => c.id === ID);
+  check("GET customers returns the owner under both names", mine?.accountOwner === "original@shared-http.test" && mine?.fdeOwner === "original@shared-http.test", mine);
+  const w3 = await call(A, "GET", "/api/ops/workbook");
+  const wmine = (w3.body?.customers ?? []).find((c) => c.id === ID);
+  check("GET workbook returns the owner under both names", wmine?.accountOwner === "original@shared-http.test" && wmine?.fdeOwner === "original@shared-http.test", wmine);
+  check("…and B's company is byte-for-byte unchanged", (await snapshot(B)) === bBefore);
+
   console.log("4. A delete in one never removes the other's row");
   bBefore = await snapshot(B);
   const x1 = await call(A, "DELETE", `/api/ops/deployments/${encodeURIComponent(DEP)}?customerId=${ID}`);

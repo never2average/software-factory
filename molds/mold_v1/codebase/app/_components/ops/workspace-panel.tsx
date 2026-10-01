@@ -1941,6 +1941,8 @@ interface CustomerLite {
   lifecycleStage: string | null;
   status: string | null;
   healthScore: number | null;
+  /** The account's owner; the API returns it under both names (accountOwner is the neutral one). */
+  accountOwner?: string | null;
   fdeOwner: string | null;
   openTickets?: number;
 }
@@ -2033,7 +2035,7 @@ function PersonContext({
       })
     : null;
   const reports = people.filter((x) => x.managerEmail?.toLowerCase() === email);
-  const owned = (accounts ?? []).filter((c) => c.fdeOwner?.toLowerCase() === email);
+  const owned = (accounts ?? []).filter((c) => (c.accountOwner ?? c.fdeOwner)?.toLowerCase() === email);
 
   const PersonChip = ({ p }: { p: PersonRow }) => (
     <button

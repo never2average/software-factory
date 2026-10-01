@@ -396,9 +396,10 @@ async function resolveAssignment(sql: postgres.TransactionSql, orgId: string, ta
           ? task.container_id
           : null;
       if (!customerId) return "needs_review";
-      const [customer] = await sql<{ fde_owner: string | null }[]>`
-        select fde_owner from customers where customer_id = ${customerId} and org_id = ${orgId} limit 1`;
-      return customer?.fde_owner?.toLowerCase() ?? "needs_review";
+      // The neutral owner column, else the original (drizzle/0028_neutral_owner_columns.sql keeps them equal).
+      const [customer] = await sql<{ owner: string | null }[]>`
+        select coalesce(account_owner, fde_owner) as owner from customers where customer_id = ${customerId} and org_id = ${orgId} limit 1`;
+      return customer?.owner?.toLowerCase() ?? "needs_review";
     }
     case "prompt":
       return "needs_review";

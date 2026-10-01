@@ -65,8 +65,8 @@ async function main() {
     }
     await withOrgDb(orgId, (tx) => tx
       .insert(solutions)
-      .values({ orgId, customerId, solutionId: id, useCase, modulesEnabled: [], solutionStatus: "configuring", solutionFdeOwner: me })
-      .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, solutionStatus: "configuring", solutionFdeOwner: me } }));
+      .values({ orgId, customerId, solutionId: id, useCase, modulesEnabled: [], solutionStatus: "configuring", solutionOwner: me, solutionFdeOwner: me })
+      .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, solutionStatus: "configuring", solutionOwner: me, solutionFdeOwner: me } }));
     // Seed the customer's deployment instance from the recipe (dm.md recipe seam).
     const dep = `Deployments/${customerId}/${version}/platform/pipelines/${id}`;
     // In the workspace's own data room: Deployments/{customer_id}/… is per company, and so per workspace.

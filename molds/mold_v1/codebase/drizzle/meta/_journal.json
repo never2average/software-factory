@@ -197,6 +197,13 @@
       "when": 1791500000000,
       "tag": "0027_chat_invite_expiry",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791600000000,
+      "tag": "0028_neutral_owner_columns",
+      "breakpoints": true
     }
   ]
 }

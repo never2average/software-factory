@@ -28,6 +28,8 @@ export interface CustomerListItem {
   status?: string | null;
   healthScore?: number | null;
   healthReason?: string | null;
+  /** The account's owner; the API returns it under both names (accountOwner is the neutral one). */
+  accountOwner?: string | null;
   fdeOwner?: string | null;
   openTickets?: number;
   lastTouchDate?: string | null;
@@ -60,7 +62,7 @@ function liveSummary(c: CustomerListItem): CustomerContextSummary | undefined {
     c.lifecycleStage != null ||
     c.status != null ||
     c.healthReason != null ||
-    c.fdeOwner != null ||
+    (c.accountOwner ?? c.fdeOwner) != null ||
     c.lastTouchDate != null ||
     (c.openTickets ?? 0) > 0;
   if (!hasAny) return undefined;
@@ -70,7 +72,7 @@ function liveSummary(c: CustomerListItem): CustomerContextSummary | undefined {
     status: c.status ?? undefined,
     healthScore: c.healthScore ?? undefined,
     healthReason: c.healthReason ?? undefined,
-    fdeOwner: c.fdeOwner ?? undefined,
+    fdeOwner: c.accountOwner ?? c.fdeOwner ?? undefined,
     openTickets: c.openTickets ?? 0,
     lastTouchDate: c.lastTouchDate ?? undefined,
     lastTouch: c.lastTouch ?? undefined,

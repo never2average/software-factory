@@ -51,7 +51,8 @@ export function speakKey(key: string): string {
 
 /** camelCase key -> "Words Like This", spoken: `customerId` -> "Company Id"; the owner key -> the owner label. */
 export function humanizeKey(key: string): string {
-  if (VOCABULARY_RELABELLED && /^fde_?owner$/i.test(key)) return W.owner;
+  // The owner key under either of its names (drizzle/0028_neutral_owner_columns.sql): the profile's owner label.
+  if (VOCABULARY_RELABELLED && /^(fde_?owner|account_?owner)$/i.test(key)) return W.owner;
   return speakKey(key)
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, (c) => c.toUpperCase())

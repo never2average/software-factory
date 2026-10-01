@@ -84,6 +84,8 @@ async function relabelled() {
     assert.notEqual(keys.speakKey("deployment_id"), "deployment_id");
     assert.notEqual(keys.speakKey("implementation_stage"), "implementation_stage");
     assert.equal(keys.humanizeKey("fdeOwner"), "Covering analyst");
+    assert.equal(keys.humanizeKey("accountOwner"), "Covering analyst", "the owner's neutral key reads the same label");
+    assert.equal(keys.humanizeKey("account_owner"), "Covering analyst");
   });
 
   const wb = await imp("lib/workbook-fields.ts");
@@ -236,6 +238,7 @@ async function defaults() {
   await check("D speakKey / humanizeKey are the identity", () => {
     for (const k of ["customer_id", "deployment_model", "deploymentId", "fdeOwner"]) assert.equal(keys.speakKey(k), k);
     assert.equal(keys.humanizeKey("fdeOwner"), "Fde Owner");
+    assert.equal(keys.humanizeKey("accountOwner"), "Account Owner");
   });
   const errs = await imp("lib/ops-errors.ts");
   await check("D an ops API error reads exactly as before (`path: message`, String(e))", () => {
