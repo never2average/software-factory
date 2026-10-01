@@ -7,18 +7,18 @@
  * and agent/lib/db/index.ts. This manifest is the reason the Ops Center can say
  * WHY a connector is dead instead of showing a green dot that means nothing.
  */
-import { VOCABULARY_RELABELLED } from "../agent/lib/agent-vocabulary.ts";
 import { SUBAGENT_META } from "../app/_components/subagent-meta.generated.ts";
 
 /**
  * The specialists that read meeting notes, of the ones this deployment keeps: a person is never told about one its
- * profile excludes (`specialists.exclude`). Under a relabelling profile each is named by its display name, in the
- * profile's words, as the rest of the UI names it (SUBAGENT_META); the default keeps its sentence as it was.
+ * profile excludes (`specialists.exclude`). Each is named by its display name, in the profile's words, as the rest
+ * of the UI names it (SUBAGENT_META), under every profile: a specialist's directory name is how it is delegated to,
+ * never what a person reads.
  */
 const MEETING_READERS =
   ["research", "customer-context"]
     .filter((k) => k in SUBAGENT_META)
-    .map((k) => (VOCABULARY_RELABELLED ? SUBAGENT_META[k].name : k))
+    .map((k) => SUBAGENT_META[k].name)
     .join(" and ") || "the specialists";
 export interface RequiredSecret {
   name: string;

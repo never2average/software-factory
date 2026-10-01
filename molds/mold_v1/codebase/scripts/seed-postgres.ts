@@ -21,6 +21,7 @@ import { customerStoreSchema, peopleStoreSchema } from "../agent/lib/customer-sc
 import { closeDb, getDatabaseUrl, getDb } from "../agent/lib/db/index.ts";
 import { customerStakeholders, internalStaff } from "../agent/lib/db/schema.ts";
 import { writeCustomerToPostgres } from "../agent/lib/system-of-record.ts";
+import { W } from "../lib/ui-words.ts";
 
 /**
  * Which workspace the seed lands in. Overridable, because a seed that can only
@@ -36,7 +37,7 @@ const SEED_ORG = process.env.SEED_ORG_ID ?? "org-onfinance-ai";
 const wantsSample = process.env.DEMO_SAMPLE_DATA === "1" || process.env.DEMO_SAMPLE_DATA === "true" || process.argv.includes("--sample");
 if (!wantsSample) {
   console.error(
-    "seed:postgres: refused — this writes the INVENTED sample accounts (data/sample/) into the database.\n" +
+    `seed:postgres: refused — this writes the INVENTED sample ${W.accounts} (data/sample/) into the database.\n` +
       "For a demo database only, run it with DEMO_SAMPLE_DATA=1 or pass --sample (npm run seed:postgres -- --sample).",
   );
   process.exit(2);
@@ -65,7 +66,7 @@ try {
     // Into SEED_ORG, by the company's whole key (org_id, customer_id): the same id in another workspace is another
     // company and is not touched.
     await writeCustomerToPostgres(db, customer, SEED_ORG);
-    console.log(`seed:postgres: upserted customer ${customer.id} in ${SEED_ORG}`);
+    console.log(`seed:postgres: upserted ${W.account} ${customer.id} in ${SEED_ORG}`);
   }
 
   await db.transaction(async (tx) => {
@@ -103,9 +104,9 @@ try {
     }
   });
   console.log(
-    `seed:postgres: seeded ${customerStore.customers.length} customers, ` +
+    `seed:postgres: seeded ${customerStore.customers.length} ${W.accounts}, ` +
       `${peopleStore.internalStaffAssignments.length} internal staff assignments, ` +
-      `${peopleStore.customerStakeholders.length} customer stakeholders`,
+      `${peopleStore.customerStakeholders.length} ${W.account} stakeholders`,
   );
 } finally {
   await closeDb();

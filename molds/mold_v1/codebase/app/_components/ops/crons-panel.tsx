@@ -441,7 +441,7 @@ function ScheduleWizard({
                 placeholder="C0123456789"
               />
             </Field>
-            <Field label={W.Account} hint="Optional — scope to one account.">
+            <Field label={W.Account} hint={`Optional — scope to one ${W.account}.`}>
               <CustomerSelect
                 value={customerId || null}
                 onChange={(next) => setCustomerId(next ?? "")}

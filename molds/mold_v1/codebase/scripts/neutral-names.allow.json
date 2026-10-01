@@ -336,30 +336,18 @@
       "stored": {
         "why": "A stored enum value that is the record word itself (`blockerOwner: \"Customer\"`, a ticket's waiting party). Rows are never rewritten here: changing a stored value is a data migration. A relabelling profile's reader gets the profile's label for it (domains.<area>.fields.<key>.options).",
         "files": {
-          "agent/lib/customer-schema.ts": 2,
-          "app/api/ops/implementations/[id]/route.ts": 1
+          "agent/lib/customer-schema.ts": 2
         }
       },
       "ui": {
         "why": "The web app, its API messages and the libraries behind them (app/, components/, lib/): PR 7b of mold_v1-103 owns these and lowers each ceiling as it takes the word from lib/ui-words.ts (W.account, W.deployments, …) or fills a placeholder. Counted at the commit PR 7a branched from.",
         "files": {
-          "app/api/ops/customers/route.ts": 3,
-          "app/api/ops/export/route.ts": 2,
-          "app/api/ops/people/[email]/account-summary/route.ts": 2,
-          "app/preview/cards/page.tsx": 4,
-          "app/preview/stickloop/page.tsx": 3,
-          "lib/org-seed.ts": 6,
           "lib/workflow-runtime.ts": 3
         }
       },
       "seeders": {
         "why": "The seeders (scripts/seed*): the sample data room and demo database they write. PR 7b of mold_v1-103 owns these; sample CONTENT (a fictional account's notes) is data and may stay under its ceiling, the seeders' own labels and messages move to the profile's words.",
         "files": {
-          "scripts/seed-dataroom-blob.mjs": 21,
-          "scripts/seed-dataroom.ts": 9,
-          "scripts/seed-inbox-samples.mjs": 2,
-          "scripts/seed-ops.mjs": 7,
-          "scripts/seed-postgres.ts": 3
         }
       },
       "rig": {

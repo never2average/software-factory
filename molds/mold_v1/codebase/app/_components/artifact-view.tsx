@@ -16,9 +16,7 @@ import { CodeBlock } from "@/components/ai-elements/code-block";
 import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
-import { LEGACY_MEMBER, ownerKeyLabel } from "@/agent/lib/legacy-member";
-import { secondaryOwnerKeyLabel } from "@/agent/lib/owner-keys";
-import { W } from "@/lib/ui-words";
+import { headerLabel } from "@/lib/ui-keys";
 import { opsFetch } from "./ops/lib";
 
 /** SheetJS, fetched the first time a workbook preview opens (once per page; a failed fetch may be retried). */
@@ -82,40 +80,8 @@ const KIND_LABEL: Record<Kind, string> = {
   code: "File",
 };
 
-const HEADER_ABBR: Record<string, string> = {
-  id: "ID",
-  url: "URL",
-  api: "API",
-  // A data column whose name carries the member's legacy word keeps its name in the file; only the HEADER a person
-  // reads follows the deployment's word for its members ("Member" by default, "Analyst" on a research deployment).
-  [LEGACY_MEMBER.singular.toLowerCase()]: DEPLOYMENT_PROFILE.vocabulary.member.singular.charAt(0).toUpperCase() + DEPLOYMENT_PROFILE.vocabulary.member.singular.slice(1),
-  sla: "SLA",
-  kpi: "KPI",
-  poc: "POC",
-  crm: "CRM",
-  ai: "AI",
-  arr: "ARR",
-  mrr: "MRR",
-  po: "PO",
-  qbr: "QBR",
-};
-
-/** "customer_id" / "customerId" → "Customer ID". Column headers should never
- *  read as raw snake_case to the user. */
-function humanizeHeader(raw: unknown): string {
-  const s = String(raw ?? "").trim();
-  if (!s) return s;
-  // The owner column reads the profile's owner label ("Account owner"), as everywhere else (lib/ui-keys.ts).
-  const owner = ownerKeyLabel(s, W.owner) ?? secondaryOwnerKeyLabel(s, W.secondaryOwner);
-  if (owner) return owner;
-  return s
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[_-]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .map((w) => HEADER_ABBR[w.toLowerCase()] ?? w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
+/** A column header as a person reads it, in the profile's words (lib/ui-keys.ts). */
+const humanizeHeader = headerLabel;
 
 export function kindOf(filename: string): Kind {
   const ext = (filename.split(".").pop() ?? "").toLowerCase();

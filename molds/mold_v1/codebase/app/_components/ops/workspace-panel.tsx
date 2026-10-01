@@ -75,8 +75,8 @@ import { RosterImportDialog } from "./roster-import";
 import { WorkflowBuilder } from "./workflow-builder";
 
 import { SUBAGENT_META } from "../subagent-meta.generated";
-import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { an, W } from "@/lib/ui-words";
+import { lowerFirst } from "@/lib/profile-domains";
 import { jsonForPeople } from "@/lib/ui-keys";
 type Role = "owner" | "admin" | "engineer" | "member";
 type WorkspaceTab =
@@ -565,14 +565,9 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
 
 /* -------------------------------- Agents --------------------------------- */
 
-// People tab wording from the deployment profile. The default profile reproduces today's sentence exactly.
-const VOCAB = DEPLOYMENT_PROFILE.vocabulary;
-const ACCOUNTS_LABEL =
-  VOCAB.account.plural === "customers" ? "Accounts" : VOCAB.account.plural.charAt(0).toUpperCase() + VOCAB.account.plural.slice(1);
-const NOT_AN_OWNER =
-  VOCAB.account.singular === "customer"
-    ? `Not the ${VOCAB.owner} on any account.`
-    : `Not the ${VOCAB.owner.toLowerCase()} of any ${VOCAB.account.singular}.`;
+// People tab wording, in the deployment profile's words (lib/ui-words.ts): never a literal record word.
+const ACCOUNTS_LABEL = W.Accounts;
+const NOT_AN_OWNER = `Not the ${lowerFirst(W.owner)} of any ${W.account}.`;
 
 /** The specialist subagents the orchestrator delegates to: curated copy for the built-in ones (in the profile's words,
  *  lib/ui-words.ts; a specialist the profile excludes is not in SUBAGENT_META and is not listed), then every other
@@ -2098,7 +2093,7 @@ function PersonContext({
               onChange={(e) => setTeamDraft(e.target.value)}
               onBlur={() => teamDraft !== (person.team ?? "") && void save({ team: teamDraft }, "team")}
               onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              placeholder="e.g. Delivery"
+              placeholder="e.g. Support"
               className="w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
             />
           ) : (

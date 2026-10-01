@@ -1325,7 +1325,7 @@ function WorkflowWizard({
               placeholder="What this workflow does when the orchestrator delegates to it."
             />
           </Field>
-          <Field label={`${W.Account} ID`} hint="Optional — scope the workflow to one account.">
+          <Field label={`${W.Account} ID`} hint={`Optional — scope the workflow to one ${W.account}.`}>
             <OpsInput
               value={customerId}
               onChange={(e) => setCustomerId(e.target.value)}

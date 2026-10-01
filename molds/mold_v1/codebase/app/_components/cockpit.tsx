@@ -61,6 +61,7 @@ import { type ApiWorkflowVersion, authToken, opsFetch, type OpsSection, unkebab 
 import { pickSubagentName } from "@/lib/subagent-names";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
+import { W } from "@/lib/ui-words";
 
 /** The two record areas as this deployment names them (`domains` in the deployment profile). */
 const DEP = domainView("deployments");
@@ -1826,7 +1827,7 @@ function PersonModal({
                   {/* Accounts — click a chip to scope everything below to that
                       customer and reveal the person's role + context there. */}
                   {d?.accounts.length ? (
-                    <DossierBit label="Accounts">
+                    <DossierBit label={W.Accounts}>
                       <div className="flex w-full flex-col gap-2.5">
                         <div className="flex flex-wrap items-center gap-2">
                           {d.accounts.map((a) => {
@@ -1883,7 +1884,7 @@ function PersonModal({
                                     `${fTodos.length} TODO${fTodos.length === 1 ? "" : "s"}`,
                                   ].filter((x): x is string => x !== null),
                                 )}{" "}
-                                on this account.
+                                on this {W.account}.
                                 {s?.loading ? (
                                   <span className="ml-1 inline-flex items-center gap-1 text-muted-foreground/50">
                                     <Spinner className="size-2.5" />

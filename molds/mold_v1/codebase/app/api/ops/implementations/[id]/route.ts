@@ -3,6 +3,7 @@ import { errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { implementation } from "@/agent/lib/db/schema";
+import { implementationSchema } from "@/agent/lib/customer-schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordFieldChanges } from "@/lib/ops-activity";
 import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
@@ -32,7 +33,8 @@ const patchSchema = z.strictObject({
   displayName: z.string().optional(),
   actor: z.string().min(1).optional(),
   implementationProgressPct: z.coerce.number().min(0).max(100).optional(),
-  blockerOwner: z.enum(["Provider", "Customer", "Third-Party Vendor", "None"]).optional(),
+  // The stored values, from the one schema that lists them (agent/lib/customer-schema.ts).
+  blockerOwner: implementationSchema.shape.blockerOwner.optional(),
   // Any other single-value column, for a deployment profile that puts it on the detail card (`domains`).
   ...profileFieldSchemas("implementations", ["implementationOwnerEmail", "implementationStage", "implementationRiskLevel"]),
   // The profile's OWN fields (`custom_fields`): a PARTIAL change, merged onto what is stored; null clears a key.

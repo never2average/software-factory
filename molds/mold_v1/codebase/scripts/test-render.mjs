@@ -138,8 +138,16 @@ const LEGACY_OWNER_HEADING = LEGACY_MEMBER.owner.replace(/\bowner\b/, "Owner");
 const legacyReport = await renderAccountReport({ customerId: "acme-bank", now: NOW, profile: legacyWords });
 const legacyNorthwind = await renderAccountReport({ customerId: "northwind-cap", now: NOW, profile: legacyWords });
 const legacySummary = await renderDataroomSummary({ now: NOW, profile: legacyWords });
-assert.equal(sha(legacyReport), "192658e7cace6094f1d968b9ab4b3c5d05a3745c0c305dd9a96114c7612cd93f", "legacy words: the account report is byte-identical to the pre-change renderer");
-assert.equal(sha(legacyNorthwind), "47e28d0e4b10a46da54511a6496360b221f9ecf08736c80af123084d693c6c67", "legacy words: a second account report is byte-identical to the pre-change renderer");
+// One thing the pre-change renderer did not take from any word list: it titled the account report "Account report"
+// (and "… — Account Report") whatever the account was called. The title is the profile's account word now, so
+// under the legacy words it reads "Customer report"; it is put back as it was written before the hash is taken.
+const titledAsBefore = (html) => {
+  const out = html.split('<p class="sub">Customer report · ').join('<p class="sub">Account report · ').split(" — Customer Report</title>").join(" — Account Report</title>");
+  assert.notEqual(out, html, "legacy words: the account report's title takes the profile's account word");
+  return out;
+};
+assert.equal(sha(titledAsBefore(legacyReport)), "192658e7cace6094f1d968b9ab4b3c5d05a3745c0c305dd9a96114c7612cd93f", "legacy words: the account report is byte-identical to the pre-change renderer, its title apart");
+assert.equal(sha(titledAsBefore(legacyNorthwind)), "47e28d0e4b10a46da54511a6496360b221f9ecf08736c80af123084d693c6c67", "legacy words: a second account report is byte-identical to the pre-change renderer, its title apart");
 assert.equal(sha(legacySummary), "d28cee03efd509a9889e0a08dabf17729ef58534fb50efc73cde25b3c9141d41", "legacy words: the data-room summary is byte-identical to the pre-change renderer");
 const northwind = await renderAccountReport({ customerId: "northwind-cap", now: NOW });
 // The default profile against the legacy record words alone (member and owner as the default has them): the two
@@ -200,6 +208,11 @@ for (const html of relabelledReports) {
 assert.deepEqual(baseWords(relabelledSummary), [], "relabelled profile: the data-room summary carries no base word anywhere");
 const [relabelledReport] = relabelledReports;
 assert.ok(relabelledReport.includes('<span class="k">Covering Analyst</span>'), "relabelled profile: the owner label is the profile's owner word");
+assert.ok(relabelledReport.includes('<p class="sub">Company report · Generated '), "relabelled profile: the report's sub line names the profile's account, not the default profile's");
+assert.ok(relabelledReport.includes("<title>Acme Bank — Company Report</title>"), "relabelled profile: the report's title names the profile's account");
+// The default profile's own words for the records are profile words too: a pack's report spells none of them in a label.
+const defaultRecordWords = [BASE_VOCAB.account.singular, BASE_VOCAB.account.plural].map((w) => w.toLowerCase());
+for (const html of relabelledReports) assert.deepEqual(labels(html).join("\n").split(/[^A-Za-z]+/).filter((w) => defaultRecordWords.includes(w.toLowerCase())), [], "relabelled profile: no label of the account report spells the default profile's account word");
 assert.ok(relabelledReport.includes("<h2>Coverage Reports</h2>"), "relabelled profile: the deployment section is the profile's record area");
 assert.ok(relabelledReport.includes("<th>Coverage Report</th><th>Environment</th><th>Period / Basis</th><th>Status</th><th>Data Quality</th>"), "relabelled profile: the deployment columns are the profile's field labels");
 assert.ok(!relabelledReport.includes("Platform Summary"), "relabelled profile: the Platform area it hides is left out");
@@ -225,5 +238,46 @@ assert.equal(ownerHeading(memberOnly), "Analyst Owner", "member renamed, legacy 
 // The default owner label names no role at all, so a profile that keeps it reads it as it is.
 assert.equal(ownerHeading(mergedProfile((p) => ({ ...p, vocabulary: { ...p.vocabulary, owner: BASE_VOCAB.owner } }))), "Account Owner");
 assert.equal(ownerHeading(), BASE_OWNER_HEADING, "default profile: the heading is the base one");
+
+/* -------------------------------------------------------------------------- */
+/* The record words are the profile's, whatever the profile                    */
+/* -------------------------------------------------------------------------- */
+
+// A profile that calls each record by a neutral word that is not its stored name and relabels nothing else
+// (scripts/fixtures/ui-vocabulary/50-neutral-records.json: account, delivery, project, plan), merged by the real
+// generator. Neither report's labels may spell a record's stored name, and each label that names a record reads the
+// profile's word. (The relabelled profile above proves the same for a pack that renames everything.)
+const { STORED_RECORDS } = await import("./lib/record-literals.mjs");
+const storedRecordWords = (t) => baseWords(t).filter((w) => Object.values(STORED_RECORDS).flat().includes(w.toLowerCase()));
+function neutralRecordsProfile() {
+  const dir = mkdtempSync(join(tmpdir(), "render-profiles-"));
+  try {
+    cpSync(join(REPO, "profiles/00-default.json"), join(dir, "00-default.json"));
+    cpSync(join(REPO, "scripts/fixtures/ui-vocabulary/50-neutral-records.json"), join(dir, "50-neutral-records.json"));
+    const r = spawnSync(process.execPath, ["scripts/gen-deployment-profile.mjs", "--print"], { cwd: REPO, env: { ...process.env, PROFILES_DIR: dir }, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const neutral = neutralRecordsProfile();
+const neutralReports = [
+  await renderAccountReport({ customerId: "acme-bank", now: NOW, profile: neutral }),
+  await renderAccountReport({ customerId: "northwind-cap", now: NOW, profile: neutral }),
+];
+const neutralSummary = await renderDataroomSummary({ now: NOW, profile: neutral });
+for (const html of neutralReports) {
+  assert.ok(labels(html).length >= 20, "the label extractor sees the report's labels");
+  assert.deepEqual(storedRecordWords(labels(html).join("\n")), [], "neutral record words: no label of the account report spells a record's stored name");
+}
+assert.deepEqual(storedRecordWords(neutralSummary), [], "neutral record words: the data-room summary spells no record's stored name anywhere");
+assert.ok(neutralReports[0].includes("<h2>Deliveries</h2>"), "neutral record words: the deployment section is the profile's record area");
+assert.ok(neutralReports[0].includes("<th>Delivery</th>"), "neutral record words: the deployment column is the profile's record");
+assert.ok(neutralSummary.includes("<h2>Accounts</h2>") && neutralSummary.includes("<th>Account</th>"), "neutral record words: the summary's section and column name the profile's accounts");
+assert.match(neutralSummary, /<p class="totals">2 accounts · /, "neutral record words: the totals line counts the profile's accounts");
+const nw = reportWords(neutral);
+assert.equal(nw.deployments, "deliveries", "neutral record words: \"No deliveries on record.\"");
+assert.deepEqual(storedRecordWords(Object.values(nw).filter((x) => typeof x === "string").join("\n")), [], "neutral record words: no report word is a record's stored name");
 
 console.log("test-render: all assertions passed (fallback path, no Postgres).");

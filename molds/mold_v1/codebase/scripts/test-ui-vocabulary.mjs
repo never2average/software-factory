@@ -11,6 +11,12 @@
  * relabels nothing reads exactly what it read before (lib/ui-words.ts's words are pinned by check:ui-vocabulary).
  * RELABELLED re-runs this file inside a throwaway copy stamped with scripts/fixtures/agent-vocabulary/
  * 50-relabelled.json, because the profile is read at module load, the way a build reads it.
+ * RECORDS (R) holds the record words (the account, the two record areas, the second one's group) to the profile under
+ * all three: this checkout's default profile, the relabelled copy, and a copy stamped with scripts/fixtures/
+ * ui-vocabulary/50-neutral-records.json, which calls each record by a neutral word and relabels nothing else. No
+ * text the product writes outside the agent (a label made from a key, a record kind, a workflow step's framing, a
+ * new workspace's README, what the seeders write) spells a record's stored name; and the record-word audit
+ * (scripts/lib/record-literals.mjs) holds every string literal of app/, components/, lib/ and the seeders to that.
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
@@ -39,8 +45,12 @@ register(
 
 const ROOT = process.cwd();
 const STAMPED = process.argv.includes("--stamped");
+/** `--records-only`: a stamped copy whose profile is not the relabelled fixture runs the R checks alone. */
+const RECORDS_ONLY = process.argv.includes("--records-only");
+const NEUTRAL_FIXTURE = join(new URL("..", import.meta.url).pathname, "scripts/fixtures/ui-vocabulary/50-neutral-records.json");
 const FIXTURE = join(new URL("..", import.meta.url).pathname, "scripts/fixtures/agent-vocabulary/50-relabelled.json");
 const { LEGACY_MEMBER } = await import(pathToFileURL(join(process.cwd(), "agent/lib/legacy-member.ts")).href);
+const { auditRecordLiterals, recordProseWords, recordTokens, STORED_RECORDS } = await import(pathToFileURL(join(process.cwd(), "scripts/lib/record-literals.mjs")).href);
 const BASE = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", LEGACY_MEMBER.singular.toLowerCase(), LEGACY_MEMBER.plural.toLowerCase()]);
 const baseWords = (t) => [...String(t).matchAll(/[A-Za-z0-9]+/g)].flatMap((m) => m[0].split(/(?<=[a-z0-9])(?=[A-Z])/)).filter((p) => BASE.has(p.toLowerCase()));
 let passed = 0;
@@ -308,10 +318,13 @@ async function defaults() {
 
   const exp = await imp("lib/record-export.ts");
   const B = { type: "deployment", record: { containerType: "deployment", blockerOwner: "Customer", fdeOwner: "a@x", custom: { customer_tier: "gold" } }, resolved: { comments: [{ author: "a", body: "b" }] }, dataroom: { customerId: "acme", context: "ctx", files: { "s.json": { type: "deployment" } } } };
-  await check("D Copy as JSON is byte-identical to the API's bundle; Markdown to the former rendering", () => {
-    assert.equal(exp.exportJson(B), JSON.stringify(B, null, 2));
+  await check("D Copy as JSON is the API's bundle, a record kind in the profile's word; Markdown is the former rendering", () => {
+    // A record kind (`type`, `containerType`) reads the profile's word for the record under every profile; where
+    // that is the stored word the copy is byte-identical to the API's bundle. The data-room files are data.
+    const spoken = { ...B, type: words.W.deployment, record: { ...B.record, containerType: words.W.deployment } };
+    assert.equal(exp.exportJson(B), JSON.stringify(spoken, null, 2));
     const md = exp.bundleToMarkdown("T", B);
-    assert.match(md, /- \*\*Container Type:\*\* deployment/);
+    assert.ok(md.includes(`- **Container Type:** ${words.W.deployment}`), md);
     assert.match(md, /- \*\*Account owner:\*\* a@x/);
     assert.match(md, /## Comments\n- Author: a · Body: b/);
     assert.match(md, /### S\.json\n```json\n\{\n  "type": "deployment"\n\}\n```/);
@@ -347,21 +360,255 @@ async function defaults() {
     // default profile's tree differs from that in the member word alone.
     const { createHash } = await import("node:crypto");
     const { DEPLOYMENT_PROFILE } = await imp("lib/deployment-profile.generated.ts");
-    const legacy = { ...DEPLOYMENT_PROFILE, vocabulary: { ...DEPLOYMENT_PROFILE.vocabulary, member: { singular: LEGACY_MEMBER.singular, plural: LEGACY_MEMBER.plural }, owner: LEGACY_MEMBER.owner } };
+    // The pre-change tree called the account by its STORED name too, so that is put back with the member's words:
+    // the README takes both from the profile, and neither is a literal in lib/org-seed.ts.
+    const storedAccount = { singular: STORED_RECORDS.account[0], plural: STORED_RECORDS.account[1] };
+    const legacy = { ...DEPLOYMENT_PROFILE, vocabulary: { ...DEPLOYMENT_PROFILE.vocabulary, account: storedAccount, member: { singular: LEGACY_MEMBER.singular, plural: LEGACY_MEMBER.plural }, owner: LEGACY_MEMBER.owner } };
     const before = seed.starterFiles("org-1", "Acme", legacy);
-    assert.equal(createHash("sha256").update(JSON.stringify(before)).digest("hex"), "991a1d36007cec5dc527d98e6619d68f11b216f61a783ad4963e585744bb81fb");
+    // The pre-change tree spelled the account two ways, its stored name in most sentences and "account" in three.
+    // Every one is the profile's word now, so those three are put back as they were written before the hash is taken.
+    const [one] = STORED_RECORDS.account;
+    const asWritten = (t) => t.replace(`${one} context, curated by`, "account context, curated by").replace(`know about this ${one} lives`, "know about this account lives").replace(`when asked about a ${one}.`, "when asked about an account.");
+    assert.equal(createHash("sha256").update(JSON.stringify(before.map(([p, body]) => [p, asWritten(body)]))).digest("hex"), "991a1d36007cec5dc527d98e6619d68f11b216f61a783ad4963e585744bb81fb");
+    assert.notDeepEqual(before.map(([, body]) => asWritten(body)), before.map(([, body]) => body), "the three sentences do take the profile's word");
     const swap = (t) => t.replace(new RegExp(`\\b${LEGACY_MEMBER.plural}\\b`, "g"), "Members").replace(new RegExp(`\\b${LEGACY_MEMBER.singular}\\b`, "g"), "member");
-    assert.deepEqual(seed.starterFiles("org-1", "Acme"), before.map(([p, body]) => [p, swap(body)]));
+    const storedAccountDefault = { ...DEPLOYMENT_PROFILE, vocabulary: { ...DEPLOYMENT_PROFILE.vocabulary, account: storedAccount } };
+    assert.deepEqual(seed.starterFiles("org-1", "Acme", storedAccountDefault), before.map(([p, body]) => [p, swap(body)]));
     const files = Object.fromEntries(seed.starterFiles("org-1", "Acme"));
     for (const [path, body] of Object.entries(files)) assert.doesNotMatch(body, ROLE_WORD, `${path} carries the legacy role word`);
     assert.deepEqual(Object.keys(files), ["README.md", "Customers/README.md", "People/README.md"]);
-    assert.ok(files["README.md"].includes(`Everything the agent and the ${BASE_MEMBER} team\nknow about this account`));
-    assert.ok(files["README.md"].includes(`account context, curated by the ${BASE_MEMBER}\n`));
+    assert.ok(files["README.md"].includes(`Everything the agent and the ${BASE_MEMBER} team\nknow about this ${words.W.account} lives here`));
+    assert.ok(files["README.md"].includes(`${words.W.account} context, curated by the ${BASE_MEMBER}\n`));
     assert.ok(files["People/README.md"].includes(`Internal staff do **not** belong here. ${BASE_MEMBERS.charAt(0).toUpperCase() + BASE_MEMBERS.slice(1)} are recorded as team memories via the\n`));
   });
   await check("D the published HTML reports keep the base owner heading", async () => {
     const render = await imp("agent/lib/render-html.ts");
     assert.equal(render.ownerHeading(), BASE_VOCAB.owner.replace(/\bowner\b/, "Owner"));
+  });
+}
+
+/**
+ * R: the RECORD words a person reads, under the profile this checkout (or stamped copy) carries. Written against the
+ * profile's own words (`W`), so it holds under the default profile whatever its words are, under the relabelled
+ * fixture and under the neutral one. `relabels`: the profile calls at least one record by a word that is not its
+ * stored name, so the stored name must not be read anywhere.
+ */
+async function records(name) {
+  console.log(`\nrecord words (${name}):`);
+  const { W, an, domainLabel } = await imp("lib/ui-words.ts");
+  const keys = await imp("lib/ui-keys.ts");
+  const title = (w) => String(w).replace(/(^|\s)([a-z])/g, (_m, sp, c) => sp + c.toUpperCase());
+  /** The stored names this profile does NOT use for its records: the ones no person may read. */
+  const unused = Object.entries(STORED_RECORDS).flatMap(([k, [one, many]]) => [W[k] === one ? [] : one, W[`${k}s`] === many ? [] : many]).flat();
+  const stray = (text) => recordProseWords(text).filter((w) => unused.includes(w.toLowerCase()));
+  /** A data-room FOLDER named in a sentence reads its profile label; where the profile keeps the stored folder name
+   *  ("Deployments"), that name is the folder's and is put aside before the sentence is read. */
+  const folders = ["Customers", "Deployments", "Implementation"].map((d) => domainLabel(d));
+  const besideFolders = (text) => folders.reduce((t, f) => t.replaceAll(f, " "), String(text));
+  console.log(`  (the profile's words: ${W.account} / ${W.deployment} / ${W.implementation} / ${W.rollout}; stored names it does not use: ${unused.join(", ") || "none"})`);
+
+  await check("R1 a product key made into a LABEL reads the profile's word for the record, a key shown as a key keeps its rule", () => {
+    assert.equal(keys.keyLabel("customerId"), `${title(W.account)} Id`);
+    assert.equal(keys.keyLabel("deploymentId"), `${title(W.deployment)} Id`);
+    assert.equal(keys.keyLabel("implementationStage"), `${title(W.implementation)} Stage`);
+    assert.equal(keys.keyLabel("rolloutId"), `${title(W.rollout)} Id`);
+    assert.equal(keys.keyLabel("deployment"), title(W.deployment), "an export's section heading");
+    assert.equal(keys.keyLabel("implementation"), title(W.implementation));
+    assert.equal(keys.keyLabel("deploymentModel"), "Deployment Model", "a platform's software-deployment setting is not the record");
+    assert.equal(keys.keyLabel("notes"), "Notes");
+    assert.equal(keys.keyLabel("fdeOwner"), W.owner);
+    for (const k of ["customerId", "customers", "deploymentId", "deploymentIds", "relatedDeploymentIds", "implementationStage", "implementationRiskLevel", "rolloutId"]) {
+      assert.deepEqual(recordTokens(keys.keyLabel(k)).filter((w) => unused.includes(w.toLowerCase())), [], `${k} reads ${keys.keyLabel(k)}`);
+    }
+  });
+  await check("R2 a table preview's column header reads the profile's word for a product KEY, and leaves a file's own header alone", () => {
+    assert.equal(keys.headerLabel("customer_id"), `${title(W.account)} ID`);
+    assert.equal(keys.headerLabel("customerId"), `${title(W.account)} ID`);
+    assert.equal(keys.headerLabel("deployment_id"), `${title(W.deployment)} ID`);
+    assert.equal(keys.headerLabel("implementation_stage"), `${title(W.implementation)} Stage`);
+    assert.equal(keys.headerLabel("fde_owner"), W.owner);
+    assert.equal(keys.headerLabel("ae_owner"), W.secondaryOwner, "the second owner's column reads the profile's label");
+    assert.equal(keys.headerLabel("secondaryOwner"), W.secondaryOwner);
+    assert.equal(keys.headerLabel("deployment_model"), "Deployment Model");
+    // Not key-shaped: the file's own words. They are data, shown as written (case tidied as before).
+    assert.equal(keys.headerLabel("Customer"), "Customer");
+    assert.equal(keys.headerLabel("Net revenue"), "Net Revenue");
+    assert.equal(keys.headerLabel("arr_usd"), "ARR Usd");
+    assert.equal(keys.headerLabel(""), "");
+    // A word that is also an Object.prototype property is a word like any other.
+    assert.equal(keys.headerLabel("constructor"), "Constructor");
+    assert.equal(keys.headerLabel("customer_constructor"), `${title(W.account)} Constructor`);
+    assert.equal(keys.keyLabel("customerToString"), `${title(W.account)} To String`);
+  });
+  const exp = await imp("lib/record-export.ts");
+  await check("R3 a record kind reads the profile's word wherever a person copies it (JSON and Markdown); data stays data", () => {
+    assert.equal(keys.speakValue("containerType", "deployment"), W.deployment);
+    assert.equal(keys.speakValue("containerType", "implementation"), W.implementation);
+    assert.equal(keys.speakValue("linkType", "customer"), W.account);
+    assert.equal(keys.speakValue("type", "constructor"), "constructor", "an inherited property name is not a kind");
+    assert.equal(keys.speakValue("note", "deployment"), "deployment", "any other field's value is data");
+    const bundle = {
+      type: "deployment",
+      record: { id: "t1", title: "Chase the filing", customerId: "acme", containerType: "implementation", linkType: "customer", note: "the customer asked" },
+      resolved: { deployment: { deploymentId: "d1" }, implementation: { implementationProgressPct: 40 } },
+      dataroom: { customerId: "acme", context: null, files: { "state.json": { type: "deployment" } } },
+    };
+    const json = JSON.parse(exp.exportJson(bundle));
+    assert.equal(json.type, W.deployment);
+    assert.equal(json.record.containerType, W.implementation);
+    assert.equal(json.record.linkType, W.account);
+    assert.equal(json.record.note, "the customer asked", "a value is data");
+    assert.equal(json.dataroom.files["state.json"].type, "deployment", "a data-room file is stored data");
+    const md = exp.bundleToMarkdown("T", bundle).split("```json")[0];
+    assert.ok(md.includes(`- **${title(W.account)} Id:** acme`), md);
+    assert.ok(md.includes(`- **Container Type:** ${W.implementation}`), md);
+    assert.ok(md.includes(`## ${title(W.deployment)}\n- **${title(W.deployment)} Id:** d1`), md);
+    assert.ok(md.includes(`## ${title(W.implementation)}\n- **${title(W.implementation)} Progress Pct:** 40`), md);
+    assert.deepEqual(stray(md.replace("the customer asked", "")), [], md);
+  });
+
+  const delegate = await imp("lib/workflow-delegate.ts");
+  await check("R4 a workflow step's framing names the account in the profile's word", () => {
+    const ctx = { workflow: "Weekly report", phase: "Gather", runId: "wfr_1", call: 2, customerId: "acme-bank" };
+    const plain = delegate.composeStepMessage("Summarise last week's tickets.", undefined, ctx);
+    assert.ok(plain.includes(`${W.Account}: acme-bank`), plain);
+    const routed = delegate.composeStepMessage("Summarise last week's tickets.", "research", ctx);
+    assert.ok(routed.includes(`which run and ${W.account} this is for`), routed);
+    for (const m of [plain, routed]) assert.deepEqual(stray(m), [], m);
+  });
+
+  const seed = await imp("lib/org-seed.ts");
+  const { DEPLOYMENT_PROFILE } = await imp("lib/deployment-profile.generated.ts");
+  await check("R5 a new workspace's built-in README names the account in the profile's word, in every sentence", () => {
+    const builtIn = { ...DEPLOYMENT_PROFILE, dataroom: { ...DEPLOYMENT_PROFILE.dataroom, seed: null } };
+    const files = Object.fromEntries(seed.starterFiles("org-1", "Acme", builtIn));
+    const accounts = files["Customers/README.md"];
+    assert.ok(accounts.startsWith(`# ${W.Accounts}\n`), accounts.slice(0, 40));
+    assert.ok(accounts.includes(`One subtree per ${W.account}, keyed by`), accounts);
+    assert.ok(files["README.md"].includes(`1. Never write ${W.account} content outside its own`), files["README.md"]);
+    assert.ok(files["README.md"].includes(`skill to create your first ${W.account} subtree.`), files["README.md"]);
+    assert.ok(files["People/README.md"].includes(`External people only — ${W.account} stakeholders, champions`), files["People/README.md"]);
+    assert.ok(files["People/README.md"].includes(`keeps employee records out of ${W.account}-shared\ncontext.`), files["People/README.md"]);
+    assert.ok(files["README.md"].includes(`${W.account} context, curated by the ${W.member}\n`), files["README.md"]);
+    assert.ok(files["README.md"].includes(`know about this ${W.account} lives here as plain files.`), files["README.md"]);
+    assert.ok(accounts.includes(`reads first when asked about ${an(W.account)} ${W.account}.`), "a / an follows the word");
+    // The skill is called by its slug, which does not move; nothing else may spell a stored name the profile does not use.
+    for (const [path, body] of Object.entries(files)) assert.deepEqual(stray(body.replace(/\*\*onboard-customer\*\*/g, "")), [], `${path}:\n${body}`);
+  });
+
+  /** A seeder's `--print`: what it would write, as JSON, with no store and no database. */
+  const printed = (script) => {
+    const r = spawnSync(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", script, "--print"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: { ...process.env, BLOB_READ_WRITE_TOKEN: "", DATABASE_URL: "", POSTGRES_URL: "", SEED_ORG: "" } });
+    assert.equal(r.status, 0, `${script} --print: ${r.stderr}`);
+    return JSON.parse(r.stdout);
+  };
+  await check("R6 the sample data room the seeder writes names the records in the profile's words: no stored name in a sentence", () => {
+    const files = printed("scripts/seed-dataroom-blob.mjs");
+    assert.ok(Object.keys(files).length >= 30, "the tree is printed whole");
+    for (const [path, body] of Object.entries(files)) {
+      assert.doesNotMatch(body, /undefined|\$\{|\{(account|deployment|implementation|rollout)s?\}/i, `${path} carries an unfilled word`);
+      // `stage: "implementation"` is a pipeline's stored stage value in a JSON file; everything else is a sentence.
+      assert.deepEqual(stray(besideFolders(body.replace(/"stage": "implementation"/, ""))), [], `${path}:\n${body}`);
+    }
+    const all = Object.values(files).join("\n");
+    assert.ok(all.includes(`requested by ${W.account} infosec`), "the account, mid-sentence");
+    assert.ok(all.includes(`# Acme Bank — ${W.Account} Context\n`), "a file's own heading");
+    assert.ok(all.includes(`first — the ${W.account} is sensitive to surprise emails.`));
+    assert.ok(all.includes(`- Owns migration execution for assigned ${W.accounts} (approach docs`), "the plural");
+    assert.ok(all.includes(`# Signoff — ${W.Account} Infrastructure (Acme Bank)`), "the account, in a heading");
+    assert.ok(all.includes(`- ${W.Account}-managed KMS keys for data at rest`));
+    assert.ok(all.includes(`playbook for migrating ${an(W.account)} ${W.account}'s collections history`), "a / an follows the word");
+    assert.ok(all.includes(`- ${W.Implementation} kicked off 2026-06-02`));
+    assert.ok(all.includes(`**Stage:** ${W.implementation} ·`));
+    assert.ok(all.includes(`accountable for the v2.4.0 ${W.deployment} health`));
+    assert.ok(all.includes(`${W.deployment}-specific overrides live under ${domainLabel("Deployments")}.`), "a folder reads its profile label");
+  });
+  await check("R7 the connector and workflow rows the ops seeder writes name the records and folders in the profile's words", () => {
+    const { CONNECTORS, WORKFLOWS } = printed("scripts/seed-ops.mjs");
+    const sor = CONNECTORS.find((c) => c.kind === "system_of_record");
+    assert.equal(sor.detail, `Neon Postgres — ${W.accounts}, tickets, ${W.deployments}, interactions`);
+    assert.equal(sor.lands, `Postgres (Drizzle) · mirrored to ${domainLabel("Customers")}/{id}/interactions.jsonl`);
+    assert.deepEqual(sor.synced, [W.Accounts, "People", "Workbook sheets"]);
+    const slack = CONNECTORS.find((c) => c.kind === "slack");
+    assert.equal(slack.detail, `${W.Account} channels & alerts via Vercel Connect`);
+    assert.ok(slack.synced.includes(`${W.Account} DMs`));
+    assert.equal(WORKFLOWS.find((w) => w.name === "deployment").description, `Deploy & operate ${W.account} platforms; owns the 4-party infra signoff chain.`);
+    assert.equal(WORKFLOWS.find((w) => w.name === "research").description, `Research ${an(W.account)} ${W.account} & build its 7 domain workbooks.`, "a / an follows the word");
+    // What a person reads in a row: its detail, where it lands, what it syncs, a workflow's description. Vercel's
+    // row lists what VERCEL syncs under Vercel's own name for it ("Deployments", as on the connector card); a row's
+    // name and kind are identifiers.
+    for (const c of CONNECTORS) for (const t of [c.detail, ...c.synced.filter((x) => c.kind !== "vercel" || x !== "Deployments")]) assert.deepEqual(stray(besideFolders(t)), [], `${c.name}: ${t}`);
+    for (const w of WORKFLOWS) assert.deepEqual(stray(w.description), [], `${w.name}: ${w.description}`);
+    assert.equal(slack.lands, `${domainLabel("Customers")}/·/${domainLabel("Tickets")}/·/${domainLabel("People")}/syncs/slack`, "a folder reads its profile label");
+  });
+  const secrets = await imp("lib/connector-secrets-manifest.ts");
+  const { SUBAGENT_META } = await imp("app/_components/subagent-meta.generated.ts");
+  await check("R8 a connector's secret notes name a specialist by its display name, never by its directory name", () => {
+    const granola = secrets.CONNECTOR_SECRETS.granola.find((x) => x.name === "GRANOLA_API_KEY").purpose;
+    const readers = ["research", "customer-context"].filter((k) => k in SUBAGENT_META).map((k) => SUBAGENT_META[k].name);
+    assert.equal(granola, `Meeting notes. Without it, ${readers.join(" and ") || "the specialists"} lose their call transcripts.`);
+    // A specialist's display name is the roster's (scripts/gen-subagent-meta.mjs): the note repeats it and adds no
+    // record word of its own.
+    for (const x of Object.values(secrets.CONNECTOR_SECRETS).flat()) {
+      assert.doesNotMatch(x.purpose, /\b[a-z]+-context\b/, `${x.name}: ${x.purpose}`);
+      assert.deepEqual(stray(readers.reduce((t, name) => t.replaceAll(name, " "), x.purpose)), [], `${x.name}: ${x.purpose}`);
+    }
+  });
+  const { domainView } = await imp("lib/profile-domains.ts");
+  const { DOMAIN_FIELDS } = await imp("lib/deployment-profile.generated.ts");
+  await check("R9 an enum value the profile gives no label reads the profile's word for the record it names (a choice's label, a cell)", () => {
+    let seen = 0;
+    for (const area of ["deployments", "implementations"]) {
+      const view = domainView(area);
+      for (const [key, meta] of Object.entries(DOMAIN_FIELDS[area])) {
+        if (meta.type !== "enum") continue;
+        for (const [value, label] of [...(meta.values ?? []).map((x) => [x, view.display(key, x)]), ...view.options(key).map((o) => [o.value, o.label])]) {
+          seen++;
+          assert.deepEqual(recordTokens(label).filter((w) => unused.includes(w.toLowerCase())), [], `${area}.${key}: ${value} reads ${label}`);
+        }
+      }
+    }
+    assert.ok(seen > 40, "the enum fields were read");
+    // The stored values are what they were: the label is what a person reads, the value is what is submitted.
+    assert.ok(DOMAIN_FIELDS.implementations.blockerOwner.values.includes(`${STORED_RECORDS.account[0][0].toUpperCase()}${STORED_RECORDS.account[0].slice(1)}`));
+    assert.ok(DOMAIN_FIELDS.deployments.region.values.includes(`${STORED_RECORDS.account[0]}-vpc`));
+  });
+  await check("R10 the roster names no specialist by a record's stored name: a directory name is not a display name", () => {
+    assert.ok(Object.keys(SUBAGENT_META).length >= 4, "the roster was generated");
+    for (const [key, m] of Object.entries(SUBAGENT_META)) {
+      assert.doesNotMatch(m.name, /[{}]/, `${key}: an unfilled placeholder in ${m.name}`);
+      assert.deepEqual(recordTokens(m.name).filter((w) => unused.includes(w.toLowerCase())), [], `${key} is shown as ${m.name}`);
+    }
+    if (SUBAGENT_META["customer-context"]) assert.equal(SUBAGENT_META["customer-context"].name, `${W.Account} Context`);
+    if (SUBAGENT_META.deployment) assert.equal(SUBAGENT_META.deployment.name, W.Deployment);
+  });
+}
+
+/** R0: the static half, in this checkout only (a stamped copy carries no app/). */
+async function recordLiterals() {
+  console.log("\nrecord-word audit (every string literal of app/, components/, lib/ and the seeders):");
+  await check("R0 the audit reports each shape that used to reach a person, and no contract (control fixture)", () => {
+    const probe = "scripts/fixtures/ui-vocabulary/record-literals/probe.ts";
+    const { literals } = auditRecordLiterals(ROOT, { targets: [probe], shared: null, own: null });
+    const src = readFileSync(join(ROOT, probe), "utf8").split("\n");
+    const want = src.flatMap((line, i) => Array.from(line.matchAll(/\bLEAK\b/g), () => i + 1));
+    assert.ok(src.some((line) => /CONTRACT/.test(line)), "the control fixture marks its contracts");
+    assert.ok(want.length >= 8, "the control fixture marks its leaks");
+    assert.deepEqual(literals.filter((l) => l.kind === "prose").map((l) => l.line).sort((a, b) => a - b), want);
+    for (const l of literals) assert.doesNotMatch(src[l.line - 1], /CONTRACT/, `reported a contract: ${l.text}`);
+    // The default profile's own words (read from profiles/00-default.json) are profile words too: in a sentence, or
+    // alone as a label, they are reported; an identifier or a word the profile supplies is not.
+    const wantDefault = src.flatMap((line, i) => Array.from(line.matchAll(/\bDEFAULT\b/g), () => i + 1));
+    assert.ok(wantDefault.length >= 3, "the control fixture marks the default profile's words");
+    assert.deepEqual(literals.filter((l) => l.kind === "default").map((l) => l.line).sort((a, b) => a - b), wantDefault);
+  });
+  await check("R0 no literal spells a record word as prose, and every token that carries one is a listed contract", () => {
+    const { literals, unused } = auditRecordLiterals(ROOT);
+    const bad = literals.filter((l) => !l.allowed);
+    assert.deepEqual(bad.map((l) => `${l.source}:${l.line} [${l.kind}] ${JSON.stringify(l.text.slice(0, 120))}`), [], "take the word from the profile (W in lib/ui-words.ts), or list the contract in scripts/fixtures/ui-vocabulary/record-literals.allow.json with why");
+    assert.deepEqual(unused, [], "an allowance that matches nothing is stale");
+    assert.ok(literals.length > 100, "the audit read the tree");
+    assert.ok(literals.some((l) => l.source === "agent/lib/render-html.ts"), "the report renderer is read");
   });
 }
 
@@ -398,24 +645,30 @@ async function concurrentBuild() {
 }
 
 if (STAMPED) {
-  await relabelled();
+  if (!RECORDS_ONLY) await relabelled();
+  await records(RECORDS_ONLY ? "the neutral-records fixture" : "the relabelled fixture");
 } else {
   await defaults();
-  // RELABELLED: a copy stamped with the fixture, this file re-run inside it.
-  const dir = mkdtempSync(join(tmpdir(), "ui-vocab-stamped-"));
-  try {
-    for (const e of ["agent", "lib", "data", "scripts", "profiles", "package.json", "dm.md", "docs"]) if (existsSync(join(ROOT, e))) cpSync(join(ROOT, e), join(dir, e), { recursive: true, filter: (s) => !s.includes("__pycache__") });
-    mkdirSync(join(dir, "app/_components"), { recursive: true });
-    cpSync(FIXTURE, join(dir, "profiles/50-relabelled.json"));
-    symlinkSync(join(ROOT, "node_modules"), join(dir, "node_modules"), "dir");
-    for (const s of ["scripts/gen-subagent-meta.mjs", "scripts/gen-deployment-profile.mjs"]) {
-      const r = spawnSync(process.execPath, [s], { cwd: dir, encoding: "utf8" });
-      if (r.status !== 0) throw new Error(`${s}: ${r.stderr}`);
+  await records("default profile");
+  await recordLiterals();
+  // STAMPED: a copy stamped with a fixture profile, this file re-run inside it. The relabelled fixture runs every
+  // relabelled check and the record checks; the neutral-records fixture the record checks alone.
+  for (const [fixture, flags] of [[FIXTURE, []], [NEUTRAL_FIXTURE, ["--records-only"]]]) {
+    const dir = mkdtempSync(join(tmpdir(), "ui-vocab-stamped-"));
+    try {
+      for (const e of ["agent", "lib", "data", "scripts", "profiles", "package.json", "dm.md", "docs"]) if (existsSync(join(ROOT, e))) cpSync(join(ROOT, e), join(dir, e), { recursive: true, filter: (s) => !s.includes("__pycache__") });
+      mkdirSync(join(dir, "app/_components"), { recursive: true });
+      cpSync(fixture, join(dir, "profiles/50-relabelled.json"));
+      symlinkSync(join(ROOT, "node_modules"), join(dir, "node_modules"), "dir");
+      for (const s of ["scripts/gen-subagent-meta.mjs", "scripts/gen-deployment-profile.mjs"]) {
+        const r = spawnSync(process.execPath, [s], { cwd: dir, encoding: "utf8" });
+        if (r.status !== 0) throw new Error(`${s}: ${r.stderr}`);
+      }
+      const r = spawnSync(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "scripts/test-ui-vocabulary.mjs", "--stamped", ...flags], { cwd: dir, encoding: "utf8", stdio: "inherit" });
+      if (r.status !== 0) process.exitCode = 1;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-    const r = spawnSync(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "scripts/test-ui-vocabulary.mjs", "--stamped"], { cwd: dir, encoding: "utf8", stdio: "inherit" });
-    if (r.status !== 0) process.exitCode = 1;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
   }
   await concurrentBuild();
 }

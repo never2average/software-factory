@@ -3,43 +3,54 @@
 // the table is empty. Run with DATABASE_URL set.
 import { getDb, closeDb } from "../agent/lib/db/index.ts";
 import { connectors, workflows } from "../agent/lib/db/schema.ts";
+import { an, domainLabel, W } from "../lib/ui-words.ts";
+
+// What a person reads in these rows names the account, the record areas and the data-room folders in this
+// deployment's words (lib/ui-words.ts), never a literal record word. A row's `name` and `kind` are identifiers.
+const ROOM = { accounts: domainLabel("Customers"), tickets: domainLabel("Tickets"), people: domainLabel("People"), platform: domainLabel("Platform"), deployments: domainLabel("Deployments") };
 
 const CONNECTORS = [
   { name: "System of record", kind: "system_of_record", access: "read_write", status: "connected",
-    detail: "Neon Postgres — customers, tickets, deployments, interactions",
-    lands: "Postgres (Drizzle) · mirrored to Customers/{id}/interactions.jsonl",
-    synced: ["Accounts", "People", "Workbook sheets"] },
+    detail: `Neon Postgres — ${W.accounts}, tickets, ${W.deployments}, interactions`,
+    lands: `Postgres (Drizzle) · mirrored to ${ROOM.accounts}/{id}/interactions.jsonl`,
+    synced: [W.Accounts, "People", "Workbook sheets"] },
   { name: "Slack", kind: "slack", access: "read_write", status: "connected",
-    detail: "Customer channels & alerts via Vercel Connect",
-    lands: "Customers/·/Tickets/·/People/syncs/slack",
-    synced: ["Support channels", "Onboarding channels", "Customer DMs", "Alerts"] },
+    detail: `${W.Account} channels & alerts via Vercel Connect`,
+    lands: `${ROOM.accounts}/·/${ROOM.tickets}/·/${ROOM.people}/syncs/slack`,
+    synced: ["Support channels", "Onboarding channels", `${W.Account} DMs`, "Alerts"] },
   { name: "GitHub", kind: "github", access: "read", status: "read_only",
     detail: "Releases, commits, PRs (read-only PAT)",
-    lands: "Platform/·/Deployments/syncs/github",
+    lands: `${ROOM.platform}/·/${ROOM.deployments}/syncs/github`,
     synced: ["Releases", "Commits", "Pull requests", "Tags"] },
   { name: "Granola", kind: "granola", access: "read", status: "connected",
     detail: "Meeting notes, attendees, action items",
-    lands: "Customers/·/People/syncs/meeting_notes/granola",
+    lands: `${ROOM.accounts}/·/${ROOM.people}/syncs/meeting_notes/granola`,
     synced: ["Meeting notes", "Attendees", "Action items"] },
   { name: "Gmail", kind: "gmail", access: "read_write", status: "connected",
     detail: "IMAP threads & drafts (draft-only, never sends)",
-    lands: "Customers/·/Tickets/·/People/syncs/email",
+    lands: `${ROOM.accounts}/·/${ROOM.tickets}/·/${ROOM.people}/syncs/email`,
     synced: ["Email threads", "Follow-up drafts", "Attachments"] },
   { name: "Vercel", kind: "vercel", access: "read", status: "connected",
-    detail: "Deployments, build logs, runtime metrics",
-    lands: "Deployments/syncs",
+    detail: "Deploys, build logs, runtime metrics",
+    lands: `${ROOM.deployments}/syncs`,
     synced: ["Deployments", "Build logs", "Runtime metrics", "Regions"] },
 ];
 
 const WORKFLOWS = [
-  { name: "deployment", description: "Deploy & operate customer platforms; owns the 4-party infra signoff chain.", trigger: "on delegation" },
+  { name: "deployment", description: `Deploy & operate ${W.account} platforms; owns the 4-party infra signoff chain.`, trigger: "on delegation" },
   { name: "configuration", description: "Configure models, connections, feature flags, guardrails.", trigger: "on delegation" },
   { name: "evals", description: "Build, run & interpret eval suites; catch regressions.", trigger: "on delegation" },
-  { name: "data-migration", description: "Plan & execute customer data migrations and backfills.", trigger: "on delegation" },
+  { name: "data-migration", description: `Plan & execute ${W.account} data migrations and backfills.`, trigger: "on delegation" },
   { name: "customer-context", description: "Keep the system of record current from meetings, email, Slack.", trigger: "on delegation" },
   { name: "follow-ups", description: "Chase open follow-ups; prepare the daily stand-up summary.", trigger: "on delegation" },
-  { name: "research", description: "Research an account & build its 7 domain workbooks.", trigger: "on delegation" },
+  { name: "research", description: `Research ${an(W.account)} ${W.account} & build its 7 domain workbooks.`, trigger: "on delegation" },
 ];
+
+// `--print`: the rows as JSON on stdout, nothing written and no database needed (scripts/test-ui-vocabulary.mjs).
+if (process.argv.includes("--print")) {
+  console.log(JSON.stringify({ CONNECTORS, WORKFLOWS }));
+  process.exit(0);
+}
 
 const db = getDb();
 if (!db) {

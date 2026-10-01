@@ -3,10 +3,11 @@
  * "Copy as Markdown". The bundle comes from GET /api/ops/export, which stays RAW (stored keys, stored values) for any
  * program that reads it; what is copied for a person has its keys and its code values in the profile's words
  * (lib/ui-keys.ts: `containerType: deployment` -> `containerType: coverage report`, blockerOwner `Customer` -> its
- * label), the profile's own custom fields and every piece of data verbatim. Byte-identical to the former output
- * under the default profile.
+ * label), the profile's own custom fields and every piece of data verbatim. A field's Markdown label and a record
+ * kind read the profile's word for the record under every profile (lib/ui-keys.ts keyLabel, speakValue); under a
+ * profile that keeps the stored words the output is byte-identical to the former one.
  */
-import { humanizeKey, jsonForPeople, speakKeys, speakValues } from "./ui-keys.ts";
+import { humanizeKey, jsonForPeople, keyLabel, speakKeys, speakValues } from "./ui-keys.ts";
 
 export type ExportBundle = {
   type?: string;
@@ -32,7 +33,7 @@ function fieldsToMarkdown(obj: Record<string, unknown>): string[] {
   for (const [k, v] of Object.entries(obj)) {
     if (v === null || v === undefined || v === "") continue;
     const val = typeof v === "object" ? jsonForPeople(v) : String(v);
-    out.push(`- **${humanizeKey(k)}:** ${val}`);
+    out.push(`- **${keyLabel(k)}:** ${val}`);
   }
   return out;
 }
@@ -46,12 +47,12 @@ export function bundleToMarkdown(title: string, raw: ExportBundle): string {
   const resolved = bundle.resolved ?? {};
   for (const [key, val] of Object.entries(resolved)) {
     if (val === null || val === undefined || (Array.isArray(val) && val.length === 0)) continue;
-    lines.push("", `## ${humanizeKey(key)}`);
+    lines.push("", `## ${keyLabel(key)}`);
     if (Array.isArray(val)) {
       for (const item of val) {
         lines.push(
           typeof item === "object" && item
-            ? `- ${Object.entries(item as Record<string, unknown>).map(([k, v]) => `${humanizeKey(k)}: ${typeof v === "object" ? jsonForPeople(v) : v}`).join(" · ")}`
+            ? `- ${Object.entries(item as Record<string, unknown>).map(([k, v]) => `${keyLabel(k)}: ${typeof v === "object" ? jsonForPeople(v) : v}`).join(" · ")}`
             : `- ${String(item)}`,
         );
       }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorMessage } from "@/lib/ops-errors";
+import { an, upperFirst, W } from "@/lib/ui-words";
 import { speak } from "@/agent/lib/agent-vocabulary";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText } from "ai";
@@ -107,24 +108,27 @@ const contextSchema = z
   })
   .strict();
 
+/** The account word as the prompt's section headings write it. */
+const ACCOUNT = W.account.toUpperCase();
+
 function buildPrompt(email: string, c: z.infer<typeof contextSchema>): string {
   const person = c.person?.name ?? email;
   const counts = c.counts ?? {};
   return [
     // The product's own words go through speak() (the model reads the profile's words); the names are data.
-    `Write a short, specific briefing on ${person}'s role and work on the "${c.account}" account. ${speak("It renders directly as a summary paragraph in an internal Control Panel (the {members}' operations tool).")}`,
+    `Write a short, specific briefing on ${person}'s role and work on the ${W.account} "${c.account}". ${speak("It renders directly as a summary paragraph in an internal Control Panel (the {members}' operations tool).")}`,
     "",
     "PERSON: " +
       `${person} (${email})${c.person?.title ? `, ${c.person.title}` : ""}${c.person?.org ? ` at ${c.person.org}` : ""}${c.person?.kind ? ` — ${c.person.kind}` : ""}`,
-    `ACCOUNT: ${c.account}`,
-    `THEIR ROLE ON THIS ACCOUNT: ${c.role ?? "unknown"}${c.title ? ` (${c.title})` : ""}`,
+    `${ACCOUNT}: ${c.account}`,
+    `THEIR ROLE ON THIS ${ACCOUNT}: ${c.role ?? "unknown"}${c.title ? ` (${c.title})` : ""}`,
     `LAST CONTACT: ${c.lastContact ?? "unknown"}`,
-    `TOTALS ON THIS ACCOUNT: ${counts.tickets ?? 0} tickets, ${counts.deployments ?? 0} deployments, ${counts.implementations ?? 0} implementations, ${counts.todos ?? 0} TODOs`,
+    `TOTALS ON THIS ${ACCOUNT}: ${counts.tickets ?? 0} tickets, ${counts.deployments ?? 0} ${W.deployments}, ${counts.implementations ?? 0} ${W.implementations}, ${counts.todos ?? 0} TODOs`,
     "",
-    "WHAT THEY OWN ON THIS ACCOUNT:",
-    c.workText?.trim() || "(nothing recorded against them on this account)",
+    `WHAT THEY OWN ON THIS ${ACCOUNT}:`,
+    c.workText?.trim() || `(nothing recorded against them on this ${W.account})`,
     "",
-    `Write AT MOST 2 sentences — 60 words maximum, a hard limit. This is a briefing about ${person}, NOT an account status report: every sentence should be about what THEY are doing, own, or are blocked on here. Lead with their responsibility on this account, then the single most notable thing about their work on it (a blocker they need to clear, a risk they carry, a stale item, or that it's quiet for them). Describe the account only where it explains their position. Cut all account boilerplate: no SLA terms, no lifecycle/stage recital, no capacity math, no "nothing recorded" inventory.`,
+    `Write AT MOST 2 sentences — 60 words maximum, a hard limit. This is a briefing about ${person}, NOT ${an(W.account)} ${W.account} status report: every sentence should be about what THEY are doing, own, or are blocked on here. Lead with their responsibility on this ${W.account}, then the single most notable thing about their work on it (a blocker they need to clear, a risk they carry, a stale item, or that it's quiet for them). Describe the ${W.account} only where it explains their position. Cut all ${W.account} boilerplate: no SLA terms, no lifecycle/stage recital, no capacity math, no "nothing recorded" inventory.`,
     "",
     "CRITICAL — do NOT call any tools or look anything up. Everything you need is above; answer directly in a single step. No headings, no bullet points, no preamble or sign-off, no markdown. Ground every claim in the data above and omit anything not present rather than inventing it. Your entire reply IS the summary; a program renders it verbatim.",
   ].join("\n");
@@ -145,7 +149,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ email:
   const email = decodeURIComponent((await ctx.params).email).trim().toLowerCase();
   const parsed = contextSchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: "An account is required." }, { status: 400 });
+    return NextResponse.json({ error: `${upperFirst(an(W.account))} ${W.account} is required.` }, { status: 400 });
   }
   const db = getOpsDb();
   const key = `${email}|${parsed.data.accountId ?? parsed.data.account}`;

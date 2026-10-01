@@ -20,17 +20,53 @@ import {
   type DomainFieldMeta,
   type DomainFieldSpec,
 } from "./deployment-profile.generated.ts";
-import { speak, speakCode, VOCABULARY_RELABELLED } from "../agent/lib/agent-vocabulary.ts";
+import { LEGACY_RECORDS, speak, speakCode, VOCABULARY_RELABELLED } from "../agent/lib/agent-vocabulary.ts";
 
 /**
- * A choice's label when the profile gives it none: under a relabelling profile, a stored enum VALUE shown as it is
- * would read the base product's word (`customer-vpc`, `customer_cloud`, blockerOwner `Customer`), so it is shown the
- * way the model is told it (`company-vpc`, `Company`) and a built-in label is spoken. The value stored is unchanged.
- * A label the profile gives is its own words and is never touched. The identity under the default profile.
+ * The profile's word for each record, by the stored name a code value may spell (`customer-vpc`, `customer_cloud`,
+ * blockerOwner `Customer`): lower case, as prose writes it.
+ */
+const RECORD_WORD: Record<string, string> = Object.fromEntries(
+  (
+    [
+      [LEGACY_RECORDS.account, DEPLOYMENT_PROFILE.vocabulary.account],
+      [LEGACY_RECORDS.deployments, DEPLOYMENT_PROFILE.domains.deployments.label],
+      [LEGACY_RECORDS.implementations, DEPLOYMENT_PROFILE.domains.implementations.label],
+      [LEGACY_RECORDS.rollouts, DEPLOYMENT_PROFILE.domains.implementations.group_label],
+    ] as const
+  ).flatMap(([stored, word]) => [
+    [stored.singular, lowerFirst(word.singular)],
+    [stored.plural, lowerFirst(word.plural)],
+  ]),
+);
+
+/**
+ * A stored code value with each record's stored name read in the profile's word, where the vocabulary does not
+ * translate it itself (the default profile; a profile that renames one record and keeps the default word for
+ * another): `customer-vpc` -> `account-vpc`, `Customer` -> `Account`. The identity where the profile's word is the
+ * stored one.
+ */
+function inRecordWords(value: string): string {
+  return value.replace(/[A-Za-z]+/g, (w) => {
+    const stored = w.toLowerCase();
+    if (!Object.hasOwn(RECORD_WORD, stored)) return w;
+    const word = RECORD_WORD[stored];
+    if (word === stored || (VOCABULARY_RELABELLED && speakCode(stored) !== stored)) return w;
+    return /^[A-Z]/.test(w) ? word[0].toUpperCase() + word.slice(1) : word;
+  });
+}
+
+/**
+ * A choice's label when the profile gives it none: a stored enum VALUE shown as it is would read a record's stored
+ * name (`customer-vpc`, `customer_cloud`, blockerOwner `Customer`), so the record word in it is the profile's, under
+ * every profile (`account-vpc`, `Account`); under a relabelling profile it is shown the way the model is told it
+ * (`company-vpc`, `Company`) and a built-in label is spoken. The value stored is unchanged. A label the profile
+ * gives is its own words and is never touched.
  */
 function said(value: string, label: string): string {
-  if (!VOCABULARY_RELABELLED) return label;
-  return label === value ? speakCode(value) : speak(label);
+  if (label !== value) return VOCABULARY_RELABELLED ? speak(label) : label;
+  const words = inRecordWords(value);
+  return VOCABULARY_RELABELLED ? speakCode(words) : words;
 }
 
 export type Domains = DeploymentProfile["domains"];

@@ -751,15 +751,39 @@ did before (`check:ui-vocabulary` pins each word).
 | the subagent roster (cockpit rail, workspace Agents tab): names, summaries, descriptions, tool names and descriptions | spoken at generation (`scripts/gen-subagent-meta.mjs` → `scripts/lib/speak-subagent-meta.mjs`) with the same `speak()` / `speakIdentifier()` the model's copy goes through, so the panel shows `list_analysts` and "List the analyst roster…", exactly what the model is given |
 | the workflow library | never shipped to the browser: `GET /api/ops/workflows` says in one sentence why the library is smaller (`libraryNote`); a stored base library row that needs an excluded specialist is listed as "not in this workspace", its text in the profile's words, and can be opened and adopted (edit it to use this workspace's specialists) |
 | a workflow a person edited that still delegates to an excluded specialist | a count ("needs 2 specialists"), never the directory names |
-| an enum VALUE a person sees (`customer-vpc`, `customer_cloud`, blockerOwner `Customer`) | the profile's option label; without one, the value as the model is told it (`company-vpc`) |
+| an enum VALUE a person sees (`customer-vpc`, `customer_cloud`, blockerOwner `Customer`) | the profile's option label; without one, the value with the record word in the profile's word, under every profile (`account-vpc`, `Account` under the default profile; `company-vpc` as the model is told it under a relabelling one). The stored value is what is submitted |
 | JSON a person views or copies (a record's Copy as JSON / Markdown export, the data-room JSON and JSONL viewers), an ops API error's field path | keys through `lib/ui-keys.ts` (`jsonForPeople`, `lib/ops-errors.ts`); values verbatim |
 | a stored key a person reads (a data-room sheet's column header, a Markdown export's field) | `lib/ui-keys.ts`: `customer_id` → `company_id` (the model's spelling); the owner key humanises to `vocabulary.owner` |
 | a data-room domain | its `dataroom.domains.<Domain>.label`, also in path-shaped placeholders and sheet tabs |
 | specialists the profile excludes | not listed anywhere: not in the roster, not in a starter workflow, not in a connector's "without it, … lose" line |
+| a product key made into a LABEL (a Markdown export's `**Account Id:**`, a table preview's column header) | `keyLabel` / `headerLabel` in `lib/ui-keys.ts`: the record word in the label is the profile's under every profile, the default included. A key shown as a key keeps its stored name unless the profile relabels it; a header that is not key-shaped is the file's own text |
+| a record kind a person copies (`containerType`, `linkType`, an export's `type`) | the profile's word for the record, under every profile (`speakValue`) |
+| a specialist's display name in the roster, when its `subagent.json` gives none | the title-cased directory name, a record's stored name in it written as that record's placeholder (`customer-context` → "{Account} Context" → "Account Context"; `scripts/gen-subagent-meta.mjs`) |
+| the published account report's title and sub line | the profile's account word (`reportWords`): "Account report", "Company report" |
+| what the seeders write (the sample data room, the connector and workflow rows, their console reports) | `W.*` and `domainLabel(...)`, as the UI; `npm run seed:dataroom-blob -- --print` and `node scripts/seed-ops.mjs --print` show it without a store or a database |
 
 What is NOT translated, and why, is the allow-list `scripts/fixtures/ui-vocabulary/allow.json`: keys, routes,
 storage keys and stored values a person never reads, each with its reason. User data (names, notes, a
 workflow a person wrote) is never translated.
+
+**No sentence spells a record word, stored or default.** `customer`, `deployment`, `implementation` and `rollout`
+are what storage calls the records (columns, API keys, routes, folders, enum values); `account`, `delivery`,
+`project` and `plan` are what the DEFAULT profile calls them, and a pack calls them something else. A sentence
+takes the word from the profile either way. The record-word audit (`scripts/lib/record-literals.mjs`, run by
+`npm run test:ui-vocabulary`) reads every string literal, template piece and JSX text of `app/`, `components/`,
+`lib/`, the report renderer and the seeders, whatever its shape and wherever it goes (an audit event, a prompt
+handed to `speak()`, a console line):
+
+- a stored name as prose fails unless `scripts/fixtures/ui-vocabulary/record-literals.allow.json` says why (SQL, a
+  specialist's directory name), and a bare token must be a listed contract;
+- a default-profile word in a sentence, or alone as a label ("Accounts"), fails unless that list says why it is
+  ordinary English there: a person's sign-in account, plan mode, a code project, a message's delivery, a third
+  party's own noun.
+
+`node scripts/lib/record-literals.mjs --list` prints them all. What a person still reads in a stored name under
+the default profile is three kinds of identifier, on purpose: a data-room domain (`Customers`, `Deployments`,
+`Implementation`: the label is the stored folder name until a profile gives another), a key shown as a key (a
+sheet's `customer_id` column), and the identifiers and paths inside a tool's description in the roster.
 
 ## Checks
 
@@ -770,7 +794,7 @@ npm run check:agent-vocabulary     # the model-facing surface under a relabellin
 npm run check:neutral-names        # the role word only as a listed contract; the record words as prose only under a per-file ceiling
 npm run check:ui-vocabulary        # what a PERSON reads (source text, the built client bundle, prerendered pages) under the same fixture has no base word; the default's words are unchanged
 npm run check:vocabulary           # its static half, in seconds (no build)
-npm run test:ui-vocabulary         # keys in JSON and exports, ops API errors, library rows, unlabelled enum values, the generator during a build
+npm run test:ui-vocabulary         # keys in JSON and exports, ops API errors, library rows, unlabelled enum values, the generator during a build; the record words (labels, kinds, the README, the seeders) under the default, the relabelled and a neutral-records profile; the record-word audit
 npm run test:agent-vocabulary      # what the model writes in the profile's words lands in unchanged storage; specialists.exclude moves and restores
 npm run test:custom-fields         # the custom-field validator, the agent's write path, the MCP inputs, the migration; offline
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked

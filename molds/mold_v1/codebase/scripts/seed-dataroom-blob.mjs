@@ -16,13 +16,23 @@
 
 import { getDataroomStore } from "../agent/lib/dataroom-store.ts";
 import { DEPLOYMENT_PROFILE } from "../agent/lib/deployment-profile.generated.ts";
+import { an, domainLabel, W } from "../lib/ui-words.ts";
 
 // The role words the seeded files use, from this deployment's profile (never a literal role word).
 const MEMBER = DEPLOYMENT_PROFILE.vocabulary.member.singular;
 const Owner = DEPLOYMENT_PROFILE.vocabulary.owner.charAt(0).toUpperCase() + DEPLOYMENT_PROFILE.vocabulary.owner.slice(1);
 const OWNER = /^[A-Z][a-z]/.test(Owner) ? Owner.charAt(0).toLowerCase() + Owner.slice(1) : Owner;
 
-if (!process.env.BLOB_READ_WRITE_TOKEN) {
+// The record words, from the same profile (lib/ui-words.ts): the account, the two record areas, and a data-room
+// domain's label where a sentence names the folder. Paths and field keys are storage's and stay as they are.
+const DEPLOYMENTS_ROOM = domainLabel("Deployments");
+const IMPLEMENTATION_ROOM = domainLabel("Implementation");
+
+// `--print`: the tree as JSON on stdout, nothing written and no store needed (scripts/test-ui-vocabulary.mjs reads
+// it under the default profile and under a relabelling one).
+const PRINT = process.argv.includes("--print");
+
+if (!PRINT && !process.env.BLOB_READ_WRITE_TOKEN) {
   console.error(
     "seed-dataroom-blob: BLOB_READ_WRITE_TOKEN is not set — this seed targets the Vercel Blob store.",
   );
@@ -33,12 +43,12 @@ if (!process.env.BLOB_READ_WRITE_TOKEN) {
 // root is no workspace's (lib/dataroom-keyspace.ts).
 const orgArg = process.argv.indexOf("--org");
 const SEED_ORG = (orgArg > -1 ? process.argv[orgArg + 1] : process.env.SEED_ORG ?? "").trim();
-if (!SEED_ORG) {
+if (!PRINT && !SEED_ORG) {
   console.error("seed-dataroom-blob: name the workspace to seed: --org <workspace id> (or SEED_ORG).");
   process.exit(1);
 }
-const store = getDataroomStore(SEED_ORG);
-if (store.backend.kind !== "vercel-blob") {
+const store = PRINT ? null : getDataroomStore(SEED_ORG);
+if (store && store.backend.kind !== "vercel-blob") {
   console.error(
     `seed-dataroom-blob: expected the vercel-blob backend, got "${store.backend.kind}".`,
   );
@@ -54,7 +64,7 @@ const jsonl = (records) => records.map((r) => JSON.stringify(r)).join("\n");
 
 const FILES = {
   // --- Customers -------------------------------------------------------------
-  "Customers/acme-bank/context.md": `# Acme Bank — Account Context
+  "Customers/acme-bank/context.md": `# Acme Bank — ${W.Account} Context
 
 **Tier:** Enterprise · **Lifecycle:** Live · **Region:** us-east-1
 
@@ -68,12 +78,12 @@ const FILES = {
 
 - **TCK-1002** — connector rate limits during the nightly core-banking sync
 - Infosec re-review of the inference \`customizations.tf\` due **2026-07-18**
-- SBOM for the v2.4.0 inference image requested by customer infosec
+- SBOM for the v2.4.0 inference image requested by ${W.account} infosec
 
 ## Working notes
 
 Champion is the VP of Operations; weekly sync every Thursday. Escalations go
-through the ${OWNER} first — the account is sensitive to surprise emails.`,
+through the ${OWNER} first — the ${W.account} is sensitive to surprise emails.`,
 
   "Customers/acme-bank/interactions.jsonl": jsonl([
     {
@@ -85,7 +95,7 @@ through the ${OWNER} first — the account is sensitive to surprise emails.`,
       summary: "Weekly sync — reviewed TCK-1002 mitigation and disputes UAT timeline",
       participant_emails: ["sam.cole@onfinance.ai", "vp.ops@acmebank.com"],
       sentiment: "positive",
-      next_action: "Send revised rollout plan",
+      next_action: "Send revised go-live plan",
       next_action_owner_email: "sam.cole@onfinance.ai",
       next_action_due_date: "2026-07-11",
     },
@@ -124,18 +134,18 @@ through the ${OWNER} first — the account is sensitive to surprise emails.`,
 
 ## Key clauses
 
-- Data residency: all customer data processed and stored in **us-east-1**
-- Customer-managed KMS keys for data at rest (Schedule C)
+- Data residency: all ${W.account} data processed and stored in **us-east-1**
+- ${W.Account}-managed KMS keys for data at rest (Schedule C)
 - Model providers restricted to the approved list in the AI Addendum
 - Termination for convenience: 90 days' notice, prorated refund`,
 
-  "Customers/northwind-capital/context.md": `# Northwind Capital — Account Context
+  "Customers/northwind-capital/context.md": `# Northwind Capital — ${W.Account} Context
 
 **Tier:** Growth · **Lifecycle:** Onboarding · **Region:** eu-west-1
 
 ## Current state
 
-- Implementation kicked off 2026-06-02; research-assistant workflow scoped
+- ${W.Implementation} kicked off 2026-06-02; research-assistant workflow scoped
 - Data-access review in progress with their platform team
 - **TCK-2031** (portfolio ingest dedupe bug) is the top blocker for UAT
 
@@ -186,7 +196,7 @@ the COO. Keep the tone metrics-first — they track everything.`,
 
 ## Key clauses
 
-- Data residency: all customer data processed and stored in **eu-west-1** (GDPR)
+- Data residency: all ${W.account} data processed and stored in **eu-west-1** (GDPR)
 - Sub-processor list changes require 30 days' advance notice
 - Model providers restricted to the approved list in the AI Addendum
 - Termination for convenience: 60 days' notice after month 12`,
@@ -367,7 +377,7 @@ module "inference_override" {
   tenant_id        = "tnt-acme0001"
   inference_region = "us-east-1"
 
-  # Customer-managed KMS key for all inference-side storage
+  # ${W.Account}-managed KMS key for all inference-side storage
   kms_key_arn = "arn:aws:kms:us-east-1:481522891733:key/7c1e-acme-cmk"
 
   # Dedicated inference node group — no multi-tenant sharing
@@ -392,7 +402,7 @@ inference isolation guarantees beyond the shared v2.4.0 defaults:
 
 - **Dedicated node group** — no co-tenancy on inference hosts, per their
   third-party risk assessment
-- **Customer-managed KMS key** — all inference-side caches and logs encrypt
+- **${W.Account}-managed KMS key** — all inference-side caches and logs encrypt
   under the Acme CMK (MSA Schedule C)
 - **Restricted egress** — outbound traffic pinned to the approved model
   provider endpoint list; anything else is dropped at the NAT policy
@@ -400,11 +410,11 @@ inference isolation guarantees beyond the shared v2.4.0 defaults:
 ## Cost impact
 
 Dedicated \`g6.4xlarge\` capacity adds ~$3,100/mo over pooled inference at
-current volumes. Approved by the account team on 2026-06-24.
+current volumes. Approved by the ${W.account} team on 2026-06-24.
 
 ## Review cadence
 
-Re-review with customer infosec each platform minor release, next due
+Re-review with ${W.account} infosec each platform minor release, next due
 **2026-07-18** alongside the v2.4.0 SBOM review.`,
 
   "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/internal.md": `# Signoff — Internal (OnFinance)
@@ -413,11 +423,11 @@ Re-review with customer infosec each platform minor release, next due
 
 Reviewed the dedicated node group sizing, CMK integration, and restricted
 egress list against the v2.4.0 base module. Terraform plan shows no drift
-outside the inference module. Cost delta approved by the account team.
+outside the inference module. Cost delta approved by the ${W.account} team.
 
 **Decision: APPROVED** — Sam Cole, Solutions Engineering`,
 
-  "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infra.md": `# Signoff — Customer Infrastructure (Acme Bank)
+  "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infra.md": `# Signoff — ${W.Account} Infrastructure (Acme Bank)
 
 **Artifact:** \`customizations.tf\` @ \`b4f19d7\` · **Date:** 2026-06-27
 
@@ -427,7 +437,7 @@ lands in our approved subnets and tagging standard is met.
 
 **Decision: APPROVED** — R. Iyer, Head of Platform Engineering, Acme Bank`,
 
-  "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infosec.md": `# Signoff — Customer Information Security (Acme Bank)
+  "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infosec.md": `# Signoff — ${W.Account} Information Security (Acme Bank)
 
 **Artifact:** \`customizations.tf\` @ \`b4f19d7\` · **Date:** 2026-06-30
 
@@ -497,7 +507,7 @@ no service-quota increases required at the stated max of 6 nodes.
 
   "Deployments/acme-bank/v2.4.0/platform/migrations/mig-001/context.md": `# Migration mig-001 — Legacy Collections DB → Data Platform
 
-**Customer:** acme-bank · **Platform:** v2.4.0 · **Strategy:** incremental
+**${W.Account}:** acme-bank · **Platform:** v2.4.0 · **Strategy:** incremental
 
 ## Scope
 
@@ -512,7 +522,7 @@ database into the managed data platform feeding pipeline **pl-001**.
 
 ## Open items
 
-- Final checksum report to customer data engineering before cutover`,
+- Final checksum report to ${W.account} data engineering before cutover`,
 
   "Deployments/acme-bank/v2.4.0/platform/migrations/mig-001/interactions.jsonl": jsonl([
     {
@@ -596,7 +606,7 @@ ships to production.`,
         target_dataset: "delinquency_ledger",
         strategy: "incremental",
         notes:
-          "Solution-level reference approach for onboarding pl-001 consumers; deployment-specific overrides live under Deployments.",
+          `Solution-level reference approach for onboarding pl-001 consumers; ${W.deployment}-specific overrides live under ${DEPLOYMENTS_ROOM}.`,
         validation: { row_count_tolerance_pct: 0.5, checksum_validation: true },
       },
       null,
@@ -605,7 +615,7 @@ ships to production.`,
 
   "Solutions/v2.4.0/pipelines/pl-001/migrations/mig-001/context.md": `# Migration mig-001 — pl-001 Reference Approach (v2.4.0)
 
-Solution-level playbook for migrating a customer's collections history into
+Solution-level playbook for migrating ${an(W.account)} ${W.account}'s collections history into
 the dataset behind pipeline **pl-001**.
 
 ## Approach
@@ -617,8 +627,8 @@ the dataset behind pipeline **pl-001**.
 
 ## Notes
 
-Customer-specific cutover windows, credentials, and codebases live in the
-matching Deployments/Implementation migration folders.`,
+${W.Account}-specific cutover windows, credentials, and codebases live in the
+matching ${DEPLOYMENTS_ROOM}/${IMPLEMENTATION_ROOM} migration folders.`,
 
   "Solutions/v2.4.0/pipelines/pl-001/migrations/mig-001/interactions.jsonl": jsonl([
     {
@@ -659,7 +669,7 @@ matching Deployments/Implementation migration folders.`,
       },
       schedule: "manual",
       notes:
-        "Full-history backfill config used during onboarding; the production nightly variant lives under Deployments.",
+        `Full-history backfill config used during onboarding; the production nightly variant lives under ${DEPLOYMENTS_ROOM}.`,
       acceptance: {
         row_count_tolerance_pct: 0.5,
         checksum_validation: true,
@@ -679,7 +689,7 @@ matching Deployments/Implementation migration folders.`,
       strategy: "full_load",
       cutover_window: "onboarding",
       notes:
-        "Onboarding full-history load executed during implementation; the production incremental variant lives under Deployments.",
+        `Onboarding full-history load executed before go-live; the production incremental variant lives under ${DEPLOYMENTS_ROOM}.`,
       validation: {
         row_count_tolerance_pct: 0.5,
         checksum_validation: true,
@@ -692,7 +702,7 @@ matching Deployments/Implementation migration folders.`,
 
   "Implementation/acme-bank/migrations/mig-001/context.md": `# Migration mig-001 — Acme Bank Onboarding Load
 
-**Stage:** implementation · **Strategy:** full-history load
+**Stage:** ${W.implementation} · **Strategy:** full-history load
 
 ## Summary
 
@@ -703,11 +713,11 @@ platform during onboarding, ahead of the incremental production migration.
 
 - Extract received 2026-06-10; 7 years of ledger history (41.2M rows)
 - Full load completed 2026-06-14; checksum validation clean
-- Signed off by the customer data engineering lead on 2026-06-16
+- Signed off by the ${W.account} data engineering lead on 2026-06-16
 
 ## Follow-ups
 
-- Production incremental cutover tracked under Deployments mig-001`,
+- Production incremental cutover tracked under ${DEPLOYMENTS_ROOM} mig-001`,
 
   "Implementation/acme-bank/migrations/mig-001/interactions.jsonl": jsonl([
     {
@@ -725,7 +735,7 @@ platform during onboarding, ahead of the incremental production migration.
       customer_id: "acme-bank",
       interaction_at: "2026-06-16T10:00:00Z",
       interaction_type: "email",
-      summary: "Customer data engineering signed off on the onboarding load",
+      summary: `${W.Account} data engineering signed off on the onboarding load`,
       recorded_by_email: "sam.cole@onfinance.ai",
     },
   ]),
@@ -829,7 +839,7 @@ platform during onboarding, ahead of the incremental production migration.
 ## Working style
 
 - Prefers Slack threads over email for anything operational
-- Writes the weekly account digest Fridays; escalates via the AE only when
+- Writes the weekly ${W.account} digest Fridays; escalates via the AE only when
   a commercial term is in play
 
 ## Recent focus
@@ -866,16 +876,16 @@ the Northwind dedupe bug before their UAT window closes.`,
 
 ## Responsibilities
 
-- **${Owner}, acme-bank** — accountable for the v2.4.0 deployment health,
+- **${Owner}, acme-bank** — accountable for the v2.4.0 ${W.deployment} health,
   the TCK-1002 connector work, and the infosec re-review conditions
 - **${Owner}, northwind-capital** — runs the onboarding plan, UAT
   sequencing, and the dedupe-bug remediation (TCK-2031)
-- Owns migration execution for assigned accounts (approach docs, cutover
+- Owns migration execution for assigned ${W.accounts} (approach docs, cutover
   windows, rollback rehearsals)
 
 ## Decision rights
 
-- Approves internal signoff on deployment infrastructure customizations
+- Approves internal signoff on ${W.deployment} infrastructure customizations
 - Escalates commercial-term changes to the AE; never negotiates directly
 
 ## Coverage
@@ -886,6 +896,11 @@ Backup ${MEMBER} during PTO: rotation via the solutions-engineering on-call.`,
 // ---------------------------------------------------------------------------
 // Write everything through the store (path-validated), then report
 // ---------------------------------------------------------------------------
+
+if (PRINT) {
+  console.log(JSON.stringify(FILES));
+  process.exit(0);
+}
 
 const paths = Object.keys(FILES);
 let written = 0;

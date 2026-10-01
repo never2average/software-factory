@@ -11,13 +11,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Conversation, ConversationContent } from "@/components/ai-elements/conversation";
 import { MessageResponse } from "@/components/ai-elements/message";
+import { W } from "@/lib/ui-words";
 
 // The full markdown a "record" turn produces — prose, then a table, then a tail.
-const FULL = `The deployment is now part of Example Housing Finance's system-of-record and will show up in account reports. Here is the record:
+const FULL = `The ${W.deployment} is now part of Example Housing Finance's system-of-record and will show up in ${W.account} reports. Here is the record:
 
 | Field | Value |
 | --- | --- |
-| Deployment ID | \`DEP-EXAMPLE-HF-PROD\` |
+| ${W.Deployment} ID | \`DEP-EXAMPLE-HF-PROD\` |
 | Environment | prod |
 | Region / Cloud | ap-south-1 / AWS |
 | Runtime / Strategy | Vercel / blue-green |
@@ -27,7 +28,7 @@ const FULL = `The deployment is now part of Example Housing Finance's system-of-
 | Health | Healthy — 99.97% uptime, p95 620 ms (SLO 800 ms), 41% util, 184k req/30d |
 | Live URL | https://example-hf.example.com |
 
-The deployment is healthy and serving traffic. Fallback model routing is configured and CI/CD is under discussion with the SRE team.`;
+The ${W.deployment} is healthy and serving traffic. Fallback model routing is configured and CI/CD is under discussion with the SRE team.`;
 
 export default function StickLoopPreview() {
   const [len, setLen] = useState(0);

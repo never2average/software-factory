@@ -378,7 +378,7 @@ export async function renderAccountReport(opts: {
 
   const header = `<header class="report">
 <h1>${escapeHtml(customer.name)}</h1>
-<p class="sub">Account report · Generated ${escapeHtml(utcDate(opts.now))} (UTC)</p>
+<p class="sub">${escapeHtml(w.Account)} report · Generated ${escapeHtml(utcDate(opts.now))} (UTC)</p>
 <div class="meta">
 ${metaItem("Tier", customer.tier)}
 ${metaItem("Lifecycle Stage", customer.lifecycleStage)}
@@ -399,7 +399,7 @@ ${metaItem(w.owner, customer.fdeOwner)}
     )}</footer>`,
   ].join("\n");
 
-  return documentShell(`${customer.name} — Account Report`, body);
+  return documentShell(`${customer.name} — ${titleCase(w.Account)} Report`, body);
 }
 
 /* -------------------------------------------------------------------------- */

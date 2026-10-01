@@ -162,7 +162,7 @@ async function listCustomers(request: NextRequest) {
     if (isEmptyStore(e)) {
       return NextResponse.json({ customers: [] as CustomerOption[], items: [] as CustomerOption[] });
     }
-    console.error("customers GET failed", e);
+    console.error("GET /api/ops/customers failed", e);
     return NextResponse.json({ error: `${W.account} store unavailable` }, { status: 503 });
   }
 }
@@ -267,7 +267,7 @@ export async function POST(request: NextRequest) {
         automationId: row.customerId,
         actor,
         orgId: ctx.orgId,
-        event: existing ? `Customer ${row.customerId} updated` : `Customer ${row.customerId} created`,
+        event: `${W.Account} ${row.customerId} ${existing ? "updated" : "created"}`,
       });
       return NextResponse.json({ item: withOwnerKeys(row), created: !existing }, { status: existing ? 200 : 201 });
     });

@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
   // Not a member: say "no such workspace" rather than "forbidden", which would
   // confirm the id exists.
   if (updated.length === 0) {
-    return NextResponse.json({ error: "No such workspace for this account." }, { status: 404 });
+    return NextResponse.json({ error: "You have no workspace with that id." }, { status: 404 });
   }
   return NextResponse.json({ ok: true, orgId: updated[0].orgId });
 }

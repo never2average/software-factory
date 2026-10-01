@@ -14,6 +14,7 @@
  */
 import postgres from "postgres";
 import { readFileSync } from "node:fs";
+import { W } from "../lib/ui-words.ts";
 
 /* ─── Paste here ─────────────────────────────────────────────────────────────
  * source:     "email" | "granola" | "slack"   (drives the row icon)
@@ -127,7 +128,7 @@ if (process.argv.includes("--clear")) {
       continue;
     }
     await sql`DELETE FROM customers WHERE customer_id = ${id} AND org_id = ${orgId}`;
-    console.log(`  removed customer ${id}`);
+    console.log(`  removed ${W.account} ${id}`);
   }
 
   const [{ n }] = await sql`SELECT count(*)::int AS n FROM inbox_items WHERE org_id = ${orgId}`;
@@ -145,7 +146,7 @@ for (const id of referenced) {
   if (!exists) {
     await sql`INSERT INTO customers (customer_id, org_id, customer_name)
               VALUES (${id}, ${orgId}, ${id.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())})`;
-    console.log(`  + customer ${id}`);
+    console.log(`  + ${W.account} ${id}`);
   }
 }
 

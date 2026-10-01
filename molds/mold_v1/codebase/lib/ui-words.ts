@@ -1,21 +1,28 @@
 /**
  * THE WORDS A PERSON READS for the base product's domains, in this deployment's profile.
  *
- * The base product names five things: the account (a "customer"), the person who works in the console (a "member"),
- * the account's owner ("Account owner"), and the two delivery record areas (a "deployment", an "implementation", whose
- * groups are "rollouts"). A profile renames them (profiles/*.json: `vocabulary`, `domains.<area>.label`,
- * `domains.implementations.group_label`). Any sentence the UI or an ops API shows that names one of them takes the
- * word from HERE, never from a literal: `${W.Account} not found`, not "Customer not found". That is what
- * `npm run check:ui-vocabulary` enforces, in the source and in the built client bundle.
+ * The base product has five things to name: the account, the person who works in the console, the account's owner,
+ * and the two record areas (the second one's rows come in groups). What each is CALLED is the profile's
+ * (profiles/*.json: `vocabulary`, `domains.<area>.label`, `domains.implementations.group_label`). The default
+ * profile's words are neutral ones, chosen to name no line of work: account, member, "Account owner", delivery,
+ * project, and plan for the group. A pack's profile replaces them with its own (company, analyst, coverage report).
+ * Storage keeps its own, older names for the same things (`customer_id`, `Deployments/`, `implementationStage`,
+ * `rolloutId`): those are identifiers and never move, and no sentence may spell one.
  *
- * Under profiles/00-default.json every word below is exactly the base word it replaces ("customer", "Customers",
- * "Account owner", "deployment", "Implementation"…), so the default deployment reads byte-for-byte what it read
- * before; `npm run check:ui-vocabulary` pins every word, and scripts/test-ui-vocabulary.mjs holds the functions built
- * on them (lib/ui-keys.ts, lib/ops-errors.ts) to the identity.
+ * So any sentence the UI, an ops API, a published report, a seeded file or a seeder writes that names one of them
+ * takes the word from HERE, never from a literal, the default profile's words included: `${W.Account} not found`,
+ * `${an(W.account)} ${W.account}`, never "Account not found" (a pack's deployment would read the default's word).
+ * `npm run check:ui-vocabulary` enforces that in the source it calls visible, the built client bundle and the
+ * rendered pages; the record-word audit (scripts/lib/record-literals.mjs, run by `npm run test:ui-vocabulary`) in
+ * every string literal of app/, components/, lib/, the report renderer and the seeders, for the stored names and
+ * for the default profile's words alike.
  *
- * `install` is the product install itself ("configured on this deployment"): once the profile renames the
- * deployment record area, "deployment" means that record, so the install is called the workspace — the same rule
- * agent/lib/agent-vocabulary.ts applies to what the model reads.
+ * `npm run check:ui-vocabulary` pins every word below to the default profile's, and scripts/test-ui-vocabulary.mjs
+ * holds the functions built on them (lib/ui-keys.ts, lib/ops-errors.ts, lib/record-export.ts, lib/profile-domains.ts)
+ * under the default profile, a relabelling one and one that only renames the records.
+ *
+ * `install` is the product install itself ("email sign-in is not configured on this workspace"): the workspace,
+ * under every profile, as base text for the model says it.
  *
  * Pure: plain data from the generated profile, safe on the client and the server.
  */
@@ -57,10 +64,10 @@ export const W = {
   rollouts: lowerFirst(ROLLOUT.plural),
   Rollout: ROLLOUT.singular,
   Rollouts: ROLLOUT.plural,
-  /** An account id as a placeholder shows it: "customer-id". */
+  /** An account id as a placeholder shows it: the account word, then "-id". */
   accountIdExample: `${V.account.singular.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}-id`,
-  /** The product install ("not configured on this deployment"). */
-  install: DEP.noun === "deployment" ? "deployment" : "workspace",
+  /** The product install ("not configured on this workspace"). */
+  install: "workspace",
 } as const;
 
 /** A data-room domain (its stored name: "Customers", "Tickets") as a person reads it: the profile's label. */

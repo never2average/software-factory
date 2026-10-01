@@ -146,7 +146,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "customer-context": {
-    "name": "Customer Context",
+    "name": "Account Context",
     "summary": "Keep the account system of record current from meetings (Granola), email (Gmail), and Slack.",
     "description": "Keep the account system of record current from meetings (Granola), email (Gmail), and Slack. Delegate here to capture what happened with an account and write it back as interactions, follow-ups, or record updates.",
     "skillNames": [],
@@ -284,7 +284,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     ]
   },
   "deployment": {
-    "name": "Deployment",
+    "name": "Delivery",
     "summary": "Deploy and operate account platforms on Vercel: releases, rollbacks, and health checks.",
     "description": "Deploy and operate account platforms on Vercel: releases, rollbacks, and health checks. Delegate here to ship or diagnose an account environment.",
     "skillNames": [],

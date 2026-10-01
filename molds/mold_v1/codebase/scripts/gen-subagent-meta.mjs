@@ -63,7 +63,14 @@ function toolDescription(subDir, name) {
   return null;
 }
 
-const titleCase = (key) => key.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+/**
+ * A directory name as a display name: "data-migration" -> "Data Migration". A word that is a record's stored name
+ * (the directory of the customer-context and deployment specialists, which never moves) is written as that record's
+ * placeholder, so the name a person reads is the profile's word for it under every profile: "{Account} Context",
+ * "{Deployment}" (filled where the roster is spoken, scripts/lib/speak-subagent-meta.mjs).
+ */
+const RECORD_PLACEHOLDER = { customer: "{Account}", customers: "{Accounts}", deployment: "{Deployment}", deployments: "{Deployments}", implementation: "{Implementation}", implementations: "{Implementations}", rollout: "{Rollout}", rollouts: "{Rollouts}" };
+const titleCase = (key) => key.split("-").map((w) => (Object.hasOwn(RECORD_PLACEHOLDER, w) ? RECORD_PLACEHOLDER[w] : w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
 const firstSentence = (text) => (text.match(/^.*?[.!?](?=\s|$)/s)?.[0] ?? text).replace(/\s+/g, " ").trim();
 const TEMPLATE_OK = /^[A-Za-z][A-Za-z0-9_-]*(\/(\{[a-z_]+\}|[A-Za-z0-9_.{}-]+))*\/(\*\*|[A-Za-z0-9_.{}-]+)$/;
 

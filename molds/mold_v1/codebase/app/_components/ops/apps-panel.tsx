@@ -644,7 +644,7 @@ function AppDetail({
                   <OpsTextarea
                     rows={6}
                     defaultValue={app.prompt ?? ""}
-                    placeholder="Summarize every at-risk account with open P0s as a table."
+                    placeholder={`Summarize every at-risk ${W.account} with open P0s as a table.`}
                     onBlur={(e) => {
                       const v = e.target.value.trim();
                       if (v && v !== app.prompt) onPatch({ prompt: v });
@@ -851,7 +851,7 @@ function AppCreateForm({
           rows={4}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="Daily snapshot of at-risk accounts"
+          placeholder={`Daily snapshot of at-risk ${W.accounts}`}
         />
       </Field>
 
@@ -886,7 +886,7 @@ function AppCreateForm({
             className="min-h-24"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Summarize every at-risk account with open P0 tickets as a Markdown table, newest first."
+            placeholder={`Summarize every at-risk ${W.account} with open P0 tickets as a Markdown table, newest first.`}
           />
         </Field>
       )}

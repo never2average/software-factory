@@ -40,6 +40,11 @@ import {
   type TicketCategory,
 } from "#lib/customer-schema.ts";
 import type { TicketFolder } from "#lib/dataroom-schema.ts";
+import { domainLabel, W } from "../lib/ui-words.ts";
+
+// What the report below calls each data-room folder: this deployment's label for it (lib/ui-words.ts). The paths
+// written and counted are the stored ones.
+const ROOM = { accounts: domainLabel("Customers"), deployments: domainLabel("Deployments"), implementation: domainLabel("Implementation") };
 
 // A single synthetic platform_version_id partitions every version-scoped path.
 // The real platform_version_id spine is populated by a later iteration; this
@@ -143,7 +148,7 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
 
   // --- Customers/{cid}/context.md (stub brief) ---
   const contextLines = [
-    `# ${customer.name} — account context`,
+    `# ${customer.name} — ${W.account} context`,
     "",
     `- customer_id: \`${cid}\``,
     customer.lifecycleStage ? `- lifecycle_stage: ${customer.lifecycleStage}` : null,
@@ -295,7 +300,7 @@ async function seedPerson(store: DataroomStore, person: AggregatedPerson): Promi
     `- employer_org: ${person.employerOrg}`,
     person.title ? `- title: ${person.title}` : null,
     `- roles: ${[...person.roles].sort().join(", ")}`,
-    `- customers: ${customerIds.join(", ")}`,
+    `- ${W.accounts}: ${customerIds.join(", ")}`,
     `- primary_email: ${person.primaryEmail}`,
     "",
     "_Seeded stub. Owned by the research subagent; expand with the real brief._",
@@ -313,13 +318,13 @@ async function verify(store: DataroomStore, counts: Counts, sourcePeopleRows: nu
   const count = (pred: (p: string) => boolean) => all.filter(pred).length;
 
   const checks: Array<[string, number, number]> = [
-    ["Customers interactions.jsonl", counts.interactionsFiles, count((p) => /^Customers\/[^/]+\/interactions\.jsonl$/.test(p))],
-    ["Customers context.md", counts.contextDocs, count((p) => /^Customers\/[^/]+\/context\.md$/.test(p))],
-    ["Customers agreements/", counts.agreementsPlaceholders, count((p) => /^Customers\/[^/]+\/agreements\//.test(p))],
+    [`${ROOM.accounts} interactions.jsonl`, counts.interactionsFiles, count((p) => /^Customers\/[^/]+\/interactions\.jsonl$/.test(p))],
+    [`${ROOM.accounts} context.md`, counts.contextDocs, count((p) => /^Customers\/[^/]+\/context\.md$/.test(p))],
+    [`${ROOM.accounts} agreements/`, counts.agreementsPlaceholders, count((p) => /^Customers\/[^/]+\/agreements\//.test(p))],
     ["Platform rows", counts.platform, count((p) => /^Deployments\/[^/]+\/[^/]+\/platform\/organization\.json$/.test(p))],
-    ["Deployments rows", counts.deployments, count((p) => /^Deployments\/[^/]+\/[^/]+\/platform\/pipelines\/[^/]+\/pipeline_config\.json$/.test(p))],
+    [`${ROOM.deployments} rows`, counts.deployments, count((p) => /^Deployments\/[^/]+\/[^/]+\/platform\/pipelines\/[^/]+\/pipeline_config\.json$/.test(p))],
     ["Solutions rows", counts.solutions, count((p) => /^Solutions\/[^/]+\/pipelines\/[^/]+\/pipeline_config\.json$/.test(p))],
-    ["Implementation rows", counts.implementation, count((p) => /^Implementation\/[^/]+\/integromat\.json$/.test(p))],
+    [`${ROOM.implementation} rows`, counts.implementation, count((p) => /^Implementation\/[^/]+\/integromat\.json$/.test(p))],
     ["Tickets rows", counts.tickets, count((p) => /^Tickets\/[^/]+\/[^/]+\/[^/]+\/tickets_.+\.jsonl$/.test(p))],
     ["Person identity.json", counts.persons, count((p) => /^People\/[^/]+\/identity\.json$/.test(p))],
     ["Person context.md", counts.persons, count((p) => /^People\/[^/]+\/context\.md$/.test(p))],
@@ -360,14 +365,14 @@ async function verify(store: DataroomStore, counts: Counts, sourcePeopleRows: nu
 
 function printSummary(counts: Counts, sourcePeopleRows: number): void {
   const rows: Array<[string, number, number]> = [
-    ["Customers (interactions.jsonl)", customerStore.customers.length, counts.interactionsFiles],
+    [`${ROOM.accounts} (interactions.jsonl)`, customerStore.customers.length, counts.interactionsFiles],
     ["  interaction records", totalInteractions(), counts.interactionRecords],
-    ["Customers (context.md)", customerStore.customers.length, counts.contextDocs],
-    ["Customers (agreements/)", customerStore.customers.length, counts.agreementsPlaceholders],
+    [`${ROOM.accounts} (context.md)`, customerStore.customers.length, counts.contextDocs],
+    [`${ROOM.accounts} (agreements/)`, customerStore.customers.length, counts.agreementsPlaceholders],
     ["Platform", totalPlatform(), counts.platform],
-    ["Deployments", totalDeployments(), counts.deployments],
+    [ROOM.deployments, totalDeployments(), counts.deployments],
     ["Solutions", totalSolutions(), counts.solutions],
-    ["Implementation", totalImplementation(), counts.implementation],
+    [ROOM.implementation, totalImplementation(), counts.implementation],
     ["Tickets", totalTickets(), counts.tickets],
     // People rows dedupe by email into unique People/ folders, so the fair
     // comparison is unique-persons vs folders written (see note printed below).

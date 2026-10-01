@@ -112,6 +112,9 @@ async function activityFor(
   return rows.map((r) => ({ actor: r.actor, event: r.event, at: r.createdAt.toISOString() }));
 }
 
+/** The record kinds this route exports: the `type` parameter's accepted values, as the API takes them. */
+const EXPORT_TYPES = ["task", "deployment", "implementation"];
+
 export async function GET(request: NextRequest) {
   // This route read tenant data with NO workspace resolved at all.
   const ctx = await orgContextForRequest(request);
@@ -122,8 +125,8 @@ export async function GET(request: NextRequest) {
   const type = url.searchParams.get("type") ?? "";
   const id = url.searchParams.get("id") ?? "";
   const customerIdParam = url.searchParams.get("customerId");
-  if (!["task", "deployment", "implementation"].includes(type) || !id) {
-    return NextResponse.json({ error: "type (task|deployment|implementation) + id required" }, { status: 400 });
+  if (!EXPORT_TYPES.includes(type) || !id) {
+    return NextResponse.json({ error: `type (${EXPORT_TYPES.join("|")}) + id required` }, { status: 400 });
   }
 
   try {

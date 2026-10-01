@@ -31,8 +31,9 @@
   },
   {
     "source": "^app/api/ops/export/route\\.ts$",
-    "literal": "^type \\(task\\|deployment\\|implementation\\) \\+ id required$",
-    "why": "A request-validation error listing the export API's accepted `type` values, for a caller that sent none. The UI always sends one."
+    "literal": "^(deployment|implementation)$",
+    "rendered": true,
+    "why": "The export API's accepted `type` values (EXPORT_TYPES), listed as the API takes them in the request-validation error for a caller that sent none: `type (task|deployment|implementation) + id required`. A caller is meant to read the values it may send; the UI always sends one, so a person using it never sees this."
   },
   {
     "source": "^agent/lib/render-html\\.ts$",
