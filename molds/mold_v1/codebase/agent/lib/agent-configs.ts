@@ -31,12 +31,10 @@ export async function loadAgentConfigs(orgId: string): Promise<AgentConfigRow[]>
   }
 }
 
-/** Human labels for the known subagent keys (for the injected instructions). */
+/** Human labels for the known subagent keys (for the injected instructions); a key not listed takes its registry label. */
 const AGENT_LABELS: Record<string, string> = {
   research: "Research",
-  "customer-context": "Customer context",
   configuration: "Configuration",
-  deployment: "Deployment",
   "data-migration": "Data migration",
   evals: "Evals",
   "workflow-author": "Workflow author",

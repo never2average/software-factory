@@ -25,6 +25,7 @@ import {
 } from "./schedule-store.ts";
 import { orgForSession } from "./org-context.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
+import { fill } from "./agent-vocabulary.ts";
 
 /**
  * The rule author comes from the verified session auth, never from the model:
@@ -48,7 +49,7 @@ function callerEmail(ctx: {
 
 export const createScheduleTool = modelFacing("create_schedule", defineTool({
   description:
-    "Create a durable, DB-maintained schedule rule that runs a prompt on a cadence (or once). It persists in the Postgres `schedule_rules` table and is executed by the dynamic-schedule dispatcher — so this is how you add a recurring cron WITHOUT a deploy. Set `cron` for anchored times (e.g. '0 9 * * 1-5' = weekdays 09:00 UTC) OR `everyMinutes` for a fixed interval (null + no cron = run once). Scope it to a customer with `customerId`, or leave it team-wide. `channelId` overrides the delivery channel; omit it to post to the team channel.",
+    "Create a durable, DB-maintained schedule rule that runs a prompt on a cadence (or once). It persists in the Postgres `schedule_rules` table and is executed by the dynamic-schedule dispatcher — so this is how you add a recurring cron WITHOUT a deploy. Set `cron` for anchored times (e.g. '0 9 * * 1-5' = weekdays 09:00 UTC) OR `everyMinutes` for a fixed interval (null + no cron = run once). Scope it to a {account} with `customerId`, or leave it team-wide. `channelId` overrides the delivery channel; omit it to post to the team channel.",
   approval: once(),
   inputSchema: z.object({
     name: z.string().min(1).max(200).describe("Short human label, e.g. 'Acme weekly health check'."),
@@ -76,7 +77,7 @@ export const createScheduleTool = modelFacing("create_schedule", defineTool({
     customerId: z
       .string()
       .optional()
-      .describe("Optional customer slug scope, e.g. 'acme-bank' (omit for team-wide)."),
+      .describe(fill("Optional {account} slug scope, e.g. 'acme-bank' (omit for team-wide).")),
     channelId: z
       .string()
       .optional()
@@ -104,12 +105,12 @@ export const createScheduleTool = modelFacing("create_schedule", defineTool({
 
 export const listSchedulesTool = modelFacing("list_schedules", defineTool({
   description:
-    "List durable schedule rules, optionally filtered to one customer or by enabled state. Ordered by next run time, soonest first.",
+    "List durable schedule rules, optionally filtered to one {account} or by enabled state. Ordered by next run time, soonest first.",
   inputSchema: z.object({
     customerId: z
       .string()
       .optional()
-      .describe("Optional: only rules scoped to this customer slug, e.g. 'acme-bank'."),
+      .describe(fill("Optional: only rules scoped to this {account} slug, e.g. 'acme-bank'.")),
     enabled: z.boolean().optional().describe("Optional: only enabled (true) or disabled (false) rules."),
   }),
   async execute({ customerId, enabled }, ctx) {

@@ -14,7 +14,7 @@ const NOT_DELEGABLE = new Set(["workflow-author", "app-author", "browser"]);
 
 export default defineInstructions({
   markdown: speakPrompt([
-    "## Every subagent this deployment declares",
+    "## Every subagent this workspace declares",
     "",
     "`agent()` may name any of these (this list is generated from the codebase and supersedes the shorter one above):",
     "",

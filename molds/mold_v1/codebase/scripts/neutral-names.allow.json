@@ -1,5 +1,5 @@
 {
-  "$comment": "scripts/check-neutral-names.mjs reads this. See scripts/lib/neutral-names.mjs for what each section means. Contracts and examples are exact names; base_word gives a per-file ceiling for the bare word and must equal today's count.",
+  "$comment": "scripts/check-neutral-names.mjs reads this. See scripts/lib/neutral-names.mjs for what each section means. Contracts and examples are exact names; base_word gives a per-file ceiling for the bare word and must equal today's count. record_words is the second ratchet (scripts/lib/record-words.mjs): which files are read for the record words written as prose, the names that are not prose, and a per-file ceiling for what remains.",
   "exempt_paths": {
     "$comment": "Whole paths the check does not read, each for a reason that does not expire with a rename.",
     "drizzle/meta/": "migration history: the journal's schema snapshots are immutable records of what each migration produced; rewriting one would make drift lie",
@@ -296,6 +296,77 @@
         "agent/lib/customer-schema.ts": 2,
         "data/__fixtures__/dataroom/tickets.json": 1,
         "data/sample/customers.json": 5
+      }
+    }
+  },
+  "record_words": {
+    "$comment": "The record words (customer, deployment, implementation, rollout; any case, singular or plural) written as PROSE in text base code hands to a reader: string literals, template text and JSX text of source files, Markdown, the string values of JSON. Base text writes a placeholder the profile fills instead ({account}, {deployment}, {implementation}, {rollout}; agent/lib/agent-vocabulary.ts) or takes the word from lib/ui-words.ts. Identifiers, paths, code spans, quoted values and one-token strings are never counted. `node scripts/check-neutral-names.mjs --records --lines` lists what is left.",
+    "scan": {
+      "$comment": "Globs of the files read. Everything a model or a person is handed by base code; not docs, tests, comments or migrations.",
+      "agent/**": "the agent: prompts, tool and parameter descriptions, messages, skills and sandbox files",
+      "app/**": "the web app and its API messages",
+      "components/**": "shared UI components",
+      "lib/**": "server and client libraries whose strings reach a page, an API answer or a seeded file",
+      "skills/**": "the base skill a coding assistant installs",
+      "setup/skills/**": "the base skill as the generic package ships it (filled from the default profile)",
+      "scripts/operator/**": "the library workflows and the operator tooling",
+      "scripts/seed*": "the seeders: what a new data room and a demo database are filled with",
+      "profiles/00-default.json": "the default profile: the words every placeholder is filled with",
+      "dm.md": "the data-room description served to coding assistants",
+      "proxy.ts": "the request gate's own messages"
+    },
+    "skip": {
+      "$comment": "Globs left out of the scan, each for a reason.",
+      "**/*.generated.*": "derived from a scanned source (prompts, the profile, the workflow library, the subagent registry)",
+      "agent/lib/agent-vocabulary.ts": "the vocabulary machinery: it names the legacy words to translate them (LEGACY_RECORDS) and its comments' examples are not text anyone is handed",
+      "**/__fixtures__/**": "fixture records: stored data, not base text"
+    },
+    "names": {
+      "$comment": "Whole names that are not prose where they stand: a specialist's directory name (hyphenated anywhere; a single word only when written **bold** or as code), and stored enum values and sheet names of more than one word. Each is a contract.",
+      "customer-context": "specialist directory name: the model delegates to it by this name",
+      "deployment": "specialist directory name (allowed as **deployment** in a roster line)",
+      "customer-vpc": "stored enum value (deployment region / hosting model)",
+      "Waiting on Customer": "stored enum value (ticketStatus)",
+      "Customer Stakeholders": "workbook sheet name (People/Master.xlsx), a contract of the data model",
+      "Customer Verified": "stored enum value (valueEvidenceStatus)",
+      "new-customer": "npm script and operator tool name (operator:new-customer), a contract (scripts/test-operator-tooling.mjs)"
+    },
+    "ceilings": {
+      "$comment": "Per file, the exact count of record words written as prose today, grouped by why they remain. More fails; fewer fails with the number to lower it to; a ceiling on a file that carries none fails. The agent side (prompts, tool and parameter descriptions, messages, the library workflows, the base skill, the default profile, the operator tooling) carries none: PR 7a.",
+      "stored": {
+        "why": "A stored enum value that is the record word itself (`blockerOwner: \"Customer\"`, a ticket's waiting party). Rows are never rewritten here: changing a stored value is a data migration. A relabelling profile's reader gets the profile's label for it (domains.<area>.fields.<key>.options).",
+        "files": {
+          "agent/lib/customer-schema.ts": 2,
+          "app/api/ops/implementations/[id]/route.ts": 1
+        }
+      },
+      "ui": {
+        "why": "The web app, its API messages and the libraries behind them (app/, components/, lib/): PR 7b of mold_v1-103 owns these and lowers each ceiling as it takes the word from lib/ui-words.ts (W.account, W.deployments, …) or fills a placeholder. Counted at the commit PR 7a branched from.",
+        "files": {
+          "app/api/ops/customers/route.ts": 3,
+          "app/api/ops/export/route.ts": 2,
+          "app/api/ops/people/[email]/account-summary/route.ts": 2,
+          "app/preview/cards/page.tsx": 4,
+          "app/preview/stickloop/page.tsx": 3,
+          "lib/org-seed.ts": 6,
+          "lib/workflow-runtime.ts": 3
+        }
+      },
+      "seeders": {
+        "why": "The seeders (scripts/seed*): the sample data room and demo database they write. PR 7b of mold_v1-103 owns these; sample CONTENT (a fictional account's notes) is data and may stay under its ceiling, the seeders' own labels and messages move to the profile's words.",
+        "files": {
+          "scripts/seed-dataroom-blob.mjs": 21,
+          "scripts/seed-dataroom.ts": 9,
+          "scripts/seed-inbox-samples.mjs": 2,
+          "scripts/seed-ops.mjs": 7,
+          "scripts/seed-postgres.ts": 3
+        }
+      },
+      "rig": {
+        "why": "A performance rig's synthetic chat content (a made-up table and the question asked about it): never shown to a deployment's reader and not base text, but under scripts/operator/ and so read by the scan.",
+        "files": {
+          "scripts/operator/chat-persist-perf.mjs": 4
+        }
       }
     }
   }

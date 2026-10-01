@@ -58,6 +58,7 @@ import { getDataroomStore } from "./dataroom-store.ts";
 import { DEFAULT_ORG } from "./org-context.ts";
 import { LONG_TEXT_LIMIT, asCustomValues, customDelta, customFieldsOf, replacedKeys, validateAppend, validateCustom, type CustomDelta, type CustomValues } from "./custom-fields.ts";
 import { customMergeSql } from "./custom-merge-sql.ts";
+import { fill, wordFor } from "./agent-vocabulary.ts";
 import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
 
 export type FollowUp = Ticket;
@@ -75,7 +76,7 @@ export type FollowUp = Ticket;
  */
 function scopeFor(customerId: string, orgId?: string | null): string {
   if (orgId) return orgId;
-  throw new Error(`No workspace was given for customer ${customerId}, so nothing was read or changed. A company id names a company only within a workspace: name the workspace.`);
+  throw new Error(`No workspace was given for ${wordFor("account")} ${customerId}, so nothing was read or changed. A company id names a company only within a workspace: name the workspace.`);
 }
 
 /**
@@ -384,7 +385,7 @@ export async function listCustomers(orgId?: string | null): Promise<
      * The caller's workspace, and only it. "No workspace → every row" was the contract here (a sweep, each workspace
      * in its own scope); workspaces are not aware of each other now, so no workspace is refused (listScope).
      */
-    const org = listScope("customers", orgId);
+    const org = listScope(wordFor("accounts"), orgId);
     const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
       withOrgDb(org, (tx) => fn(tx, org));
     const [rows, openTicketRows] = await Promise.all([
@@ -593,9 +594,9 @@ interface NestedPart {
 }
 const NESTED: NestedPart[] = [
   { key: "platform", id: null, table: platformTable, schema: platformSchema, noun: "platform record" },
-  { key: "deployments", id: "deploymentId", table: deploymentsTable, schema: deploymentSchema, noun: "deployments row" },
+  { key: "deployments", id: "deploymentId", table: deploymentsTable, schema: deploymentSchema, noun: fill("{deployments} row") },
   { key: "solutions", id: "solutionId", table: solutionsTable, schema: solutionSchema, noun: "solutions row" },
-  { key: "implementation", id: null, table: implementationTable, schema: implementationSchema, noun: "implementation record" },
+  { key: "implementation", id: null, table: implementationTable, schema: implementationSchema, noun: fill("{implementation} record") },
   { key: "tickets", id: "ticketId", table: ticketsTable, schema: ticketSchema, noun: "tickets row" },
   { key: "interactions", id: "interactionId", table: interactionsTable, schema: interactionSchema, noun: "interactions row" },
 ];
@@ -704,7 +705,7 @@ export function applyPatchToRecord(existing: Customer | null, patch: CustomerPat
 }
 
 /** The sentence for an account that is not the caller's to write, whether it is absent or another workspace's. */
-const notYours = (id: string) => `Unknown customer: ${id}`;
+const notYours = (id: string) => `Unknown ${wordFor("account")}: ${id}`;
 
 /**
  * Write a validated PATCH to Postgres, changing only what it names, each change applied in SQL onto what is stored
@@ -846,7 +847,7 @@ export async function upsertCustomer(
     // The record AS STORED after the write, not the one computed from the read: a change someone else made in
     // between is part of it, and the caller is not told a stale value was kept.
     const after = await dbGetCustomer(db, parsedPatch.id, org);
-    if (!after) throw new Error(`Unknown customer: ${parsedPatch.id}`);
+    if (!after) throw new Error(`Unknown ${wordFor("account")}: ${parsedPatch.id}`);
     return after;
   }
   const store = await readStore();
@@ -863,7 +864,7 @@ export async function upsertCustomer(
 export async function recordInteraction(
   customerId: string,
   interaction: Interaction,
-  /** The caller's workspace; an id outside it is "Unknown customer". Omitted only by system paths. */
+  /** The caller's workspace; an id outside it is "Unknown <account>". Omitted only by system paths. */
   orgId?: string | null,
 ): Promise<Customer> {
   const db = getDb();
@@ -877,7 +878,7 @@ export async function recordInteraction(
         .where(ofCompany(scope, customerId))
         .limit(1),
     );
-    if (exists.length === 0) throw new Error(`Unknown customer: ${customerId}`);
+    if (exists.length === 0) throw new Error(`Unknown ${wordFor("account")}: ${customerId}`);
     await withOrgDb(scope, (tx) =>
       tx
         .insert(interactionsTable)
@@ -887,12 +888,12 @@ export async function recordInteraction(
     );
     await appendInteractionArtifacts(customerId, [valid], scope);
     const customer = await dbGetCustomer(db, customerId, scope);
-    if (!customer) throw new Error(`Unknown customer: ${customerId}`);
+    if (!customer) throw new Error(`Unknown ${wordFor("account")}: ${customerId}`);
     return customer;
   }
   const store = await readStore();
   const customer = store.customers.find((c) => c.id === customerId);
-  if (!customer) throw new Error(`Unknown customer: ${customerId}`);
+  if (!customer) throw new Error(`Unknown ${wordFor("account")}: ${customerId}`);
   customer.interactions = [interaction, ...(customer.interactions ?? [])];
   await writeStore(store);
   await appendInteractionArtifact(customerId, interaction);
@@ -908,7 +909,7 @@ export async function recordInteraction(
 export async function recordInteractions(
   customerId: string,
   interactions: readonly Interaction[],
-  /** The caller's workspace; an id outside it is "Unknown customer". Omitted only by system paths. */
+  /** The caller's workspace; an id outside it is "Unknown <account>". Omitted only by system paths. */
   orgId?: string | null,
 ): Promise<Customer> {
   if (interactions.length === 0) throw new Error("recordInteractions: no interactions given");
@@ -923,7 +924,7 @@ export async function recordInteractions(
         .where(ofCompany(scope, customerId))
         .limit(1),
     );
-    if (exists.length === 0) throw new Error(`Unknown customer: ${customerId}`);
+    if (exists.length === 0) throw new Error(`Unknown ${wordFor("account")}: ${customerId}`);
     await withOrgDb(scope, (tx) =>
       tx
         .insert(interactionsTable)
@@ -931,12 +932,12 @@ export async function recordInteractions(
     );
     await appendInteractionArtifacts(customerId, valid, scope);
     const customer = await dbGetCustomer(db, customerId, scope);
-    if (!customer) throw new Error(`Unknown customer: ${customerId}`);
+    if (!customer) throw new Error(`Unknown ${wordFor("account")}: ${customerId}`);
     return customer;
   }
   const store = await readStore();
   const customer = store.customers.find((c) => c.id === customerId);
-  if (!customer) throw new Error(`Unknown customer: ${customerId}`);
+  if (!customer) throw new Error(`Unknown ${wordFor("account")}: ${customerId}`);
   // Prepend the batch in the given order (first element = newest).
   customer.interactions = [...valid, ...(customer.interactions ?? [])];
   await writeStore(store);
@@ -975,7 +976,7 @@ export async function listStaleCustomers(
   if (!db) return [];
   const now = Date.now();
   const cutoffMs = now - days * 86_400_000;
-  const org = listScope("stale customers", orgId);
+  const org = listScope(`stale ${wordFor("accounts")}`, orgId);
   const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
     withOrgDb(org, (tx) => fn(tx, org));
 
@@ -1120,7 +1121,7 @@ export async function reassignOwner(
   customerId: string,
   newOwnerEmail: string,
   ownerName?: string,
-  /** The caller's workspace; an id outside it is "Unknown customer". Omitted only by system paths. */
+  /** The caller's workspace; an id outside it is "Unknown <account>". Omitted only by system paths. */
   orgId?: string | null,
 ): Promise<{ customerId: string; previousOwner: string | null; newOwner: string }> {
   const db = getDb();
@@ -1133,7 +1134,7 @@ export async function reassignOwner(
       .where(ofCompany(staffOrg, customerId))
       .limit(1),
   );
-  if (rows.length === 0) throw new Error(`Unknown customer: ${customerId}`);
+  if (rows.length === 0) throw new Error(`Unknown ${wordFor("account")}: ${customerId}`);
   const previousOwner = rows[0].owner ?? null;
   await withOrgDb(staffOrg, (tx) =>
     tx
@@ -1205,7 +1206,7 @@ export interface NewTicketInput {
  */
 export async function createTicket(
   input: NewTicketInput,
-  /** The caller's workspace; an id outside it is "Unknown customer". Omitted only by system paths. */
+  /** The caller's workspace; an id outside it is "Unknown <account>". Omitted only by system paths. */
   orgId?: string | null,
 ): Promise<{ ticketId: string; created: boolean }> {
   const db = getDb();
@@ -1218,7 +1219,7 @@ export async function createTicket(
       .where(ofCompany(scope, input.customerId))
       .limit(1),
   );
-  if (exists.length === 0) throw new Error(`Unknown customer: ${input.customerId}`);
+  if (exists.length === 0) throw new Error(`Unknown ${wordFor("account")}: ${input.customerId}`);
   if (input.externalId) {
     // Narrowing does not survive into the callback — capture it first.
     const externalId = input.externalId;
@@ -1349,7 +1350,7 @@ export async function resolveFollowUp(
         .returning(),
     );
     if (updated.length === 0) {
-      throw new Error(`Ticket ${followUpId} not found for customer ${customerId}`);
+      throw new Error(`Ticket ${followUpId} not found for ${wordFor("account")} ${customerId}`);
     }
     return ticketReadSchema.parse(rowToEntity(updated[0]));
   }
@@ -1357,7 +1358,7 @@ export async function resolveFollowUp(
   const customer = store.customers.find((c) => c.id === customerId);
   const ticket = customer?.tickets?.find((t) => t.ticketId === followUpId);
   if (!customer || !ticket) {
-    throw new Error(`Ticket ${followUpId} not found for customer ${customerId}`);
+    throw new Error(`Ticket ${followUpId} not found for ${wordFor("account")} ${customerId}`);
   }
   ticket.ticketStatus = "Resolved";
   await writeStore(store);
@@ -1388,7 +1389,7 @@ export async function setTicketStatus(
         .returning(),
     );
     if (updated.length === 0) {
-      throw new Error(`Ticket ${ticketId} not found for customer ${customerId}`);
+      throw new Error(`Ticket ${ticketId} not found for ${wordFor("account")} ${customerId}`);
     }
     return ticketReadSchema.parse(rowToEntity(updated[0]));
   }
@@ -1396,7 +1397,7 @@ export async function setTicketStatus(
   const customer = store.customers.find((c) => c.id === customerId);
   const ticket = customer?.tickets?.find((t) => t.ticketId === ticketId);
   if (!customer || !ticket) {
-    throw new Error(`Ticket ${ticketId} not found for customer ${customerId}`);
+    throw new Error(`Ticket ${ticketId} not found for ${wordFor("account")} ${customerId}`);
   }
   ticket.ticketStatus = ticketStatus;
   ticket.lastActivityDate = now;
@@ -1473,7 +1474,7 @@ export async function matchCustomerByEmail(
 
   const db = getDb();
   if (db) {
-    const org = listScope("customers to match a sender against", orgId);
+    const org = listScope(`${wordFor("accounts")} to match a sender against`, orgId);
     const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
       withOrgDb(org, (tx) => fn(tx, org));
     const pick = { orgId: customersTable.orgId, id: customersTable.customerId, name: customersTable.customerName, fdeOwner: accountOwnerSql };

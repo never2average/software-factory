@@ -14,9 +14,10 @@
  * Run:  npm run build:skill-library   (and after editing any SKILL.md)
  */
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { fillPlaceholders, hasPlaceholder } from "./lib/profile-words.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "skills");
@@ -63,5 +64,22 @@ const pkgSkills = join(here, "..", "setup", "skills");
 rmSync(pkgSkills, { recursive: true, force: true });
 mkdirSync(pkgSkills, { recursive: true });
 cpSync(src, pkgSkills, { recursive: true });
+// A base skill never spells a role or a record word: it writes a placeholder ({account}, {member}, …). The generic
+// package is the base product's, so its copy is filled from the base profile alone (profiles/00-default.json);
+// a deployment's own package fills the same source from its own profiles (scripts/build-agent-cli.mjs).
+const baseProfile = JSON.parse(readFileSync(join(here, "..", "profiles", "00-default.json"), "utf8"));
+const fillTree = (dir) => {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) fillTree(p);
+    else if (/\.(md|txt|json|ya?ml)$/i.test(entry.name)) {
+      const text = readFileSync(p, "utf8");
+      const filled = fillPlaceholders(text, baseProfile);
+      if (filled !== text) writeFileSync(p, filled);
+      if (hasPlaceholder(filled)) throw new Error(`${p}: a placeholder was left unfilled`);
+    }
+  }
+};
+fillTree(pkgSkills);
 console.log(`✓ mirrored into ${pkgSkills}`);
 for (const s of skills) console.log(`  ${s.name}  ${s.digest.slice(0, 20)}…  ${s.body.length} bytes`);

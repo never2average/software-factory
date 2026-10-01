@@ -95,8 +95,8 @@ export async function mailboxFor(orgId: string | null | undefined): Promise<Mail
     return {
       mailbox: null,
       reason: bound
-        ? "This workspace has no mailbox of its own (a 'gmail' connector), and the deployment's mailbox is not this workspace's."
-        : "This workspace has no mailbox of its own (a 'gmail' connector). The deployment's mailbox (IMAP_*) is not bound to a workspace (IMAP_WORKSPACE), so no workspace reads it.",
+        ? "This workspace has no mailbox of its own (a 'gmail' connector), and the installation's mailbox is not this workspace's."
+        : "This workspace has no mailbox of its own (a 'gmail' connector). The installation's mailbox (IMAP_*) is not bound to a workspace (IMAP_WORKSPACE), so no workspace reads it.",
     };
   }
   return { mailbox: null, reason: "This workspace has no mailbox: add a 'gmail' connector with its IMAP secrets." };

@@ -12,8 +12,8 @@ export const DEPLOYMENT = {
   "mcpEndpoint": null,
   "vocabulary": {
     "account": {
-      "singular": "customer",
-      "plural": "customers"
+      "singular": "account",
+      "plural": "accounts"
     },
     "member": {
       "singular": "member",
@@ -21,7 +21,7 @@ export const DEPLOYMENT = {
     },
     "owner": "Account owner",
     "secondary_owner": "Secondary owner",
-    "account_context": "Customer context"
+    "account_context": "Account context"
   },
   "commands": {
     "login": "workspace-login",

@@ -53,8 +53,8 @@ arbitrary tools:
 - `{ "kind":"open", "href":"/?ops=customers&id=<slug>" }` — navigate to a record.
 - `{ "kind":"refresh" }` — regenerate this dashboard.
 
-Attach actions where they're genuinely useful — a blocked account's card gets a
-`chat` action to draft the unblock, an at-risk row an action to open the account.
+Attach actions where they're genuinely useful — a blocked {account}'s card gets a
+`chat` action to draft the unblock, an at-risk row an action to open the {account}.
 Prefer `chat` for consequential actions so a human stays in the loop; never wire
 an action that silently mutates. A dashboard with a few well-chosen action
 buttons beats one with a button on every row.
@@ -75,10 +75,10 @@ Compute every number from real data via your read tools. **Be fast — favour th
 LIST tools, which already carry what you need:** `list_customers` (name, stage,
 status, health, owner, open-ticket counts), `list_urgent_tickets`,
 `list_followups`, `list_members`, `list_stale_customers`, `get_oncall`. Aggregate
-those into the widgets. Only call `get_customer` for the **handful** of accounts
+those into the widgets. Only call `get_customer` for the **handful** of {accounts}
 that genuinely need a detail the list doesn't carry — never per-account across
 the whole book (that's slow and will time the refresh out). A dozen tool calls
-is plenty; dozens is too many. Never invent a customer, ticket, owner, or number.
+is plenty; dozens is too many. Never invent a {account}, ticket, owner, or number.
 If a signal is unavailable, omit that widget rather than faking it.
 
 ## Hard rules

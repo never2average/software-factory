@@ -32,6 +32,7 @@ import { publishArtifact } from "./artifact.ts";
 import { recordAudit } from "./automation-audit.ts";
 import { orgForSession, type SessionCtxLike } from "./org-context.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
+import { fill } from "./agent-vocabulary.ts";
 
 const NOT_CONFIGURED =
   "The browser runtime is not configured. An operator must set OPS_SECRETS_KEY plus BROWSERBASE_API_KEY on the agent (or BROWSER_LOCAL=1 for local dev).";
@@ -59,9 +60,9 @@ async function requireSession(sessionRef: string, ctx: BrowserToolCtx) {
 
 export const browserOpenTool = modelFacing("browser_open", defineTool({
   description:
-    "Open a browser session and return its `sessionRef`, status, and (only for a newly-created session) a `liveViewUrl` an operator can watch. Pass a `customerId` to persist login state. Cookie sharing defaults to the authenticated principal; choose contextScope='team' explicitly only when every operator in this workspace should share that customer's browser login. Every other browser tool takes the returned `sessionRef`. Always browser_close when done.",
+    "Open a browser session and return its `sessionRef`, status, and (only for a newly-created session) a `liveViewUrl` an operator can watch. Pass a `customerId` to persist login state. Cookie sharing defaults to the authenticated principal; choose contextScope='team' explicitly only when every operator in this workspace should share that {account}'s browser login. Every other browser tool takes the returned `sessionRef`. Always browser_close when done.",
   inputSchema: z.object({
-    customerId: z.string().optional().describe("Customer slug this browsing is for, e.g. 'acme-bank'. Enables persistent login."),
+    customerId: z.string().optional().describe(fill("{Account} slug this browsing is for, e.g. 'acme-bank'. Enables persistent login.")),
     contextScope: z
       .enum(["principal", "team"])
       .default("principal")
@@ -194,11 +195,11 @@ export const browserActTool = modelFacing("browser_act", defineTool({
 
 export const browserLoginTool = modelFacing("browser_login", defineTool({
   description:
-    "Log in to a site using the customer's STORED credentials — without ever seeing them. First browser_read the login page and identify the username field, password field, and submit button by their refs; pass those refs plus the `customerId` and `site` (host). The agent fills the stored username/password server-side and submits — the credential never enters this conversation. Returns whether a credential was found + the landing page. Approval-gated (it acts on the page and uses a secret). If no credential is stored, it reports `found:false` — then a human can log in via the live view (take control).",
+    "Log in to a site using the {account}'s STORED credentials — without ever seeing them. First browser_read the login page and identify the username field, password field, and submit button by their refs; pass those refs plus the `customerId` and `site` (host). The agent fills the stored username/password server-side and submits — the credential never enters this conversation. Returns whether a credential was found + the landing page. Approval-gated (it acts on the page and uses a secret). If no credential is stored, it reports `found:false` — then a human can log in via the live view (take control).",
   approval: once(),
   inputSchema: z.object({
     sessionRef: z.string().describe("From browser_open."),
-    customerId: z.string().describe("Customer slug the credential is stored under, e.g. 'acme-bank'."),
+    customerId: z.string().describe(fill("{Account} slug the credential is stored under, e.g. 'acme-bank'.")),
     site: z.string().describe("The login site host, e.g. 'app.acme-bank.com'."),
     usernameRef: z.string().describe("Ref of the username/email field from the last browser_read."),
     passwordRef: z.string().describe("Ref of the password field from the last browser_read."),

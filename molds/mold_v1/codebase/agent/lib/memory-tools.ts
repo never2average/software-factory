@@ -49,7 +49,7 @@ function memoryAuthor(ctx: {
 
 export const rememberTool = modelFacing("remember", defineTool({
   description:
-    "Save one durable fact to the team's SHARED long-term memory so it is recalled in future sessions — by you and by every teammate (Postgres `memories` table when configured; in-process fallback otherwise). Scope it: 'team' (recalled on every turn for everyone), 'customer:{id}' (recalled whenever that customer comes up, e.g. 'customer:acme-bank'), or 'person:{email-or-slug}' (recalled whenever that person comes up). Saving an existing (scope, key) updates the value in place. Never save secrets, passwords, or one-time codes.",
+    "Save one durable fact to the team's SHARED long-term memory so it is recalled in future sessions — by you and by every teammate (Postgres `memories` table when configured; in-process fallback otherwise). Scope it: 'team' (recalled on every turn for everyone), 'customer:{id}' (recalled whenever that {account} comes up, e.g. 'customer:acme-bank'), or 'person:{email-or-slug}' (recalled whenever that person comes up). Saving an existing (scope, key) updates the value in place. Never save secrets, passwords, or one-time codes.",
   inputSchema: z.object({
     scope: memoryScopeStringSchema.describe(
       "'team', 'customer:{customerId}' (e.g. 'customer:acme-bank'), or 'person:{email-or-slug}'.",

@@ -158,7 +158,7 @@ function parseSignoffFrontMatter(text: string): Record<string, unknown> {
 
 export const recordSignoffTool = modelFacing("record_signoff", defineTool({
   description:
-    "Record an authoritative deployment signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deployments/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision.",
+    "Record an authoritative {deployment} signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deployments/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision.",
   approval: once(),
   inputSchema: z.object({
     customerId: z.string().min(1),
@@ -263,7 +263,7 @@ interface ComponentReport {
 
 export const getSignoffStatusTool = modelFacing("get_signoff_status", defineTool({
   description:
-    "Read the deployment signoff chain for a deployment and report each party's status per infrastructure component, plus whether each component's four-party chain is complete (every party approved or waived). Parties with no record report as not_requested. Omit component to report every component that has signoff records.",
+    "Read the {deployment} signoff chain for a {deployment} and report each party's status per infrastructure component, plus whether each component's four-party chain is complete (every party approved or waived). Parties with no record report as not_requested. Omit component to report every component that has signoff records.",
   inputSchema: z.object({
     customerId: z.string().min(1),
     platformVersionId: z.string().min(1),

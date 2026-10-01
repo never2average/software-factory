@@ -17,6 +17,7 @@
 import { createSign } from "node:crypto";
 import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "eve/connections";
+import { fill } from "./agent-vocabulary.ts";
 
 /**
  * GitHub App installation token — minted on demand, short-lived (~1h), and
@@ -86,8 +87,9 @@ async function githubToken(): Promise<string> {
 
 export const githubConnection = defineMcpClientConnection({
   url: process.env.GITHUB_MCP_URL ?? "https://api.githubcopilot.com/mcp/",
-  description:
-    "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for customer deployments.",
+  description: fill(
+    "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for {account} platforms.",
+  ),
   auth: { getToken: async () => ({ token: await githubToken() }) },
 });
 
@@ -97,8 +99,9 @@ export const githubConnection = defineMcpClientConnection({
  */
 export const slackConnection = defineMcpClientConnection({
   url: process.env.SLACK_MCP_URL ?? "https://slack-mcp.example.com/mcp",
-  description:
-    "Slack: read customer channels and threads, and post stand-up summaries and follow-up reminders.",
+  description: fill(
+    "Slack: read {account} channels and threads, and post stand-up summaries and follow-up reminders.",
+  ),
   auth: connect({ connector: "slack/fde-agent", principalType: "app" }),
 });
 

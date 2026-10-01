@@ -16,6 +16,7 @@ import { isMemberKind } from "../../agent/lib/member-kind.ts";
 import { eq } from "drizzle-orm";
 import { buildContextGraph } from "./lib/context-graph.mjs";
 import { glyph, flag, hasFlag, operatorEnv } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 
 async function main() {
@@ -55,11 +56,11 @@ async function doctorWorkspace(db, orgId, only) {
     : await withOrgDb(orgId, (tx) => tx.select({ customerId: customers.customerId }).from(customers).where(eq(customers.orgId, orgId)));
 
   if (rows.length === 0) {
-    console.log(`${glyph.info} ${orgId}: no customers to check.`);
+    console.log(`${glyph.info} ${orgId}: no ${W.accounts} to check.`);
     return { problems: 0, rosterProblems: 0 };
   }
 
-  console.log(`Doctor — ${orgId}: checking ${rows.length} customer folder(s)\n`);
+  console.log(`Doctor — ${orgId}: checking ${rows.length} ${W.account} folder(s)\n`);
   let problems = 0;
   for (const { customerId } of rows) {
     const g = await buildContextGraph(store, db, `Customers/${customerId}`, nowIso(), orgId);

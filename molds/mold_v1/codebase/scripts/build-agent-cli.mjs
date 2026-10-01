@@ -35,6 +35,7 @@ import {
   moduleFileNames, moduleSpecifiers, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter,
   renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate,
 } from "./lib/agent-cli.mjs";
+import { fillPlaceholders } from "./lib/profile-words.mjs";
 // The migration tables the wire-name gate allows and nothing else, read from the modules that
 // HONOUR them, so the gate and the compatibility shim can never drift into disagreeing about
 // what is deliberate.
@@ -204,15 +205,18 @@ function rebrandBaseSkill(text) {
 }
 for (const s of shippedSkills) {
   cpSync(s.dir, join(OUT, "skills", s.name), { recursive: true, verbatimSymlinks: true });
-  if (s.base && name !== GENERIC_AGENT_PACKAGE) {
+  if (s.base) {
+    // A base skill writes placeholders for the role and record words ({account}, {member}, …): filled from THIS
+    // deployment's profile in every package, the generic one included. A kit's own skills are in its own words.
+    const inWords = (text) => fillPlaceholders(name !== GENERIC_AGENT_PACKAGE ? rebrandBaseSkill(text) : text, profile);
     for (const file of walk(join(OUT, "skills", s.name))) {
       if (!/\.(md|txt|json|ya?ml)$/i.test(file) || lstatSync(file).isSymbolicLink()) continue;
       const text = readFileSync(file, "utf8");
-      const rebranded = rebrandBaseSkill(text);
+      const rebranded = inWords(text);
       if (rebranded !== text) writeFileSync(file, rebranded);
     }
     // The README quotes this line; it was read from the frontmatter before the rewrite above.
-    s.description = rebrandBaseSkill(s.description);
+    s.description = inWords(s.description);
   }
 }
 function walk(dir) {

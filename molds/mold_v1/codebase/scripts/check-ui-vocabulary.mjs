@@ -374,14 +374,16 @@ async function defaultWords() {
   if (!existsSync(join(ROOT, "lib/ui-words.ts"))) return { wrong: ["lib/ui-words.ts is missing: the UI has no profile words to take"] };
   const { W, an } = await import(pathToFileURL(join(ROOT, "lib/ui-words.ts")).href);
   const want = {
-    account: "customer", accounts: "customers", Account: "Customer", Accounts: "Customers",
+    // The default profile's words are neutral (profiles/00-default.json): an account, a delivery, a project and
+    // its plan. The identifiers keep the stored words (speakKey below is still the identity).
+    account: "account", accounts: "accounts", Account: "Account", Accounts: "Accounts",
     member: "member", members: "members", Member: "Member", Members: "Members", owner: "Account owner", secondaryOwner: "Secondary owner",
-    deployment: "deployment", deployments: "deployments", Deployment: "Deployment", Deployments: "Deployments",
-    implementation: "implementation", implementations: "implementations", Implementation: "Implementation", Implementations: "Implementations",
-    rollout: "rollout", rollouts: "rollouts", Rollout: "Rollout", Rollouts: "Rollouts",
-    accountIdExample: "customer-id", install: "deployment",
+    deployment: "delivery", deployments: "deliveries", Deployment: "Delivery", Deployments: "Deliveries",
+    implementation: "project", implementations: "projects", Implementation: "Project", Implementations: "Projects",
+    rollout: "plan", rollouts: "plans", Rollout: "Plan", Rollouts: "Plans",
+    accountIdExample: "account-id", install: "workspace",
   };
-  const wrong = Object.entries(want).filter(([k, v]) => W[k] !== v).map(([k, v]) => `W.${k} is ${JSON.stringify(W[k])}, the default UI said ${JSON.stringify(v)}`);
+  const wrong = Object.entries(want).filter(([k, v]) => W[k] !== v).map(([k, v]) => `W.${k} is ${JSON.stringify(W[k])}, the default profile says ${JSON.stringify(v)}`);
   if (Object.keys(W).some((k) => !(k in want))) wrong.push(`lib/ui-words.ts has words this check does not pin: ${Object.keys(W).filter((k) => !(k in want)).join(", ")}`);
   for (const [w, a] of [["customer", "a"], ["member", "a"], [LEGACY_MEMBER.singular, "an"], ["deployment", "a"], ["implementation", "an"], ["analyst", "an"], ["company", "a"]]) if (an(w) !== a) wrong.push(`an("${w}") is "${an(w)}", not "${a}"`);
   const { speakKey, humanizeKey } = await import(pathToFileURL(join(ROOT, "lib/ui-keys.ts")).href);

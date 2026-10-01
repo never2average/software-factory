@@ -18,6 +18,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { createDataroomStore } from "../../agent/lib/dataroom-store.ts";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 import { glyph, flag, resolveIdentity, isOnfinance, checkHealth, envReady, operatorEnv, memberProfileKeys, pickMemberProfile } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 
 /** The deployment's own word for a team member (the default profile's is the base product's role word). */
 const MEMBER = DEPLOYMENT_PROFILE.vocabulary.member.singular;
@@ -143,7 +144,7 @@ async function main() {
       );
       await store.write(
         `People/${slug}/roles_and_responsibilities.md`,
-        `# Roles & responsibilities — ${name || email}\n\n${Member}. Owns assigned customer accounts end to end (onboarding, configuration, deployment, migration, evals, follow-ups) and takes on-call rotations for incidents.\n`,
+        `# Roles & responsibilities — ${name || email}\n\n${Member}. Owns assigned ${W.accounts} end to end (onboarding, configuration, deploys, migration, evals, follow-ups) and takes on-call rotations for incidents.\n`,
       );
     }
     console.log(`${glyph.ok} Registered you in the ${MEMBER} roster (People/${slug}/, kind ${MEMBER_KIND}).`);

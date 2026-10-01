@@ -82,6 +82,47 @@ async function phaseUnits() {
     assert.equal(v.hasRolePlaceholder("the {owner}"), true);
     assert.equal(v.hasRolePlaceholder("People/{id}"), false);
   });
+  await check("base text's record placeholders are filled with the default profile's neutral words", () => {
+    assert.equal(
+      v.speakWith(base, "List all {accounts}: a {account}'s {deployments}, its {implementation} and its {rollout}. {Account} id."),
+      "List all accounts: an account's deliveries, its project and its plan. Account id.",
+    );
+    assert.equal(v.fillWith(base, "{Accounts}, {Deployment}, {Deployments}, {Implementation}, {Implementations}, {Rollout}, {Rollouts}, {rollouts}, {implementations}, {deployment}"),
+      "Accounts, Delivery, Deliveries, Project, Projects, Plan, Plans, plans, projects, delivery");
+    assert.equal(v.fillWith(base, "an {deployment} or a {implementation}; ${account} and {customer} and {customer_id} stay"), "a delivery or a project; ${account} and {customer} and {customer_id} stay");
+    assert.equal(v.hasRolePlaceholder("one {account}"), true);
+    assert.equal(v.wordForWith(base, "account"), "account");
+    assert.equal(v.wordForWith(base, "Deployments"), "Deliveries");
+  });
+  await check("the record words' legacy spelling is a contract under the default profile: never translated", () => {
+    const t = "customer_id, list_customers, Customers/acme, deploymentId, implementationStage, rolloutId; an old note says the customer's deployment and its rollout";
+    assert.equal(v.speakWith(base, t), t);
+    for (const id of ["customer_id", "list_customers", "deployments", "implementation", "rolloutId"]) assert.equal(v.speakIdentifierWith(base, id), id);
+    assert.equal(base.words.size, 0);
+  });
+  await check("a profile that keeps the identifiers' own words is not relabelled, and its placeholders read those words", () => {
+    const legacy = structuredClone(DEPLOYMENT_PROFILE);
+    legacy.vocabulary.account = { singular: "customer", plural: "customers" };
+    legacy.domains.deployments.label = { singular: "Deployment", plural: "Deployments" };
+    legacy.domains.implementations.label = { singular: "Implementation", plural: "Implementations" };
+    legacy.domains.implementations.group_label = { singular: "Rollout", plural: "Rollouts" };
+    const lv = v.createVocabulary(legacy);
+    assert.equal(lv.relabelled, false);
+    assert.equal(v.speakWith(lv, "a {account}'s {deployments} and {rollout}; {Implementation}"), "a customer's deployments and rollout; Implementation");
+  });
+  await check("the build scripts' plain-JavaScript fill (scripts/lib/profile-words.mjs) is fillWith, key for key", async () => {
+    const { fillPlaceholders, hasPlaceholder } = await imp("scripts/lib/profile-words.mjs");
+    const fixture = fixtureProfile();
+    for (const [profile, vocab] of [[DEPLOYMENT_PROFILE, base], [fixture, voc]]) {
+      for (const key of v.PLACEHOLDER_KEYS) {
+        for (const text of [`{${key}}`, `a {${key}} here`, `An **{${key}}** and an {${key}}'s id; \${${key}} stays`]) {
+          assert.equal(fillPlaceholders(text, profile), v.fillWith(vocab, text), text);
+        }
+        assert.equal(hasPlaceholder(`x {${key}} y`), true);
+      }
+    }
+    assert.equal(hasPlaceholder("People/{id}/x and ${account}"), false);
+  });
   await check("the member's legacy word is data under the default profile: not translated, not a base word", () => {
     const t = `${L.owner} reassigned; ownerTeam ${L.singular}`;
     assert.equal(v.speakWith(base, t), t);
@@ -117,6 +158,10 @@ async function phaseUnits() {
     // The base text's own role placeholders, filled from the profile (articles follow the word).
     ["The {member} who owns it — usually the customer's {owner}.", "The analyst who owns it — usually the company's covering analyst."],
     ["Ask a {member}; the {Members} decide; {Owner} first.", "Ask an analyst; the Analysts decide; Covering analyst first."],
+    // …and its record placeholders: the profile's word for each record, never the base one.
+    ["List all {accounts}: a {account}'s {deployments}. {Account} id.", "List all companies: a company's coverage reports. Company id."],
+    ["an {implementation} in one {rollout}; {Deployments} and {Implementations}", "a portfolio entry in one portfolio; Coverage reports and Portfolio entries"],
+    ["{Accounts} in `missing`; per-{account} filters; {account}-facing", "Companies in `missing`; per-company filters; company-facing"],
     ["Read Customers/{id}/sla.json and Implementation/{id}/x and Deployments/{customer_id}/", "Read Companies/{id}/sla.json and Portfolios/{id}/x and Coverage-reports/{company_id}/"],
     ["seven domains (Customers, Deployments, Implementation, People)", "seven domains (Companies, Coverage reports, Portfolios, People)"],
     ["scope 'customer:{id}' e.g. 'customer:acme-bank'", "scope 'company:{id}' e.g. 'company:acme-bank'"],

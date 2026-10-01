@@ -23,9 +23,12 @@
  *      `Customers/` are exactly the leaks this exists for, and a plain \b would pass every one of them.
  *   2. DEFAULT — profiles/00-default.json alone. The rendered prompts, tools and roster must be byte-identical
  *      to scripts/fixtures/agent-vocabulary/default-surface.txt (first taken BEFORE the vocabulary work, re-taken
- *      when the default profile's role words became neutral). A deployment that relabels nothing must not pay for
- *      the ones that do. And it reads the member's legacy word nowhere as a word (only inside a contract
- *      identifier such as a column name), and no role placeholder (`{member}`, `{owner}`) unfilled.
+ *      when the default profile's role words became neutral, and again when its record words did). A deployment
+ *      that relabels nothing must not pay for the ones that do. And it reads the member's legacy word nowhere as a
+ *      word (only inside a contract identifier such as a column name), no record word (customer, deployment,
+ *      implementation, rollout) as prose, tool results and the workflow library included (identifiers, paths, code
+ *      spans and stored values keep them: they are contracts), and no placeholder (`{member}`, `{account}`)
+ *      unfilled.
  *
  *   npm run check:agent-vocabulary                    both
  *   npm run check:agent-vocabulary -- --update-baseline   re-snapshot the default surface (a deliberate prompt change)
@@ -44,6 +47,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
+import { proseRecordWords, readRecordAllow } from "./lib/record-words.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const FIXTURES = join(ROOT, "scripts", "fixtures", "agent-vocabulary");
@@ -68,8 +72,32 @@ const LEGACY_AS_WORD = new RegExp(`(?<![A-Za-z0-9_\\-.])(${BASE_PRODUCT_WORD}s?)
  */
 const LEGACY_STORED_VALUES = new Set([BASE_PRODUCT_WORD.toUpperCase(), `${BASE_PRODUCT_WORD.toUpperCase()} Verified`]);
 const isStoredValueLine = (line) => LEGACY_STORED_VALUES.has(line.trim().replace(/^"|",?$|"$/g, ""));
-/** A role placeholder base text writes, which every boundary must fill from the profile. */
-const UNFILLED = /(?<!\$)\{(member|members|Member|Members|owner|Owner)\}/g;
+/** A role or record placeholder base text writes, which every boundary must fill from the profile. */
+const UNFILLED = /(?<!\$)\{(members?|Members?|owner|Owner|accounts?|Accounts?|deployments?|Deployments?|implementations?|Implementations?|rollouts?|Rollouts?)\}/g;
+/** Names that are not prose where they stand (a specialist's directory name, a stored enum value): the ratchet's own list. */
+const RECORD_NAMES = readRecordAllow(JSON.parse(readFileSync(join(ROOT, "scripts", "neutral-names.allow.json"), "utf8"))).names;
+/**
+ * The record words (customer, deployment, implementation, rollout) the model reads as PROSE in a surface, by the
+ * same rule the source ratchet applies (scripts/lib/record-words.mjs): never inside an identifier, a path, a code
+ * span or a quoted value. A tool's input schema is JSON, where every key and enum value is quoted: only its
+ * description strings are prose, and those are read as text.
+ */
+function recordProse(surface) {
+  const out = [];
+  for (const s of surface.split(/^(?==== )/m)) {
+    const title = s.slice(4, s.indexOf("\n"));
+    let body = s.slice(s.indexOf("\n") + 1);
+    // A roster entry is `<directory name>: <description>`: the name is the specialist's, a contract.
+    if (/ :: roster entry$/.test(title)) body = body.replace(/^[a-z0-9-]+: /, "");
+    // A tool result is printed as JSON, and a thrown validation error is JSON inside it: read the quotes and
+    // line breaks as the model does, so a quoted value (`\"Customer\"`) is seen as one.
+    if (/ :: result :: /.test(title)) body = body.replace(/\\+"/g, '"').replace(/\\+n/g, "\n");
+    // A line that is one lower-case token (a specialist's name among a workflow's literals, a key) is a name.
+    body = body.split("\n").map((line) => (/^\s*[a-z0-9_\-./:]+\s*$/.test(line) ? "" : line)).join("\n");
+    for (const h of proseRecordWords(body, RECORD_NAMES)) out.push(`[${title}] "${h.word}": ${h.text}`);
+  }
+  return out;
+}
 /** Lines of a surface that carry `re`, with their section, for a report. */
 function linesWith(surface, re) {
   const out = [];
@@ -190,12 +218,45 @@ if (problems.length) {
     failed = true;
     console.error(`check-agent-vocabulary: ${unfilledR.length} role placeholder(s) reached the model unfilled:\n${unfilledR.slice(0, 40).map((l) => `  - ${l}`).join("\n")}`);
   }
+  // …and the profile's own words are what stands there: each record word the profile declares is read by the model,
+  // in the prompts and in the tool descriptions (the two places base text writes a record placeholder).
+  if (!PACK) {
+    const declared = JSON.parse(readFileSync(FIXTURE, "utf8"));
+    const words = [
+      declared.vocabulary?.account?.singular, declared.vocabulary?.account?.plural,
+      declared.domains?.deployments?.label?.singular, declared.domains?.deployments?.label?.plural,
+      declared.domains?.implementations?.label?.singular, declared.domains?.implementations?.group_label?.singular,
+    ].filter((w) => typeof w === "string" && w.trim()).map((w) => w.trim().toLowerCase());
+    const read = (kind) => sections.filter((s) => new RegExp(` :: ${kind}( ::|$)`, "m").test(s.slice(0, s.indexOf("\n")))).join("\n").toLowerCase();
+    const prompts = read("prompt");
+    const tools = read("tool");
+    const missing = [...new Set(words)].filter((w) => !prompts.includes(w) && !tools.includes(w));
+    const unspoken = [declared.vocabulary?.account?.plural].filter((w) => typeof w === "string" && (!prompts.includes(w.toLowerCase()) || !tools.includes(w.toLowerCase())));
+    if (missing.length || unspoken.length) {
+      failed = true;
+      console.error(`check-agent-vocabulary: RELABELLED profile — the profile's own words are missing from what the model reads: ${[...missing, ...unspoken].map((w) => `"${w}"`).join(", ")}. A record placeholder ({account}, {deployment}, {implementation}, {rollout}) must be filled with the profile's word.`);
+    } else {
+      console.log(`check-agent-vocabulary: relabelled profile — the profile's record words (${[...new Set(words)].join(", ")}) are what the model reads in the prompts and the tool descriptions`);
+    }
+  }
   console.log(`check-agent-vocabulary: ${PACK ? `pack ${PACK} under its own profile` : "relabelled profile"} — ${sections.length} model-facing sections (${toolCount} tool definitions across the root and ${subagentCount} subagents, prompts, skills, sandbox files, briefing, tool results) carry no base word`);
 }
 
 /* 2. DEFAULT --------------------------------------------------------------------------------------------- */
 const snapshot = PACK ? null : render([], ["--snapshot", "--no-results"]);
 if (!PACK) {
+  // Everything the default deployment's model reads, tool results and the provisioned workflow library included
+  // (the snapshot above has neither): no record word as prose, and no placeholder unfilled.
+  const full = render([], []);
+  const prose = recordProse(full);
+  const unfilledFull = linesWith(full, UNFILLED);
+  if (prose.length || unfilledFull.length) {
+    failed = true;
+    if (prose.length) console.error(`check-agent-vocabulary: DEFAULT profile — the model reads a record word as prose in ${prose.length} place(s). Base text writes a placeholder the profile fills ({account}, {deployment}, {implementation}, {rollout}); the default profile's words are neutral:\n${[...new Set(prose)].slice(0, 60).map((l) => `  - ${l}`).join("\n")}`);
+    if (unfilledFull.length) console.error(`check-agent-vocabulary: DEFAULT profile — ${unfilledFull.length} placeholder(s) reached the model unfilled (tool results and the workflow library included):\n${unfilledFull.slice(0, 40).map((l) => `  - ${l}`).join("\n")}`);
+  } else {
+    console.log(`check-agent-vocabulary: default profile — no record word (customer, deployment, implementation, rollout) is read as prose in ${full.split(/^(?==== )/m).length} model-facing sections (prompts, tools, roster, briefing, workflow library, tool results), and every placeholder is filled`);
+  }
   const legacy = linesWith(snapshot, LEGACY_AS_WORD);
   const unfilled = linesWith(snapshot, UNFILLED);
   if (legacy.length || unfilled.length) {

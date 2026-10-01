@@ -3,7 +3,7 @@
     |-{CustomerID}
        |-interactions.jsonl
        |-context.md
-       |-personas.jsonl (this customer's user archetypes — one persona record per line; see personaSchema)
+       |-personas.jsonl (its user archetypes — one persona record per line; see personaSchema)
        |-agreements/
     |-syncs/
        |-manual_entry/
@@ -89,7 +89,7 @@
            |-custom_k8s
   |-Solutions
       |-{platform_version_id}
-         |-supported.personas.jsonl (the personas this solution version supports — one persona record per line; recipes cite persona_ids; customer-specific personas live in Customers/{CustomerID}/personas.jsonl)
+         |-supported.personas.jsonl (the personas this solution version supports — one persona record per line; recipes cite persona_ids; the personas of one {CustomerID} live in Customers/{CustomerID}/personas.jsonl)
          |-agents/
            |-{agent_id}
               |-dataplatform.schemas.json

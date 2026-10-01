@@ -53,7 +53,7 @@ export function compatEnv(name: keyof typeof LEGACY_APP_ENV_NAMES | string): str
     warned.add(legacy);
     console.warn(
       `[config] ${legacy} is the old name for ${name} and still works, but it will be removed. ` +
-        `Set ${name} to the same value on this deployment and drop ${legacy}.`,
+        `Set ${name} to the same value on this installation and drop ${legacy}.`,
     );
   }
   return old;

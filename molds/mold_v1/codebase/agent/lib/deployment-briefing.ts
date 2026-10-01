@@ -14,12 +14,17 @@
  * When the profile only hides domains or redefines fields without renaming anything, the identifiers ARE the
  * base ones, and the block says so as before.
  *
- * Returns null when the profile is the default one: the default deployment's prompt is unchanged.
+ * Under the default profile the block is one short list: the profile's neutral record words (an account, a
+ * delivery, a project and its plan) beside the stored identifiers that carry them (`customer_id`,
+ * `deployments[]`, `implementation`, `rolloutId`). Base text speaks the first, the tools and paths the second,
+ * and nothing else would tell the model they are the same thing. A profile whose words ARE the identifiers'
+ * needs no such line, and gets none.
  */
 import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, type CustomFieldSpec, type DeploymentProfile, type DomainArea } from "./deployment-profile.generated.ts";
-import { createVocabulary, speakCodeWith, speakWith, verbatimWith, VOCABULARY, type Vocabulary, type VocabularyProfile } from "./agent-vocabulary.ts";
+import { createVocabulary, LEGACY_RECORDS, speakCodeWith, speakWith, verbatimWith, VOCABULARY, type Vocabulary, type VocabularyProfile } from "./agent-vocabulary.ts";
 
-const DEFAULT_ACCOUNT = "customer";
+/** The account as the identifiers spell it: a profile whose word is this one needs no line saying so. */
+const DEFAULT_ACCOUNT = LEGACY_RECORDS.account.singular;
 /** The member's words in the default profile: the base text's role placeholders are filled with these. */
 const DEFAULT_MEMBER = "member";
 
@@ -34,6 +39,32 @@ const AREA_IDENTIFIERS: Record<DomainArea, { was: string; record: string; folder
 };
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const sameWord = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const lowerFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s);
+const an = (word: string) => (/^[aeiou]/i.test(word) && !/^(uni|use|usu|eu|one)/i.test(word) ? "an" : "a");
+const upperFirst = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/**
+ * An area left exactly as the default profile has it, whose word is not the identifiers' word: one line that
+ * ties the two together ("A **delivery** is a `deployment` in the identifiers…"). Nothing when the profile's word
+ * is the identifiers' own, and nothing for an area the profile redefines (renderDomainBriefing says it there).
+ */
+function renderAreaIdentifiers(area: DomainArea, domains: DeploymentProfile["domains"]): string[] {
+  const spec = domains[area];
+  if (!same(spec, DEFAULT_DOMAINS[area])) return [];
+  const ids = AREA_IDENTIFIERS[area];
+  const word = lowerFirst(spec.label.singular);
+  const lines: string[] = [];
+  if (!sameWord(word, ids.was)) {
+    lines.push(`- ${upperFirst(an(word))} **${word}** (plural: ${lowerFirst(spec.label.plural)}) is ${an(ids.was)} \`${ids.was}\` in the identifiers: \`${ids.record}\` on the record, files under \`${ids.folder}\`, TODO containerType \`${ids.container}\`.`);
+  }
+  const group = "group_label" in spec ? (spec as DeploymentProfile["domains"]["implementations"]).group_label : null;
+  if (group && !sameWord(group.singular, LEGACY_RECORDS.rollouts.singular)) {
+    const g = lowerFirst(group.singular);
+    lines.push(`- ${upperFirst(an(g))} **${g}** (plural: ${lowerFirst(group.plural)}) is a \`${LEGACY_RECORDS.rollouts.singular}\` in the identifiers: the \`${ids.id}\` its \`${ids.record}\` rows share.`);
+  }
+  return lines;
+}
 
 /**
  * One own field, terse on purpose (this is paid for on every turn): `key`="Label" (type or choices; required).
@@ -64,12 +95,16 @@ export function renderAccountFieldsBriefing(profile: Pick<DeploymentProfile, "ac
  * One redefined area, tersely: what it MEANS here, how its fields and enum values are shown to people, what is
  * not used (and what to write there anyway), and that the identifiers stay. Nothing for an area left at default.
  */
-export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfile["domains"], v?: Vocabulary): string[] {
+export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfile["domains"], v?: Vocabulary, accountWord: string = (v ?? VOCABULARY).records.account.singular): string[] {
   const relabelled = Boolean(v?.relabelled);
   const spec = domains[area];
   const def = DEFAULT_DOMAINS[area];
   if (same(spec, def)) return [];
   const ids = AREA_IDENTIFIERS[area];
+  // An area that differs from the default only in its WORDS, and whose word is the identifiers' own (the record
+  // words the default carried before it spoke neutrally): the model already reads that word everywhere.
+  const structure = ({ label: _l, description: _d, id_label: _i, ...rest }: Record<string, unknown>) => ({ ...rest, group_label: undefined });
+  if (!relabelled && sameWord(spec.label.singular, ids.was) && same(structure(spec as unknown as Record<string, unknown>), structure(def as unknown as Record<string, unknown>))) return [];
   const fields = Object.entries(spec.fields);
   const lines: string[] = [];
   const an = /^[aeiou]/i.test(ids.was) ? "an" : "a";
@@ -86,12 +121,12 @@ export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfil
     );
   } else {
     lines.push(
-      `- ${!same(spec.label, def.label) ? `${an[0].toUpperCase()}${an.slice(1)} "${ids.was}" is a **${spec.label.singular}** here (plural: ${spec.label.plural})` : `${spec.label.plural} mean something specific here`}: ${spec.description} Identifiers stay: read with \`get_customer\` (\`${ids.record}\`), write with \`upsert_customer\`, files under \`${ids.folder}\`, TODO containerType \`${ids.container}\`, \`${ids.id}\` shown as "${spec.id_label}". People say the display words below; you store the values.`,
+      `- ${!same(spec.label, def.label) && !sameWord(spec.label.singular, ids.was) ? `${an[0].toUpperCase()}${an.slice(1)} \`${ids.was}\` is a **${spec.label.singular}** here (plural: ${spec.label.plural})` : `${spec.label.plural} mean something specific here`}: ${spec.description} Identifiers stay: read with \`get_customer\` (\`${ids.record}\`), write with \`upsert_customer\`, files under \`${ids.folder}\`, TODO containerType \`${ids.container}\`, \`${ids.id}\` shown as "${spec.id_label}". People say the display words below; you store the values.`,
     );
   }
   const group = "group_by" in spec ? (spec as DeploymentProfile["domains"]["implementations"]) : null;
   if (group?.group_by) {
-    lines.push(`  - A **${own(group.group_label.singular)}** (plural: ${own(group.group_label.plural)}) is the set of \`${ids.record}\` rows sharing one \`${group.group_by}\` slug, e.g. \`large-caps\`. One row per customer id, so each is in one ${own(group.group_label.singular.toLowerCase())} at a time.`);
+    lines.push(`  - A **${own(group.group_label.singular)}** (plural: ${own(group.group_label.plural)}) is the set of \`${ids.record}\` rows sharing one \`${group.group_by}\` slug, e.g. \`large-caps\`. One row per ${own(lowerFirst(accountWord))} id, so each is in one ${own(group.group_label.singular.toLowerCase())} at a time.`);
   }
   if (spec.kind_field) lines.push(`  - \`${spec.kind_field}\` carries the ${own(spec.fields[spec.kind_field]?.label ?? "kind")}: ${spec.kinds.map(own).join("; ")}.`);
   const labelled = fields.filter(([k, f]) => !f.hidden && f.label && f.label !== def.fields[k]?.label && k !== spec.kind_field && k !== group?.group_by && plain(f.label) !== plain(k));
@@ -126,13 +161,13 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE): string |
   const lines: string[] = [];
   if (voc.account.singular !== DEFAULT_ACCOUNT) {
     lines.push(
-      `- In this deployment a "customer" is called a **${voc.account.singular}** (plural: ${voc.account.plural}). Say "${voc.account.singular}" to people. The identifiers do not change: tools such as \`list_customers\` and \`get_customer\`, the \`customer_id\` field and the \`Customers/\` data-room folder all refer to ${voc.account.plural}.`,
+      `- ${upperFirst(an(voc.account.singular))} **${voc.account.singular}** (plural: ${voc.account.plural}) is a \`${DEFAULT_ACCOUNT}\` in the identifiers. Say "${voc.account.singular}" to people. The identifiers do not change: tools such as \`list_customers\` and \`get_customer\`, the \`customer_id\` field and the \`Customers/\` data-room folder all refer to ${voc.account.plural}.`,
     );
   }
   const hidden = Object.entries(dataroom.domains).filter(([, d]) => !d.visible).map(([k]) => k);
   if (hidden.length > 0) {
     lines.push(
-      `- This deployment does not use these parts of the product: ${hidden.join(", ")}. Do not offer, plan or write work under them, and ignore the sections of your instructions that are only about them, unless a person explicitly asks.`,
+      `- This workspace does not use these parts of the product: ${hidden.join(", ")}. Do not offer, plan or write work under them, and ignore the sections of your instructions that are only about them, unless a person explicitly asks.`,
     );
   }
   const relabelled = Object.entries(dataroom.domains).filter(([k, d]) => d.visible && d.label !== k);
@@ -140,9 +175,10 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE): string |
     lines.push(`- People see these data-room folders under other names: ${relabelled.map(([k, d]) => `\`${k}/\` is shown as "${d.label}"`).join("; ")}. Paths you read and write keep the folder's real name.`);
   }
   lines.push(...renderAccountFieldsBriefing(profile));
-  for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains));
+  for (const area of ["deployments", "implementations"] as const) lines.push(...renderAreaIdentifiers(area, profile.domains));
+  for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, undefined, voc.account.singular));
   const body = [lines.join("\n"), agent.briefing?.trim() ?? ""].filter(Boolean).join("\n\n");
-  return body ? `## This deployment\n\n${body}` : null;
+  return body ? `## This workspace\n\n${body}` : null;
 }
 
 /**

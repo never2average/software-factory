@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LEGACY_GENERIC_COMMANDS, defaultDeployment, isSemver, moduleFileNames, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter, renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate } from "./lib/agent-cli.mjs";
+import { hasPlaceholder } from "./lib/profile-words.mjs";
 import { declaredAliases } from "./lib/wire-names.mjs";
 import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 /** The base product's role word as a word (not inside an identifier), built from its one spelling. */
@@ -343,6 +344,17 @@ try {
     // because its description is quoted verbatim into the README an analyst reads.
     assert.ok(!text.includes("@delivery-agents/cli") && text.includes(`npx ${NAME} login`));
     assert.ok(!ROLE_WORD.test(text), "no base-product name survives in a shipped base skill");
+    // The skill's source writes record placeholders ({account}); the package carries this build's word for each.
+    assert.ok(/\{account\}/.test(readFileSync(join(ROOT, "skills/delivered-setup/SKILL.md"), "utf8")), "the source writes the placeholder");
+    assert.ok(!hasPlaceholder(text), "no placeholder is left unfilled in a shipped base skill");
+    assert.ok(text.includes("## 4. Onboard the first account") && text.includes("an account is discoverable"), "filled with the default profile's word, article and all");
+    assert.ok(!/\bcustomers?\b(?![_.])/i.test(text.replace(/`[^`\n]*`/g, "")), "no record word as prose in the shipped base skill");
+    const readme = readFileSync(join(D, "README.md"), "utf8");
+    assert.ok(!hasPlaceholder(readme) && readme.includes("onboard the first account"), "the README quotes the skill's description filled");
+  });
+  await check("the generic package's mirror of the base skill is filled from the default profile", () => {
+    const mirrored = readFileSync(join(ROOT, "setup/skills/delivered-setup/SKILL.md"), "utf8");
+    assert.ok(!hasPlaceholder(mirrored) && mirrored.includes("## 4. Onboard the first account"));
   });
   await check("the README leads with the hosted one-liner, then login / mcp / install-skills", () => {
     const t = readFileSync(join(D, "README.md"), "utf8");
@@ -633,6 +645,9 @@ try {
     const r = build(out, { env: { PROFILES_DIR: PROFILES } });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(readdirSync(join(out, "skills")).sort(), ["delivered-setup", "demo-setup"]);
+    // …and it speaks this deployment's words: the placeholder is filled from ITS profile.
+    const brought = readFileSync(join(out, "skills/delivered-setup/SKILL.md"), "utf8");
+    assert.ok(brought.includes("## 4. Onboard the first company") && brought.includes("a company is discoverable") && !hasPlaceholder(brought), "the base skill under the probe profile says company");
     writeFileSync(join(KIT, "kit.json"), JSON.stringify({ include_base_skills: ["no-such-skill"] }));
     assert.equal(build(join(TMP, "probe-kit-bad"), { env: { PROFILES_DIR: PROFILES } }).status, 1);
     rmSync(join(KIT, "kit.json"));

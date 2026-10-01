@@ -21,6 +21,7 @@ import { apps } from "./db/schema.ts";
 import { orgForSession } from "./org-context.ts";
 import { cronMatches } from "./cron-match.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
+import { fill } from "./agent-vocabulary.ts";
 
 /** The author comes from the verified session auth, never from the model. */
 function callerEmail(ctx: {
@@ -65,7 +66,7 @@ function assertCron(expr: string | null | undefined): string | null {
 
 export const createAppTool = modelFacing("create_app", defineTool({
   description:
-    "Create an APP — a living Markdown document that is REGENERATED on a cadence and rendered read-only in the Ops Center's Apps tab. Use this when someone wants a standing report/dashboard that stays current (e.g. 'a daily at-risk accounts digest'), rather than a one-off answer. Content comes from either a PROMPT (one agent call each refresh; simplest) or a WORKFLOW (a saved workflow script whose return value is the document). Set `refreshCron` (5-field UTC) to refresh automatically; omit it for manual-only. This creates the DEFINITION — the first document appears after the first refresh.",
+    "Create an APP — a living Markdown document that is REGENERATED on a cadence and rendered read-only in the Ops Center's Apps tab. Use this when someone wants a standing report/dashboard that stays current (e.g. 'a daily at-risk {accounts} digest'), rather than a one-off answer. Content comes from either a PROMPT (one agent call each refresh; simplest) or a WORKFLOW (a saved workflow script whose return value is the document). Set `refreshCron` (5-field UTC) to refresh automatically; omit it for manual-only. This creates the DEFINITION — the first document appears after the first refresh.",
   approval: once(),
   inputSchema: z.object({
     name: z.string().min(1).max(200).describe("Short human label, e.g. 'Portfolio health digest'."),
@@ -98,7 +99,7 @@ export const createAppTool = modelFacing("create_app", defineTool({
     customerId: z
       .string()
       .optional()
-      .describe("Optional customer slug scope, e.g. 'acme-bank' (omit for team-wide)."),
+      .describe(fill("Optional {account} slug scope, e.g. 'acme-bank' (omit for team-wide).")),
   }),
   async execute(input, ctx) {
     const db = requireDb();
@@ -169,7 +170,7 @@ export const listAppsTool = modelFacing("list_apps", defineTool({
 
 export const updateAppTool = modelFacing("update_app", defineTool({
   description:
-    "Update an APP's definition — its prompt/workflow, refresh cadence, customer scope, or paused state. Only the fields you pass change. Use `list_apps` first to get the id. This does NOT regenerate the document; the next refresh does.",
+    "Update an APP's definition — its prompt/workflow, refresh cadence, {account} scope, or paused state. Only the fields you pass change. Use `list_apps` first to get the id. This does NOT regenerate the document; the next refresh does.",
   approval: once(),
   inputSchema: z.object({
     id: z.string().min(1).describe("The app id from list_apps."),

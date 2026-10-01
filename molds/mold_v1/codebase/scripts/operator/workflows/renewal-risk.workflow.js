@@ -1,13 +1,13 @@
 export const meta = {
   name: "renewal-risk",
-  description: "Assess a customer's renewal risk and produce a save plan with owner actions.",
+  description: "Assess a {account}'s renewal risk and produce a save plan with owner actions.",
 };
 
 const c = (args && args.customerId) || "";
 
 phase("Assess");
 const assessment = await agent(
-  "Assess renewal risk for customer " + c + ": health trend, SLA breaches, ticket load, engagement/interaction recency, value realization vs target, and renewal date proximity. Return a risk level (low/medium/high) with the evidence.",
+  "Assess renewal risk for {account} " + c + ": health trend, SLA breaches, ticket load, engagement/interaction recency, value realization vs target, and renewal date proximity. Return a risk level (low/medium/high) with the evidence.",
   { subagent: "customer-context" },
 );
 

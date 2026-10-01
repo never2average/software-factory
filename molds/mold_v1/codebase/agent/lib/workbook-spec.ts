@@ -35,6 +35,7 @@ import {
 } from "./customer-schema.ts";
 import { readFileSync } from "node:fs";
 import { compatEnv } from "./compat-env.ts";
+import { wordFor } from "./agent-vocabulary.ts";
 import { customFieldsOf } from "./custom-fields.ts";
 import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
 import { samplePeople } from "./sample-data.ts";
@@ -744,21 +745,21 @@ function baseDomainSheets(customer: Customer, domain: WorkbookDomain): SheetSpec
 
 /**
  * Build the workbook spec for one `<Domain>/Master.xlsx` of a customer.
- * `now` is reserved (see module doc). Throws `Unknown customer: <id>` when the
+ * `now` is reserved (see module doc). Throws `Unknown <account>: <id>` when the
  * customer is not in the system of record.
  */
 export async function buildDomainWorkbookSpec(opts: {
   customerId: string;
   domain: WorkbookDomain;
   now: Date | string;
-  /** The caller's workspace: a customer outside it is "Unknown customer". */
+  /** The caller's workspace: a customer outside it is "Unknown <account>". */
   orgId?: string | null;
   /** Tests only: the declared own fields, when this build's profile declares none. */
   declared?: DeclaredOwnFields;
 }): Promise<WorkbookSpec> {
   void opts.now; // reserved: digest is derived purely from stored rows
   const customer = await getCustomer(opts.customerId, opts.orgId);
-  if (!customer) throw new Error(`Unknown customer: ${opts.customerId}`);
+  if (!customer) throw new Error(`Unknown ${wordFor("account")}: ${opts.customerId}`);
   return {
     workbook: `${opts.domain}/Master.xlsx`,
     domain: opts.domain,
@@ -768,19 +769,19 @@ export async function buildDomainWorkbookSpec(opts: {
 
 /**
  * Build every domain workbook spec for a customer, in the fixed
- * `WORKBOOK_DOMAINS` order. Throws `Unknown customer: <id>` when absent.
+ * `WORKBOOK_DOMAINS` order. Throws `Unknown <account>: <id>` when absent.
  */
 export async function buildCustomerWorkbookSpecs(opts: {
   customerId: string;
   now: Date | string;
-  /** The caller's workspace: a customer outside it is "Unknown customer". */
+  /** The caller's workspace: a customer outside it is "Unknown <account>". */
   orgId?: string | null;
   /** Tests only: the declared own fields, when this build's profile declares none. */
   declared?: DeclaredOwnFields;
 }): Promise<WorkbookSpec[]> {
   void opts.now; // reserved
   const customer = await getCustomer(opts.customerId, opts.orgId);
-  if (!customer) throw new Error(`Unknown customer: ${opts.customerId}`);
+  if (!customer) throw new Error(`Unknown ${wordFor("account")}: ${opts.customerId}`);
   return WORKBOOK_DOMAINS.map((domain) => ({
     workbook: `${domain}/Master.xlsx`,
     domain,

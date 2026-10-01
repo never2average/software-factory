@@ -240,7 +240,7 @@ try {
   });
   await attempt("remove on an id that is not there is said, not silently ignored", async () => {
     await assert.rejects(upsert({ deployments: [{ deploymentId: "NOPE", remove: true }] }), (e) => {
-      check("…in a sentence", /Nothing was written\. deploymentId NOPE: there is no such deployments row to remove\./.test(e.message), e.message);
+      check("…in a sentence", /Nothing was written\. deploymentId NOPE: there is no such deliveries row to remove\./.test(e.message), e.message);
       return true;
     });
   });

@@ -16,6 +16,7 @@ import { orgs, orgMembers, platformAdmins } from "../../agent/lib/db/schema.ts";
 import { BUILTIN_RECIPES, provisionWorkspace } from "../../agent/lib/provision-workspace.ts";
 import { eq } from "drizzle-orm";
 import { glyph, flag, hasFlag, resolveIdentity } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 
 async function main() {
   const name = flag("name").trim();
@@ -88,7 +89,7 @@ async function main() {
   console.log(`${glyph.ok} Workflow library: ${workflowsCreated} installed, ${workflowsSkipped} already present.`);
 
   console.log(`\n${glyph.ok} Workspace "${id}" provisioned at ${nowIso()}.`);
-  console.log(`   Next: invite operators, connect a source, onboard the first customer.`);
+  console.log(`   Next: invite operators, connect a source, onboard the first ${W.account}.`);
   console.log(`   Check readiness:  GET /api/ops/orgs/${id}/health`);
   await closeDb();
 }

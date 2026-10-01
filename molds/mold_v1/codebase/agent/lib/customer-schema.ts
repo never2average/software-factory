@@ -44,7 +44,7 @@ const urlOrEmptySchema = z.string().url().or(z.literal(""));
  */
 const customValuesSchema = z
   .record(z.string(), z.union([z.string(), z.number(), z.null()]))
-  .describe("This deployment's own fields on the record, by field key. Only the keys its profile declares are accepted; send just the ones you are changing, null to clear one.");
+  .describe("This workspace's own fields on the record, by field key. Only the keys its profile declares are accepted; send just the ones you are changing, null to clear one.");
 
 export const platformSchema = z.object({
   tenantId: z.string().min(1).optional(),
@@ -620,7 +620,7 @@ export const interactionPatchSchema = rowPatchSchema(interactionSchema, "interac
 
 /** The one rule every nested list of a patch follows, said once per list in its own id. */
 const listRule = (id: string) => `Rows to add or change, each by its ${id}. Send only the fields that change: the ones you leave out keep their stored values, and null clears one. Rows you leave out are kept; to delete a row send its ${id} with remove: true. A new row needs every required field.`;
-const recordRule = (what: string) => `The ${what} record's fields to change. Send only the fields that change: the ones you leave out keep their stored values, and null clears one. To delete it send remove: true. A new one needs every required field.`;
+const recordRule = (what: string) => `The \`${what}\` record's fields to change. Send only the fields that change: the ones you leave out keep their stored values, and null clears one. To delete it send remove: true. A new one needs every required field.`;
 
 export const customerPatchSchema = customerSchema.partial().extend({
   id: z.string().min(1),

@@ -11,6 +11,7 @@
 import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
 import { solutions } from "../../agent/lib/db/schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 
 async function main() {
   const version = flag("version").trim();
@@ -55,7 +56,7 @@ async function main() {
     // The workspace, named (--org): a company id names a company only within a workspace (mold_v1-118).
     const orgId = workspaceFor();
     if (!(await getCustomer(db, orgId, customerId))) {
-      console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
+      console.error(`${glyph.bad} ${W.Account} "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
       await closeDb();
       process.exit(1);
     }

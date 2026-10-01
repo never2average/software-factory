@@ -42,7 +42,7 @@ const linkType = z.enum(["ticket", "customer", "app", "cron", "workflow", "chat"
 
 export const upsertTodoTool = modelFacing("upsert_todo", defineTool({
   description:
-    "Create OR update a TODO — the team's internal checklist item (NOT a customer ticket; use create_ticket for those). Omit `id` to create; pass `id` to update just the fields you provide. A todo can be filed under a Deployment or Implementation (the 'epic' — set container*), linked to a related object (a ticket/customer/app/cron/workflow/chat — set link*), assigned, prioritised, and given a due date. Use this for 'remind me to X', 'add a todo to Y', or to mark one done.",
+    "Create OR update a TODO — the team's internal checklist item (NOT a {account} ticket; use create_ticket for those). Omit `id` to create; pass `id` to update just the fields you provide. A todo can be filed under a {deployment} or an {implementation} (the 'epic' — set container*), linked to a related object (a ticket/customer/app/cron/workflow/chat — set link*), assigned, prioritised, and given a due date. Use this for 'remind me to X', 'add a todo to Y', or to mark one done.",
   approval: once(),
   inputSchema: z.object({
     id: z.string().optional().describe("The todo id to UPDATE. Omit to create a new one."),

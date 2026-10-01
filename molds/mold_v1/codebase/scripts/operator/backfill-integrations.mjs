@@ -13,6 +13,7 @@ import { getDb, closeDb, dataroom, workspaceFor, nowIso, appendInteraction, read
 import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system-of-record.ts";
 import { implementationSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 
 async function main() {
   const customerId = flag("customer").trim();
@@ -36,7 +37,7 @@ async function main() {
   const record = await getRecord(customerId, orgId);
   const customer = record ? { customerName: record.name } : null;
   if (!customer) {
-    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
+    console.error(`${glyph.bad} ${W.Account} "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
     await closeDb();
     process.exit(1);
   }
@@ -69,7 +70,7 @@ async function main() {
     process.exit(1);
   }
   await upsertCustomer({ id: customerId, implementation: row }, orgId);
-  console.log(`${glyph.ok} ${record.implementation ? "Updated" : "Created"} implementation row (${customerId}).`);
+  console.log(`${glyph.ok} ${record.implementation ? "Updated" : "Created"} ${W.implementation} row (${customerId}).`);
 
   // 2. Canonical data-room artifacts per pipeline.
   const store = dataroom(orgId);

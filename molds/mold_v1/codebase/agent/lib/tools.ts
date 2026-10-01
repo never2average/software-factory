@@ -167,7 +167,7 @@ const hidesParts = RECORD_PARTS.some((k) => HIDDEN_FIELDS.account.has(k));
 
 export const listCustomersTool = modelFacing("list_customers", defineTool({
   description:
-    "List all customers in the system of record with tier, lifecycle stage, status, {owner}, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.",
+    "List all {accounts} in the system of record with tier, lifecycle stage, status, {owner}, open ticket count, and — for matching an inbound sender to a {account} — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     return { customers: await listCustomers(await orgForSession(ctx)) };
@@ -176,9 +176,9 @@ export const listCustomersTool = modelFacing("list_customers", defineTool({
 
 export const getCustomerTool = modelFacing("get_customer", defineTool({
   description:
-    "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions.",
+    "Get the full record for one {account}: platform config, {deployments}, solutions, its {implementation}, tickets, and recent interactions.",
   inputSchema: z.object({
-    id: z.string().min(1).describe("Customer id, e.g. 'acme-bank'."),
+    id: z.string().min(1).describe(fill("{Account} id, e.g. 'acme-bank'.")),
   }),
   async execute({ id }, ctx) {
     const customer = await getCustomer(id, await orgForSession(ctx));
@@ -188,7 +188,7 @@ export const getCustomerTool = modelFacing("get_customer", defineTool({
 }), {
   recordOutput: ["customer"],
   modelDescription: hidesParts
-    ? `Get the full record for one customer: ${shownParts([["platform", "platform config"], ["deployments", "deployments"], ["solutions", "solutions"], ["implementation", "implementation"], ["tickets", "tickets"], ["interactions", "recent interactions"]])}.`
+    ? `Get the full record for one {account}: ${shownParts([["platform", "platform config"], ["deployments", "{deployments}"], ["solutions", "solutions"], ["implementation", "its {implementation}"], ["tickets", "tickets"], ["interactions", "recent interactions"]])}.`
     : undefined,
 });
 
@@ -210,7 +210,7 @@ const upsertCustomerInput = (
 
 export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
   description:
-    "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (platform, deployments, solutions, implementation, tickets, interactions) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth.",
+    "Create or update a {account} record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (`platform`, `deployments`, `solutions`, `implementation`, `tickets`, `interactions`) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth.",
   approval: once(),
   inputSchema: upsertCustomerInput,
   async execute(patch, ctx) {
@@ -227,7 +227,7 @@ export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
   recordInput: {},
   recordOutput: ["customer"],
   modelDescription: hidesParts
-    ? `Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (${RECORD_PARTS.filter((k) => !HIDDEN_FIELDS.account.has(k)).join(", ")}) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth.`
+    ? `Create or update a {account} record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (${RECORD_PARTS.filter((k) => !HIDDEN_FIELDS.account.has(k)).map((k) => `\`${k}\``).join(", ")}) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth.`
     : undefined,
 });
 
@@ -267,7 +267,7 @@ function toInteractionRow(input: InteractionInput, recordedByEmail: string | und
 
 export const recordInteractionTool = modelFacing("record_interaction", defineTool({
   description:
-    "Append ONE interaction (meeting, email, call, Slack thread) to a customer's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.",
+    "Append ONE interaction (meeting, email, call, Slack thread) to a {account}'s history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.",
   inputSchema: z.object({
     customerId: z.string().min(1),
     ...interactionInputShape,
@@ -284,13 +284,13 @@ export const recordInteractionTool = modelFacing("record_interaction", defineToo
 
 export const recordInteractionsTool = modelFacing("record_interactions", defineTool({
   description:
-    "Append MANY interactions to a single customer's history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same customer — e.g. backfilling a history or logging a batch of meetings/emails.",
+    "Append MANY interactions to a single {account}'s history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same {account} — e.g. backfilling a history or logging a batch of meetings/emails.",
   inputSchema: z.object({
     customerId: z.string().min(1),
     interactions: z
       .array(z.object(interactionInputShape))
       .min(1)
-      .describe("A non-empty list of interactions to append to this customer, oldest-to-newest."),
+      .describe(fill("A non-empty list of interactions to append to this {account}, oldest-to-newest.")),
   }),
   async execute({ customerId, interactions }, ctx) {
     const email = emailOrUndefined(callerEmail(ctx));
@@ -305,7 +305,7 @@ export const recordInteractionsTool = modelFacing("record_interactions", defineT
 
 export const listStaleCustomersTool = modelFacing("list_stale_customers", defineTool({
   description:
-    "List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, {owner}, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.",
+    "List OUT-OF-TOUCH {accounts}: active ones (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. work going quiet with limited/no recent progress. Returns each {account}'s lifecycle stage, status, one-line health summary, {owner}, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep.",
   inputSchema: z.object({
     days: z
       .number()
@@ -322,7 +322,7 @@ export const listStaleCustomersTool = modelFacing("list_stale_customers", define
 
 export const readCustomerSlasTool = modelFacing("read_customer_slas", defineTool({
   description:
-    "Read EVERY customer's SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-customer urgency/breach filters from each customer's own commitments instead of one global rule, and (b) check whether that customer's Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Customers in `missing` have no sla.json — fall back to the platform default.",
+    "Read EVERY {account}'s SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-{account} urgency/breach filters from each {account}'s own commitments instead of one global rule, and (b) check whether that {account}'s Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. {Accounts} in `missing` have no sla.json — fall back to the platform default.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const org = await orgForSession(ctx);
@@ -397,7 +397,7 @@ export const getOncallTool = modelFacing("get_oncall", defineTool({
 
 export const listMembersTool = modelFacing("list_members", defineTool({
   description:
-    "List the {member} roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the accounts each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.",
+    "List the {member} roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the {accounts} each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const org = await orgForSession(ctx);
@@ -446,7 +446,7 @@ export const listMembersTool = modelFacing("list_members", defineTool({
 
 export const reassignOwnerTool = modelFacing("reassign_owner", defineTool({
   description:
-    "Reassign a customer's durable {owner} (updates the account's ownership and the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership.",
+    "Reassign the durable {owner} of a {account} (updates the {account}'s ownership and the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes {account} ownership.",
   approval: once(),
   inputSchema: z.object({
     customerId: z.string().min(1),
@@ -475,7 +475,7 @@ export const reassignOwnerTool = modelFacing("reassign_owner", defineTool({
 
 export const createTicketTool = modelFacing("create_ticket", defineTool({
   description:
-    "Create a ticket in the system of record for a customer — e.g. a customer doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the customer's fde_owner. Gated on approval since it writes to the shared tickets store.",
+    "Create a ticket in the system of record for a {account} — e.g. a {account} doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the {account}'s fde_owner. Gated on approval since it writes to the shared tickets store.",
   approval: once(),
   inputSchema: z.object({
     customerId: z.string().min(1),
@@ -485,7 +485,7 @@ export const createTicketTool = modelFacing("create_ticket", defineTool({
     ticketCategory: z.enum(["Feature Request", "Bug Report", "Data Migration Request", "Configuration Change Request", "Workflow Customization Request"]),
     ticketPriority: z.enum(["P0-Critical", "P1-High", "P2-Medium", "P3-Low"]),
     ticketStatus: z.enum(["Open", "Needs Triage", "In Progress", "Blocked", "Waiting on Customer"]).optional(),
-    ticketOwnerEmail: z.string().email().describe(fill("The {member} who owns it — usually the customer's {owner}.")),
+    ticketOwnerEmail: z.string().email().describe(fill("The {member} who owns it — usually the {owner} of the {account}.")),
     ticketNextStep: z.string().min(1),
     sourceChannel: z.enum(["Email", "Slack", "Call", "Meeting", "In-App", "Zendesk"]).optional(),
     reportedByEmail: z.string().email().optional(),
@@ -504,7 +504,7 @@ export const createTicketTool = modelFacing("create_ticket", defineTool({
 
 export const runEmailIntakeTool = modelFacing("run_email_intake", defineTool({
   description:
-    "Run the FULL email intake in one deterministic step: read unread inbox mail (last `sinceDays` days), match each sender to a customer, and stage a Needs-Triage DRAFT ticket for every matched customer email (skips automated/no-reply; dedups by Message-ID). Returns { read, skipped, staged:[{ticketId,customerId,customerName,subject}], unmatched:[{sender,subject}] }. This IS the whole intake — do NOT also call email_list_inbox / match_customer_by_email / create_triage_ticket; just call this once and report its result.",
+    "Run the FULL email intake in one deterministic step: read unread inbox mail (last `sinceDays` days), match each sender to a {account}, and stage a Needs-Triage DRAFT ticket for every matched {account} email (skips automated/no-reply; dedups by Message-ID). Returns { read, skipped, staged:[{ticketId,customerId,customerName,subject}], unmatched:[{sender,subject}] }. This IS the whole intake — do NOT also call email_list_inbox / match_customer_by_email / create_triage_ticket; just call this once and report its result.",
   inputSchema: z.object({
     sinceDays: z.number().int().min(1).max(30).optional().describe("How many days back to read (default 2)."),
     max: z.number().int().min(1).max(50).optional().describe("Max messages to process (default 20)."),
@@ -516,7 +516,7 @@ export const runEmailIntakeTool = modelFacing("run_email_intake", defineTool({
 
 export const matchCustomerByEmailTool = modelFacing("match_customer_by_email", defineTool({
   description:
-    "Deterministically match an inbound email sender to a customer — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on a customer's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.",
+    "Deterministically match an inbound email sender to a {account} — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on a {account}'s business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.",
   inputSchema: z.object({
     sender: z.string().min(3).describe("The sender's email address (a raw address or a 'Name <addr>' header form)."),
   }),
@@ -527,7 +527,7 @@ export const matchCustomerByEmailTool = modelFacing("match_customer_by_email", d
 
 export const createTriageTicketTool = modelFacing("create_triage_ticket", defineTool({
   description:
-    "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the {owner} and a human will assign it on approval.",
+    "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched {account} — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the {owner} and a human will assign it on approval.",
   inputSchema: z.object({
     customerId: z.string().min(1),
     summary: z.string().min(1).describe("One-line ticket title (e.g. the email subject)."),
@@ -535,7 +535,7 @@ export const createTriageTicketTool = modelFacing("create_triage_ticket", define
     ticketType: z.enum(["Bug", "Config Change", "Feature Request", "Access Request", "Data Issue", "Migration", "Question", "Escalation"]),
     ticketCategory: z.enum(["Feature Request", "Bug Report", "Data Migration Request", "Configuration Change Request", "Workflow Customization Request"]),
     ticketPriority: z.enum(["P0-Critical", "P1-High", "P2-Medium", "P3-Low"]),
-    ticketOwnerEmail: z.string().email().optional().describe(fill("The {member} who would own it (the customer's {owner}). Omit if unresolved — a human assigns it on approval.")),
+    ticketOwnerEmail: z.string().email().optional().describe(fill("The {member} who would own it (the {owner} of the {account}). Omit if unresolved — a human assigns it on approval.")),
     ticketNextStep: z.string().min(1),
     sourceChannel: z.enum(["Email", "Slack", "Call", "Meeting", "In-App", "Zendesk"]).optional(),
     reportedByEmail: z.string().email().optional(),
@@ -574,7 +574,7 @@ export const promoteTicketTool = modelFacing("promote_ticket", defineTool({
 
 export const listTriageTicketsTool = modelFacing("list_triage_tickets", defineTool({
   description:
-    "List the triage queue — draft tickets awaiting approval (status 'Needs Triage') across all customers, e.g. those staged by email intake. Each carries the customer, summary, description, priority, owner, and source. Use this to review what to promote (approve) or resolve (discard).",
+    "List the triage queue — draft tickets awaiting approval (status 'Needs Triage') across all {accounts}, e.g. those staged by email intake. Each carries the {account}, summary, description, priority, owner, and source. Use this to review what to promote (approve) or resolve (discard).",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     return { triageTickets: await ownRows(ctx, (org) => listTriageTickets(org)) };
@@ -583,7 +583,7 @@ export const listTriageTicketsTool = modelFacing("list_triage_tickets", defineTo
 
 export const listUrgentTicketsTool = modelFacing("list_urgent_tickets", defineTool({
   description:
-    "List OPEN, URGENT tickets across all customers from the tickets store — P0-Critical/P1-High priority, SLA at-risk/breached, or past their due date — ranked most-urgent first. Each ticket carries urgencyRank, customer, summary, DESCRIPTION (the reported metric signal — uptime/accuracy/throughput incidents live here), next step, openedAt, and ageHours (the measured TAT, for reconciling against a TAT SLA commitment), plus due date. Use this to prioritize whoever most needs a change and to reconcile SLA breaches from ticket data.",
+    "List OPEN, URGENT tickets across all {accounts} from the tickets store — P0-Critical/P1-High priority, SLA at-risk/breached, or past their due date — ranked most-urgent first. Each ticket carries urgencyRank, {account}, summary, DESCRIPTION (the reported metric signal — uptime/accuracy/throughput incidents live here), next step, openedAt, and ageHours (the measured TAT, for reconciling against a TAT SLA commitment), plus due date. Use this to prioritize whoever most needs a change and to reconcile SLA breaches from ticket data.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     return { urgentTickets: await ownRows(ctx, (org) => listUrgentTickets(org)) };
@@ -592,9 +592,9 @@ export const listUrgentTicketsTool = modelFacing("list_urgent_tickets", defineTo
 
 export const listFollowupsTool = modelFacing("list_followups", defineTool({
   description:
-    "List open customer tickets/follow-ups across all customers (or one), sorted by the caller. Use this to prep the daily stand-up.",
+    "List open {account} tickets/follow-ups across all {accounts} (or one), sorted by the caller. Use this to prep the daily stand-up.",
   inputSchema: z.object({
-    customerId: z.string().optional().describe("Optional: scope to a single customer."),
+    customerId: z.string().optional().describe(fill("Optional: scope to a single {account}.")),
   }),
   async execute({ customerId }, ctx) {
     return { followUps: await ownRows(ctx, (org) => listFollowUps(customerId, org)) };
@@ -602,7 +602,7 @@ export const listFollowupsTool = modelFacing("list_followups", defineTool({
 }));
 
 export const resolveFollowupTool = modelFacing("resolve_followup", defineTool({
-  description: "Mark a customer follow-up as done in the system of record.",
+  description: "Mark a {account} follow-up as done in the system of record.",
   approval: once(),
   inputSchema: z.object({
     customerId: z.string().min(1),
@@ -656,7 +656,7 @@ export const emailCreateDraftTool = modelFacing("email_create_draft", defineTool
 
 export const granolaSearchNotesTool = modelFacing("granola_search_notes", defineTool({
   description:
-    "Search Granola meeting notes by keyword to pull recent customer-call context and action items.",
+    "Search Granola meeting notes by keyword to pull recent {account}-call context and action items.",
   inputSchema: z.object({
     query: z.string().min(1),
     limit: z.number().int().min(1).max(20).optional(),

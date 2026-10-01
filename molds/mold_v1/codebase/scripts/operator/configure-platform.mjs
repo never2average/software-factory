@@ -12,6 +12,7 @@
 import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
 import { platform } from "../../agent/lib/db/schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 
 // The seven design-decision schemas that make up the platform contract (dm.md).
 const DESIGN_SCHEMAS = [
@@ -60,7 +61,7 @@ async function main() {
     }
     const orgId = workspaceFor();
     if (!(await getCustomer(db, orgId, customerId))) {
-      console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
+      console.error(`${glyph.bad} ${W.Account} "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
       await closeDb();
       process.exit(1);
     }

@@ -182,12 +182,12 @@ assert.deepEqual(
 
 await assert.rejects(
   () => buildCustomerWorkbookSpecs({ customerId: "no-such-customer", now: NOW }),
-  /Unknown customer: no-such-customer/,
+  /Unknown account: no-such-customer/,
   "unknown customer rejects (all-domains)",
 );
 await assert.rejects(
   () => buildDomainWorkbookSpec({ customerId: "no-such-customer", domain: "Customers", now: NOW }),
-  /Unknown customer: no-such-customer/,
+  /Unknown account: no-such-customer/,
   "unknown customer rejects (single-domain)",
 );
 

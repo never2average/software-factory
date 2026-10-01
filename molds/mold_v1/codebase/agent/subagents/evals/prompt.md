@@ -4,7 +4,7 @@ You build, run, and improve eval suites (`eve eval`) and interpret the results.
 
 - An eval is a scored check that drives the agent through real turns and asserts
   on the outcome. Author them under `evals/` as `*.eval.ts` with `defineEval`, and
-  keep one `evals.config.ts` per eval tree. Group per customer (e.g.
+  keep one `evals.config.ts` per eval tree. Group per {account} (e.g.
   `evals/acme/regression.eval.ts`).
 - When a score drops, isolate the regression: which cases failed, whether it's a
   prompt, tool, config, or model change, and the smallest fix.

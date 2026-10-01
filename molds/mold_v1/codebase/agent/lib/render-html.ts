@@ -27,7 +27,7 @@
 import { getCustomer, listCustomers, listFollowUps } from "./system-of-record.ts";
 import { computeStandupDigest, type FollowUpAlert } from "./alerts.ts";
 import type { Customer } from "./customer-schema.ts";
-import { createVocabulary, speakWith, VOCABULARY, type VocabularyProfile } from "./agent-vocabulary.ts";
+import { createVocabulary, speakWith, VOCABULARY, wordFor, type VocabularyProfile } from "./agent-vocabulary.ts";
 import { DEPLOYMENT_PROFILE } from "./deployment-profile.generated.ts";
 
 /* -------------------------------------------------------------------------- */
@@ -356,19 +356,19 @@ ${metaItem("Connectors", p.enabledConnectors)}
 
 /**
  * Render a deterministic, self-contained HTML account report for one customer.
- * Throws `Unknown customer: ${customerId}` when the customer is absent.
+ * Throws `Unknown <account>: ${customerId}` when the customer is absent.
  */
 export async function renderAccountReport(opts: {
   customerId: string;
   now: Date | string;
-  /** The caller's workspace: a customer outside it is "Unknown customer". */
+  /** The caller's workspace: a customer outside it is "Unknown <account>". */
   orgId?: string | null;
   /** The deployment profile whose words the labels take. Defaults to this deployment's. */
   profile?: VocabularyProfile;
 }): Promise<string> {
   const customer = await getCustomer(opts.customerId, opts.orgId);
   // A tool error, read by the model (the model-facing boundary speaks it), never printed in the report.
-  if (!customer) throw new Error(`Unknown customer: ${opts.customerId}`);
+  if (!customer) throw new Error(`Unknown ${wordFor("account")}: ${opts.customerId}`);
   const w = reportWords(opts.profile);
 
   // Reuse the alerts ranking (overdue-first) scoped to this customer.

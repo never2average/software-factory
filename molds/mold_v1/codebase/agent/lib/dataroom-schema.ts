@@ -14,6 +14,7 @@
 
 import { z } from "zod";
 import { interactionSchema, ticketSchema } from "./customer-schema.ts";
+import { fill } from "./agent-vocabulary.ts";
 
 // ---------------------------------------------------------------------------
 // Keys
@@ -148,7 +149,7 @@ export const agreementSchema = z
   })
   .refine(
     (a) => (a.scope === "customer" ? a.customerId !== undefined : a.personId !== undefined),
-    "customer-scoped agreements need customerId; person-scoped agreements need personId",
+    fill("{account}-scoped agreements need customerId; person-scoped agreements need personId"),
   );
 
 // ---------------------------------------------------------------------------

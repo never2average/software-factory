@@ -15,7 +15,7 @@
  * And the refusal leaked too: upsertCustomer merged the other workspace's record into the patch, the database
  * refused the write, and drizzle's error text carried every merged value back to the model.
  *
- * For each by-id reader/writer: workspace B asking for workspace A's id gets nothing (null / "Unknown customer" /
+ * For each by-id reader/writer: workspace B asking for workspace A's id gets nothing (null / "Unknown account" /
  * not found / []), A's record is unchanged, and the owner still gets its record. A is the default workspace (the
  * one the old fallback resolved every id to, so the leak is live there) and a second, ordinary workspace Y (where
  * the owner itself was locked out).
@@ -198,8 +198,8 @@ try {
   await admin`DELETE FROM customers WHERE customer_id = ${X} AND org_id = ${B}`;
 
   console.log("\n3. recordInteraction / recordInteractions");
-  check("B logging onto A's id is refused as an unknown customer", /Unknown customer/.test(messageOf(await errorOf(() => sor.recordInteraction(X, interaction(`INT-b1-${PID}`), B)))));
-  check("B batch-logging onto A's id is refused", /Unknown customer/.test(messageOf(await errorOf(() => sor.recordInteractions(X, [interaction(`INT-b2-${PID}`)], B)))));
+  check("B logging onto A's id is refused as an unknown account", /Unknown account/.test(messageOf(await errorOf(() => sor.recordInteraction(X, interaction(`INT-b1-${PID}`), B)))));
+  check("B batch-logging onto A's id is refused", /Unknown account/.test(messageOf(await errorOf(() => sor.recordInteractions(X, [interaction(`INT-b2-${PID}`)], B)))));
   check("…and A has no interaction from B", (await snapshot()) === before);
   const mine = await sor.recordInteraction(X, interaction(`INT-a1-${PID}`), A).catch((e) => e);
   check("A logs onto its own account and reads it back", mine?.id === X && mine.interactions?.some((i) => i.interactionId === `INT-a1-${PID}`), messageOf(mine));
@@ -208,13 +208,13 @@ try {
   const afterOwnerWrites = await snapshot();
 
   console.log("\n4. reassignOwner");
-  check("B reassigning A's account is refused", /Unknown customer/.test(messageOf(await errorOf(() => sor.reassignOwner(X, `b-${PID}@xws-probe.test`, "B", B)))));
+  check("B reassigning A's account is refused", /Unknown account/.test(messageOf(await errorOf(() => sor.reassignOwner(X, `b-${PID}@xws-probe.test`, "B", B)))));
   check("…and A's owner is unchanged", (await snapshot()) === afterOwnerWrites);
   const own = await sor.reassignOwner(YX, `y-owner-${PID}@y-probe.test`, "Y owner", Y).catch((e) => e);
   check("Y reassigns its own account", own?.newOwner === `y-owner-${PID}@y-probe.test`, messageOf(own));
 
   console.log("\n5. createTicket / setTicketStatus / resolveFollowUp");
-  check("B opening a ticket on A's account is refused", /Unknown customer/.test(messageOf(await errorOf(() => sor.createTicket(newTicket(X, `TCK-b-${PID}`), B)))));
+  check("B opening a ticket on A's account is refused", /Unknown account/.test(messageOf(await errorOf(() => sor.createTicket(newTicket(X, `TCK-b-${PID}`), B)))));
   check("B promoting A's ticket is refused as not found", /not found/.test(messageOf(await errorOf(() => sor.setTicketStatus(X, OPEN_TICKET, "Open", B)))));
   check("B resolving A's follow-up is refused as not found", /not found/.test(messageOf(await errorOf(() => sor.resolveFollowUp(X, OPEN_TICKET, B)))));
   check("…and A's tickets are unchanged", (await snapshot()) === afterOwnerWrites);
@@ -239,14 +239,14 @@ try {
   check("A matches its own contact", aMatch.matched === true && aMatch.customerId === X);
 
   console.log("\n8. render_account_report and build_workbook_spec");
-  check("B rendering A's account report is refused", /Unknown customer/.test(messageOf(await errorOf(() => renderAccountReport({ customerId: X, now: NOW, orgId: B })))));
+  check("B rendering A's account report is refused", /Unknown account/.test(messageOf(await errorOf(() => renderAccountReport({ customerId: X, now: NOW, orgId: B })))));
   const aReport = await renderAccountReport({ customerId: X, now: NOW, orgId: A }).catch((e) => e);
   check("A renders its own", typeof aReport === "string" && aReport.includes(SECRET_NAME), messageOf(aReport));
   const bIndex = await renderDataroomSummary({ now: NOW, orgId: B });
   check("B's data-room index lists none of A's or Y's accounts", !bIndex.includes(SECRET_NAME) && !bIndex.includes(`Y Holdings ${PID}`));
   check("A's data-room index lists its own", (await renderDataroomSummary({ now: NOW, orgId: A })).includes(SECRET_NAME));
-  check("B building A's workbooks is refused", /Unknown customer/.test(messageOf(await errorOf(() => buildCustomerWorkbookSpecs({ customerId: X, now: NOW, orgId: B })))));
-  check("B building one of A's workbooks is refused", /Unknown customer/.test(messageOf(await errorOf(() => buildDomainWorkbookSpec({ customerId: X, domain: "Tickets", now: NOW, orgId: B })))));
+  check("B building A's workbooks is refused", /Unknown account/.test(messageOf(await errorOf(() => buildCustomerWorkbookSpecs({ customerId: X, now: NOW, orgId: B })))));
+  check("B building one of A's workbooks is refused", /Unknown account/.test(messageOf(await errorOf(() => buildDomainWorkbookSpec({ customerId: X, domain: "Tickets", now: NOW, orgId: B })))));
   const aBooks = await buildCustomerWorkbookSpecs({ customerId: X, now: NOW, orgId: A }).catch((e) => e);
   check("A builds its own", Array.isArray(aBooks) && aBooks.length > 0, messageOf(aBooks));
 

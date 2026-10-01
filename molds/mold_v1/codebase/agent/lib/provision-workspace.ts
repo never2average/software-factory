@@ -34,6 +34,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { recipes, workflows } from "./db/schema.ts";
 import { SUBAGENT_KEYS, SUBAGENT_SUMMARIES } from "./subagent-registry.generated.ts";
 import { deploymentWorkflowLibrary } from "./workflow-library-view.ts";
+import { fill } from "./agent-vocabulary.ts";
 
 /**
  * The built-in recipe catalog, seeded PER WORKSPACE (`recipes.org_id` is NOT
@@ -46,7 +47,7 @@ export const BUILTIN_RECIPES = [
   { slug: "import-roster", title: "Import the roster", summary: "Pull people from Google Directory or a CSV into the roster.", satisfiesCheck: "roster" },
   { slug: "connect-sources", title: "Connect a source", summary: "Wire one connector (GitHub, Slack, …) and store its secret.", satisfiesCheck: "connector" },
   { slug: "seed-workflows", title: "Seed the workflow library", summary: "Install the starter workflow library, default apps, and crons.", satisfiesCheck: "workflows" },
-  { slug: "onboard-customer", title: "Onboard the first customer", summary: "Create the first customer account and its data-room skeleton.", satisfiesCheck: "customer" },
+  { slug: "onboard-customer", title: fill("Onboard the first {account}"), summary: fill("Create the first {account} and its data-room skeleton."), satisfiesCheck: "customer" },
 ] as const;
 
 /** Minimal shape of the Drizzle transaction handle both callers hold. */

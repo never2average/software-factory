@@ -1,6 +1,6 @@
 ---
 name: delivered-setup
-description: Set up a Delivered workspace end to end — verify the workspace MCP wiring, choose and install a vertical data room, connect the first source, and onboard the first customer. Use when someone is invited to a Delivered workspace, says "set up my Delivered workspace", "finish the Delivered setup checks", "run the Delivered onboarding", or when the workspace MCP tools return 401 / are not wired yet.
+description: Set up a Delivered workspace end to end — verify the workspace MCP wiring, choose and install a vertical data room, connect the first source, and onboard the first {account}. Use when someone is invited to a Delivered workspace, says "set up my Delivered workspace", "finish the Delivered setup checks", "run the Delivered onboarding", or when the workspace MCP tools return 401 / are not wired yet.
 ---
 
 # Set up a Delivered workspace
@@ -102,10 +102,10 @@ A connector with no stored secret is not usable, so do not treat the step as don
 until the secret is stored. If no credential is available, say exactly which one
 you need and stop — this is case 2 (you cannot invent a credential).
 
-## 4. Onboard the first customer
+## 4. Onboard the first {account}
 
-Create the first customer account and its data-room skeleton. If the operator
-named one, use it. If not, and a customer is discoverable from the roster or an
+Create the first {account} and its data-room skeleton. If the operator
+named one, use it. If not, and a {account} is discoverable from the roster or an
 existing connector, use that and say so. Otherwise ask for a name — one question,
 not a questionnaire.
 
@@ -120,7 +120,7 @@ The workspace is ready when every setup check is green:
 | Connector | one connector **with** a stored secret |
 | Workflows | the library is seeded |
 | Data room | the skeleton is written |
-| Customer | one customer onboarded |
+| {Account} | one {account} onboarded |
 
 Finish by **reporting the checks that are still outstanding**, not by declaring
 success. "Done" with three checks red is the failure mode this skill exists to

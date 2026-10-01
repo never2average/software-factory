@@ -46,7 +46,7 @@ A vertical (a set of subagents for one line of work) ships as a **subagent pack*
 dropped in, no fork, no edits to base files. See
 [`docs/SUBAGENT_PACKS.md`](docs/SUBAGENT_PACKS.md).
 
-What a deployment is *for* (the product name, what a "customer" and a team member are called,
+What a deployment is *for* (the product name, what an account and a team member are called,
 which data-room domains show and under what label, the starter tree, the chat's opening
 lines, a short per-turn briefing for the model) is a **deployment profile**: JSON files
 added under `profiles/`, never an edit to a component. See
@@ -57,7 +57,11 @@ storage never moves, and `npm run check:agent-vocabulary` proves both halves. Wh
 ops API's messages, the client bundle) takes the same words from `lib/ui-words.ts`, and
 `npm run check:ui-vocabulary` proves it. The rest of the tree (identifiers, file names, comments, docs) is held by
 `npm run check:neutral-names`: the base product's role word may appear only as a listed contract with its
-migration plan, under a per-file ceiling, or under an exempt path (`scripts/neutral-names.allow.json`). Every tool is
+migration plan, under a per-file ceiling, or under an exempt path (`scripts/neutral-names.allow.json`). Base text
+never spells a role or a record word: it writes a placeholder the profile fills (`{member}`, `{owner}`, `{account}`,
+`{deployment}`, `{implementation}`, `{rollout}`; `speak()` / `fill()` in `agent/lib/agent-vocabulary.ts`, `W` in
+`lib/ui-words.ts`), the default profile's words are neutral, and the same check holds every record word still written
+as prose to a per-file ceiling (`record_words` in the allow-list). Every tool is
 exported through `modelFacing(...)`; the root prompt is `agent/prompt-*.md`, rendered by
 `agent/instructions.ts`, and a base specialist's is its `prompt.md`.
 

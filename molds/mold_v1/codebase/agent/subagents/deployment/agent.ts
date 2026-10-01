@@ -5,7 +5,7 @@ import { speak } from "#lib/agent-vocabulary.js";
 export default defineAgent({
   // The roster line the parent delegates on, in the deployment's words (identity under the default profile).
   description: speak(
-    "Deploy and operate customer platforms: Vercel deployments, releases, rollbacks, and health checks. Delegate here to ship or diagnose a customer environment.",
+    "Deploy and operate {account} platforms on Vercel: releases, rollbacks, and health checks. Delegate here to ship or diagnose a {account} environment.",
   ),
   model: agentModel("specialist"),
   modelContextWindowTokens: modelContextWindowTokens("specialist"),

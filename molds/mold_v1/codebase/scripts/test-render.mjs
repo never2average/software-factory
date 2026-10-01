@@ -53,7 +53,8 @@ assert.ok(report.includes("Acme Bank"), "report names the customer");
 assert.ok(report.includes("TCK-1001"), "report lists the overdue ticket");
 assert.ok(report.includes("priyesh@example.com"), "report surfaces the account owner");
 
-for (const heading of ["Open Follow-Ups", "Recent Interactions", "Deployments", "Platform"]) {
+// "Deliveries": the default profile's word for the first record area (profiles/00-default.json).
+for (const heading of ["Open Follow-Ups", "Recent Interactions", "Deliveries", "Platform"]) {
   assert.ok(report.includes(heading), `report has the '${heading}' section`);
 }
 
@@ -74,8 +75,8 @@ assert.ok(
 
 await assert.rejects(
   () => renderAccountReport({ customerId: "does-not-exist", now: NOW }),
-  /Unknown customer: does-not-exist/,
-  "unknown customer rejects with a self-describing error",
+  /Unknown account: does-not-exist/,
+  "an unknown id rejects with a self-describing error, in the profile's word for the account",
 );
 
 /* -------------------------------------------------------------------------- */
@@ -120,17 +121,19 @@ const labels = (html) =>
     .map((m) => m[2].replace(/<[^>]+>/g, " "))
     .concat(/Summary<\/h1>/.test(html) ? [html.match(/<h1>([^<]*)<\/h1>/)[1]] : []);
 
-// The renderer is unchanged: under the default profile with the member's LEGACY words put back (what the default
-// profile said before it spoke neutrally, agent/lib/legacy-member.ts), every report is byte-identical to the renderer
-// before any label came from the profile (sha256 of its output on this fixture store at NOW, taken from the
-// pre-change code at aaec6b9). The default profile's output differs from that in the owner label alone.
+// The renderer is unchanged: under the default profile with its LEGACY words put back (what the default profile said
+// before it spoke neutrally: the member's, agent/lib/legacy-member.ts, and the record words,
+// scripts/fixtures/legacy-record-words), every report is byte-identical to the renderer before any label came from
+// the profile (sha256 of its output on this fixture store at NOW, taken from the pre-change code at aaec6b9). The
+// default profile's output differs from that in its words alone: the owner label and the record words.
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 const { LEGACY_MEMBER } = await import("../agent/lib/legacy-member.ts");
 const { spawnSync: spawnDefault } = await import("node:child_process");
 const printedDefault = spawnDefault(process.execPath, ["scripts/gen-deployment-profile.mjs", "--print"], { cwd: new URL("..", import.meta.url).pathname, encoding: "utf8" });
 assert.equal(printedDefault.status, 0, printedDefault.stderr);
-const defaults = JSON.parse(printedDefault.stdout);
-const legacyWords = { ...defaults, vocabulary: { ...defaults.vocabulary, member: { singular: LEGACY_MEMBER.singular, plural: LEGACY_MEMBER.plural }, owner: LEGACY_MEMBER.owner } };
+const { legacyRecordProfile } = await import("./lib/legacy-record-profile.mjs");
+const legacyRecords = legacyRecordProfile();
+const legacyWords = { ...legacyRecords, vocabulary: { ...legacyRecords.vocabulary, member: { singular: LEGACY_MEMBER.singular, plural: LEGACY_MEMBER.plural }, owner: LEGACY_MEMBER.owner } };
 const LEGACY_OWNER_HEADING = LEGACY_MEMBER.owner.replace(/\bowner\b/, "Owner");
 const legacyReport = await renderAccountReport({ customerId: "acme-bank", now: NOW, profile: legacyWords });
 const legacyNorthwind = await renderAccountReport({ customerId: "northwind-cap", now: NOW, profile: legacyWords });
@@ -139,10 +142,25 @@ assert.equal(sha(legacyReport), "192658e7cace6094f1d968b9ab4b3c5d05a3745c0c305dd
 assert.equal(sha(legacyNorthwind), "47e28d0e4b10a46da54511a6496360b221f9ecf08736c80af123084d693c6c67", "legacy words: a second account report is byte-identical to the pre-change renderer");
 assert.equal(sha(legacySummary), "d28cee03efd509a9889e0a08dabf17729ef58534fb50efc73cde25b3c9141d41", "legacy words: the data-room summary is byte-identical to the pre-change renderer");
 const northwind = await renderAccountReport({ customerId: "northwind-cap", now: NOW });
+// The default profile against the legacy record words alone (member and owner as the default has them): the two
+// differ in LABELS only, and every label that differs is a record word swapped for the default profile's.
+const recordsOnly = [
+  await renderAccountReport({ customerId: "acme-bank", now: NOW, profile: legacyRecords }),
+  await renderAccountReport({ customerId: "northwind-cap", now: NOW, profile: legacyRecords }),
+  await renderDataroomSummary({ now: NOW, profile: legacyRecords }),
+];
 const swapOwner = (html) => html.split(LEGACY_OWNER_HEADING).join(BASE_OWNER_HEADING);
-assert.equal(report, swapOwner(legacyReport), "default profile: the account report differs from before only in the owner label");
-assert.equal(northwind, swapOwner(legacyNorthwind), "default profile: a second account report differs from before only in the owner label");
-assert.equal(summary, swapOwner(legacySummary), "default profile: the data-room summary differs from before only in the owner label");
+assert.equal(recordsOnly[0], swapOwner(legacyReport), "legacy record words: the account report differs from before only in the owner label");
+assert.equal(recordsOnly[1], swapOwner(legacyNorthwind), "legacy record words: a second account report differs from before only in the owner label");
+assert.equal(recordsOnly[2], swapOwner(legacySummary), "legacy record words: the data-room summary differs from before only in the owner label");
+// ("Deployment Model" is the platform's software install: once the record area is named something else it reads "Hosting Model".)
+const NEUTRAL = [["Deployment Model", "Hosting Model"], ["Customers", "Accounts"], ["customers", "accounts"], ["Customer", "Account"], ["customer", "account"], ["Deployments", "Deliveries"], ["deployments", "deliveries"], ["Deployment", "Delivery"], ["deployment", "delivery"]];
+const neutralLabel = (label) => NEUTRAL.reduce((t, [from, to]) => t.split(from).join(to), label);
+for (const [now, before, what] of [[report, recordsOnly[0], "the account report"], [northwind, recordsOnly[1], "a second account report"], [summary, recordsOnly[2], "the data-room summary"]]) {
+  assert.deepEqual(labels(now), labels(before).map(neutralLabel), `default profile: ${what}'s labels are the legacy ones with each record word swapped for the profile's`);
+  assert.deepEqual(baseWords(labels(now).join("\n")).filter((w) => !/^member/i.test(w)), [], `default profile: no label of ${what} carries a record word`);
+  assert.ok(baseWords(labels(before).join("\n")).length > 0, `legacy record words: ${what}'s labels do carry them (the check above is not vacuous)`);
+}
 assert.equal(BASE_OWNER_HEADING, "Account Owner");
 assert.ok(report.includes(`<span class="k">${BASE_OWNER_HEADING}</span>`), "default profile: the report's owner label is the profile's");
 assert.ok(summary.includes(`<th>${BASE_OWNER_HEADING}</th>`), "default profile: the summary's owner column is the profile's");

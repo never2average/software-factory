@@ -173,7 +173,7 @@ export interface IngestInput {
   recordedByEmail?: string;
   /**
    * The caller's workspace (the tool passes orgForSession). The landing zone and any normalized interaction go in
-   * THIS workspace, and a customer id from another one is "Unknown customer". Omitted only by system paths.
+   * THIS workspace, and a customer id from another one is "Unknown <account>". Omitted only by system paths.
    */
   orgId?: string | null;
 }

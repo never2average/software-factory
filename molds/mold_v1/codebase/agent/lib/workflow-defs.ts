@@ -12,6 +12,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { workflowDefinitions } from "./db/schema.ts";
+import { fill } from "./agent-vocabulary.ts";
 
 interface AssignRule {
   type: string;
@@ -58,7 +59,7 @@ function assignText(a: AssignRule | undefined): string {
     case "team":
       return `round-robin across the ${a.value} team`;
     case "customer_owner":
-      return "assign the related customer's owner";
+      return fill("assign the related {account}'s owner");
     case "least_loaded":
       return `assign the least-loaded person${a.value ? ` in ${a.value}` : ""}`;
     case "prompt":
@@ -81,9 +82,9 @@ function migrateText(m: Transition["migrate"]): string {
 export function renderWorkflowDefs(defs: WorkflowDef[]): string | null {
   if (defs.length === 0) return null;
   const lines: string[] = [
-    "## Project workflows (how to manage tasks / implementations)",
+    fill("## Project workflows (how to manage tasks / {implementations})"),
     "",
-    "When you move or create a task or implementation, follow the workspace's workflow for that entity: put it in the right stage, apply the stage's assignment rule (assign the owner via `reassign_owner` / the todo's assignee), and only advance it along a defined transition when the migration condition is met. Interpret free-text (prompt) rules yourself.",
+    fill("When you move or create a task or {implementation}, follow the workspace's workflow for that entity: put it in the right stage, apply the stage's assignment rule (assign the owner via `reassign_owner` / the todo's assignee), and only advance it along a defined transition when the migration condition is met. Interpret free-text (prompt) rules yourself."),
   ];
   for (const def of defs) {
     const byId = new Map(def.stages.map((s) => [s.id, s.label]));

@@ -49,7 +49,7 @@ const refused = (result, pattern) => {
 // runs the rest of this file unchanged, because every other case passes its fields in.
 if (customFieldsOf("deployments").length === 0 && customFieldsOf("implementations").length === 0) {
   assert.deepEqual(validateCustom("deployments", undefined, { mode: "create" }), { ok: true, values: {} }, "no custom fields, nothing sent: nothing to store");
-  refused(validateCustom("deployments", { rating: "Buy" }, { mode: "create" }), /no custom field "rating" here: this deployment's profile declares none/);
+  refused(validateCustom("deployments", { rating: "Buy" }, { mode: "create" }), /no custom field "rating" here: this workspace's profile declares none/);
 }
 
 // --- create: normalised values, required enforced, unknown keys refused ------------------------------------------
@@ -167,7 +167,7 @@ const ACCOUNT = [
 ];
 const SITE_ACCOUNT = [{ key: "permit_number", label: "Permit number", type: "text", required: true }];
 if (customFieldsOf("account").length === 0) {
-  refused(validateCustom("account", { notes: "x" }, { mode: "update", existing: {} }), /no custom field "notes" here: this deployment's profile declares none/);
+  refused(validateCustom("account", { notes: "x" }, { mode: "update", existing: {} }), /no custom field "notes" here: this workspace's profile declares none/);
 }
 // The text a person writes is stored as written: line breaks, a folder name, the base product's words.
 const NOTE = "Filed under Customers/hdfc/filings/Q1.pdf.\nAsked about the deployment of the rights-issue money; customer_id is not ours to change.";
@@ -194,7 +194,7 @@ assert.deepEqual(applyCustomFields({ id: "site-9", custom: { permit_number: "P-7
 assert.deepEqual(applyCustomFields({ id: "site-8", tier: "A" }, { id: "site-8", name: "Site 8" }, { account: SITE_ACCOUNT }), { id: "site-8", tier: "A" }, "an account that predates the field is edited without it");
 // Nothing declared at the account: an untouched patch passes through byte-identical, an invented key is refused.
 assert.deepEqual(applyCustomFields({ id: "acme", tier: "A" }, null, { account: [] }), { id: "acme", tier: "A" });
-assert.throws(() => applyCustomFields({ id: "acme", custom: { notes: "x" } }, null, { account: [] }), /acme: There is no custom field "notes" here: this deployment's profile declares none/);
+assert.throws(() => applyCustomFields({ id: "acme", custom: { notes: "x" } }, null, { account: [] }), /acme: There is no custom field "notes" here: this workspace's profile declares none/);
 // The stored column is NULLABLE: no own values is NULL (never {}), values are stored as validated.
 assert.equal(customerToDbRows({ id: "acme", name: "Acme" }).customer.custom, null);
 assert.equal(customerToDbRows({ id: "acme", name: "Acme", custom: {} }).customer.custom, null);

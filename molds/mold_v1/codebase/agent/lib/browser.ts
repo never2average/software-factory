@@ -22,6 +22,7 @@ import { acrossOrgDbs, getDb, type Db, withOrgDb } from "./db/index.ts";
 import { browserAllowlist, browserContexts, browserCredentials, browserSessions } from "./db/schema.ts";
 import { openBrowserCapability, sealBrowserCapability } from "./browser-capability-crypto.ts";
 import { decryptSecret, hasSecretsKey } from "./secret-crypto.ts";
+import { fill } from "./agent-vocabulary.ts";
 
 export type BrowserProvider = "browserbase" | "local";
 
@@ -845,7 +846,7 @@ export async function pageLogin(
 ): Promise<{ ok: boolean; found: boolean; url: string; title: string }> {
   assertNotHumanControlled(row);
   if (row.customerId !== customerId) {
-    throw new Error("The requested credential customer does not own this browser session.");
+    throw new Error(fill("The {account} named for the credential does not own this browser session."));
   }
   const cred = await getStoredCredential(row.orgId, customerId, siteOrigin);
   if (!cred) return { ok: false, found: false, url: "", title: "" };

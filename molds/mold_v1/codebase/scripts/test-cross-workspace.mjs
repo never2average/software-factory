@@ -102,7 +102,7 @@ try {
       description: "probe",
       inputSchema: z.object({}),
       async execute() {
-        throw new Error("Unknown customer: acme");
+        throw new Error("Unknown account: acme");
       },
     }),
   );
@@ -112,7 +112,7 @@ try {
   } catch (e) {
     plainError = e;
   }
-  check("…while a tool's own sentence passes through untouched", plainError?.message === "Unknown customer: acme", plainError?.message);
+  check("…while a tool's own sentence passes through untouched", plainError?.message === "Unknown account: acme", plainError?.message);
 } finally {
   console.error = quiet;
 }
@@ -169,7 +169,7 @@ const sor = readFileSync("agent/lib/system-of-record.ts", "utf8");
   check("system-of-record: nothing calls orgForCustomer", callsOf(sor, "orgForCustomer").length === 0);
   check("system-of-record: scopeFor answers only the workspace it was given, and otherwise refuses", at !== -1 && /if \(orgId\) return orgId;/.test(fn) && /throw new Error/.test(fn) && !/acrossOrgDbs|customersTable|DEFAULT_ORG/.test(fn), fn);
   check("system-of-record: nothing resolves an owner workspace from an id", !/ownerWorkspaceOf|orgForCustomer\(/.test(sor));
-  check("system-of-record: no list sweeps every workspace (acrossOrgDbs), and none widens a missing workspace", !/acrossOrgDbs/.test(sor) && /function listScope\(/.test(sor) && (sor.match(/listScope\("/g) ?? []).length === 6);
+  check("system-of-record: no list sweeps every workspace (acrossOrgDbs), and none widens a missing workspace", !/acrossOrgDbs/.test(sor) && /function listScope\(/.test(sor) && (sor.match(/listScope\((?:"|`|wordFor\()/g) ?? []).length === 6);
   check("system-of-record: nothing lists the workspaces that hold an id", !/workspacesHolding/.test(sor));
   check("scripts/operator/lib/customer.mjs: --org is required and the holders of an id are never named", !/acrossOrgDbs|holding/.test(readFileSync("scripts/operator/lib/customer.mjs", "utf8")));
   check("agent/lib/org-context.ts: orgForCustomer is gone", !/export async function orgForCustomer/.test(readFileSync("agent/lib/org-context.ts", "utf8")));

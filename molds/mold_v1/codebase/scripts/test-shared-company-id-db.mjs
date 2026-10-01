@@ -19,7 +19,7 @@
  *   3. every delete in one (a nested row by `remove`, the company itself with its cascade) never touches the other;
  *   4. writing INTO another workspace's company is still impossible: a nested row cannot be planted under an id only
  *      the other workspace holds (the database refuses it: the foreign key now carries the workspace), and a by-id
- *      write naming an id the caller does not hold is still "Unknown customer";
+ *      write naming an id the caller does not hold is still "Unknown account";
  *   5. a system path must name its workspace: an id no longer names one, and no list widens to every workspace.
  *
  * Needs ADMIN_URL (policy DDL, seeding orgs) and DATABASE_URL (app_rw); without them it skips. Rows live under
@@ -279,9 +279,9 @@ try {
   check("a nested row B stamps with its own workspace under A's id is refused by the database (no parent in B)", planted?.code === "23503" || planted?.cause?.code === "23503", { code: planted?.code ?? planted?.cause?.code, message: messageOf(planted).slice(0, 160) });
   check("…nothing was planted", (await admin`SELECT count(*)::int AS n FROM deployments WHERE customer_id = ${ONLY_A} AND org_id = ${B}`)[0].n === 0);
   const aOnlyBefore = JSON.stringify(await admin`SELECT customer_name, health_reason FROM customers WHERE customer_id = ${ONLY_A}`);
-  check("B logging onto an id only A holds is 'Unknown customer'", /Unknown customer/.test(messageOf(await errorOf(() => sor.recordInteraction(ONLY_A, { interactionId: `INT-x-${PID}`, interactionAt: "2026-09-29", interactionType: "note", sourceSystem: "manual", note: "x" }, B)))));
-  check("B opening a ticket on it is 'Unknown customer'", /Unknown customer/.test(messageOf(await errorOf(() => sor.createTicket({ ticketId: `TCK-x-${PID}`, customerId: ONLY_A, summary: "x", ticketType: "Question", ticketCategory: "Feature Request", ticketPriority: "P3-Low", ticketOwnerEmail: "b@x.test", ticketNextStep: "x" }, B)))));
-  check("B reassigning it is 'Unknown customer'", /Unknown customer/.test(messageOf(await errorOf(() => sor.reassignOwner(ONLY_A, "b@x.test", "B", B)))));
+  check("B logging onto an id only A holds is 'Unknown account'", /Unknown account/.test(messageOf(await errorOf(() => sor.recordInteraction(ONLY_A, { interactionId: `INT-x-${PID}`, interactionAt: "2026-09-29", interactionType: "note", sourceSystem: "manual", note: "x" }, B)))));
+  check("B opening a ticket on it is 'Unknown account'", /Unknown account/.test(messageOf(await errorOf(() => sor.createTicket({ ticketId: `TCK-x-${PID}`, customerId: ONLY_A, summary: "x", ticketType: "Question", ticketCategory: "Feature Request", ticketPriority: "P3-Low", ticketOwnerEmail: "b@x.test", ticketNextStep: "x" }, B)))));
+  check("B reassigning it is 'Unknown account'", /Unknown account/.test(messageOf(await errorOf(() => sor.reassignOwner(ONLY_A, "b@x.test", "B", B)))));
   check("B resolving its ticket is 'not found'", /not found/.test(messageOf(await errorOf(() => sor.resolveFollowUp(ONLY_A, TCK, B)))));
   check("…and A's company is unchanged", JSON.stringify(await admin`SELECT customer_name, health_reason FROM customers WHERE customer_id = ${ONLY_A}`) === aOnlyBefore);
 

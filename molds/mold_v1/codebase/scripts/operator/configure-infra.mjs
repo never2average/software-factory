@@ -12,6 +12,7 @@ import { getDb, closeDb, dataroom, workspaceFor, writeIfAbsent, checkValues, fix
 import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system-of-record.ts";
 import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 
 // The infrastructure domains under a deployment (dm.md).
 const DOMAINS = ["network", "compute", "storage", "inference", "agents", "database", "observability", "autoscale"];
@@ -39,7 +40,7 @@ async function main() {
   const orgId = workspaceFor();
   const record = await getRecord(customerId, orgId);
   if (!record) {
-    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
+    console.error(`${glyph.bad} ${W.Account} "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
     await closeDb();
     process.exit(1);
   }
@@ -70,7 +71,7 @@ async function main() {
     process.exit(1);
   }
   await upsertCustomer({ id: customerId, deployments: [row] }, orgId);
-  console.log(`${glyph.ok} ${stored ? "Updated" : "Created"} deployments row (${customerId}, ${version}).`);
+  console.log(`${glyph.ok} ${stored ? "Updated" : "Created"} ${W.deployments} row (${customerId}, ${version}).`);
 
   // 2. The infra domain scaffold (blob). Never clobber authored infra.
   const store = dataroom(orgId);

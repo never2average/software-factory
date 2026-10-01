@@ -41,16 +41,30 @@ assert.equal(
     context: DEPLOYMENT_PROFILE.vocabulary.account_context,
     names: "Acme, Globex",
   }),
-  "Customer context: Acme, Globex — click to change",
+  "Account context: Acme, Globex — click to change",
 );
 assert.equal(fillProfileText("{unknown} stays"), "{unknown} stays", "an unknown slot is left as written");
 assert.deepEqual(DEPLOYMENT_PROFILE.chat.user_messages, { collapse: true, collapsed_lines: 6 }, "long sent messages fold to six lines by default");
 for (const d of Object.values(DEPLOYMENT_PROFILE.dataroom.domains)) assert.equal(d.visible, true, "every domain is visible by default");
 
-// --- the briefing: nothing for the default, a reading rule for anything else ---
+// --- the briefing: the default's words beside their identifiers, a reading rule for anything else ---
 
-assert.equal(renderDeploymentBriefing(), null, "the default deployment adds nothing to the prompt");
-assert.equal(renderDeploymentBriefing(DEPLOYMENT_PROFILE), null);
+// The default profile speaks neutral record words; the identifiers keep the stored ones. The block is the one
+// place that ties them together, and it names each stored word only as code.
+const DEFAULT_BLOCK = [
+  "## This workspace",
+  "",
+  '- An **account** (plural: accounts) is a `customer` in the identifiers. Say "account" to people. The identifiers do not change: tools such as `list_customers` and `get_customer`, the `customer_id` field and the `Customers/` data-room folder all refer to accounts.',
+  "- A **delivery** (plural: deliveries) is a `deployment` in the identifiers: `deployments[]` on the record, files under `Deployments/`, TODO containerType `deployment`.",
+  "- A **project** (plural: projects) is an `implementation` in the identifiers: `implementation` on the record, files under `Implementation/`, TODO containerType `implementation`.",
+  "- A **plan** (plural: plans) is a `rollout` in the identifiers: the `rolloutId` its `implementation` rows share.",
+].join("\n");
+assert.equal(renderDeploymentBriefing(), DEFAULT_BLOCK, "the default deployment's block ties its record words to the identifiers");
+assert.equal(renderDeploymentBriefing(DEPLOYMENT_PROFILE), DEFAULT_BLOCK);
+// A profile whose words ARE the identifiers' (the record words the default carried before) needs no such line.
+const { legacyRecordProfile } = await import("./lib/legacy-record-profile.mjs");
+const LEGACY_RECORDS_PROFILE = legacyRecordProfile();
+assert.equal(renderDeploymentBriefing(LEGACY_RECORDS_PROFILE), null, "a profile that keeps the identifiers' own words adds nothing to the prompt");
 
 const research = structuredClone(DEPLOYMENT_PROFILE);
 research.vocabulary.account = { singular: "company", plural: "companies" };
@@ -71,12 +85,15 @@ for (const word of ["company", "companies", "analyst", "analysts", "lead analyst
 assert.ok(block.includes("`list_companies`") && block.includes("`company_id`"), "the tool and field the model actually has");
 assert.ok(block.includes("`Companies/`"), "the folder the model actually reads and writes");
 assert.doesNotMatch(block, new RegExp(`customer|\\b${BASE_PRODUCT_WORD}`, "i"), "no base word in a relabelled deployment's block");
-assert.equal(renderDeploymentBriefing(DEPLOYMENT_PROFILE), null, "rendering another profile does not touch the default");
+assert.equal(renderDeploymentBriefing(DEPLOYMENT_PROFILE), DEFAULT_BLOCK, "rendering another profile does not touch the default");
 
 // A briefing alone is enough to render a block.
-const briefed = structuredClone(DEPLOYMENT_PROFILE);
+const briefed = structuredClone(LEGACY_RECORDS_PROFILE);
 briefed.agent.briefing = "Only the briefing.";
-assert.equal(renderDeploymentBriefing(briefed), "## This deployment\n\nOnly the briefing.");
+assert.equal(renderDeploymentBriefing(briefed), "## This workspace\n\nOnly the briefing.");
+const briefedDefault = structuredClone(DEPLOYMENT_PROFILE);
+briefedDefault.agent.briefing = "Only the briefing.";
+assert.equal(renderDeploymentBriefing(briefedDefault), `${DEFAULT_BLOCK}\n\nOnly the briefing.`);
 
 // --- domains: the two record areas a deployment may redefine ---------------------------------------------------
 
@@ -97,11 +114,11 @@ const dep = domainView("deployments");
 const imp = domainView("implementations");
 assert.equal(dep.redefined, false);
 assert.equal(imp.redefined, false);
-assert.deepEqual([dep.title, dep.singular, dep.noun, dep.nouns], ["Deployments", "Deployment", "deployment", "deployments"]);
-assert.deepEqual([imp.title, imp.singular, imp.noun, imp.nouns], ["Implementations", "Implementation", "implementation", "implementations"]);
-assert.equal(dep.description, "Deployments, filtered by owner.");
-assert.equal(imp.description, "Rollouts, filtered by owner.");
-assert.equal(dep.idLabel, "Deployment id");
+assert.deepEqual([dep.title, dep.singular, dep.noun, dep.nouns], ["Deliveries", "Delivery", "delivery", "deliveries"]);
+assert.deepEqual([imp.title, imp.singular, imp.noun, imp.nouns], ["Projects", "Project", "project", "projects"]);
+assert.equal(dep.description, "Deliveries, filtered by owner.");
+assert.equal(imp.description, "Plans, filtered by owner.");
+assert.equal(dep.idLabel, "Delivery id");
 assert.equal(dep.placeholder("deploymentId", "x"), "DEP-…");
 assert.equal(dep.placeholder("region"), "ap-south-1");
 // The old UI used three words for one field; each spot keeps its own until the profile speaks.
@@ -355,8 +372,8 @@ assert.deepEqual(DEPLOYMENT_PROFILE.account_fields.custom_fields, [], "the defau
 const withNotes = structuredClone(DEPLOYMENT_PROFILE);
 withNotes.account_fields.custom_fields = [{ key: "notes", label: "Notes", type: "long_text" }, { key: "house_view", label: "House view", type: "pick_list", options: ["Positive", "Negative"], show_in_list: true }];
 const notesBlock = renderDeploymentBriefing(withNotes);
-assert.ok(notesBlock.startsWith("## This deployment"), "own account fields alone are enough to brief");
-assert.ok(notesBlock.includes("- Own fields of each customer, by key in its `custom` (read with `get_customer`, write with `upsert_customer`; send only changed keys; null clears; other keys are refused; add to a long text with `custom_append` instead of resending it (replace one: null in `custom` plus the new text in `custom_append`); `list_customers` carries only `house_view`): `notes`=\"Notes\" (long_text), `house_view`=\"House view\" (Positive|Negative)."), notesBlock);
+assert.ok(notesBlock.startsWith("## This workspace"), "own account fields alone are enough to brief");
+assert.ok(notesBlock.includes("- Own fields of each account, by key in its `custom` (read with `get_customer`, write with `upsert_customer`; send only changed keys; null clears; other keys are refused; add to a long text with `custom_append` instead of resending it (replace one: null in `custom` plus the new text in `custom_append`); `list_customers` carries only `house_view`): `notes`=\"Notes\" (long_text), `house_view`=\"House view\" (Positive|Negative)."), notesBlock);
 const { renderAccountFieldsBriefing } = await import("../agent/lib/deployment-briefing.ts");
 assert.deepEqual(renderAccountFieldsBriefing(DEPLOYMENT_PROFILE), [], "the default says nothing about account fields");
 const pickOnly = structuredClone(withNotes);

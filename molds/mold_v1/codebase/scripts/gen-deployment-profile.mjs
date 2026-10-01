@@ -404,8 +404,14 @@ if (!CHECK_ONLY) for (const target of ["lib/deployment-profile.generated.ts", "a
  */
 if (!CHECK_ONLY) {
   // A kept specialist whose NAME carries a word the profile relabels is still called that by the model.
-  const relabelledWords = [["customer", profile.vocabulary.account.singular], ["deployment", profile.domains.deployments.label.singular], ["implementation", profile.domains.implementations.label.singular], ["member", profile.vocabulary.member.singular]]
-    .filter(([base, word]) => base !== word.trim().toLowerCase()).map(([base]) => base);
+  // "Relabels": its word is neither the name's own word nor the default profile's (the neutral word base text fills in).
+  const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const relabelledWords = [
+    ["customer", profile.vocabulary.account.singular, defaults.vocabulary.account.singular],
+    ["deployment", profile.domains.deployments.label.singular, defaults.domains.deployments.label.singular],
+    ["implementation", profile.domains.implementations.label.singular, defaults.domains.implementations.label.singular],
+    ["member", profile.vocabulary.member.singular, defaults.vocabulary.member.singular],
+  ].filter(([base, word, neutral]) => !same(base, word) && !same(neutral, word)).map(([base]) => base);
   for (const key of present(SUBAGENTS).filter((k) => !profile.specialists.exclude.includes(k))) {
     const hit = relabelledWords.find((w) => key.split("-").includes(w));
     if (hit) console.warn(`gen-deployment-profile: warning: the specialist "${key}" keeps its name, and the model delegates to it by that name, but this profile relabels "${hit}". Exclude it (specialists.exclude) if this deployment does not use it.`);

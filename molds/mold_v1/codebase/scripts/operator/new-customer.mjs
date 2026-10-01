@@ -12,12 +12,13 @@ import { getDb, closeDb, slugify, dataroom, getCustomer, nowIso, appendInteracti
 import { customers, internalStaff } from "../../agent/lib/db/schema.ts";
 import { and, eq } from "drizzle-orm";
 import { glyph, flag, hasFlag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 
 async function main() {
   const name = flag("name").trim();
   if (!name) {
-    console.error(`${glyph.bad} --name is required (the customer's display name).`);
+    console.error(`${glyph.bad} --name is required (the ${W.account}'s display name).`);
     process.exit(1);
   }
   const id = (flag("id").trim() || slugify(name));
@@ -34,11 +35,11 @@ async function main() {
   }
 
   const orgId = workspaceFor();
-  console.log(`New customer: ${name}  (id: ${id}, workspace: ${orgId})\n`);
+  console.log(`New ${W.account}: ${name}  (id: ${id}, workspace: ${orgId})\n`);
 
   const existing = await getCustomer(db, orgId, id);
   if (existing && !hasFlag("force")) {
-    console.error(`${glyph.bad} Customer "${id}" already exists in ${orgId}. Pass --force to update it, or choose --id.`);
+    console.error(`${glyph.bad} ${W.Account} "${id}" already exists in ${orgId}. Pass --force to update it, or choose --id.`);
     await closeDb();
     process.exit(1);
   }
@@ -61,10 +62,10 @@ async function main() {
 
   if (existing) {
     await withOrgDb(orgId, (tx) => tx.update(customers).set(row).where(and(eq(customers.orgId, orgId), eq(customers.customerId, id))));
-    console.log(`${glyph.ok} Updated customer row "${id}" in ${orgId}.`);
+    console.log(`${glyph.ok} Updated ${W.account} row "${id}" in ${orgId}.`);
   } else {
     await withOrgDb(orgId, (tx) => tx.insert(customers).values(row));
-    console.log(`${glyph.ok} Created customer row "${id}" in ${orgId} (lifecycle: Onboarding, owner: ${me}).`);
+    console.log(`${glyph.ok} Created ${W.account} row "${id}" in ${orgId} (lifecycle: Onboarding, owner: ${me}).`);
   }
 
   // Assign yourself as the solution engineer (idempotent on the composite PK, which carries the workspace).
@@ -90,7 +91,7 @@ async function main() {
     ts: nowIso(),
     type: "account_created",
     actor: me,
-    summary: `Customer "${name}" onboarded by ${me}.`,
+    summary: `${W.Account} "${name}" onboarded by ${me}.`,
   });
   console.log(`${glyph.ok} Logged account_created to Customers/${id}/interactions.jsonl.`);
 
@@ -101,7 +102,7 @@ async function main() {
 function contextTemplate(name, id, me, row) {
   return `# ${name}
 
-- **Customer ID:** ${id}
+- **${W.Account} ID:** ${id}
 - **Tier:** ${row.tier ?? "TODO"}
 - **Vertical:** ${row.vertical ?? "TODO"}
 - **Region:** ${row.accountRegion ?? "TODO"}

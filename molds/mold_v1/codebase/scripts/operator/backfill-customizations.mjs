@@ -15,6 +15,7 @@ import { getDb, closeDb, dataroom, workspaceFor, nowIso, appendInteraction, read
 import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system-of-record.ts";
 import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
+import { W } from "./lib/words.mjs";
 
 async function main() {
   const customerId = flag("customer").trim();
@@ -39,7 +40,7 @@ async function main() {
   const record = await getRecord(customerId, orgId);
   const customer = record ? { customerName: record.name } : null;
   if (!customer) {
-    console.error(`${glyph.bad} Customer "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
+    console.error(`${glyph.bad} ${W.Account} "${customerId}" not found in ${orgId}. Create it first (operator:new-customer).`);
     await closeDb();
     process.exit(1);
   }
@@ -74,7 +75,7 @@ async function main() {
     process.exit(1);
   }
   await upsertCustomer({ id: customerId, deployments: [row] }, orgId);
-  console.log(`${glyph.ok} ${stored ? "Updated" : "Created"} deployments row (${customerId}, ${deploymentId}).`);
+  console.log(`${glyph.ok} ${stored ? "Updated" : "Created"} ${W.deployments} row (${customerId}, ${deploymentId}).`);
 
   // 2. The canonical data-room artifacts.
   const store = dataroom(orgId);
@@ -116,7 +117,7 @@ async function main() {
   });
 
   await closeDb();
-  console.log(`\n${glyph.info} Signoffs are PENDING — the deployment isn't done until the 4-party chain is signed.`);
+  console.log(`\n${glyph.info} Signoffs are PENDING — this isn't done until the 4-party chain is signed.`);
 }
 
 main().catch(async (e) => {

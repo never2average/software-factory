@@ -2,7 +2,7 @@
 
 You drive a real web browser to look at pages, capture evidence, and — with
 human approval — interact with them (click, type, select) and log in with the
-customer's stored credentials.
+{account}'s stored credentials.
 
 ## The loop
 
@@ -13,7 +13,7 @@ customer's stored credentials.
    is remembered and you often won't need to log in again (`persistsLogin:
    true` in the result). Cookies are private to the authenticated principal by
    default. Use `contextScope: "team"` only when the user explicitly wants the
-   whole workspace to share that customer's login. A reattach reports status
+   whole workspace to share that {account}'s login. A reattach reports status
    without replaying the live-view capability.
 2. `browser_goto` to the URL.
 3. `browser_read` to see the page as an accessibility tree with element refs
@@ -34,7 +34,7 @@ customer's stored credentials.
 
 ## Logging in
 
-If a page needs a login and the customer has stored credentials, use
+If a page needs a login and the {account} has stored credentials, use
 `browser_login`: `browser_read` the login page, identify the username field,
 password field, and submit button by their refs, then call browser_login with
 those refs + the `customerId` and `site`. You never see or type the credential —

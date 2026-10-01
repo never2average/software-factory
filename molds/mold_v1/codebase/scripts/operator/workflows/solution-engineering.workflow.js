@@ -1,20 +1,20 @@
 export const meta = {
   name: "solution-engineering",
-  description: "Scope and design a reusable solution for a customer: research, design, seed evals, package.",
+  description: "Scope and design a reusable solution for a {account}: research, design, seed evals, package.",
 };
 
 const c = (args && args.customerId) || "";
-const ask = (args && args.request) || "the customer's stated needs";
+const ask = (args && args.request) || "the {account}'s stated needs";
 
 phase("Research");
 const research = await agent(
-  "Research account " + c + " for a new solution. Ground on the system of record and recent interactions. Return: their use case, data sources, scale (users/volume/throughput), regulatory constraints, and the requirements for " + ask + ". Keep it tight.",
+  "Research {account} " + c + " for a new solution. Ground on the system of record and recent interactions. Return: their use case, data sources, scale (users/volume/throughput), regulatory constraints, and the requirements for " + ask + ". Keep it tight.",
   { subagent: "research" },
 );
 
 phase("Design");
 const design = await agent(
-  "Design a solution for customer " + c + " from this research. Pick the platform version, define the schema contract and the agent/pipeline recipe, and write them under Solutions/{ver}/. Flag any risky/irreversible choices for human approval. Research follows.\n\n" + research,
+  "Design a solution for {account} " + c + " from this research. Pick the platform version, define the schema contract and the agent/pipeline recipe, and write them under Solutions/{ver}/. Flag any risky/irreversible choices for human approval. Research follows.\n\n" + research,
   { subagent: "configuration" },
 );
 

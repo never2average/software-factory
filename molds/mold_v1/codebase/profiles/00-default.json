@@ -1,20 +1,20 @@
 {
-  "$comment": "The deployment profile: everything a person or the model READS that is specific to what this deployment is for. These defaults reproduce the product exactly as it was before profiles existed. A deployment changes them by ADDING profiles/NN-<name>.json files (later files win, objects merge deeply, arrays replace); nothing here is edited. Identifiers never change with a profile: database columns, API routes, tool names and data-room path tokens stay as they are. See docs/DEPLOYMENT_PROFILE.md.",
+  "$comment": "The deployment profile: everything a person or the model READS that is specific to what this deployment is for. These defaults are the base product in NEUTRAL words: an account, a member, its account owner, a delivery, a project and its plan. Base text never spells a role or a record word; it writes a placeholder ({account}, {deployment}, {implementation}, {rollout}, {member}, {owner}) filled from here, and a deployment's own profile supplies its domain's words. A deployment changes them by ADDING profiles/NN-<name>.json files (later files win, objects merge deeply, arrays replace); nothing here is edited. Identifiers never change with a profile: database columns, API routes, tool names and data-room path tokens stay as they are. See docs/DEPLOYMENT_PROFILE.md.",
   "product": {
     "name": "Delivered",
-    "tagline": "The operations console for teams that run customer work.",
-    "description": "{product} — an operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for your team."
+    "tagline": "The operations console for teams that run account work.",
+    "description": "{product} — an operations console: an eve-powered agent that runs account onboarding, deliveries, and the data room for your team."
   },
   "vocabulary": {
-    "account": { "singular": "customer", "plural": "customers" },
+    "account": { "singular": "account", "plural": "accounts" },
     "member": { "singular": "member", "plural": "members" },
     "owner": "Account owner",
     "secondary_owner": "Secondary owner",
-    "account_context": "Customer context"
+    "account_context": "Account context"
   },
   "chat": {
-    "hero_lines": ["{product}", "What needs doing today?", "Prep the stand-up", "Chase the follow-ups", "Keep every customer close"],
-    "empty_sections": { "urgent": "Urgent tickets", "stalled": "Stalled customers" },
+    "hero_lines": ["{product}", "What needs doing today?", "Prep the stand-up", "Chase the follow-ups", "Keep every account close"],
+    "empty_sections": { "urgent": "Urgent tickets", "stalled": "Stalled accounts" },
     "user_messages": { "collapse": true, "collapsed_lines": 6 },
     "starter_cards": {
       "owner_label": "Account owner",
@@ -31,11 +31,11 @@
       "quiet_prompt": "{name} has been quiet for {days} days. Summarise where we left off and draft a check-in to their main contact."
     },
     "account_search": {
-      "title": "Customer context",
-      "description": "Pick the customers this conversation is about — the agent grounds itself in their record.",
-      "placeholder": "Search customers…",
-      "empty": "No customers found.",
-      "pill_empty": "Set the customer context for this chat",
+      "title": "Account context",
+      "description": "Pick the accounts this conversation is about — the agent grounds itself in their record.",
+      "placeholder": "Search accounts…",
+      "empty": "No accounts found.",
+      "pill_empty": "Set the account context for this chat",
       "pill_active": "{context}: {names} — click to change",
       "pill_locked": "{context} is locked for this chat: {names}"
     }
@@ -56,9 +56,9 @@
   "domains": {
     "$comment": "The two record areas a deployment may REDEFINE rather than hide: what each is called, what its fields and enum values are shown as, which fields are not used (hidden; a hidden required field carries a fixed value the forms submit). Field keys are the real ones (agent/lib/customer-schema.ts, agent/lib/db/schema.ts) and option keys are real enum values; both are checked at build. custom_fields are the deployment's OWN fields on an area (key, label, type, required, options, help, show_in_list), stored by key in the table's `custom` column; the default declares none. These defaults are today's labels.",
     "deployments": {
-      "label": {"singular": "Deployment", "plural": "Deployments"},
-      "description": "Deployments, filtered by owner.",
-      "id_label": "Deployment id",
+      "label": {"singular": "Delivery", "plural": "Deliveries"},
+      "description": "Deliveries, filtered by owner.",
+      "id_label": "Delivery id",
       "kind_field": null,
       "kinds": [],
       "create_fields": [],
@@ -75,16 +75,16 @@
       }
     },
     "implementations": {
-      "label": {"singular": "Implementation", "plural": "Implementations"},
-      "description": "Rollouts, filtered by owner.",
-      "id_label": "Rollout id",
+      "label": {"singular": "Project", "plural": "Projects"},
+      "description": "Plans, filtered by owner.",
+      "id_label": "Plan id",
       "kind_field": null,
       "kinds": [],
       "create_fields": [],
       "detail_fields": [],
       "custom_fields": [],
       "group_by": null,
-      "group_label": {"singular": "Rollout", "plural": "Rollouts"},
+      "group_label": {"singular": "Plan", "plural": "Plans"},
       "fields": {
         "implementationStage": {"label": "Stage", "options": {"Kickoff": "Kickoff", "Discovery": "Discovery", "Configuration": "Configuration", "Integration": "Integration", "UAT": "UAT", "Pilot": "Pilot", "Go-Live": "Go-Live", "Stabilization": "Stabilization", "Steady State": "Steady State", "On Hold": "On Hold"}},
         "implementationRiskLevel": {"label": "Risk"},

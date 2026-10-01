@@ -7,11 +7,15 @@
  * customers are "companies", deployments are "Coverage reports", implementation is "Portfolios", members are
  * "analysts".
  *
- * The ROLE words (the member and the account owner) are not translated: base text never spells them. It writes a
- * placeholder, `{member}`, `{members}`, `{Member}`, `{Members}`, `{owner}` or `{Owner}`, and every boundary that
- * hands base text to the model fills it from the profile (fillWith, inside speakWith), under every profile,
- * default included. What is still translated for the member is only its LEGACY spelling (LEGACY_MEMBER), which
- * identifiers and stored data already hold.
+ * The ROLE words (the member and the account owner) and the RECORD words (the account, the two record areas, the
+ * group of the second) are not translated: base text never spells them. It writes a placeholder: `{member}`,
+ * `{members}`, `{Member}`, `{Members}`, `{owner}`, `{Owner}`, and for the records `{account}`, `{deployment}`,
+ * `{implementation}`, `{rollout}`, each with its plural (`{accounts}`) and its capitalised forms (`{Account}`,
+ * `{Accounts}`). Every boundary that hands base text to the model fills them from the profile (fillWith, inside
+ * speakWith), under every profile, default included. The default profile's own words are neutral ones (BASE).
+ * What is still translated is only the LEGACY spelling of each (LEGACY_MEMBER, LEGACY_RECORDS): the words the
+ * identifiers (`customer_id`, `list_customers`, `deploymentId`), the data-room folders and stored text already
+ * hold. Under the default profile those are contracts and data and are left exactly as they are.
  *
  * Until this module, that relabelling stopped at the UI. The model was handed `list_customers`, `customer_id`
  * and `Customers/…`, a customer-management persona, and a per-turn note that "the identifiers do not change",
@@ -37,11 +41,28 @@ import { withOwnerKeyTwins } from "./owner-keys.ts";
 /** The data-room domains whose folder a profile may relabel, by stored name. */
 const DOMAIN_KEYS = ["Customers", "Platform", "Deployments", "Solutions", "Implementation", "Tickets", "People"] as const;
 
-/** What the base product calls things. A term is relabelled when the profile's word differs from these. */
+/**
+ * What the base product calls things: the neutral words profiles/00-default.json carries. A term is relabelled
+ * when the profile's word differs from these (and from its legacy spelling below).
+ */
 const BASE = {
-  account: { singular: "customer", plural: "customers" },
+  account: { singular: "account", plural: "accounts" },
   member: { singular: "member", plural: "members" },
   owner: "Account owner",
+  deployments: { singular: "delivery", plural: "deliveries" },
+  implementations: { singular: "project", plural: "projects" },
+  rollouts: { singular: "plan", plural: "plans" },
+} as const;
+
+/**
+ * The record words as the identifiers, the data-room folders and stored text spell them, and always will
+ * (`customer_id`, `list_customers`, `Customers/`, `deploymentId`, `implementationStage`, `rolloutId`). Base TEXT
+ * never uses them: it writes a record placeholder the profile fills. Under a profile whose word for a record is
+ * not the base one, its legacy spelling is translated to the profile's word wherever the model would meet it;
+ * under the default profile it is a contract and is left alone.
+ */
+export const LEGACY_RECORDS = {
+  account: { singular: "customer", plural: "customers" },
   deployments: { singular: "deployment", plural: "deployments" },
   implementations: { singular: "implementation", plural: "implementations" },
   rollouts: { singular: "rollout", plural: "rollouts" },
@@ -71,6 +92,8 @@ export interface Vocabulary {
   owner: string | null;
   /** What each role placeholder is filled with: the profile's member words and its owner label. */
   roles: { member: string; members: string; owner: string };
+  /** What each record placeholder is filled with: the profile's word for the record, singular and plural. */
+  records: { account: Pair; deployment: Pair; implementation: Pair; rollout: Pair };
   /** The memory scope prefix for an account: `customer` by default, derived from the profile's word otherwise. */
   memoryPrefix: string;
   /** Keep the base product's customer-management persona in the root prompt. */
@@ -103,12 +126,15 @@ export type VocabularyProfile = DeploymentProfile & {
 /** The vocabulary a profile implies. Exported for tests; the agent uses VOCABULARY below. */
 export function createVocabulary(profile: VocabularyProfile, specialists: readonly string[] = SUBAGENT_KEYS): Vocabulary {
   const words = new Map<string, string>();
-  const add = (base: Pair, to: Pair) => {
-    if (sameWord(base.singular, to.singular) && sameWord(base.plural, to.plural)) return;
-    words.set(base.singular.toLowerCase(), to.singular);
-    words.set(base.plural.toLowerCase(), to.plural);
+  // A record: base text fills its placeholder from the profile, so only the legacy spelling is translated, and only
+  // when this profile's word is neither the base one nor the legacy one itself.
+  const add = (base: Pair, legacy: Pair, to: Pair) => {
+    const same = (a: Pair) => sameWord(a.singular, to.singular) && sameWord(a.plural, to.plural);
+    if (same(base) || same(legacy)) return;
+    words.set(legacy.singular, to.singular);
+    words.set(legacy.plural, to.plural);
   };
-  add(BASE.account, profile.vocabulary.account);
+  add(BASE.account, LEGACY_RECORDS.account, profile.vocabulary.account);
   // The member: base text fills `{member}` from the profile, so only the legacy spelling is translated, and only
   // when this profile's word is not the base one.
   const m = profile.vocabulary.member;
@@ -117,9 +143,9 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
     words.set(LEGACY_WORD, m.singular);
     words.set(LEGACY_WORDS, m.plural);
   }
-  add(BASE.deployments, profile.domains.deployments.label);
-  add(BASE.implementations, profile.domains.implementations.label);
-  add(BASE.rollouts, profile.domains.implementations.group_label);
+  add(BASE.deployments, LEGACY_RECORDS.deployments, profile.domains.deployments.label);
+  add(BASE.implementations, LEGACY_RECORDS.implementations, profile.domains.implementations.label);
+  add(BASE.rollouts, LEGACY_RECORDS.rollouts, profile.domains.implementations.group_label);
 
   const folders = new Map<string, string>();
   const domainLabels = new Map<string, string>();
@@ -133,8 +159,9 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
   const storedFolders = new Map([...folders].map(([k, v]) => [v, k]));
 
   const owner = memberRelabelled || !sameWord(profile.vocabulary.owner, BASE.owner) ? profile.vocabulary.owner : null;
-  const accountWord = identifierWords(profile.vocabulary.account.singular).join("-") || BASE.account.singular;
-  const memoryPrefix = words.has("customer") && !["team", "person"].includes(accountWord) ? accountWord : BASE.account.singular;
+  // A memory scope's prefix is stored: the legacy account word unless the profile relabels the account.
+  const accountWord = identifierWords(profile.vocabulary.account.singular).join("-") || LEGACY_RECORDS.account.singular;
+  const memoryPrefix = words.has(LEGACY_RECORDS.account.singular) && !["team", "person"].includes(accountWord) ? accountWord : LEGACY_RECORDS.account.singular;
   const relabelled = words.size > 0 || folders.size > 0 || domainLabels.size > 0;
   return {
     relabelled,
@@ -144,6 +171,12 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
     domainLabels,
     owner,
     roles: { member: m.singular, members: m.plural, owner: profile.vocabulary.owner },
+    records: {
+      account: profile.vocabulary.account,
+      deployment: profile.domains.deployments.label,
+      implementation: profile.domains.implementations.label,
+      rollout: profile.domains.implementations.group_label,
+    },
     memoryPrefix,
     personaBase: profile.persona?.base !== false,
     excludedSpecialists: [...(profile.specialists?.exclude ?? [])],
@@ -301,7 +334,7 @@ function speakSegment(v: Vocabulary, text: string, protectSpecialists: boolean):
     out = out.replace(phrase, (_m, at: number, whole: string) => mark(sentenceStart(whole, at) ? upperFirst(owner) : lowerFirst(owner)));
   }
   // "this deployment" is the product install, not a record: the install is the workspace to the model.
-  if (v.words.has("deployment")) {
+  if (v.words.has(LEGACY_RECORDS.deployments.singular)) {
     out = out.replace(/\b([Tt])his deployment('s)?\b/g, (_m, t: string, s?: string) => mark(`${t}his workspace${s ?? ""}`));
   }
   // 2. Data-room folders at the head of a path, and memory scopes.
@@ -351,28 +384,46 @@ function speakSegment(v: Vocabulary, text: string, protectSpecialists: boolean):
 
 /** "a" / "an" before a word that was replaced, recomputed for the new word. */
 function fixArticles(text: string): string {
-  return text.replace(new RegExp(`\\b([Aa])(n?) (\\*\\*|\\*|_|\`|")?${OPEN}([^${CLOSE}]*)${CLOSE}`, "g"), (_m, a: string, _n: string, fmt: string | undefined, w: string) => {
+  // The article may end a wrapped line ("… serves. A\n{account}'s …"): the break is kept as written.
+  return text.replace(new RegExp(`\\b([Aa])(n?)( |\\n[ \\t]*)(\\*\\*|\\*|_|\`|")?${OPEN}([^${CLOSE}]*)${CLOSE}`, "g"), (_m, a: string, _n: string, gap: string, fmt: string | undefined, w: string) => {
     const vowel = /^[aeiou]/i.test(w) && !/^(uni|use|usu|eu|one)/i.test(w);
-    return `${a}${vowel ? "n" : ""} ${fmt ?? ""}${OPEN}${w}${CLOSE}`;
+    return `${a}${vowel ? "n" : ""}${gap}${fmt ?? ""}${OPEN}${w}${CLOSE}`;
   });
 }
 
-/** The role placeholders base text writes instead of a role word. */
+/** The placeholders base text writes instead of a role word or a record word. */
+export const ROLE_KEYS = ["member", "members", "Member", "Members", "owner", "Owner"] as const;
+export const RECORD_KEYS = [
+  "account", "accounts", "Account", "Accounts",
+  "deployment", "deployments", "Deployment", "Deployments",
+  "implementation", "implementations", "Implementation", "Implementations",
+  "rollout", "rollouts", "Rollout", "Rollouts",
+] as const;
+export const PLACEHOLDER_KEYS: readonly string[] = [...ROLE_KEYS, ...RECORD_KEYS];
 // `${owner}` is a template interpolation in quoted code, never a placeholder.
-const ROLE_PLACEHOLDER = /(?<!\$)\{(member|members|Member|Members|owner|Owner)\}/g;
-/** Does this text hold a role placeholder? */
+const ROLE_PLACEHOLDER = new RegExp(`(?<!\\$)\\{(${PLACEHOLDER_KEYS.join("|")})\\}`, "g");
+/** Does this text hold a role or record placeholder? */
 export const hasRolePlaceholder = (text: string): boolean => typeof text === "string" && text.includes("{") && new RegExp(ROLE_PLACEHOLDER.source).test(text);
 
-/** Each role placeholder filled from the profile, marked (so speak() leaves the profile's words alone). */
+/**
+ * The word one placeholder stands for under `v`: `account` -> "account" / "company", `Deployments` ->
+ * "Deliveries" / "Coverage reports". A lower-case key gives the word as prose writes it mid-sentence (an acronym
+ * keeps its capitals), a capitalised key the word with its first letter raised. Exported for code that builds a
+ * sentence from parts (`${wordFor("Account")} ${id} not found`).
+ */
+export function wordForWith(v: Vocabulary, key: string): string {
+  const r = v.roles;
+  const lower = key[0].toLowerCase() + key.slice(1);
+  const plural = lower.endsWith("s");
+  const stem = (plural ? lower.slice(0, -1) : lower) as "member" | "owner" | keyof Vocabulary["records"];
+  const word = stem === "member" ? (plural ? r.members : r.member) : stem === "owner" ? r.owner : plural ? v.records[stem].plural : v.records[stem].singular;
+  return key === lower ? lowerFirst(word) : upperFirst(word);
+}
+
+/** Each role and record placeholder filled from the profile, marked (so speak() leaves the profile's words alone). */
 function fillMarked(v: Vocabulary, text: string): string {
   if (!text.includes("{")) return text;
-  const r = v.roles;
-  return text.replace(ROLE_PLACEHOLDER, (_m, k: string) => {
-    const word =
-      k === "member" ? lowerFirst(r.member) : k === "members" ? lowerFirst(r.members) : k === "Member" ? upperFirst(r.member)
-        : k === "Members" ? upperFirst(r.members) : k === "owner" ? lowerFirst(r.owner) : upperFirst(r.owner);
-    return mark(word);
-  });
+  return text.replace(ROLE_PLACEHOLDER, (_m, k: string) => mark(wordForWith(v, k)));
 }
 
 const unmark = (text: string) => text.replace(new RegExp(`[${OPEN}${CLOSE}]`, "g"), "");
@@ -386,6 +437,8 @@ export function fillWith(v: Vocabulary, text: string): string {
   return unmark(fixArticles(fillMarked(v, text)));
 }
 export const fill = (text: string): string => fillWith(VOCABULARY, text);
+/** One placeholder's word in this deployment (`wordFor("account")`, `wordFor("Deployments")`). */
+export const wordFor = (key: (typeof ROLE_KEYS)[number] | (typeof RECORD_KEYS)[number]): string => wordForWith(VOCABULARY, key);
 
 /**
  * Text in the deployment's words: role placeholders filled from the profile, then, under a relabelling profile,
@@ -479,15 +532,15 @@ export const toStoredPath = (p: string) => toStoredPathWith(VOCABULARY, p);
  */
 export function memoryScopeVariants(scope: string, v: Vocabulary = VOCABULARY): string[] {
   const m = /^([a-z][a-z0-9-]*):(.+)$/.exec(scope);
-  if (!m || v.memoryPrefix === BASE.account.singular) return [scope];
-  if (m[1] === v.memoryPrefix || m[1] === BASE.account.singular) return [`${v.memoryPrefix}:${m[2]}`, `${BASE.account.singular}:${m[2]}`];
+  if (!m || v.memoryPrefix === LEGACY_RECORDS.account.singular) return [scope];
+  if (m[1] === v.memoryPrefix || m[1] === LEGACY_RECORDS.account.singular) return [`${v.memoryPrefix}:${m[2]}`, `${LEGACY_RECORDS.account.singular}:${m[2]}`];
   return [scope];
 }
 
 /** The scope as the model reads it. */
 export function displayMemoryScope(scope: string, v: Vocabulary = VOCABULARY): string {
-  if (v.memoryPrefix === BASE.account.singular) return scope;
-  return scope.startsWith(`${BASE.account.singular}:`) ? `${v.memoryPrefix}:${scope.slice(BASE.account.singular.length + 1)}` : scope;
+  if (v.memoryPrefix === LEGACY_RECORDS.account.singular) return scope;
+  return scope.startsWith(`${LEGACY_RECORDS.account.singular}:`) ? `${v.memoryPrefix}:${scope.slice(LEGACY_RECORDS.account.singular.length + 1)}` : scope;
 }
 
 // ------------------------------------------------------------------------------------ JSON at the boundary
@@ -734,6 +787,11 @@ export function outputForModelWith(
 
 // ------------------------------------------------------------------------------------------------ messages
 
+/** "customer-facing", "deployment-wide": a legacy word heading an English compound (either case, or the member's). */
+const COMPOUND = new RegExp(
+  `^(${[LEGACY_RECORDS.account.singular, upperFirst(LEGACY_RECORDS.account.singular), LEGACY_MEMBER.singular, LEGACY_RECORDS.deployments.singular, upperFirst(LEGACY_RECORDS.deployments.singular)].map((w) => `${w}s?`).join("|")})-(facing|owned|side|specific|level|wide|led|managed)$`,
+);
+
 /** A known product identifier or tool name, as a whole token. */
 function isProductToken(token: string): boolean {
   return PRODUCT_KEYS.has(token) || MODEL_NAMES.has(token);
@@ -769,7 +827,7 @@ export function speakMessageWith(v: Vocabulary, text: string): string {
       const m = /^([(\[{]*)([\s\S]*?)((?:'s)?[)\]},.;:!?]*)$/.exec(p)!;
       const [, lead, core, trail] = m;
       // "customer-facing": an English compound, not an id — its base word is prose.
-      const compound = new RegExp(`^(customers?|Customers?|${LEGACY_MEMBER.singular}s?|deployments?|Deployments?)-(facing|owned|side|specific|level|wide|led|managed)$`).exec(core);
+      const compound = COMPOUND.exec(core);
       if (compound) {
         words.push({ at: out.length, w: compound[1] });
         out.push(`${lead}\u0000${compound[1]}\u0000-${compound[2]}${trail}`);

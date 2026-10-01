@@ -18,6 +18,7 @@ import { once } from "eve/tools/approval";
 import { z } from "zod";
 import { orgForSession, type SessionCtxLike } from "./org-context.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
+import { fill } from "./agent-vocabulary.ts";
 
 /** The front-end that owns the run routes + the sandbox runtime. */
 const WEB_ORIGIN = process.env.WEB_ORIGIN?.trim() || "https://fde-agent.vercel.app";
@@ -69,13 +70,13 @@ export const triggerWorkflowTool = modelFacing("trigger_workflow", defineTool({
     args: z
       .record(z.string(), z.unknown())
       .optional()
-      .describe(
+      .describe(fill(
         "The payload the workflow runs with, as a JSON object — e.g. {\"customerId\": \"acme-bank\"} " +
-          "when someone asks to run it FOR a particular account. Keys must be the ones the script " +
+          "when someone asks to run it FOR a particular {account}. Keys must be the ones the script " +
           "actually reads: the run is REFUSED, before spending anything, if a key is misspelled or " +
           "unused, and the error lists the keys it does read. Omit entirely when the request names " +
           "no scope — most workflows read what they need for themselves.",
-      ),
+      )),
   }),
   async execute({ workflow, args }, ctx) {
     const data = await triggerRun(

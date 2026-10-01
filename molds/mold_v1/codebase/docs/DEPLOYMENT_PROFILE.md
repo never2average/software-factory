@@ -55,24 +55,24 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
 |---|---|---|
 | `product.name` | The display name, everywhere a person sees it: browser title and title template, application name, the sign-in wordmark and copyright line, the onboarding wizard, the invitation and sign-in-code emails (subject, body, the prompt a coding agent is given), the ops-auth "work accounts only" sentence, the roster workbook's author field, the inbox hand-off prompt, and `{product}` in any profile string. Exported as `PRODUCT_NAME`. | `"Delivered"` |
 | `product.tagline` | The line under the wordmark on the sign-in screen. *slots: `{product}`* | `"The operations console for teams that run customer work."` |
-| `product.description` | The page's meta description. *slots: `{product}`* | `"{product} — an operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for your team."` |
+| `product.description` | The page's meta description. *slots: `{product}`* | `"{product} — an operations console: an eve-powered agent that runs account onboarding, deliveries, and the data room for your team."` |
 
 ### `vocabulary`
 
 | Key | Meaning | Default |
 |---|---|---|
-| `vocabulary.account.singular` / `.plural` | What the thing every record hangs off is called in prose ("the customer's data room", "Search customers…"). Lower-case; the UI capitalises where it needs to. | `"customer"` / `"customers"` |
+| `vocabulary.account.singular` / `.plural` | What the thing every record hangs off is called in prose ("the account's data room", "Search accounts…"). Lower-case; the UI capitalises where it needs to. Base text never spells it: it writes `{account}` / `{accounts}` (see "Record placeholders" below). The identifiers keep the stored word (`customer_id`, `list_customers`, `Customers/`). | `"account"` / `"accounts"` |
 | `vocabulary.member.singular` / `.plural` | What a person who works in the console is called. Base text never spells it: it writes `{member}` / `{members}` (see "Role placeholders" below). | `"member"` / `"members"` |
 | `vocabulary.owner` | The label for the member responsible for an account. Base text writes `{owner}`. | `"Account owner"` |
 | `vocabulary.secondary_owner` | The label for an account's second owner: what a person reads for the `aeOwner` / `secondaryOwner` field (`ae_owner` / `secondary_owner` in the database) in an export or a table header. A deployment names its own role here ("Account executive", "Relationship manager"). | `"Secondary owner"` |
-| `vocabulary.account_context` | The name of the per-chat "which accounts is this about" control. | `"Customer context"` |
+| `vocabulary.account_context` | The name of the per-chat "which accounts is this about" control. | `"Account context"` |
 
 ### `chat`
 
 | Key | Meaning | Default |
 |---|---|---|
-| `chat.hero_lines` | The rotating lines on an empty chat. A non-empty list of non-empty strings. *slots: `{product}`* | `["{product}", "What needs doing today?", "Prep the stand-up", "Chase the follow-ups", "Keep every customer close"]` |
-| `chat.empty_sections.urgent` / `.stalled` | Headings of the two suggestion groups on an empty chat. | `"Urgent tickets"` / `"Stalled customers"` |
+| `chat.hero_lines` | The rotating lines on an empty chat. A non-empty list of non-empty strings. *slots: `{product}`* | `["{product}", "What needs doing today?", "Prep the stand-up", "Chase the follow-ups", "Keep every account close"]` |
+| `chat.empty_sections.urgent` / `.stalled` | Headings of the two suggestion groups on an empty chat. | `"Urgent tickets"` / `"Stalled accounts"` |
 | `chat.user_messages.collapse` | Whether a long message a person sent starts folded, with a "Show more" button. Short messages are never touched and assistant replies never fold. `true` or `false`. | `true` |
 | `chat.user_messages.collapsed_lines` | How many lines of a folded message stay visible. A whole number from 2 to 40. A desk that pastes filings and tables wants it small; one that writes three-line prompts can turn `collapse` off. | `6` |
 | `chat.starter_cards.owner_label` | Label for the owner on a starter card. | `"Account owner"` |
@@ -82,7 +82,7 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
 | `chat.starter_cards.quiet_summary` / `.quiet_summary_long` | Card summary for an account with no recent contact (long: over a month). *slots: `{name}`, `{days}`* | `"No contact logged in {days} days."` / `"No contact logged for over a month."` |
 | `chat.starter_cards.quiet_badge` | That card's badge. *slots: `{days}`* | `"{days}d quiet"` |
 | `chat.starter_cards.quiet_title` / `.quiet_prompt` | The action's title and prompt. *slots: `{name}`, `{days}`* | `"Draft a check-in"` / `"{name} has been quiet for {days} days. Summarise where we left off and draft a check-in to their main contact."` |
-| `chat.account_search.title` / `.description` / `.placeholder` / `.empty` | The account picker dialog: its title, its one-line explanation, the search box's placeholder, and the no-results line. | `"Customer context"` / `"Pick the customers this conversation is about — the agent grounds itself in their record."` / `"Search customers…"` / `"No customers found."` |
+| `chat.account_search.title` / `.description` / `.placeholder` / `.empty` | The account picker dialog: its title, its one-line explanation, the search box's placeholder, and the no-results line. | `"Account context"` / `"Pick the accounts this conversation is about — the agent grounds itself in their record."` / `"Search accounts…"` / `"No accounts found."` |
 | `chat.account_search.pill_empty` / `.pill_active` / `.pill_locked` | The tooltip on the context pill with nothing chosen, with a choice, and once the chat has locked it. *slots: `{context}` (= `vocabulary.account_context`), `{names}`* | `"Set the customer context for this chat"` / `"{context}: {names} — click to change"` / `"{context} is locked for this chat: {names}"` |
 
 ### `dataroom`
@@ -110,15 +110,15 @@ submits `releaseStatus: "deployed"`, whatever the person read. (Hiding an area i
 
 | Key | Meaning | Default |
 |---|---|---|
-| `domains.<area>.label.singular` / `.plural` | What one record and the area are called: the TODOs tab, "New …", "Loading …", "Delete …", the Control Panel's panel and its "owns 3 …" sentence, a task's container type, the sheet's tab in the data room. | `"Deployment"` / `"Deployments"`; `"Implementation"` / `"Implementations"` |
-| `domains.<area>.description` | One sentence: what a record IS here. The tab's blurb, and what the model is told the area means. | `"Deployments, filtered by owner."` / `"Rollouts, filtered by owner."` |
-| `domains.<area>.id_label` | The label of the record's id (`deploymentId`, `rolloutId`). | `"Deployment id"` / `"Rollout id"` |
+| `domains.<area>.label.singular` / `.plural` | What one record and the area are called: the TODOs tab, "New …", "Loading …", "Delete …", the Control Panel's panel and its "owns 3 …" sentence, a task's container type, the sheet's tab in the data room. | `"Delivery"` / `"Deliveries"`; `"Project"` / `"Projects"` |
+| `domains.<area>.description` | One sentence: what a record IS here. The tab's blurb, and what the model is told the area means. | `"Deliveries, filtered by owner."` / `"Plans, filtered by owner."` |
+| `domains.<area>.id_label` | The label of the record's id (`deploymentId`, `rolloutId`). | `"Delivery id"` / `"Plan id"` |
 | `domains.<area>.fields.<fieldKey>` | One entry per field you want to say something about; see below. `<fieldKey>` is a real field: a key of `deploymentSchema` / `implementationSchema` (`agent/lib/customer-schema.ts`) or a column of the table (`agent/lib/db/schema.ts`). | today's labels for the fields the UI shows |
 | `domains.<area>.kind_field` + `.kinds` | A free-text column that carries one of `kinds` (a report type, a release type). Shown as a select of exactly those strings; the string itself is what is stored. An enum column cannot be used: its values are fixed by the schema. | `null` / `[]` |
 | `domains.<area>.create_fields` / `.detail_fields` | Extra real columns on the "New …" form / the detail card, after the built-in ones. Typed from the schema: an enum is a select, a percentage or number a number input, anything else text. List-valued columns cannot be put on a form. | `[]` / `[]` |
 | `domains.<area>.custom_fields` | The deployment's OWN fields on the area: fields the base never had. See [Custom fields](#custom-fields). | `[]` |
 | `domains.implementations.group_by` | A free-text column whose value groups the rows (in practice `rolloutId`). The tab is then titled with `group_label.plural`, the list gets a header per group (name, owner, how many, average progress), "New" picks an existing group or names a new one (stored as a slug: "Affordable housing" is `affordable-housing`), and the row's id becomes the customer id because many rows now share a `rolloutId`. | `null` |
-| `domains.implementations.group_label.singular` / `.plural` | What a group is called. | `"Rollout"` / `"Rollouts"` |
+| `domains.implementations.group_label.singular` / `.plural` | What a group is called. | `"Plan"` / `"Plans"` |
 
 A field entry takes:
 
@@ -417,10 +417,11 @@ tool boundary instead: see "How the agent sees it" below.)
 
 ## How the agent sees it
 
-Under the default profile: exactly as before this existed. The root prompt is rendered at eve build
-time by `agent/instructions.ts` from `agent/prompt-core.md` and `agent/prompt-persona.md`, and is the
-former `agent/instructions.md` byte for byte; every tool, parameter, description and result is the
-same object; `check:agent-vocabulary` holds the whole default surface to a snapshot.
+Under the default profile: the root prompt is rendered at eve build time by `agent/instructions.ts` from
+`agent/prompt-core.md` and `agent/prompt-persona.md`, with its role and record placeholders filled with the
+default profile's neutral words; every tool is the same object, with the same name, parameters and results (only
+its description's placeholders are filled, in place); `check:agent-vocabulary` holds the whole default surface to
+a snapshot.
 
 Under a profile that **relabels** (the account, the member, either record area or a data-room folder
 has a word of its own), the model reads only the profile's words, everywhere
@@ -433,7 +434,43 @@ has a word of its own), the model reads only the profile's words, everywhere
 | enum values | `Waiting on Customer`, `customer-vpc`, TODO `containerType` `deployment` | `Waiting on Company`, `company-vpc`, `coverageReport` |
 | data-room paths (in and out) | `Customers/acme/…`, `Deployments/…`, `Implementation/…` | `Companies/acme/…`, `Coverage-reports/…`, `Portfolios/…` (the label as a folder name) |
 | memory scopes | `customer:{id}` | `company:{id}` |
-| descriptions, prompts, the per-turn block | "customer", "{owner}" (filled: "account owner"), "deployment" | "company", "covering analyst", "coverage report" |
+| descriptions, prompts, the per-turn block | "{account}" (filled: "account"), "{owner}" (filled: "account owner"), "{deployment}" (filled: "delivery") | "company", "covering analyst", "coverage report" |
+
+**Record placeholders.** The RECORD words are written the same way. Base text never spells the account, the two
+record areas or the group of the second: it writes `{account}`, `{deployment}`, `{implementation}` and `{rollout}`,
+each with its plural (`{accounts}`) and its capitalised forms (`{Account}`, `{Accounts}`), and the same boundaries
+fill them from the profile under every profile:
+
+| Placeholder | Filled from | Default profile | The hfc-research profile |
+|---|---|---|---|
+| `{account}` / `{accounts}` | `vocabulary.account` | account / accounts | company / companies |
+| `{deployment}` / `{deployments}` | `domains.deployments.label` | delivery / deliveries | coverage report / coverage reports |
+| `{implementation}` / `{implementations}` | `domains.implementations.label` | project / projects | portfolio entry / portfolio entries |
+| `{rollout}` / `{rollouts}` | `domains.implementations.group_label` | plan / plans | portfolio / portfolios |
+
+In a prompt, a tool description, a library workflow's step or the base skill, write the placeholder; `speak()` /
+`fill()` fill it (`modelFacing` fills a tool's description in place; a parameter description is written
+`.describe(fill("…"))`; a message a tool builds takes one word with `wordFor("account")`). In the UI, take the
+word from `W` in `lib/ui-words.ts` (`W.account`, `W.Deployments`, …), which has every key above. In the operator
+tooling, `W` from `scripts/operator/lib/words.mjs`. The base skill (`skills/*/SKILL.md`) is filled when it is
+mirrored into a package: from `profiles/00-default.json` for the generic one, from the deployment's profiles for
+its own (`scripts/lib/profile-words.mjs`).
+
+The default profile's words are neutral ones, and the identifiers are not: `customer_id`, `list_customers`,
+`Customers/`, `deploymentId`, `implementation`, `rolloutId` are contracts and never move with a profile. Under the
+default profile they reach the model exactly as stored, and the per-turn block ties the two together in four short
+lines ("A **delivery** is a `deployment` in the identifiers: …"). A profile whose words ARE the identifiers' own
+(`scripts/fixtures/legacy-record-words/50-legacy-record-words.json`, the words the default carried before) gets no
+such lines and is not "relabelled". Any other word relabels: the identifiers, paths and stored text that carry the
+stored word are translated to the profile's at the boundary, as before.
+
+Two gates hold it. `check:agent-vocabulary` fails when the default deployment's model reads a record word as prose
+anywhere (prompts, tools, roster, briefing, the workflow library, tool results), when a placeholder reaches a model
+unfilled, or when a relabelling profile's own words are missing from what its model reads. `check:neutral-names`
+counts every record word written as prose in base text (string literals, template and JSX text, Markdown, the
+default profile's values; never an identifier, a path, a code span or a quoted value) and holds each file to a
+ceiling in `scripts/neutral-names.allow.json` (`record_words`): a file with no ceiling may carry none, and
+`node scripts/check-neutral-names.mjs --records --lines` lists what is left.
 
 **Role placeholders.** The ROLE words, the member and the account owner, are not translated: base text never spells
 them. It writes a placeholder (`{member}`, `{members}`, `{Member}`, `{Members}`, `{owner}`, `{Owner}`), and every
@@ -729,7 +766,8 @@ workflow a person wrote) is never translated.
 ```bash
 npm run build:deployment-profile   # merge + validate + write both generated files
 npm run test:deployment-profile    # merge rules, domains (defaults exact, example validates, bad profiles fail), the briefing; offline
-npm run check:agent-vocabulary     # the model-facing surface under a relabelling fixture has no base word; the default's is unchanged
+npm run check:agent-vocabulary     # the model-facing surface under a relabelling fixture has no base word and carries the profile's; the default's is unchanged and reads no record word as prose
+npm run check:neutral-names        # the role word only as a listed contract; the record words as prose only under a per-file ceiling
 npm run check:ui-vocabulary        # what a PERSON reads (source text, the built client bundle, prerendered pages) under the same fixture has no base word; the default's words are unchanged
 npm run check:vocabulary           # its static half, in seconds (no build)
 npm run test:ui-vocabulary         # keys in JSON and exports, ops API errors, library rows, unlabelled enum values, the generator during a build

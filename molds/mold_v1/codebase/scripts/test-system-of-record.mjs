@@ -124,7 +124,7 @@ patched = await sor.upsertCustomer({ id: "acme-bank", tickets: [{ ticketId: t0.t
 assert.deepEqual(patched.tickets, acme.tickets.map((t) => (t.ticketId === t0.ticketId ? { ...t, ticketNextStep: "changed" } : t)), "one ticket field changes; every other ticket is kept");
 assert.deepEqual(patched.interactions ?? [], ints, "an empty interactions list deletes nothing");
 await assert.rejects(sor.upsertCustomer({ id: "acme-bank", tickets: [{ ticketId: t0.ticketId, remove: true, summary: "x" }] }), /remove: true deletes the row, so it is sent with nothing else \(it also named summary\)/);
-await assert.rejects(sor.upsertCustomer({ id: "acme-bank", deployments: [{ deploymentId: "NOPE", remove: true }] }), /deploymentId NOPE: there is no such deployments row to remove/);
+await assert.rejects(sor.upsertCustomer({ id: "acme-bank", deployments: [{ deploymentId: "NOPE", remove: true }] }), /deploymentId NOPE: there is no such deliveries row to remove/);
 // A row without its id is a sentence, not zod's JSON issue dump (review of #80).
 await assert.rejects(sor.upsertCustomer({ id: "acme-bank", deployments: [{ notes: "no id" }] }), (e) => e.message === "Nothing was written. deployments[0] has no deploymentId: every row names its deploymentId, a new one too.");
 await sor.upsertCustomer({ id: "acme-bank", tickets: [{ ticketId: t0.ticketId, ticketNextStep: t0.ticketNextStep }] });
@@ -156,7 +156,7 @@ assert.equal(
 );
 await assert.rejects(
   () => sor.recordInteraction("no-such-customer", interaction),
-  /Unknown customer: no-such-customer/,
+  /Unknown account: no-such-customer/,
 );
 
 // Document-view mirror: Customers/{id}/interactions.jsonl in the data room — the default workspace's own tree (no
@@ -179,7 +179,7 @@ assert.ok(
 );
 await assert.rejects(
   () => sor.resolveFollowUp("acme-bank", "TCK-does-not-exist"),
-  /not found for customer acme-bank/,
+  /not found for account acme-bank/,
 );
 
 console.log("system-of-record fallback tests ok");

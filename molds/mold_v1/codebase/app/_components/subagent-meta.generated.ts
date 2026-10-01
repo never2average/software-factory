@@ -21,7 +21,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   "app-author": {
     "name": "App Author",
     "summary": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots).",
-    "description": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots). Delegate here whenever the task is to PRODUCE a document from the data room's current state: it gathers the relevant read-only signals (customers, tickets, members, on-call, SLAs, interactions) and returns GitHub-flavored Markdown and nothing else. It reads and writes prose — it never mutates state, pages anyone, or files a ticket.",
+    "description": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots). Delegate here whenever the task is to PRODUCE a document from the data room's current state: it gathers the relevant read-only signals (accounts, tickets, members, on-call, SLAs, interactions) and returns GitHub-flavored Markdown and nothing else. It reads and writes prose — it never mutates state, pages anyone, or files a ticket.",
     "skillNames": [],
     "skillsSummary": "",
     "tools": [
@@ -35,7 +35,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "get_customer",
-        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+        "description": "Get the full record for one account: platform config, deliveries, solutions, its project, tickets, and recent interactions."
       },
       {
         "name": "get_oncall",
@@ -43,15 +43,15 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "granola_search_notes",
-        "description": "Search Granola meeting notes by keyword to pull recent customer-call context and action items."
+        "description": "Search Granola meeting notes by keyword to pull recent account-call context and action items."
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all accounts in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to an account — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "list_followups",
-        "description": "List open customer tickets/follow-ups across all customers (or one), sorted by the caller. Use this to prep the daily stand-up."
+        "description": "List open account tickets/follow-ups across all accounts (or one), sorted by the caller. Use this to prep the daily stand-up."
       },
       {
         "name": "list_members",
@@ -63,27 +63,27 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_stale_customers",
-        "description": "List OUT-OF-TOUCH customers: active accounts (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. deployments going quiet with limited/no recent progress. Returns each customer's lifecycle stage, status, one-line health summary, account owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep."
+        "description": "List OUT-OF-TOUCH accounts: active ones (Onboarding/Pilot/Contracting) with no logged interaction in the last `days` days (default 7) — i.e. work going quiet with limited/no recent progress. Returns each account's lifecycle stage, status, one-line health summary, account owner, last-touch date, and daysQuiet, sorted most-stale first. Use this for the out-of-touch sweep."
       },
       {
         "name": "list_syncs",
-        "description": "List the landed sync .jsonl streams in the data room under a (domain, source?, customer?) prefix. Read-only. Each returned path is one domain/source/customer/day raw stream produced by sync_pull."
+        "description": "List the landed sync .jsonl streams in the data room under a (domain, source?, customerId?) prefix. Read-only. Each returned path is one domain/source/customer/day raw stream produced by sync_pull."
       },
       {
         "name": "list_triage_tickets",
-        "description": "List the triage queue — draft tickets awaiting approval (status 'Needs Triage') across all customers, e.g. those staged by email intake. Each carries the customer, summary, description, priority, owner, and source. Use this to review what to promote (approve) or resolve (discard)."
+        "description": "List the triage queue — draft tickets awaiting approval (status 'Needs Triage') across all accounts, e.g. those staged by email intake. Each carries the account, summary, description, priority, owner, and source. Use this to review what to promote (approve) or resolve (discard)."
       },
       {
         "name": "list_urgent_tickets",
-        "description": "List OPEN, URGENT tickets across all customers from the tickets store — P0-Critical/P1-High priority, SLA at-risk/breached, or past their due date — ranked most-urgent first. Each ticket carries urgencyRank, customer, summary, DESCRIPTION (the reported metric signal — uptime/accuracy/throughput incidents live here), next step, openedAt, and ageHours (the measured TAT, for reconciling against a TAT SLA commitment), plus due date. Use this to prioritize whoever most needs a change and to reconcile SLA breaches from ticket data."
+        "description": "List OPEN, URGENT tickets across all accounts from the tickets store — P0-Critical/P1-High priority, SLA at-risk/breached, or past their due date — ranked most-urgent first. Each ticket carries urgencyRank, account, summary, DESCRIPTION (the reported metric signal — uptime/accuracy/throughput incidents live here), next step, openedAt, and ageHours (the measured TAT, for reconciling against a TAT SLA commitment), plus due date. Use this to prioritize whoever most needs a change and to reconcile SLA breaches from ticket data."
       },
       {
         "name": "match_customer_by_email",
-        "description": "Deterministically match an inbound email sender to a customer — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on a customer's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage."
+        "description": "Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage."
       },
       {
         "name": "read_customer_slas",
-        "description": "Read EVERY customer's SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-customer urgency/breach filters from each customer's own commitments instead of one global rule, and (b) check whether that customer's Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Customers in `missing` have no sla.json — fall back to the platform default."
+        "description": "Read EVERY account's SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-account urgency/breach filters from each account's own commitments instead of one global rule, and (b) check whether that account's Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Accounts in `missing` have no sla.json — fall back to the platform default."
       },
       {
         "name": "web_search",
@@ -93,8 +93,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   },
   "browser": {
     "name": "Browser",
-    "summary": "Drive a real web browser to verify and interact with web pages: load a deployed customer UI and confirm a change rendered, scrape a console the platform has no API for, capture screenshots as signoff evidence, and — with human approval — click/type/fill/select to complete a flow.",
-    "description": "Drive a real web browser to verify and interact with web pages: load a deployed customer UI and confirm a change rendered, scrape a console the platform has no API for, capture screenshots as signoff evidence, and — with human approval — click/type/fill/select to complete a flow. Delegate here for any 'open this page and tell me / show me / do X on it' task. Page actions are approval-gated; it cannot log in with stored credentials yet.",
+    "summary": "Drive a real web browser to verify and interact with web pages: load a deployed account UI and confirm a change rendered, scrape a console the platform has no API for, capture screenshots as signoff evidence, and — with human approval — click/type/fill/select to complete a flow.",
+    "description": "Drive a real web browser to verify and interact with web pages: load a deployed account UI and confirm a change rendered, scrape a console the platform has no API for, capture screenshots as signoff evidence, and — with human approval — click/type/fill/select to complete a flow. Delegate here for any 'open this page and tell me / show me / do X on it' task. Page actions are approval-gated; it cannot log in with stored credentials yet.",
     "skillNames": [],
     "skillsSummary": "",
     "tools": [
@@ -106,8 +106,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   },
   "configuration": {
     "name": "Configuration",
-    "summary": "Configure a customer's platform: models, connections, feature flags, and guardrails.",
-    "description": "Configure a customer's platform: models, connections, feature flags, and guardrails. Delegate here to review or change how a customer's deployment is set up.",
+    "summary": "Configure an account's platform: models, connections, feature flags, and guardrails.",
+    "description": "Configure an account's platform: models, connections, feature flags, and guardrails. Delegate here to review or change how an account's platform is set up.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": [
@@ -133,11 +133,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "get_customer",
-        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+        "description": "Get the full record for one account: platform config, deliveries, solutions, its project, tickets, and recent interactions."
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all accounts in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to an account — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "publish_artifact",
@@ -147,8 +147,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   },
   "customer-context": {
     "name": "Customer Context",
-    "summary": "Keep the customer system of record current from meetings (Granola), email (Gmail), and Slack.",
-    "description": "Keep the customer system of record current from meetings (Granola), email (Gmail), and Slack. Delegate here to capture what happened with a customer and write it back as interactions, follow-ups, or record updates.",
+    "summary": "Keep the account system of record current from meetings (Granola), email (Gmail), and Slack.",
+    "description": "Keep the account system of record current from meetings (Granola), email (Gmail), and Slack. Delegate here to capture what happened with an account and write it back as interactions, follow-ups, or record updates.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": [
@@ -162,11 +162,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "build_workbook_spec",
-        "description": "Build the DETERMINISTIC workbook spec(s) for a customer per docs/data-model.md: for each <Domain>/Master.xlsx the exact sheet names, column headers, and data rows from the system of record (Tickets carries Tickets + Interactions + derived Interaction Digest; People carries Internal Staff + Customer Stakeholders). Returns JSON to serialize verbatim to .xlsx in the bash sandbox with openpyxl (one sheet per SheetSpec, columns as row 1), then publish via publish_artifact with the sandbox path. Do NOT invent or reorder columns."
+        "description": "Build the DETERMINISTIC workbook spec(s) for an account per docs/data-model.md: for each <Domain>/Master.xlsx the exact sheet names, column headers, and data rows from the system of record (Tickets carries Tickets + Interactions + derived Interaction Digest; People carries Internal Staff + Customer Stakeholders). Returns JSON to serialize verbatim to .xlsx in the bash sandbox with openpyxl (one sheet per SheetSpec, columns as row 1), then publish via publish_artifact with the sandbox path. Do NOT invent or reorder columns."
       },
       {
         "name": "create_ticket",
-        "description": "Create a ticket in the system of record for a customer — e.g. a customer doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the customer's fde_owner. Gated on approval since it writes to the shared tickets store."
+        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store."
       },
       {
         "name": "dataroom_append_jsonl",
@@ -190,19 +190,19 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "get_customer",
-        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+        "description": "Get the full record for one account: platform config, deliveries, solutions, its project, tickets, and recent interactions."
       },
       {
         "name": "granola_search_notes",
-        "description": "Search Granola meeting notes by keyword to pull recent customer-call context and action items."
+        "description": "Search Granola meeting notes by keyword to pull recent account-call context and action items."
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all accounts in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to an account — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "list_followups",
-        "description": "List open customer tickets/follow-ups across all customers (or one), sorted by the caller. Use this to prep the daily stand-up."
+        "description": "List open account tickets/follow-ups across all accounts (or one), sorted by the caller. Use this to prep the daily stand-up."
       },
       {
         "name": "list_members",
@@ -210,7 +210,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "list_syncs",
-        "description": "List the landed sync .jsonl streams in the data room under a (domain, source?, customer?) prefix. Read-only. Each returned path is one domain/source/customer/day raw stream produced by sync_pull."
+        "description": "List the landed sync .jsonl streams in the data room under a (domain, source?, customerId?) prefix. Read-only. Each returned path is one domain/source/customer/day raw stream produced by sync_pull."
       },
       {
         "name": "publish_artifact",
@@ -218,27 +218,27 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "reassign_owner",
-        "description": "Reassign a customer's durable account owner (updates the account's ownership and the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership."
+        "description": "Reassign the durable account owner of an account (updates the account's ownership and the internal_staff solution_engineer row) and logs the change as an interaction. Gated on approval since it changes account ownership."
       },
       {
         "name": "record_interaction",
-        "description": "Append ONE interaction (meeting, email, call, Slack thread) to a customer's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
+        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
       },
       {
         "name": "record_interactions",
-        "description": "Append MANY interactions to a single customer's history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same customer — e.g. backfilling a history or logging a batch of meetings/emails."
+        "description": "Append MANY interactions to a single account's history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same account — e.g. backfilling a history or logging a batch of meetings/emails."
       },
       {
         "name": "render_account_report",
-        "description": "Render a deterministic, self-contained HTML account report for one customer straight from the system of record (header, ranked open follow-ups, recent interactions, deployments, platform summary) and PUBLISH it via the private signed-link artifact path. Pass scope:'dataroom' for the all-customers data-room index instead. Returns the signed url + expiresAt."
+        "description": "Render a deterministic, self-contained HTML report for one account straight from the system of record (header, ranked open follow-ups, recent interactions, deliveries, platform summary) and PUBLISH it via the private signed-link artifact path. Pass scope:'dataroom' for the all-accounts data-room index instead. Returns the signed url + expiresAt."
       },
       {
         "name": "sync_pull",
-        "description": "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: Customers {manual_entry, email, slack, granola}; Platform {manual_entry, github, aws, slack, miro}; Deployments {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; Tickets {manual_entry, call, email, slack}; People {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth."
+        "description": "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth."
       },
       {
         "name": "upsert_customer",
-        "description": "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (platform, deployments, solutions, implementation, tickets, interactions) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth."
+        "description": "Create or update an account record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (`platform`, `deployments`, `solutions`, `implementation`, `tickets`, `interactions`) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth."
       },
       {
         "name": "web_search",
@@ -248,14 +248,14 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   },
   "data-migration": {
     "name": "Data Migration",
-    "summary": "Plan and execute customer data migrations and imports (legacy CRM exports, historical data, bulk records).",
-    "description": "Plan and execute customer data migrations and imports (legacy CRM exports, historical data, bulk records). Delegate here to move a customer's data into their platform safely.",
+    "summary": "Plan and execute account data migrations and imports (legacy CRM exports, historical data, bulk records).",
+    "description": "Plan and execute account data migrations and imports (legacy CRM exports, historical data, bulk records). Delegate here to move an account's data into their platform safely.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": [
       {
         "name": "create_ticket",
-        "description": "Create a ticket in the system of record for a customer — e.g. a customer doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the customer's fde_owner. Gated on approval since it writes to the shared tickets store."
+        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store."
       },
       {
         "name": "dataroom_list",
@@ -271,11 +271,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "get_customer",
-        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+        "description": "Get the full record for one account: platform config, deliveries, solutions, its project, tickets, and recent interactions."
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all accounts in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to an account — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "publish_artifact",
@@ -285,14 +285,14 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   },
   "deployment": {
     "name": "Deployment",
-    "summary": "Deploy and operate customer platforms: Vercel deployments, releases, rollbacks, and health checks.",
-    "description": "Deploy and operate customer platforms: Vercel deployments, releases, rollbacks, and health checks. Delegate here to ship or diagnose a customer environment.",
+    "summary": "Deploy and operate account platforms on Vercel: releases, rollbacks, and health checks.",
+    "description": "Deploy and operate account platforms on Vercel: releases, rollbacks, and health checks. Delegate here to ship or diagnose an account environment.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": [
       {
         "name": "get_signoff_status",
-        "description": "Read the deployment signoff chain for a deployment and report each party's status per infrastructure component, plus whether each component's four-party chain is complete (every party approved or waived). Parties with no record report as not_requested. Omit component to report every component that has signoff records."
+        "description": "Read the delivery signoff chain for a delivery and report each party's status per infrastructure component, plus whether each component's four-party chain is complete (every party approved or waived). Parties with no record report as not_requested. Omit component to report every component that has signoff records."
       },
       {
         "name": "publish_artifact",
@@ -300,14 +300,14 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "record_signoff",
-        "description": "Record an authoritative deployment signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deployments/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision."
+        "description": "Record an authoritative delivery signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deployments/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision."
       }
     ]
   },
   "evals": {
     "name": "Evals",
-    "summary": "Build, run, and improve eval suites and interpret regressions for a customer.",
-    "description": "Build, run, and improve eval suites and interpret regressions for a customer. Delegate here to check quality before/after a change or to investigate an eval score drop.",
+    "summary": "Build, run, and improve eval suites and interpret regressions for an account.",
+    "description": "Build, run, and improve eval suites and interpret regressions for an account. Delegate here to check quality before/after a change or to investigate an eval score drop.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": [
@@ -343,18 +343,18 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   },
   "follow-ups": {
     "name": "Follow Ups",
-    "summary": "Chase open customer follow-ups and prepare the daily stand-up summary.",
-    "description": "Chase open customer follow-ups and prepare the daily stand-up summary. Delegate here to draft follow-up emails/Slack nudges and to produce the ranked, per-customer stand-up brief.",
+    "summary": "Chase open account follow-ups and prepare the daily stand-up summary.",
+    "description": "Chase open account follow-ups and prepare the daily stand-up summary. Delegate here to draft follow-up emails/Slack nudges and to produce the ranked, per-account stand-up brief.",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": [
       {
         "name": "create_ticket",
-        "description": "Create a ticket in the system of record for a customer — e.g. a customer doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the customer's fde_owner. Gated on approval since it writes to the shared tickets store."
+        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store."
       },
       {
         "name": "create_triage_ticket",
-        "description": "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched customer — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the account owner and a human will assign it on approval."
+        "description": "Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') for a matched account — this is how autonomous flows like email intake propose a ticket WITHOUT auto-filing a live one. NOT approval-gated: it can only ever create a draft, never a live ticket, so a human still approves it into 'Open' via promote_ticket. Idempotent on externalId (pass the email Message-ID so re-runs don't duplicate). Fill the fields provisionally from the source (e.g. the email) — a human corrects them on approval. ticketOwnerEmail is optional: omit it if you can't resolve the account owner and a human will assign it on approval."
       },
       {
         "name": "dataroom_list",
@@ -374,7 +374,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "get_customer",
-        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+        "description": "Get the full record for one account: platform config, deliveries, solutions, its project, tickets, and recent interactions."
       },
       {
         "name": "get_oncall",
@@ -382,27 +382,27 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "granola_search_notes",
-        "description": "Search Granola meeting notes by keyword to pull recent customer-call context and action items."
+        "description": "Search Granola meeting notes by keyword to pull recent account-call context and action items."
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all accounts in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to an account — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "list_followups",
-        "description": "List open customer tickets/follow-ups across all customers (or one), sorted by the caller. Use this to prep the daily stand-up."
+        "description": "List open account tickets/follow-ups across all accounts (or one), sorted by the caller. Use this to prep the daily stand-up."
       },
       {
         "name": "list_triage_tickets",
-        "description": "List the triage queue — draft tickets awaiting approval (status 'Needs Triage') across all customers, e.g. those staged by email intake. Each carries the customer, summary, description, priority, owner, and source. Use this to review what to promote (approve) or resolve (discard)."
+        "description": "List the triage queue — draft tickets awaiting approval (status 'Needs Triage') across all accounts, e.g. those staged by email intake. Each carries the account, summary, description, priority, owner, and source. Use this to review what to promote (approve) or resolve (discard)."
       },
       {
         "name": "list_urgent_tickets",
-        "description": "List OPEN, URGENT tickets across all customers from the tickets store — P0-Critical/P1-High priority, SLA at-risk/breached, or past their due date — ranked most-urgent first. Each ticket carries urgencyRank, customer, summary, DESCRIPTION (the reported metric signal — uptime/accuracy/throughput incidents live here), next step, openedAt, and ageHours (the measured TAT, for reconciling against a TAT SLA commitment), plus due date. Use this to prioritize whoever most needs a change and to reconcile SLA breaches from ticket data."
+        "description": "List OPEN, URGENT tickets across all accounts from the tickets store — P0-Critical/P1-High priority, SLA at-risk/breached, or past their due date — ranked most-urgent first. Each ticket carries urgencyRank, account, summary, DESCRIPTION (the reported metric signal — uptime/accuracy/throughput incidents live here), next step, openedAt, and ageHours (the measured TAT, for reconciling against a TAT SLA commitment), plus due date. Use this to prioritize whoever most needs a change and to reconcile SLA breaches from ticket data."
       },
       {
         "name": "match_customer_by_email",
-        "description": "Deterministically match an inbound email sender to a customer — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on a customer's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage."
+        "description": "Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage."
       },
       {
         "name": "page_oncall",
@@ -418,26 +418,26 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "record_interaction",
-        "description": "Append ONE interaction (meeting, email, call, Slack thread) to a customer's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
+        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
       },
       {
         "name": "record_interactions",
-        "description": "Append MANY interactions to a single customer's history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same customer — e.g. backfilling a history or logging a batch of meetings/emails."
+        "description": "Append MANY interactions to a single account's history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same account — e.g. backfilling a history or logging a batch of meetings/emails."
       },
       {
         "name": "resolve_followup",
-        "description": "Mark a customer follow-up as done in the system of record."
+        "description": "Mark an account follow-up as done in the system of record."
       },
       {
         "name": "run_email_intake",
-        "description": "Run the FULL email intake in one deterministic step: read unread inbox mail (last `sinceDays` days), match each sender to a customer, and stage a Needs-Triage DRAFT ticket for every matched customer email (skips automated/no-reply; dedups by Message-ID). Returns { read, skipped, staged:[{ticketId,customerId,customerName,subject}], unmatched:[{sender,subject}] }. This IS the whole intake — do NOT also call email_list_inbox / match_customer_by_email / create_triage_ticket; just call this once and report its result."
+        "description": "Run the FULL email intake in one deterministic step: read unread inbox mail (last `sinceDays` days), match each sender to an account, and stage a Needs-Triage DRAFT ticket for every matched account email (skips automated/no-reply; dedups by Message-ID). Returns { read, skipped, staged:[{ticketId,customerId,customerName,subject}], unmatched:[{sender,subject}] }. This IS the whole intake — do NOT also call email_list_inbox / match_customer_by_email / create_triage_ticket; just call this once and report its result."
       }
     ]
   },
   "research": {
     "name": "Research",
     "summary": "Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders.",
-    "description": "Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders. Delegate here to enrich or (re)build a customer's data room: it pulls the current record, meeting notes, and the web, writes findings back, and produces the six per-section Excel workbooks (Customers, Platform, Deployments, Solutions, Implementation, Tickets).",
+    "description": "Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders. Delegate here to enrich or (re)build an account's data room: it pulls the current record, meeting notes, and the web, writes findings back, and produces the six per-section Excel workbooks (Customers, Platform, Deployments, Solutions, Implementation, Tickets).",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": [
@@ -451,7 +451,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "build_workbook_spec",
-        "description": "Build the DETERMINISTIC workbook spec(s) for a customer per docs/data-model.md: for each <Domain>/Master.xlsx the exact sheet names, column headers, and data rows from the system of record (Tickets carries Tickets + Interactions + derived Interaction Digest; People carries Internal Staff + Customer Stakeholders). Returns JSON to serialize verbatim to .xlsx in the bash sandbox with openpyxl (one sheet per SheetSpec, columns as row 1), then publish via publish_artifact with the sandbox path. Do NOT invent or reorder columns."
+        "description": "Build the DETERMINISTIC workbook spec(s) for an account per docs/data-model.md: for each <Domain>/Master.xlsx the exact sheet names, column headers, and data rows from the system of record (Tickets carries Tickets + Interactions + derived Interaction Digest; People carries Internal Staff + Customer Stakeholders). Returns JSON to serialize verbatim to .xlsx in the bash sandbox with openpyxl (one sheet per SheetSpec, columns as row 1), then publish via publish_artifact with the sandbox path. Do NOT invent or reorder columns."
       },
       {
         "name": "dataroom_append_jsonl",
@@ -471,23 +471,23 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "get_customer",
-        "description": "Get the full record for one customer: platform config, deployments, solutions, implementation, tickets, and recent interactions."
+        "description": "Get the full record for one account: platform config, deliveries, solutions, its project, tickets, and recent interactions."
       },
       {
         "name": "granola_search_notes",
-        "description": "Search Granola meeting notes by keyword to pull recent customer-call context and action items."
+        "description": "Search Granola meeting notes by keyword to pull recent account-call context and action items."
       },
       {
         "name": "list_customers",
-        "description": "List all customers in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to a customer — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
+        "description": "List all accounts in the system of record with tier, lifecycle stage, status, account owner, open ticket count, and — for matching an inbound sender to an account — companyDomain plus businessOwnerEmail/technicalOwnerEmail. Match an email sender by its domain against companyDomain, or its address against those contact emails."
       },
       {
         "name": "list_followups",
-        "description": "List open customer tickets/follow-ups across all customers (or one), sorted by the caller. Use this to prep the daily stand-up."
+        "description": "List open account tickets/follow-ups across all accounts (or one), sorted by the caller. Use this to prep the daily stand-up."
       },
       {
         "name": "list_syncs",
-        "description": "List the landed sync .jsonl streams in the data room under a (domain, source?, customer?) prefix. Read-only. Each returned path is one domain/source/customer/day raw stream produced by sync_pull."
+        "description": "List the landed sync .jsonl streams in the data room under a (domain, source?, customerId?) prefix. Read-only. Each returned path is one domain/source/customer/day raw stream produced by sync_pull."
       },
       {
         "name": "publish_artifact",
@@ -495,23 +495,23 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "record_interaction",
-        "description": "Append ONE interaction (meeting, email, call, Slack thread) to a customer's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
+        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
       },
       {
         "name": "record_interactions",
-        "description": "Append MANY interactions to a single customer's history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same customer — e.g. backfilling a history or logging a batch of meetings/emails."
+        "description": "Append MANY interactions to a single account's history in ONE call (one batched write), instead of calling record_interaction repeatedly. Use this whenever you have more than one interaction to log for the same account — e.g. backfilling a history or logging a batch of meetings/emails."
       },
       {
         "name": "render_account_report",
-        "description": "Render a deterministic, self-contained HTML account report for one customer straight from the system of record (header, ranked open follow-ups, recent interactions, deployments, platform summary) and PUBLISH it via the private signed-link artifact path. Pass scope:'dataroom' for the all-customers data-room index instead. Returns the signed url + expiresAt."
+        "description": "Render a deterministic, self-contained HTML report for one account straight from the system of record (header, ranked open follow-ups, recent interactions, deliveries, platform summary) and PUBLISH it via the private signed-link artifact path. Pass scope:'dataroom' for the all-accounts data-room index instead. Returns the signed url + expiresAt."
       },
       {
         "name": "sync_pull",
-        "description": "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: Customers {manual_entry, email, slack, granola}; Platform {manual_entry, github, aws, slack, miro}; Deployments {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; Tickets {manual_entry, call, email, slack}; People {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth."
+        "description": "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth."
       },
       {
         "name": "upsert_customer",
-        "description": "Create or update a customer record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (platform, deployments, solutions, implementation, tickets, interactions) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth."
+        "description": "Create or update an account record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (`platform`, `deployments`, `solutions`, `implementation`, `tickets`, `interactions`) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth."
       },
       {
         "name": "web_search",

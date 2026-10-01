@@ -32,14 +32,14 @@ export const SUBAGENT_LABELS: Record<string, string> = {
 /** One-line summary per subagent key. */
 export const SUBAGENT_SUMMARIES: Record<string, string> = {
   "app-author": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots).",
-  "browser": "Drive a real web browser to verify and interact with web pages: load a deployed customer UI and confirm a change rendered, scrape a console the platform has no API for, capture screenshots as signoff evidence, and — with human approval — click/type/fill/select to complete a flow.",
-  "configuration": "Configure a customer's platform: models, connections, feature flags, and guardrails.",
-  "customer-context": "Keep the customer system of record current from meetings (Granola), email (Gmail), and Slack.",
-  "data-migration": "Plan and execute customer data migrations and imports (legacy CRM exports, historical data, bulk records).",
-  "deployment": "Deploy and operate customer platforms: Vercel deployments, releases, rollbacks, and health checks.",
-  "evals": "Build, run, and improve eval suites and interpret regressions for a customer.",
-  "follow-ups": "Chase open customer follow-ups and prepare the daily stand-up summary.",
-  "research": "Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders.",
+  "browser": "Drive a real web browser to verify and interact with web pages: load a deployed {account} UI and confirm a change rendered, scrape a console the platform has no API for, capture screenshots as signoff evidence, and — with human approval — click/type/fill/select to complete a flow.",
+  "configuration": "Configure a {account}'s platform: models, connections, feature flags, and guardrails.",
+  "customer-context": "Keep the {account} system of record current from meetings (Granola), email (Gmail), and Slack.",
+  "data-migration": "Plan and execute {account} data migrations and imports (legacy CRM exports, historical data, bulk records).",
+  "deployment": "Deploy and operate {account} platforms on Vercel: releases, rollbacks, and health checks.",
+  "evals": "Build, run, and improve eval suites and interpret regressions for a {account}.",
+  "follow-ups": "Chase open {account} follow-ups and prepare the daily stand-up summary.",
+  "research": "Thoroughly research an {account} and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders.",
   "workflow-author": "Write, lint and review Ops Center workflow scripts."
 };
 
