@@ -192,28 +192,28 @@
   "testing": {
     "load": {
       "status": "pass",
-      "run_at": "2026-10-01T22:36:22+00:00",
-      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-10-01T223622Z.md"
+      "run_at": "2026-10-02T10:42:15+00:00",
+      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc-2026-10-02T104215Z.md"
     },
     "context": {
       "status": "skipped",
-      "run_at": "2026-10-01T22:34:47+00:00",
-      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-10-01T223447Z.md"
+      "run_at": "2026-10-02T10:40:45+00:00",
+      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc-2026-10-02T104045Z.md"
     },
     "functional": {
-      "status": "skipped",
-      "run_at": "2026-10-01T22:31:58+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-10-01T223158Z.md"
+      "status": "pass",
+      "run_at": "2026-10-02T10:37:09+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc-2026-10-02T103709Z.md"
     },
     "accessibility": {
-      "status": "skipped",
-      "run_at": "2026-10-01T22:38:22+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-10-01T223822Z.md"
+      "status": "pass",
+      "run_at": "2026-10-02T10:44:08+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc-2026-10-02T104408Z.md"
     },
     "responsiveness": {
-      "status": "skipped",
-      "run_at": "2026-10-01T22:38:40+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-10-01T223840Z.md"
+      "status": "pass",
+      "run_at": "2026-10-02T10:44:47+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc-2026-10-02T104447Z.md"
     }
   },
   "customer_id": "internal",
