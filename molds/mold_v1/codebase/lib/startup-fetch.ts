@@ -20,6 +20,7 @@
  * while it is still in flight).
  */
 import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "./browser-storage.ts";
+import { isWorkspaceRefusalBody, noteWorkspaceRefused } from "./workspace-refusal.ts";
 
 /** What every signed-in first screen reads. Each is a GET the server answers per person (and workspace). */
 export const STARTUP_READS = [
@@ -123,6 +124,9 @@ export function sharedGet(url: string, headers: Record<string, string>): Promise
     (a) => {
       entry.done = true;
       if (a.status < 200 || a.status >= 300) forget();
+      // The tab's workspace was refused (not a member, or no such workspace): the page says so and offers the person's
+      // own workspaces, instead of rendering lists that are not coming (lib/workspace-refusal.ts).
+      if (isWorkspaceRefusalBody(a.status, a.body)) noteWorkspaceRefused(org);
     },
     forget,
   );

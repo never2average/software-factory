@@ -486,6 +486,16 @@ jobs:
         if: always()
         run: npm run check:first-screen
 
+      # A workspace the server refuses (the tab is set to one the person is not a member of, or that does not exist:
+      # scripts/test-named-workspace-http-db.mjs, isolation job) is said in plain words. On the production build, signed
+      # in with the ops API faked to refuse as the server does: the page shows "You are not a member of this workspace"
+      # and the person's own workspaces, never another workspace's records under its name and never a blank page; it
+      # asks for nothing more by itself (no retry loop); choosing their own workspace opens the console in it and a
+      # link's `?org=` is not adopted again; the settings page does the same; a guest of one shared chat still reads it.
+      - name: A refused workspace is a plain message with the person's own workspaces (rendered)
+        if: always()
+        run: npm run check:workspace-refused
+
       # …and the rules that need no build: the no-database fallback is empty unless DEMO_SAMPLE_DATA=1 and never
       # writes to disk, seed:postgres refuses without DEMO_SAMPLE_DATA=1 or --sample (before connecting), and nothing
       # the model or a connector card reads names the sample file or its ids.
@@ -898,6 +908,20 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:shared-company-id-http-db
+
+      # A NAMED WORKSPACE IS NEVER SWAPPED FOR ANOTHER (found live, 2026-10-02): `x-ops-org` / `?org=` was "a
+      # preference", so a request naming a workspace the caller was not in — or one that did not exist — was answered
+      # from their first membership: one workspace's records under another's name, and writes landing in the wrong
+      # one. Over HTTP (reuses the relabelling build above): a member of A naming B, and a platform admin, are refused
+      # on reads and writes with nothing written anywhere; an unknown id is the same refusal byte for byte; a guest of
+      # one shared chat in B still opens it; no name still means the default; the workspace list holds only the
+      # caller's own. The agent's half (its own routes) is in test:session-guard above.
+      - name: A named workspace is served or refused, never swapped (Ops API, MCP, guest chat), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:named-workspace-http-db
 
 # NOT RUN HERE, deliberately:
 #

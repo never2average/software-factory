@@ -54,6 +54,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   /**
    * The caller's identity travels with the workspace here, because connector
    * visibility depends on BOTH: the policy compares owner_email against
@@ -118,6 +119,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   /**
    * The caller's identity travels with the workspace here, because connector
    * visibility depends on BOTH: the policy compares owner_email against

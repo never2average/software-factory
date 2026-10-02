@@ -63,6 +63,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function POST(request: NextRequest, context: RouteContext) {
   const org = await orgContextForRequest(request);
   if (!org) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (org instanceof Response) return org;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
 

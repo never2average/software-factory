@@ -11,7 +11,7 @@
  * Driven here without a browser: the <head> script (lib/startup-fetch.ts startupScript) in a VM with its own
  * localStorage / sessionStorage / location; the per-tab workspace helpers; the notification payload; the invite
  * link; and the wiring of the proxy, the page and the notification bridge. The agent side (a header naming a
- * workspace the caller belongs to is the request's workspace; one they do not belong to is ignored) is driven through
+ * workspace the caller belongs to is the request's workspace; one they do not belong to is refused) is driven through
  * the real guarded channel in scripts/test-session-guard.mjs.
  *
  *   npm run test:workspace-deep-link

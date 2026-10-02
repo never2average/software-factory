@@ -112,6 +112,7 @@ function healthFor(
 
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   /**
    * The caller's identity travels with the workspace here, because connector
    * visibility depends on BOTH: the policy compares owner_email against
@@ -147,6 +148,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   /**
    * The caller's identity travels with the workspace here, because connector
    * visibility depends on BOTH: the policy compares owner_email against

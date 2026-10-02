@@ -25,6 +25,7 @@ const bodySchema = z.strictObject({
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const { id } = await context.params;

@@ -38,6 +38,7 @@ async function caller(request: NextRequest) {
   if (!email) return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) } as const;
   if (!getOpsDb()) return { error: NextResponse.json({ error: "unavailable" }, { status: 503 }) } as const;
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return { error: ctx } as const;
   if (!ctx) return { error: NextResponse.json({ error: "workspace unavailable" }, { status: 503 }) } as const;
   return { email, orgId: ctx.orgId } as const;
 }

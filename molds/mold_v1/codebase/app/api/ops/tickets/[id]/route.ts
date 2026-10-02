@@ -22,6 +22,7 @@ interface RouteContext {
 export async function GET(request: NextRequest, context: RouteContext) {
   const octx = await orgContextForRequest(request);
   if (!octx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (octx instanceof Response) return octx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ found: false, ticket: null, todos: [] });
   const { id } = await context.params;
@@ -106,6 +107,7 @@ const patchSchema = z.strictObject({
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const octx = await orgContextForRequest(request);
   if (!octx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (octx instanceof Response) return octx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const { id } = await context.params;

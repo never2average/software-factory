@@ -73,6 +73,7 @@ function daysParam(url: URL): number {
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const url = new URL(request.url);
   const days = daysParam(url);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);

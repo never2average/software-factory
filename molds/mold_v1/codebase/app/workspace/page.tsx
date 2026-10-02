@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeftIcon } from "lucide-react";
 import { WorkspacePanel } from "@/app/_components/ops/workspace-panel";
+import { WorkspaceRefused, useWorkspaceRefused } from "@/app/_components/workspace-refused";
 import { STORAGE_KEYS, readStored } from "@/lib/browser-storage";
 
 /** The signed-in email, decoded from the Google ID token in localStorage. */
@@ -28,6 +29,9 @@ function emailFromToken(): string | undefined {
 export default function WorkspacePage() {
   const [email, setEmail] = useState<string | undefined>(undefined);
   useEffect(() => setEmail(emailFromToken()), []);
+  // The workspace this tab is set to is not this person's: say so and offer their own (lib/workspace-refusal.ts).
+  const workspaceRefused = useWorkspaceRefused();
+  if (workspaceRefused) return <WorkspaceRefused />;
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">

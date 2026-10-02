@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
   if (!(await caller(request))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   try {
     const rows = await withOrgRls(ctx.orgId, (tx) =>
       tx
@@ -65,6 +66,7 @@ export async function POST(request: NextRequest) {
   if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
@@ -98,6 +100,7 @@ export async function DELETE(request: NextRequest) {
   if (!(await caller(request))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
   try {

@@ -37,6 +37,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest, ctx: { params: Promise<{ email: string }> }) {
   const octx = await orgContextForRequest(request);
   if (!octx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (octx instanceof Response) return octx;
   const db = getOpsDb();
   const empty = {
     found: false,

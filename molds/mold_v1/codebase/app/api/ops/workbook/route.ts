@@ -118,6 +118,7 @@ async function readTable(orgId: string, table: WorkbookTable, query: (tx: Db) =>
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: NO_STORE });
+  if (ctx instanceof Response) return ctx;
   const hidden = workbookHidden();
   const listed = {
     account: new Set(listedOwnFields("account").map((f) => f.key)),

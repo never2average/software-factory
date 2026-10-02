@@ -48,6 +48,7 @@ type Check = {
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const { id } = await params;
   // A caller may only read the health of a workspace they belong to. Isolated
   // `personal:*` identities (fallback=true) must NOT reach another org here.

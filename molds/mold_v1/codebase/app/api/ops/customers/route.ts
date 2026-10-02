@@ -65,6 +65,7 @@ export async function GET(request: NextRequest) {
 async function listCustomers(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ customers: [] as CustomerOption[], items: [] as CustomerOption[] });
   try {
@@ -218,6 +219,7 @@ const upsertCustomerSchema = z.object({
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const parsed = upsertCustomerSchema.safeParse(await request.json().catch(() => null));

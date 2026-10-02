@@ -12,6 +12,8 @@ import { clearDesktopPrefs, forgetThisDevice } from "./desktop-notify";
 import { forgetQueueCache } from "./use-chat-queue";
 import { forgetStopState } from "./chat-stop-state";
 import { guestLinkOf, type GuestLink } from "@/lib/guest-invite-rules";
+import { clearWorkspaceRefusal } from "@/lib/workspace-refusal";
+import { WorkspaceRefused, useWorkspaceRefused } from "./workspace-refused";
 
 // Minimal typing for the Google Identity Services client we load at runtime.
 declare global {
@@ -162,6 +164,12 @@ export function AuthGate() {
   useEffect(() => setChatLink(chatLinkOnPage()), []);
   /** Whether this identity belongs to any workspace yet. */
   const [orgState, setOrgState] = useState<"unknown" | "ok" | "none">("unknown");
+  /**
+   * The workspace this tab is set to was REFUSED by the server (the person is not a member of it, or there is no
+   * such workspace). The server no longer answers from another workspace instead, so the page says so and offers the
+   * person's own. Not for a guest reading the one chat its link shares with them (lib/workspace-refusal.ts).
+   */
+  const workspaceRefused = useWorkspaceRefused();
   const tokenRef = useRef<string | null>(null);
   const buttonRef = useRef<HTMLDivElement>(null);
   const expiryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -181,8 +189,8 @@ export function AuthGate() {
    * the switcher said otherwise. opsFetch had this right; the raw fetches did
    * not, and there are more of them.
    *
-   * It is a preference, not a grant: resolveOrgForIdentity honours it only for
-   * a workspace the caller is actually a member of.
+   * It is a name, not a grant: resolveOrgForIdentity honours it only for
+   * a workspace the caller is actually a member of, and refuses any other.
    */
   const getAuthHeaders = useCallback((): Record<string, string> => {
     if (!tokenRef.current) return {};
@@ -192,7 +200,7 @@ export function AuthGate() {
       const org = readActiveOrg();
       if (org) headers["x-ops-org"] = org;
     } catch {
-      /* private mode — the server falls back to the default workspace */
+      /* private mode — no workspace is named, so the server uses the person's default one */
     }
     return headers;
   }, []);
@@ -290,6 +298,7 @@ export function AuthGate() {
     forgetStopState();
     // The chosen workspace is this person's: the next one to sign in on this browser starts from their own.
     writeActiveOrg(null);
+    clearWorkspaceRefusal();
     window.google?.accounts.id.disableAutoSelect();
     restoredRef.current = false;
     tokenRef.current = null;
@@ -548,6 +557,9 @@ export function AuthGate() {
         </main>
       );
     }
+    // The tab's workspace is not this person's: a plain message and their own workspaces, never another
+    // workspace's data under its name, never a blank or half-loaded console.
+    if (workspaceRefused) return <WorkspaceRefused onSignOut={signOut} />;
     return (
       <ChatShell
         getAuthHeaders={getAuthHeaders}

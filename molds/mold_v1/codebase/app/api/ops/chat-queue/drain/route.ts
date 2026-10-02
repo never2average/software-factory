@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
   if (!getOpsDb()) return NextResponse.json({ error: "no database" }, { status: 503 });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "workspace unavailable" }, { status: 503 });
+  if (ctx instanceof Response) return ctx;
   const body = (await request.json().catch(() => null)) as { sessionId?: string } | null;
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   if (!sessionId) return NextResponse.json({ error: "sessionId is required" }, { status: 400 });

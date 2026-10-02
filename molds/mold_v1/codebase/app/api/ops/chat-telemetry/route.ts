@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
   try {
     const ctx = await orgContextForRequest(request);
     if (!ctx) return NextResponse.json({ ok: true }, { status: 202 });
+    if (ctx instanceof Response) return ctx;
     const parsed = schema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return NextResponse.json({ ok: true }, { status: 202 });
     const db = getOpsDb();

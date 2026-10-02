@@ -65,6 +65,7 @@ type RouteContext = { params: Promise<{ name: string }> };
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) {
     return NextResponse.json({ error: "Database not configured" }, { status: 503 });
@@ -277,6 +278,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 export async function DELETE(request: NextRequest, context: RouteContext) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) {
     return NextResponse.json({ error: "Database not configured" }, { status: 503 });

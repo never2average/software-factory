@@ -59,7 +59,8 @@ export async function gateForSession(
   email: string,
   sessionId: string,
   right: SessionRight,
-  workspace: string,
+  /** The request's workspace, or null when it names one the caller is not in (then only `named` is read). */
+  workspace: string | null,
   /** The workspace the request names when it is not `workspace` (a guest's link): read for a guest only. */
   named: string | null = null,
 ): Promise<GateDecision & { ownership: SessionOwnership | null }> {

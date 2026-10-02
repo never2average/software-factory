@@ -202,9 +202,12 @@ const openStream = (token, c, org) =>
 const gateReads = async (token, c, org) => {
   const email = await verifySessionToken(token);
   if (!email) return false;
-  const ctx = await resolveOrgForIdentity(email, undefined, org ?? null);
-  const named = org && org !== ctx.orgId ? org : null;
-  return (await gateForSession(email, c.session, "read", ctx.orgId, named)).allow;
+  // As the web proxy asks it (app/eve/v1/session/[...segments]): the workspace the request is in, or — when it names
+  // one the caller is not a member of — no workspace of the caller's at all, only the one named (a guest's link).
+  const resolved = await resolveOrgForIdentity(email, undefined, org ?? null);
+  const refused = resolved?.refused === true;
+  const named = refused ? org : org && org !== resolved.orgId ? org : null;
+  return (await gateForSession(email, c.session, "read", refused ? null : resolved.orgId, named)).allow;
 };
 const reachesChat = async (token, c, org) => {
   if (!token) return false;
@@ -322,6 +325,9 @@ try {
     check(`${door}: no companies of the chat's workspace, nor of another workspace`, Boolean(token) && !JSON.stringify(custA).includes(ACME) && !JSON.stringify(custC).includes(ACME), [custA, custC]);
     const orgsList = token ? await itemsOf(orgsRoute, token, "/api/ops/orgs", A) : null;
     check(`${door}: the workspace switcher lists no workspace for the guest`, Boolean(token) && orgsList.status === 200 && orgsList.items.length === 0, orgsList);
+    // The guest names the chat's workspace on every request and is not a member of it. Its lists used to be answered
+    // from the guest's own (empty) place under that name; a named workspace is never swapped now, so they are refused.
+    check(`${door}: …and the workspace's lists are refused outright, not answered from anywhere else (403)`, Boolean(token) && [threads, sidebar, custA, custC].every((r) => r.status === 403), [threads?.status, sidebar?.status, custA?.status, custC?.status]);
   }
 
   console.log("\n4. Neither door makes the guest a member of anything");

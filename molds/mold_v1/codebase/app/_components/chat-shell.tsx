@@ -14,6 +14,7 @@ import type { CustomerListItem, CustomerListStatus } from "./customer-search";
 import type { OpsSection } from "./ops-center";
 import { activeOrg, opsFetch, switchWorkspace, workspaceOfLink } from "./ops/lib";
 import { sharedGet } from "@/lib/startup-fetch";
+import { isWorkspaceRefusalBody, noteChatRefused } from "@/lib/workspace-refusal";
 import {
   SNAPSHOT_VERSION,
   buildSnapshot,
@@ -412,6 +413,12 @@ function ChatShimmer() {
   );
 }
 
+/** Is this answer the server's "You are not a member of this workspace" (lib/workspace-refusal.ts)? */
+async function isWorkspaceRefusal(res: Response): Promise<boolean> {
+  if (res.status !== 403) return false;
+  return isWorkspaceRefusalBody(res.status, await res.clone().text().catch(() => ""));
+}
+
 export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: ChatShellProps) {
   noteRender("ChatShell");
   // Read once, on the first render: the cached list and the chat to reopen (see `bootFromCache`).
@@ -517,6 +524,15 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       try {
         // Shared with the starter cards' read of the same list, and started early by the <head> script.
         const res = await sharedGet("/api/ops/customers", getAuthHeaders());
+        // A guest of one shared chat is not in the chat's workspace: its list is refused, and for them that is an
+        // empty picker, not a failure. (Anyone else refused never gets here: the page shows the refusal instead.)
+        if (await isWorkspaceRefusal(res)) {
+          if (!cancelled) {
+            setCustomerOptions([]);
+            setCustomersStatus("ready");
+          }
+          return;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { customers?: CustomerListItem[] };
         if (cancelled) return;
@@ -656,7 +672,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
          * server-owned, but only once the server has actually spoken.
          */
         if (!res.ok) {
-          if (!cancelled) setListStale(true);
+          // Refused for a guest of one shared chat (not in its workspace): there is no list to be stale about.
+          if (!cancelled && !(await isWorkspaceRefusal(res))) setListStale(true);
           return;
         }
         const { items } = (await res.json()) as { items?: DbChatSession[] };
@@ -2023,6 +2040,12 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           headers: getAuthHeaders(),
           signal: ctrl.signal,
         });
+        // The chat this page's LINK names is refused outright (not this person's chat, here or as a guest): if the
+        // tab's workspace was refused as well, the page says "You are not a member of this workspace" rather than
+        // opening an empty chat (lib/workspace-refusal.ts). Any other chat opened later changes nothing.
+        if ((res.status === 404 || res.status === 403) && new URLSearchParams(window.location.search).get("chatSession") === sessionId) {
+          noteChatRefused();
+        }
         if (res.ok && res.body) {
           const reader = res.body.getReader();
           const dec = new TextDecoder();

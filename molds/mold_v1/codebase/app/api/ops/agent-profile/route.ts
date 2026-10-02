@@ -49,6 +49,7 @@ function mergeEffective(def: ProfileRow | undefined, mine: ProfileRow | undefine
 
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getOpsDb();
@@ -90,6 +91,7 @@ const putSchema = z.object({
 
 export async function PUT(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getOpsDb();

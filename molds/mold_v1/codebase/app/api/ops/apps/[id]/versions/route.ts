@@ -21,6 +21,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   // This route read tenant data with NO workspace resolved at all.
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ items: [] });
   const { id } = await context.params;

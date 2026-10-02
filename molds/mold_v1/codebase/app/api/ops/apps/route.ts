@@ -45,6 +45,7 @@ export function slugify(name: string): string {
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   if (!getOpsDb()) return NextResponse.json({ items: [] });
   try {
     const items = await withOrgRls(ctx.orgId, (tx) =>
@@ -59,6 +60,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   let body: unknown;

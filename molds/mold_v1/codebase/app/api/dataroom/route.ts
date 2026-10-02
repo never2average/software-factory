@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
   // their org's tree (onfinance → legacy root; others → orgs/{id}/…).
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const path = request.nextUrl.searchParams.get("path");
   const wantsBytes = request.nextUrl.searchParams.get("as") === "bytes";
 

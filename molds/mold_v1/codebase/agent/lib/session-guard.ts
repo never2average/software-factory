@@ -45,7 +45,7 @@
 import { createHash } from "node:crypto";
 import { routeAuth, verifyJwtEcdsa, type AuthFn } from "eve/channels/auth";
 import type { Channel, HttpRouteDefinition, RouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
-import { DEFAULT_ORG, orgForSession } from "./org-context.ts";
+import { DEFAULT_ORG, orgForSession, WorkspaceRefusedError } from "./org-context.ts";
 import { agentGateDb, recordChildSession } from "./session-owners.ts";
 import { isServicePrincipal, SERVICE_SCOPE_HEADER, sessionAuthForRequest, WORKSPACE_PIN_HEADER } from "./service-scope.ts";
 import { localDevAllowed } from "./local-dev.ts";
@@ -427,9 +427,11 @@ function startIndexOf(request: Request): number | undefined {
 
 /**
  * The workspace a per-session request is IN — the same resolution a new session's owner is recorded under
- * (`deps.workspaceFor`: the token's own `org` claim when its holder is a member, else the person's current
- * workspace), or, for a trusted service, the workspace it names (`x-workspace-scope`). Null when there is none (an
- * identity-less caller, a personal account): the gate then finds no session and refuses.
+ * (`deps.workspaceFor`: the workspace the token's `org` claim or the tab's `x-ops-org` names when its holder is a
+ * member, the person's current workspace when it names none), or, for a trusted service, the workspace it names
+ * (`x-workspace-scope`). Null when there is none (an identity-less caller, a personal account, a person naming a
+ * workspace they are not a member of — which is never swapped for their own): the gate then finds no session and
+ * refuses, and only a guest's read of the NAMED workspace's one shared chat can still be admitted (namedWorkspace).
  */
 async function requestWorkspace(auth: AuthContext, caller: GateCaller, headers: Headers, deps: GuardDeps): Promise<string | null> {
   if (caller.kind === "service") return caller.serviceScope ?? null;
@@ -545,9 +547,16 @@ function wrapCreate(route: HttpRouteDefinition, opts: GuardOptions, deps: GuardD
     try {
       orgId = await deps.workspaceFor(auth, request.headers);
     } catch (error) {
-      // resolveOrg refuses a personal account outright; the turn would have failed the same way.
+      // resolveOrg refuses a personal account outright; the turn would have failed the same way. A request that names
+      // a workspace its person is not a member of (x-ops-org, or the token's own `org`) is refused here too, with the
+      // web's words and code: nothing is started in any other workspace (org-context.ts WorkspaceRefusedError).
+      if (error instanceof WorkspaceRefusedError) logDenied("(new)", caller, "workspace-refused", CREATE_ROUTE);
       return Response.json(
-        { error: error instanceof Error ? error.message : "This account cannot start a conversation.", ok: false },
+        {
+          error: error instanceof Error ? error.message : "This account cannot start a conversation.",
+          ...(error instanceof WorkspaceRefusedError ? { code: error.code } : {}),
+          ok: false,
+        },
         { status: 403, headers: noStore },
       );
     }

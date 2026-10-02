@@ -119,9 +119,10 @@ export const WORKSPACE_PIN_HEADER = "x-ops-org";
  *
  * A person's {@link WORKSPACE_PIN_HEADER} becomes the token's `org` attribute — unless the token already names one
  * (a workflow step's or a queue delivery's token is bound to its workspace, and a header never overrides that). It is
- * a preference, not a grant: `orgForSession` honours an `org` only for a workspace the caller is a member of, and
- * otherwise resolves as before. Without it the agent used the workspace the person selected LAST, so a second tab on
- * another workspace had its chats recorded in — and refused by — the wrong one.
+ * a name, not a grant: `orgForSession` honours an `org` only for a workspace the caller is a member of, and REFUSES
+ * any other (it used to resolve the person's first membership instead, so a console set to a workspace they were not
+ * in started its chats in another one). Without the header the agent used the workspace the person selected LAST, so
+ * a second tab on another workspace had its chats recorded in — and refused by — the wrong one.
  */
 export function sessionAuthForRequest<T extends AuthLike>(caller: T | null, headers: Headers): T | null {
   if (!caller) return null;

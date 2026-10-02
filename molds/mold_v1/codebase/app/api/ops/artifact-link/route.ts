@@ -45,6 +45,7 @@ const LINK_TTL_MS = 60 * 60 * 1000;
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
 
   const token = blobToken();
   if (!token) {

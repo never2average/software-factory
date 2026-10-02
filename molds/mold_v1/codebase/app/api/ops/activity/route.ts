@@ -17,6 +17,7 @@ const ENTITIES = new Set(["task", "cycle", "deployment", "implementation"]);
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ items: [] });
   const url = new URL(request.url);

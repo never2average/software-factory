@@ -28,6 +28,7 @@ export async function PATCH(
 ) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const { id, email: raw } = await params;
   const email = decodeURIComponent(raw).toLowerCase();
   if (!canAccessOrg(ctx, id)) return NextResponse.json({ error: "Not your workspace." }, { status: 403 });
@@ -77,6 +78,7 @@ export async function DELETE(
 ) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const { id, email: raw } = await params;
   const email = decodeURIComponent(raw).toLowerCase();
   if (!canAccessOrg(ctx, id)) return NextResponse.json({ error: "Not your workspace." }, { status: 403 });

@@ -104,7 +104,10 @@ const agentGuard = readFileSync("agent/lib/session-guard.ts", "utf8");
 const agentChannel = readFileSync("agent/channels/eve.ts", "utf8");
 check(
   "per-session paths are gated, not blindly proxied",
-  /permitted\(sessionId, identity\.email, ctx\.orgId, segments\.slice\(1\), request\.method(, named)?\)/.test(gate),
+  // `workspace` is the request's workspace, or null when it names one the caller is not a member of: a named workspace
+  // is never swapped for the caller's own (lib/org-context.ts), so only the named one is read, as a guest.
+  /permitted\(sessionId, identity\.email, workspace, segments\.slice\(1\), request\.method, named\)/.test(gate) &&
+    /const workspace = isWorkspaceRefusal\(resolved\) \? null : resolved\.orgId;/.test(gate),
 );
 check(
   // Workspaces are not aware of each other: the proxy's gate reads the ONE workspace the request is in.

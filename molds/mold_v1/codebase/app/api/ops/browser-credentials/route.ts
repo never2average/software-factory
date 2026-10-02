@@ -39,6 +39,7 @@ export async function GET(request: NextRequest) {
   if (!(await caller(request))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   try {
     // Workspace-scoped. These rows are sealed site logins; until the tenancy
     // migration the table had no org_id, so every workspace listed every
@@ -76,6 +77,7 @@ export async function POST(request: NextRequest) {
   if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   if (!hasSecretsKey()) {
     return NextResponse.json(
       { error: "OPS_SECRETS_KEY is not configured — cannot store credentials securely." },
@@ -143,6 +145,7 @@ export async function DELETE(request: NextRequest) {
   if (!(await caller(request))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const url = new URL(request.url);
   const customerId = url.searchParams.get("customerId");
   const siteOrigin = url.searchParams.get("siteOrigin");

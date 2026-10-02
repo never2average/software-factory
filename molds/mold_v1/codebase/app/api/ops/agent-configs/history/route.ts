@@ -29,6 +29,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const agentKey = new URL(request.url).searchParams.get("agentKey");
   if (!agentKey) return NextResponse.json({ error: "agentKey is required." }, { status: 400 });
   const db = getOpsDb();
@@ -47,6 +48,7 @@ const postSchema = z.object({ agentKey: z.string().min(1).max(80), versionId: z.
 
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isOrgAdmin(ctx.role)) return NextResponse.json({ error: "Admin or owner only." }, { status: 403 });

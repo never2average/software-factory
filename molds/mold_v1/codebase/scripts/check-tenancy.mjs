@@ -778,11 +778,6 @@ const CROSS_WORKSPACE_KNOWN = [
       "so this is a point read instead of a sweep.",
   ],
   [
-    "app/api/ops/orgs/route.ts#GET",
-    "CONTROL PLANE: a PLATFORM ADMIN's workspace switcher lists workspace ids and names (platform staff, " +
-      "app/api/ops/platform-admins); a member sees only their own memberships. No tenant row is read.",
-  ],
-  [
     "setup/workspace-cli.mjs#<module>",
     "A DISPATCHER, not a reader: `import(target)` loads one of setup/'s own program files (COMMANDS: login, mcp, " +
       "install-skills), each of which is a request entry point scanned here in its own right.",

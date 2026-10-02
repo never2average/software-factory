@@ -41,6 +41,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   if (!blobToken()) return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
   const url = new URL(request.url);
   const path = url.searchParams.get("path");
@@ -78,6 +79,7 @@ const writeSchema = z.object({
 
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!blobToken()) return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });

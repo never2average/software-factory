@@ -24,6 +24,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     verifyOpsAuth(request.headers.get("authorization")),
   ]);
   if (!org || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (org instanceof Response) return org;
   const { runId } = await context.params;
   if (!runIdSchema.safeParse(runId).success) {
     return NextResponse.json({ error: "Invalid run id" }, { status: 400 });

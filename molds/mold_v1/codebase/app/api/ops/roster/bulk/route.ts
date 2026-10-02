@@ -52,6 +52,7 @@ const bodySchema = z.strictObject({
 
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isOrgAdmin(ctx.role)) return NextResponse.json({ error: "Admin or owner only." }, { status: 403 });

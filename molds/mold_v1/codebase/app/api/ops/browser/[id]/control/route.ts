@@ -46,6 +46,7 @@ async function sessionFor(orgId: string, id: string) {
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const org = await orgContextForRequest(request);
   if (!org) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (org instanceof Response) return org;
   const { id } = await ctx.params;
   if (!uuid.safeParse(id).success) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
@@ -93,6 +94,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const org = await orgContextForRequest(request);
   if (!org) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (org instanceof Response) return org;
   const { id } = await ctx.params;
   if (!uuid.safeParse(id).success) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 

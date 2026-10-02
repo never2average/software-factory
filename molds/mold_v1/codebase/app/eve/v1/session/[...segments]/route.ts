@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { gateForSession } from "@/lib/chat-session-access";
 import { rightFor } from "@/lib/chat-gate";
 import { verifyOpsAuth } from "@/lib/ops-auth";
-import { ORG_HEADER, resolveOrgForIdentity } from "@/lib/org-context";
+import { ORG_HEADER, isWorkspaceRefusal, resolveOrgForIdentity, workspaceRefusedResponse } from "@/lib/org-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,7 +87,7 @@ function forwardHeaders(request: NextRequest): Headers {
 async function permitted(
   sessionId: string,
   email: string,
-  workspace: string,
+  workspace: string | null,
   rest: string[],
   method: string,
   named: string | null = null,
@@ -126,13 +126,17 @@ async function proxy(request: NextRequest, segments: string[]): Promise<Response
    */
   const sessionId = segments[0];
   if (sessionId) {
-    // The ONE workspace this request is in (a pinned x-ops-org / ?org= only when the caller is a member of it). The
-    // gate reads that workspace and no other: a session recorded anywhere else is "unknown" here.
+    // The ONE workspace this request is in: the one it names (x-ops-org / ?org=) when the caller is a member of it,
+    // their default when it names none. The gate reads that workspace and no other: a session recorded anywhere else
+    // is "unknown" here. A workspace the request names but the caller is NOT in is never swapped for the caller's own
+    // (lib/org-context.ts): there is then no request workspace, only the named one — a guest's link to one shared
+    // chat, read-only — and anything else is refused by the agent, which resolves the same way.
     const asked = request.nextUrl.searchParams.get("org") || request.headers.get(ORG_HEADER) || null;
-    const ctx = await resolveOrgForIdentity(identity.email, identity.hostedDomain, asked);
-    // A workspace the request names but the caller is not in: a guest's link to one shared chat (read-only).
-    const named = asked && asked !== ctx.orgId ? asked : null;
-    const verdict = await permitted(sessionId, identity.email, ctx.orgId, segments.slice(1), request.method, named);
+    const resolved = await resolveOrgForIdentity(identity.email, identity.hostedDomain, asked);
+    if (isWorkspaceRefusal(resolved) && resolved.reason === "unavailable") return workspaceRefusedResponse(resolved);
+    const workspace = isWorkspaceRefusal(resolved) ? null : resolved.orgId;
+    const named = isWorkspaceRefusal(resolved) ? asked?.trim() || null : null;
+    const verdict = await permitted(sessionId, identity.email, workspace, segments.slice(1), request.method, named);
     if (verdict === "refuse") {
       return NextResponse.json({ error: "Session not found.", ok: false }, { status: 404 });
     }

@@ -29,6 +29,7 @@ const BUILTIN = BUILTIN_RECIPES.map((r, i) => ({ ...r, sortOrder: i, orgId: null
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db || !(await tenancyEnabled(db))) {
     return NextResponse.json({ items: BUILTIN });

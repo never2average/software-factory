@@ -27,6 +27,7 @@ const uuidSchema = z.uuid();
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const octx = await orgContextForRequest(request);
   if (!octx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (octx instanceof Response) return octx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const { id } = await context.params;

@@ -16,6 +16,7 @@
  */
 import "server-only";
 import { resolvableByDomain } from "@/lib/workspace-rules";
+import { WORKSPACE_REFUSED_CODE, WORKSPACE_REFUSED_MESSAGE, WORKSPACE_UNAVAILABLE_CODE } from "@/lib/workspace-refusal";
 
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { getOpsDb, withOrgRls, type Db } from "@/lib/ops-db";
@@ -66,6 +67,15 @@ export const ORG_ROLE_HEADER = "x-ops-org-role";
  */
 let tenancyLive: boolean | null = null;
 export async function tenancyEnabled(db: Db | null = getOpsDb()): Promise<boolean> {
+  return (await probeTenancy(db)) === true;
+}
+
+/**
+ * The probe behind {@link tenancyEnabled}: true / false, or null when the database could not answer. A failed probe
+ * is NOT cached: it used to be remembered as "no tenancy" for the life of the process, so one refused connection at
+ * start-up resolved every later caller to the default workspace.
+ */
+async function probeTenancy(db: Db | null): Promise<boolean | null> {
   if (tenancyLive !== null) return tenancyLive;
   if (!db) return false;
   try {
@@ -73,10 +83,10 @@ export async function tenancyEnabled(db: Db | null = getOpsDb()): Promise<boolea
       sql`SELECT to_regclass('public.orgs') AS reg`,
     );
     tenancyLive = Boolean(rows[0]?.reg);
+    return tenancyLive;
   } catch {
-    tenancyLive = false;
+    return null;
   }
-  return tenancyLive;
 }
 
 /** True for an OnFinance identity (member domain or address). */
@@ -96,6 +106,49 @@ function isolatedOrgFor(email: string, hostedDomain?: string | null): string {
 }
 
 /**
+ * A NAMED WORKSPACE IS NEVER SWAPPED FOR ANOTHER.
+ *
+ * A request may name the workspace it is about (`x-ops-org`, `?org=` — the console sends its tab's workspace on every
+ * call). It used to be "a preference, not a grant": a name the caller was not a member of, or that did not exist, was
+ * dropped and the request was served from the caller's FIRST membership instead. So a console set to workspace B (a
+ * stale choice, a link, a platform admin's list of every workspace) showed workspace A's records, chats and files
+ * under B's name, and a write made there landed in A.
+ *
+ * Now a name that cannot be honoured is REFUSED: {@link resolveOrgForIdentity} answers a {@link WorkspaceRefusal}
+ * and {@link orgContextForRequest} hands the route the 403 to return. An unknown id and a workspace the caller is not
+ * in read exactly the same (nothing says whether the id exists). With no name, the default-membership resolution
+ * below is unchanged.
+ */
+export { WORKSPACE_REFUSED_CODE, WORKSPACE_REFUSED_MESSAGE, WORKSPACE_UNAVAILABLE_CODE };
+
+export type WorkspaceRefusal = {
+  readonly refused: true;
+  /**
+   * `not-a-member`: the caller is not in the workspace named, or there is no such workspace (never told apart).
+   * `unavailable`: the lookup itself failed, so membership could be neither confirmed nor denied.
+   */
+  readonly reason: "not-a-member" | "unavailable";
+};
+
+export function isWorkspaceRefusal(value: unknown): value is WorkspaceRefusal {
+  return Boolean(value) && typeof value === "object" && (value as { refused?: unknown }).refused === true;
+}
+
+/** The response a route returns for a {@link WorkspaceRefusal}. One body for unknown and not-a-member. */
+export function workspaceRefusedResponse(refusal: WorkspaceRefusal): Response {
+  if (refusal.reason === "unavailable") {
+    return Response.json(
+      { error: "Your workspace could not be checked right now. Try again in a moment.", code: WORKSPACE_UNAVAILABLE_CODE },
+      { status: 503, headers: { "cache-control": "no-store", "retry-after": "5" } },
+    );
+  }
+  return Response.json(
+    { error: WORKSPACE_REFUSED_MESSAGE, code: WORKSPACE_REFUSED_CODE },
+    { status: 403, headers: { "cache-control": "no-store" } },
+  );
+}
+
+/**
  * Resolve the org for a verified identity. Order:
  *   1. If tenancy isn't live → DEFAULT_ORG (fail-safe; single-org world).
  *   2. Explicit membership row (email → org + role) wins — covers per-email
@@ -106,20 +159,38 @@ function isolatedOrgFor(email: string, hostedDomain?: string | null): string {
  *      data to outside Workspace accounts the auth gate now admits).
  *
  * `hostedDomain` is the token's `hd` claim (may be undefined for consumer
- * accounts); `preferOrg` lets a dual-org user pin a specific workspace.
+ * accounts); `preferOrg` is the workspace the request NAMES. When it names one,
+ * the answer is that workspace or a {@link WorkspaceRefusal} — never another.
  */
 export async function resolveOrgForIdentity(
   email: string,
   hostedDomain?: string | null,
   preferOrg?: string | null,
-): Promise<OrgContext> {
-  const db = getOpsDb();
-  if (!db || !(await tenancyEnabled(db))) {
-    return { orgId: DEFAULT_ORG, role: "member", fallback: true };
+): Promise<OrgContext | WorkspaceRefusal> {
+  const named = preferOrg?.trim() || null;
+  const { ctx, lookupFailed } = await resolveWorkspace(email, hostedDomain, named);
+  // The one rule: what the steps above resolved is served only when it IS the workspace named.
+  if (named && ctx.orgId !== named) {
+    return { refused: true, reason: lookupFailed ? "unavailable" : "not-a-member" };
   }
+  return ctx;
+}
+
+/** Steps 1-4 above. `named` only chooses AMONG the caller's memberships here; the caller checks the result. */
+async function resolveWorkspace(
+  email: string,
+  hostedDomain: string | null | undefined,
+  named: string | null,
+): Promise<{ ctx: OrgContext; lookupFailed: boolean }> {
+  const db = getOpsDb();
+  const live = await probeTenancy(db);
+  if (!db || !live) {
+    return { ctx: { orgId: DEFAULT_ORG, role: "member", fallback: true }, lookupFailed: live === null };
+  }
+  let lookupFailed = false;
   try {
-    // 2. Membership — the most specific signal. If the caller asked for a
-    //    particular org and is a member, honour it; else first membership.
+    // 2. Membership — the most specific signal. The workspace the request names
+    //    when the caller is a member of it; with no name, the first membership.
     const memberships = await db
       .select({ orgId: orgMembers.orgId, role: orgMembers.role })
       .from(orgMembers)
@@ -138,11 +209,10 @@ export async function resolveOrgForIdentity(
         asc(orgMembers.orgId),
       );
     if (memberships.length > 0) {
-      // An explicit ?org= / X-Ops-Org pick wins, but ONLY if they are actually
-      // a member of it — this is the switcher's mechanism, not a bypass.
-      const pick =
-        (preferOrg && memberships.find((m) => m.orgId === preferOrg)) || memberships[0];
-      return { orgId: pick.orgId, role: normalizeRole(pick.role), fallback: false };
+      // A name that is not one of these is NOT answered with memberships[0] any more: the first membership is
+      // returned here only so the caller's comparison refuses it (resolveOrgForIdentity).
+      const pick = (named && memberships.find((m) => m.orgId === named)) || memberships[0];
+      return { ctx: { orgId: pick.orgId, role: normalizeRole(pick.role), fallback: false }, lookupFailed };
     }
     // 3. Hosted-domain → org.
     if (hostedDomain) {
@@ -154,18 +224,20 @@ export async function resolveOrgForIdentity(
         // workspace, which is how self-serve orgs became unreachable.
         .where(and(eq(orgs.googleHostedDomain, hostedDomain), resolvableByDomain(orgs.status)))
         .limit(1);
-      if (byDomain) return { orgId: byDomain.orgId, role: "member", fallback: false };
+      if (byDomain) return { ctx: { orgId: byDomain.orgId, role: "member", fallback: false }, lookupFailed };
     }
   } catch {
-    // fall through to fail-safe
+    // fall through to fail-safe — and remember that membership was never read, so a NAMED workspace is answered
+    // "could not check" (503) rather than "not a member".
+    lookupFailed = true;
   }
   // 4. No membership, no domain match. OnFinance identities keep DEFAULT_ORG
   //    (they'd normally resolve above; this is belt-and-suspenders). Every other
   //    admitted work email gets an isolated empty workspace — NOT OnFinance's.
   if (isOnfinanceIdentity(email, hostedDomain)) {
-    return { orgId: DEFAULT_ORG, role: "member", fallback: true };
+    return { ctx: { orgId: DEFAULT_ORG, role: "member", fallback: true }, lookupFailed };
   }
-  return { orgId: isolatedOrgFor(email, hostedDomain), role: "member", fallback: true };
+  return { ctx: { orgId: isolatedOrgFor(email, hostedDomain), role: "member", fallback: true }, lookupFailed };
 }
 
 /**
@@ -175,6 +247,7 @@ export async function resolveOrgForIdentity(
  *
  *   const ctx = await orgContextForRequest(request);
  *   if (!ctx) return unauthorized();
+ *   if (ctx instanceof Response) return ctx;
  *   const { db, where, stamp } = orgDb(ctx);
  */
 /**
@@ -192,15 +265,30 @@ export async function workspacesOf(email: string): Promise<string[]> {
   return rows.map((r) => r.orgId);
 }
 
-export async function orgContextForRequest(request: Request): Promise<OrgContext | null> {
+/** The workspace a request names (`?org=` first, then the `x-ops-org` header), or null. */
+export function namedWorkspaceOf(request: Request): string | null {
+  const url = safeUrl(request.url);
+  return (url?.searchParams.get("org") || request.headers.get(ORG_HEADER) || "").trim() || null;
+}
+
+/**
+ * Three answers, and a route must handle each (the type makes it: a `Response` has no `orgId`):
+ *
+ *   const ctx = await orgContextForRequest(request);
+ *   if (!ctx) return unauthorized();              // no verified identity
+ *   if (ctx instanceof Response) return ctx;      // the request named a workspace it cannot be served from
+ *
+ * The `Response` is the refusal itself (403 `workspace_refused`, or 503 when membership could not be read): the
+ * request names a workspace the caller is not a member of, or one that does not exist, and it is NOT served from the
+ * caller's default workspace instead.
+ */
+export async function orgContextForRequest(request: Request): Promise<OrgContext | Response | null> {
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!identity) return null;
-  // A caller may pin a workspace with ?org= or an X-Ops-Org request header
-  // (dual-org operators assisting a tenant); membership is still required.
-  const url = safeUrl(request.url);
-  const preferOrg =
-    url?.searchParams.get("org") || request.headers.get(ORG_HEADER) || null;
-  return resolveOrgForIdentity(identity.email, identity.hostedDomain, preferOrg);
+  // A caller names a workspace with ?org= or an X-Ops-Org request header (the console's tab, a dual-org operator
+  // assisting a tenant). Membership is required — and a name without it is refused, not replaced.
+  const resolved = await resolveOrgForIdentity(identity.email, identity.hostedDomain, namedWorkspaceOf(request));
+  return isWorkspaceRefusal(resolved) ? workspaceRefusedResponse(resolved) : resolved;
 }
 
 function safeUrl(u: string): URL | null {

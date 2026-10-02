@@ -22,6 +22,7 @@ export const maxDuration = 300;
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
 
   const body = (await request.json().catch(() => null)) as { sinceDays?: number; max?: number } | null;
   const sinceDays = Math.min(Math.max(body?.sinceDays ?? 7, 1), 90);

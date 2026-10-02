@@ -12,6 +12,7 @@ interface RouteContext {
 async function forward(request: NextRequest, context: RouteContext) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const { id } = await context.params;
   return proxyTaskWorkflow(request, ctx, `/api/v1/workflow-definitions/${encodeURIComponent(id)}`);
 }

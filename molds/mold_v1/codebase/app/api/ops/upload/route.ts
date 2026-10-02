@@ -49,6 +49,7 @@ export async function POST(request: NextRequest) {
    * then reporting "not found" the instant the agent tried to read it.
    */
   const org = await orgContextForRequest(request);
+  if (org instanceof Response) return org;
   // No workspace, no write. This used to write with `org?.orgId`, and an undefined workspace meant the store's ROOT
   // — the prefix that holds every workspace's tree (lib/dataroom-keyspace.ts).
   if (!org?.orgId) {

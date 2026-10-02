@@ -79,6 +79,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   // names, last-4 hints and who-set-them-when were readable across workspaces
   // by anyone signed in — enough to fingerprint another tenant's stack.
   const octx = await orgContextForRequest(request);
+  if (octx instanceof Response) return octx;
   /**
    * The caller's identity travels with the workspace here, because connector
    * visibility depends on BOTH: the policy compares owner_email against
@@ -146,6 +147,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
 export async function PUT(request: NextRequest, context: RouteContext) {
   const octx = await orgContextForRequest(request);
+  if (octx instanceof Response) return octx;
   /**
    * The caller's identity travels with the workspace here, because connector
    * visibility depends on BOTH: the policy compares owner_email against
@@ -253,6 +255,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   // id was enough for any signed-in user to destroy another workspace's stored
   // credential — silently, since the audit row was written against that org.
   const octx = await orgContextForRequest(request);
+  if (octx instanceof Response) return octx;
   /**
    * The caller's identity travels with the workspace here, because connector
    * visibility depends on BOTH: the policy compares owner_email against

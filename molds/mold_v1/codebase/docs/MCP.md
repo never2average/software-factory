@@ -65,6 +65,10 @@ with `"type": "http"`) take `{"url": "…/api/mcp", "headers": {"Authorization":
 **3. Optional — pin a workspace.** Add a second header, `x-ops-org: <workspace id>`.
 Without it the tools act in your active workspace — the one the web app's switcher
 shows. `workspace_list` / `workspace_use` read and change that from the agent.
+The header names a workspace; it does not grant one. A workspace you are not a
+member of, or an id that does not exist, is refused on every call ("You are not a
+member of this workspace.", never told apart) — the tools are not answered from
+your active workspace instead.
 
 ## Authentication
 

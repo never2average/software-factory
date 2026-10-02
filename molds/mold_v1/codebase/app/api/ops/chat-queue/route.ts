@@ -62,6 +62,7 @@ async function caller(request: NextRequest) {
     return { error: NextResponse.json({ error: "The queue needs a database, and none is configured." }, { status: 503 }) } as const;
   }
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return { error: ctx } as const;
   if (!ctx) return { error: NextResponse.json({ error: "workspace unavailable" }, { status: 503 }) } as const;
   return { email, orgId: ctx.orgId } as const;
 }

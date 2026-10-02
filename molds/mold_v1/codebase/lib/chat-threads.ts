@@ -3,7 +3,7 @@ import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "./ops-db";
 import { verifyOpsAuth } from "./ops-auth";
-import { DEFAULT_ORG, ORG_HEADER, orgContextForRequest } from "./org-context";
+import { DEFAULT_ORG, isWorkspaceRefusal, namedWorkspaceOf, resolveOrgForIdentity } from "./org-context";
 import { guestInviteLive, normalEmail } from "./guest-invite-rules";
 
 /**
@@ -34,30 +34,31 @@ export type Access = {
 /**
  * WHICH WORKSPACE A THREAD REQUEST IS IN — and, for a guest's link, which one it NAMES.
  *
- * A chat lives in one workspace and is visible only in that workspace's context. `orgId` is the request's workspace
- * (orgContextForRequest: the tab's `x-ops-org` or `?org=`, honoured for a member). `named` is the workspace the request
- * names when the caller is NOT in it: a guest following the link of one chat shared with them. Every read below is in
- * one of those two workspaces, by the thread's id — nothing lists or sweeps workspaces (it used to: `acrossOrgsRls`
- * for every thread load).
+ * A chat lives in one workspace and is visible only in that workspace's context. `orgId` is the request's workspace:
+ * the one it names (the tab's `x-ops-org` or `?org=`) when the caller is a member of it, or the caller's default when
+ * it names none. `named` is the workspace the request names when the caller is NOT in it: a guest following the link
+ * of one chat shared with them — and then `orgId` is null. A named workspace is never swapped for another
+ * (lib/org-context.ts): such a request is not looked up in the caller's own workspace at all (it used to be, first),
+ * only in the one it names, by this thread's id, through the read-only guest path below. Every read is in one
+ * workspace — nothing lists or sweeps workspaces (it used to: `acrossOrgsRls` for every thread load).
  */
 export interface ThreadScope {
-  readonly orgId: string;
+  readonly orgId: string | null;
   readonly named: string | null;
 }
 
 const WORKSPACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,199}$/;
 
 export async function threadScope(request: Request): Promise<ThreadScope | null> {
-  const ctx = await orgContextForRequest(request);
-  if (!ctx) return null;
-  let asked: string | null = null;
-  try {
-    asked = new URL(request.url).searchParams.get("org");
-  } catch {
-    asked = null;
-  }
-  asked = (asked || request.headers.get(ORG_HEADER) || "").trim() || null;
-  return { orgId: ctx.orgId, named: asked && asked !== ctx.orgId && WORKSPACE_ID.test(asked) ? asked : null };
+  const identity = await verifyOpsAuth(request.headers.get("authorization"));
+  if (!identity) return null;
+  const asked = namedWorkspaceOf(request);
+  const resolved = await resolveOrgForIdentity(identity.email, identity.hostedDomain, asked);
+  if (!isWorkspaceRefusal(resolved)) return { orgId: resolved.orgId, named: null };
+  // Membership could not be read: neither a member's answer nor a guest's can be given. The route answers an error.
+  if (resolved.reason === "unavailable") throw new Error("workspace unavailable");
+  // Not a member of the workspace named (or there is none): the guest path only, in that workspace, or nothing.
+  return { orgId: null, named: asked && WORKSPACE_ID.test(asked) ? asked : null };
 }
 
 /** The rows of workspace `orgId` a thread read may see (the default workspace's pre-tenancy rows have no org). */
@@ -93,7 +94,8 @@ async function loadMember(_db: OpsDb, threadId: string, email: string, orgId: st
  * The GUEST path: when the thread is not in the request's workspace and the request NAMES another (its link), that
  * one is read — by this thread's id — and a live member row there admits the caller as a read-only GUEST of this one
  * chat (`role: "viewer"`, `guest: true`). A guest sees the chat and nothing else of that workspace. A member of the
- * named workspace is never a guest (orgContextForRequest put them IN it, so `named` is null for them).
+ * named workspace is never a guest (threadScope put them IN it, so `named` is null for them); and for a guest there
+ * is no request workspace at all (`scope.orgId` is null), so nothing of their own workspace is read under its name.
  *
  * The thread and member reads are issued CONCURRENTLY, as before: one speculative member read the owner throws away
  * is cheaper than a second serial round trip for everyone else.
@@ -104,11 +106,13 @@ export async function accessFor(
   email: string,
   scope: ThreadScope,
 ): Promise<Access | null> {
-  const [thread, member] = await Promise.all([
-    loadThread(db, threadId, scope.orgId),
-    loadMember(db, threadId, email, scope.orgId),
-  ]);
-  if (thread) return resolveAccess(db, thread, member, threadId, email);
+  if (scope.orgId) {
+    const [thread, member] = await Promise.all([
+      loadThread(db, threadId, scope.orgId),
+      loadMember(db, threadId, email, scope.orgId),
+    ]);
+    if (thread) return resolveAccess(db, thread, member, threadId, email);
+  }
   if (!scope.named) return null;
   const [guestThread, guestMember] = await Promise.all([
     loadThread(db, threadId, scope.named),

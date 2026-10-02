@@ -18,6 +18,8 @@
  */
 import { and, asc, eq, sql } from "drizzle-orm";
 import { resolvableByDomain } from "../../lib/workspace-rules.ts";
+// The same words and code the web answers with.
+import { WORKSPACE_REFUSED_CODE, WORKSPACE_REFUSED_MESSAGE } from "../../lib/workspace-refusal.ts";
 import { getDb, type Db } from "./db/index.ts";
 import { orgMembers, orgs } from "./db/schema.ts";
 import { inheritedScope } from "./session-scope.ts";
@@ -68,7 +70,9 @@ async function tenancyEnabled(db: Db): Promise<boolean> {
     );
     tenancyLive = Boolean((rows as unknown as { reg: string | null }[])[0]?.reg);
   } catch {
-    tenancyLive = false;
+    // Not cached: a probe that FAILED is not "no tenancy". Remembered, one refused connection at start-up resolved
+    // every later caller of this process to the default workspace (the web's probe had the same flaw).
+    return false;
   }
   return tenancyLive;
 }
@@ -221,6 +225,15 @@ async function workspaceExists(orgId: string): Promise<boolean> {
   }
 }
 
+/** The session names a workspace its person is not a member of, or one that does not exist. Never told apart. */
+export class WorkspaceRefusedError extends Error {
+  readonly code = WORKSPACE_REFUSED_CODE;
+  constructor() {
+    super(WORKSPACE_REFUSED_MESSAGE);
+    this.name = "WorkspaceRefusedError";
+  }
+}
+
 export async function orgForSession(ctx: SessionCtxLike | undefined): Promise<string> {
   const { email, hd, org } = callerFromCtx(ctx);
   /**
@@ -254,13 +267,19 @@ export async function orgForSession(ctx: SessionCtxLike | undefined): Promise<st
     }
   }
   /**
-   * A token that NAMES its workspace wins — once membership is confirmed.
+   * A PERSON'S NAMED WORKSPACE IS THAT WORKSPACE, OR A REFUSAL — NEVER ANOTHER.
    *
-   * This is how a workflow step says which workspace it is running for. Without
-   * it the step re-resolved from the operator's identity, so a run started in
-   * one workspace could read and write another the moment its operator belonged
-   * to two. Checking membership is what keeps it a scoping hint rather than an
-   * authorisation: a token cannot name a workspace its holder is not in.
+   * The session's auth names a workspace two ways: the token's own `org` claim (a workflow step's, a queue
+   * delivery's — mintSessionToken({ org })) or the console tab's `x-ops-org` (service-scope.ts
+   * sessionAuthForRequest). Checking membership is what keeps it a scoping hint rather than an authorisation: a
+   * token cannot name a workspace its holder is not in.
+   *
+   * It used to be "a preference": a name the person was not a member of (or that did not exist) fell through to
+   * identity resolution and the session ran in their FIRST membership — a chat started from a console set to
+   * workspace B read and wrote workspace A. Now the answer is the workspace named, when membership (or the
+   * hosted-domain rule) puts the person in it, and otherwise {@link WorkspaceRefusedError}: unknown and not-a-member
+   * read the same, and a lookup that failed is a refusal too (it cannot confirm). The web resolves the same way
+   * (lib/org-context.ts resolveOrgForIdentity).
    */
   if (org && email) {
     const db = getDb();
@@ -273,9 +292,12 @@ export async function orgForSession(ctx: SessionCtxLike | undefined): Promise<st
           .limit(1);
         if (member) return member.orgId;
       } catch {
-        /* fall through to identity resolution */
+        /* could not confirm: identity resolution below must land on the same workspace, or it is refused */
       }
     }
+    const resolved = await resolveOrg(email, hd);
+    if (resolved !== org) throw new WorkspaceRefusedError();
+    return resolved;
   }
   return resolveOrg(email, hd);
 }

@@ -384,7 +384,7 @@ try {
   /* ---- one person, two workspaces, two tabs ------------------------------------------------------------- */
 
   // A person in two workspaces with a tab open on each. The web app names the tab's workspace on every call
-  // (x-ops-org, honoured only for a member); the agent used to ignore it and resolve the workspace from whichever
+  // (x-ops-org, honoured only for a member, refused otherwise); the agent used to ignore it and resolve the workspace from whichever
   // the person last SELECTED, so the second tab's chats were recorded in — and gated by — the other workspace.
   console.log("\nOne person in two workspaces, two tabs: the agent uses the workspace the request names:");
   {
@@ -400,11 +400,39 @@ try {
     const streamIn = (headers) => call("GET", `/eve/v1/session/${encodeURIComponent(made.sessionId)}/stream`, { token: duo, headers });
     check("the B tab reads it (200)", (await streamIn(tabB)).status === 200);
     check("the A tab does not (404): it is B's chat", (await streamIn(tabA)).status === 404);
-    const [before] = await admin`SELECT count(*)::int AS n FROM agent_session_owners WHERE org_id = ${ORG_A}`;
+  }
+
+  /* ---- a named workspace is never swapped for another ----------------------------------------------------- */
+
+  // The header used to be "a preference": naming a workspace the caller was not in (or one that does not exist) was
+  // dropped, and the chat was started in — and read from — the caller's first membership. A console set to workspace A
+  // by someone who is only in B therefore ran B's agent under A's name. It is refused now: nothing is started
+  // anywhere, an unknown id reads the same, and the caller's own sessions are not served under the other name.
+  console.log("\nA person naming a workspace they are NOT a member of is refused, never served from their own:");
+  {
+    const tabA = { "x-ops-org": ORG_A };
+    const nowhere = { "x-ops-org": "no-such-org" };
+    const owners = async () => (await admin`SELECT count(*)::int AS n FROM agent_session_owners WHERE org_id IN (${ORG_A}, ${ORG_B})`)[0].n;
+    const started = sessions.size;
+    const before = await owners();
     const carolPin = await create(T.carol, "Carol names a workspace she is not in", tabA);
-    const [carolRec] = await admin`SELECT org_id FROM agent_session_owners WHERE session_id = ${carolPin.sessionId ?? ""}`;
-    const [after] = await admin`SELECT count(*)::int AS n FROM agent_session_owners WHERE org_id = ${ORG_A}`;
-    check("a header naming a workspace the caller is NOT in is ignored (Carol's chat stays in B)", carolRec?.org_id === ORG_B && after.n === before.n, carolRec);
+    check("starting a chat there is refused (403, the plain sentence and its code)", carolPin.status === 403 && carolPin.json?.code === "workspace_refused" && /not a member of this workspace/i.test(carolPin.json?.error ?? ""), [carolPin.status, carolPin.json]);
+    check("…and nothing was started: no session, no owner recorded in A or in her own workspace B", !carolPin.sessionId && sessions.size === started && (await owners()) === before, { sessions: sessions.size - started, owners: (await owners()) - before });
+    const unknown = await create(T.carol, "Carol names a workspace that does not exist", nowhere);
+    check("a workspace that does not exist is refused the same way (same status, same body)", unknown.status === carolPin.status && JSON.stringify(unknown.json) === JSON.stringify(carolPin.json) && sessions.size === started && (await owners()) === before, [unknown.status, unknown.json]);
+    // Her OWN chat, in her own workspace B.
+    const own = await create(T.carol, "Carol's own chat");
+    const [ownRec] = await admin`SELECT org_id FROM agent_session_owners WHERE session_id = ${own.sessionId ?? ""}`;
+    check("with no workspace named, the default still works: her chat starts in B (202)", own.status === 202 && ownRec?.org_id === ORG_B, [own.status, ownRec]);
+    const inTab = (headers) => call("GET", `/eve/v1/session/${encodeURIComponent(own.sessionId)}/stream`, { token: T.carol, headers });
+    check("…and she reads it with no workspace named, and naming B (200)", (await inTab({})).status === 200 && (await inTab({ "x-ops-org": ORG_B })).status === 200);
+    check("naming A, her own B chat is NOT served (404): B is never read under A's name", (await inTab(tabA)).status === 404);
+    check("…nor naming a workspace that does not exist (404)", (await inTab(nowhere)).status === 404);
+    const delivered = sessions.get(own.sessionId).delivered.length;
+    const write = await call("POST", `/eve/v1/session/${encodeURIComponent(own.sessionId)}`, { token: T.carol, headers: tabA, body: { message: "written under A's name", continuationToken: own.ct } });
+    check("…and a message sent naming A is refused (404), nothing delivered into her B chat", write.status === 404 && sessions.get(own.sessionId).delivered.length === delivered, [write.status, sessions.get(own.sessionId).delivered.length - delivered]);
+    const stop = await call("POST", `/eve/v1/session/${encodeURIComponent(own.sessionId)}/cancel`, { token: T.carol, headers: tabA, body: {} });
+    check("…and so is a cancel (404, turn untouched)", stop.status === 404 && sessions.get(own.sessionId).cancelled === 0, stop.status);
   }
 
   /* ---- an outside guest of one shared chat ---------------------------------------------------------------- */

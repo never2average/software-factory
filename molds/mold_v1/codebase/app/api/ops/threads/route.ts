@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
   if (!email) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   const org = await orgContextForRequest(request);
   if (!org) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
+  if (org instanceof Response) return org;
   const orgScope = org.orgId === DEFAULT_ORG
     ? or(eq(chatThreads.orgId, org.orgId), isNull(chatThreads.orgId))
     : eq(chatThreads.orgId, org.orgId);
@@ -193,6 +194,7 @@ export async function GET(request: NextRequest) {
   if (!email) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   const org = await orgContextForRequest(request);
   if (!org) return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
+  if (org instanceof Response) return org;
   const orgScope = org.orgId === DEFAULT_ORG
     ? or(eq(chatThreads.orgId, org.orgId), isNull(chatThreads.orgId))
     : eq(chatThreads.orgId, org.orgId);

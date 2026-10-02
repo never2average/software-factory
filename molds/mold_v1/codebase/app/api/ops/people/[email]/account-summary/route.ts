@@ -146,6 +146,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ email:
   // wrote rows owned by whatever the column defaulted to.
   const org = await orgContextForRequest(request);
   if (!org) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (org instanceof Response) return org;
   const email = decodeURIComponent((await ctx.params).email).trim().toLowerCase();
   const parsed = contextSchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {

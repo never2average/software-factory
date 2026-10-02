@@ -64,6 +64,7 @@ export async function GET(request: NextRequest) {
   if (!db) return NextResponse.json({ snapshot: null });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "workspace unavailable" }, { status: 503 });
+  if (ctx instanceof Response) return ctx;
   const sessionId = new URL(request.url).searchParams.get("session");
   if (!sessionId) return NextResponse.json({ error: "session required" }, { status: 400 });
 
@@ -123,6 +124,7 @@ export async function POST(request: NextRequest) {
   if (!db) return NextResponse.json({ ok: false, reason: "no-store" });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ ok: false }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ ok: false, error: "Invalid" }, { status: 400 });
   const d = parsed.data;
@@ -198,6 +200,7 @@ export async function DELETE(request: NextRequest) {
   if (!db) return NextResponse.json({ ok: false });
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ ok: false }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const sessionId = new URL(request.url).searchParams.get("session");
   if (!sessionId) return NextResponse.json({ ok: false, error: "session required" }, { status: 400 });
   try {

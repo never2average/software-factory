@@ -25,6 +25,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ items: [] });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db || !(await tenancyEnabled(db))) return NextResponse.json({ items: [], canEdit: isOrgAdmin(ctx.role) });
   try {
@@ -55,6 +56,7 @@ const putSchema = z.object({
 
 export async function PUT(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isOrgAdmin(ctx.role)) return NextResponse.json({ error: "Admin or owner only." }, { status: 403 });

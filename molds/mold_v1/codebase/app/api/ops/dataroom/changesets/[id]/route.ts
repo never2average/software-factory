@@ -22,6 +22,7 @@ const uuidSchema = z.uuid();
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const { id } = await context.params;
   if (!uuidSchema.safeParse(id).success) {
     return NextResponse.json({ error: "Invalid changeset id" }, { status: 400 });
@@ -50,6 +51,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   // Reverting rewrites many files at once. That is an administrative act on the

@@ -48,6 +48,7 @@ async function roster(
 
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ online: [] }, { status: 200 });
   const db = getOpsDb();
@@ -73,6 +74,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
+  if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ online: [] }, { status: 200 });
   const db = getOpsDb();

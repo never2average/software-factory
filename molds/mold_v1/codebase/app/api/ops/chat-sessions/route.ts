@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
   // could not read it, not that they have no chats.
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "workspace unavailable" }, { status: 503 });
+  if (ctx instanceof Response) return ctx;
   try {
     // Named columns, and `client_markers` only once it exists (lib/chat-sessions-mirror):
     // this route must work on either side of migration 0020.
@@ -181,6 +182,7 @@ const bodySchema = z.object({ sessions: z.array(sessionSchema).max(200) });
 export async function POST(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ ok: false }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const email = (await callerEmail(request))?.toLowerCase();
   const db = getOpsDb();
   if (!db || !email) return NextResponse.json({ ok: false });
@@ -223,6 +225,7 @@ export async function DELETE(request: NextRequest) {
   // one it was started in right through to its removal.
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ ok: false }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
   try {

@@ -18,6 +18,7 @@ import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { STORAGE_KEYS, readActiveOrg, readStored, removeStored, writeActiveOrg, writeStored } from "@/lib/browser-storage";
 import { an, W } from "@/lib/ui-words";
 import { isStartupRead, sharedGet } from "@/lib/startup-fetch";
+import { isWorkspaceRefusalBody, noteWorkspaceRefused } from "@/lib/workspace-refusal";
 
 /** What a TODO is filed under, as a person reads it — only the containers whose data-room domain this deployment
  *  shows, in the profile's words ("deployment/implementation" by default). */
@@ -539,7 +540,13 @@ export async function opsFetchRaw(path: string, init?: RequestInit): Promise<Res
   if (token) headers.authorization = `Bearer ${token}`;
   const org = readActiveOrg();
   if (org) headers["x-ops-org"] = org;
-  return fetch(path, { ...init, headers });
+  const res = await fetch(path, { ...init, headers });
+  // A refused workspace is noted for the page (lib/workspace-refusal.ts); the body is left for the caller.
+  if (res.status === 403) {
+    const body = await res.clone().text().catch(() => "");
+    if (isWorkspaceRefusalBody(res.status, body)) noteWorkspaceRefused(org);
+  }
+  return res;
 }
 
 export async function opsFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -554,9 +561,10 @@ export async function opsFetch<T>(path: string, init?: RequestInit): Promise<T> 
    * one. Attached HERE rather than at each call site so a new ops surface
    * cannot forget it and silently read the wrong tenant.
    *
-   * It is a preference, not a grant: `resolveOrgForIdentity` honours it only if
-   * the caller is actually a member of that workspace, so a hand-edited value
-   * in localStorage buys nothing.
+   * It is a name, not a grant: `resolveOrgForIdentity` honours it only if
+   * the caller is actually a member of that workspace, and refuses the request
+   * otherwise (it is never served from another workspace), so a hand-edited
+   * value in localStorage buys nothing.
    */
   const org = readActiveOrg();
   if (org) headers["x-ops-org"] = org;
@@ -573,6 +581,10 @@ export async function opsFetch<T>(path: string, init?: RequestInit): Promise<T> 
     /* non-JSON error body */
   }
   if (!res.ok) {
+    // The tab's workspace is one this person is not a member of (or it does not exist): the server no longer
+    // answers from another workspace instead. Noted once for the page, which shows a plain message and the
+    // person's own workspaces (lib/workspace-refusal.ts); this call still fails with the server's sentence.
+    if (isWorkspaceRefusalBody(res.status, data)) noteWorkspaceRefused(org);
     const msg =
       data && typeof data === "object" && "error" in data
         ? String((data as { error: unknown }).error)

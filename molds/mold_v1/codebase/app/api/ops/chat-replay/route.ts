@@ -65,6 +65,7 @@ export async function GET(request: NextRequest) {
   }
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "workspace unavailable" }, { status: 503 });
+  if (ctx instanceof Response) return ctx;
 
   const params = new URL(request.url).searchParams;
   const sessionId = params.get("session");

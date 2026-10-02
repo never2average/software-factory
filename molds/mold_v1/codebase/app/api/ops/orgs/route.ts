@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorMessage, errorText } from "@/lib/ops-errors";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
 import { orgMembers, orgs, platformAdmins } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -15,8 +15,8 @@ export const dynamic = "force-dynamic";
 /**
  * Org (workspace) provisioning.
  *
- *  GET  /api/ops/orgs  — the workspaces the caller belongs to (all of them for a
- *                        platform admin). Powers the workspace switcher.
+ *  GET  /api/ops/orgs  — the workspaces the caller belongs to, and only those
+ *                        (a platform admin included). Powers the workspace switcher.
  *  POST /api/ops/orgs  — create a workspace (PLATFORM ADMIN ONLY). Writes the
  *                        org row + the creator as owner, and derives the slug.
  *
@@ -54,14 +54,19 @@ export async function GET(request: NextRequest) {
     });
   }
   try {
+    /**
+     * ONLY THE WORKSPACES THE CALLER CAN OPEN — for a platform admin too.
+     *
+     * A platform admin used to be answered with EVERY workspace, each labelled role "admin". But a platform admin
+     * may create workspaces; they are not thereby a member of any, and every route that opens one requires
+     * membership. So the console could be set to a workspace they merely saw in this list, and (until
+     * lib/org-context.ts stopped swapping a named workspace for the caller's first membership) it then showed their
+     * own workspace's records under the other one's name. Nothing in the product reads this as "all workspaces":
+     * the sign-in gate, onboarding, the switcher's logos and the settings page all read it as "mine". So that is
+     * what it is, with the caller's real role in each; `platformAdmin` still says who may create one. It is also one
+     * fewer place a person's request lists other workspaces.
+     */
     const admin = await isPlatformAdmin(db, identity.email);
-    if (admin) {
-      const rows = await db.select().from(orgs).orderBy(desc(orgs.createdAt));
-      return NextResponse.json({
-        items: rows.map((o) => ({ orgId: o.orgId, name: o.name, role: "admin", status: o.status, branding: o.branding ?? null })),
-        platformAdmin: true,
-      });
-    }
     const email = identity.email.toLowerCase();
     let memberships = await db
       .select({ orgId: orgMembers.orgId, role: orgMembers.role })
@@ -104,6 +109,7 @@ export async function GET(request: NextRequest) {
     const roleOf = new Map(memberships.map((m) => [m.orgId, m.role]));
     return NextResponse.json({
       items: rows.map((o) => ({ orgId: o.orgId, name: o.name, role: roleOf.get(o.orgId) ?? "member", status: o.status, branding: o.branding ?? null })),
+      ...(admin ? { platformAdmin: true } : {}),
     });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });

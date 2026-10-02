@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
   // are guessable enough that "someone else's run names" was one request away.
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ labels: {} });
   const raw = request.nextUrl.searchParams.get("keys") ?? "";
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
   // run it names.
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const parsed = postSchema.safeParse(await request.json().catch(() => null));
