@@ -20,6 +20,7 @@ import {
   matchDataroomPath,
   validateDataroomPath,
 } from "../agent/lib/dataroom-store.ts";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 const SELF = fileURLToPath(import.meta.url);
 
@@ -29,31 +30,31 @@ function assert(condition, message) {
 
 // Representative dm.md paths — at least one per canonical domain.
 const PATHS = {
-  customerContext: "Customers/acme-bank/context.md",
-  customerInteractions: "Customers/acme-bank/interactions.jsonl", // Customers jsonl
-  platformDesign: "Platform/2026.06.3/design_decisions/tenancy.schemas.json",
-  platformChangelog: "Platform/2026.06.3/2026-06-14_changelog_manager.md",
+  customerContext: `${FOLDER.accounts}/acme-bank/context.md`,
+  customerInteractions: `${FOLDER.accounts}/acme-bank/interactions.jsonl`, // Customers jsonl
+  platformDesign: `${FOLDER.platform}/2026.06.3/design_decisions/tenancy.schemas.json`,
+  platformChangelog: `${FOLDER.platform}/2026.06.3/2026-06-14_changelog_manager.md`,
   deploymentSignoff:
-    "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+    `${FOLDER.deliveries}/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md`,
   deploymentPipeline:
-    "Deployments/acme-bank/2026.06.3/platform/pipelines/doc-ingest/pipeline_config.json",
-  solutionRecipe: "Solutions/2026.06.3/agents/kyc-review/recipe.md",
-  solutionDataset: "Solutions/2026.06.3/agents/kyc-review/evals/dataset.jsonl", // Solutions jsonl
-  implementationConfig: "Implementation/acme-bank/pipelines/doc-ingest/pipeline_config.json",
-  ticketsBug: "Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl", // Tickets jsonl
-  personIdentity: "People/jane-doe/identity.json",
-  personAgreement: "People/jane-doe/agreements/nda-2026.pdf.md",
+    `${FOLDER.deliveries}/acme-bank/2026.06.3/platform/pipelines/doc-ingest/pipeline_config.json`,
+  solutionRecipe: `${FOLDER.solutions}/2026.06.3/agents/kyc-review/recipe.md`,
+  solutionDataset: `${FOLDER.solutions}/2026.06.3/agents/kyc-review/evals/dataset.jsonl`, // Solutions jsonl
+  implementationConfig: `${FOLDER.projects}/acme-bank/pipelines/doc-ingest/pipeline_config.json`,
+  ticketsBug: `${FOLDER.tickets}/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl`, // Tickets jsonl
+  personIdentity: `${FOLDER.people}/jane-doe/identity.json`,
+  personAgreement: `${FOLDER.people}/jane-doe/agreements/nda-2026.pdf.md`,
 };
 
 const INVALID_PATHS = [
   "../etc/passwd",
   "/etc/passwd",
-  "Customers/../Platform/x.md",
-  "Customers/acme-bank/context.txt", // not a dm.md leaf
+  `${FOLDER.accounts}/../${FOLDER.platform}/x.md`,
+  `${FOLDER.accounts}/acme-bank/context.txt`, // not a dm.md leaf
   "Unknown/foo.md", // not one of the 7 domains
-  "Tickets/wrong_category/acme-bank/2026.06.3/tickets_1.jsonl", // bad ticket folder
-  "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/nonsense.md", // bad signoff role
-  "Customers/acme-bank", // folder, not a file
+  `${FOLDER.tickets}/wrong_category/acme-bank/2026.06.3/tickets_1.jsonl`, // bad ticket folder
+  `${FOLDER.deliveries}/acme-bank/2026.06.3/infrastructure/inference/signoff/nonsense.md`, // bad signoff role
+  `${FOLDER.accounts}/acme-bank`, // folder, not a file
   "",
 ];
 
@@ -71,7 +72,7 @@ async function phaseSeed() {
     assert(isValidDataroomPath(p), `expected valid: ${p}`);
   }
   assert(
-    matchDataroomPath(PATHS.ticketsBug)?.domain === "Tickets",
+    matchDataroomPath(PATHS.ticketsBug)?.domain === FOLDER.tickets,
     "ticket path should resolve to the Tickets domain",
   );
   for (const p of INVALID_PATHS) {
@@ -89,7 +90,7 @@ async function phaseSeed() {
   const store = makeStore();
 
   // Invalid paths must be rejected before any I/O.
-  await store.write("Customers/../Platform/x.md", "nope").then(
+  await store.write(`${FOLDER.accounts}/../${FOLDER.platform}/x.md`, "nope").then(
     () => assert(false, "write to a traversal path must reject"),
     (error) => assert(error instanceof DataroomPathError, "write rejects with DataroomPathError"),
   );
@@ -134,7 +135,7 @@ async function phaseSeed() {
   // --- read-backs ---
   const context = await store.read(PATHS.customerContext);
   assert(context?.includes("Acme Bank"), "context.md round-trips");
-  assert((await store.read("Customers/no-such-customer/context.md")) === null, "missing → null");
+  assert((await store.read(`${FOLDER.accounts}/no-such-customer/context.md`)) === null, "missing → null");
   const interactions = await store.readJsonl(PATHS.customerInteractions);
   assert(interactions.length === 1 && interactions[0].seq === 1, "jsonl round-trips");
 
@@ -147,12 +148,12 @@ async function phaseSeed() {
       assert(all.includes(p), `list() must include written file ${p}`);
     }
   }
-  const customersOnly = await store.list("Customers");
+  const customersOnly = await store.list(FOLDER.accounts);
   assert(
-    customersOnly.length === 2 && customersOnly.every((p) => p.startsWith("Customers/")),
+    customersOnly.length === 2 && customersOnly.every((p) => p.startsWith(`${FOLDER.accounts}/`)),
     "domain-prefixed list returns only that domain",
   );
-  const boundary = await store.list("Customers/acme");
+  const boundary = await store.list(`${FOLDER.accounts}/acme`);
   assert(boundary.length === 0, "list uses directory-boundary prefix semantics");
 
   console.log(`seed   ok (${all.length} files across 7 domains)`);

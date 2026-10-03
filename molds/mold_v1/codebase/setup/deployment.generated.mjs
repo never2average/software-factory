@@ -23,6 +23,16 @@ export const DEPLOYMENT = {
     "secondary_owner": "Secondary owner",
     "account_context": "Account context"
   },
+  "folders": {
+    "accounts": "Accounts",
+    "platform": "Platform",
+    "deliveries": "Deliveries",
+    "solutions": "Solutions",
+    "projects": "Projects",
+    "tickets": "Tickets",
+    "people": "People",
+    "uploads": "Uploads"
+  },
   "commands": {
     "login": "workspace-login",
     "mcp": "workspace-mcp",
@@ -43,4 +53,4 @@ export const DEPLOYMENT = {
   "configDir": "workspace-mcp",
   "connect": null
 };
-export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;
+export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, folders, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;

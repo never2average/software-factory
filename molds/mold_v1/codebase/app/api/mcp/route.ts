@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
+import { FOLDER, fillFolders } from "@/agent/lib/dataroom-folders";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import { handleMcpRequest, type McpDeps } from "@/lib/mcp-server";
 import { verifyOpsAuth } from "@/lib/ops-auth";
@@ -24,8 +25,10 @@ export const maxDuration = 60;
 const deps: McpDeps = {
   productName: PRODUCT_NAME,
   verifyAuth: (authorization) => verifyOpsAuth(authorization),
-  // dm.md is traced into the function by next.config.ts (outputFileTracingIncludes).
-  readSpec: () => readFile(join(process.cwd(), "dm.md"), "utf8"),
+  // dm.md is traced into the function by next.config.ts (outputFileTracingIncludes). It names each domain by a
+  // placeholder; a caller reads the folder THIS deployment stores it under, which is what a tool's path takes.
+  readSpec: async () => fillFolders(await readFile(join(process.cwd(), "dm.md"), "utf8")),
+  folders: FOLDER,
   // The fields this deployment's profile adds to the two record areas and to the account record: the write tools'
   // `custom` input names them.
   customFields: {

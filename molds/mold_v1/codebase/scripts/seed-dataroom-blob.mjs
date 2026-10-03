@@ -17,6 +17,7 @@
 import { getDataroomStore } from "../agent/lib/dataroom-store.ts";
 import { DEPLOYMENT_PROFILE } from "../agent/lib/deployment-profile.generated.ts";
 import { an, domainLabel, W } from "../lib/ui-words.ts";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 // The role words the seeded files use, from this deployment's profile (never a literal role word).
 const MEMBER = DEPLOYMENT_PROFILE.vocabulary.member.singular;
@@ -25,8 +26,8 @@ const OWNER = /^[A-Z][a-z]/.test(Owner) ? Owner.charAt(0).toLowerCase() + Owner.
 
 // The record words, from the same profile (lib/ui-words.ts): the account, the two record areas, and a data-room
 // domain's label where a sentence names the folder. Paths and field keys are storage's and stay as they are.
-const DEPLOYMENTS_ROOM = domainLabel("Deployments");
-const IMPLEMENTATION_ROOM = domainLabel("Implementation");
+const DEPLOYMENTS_ROOM = domainLabel("deliveries");
+const IMPLEMENTATION_ROOM = domainLabel("projects");
 
 // `--print`: the tree as JSON on stdout, nothing written and no store needed (scripts/test-ui-vocabulary.mjs reads
 // it under the default profile and under a relabelling one).
@@ -63,8 +64,8 @@ const jsonl = (records) => records.map((r) => JSON.stringify(r)).join("\n");
 // ---------------------------------------------------------------------------
 
 const FILES = {
-  // --- Customers -------------------------------------------------------------
-  "Customers/acme-bank/context.md": `# Acme Bank — ${W.Account} Context
+  // --- accounts ---------------------------------------------------------------
+  [`${FOLDER.accounts}/acme-bank/context.md`]: `# Acme Bank — ${W.Account} Context
 
 **Tier:** Enterprise · **Lifecycle:** Live · **Region:** us-east-1
 
@@ -85,7 +86,7 @@ const FILES = {
 Champion is the VP of Operations; weekly sync every Thursday. Escalations go
 through the ${OWNER} first — the ${W.account} is sensitive to surprise emails.`,
 
-  "Customers/acme-bank/interactions.jsonl": jsonl([
+  [`${FOLDER.accounts}/acme-bank/interactions.jsonl`]: jsonl([
     {
       interaction_id: "INT-8841",
       customer_id: "acme-bank",
@@ -122,7 +123,7 @@ through the ${OWNER} first — the ${W.account} is sensitive to surprise emails.
     },
   ]),
 
-  "Customers/acme-bank/agreements/msa.md": `# Master Service Agreement — Acme Bank
+  [`${FOLDER.accounts}/acme-bank/agreements/msa.md`]: `# Master Service Agreement — Acme Bank
 
 **Effective:** 2025-11-30 · **Term:** 36 months · **Governing law:** New York
 
@@ -139,7 +140,7 @@ through the ${OWNER} first — the ${W.account} is sensitive to surprise emails.
 - Model providers restricted to the approved list in the AI Addendum
 - Termination for convenience: 90 days' notice, prorated refund`,
 
-  "Customers/northwind-capital/context.md": `# Northwind Capital — ${W.Account} Context
+  [`${FOLDER.accounts}/northwind-capital/context.md`]: `# Northwind Capital — ${W.Account} Context
 
 **Tier:** Growth · **Lifecycle:** Onboarding · **Region:** eu-west-1
 
@@ -159,7 +160,7 @@ through the ${OWNER} first — the ${W.account} is sensitive to surprise emails.
 Technical owner prefers async updates in Slack; monthly steering call with
 the COO. Keep the tone metrics-first — they track everything.`,
 
-  "Customers/northwind-capital/interactions.jsonl": jsonl([
+  [`${FOLDER.accounts}/northwind-capital/interactions.jsonl`]: jsonl([
     {
       interaction_id: "INT-8853",
       customer_id: "northwind-capital",
@@ -184,7 +185,7 @@ the COO. Keep the tone metrics-first — they track everything.`,
     },
   ]),
 
-  "Customers/northwind-capital/agreements/msa.md": `# Master Service Agreement — Northwind Capital
+  [`${FOLDER.accounts}/northwind-capital/agreements/msa.md`]: `# Master Service Agreement — Northwind Capital
 
 **Effective:** 2026-05-15 · **Term:** 24 months · **Governing law:** England & Wales
 
@@ -201,8 +202,8 @@ the COO. Keep the tone metrics-first — they track everything.`,
 - Model providers restricted to the approved list in the AI Addendum
 - Termination for convenience: 60 days' notice after month 12`,
 
-  // --- Platform ----------------------------------------------------------------
-  "Platform/v2.4.0/2026-07-01_changelog_manager.md": `# Platform v2.4.0 — Release Changelog
+  // --- platform ---------------------------------------------------------------
+  [`${FOLDER.platform}/v2.4.0/2026-07-01_changelog_manager.md`]: `# Platform v2.4.0 — Release Changelog
 
 **Cut:** 2026-07-01 · **Channel:** stable · **Build:** \`9f31c2a\`
 
@@ -223,7 +224,7 @@ the COO. Keep the tone metrics-first — they track everything.`,
 - Helm chart 1.8.x required; re-render values with the new \`inference.routing\` block
 - Terraform module \`onfinance/inference\` bumped to 3.2.0 — plan before apply`,
 
-  "Platform/v2.4.0/architecture/helm/values.yaml": `# onfinance-runtime Helm values — platform v2.4.0
+  [`${FOLDER.platform}/v2.4.0/architecture/helm/values.yaml`]: `# onfinance-runtime Helm values — platform v2.4.0
 image:
   repository: registry.onfinance.ai/runtime
   tag: "2.4.0"
@@ -261,7 +262,7 @@ autoscaling:
   maxReplicas: 12
   targetCPUUtilizationPercentage: 65`,
 
-  "Platform/v2.4.0/architecture/infrastructure/main.tf": `# Platform v2.4.0 — base infrastructure
+  [`${FOLDER.platform}/v2.4.0/architecture/infrastructure/main.tf`]: `# Platform v2.4.0 — base infrastructure
 terraform {
   required_version = ">= 1.8.0"
   required_providers {
@@ -299,7 +300,7 @@ module "observability" {
   log_sink   = "s3://onfinance-audit-logs"
 }`,
 
-  "Platform/v2.4.0/design_decisions/tenancy.schemas.json": JSON.stringify(
+  [`${FOLDER.platform}/v2.4.0/design_decisions/tenancy.schemas.json`]: JSON.stringify(
     {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       $id: "https://onfinance.ai/schemas/v2.4.0/tenancy.json",
@@ -319,7 +320,7 @@ module "observability" {
     2,
   ),
 
-  "Platform/v2.4.0/design_decisions/dataengineering.schemas.json": JSON.stringify(
+  [`${FOLDER.platform}/v2.4.0/design_decisions/dataengineering.schemas.json`]: JSON.stringify(
     {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       $id: "https://onfinance.ai/schemas/v2.4.0/dataengineering.json",
@@ -346,7 +347,7 @@ module "observability" {
     2,
   ),
 
-  "Platform/v2.4.0/security/sbom.json": JSON.stringify(
+  [`${FOLDER.platform}/v2.4.0/security/sbom.json`]: JSON.stringify(
     {
       bomFormat: "CycloneDX",
       specVersion: "1.5",
@@ -366,8 +367,8 @@ module "observability" {
     2,
   ),
 
-  // --- Deployments -------------------------------------------------------------
-  "Deployments/acme-bank/v2.4.0/infrastructure/inference/customizations.tf": `# Acme Bank — inference customizations over the v2.4.0 base stack
+  // --- deliveries -------------------------------------------------------------
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/infrastructure/inference/customizations.tf`]: `# Acme Bank — inference customizations over the v2.4.0 base stack
 # See rationale.md; changes require the four-party signoff chain.
 
 module "inference_override" {
@@ -393,7 +394,7 @@ module "inference_override" {
   ]
 }`,
 
-  "Deployments/acme-bank/v2.4.0/infrastructure/inference/rationale.md": `# Inference Customization Rationale — Acme Bank / v2.4.0
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/infrastructure/inference/rationale.md`]: `# Inference Customization Rationale — Acme Bank / v2.4.0
 
 ## Why these overrides exist
 
@@ -417,7 +418,7 @@ current volumes. Approved by the ${W.account} team on 2026-06-24.
 Re-review with ${W.account} infosec each platform minor release, next due
 **2026-07-18** alongside the v2.4.0 SBOM review.`,
 
-  "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/internal.md": `# Signoff — Internal (OnFinance)
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/infrastructure/inference/signoff/internal.md`]: `# Signoff — Internal (OnFinance)
 
 **Artifact:** \`customizations.tf\` @ \`b4f19d7\` · **Date:** 2026-06-25
 
@@ -427,7 +428,7 @@ outside the inference module. Cost delta approved by the ${W.account} team.
 
 **Decision: APPROVED** — Sam Cole, Solutions Engineering`,
 
-  "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infra.md": `# Signoff — ${W.Account} Infrastructure (Acme Bank)
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infra.md`]: `# Signoff — ${W.Account} Infrastructure (Acme Bank)
 
 **Artifact:** \`customizations.tf\` @ \`b4f19d7\` · **Date:** 2026-06-27
 
@@ -437,7 +438,7 @@ lands in our approved subnets and tagging standard is met.
 
 **Decision: APPROVED** — R. Iyer, Head of Platform Engineering, Acme Bank`,
 
-  "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infosec.md": `# Signoff — ${W.Account} Information Security (Acme Bank)
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infosec.md`]: `# Signoff — ${W.Account} Information Security (Acme Bank)
 
 **Artifact:** \`customizations.tf\` @ \`b4f19d7\` · **Date:** 2026-06-30
 
@@ -448,7 +449,7 @@ require a new signoff round.
 
 **Decision: APPROVED (conditional)** — M. Delgado, CISO Office, Acme Bank`,
 
-  "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.cloudvendor.md": `# Signoff — Cloud Vendor (AWS Enterprise Support)
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.cloudvendor.md`]: `# Signoff — Cloud Vendor (AWS Enterprise Support)
 
 **Artifact:** \`customizations.tf\` @ \`b4f19d7\` · **Date:** 2026-07-01
 
@@ -458,7 +459,7 @@ no service-quota increases required at the stated max of 6 nodes.
 
 **Decision: ACKNOWLEDGED** — AWS TAM, Acme Bank account`,
 
-  "Deployments/acme-bank/v2.4.0/platform/organization.json": JSON.stringify(
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/platform/organization.json`]: JSON.stringify(
     {
       org_id: "org-acme-bank",
       rbac_policy: "role-based",
@@ -472,7 +473,7 @@ no service-quota increases required at the stated max of 6 nodes.
     2,
   ),
 
-  "Deployments/acme-bank/v2.4.0/platform/pipelines/pl-001/pipeline_config.json": JSON.stringify(
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/platform/pipelines/pl-001/pipeline_config.json`]: JSON.stringify(
     {
       pipeline_id: "pl-001",
       source: {
@@ -489,7 +490,7 @@ no service-quota increases required at the stated max of 6 nodes.
     2,
   ),
 
-  "Deployments/acme-bank/v2.4.0/platform/migrations/mig-001/dataengineering.approach.json":
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/platform/migrations/mig-001/dataengineering.approach.json`]:
     JSON.stringify(
       {
         migration_id: "mig-001",
@@ -505,7 +506,7 @@ no service-quota increases required at the stated max of 6 nodes.
       2,
     ),
 
-  "Deployments/acme-bank/v2.4.0/platform/migrations/mig-001/context.md": `# Migration mig-001 — Legacy Collections DB → Data Platform
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/platform/migrations/mig-001/context.md`]: `# Migration mig-001 — Legacy Collections DB → Data Platform
 
 **${W.Account}:** acme-bank · **Platform:** v2.4.0 · **Strategy:** incremental
 
@@ -524,7 +525,7 @@ database into the managed data platform feeding pipeline **pl-001**.
 
 - Final checksum report to ${W.account} data engineering before cutover`,
 
-  "Deployments/acme-bank/v2.4.0/platform/migrations/mig-001/interactions.jsonl": jsonl([
+  [`${FOLDER.deliveries}/acme-bank/v2.4.0/platform/migrations/mig-001/interactions.jsonl`]: jsonl([
     {
       interaction_id: "INT-9101",
       migration_id: "mig-001",
@@ -545,8 +546,8 @@ database into the managed data platform feeding pipeline **pl-001**.
     },
   ]),
 
-  // --- Solutions ---------------------------------------------------------------
-  "Solutions/v2.4.0/agents/collections-agent/recipe.md": `# Collections Agent — Recipe (v2.4.0)
+  // --- solutions --------------------------------------------------------------
+  [`${FOLDER.solutions}/v2.4.0/agents/collections-agent/recipe.md`]: `# Collections Agent — Recipe (v2.4.0)
 
 ## Purpose
 
@@ -580,7 +581,7 @@ guardrails:
 Eval pass rate ≥ **92%** on \`evals/dataset.jsonl\` before any config change
 ships to production.`,
 
-  "Solutions/v2.4.0/agents/collections-agent/evals/dataset.jsonl": jsonl([
+  [`${FOLDER.solutions}/v2.4.0/agents/collections-agent/evals/dataset.jsonl`]: jsonl([
     {
       case_id: "ev-001",
       input: { days_past_due: 12, balance: 1840.55, hardship_eligible: false, prior_contacts: 1 },
@@ -598,7 +599,7 @@ ships to production.`,
     },
   ]),
 
-  "Solutions/v2.4.0/pipelines/pl-001/migrations/mig-001/dataengineering.approach.json":
+  [`${FOLDER.solutions}/v2.4.0/pipelines/pl-001/migrations/mig-001/dataengineering.approach.json`]:
     JSON.stringify(
       {
         migration_id: "mig-001",
@@ -613,7 +614,7 @@ ships to production.`,
       2,
     ),
 
-  "Solutions/v2.4.0/pipelines/pl-001/migrations/mig-001/context.md": `# Migration mig-001 — pl-001 Reference Approach (v2.4.0)
+  [`${FOLDER.solutions}/v2.4.0/pipelines/pl-001/migrations/mig-001/context.md`]: `# Migration mig-001 — pl-001 Reference Approach (v2.4.0)
 
 Solution-level playbook for migrating ${an(W.account)} ${W.account}'s collections history into
 the dataset behind pipeline **pl-001**.
@@ -630,7 +631,7 @@ the dataset behind pipeline **pl-001**.
 ${W.Account}-specific cutover windows, credentials, and codebases live in the
 matching ${DEPLOYMENTS_ROOM}/${IMPLEMENTATION_ROOM} migration folders.`,
 
-  "Solutions/v2.4.0/pipelines/pl-001/migrations/mig-001/interactions.jsonl": jsonl([
+  [`${FOLDER.solutions}/v2.4.0/pipelines/pl-001/migrations/mig-001/interactions.jsonl`]: jsonl([
     {
       interaction_id: "INT-9050",
       migration_id: "mig-001",
@@ -642,8 +643,8 @@ matching ${DEPLOYMENTS_ROOM}/${IMPLEMENTATION_ROOM} migration folders.`,
     },
   ]),
 
-  // --- Implementation ----------------------------------------------------------
-  "Implementation/acme-bank/integromat.json": JSON.stringify(
+  // --- projects ---------------------------------------------------------------
+  [`${FOLDER.projects}/acme-bank/integromat.json`]: JSON.stringify(
     {
       customer_id: "acme-bank",
       integrations: [
@@ -658,7 +659,7 @@ matching ${DEPLOYMENTS_ROOM}/${IMPLEMENTATION_ROOM} migration folders.`,
     2,
   ),
 
-  "Implementation/acme-bank/pipelines/pl-001/pipeline_config.json": JSON.stringify(
+  [`${FOLDER.projects}/acme-bank/pipelines/pl-001/pipeline_config.json`]: JSON.stringify(
     {
       pipeline_id: "pl-001",
       stage: "implementation",
@@ -680,7 +681,7 @@ matching ${DEPLOYMENTS_ROOM}/${IMPLEMENTATION_ROOM} migration folders.`,
     2,
   ),
 
-  "Implementation/acme-bank/migrations/mig-001/dataengineering.approach.json": JSON.stringify(
+  [`${FOLDER.projects}/acme-bank/migrations/mig-001/dataengineering.approach.json`]: JSON.stringify(
     {
       migration_id: "mig-001",
       customer_id: "acme-bank",
@@ -700,7 +701,7 @@ matching ${DEPLOYMENTS_ROOM}/${IMPLEMENTATION_ROOM} migration folders.`,
     2,
   ),
 
-  "Implementation/acme-bank/migrations/mig-001/context.md": `# Migration mig-001 — Acme Bank Onboarding Load
+  [`${FOLDER.projects}/acme-bank/migrations/mig-001/context.md`]: `# Migration mig-001 — Acme Bank Onboarding Load
 
 **Stage:** ${W.implementation} · **Strategy:** full-history load
 
@@ -719,7 +720,7 @@ platform during onboarding, ahead of the incremental production migration.
 
 - Production incremental cutover tracked under ${DEPLOYMENTS_ROOM} mig-001`,
 
-  "Implementation/acme-bank/migrations/mig-001/interactions.jsonl": jsonl([
+  [`${FOLDER.projects}/acme-bank/migrations/mig-001/interactions.jsonl`]: jsonl([
     {
       interaction_id: "INT-8720",
       migration_id: "mig-001",
@@ -740,8 +741,8 @@ platform during onboarding, ahead of the incremental production migration.
     },
   ]),
 
-  // --- Tickets -----------------------------------------------------------------
-  "Tickets/feat/acme-bank/v2.4.0/tickets_TCK-1002.jsonl": jsonl([
+  // --- tickets ----------------------------------------------------------------
+  [`${FOLDER.tickets}/feat/acme-bank/v2.4.0/tickets_TCK-1002.jsonl`]: jsonl([
     {
       ticket_id: "TCK-1002",
       customer_id: "acme-bank",
@@ -776,7 +777,7 @@ platform during onboarding, ahead of the incremental production migration.
     },
   ]),
 
-  "Tickets/bug/northwind-capital/v2.4.0/tickets_TCK-2031.jsonl": jsonl([
+  [`${FOLDER.tickets}/bug/northwind-capital/v2.4.0/tickets_TCK-2031.jsonl`]: jsonl([
     {
       ticket_id: "TCK-2031",
       customer_id: "northwind-capital",
@@ -804,8 +805,8 @@ platform during onboarding, ahead of the incremental production migration.
     },
   ]),
 
-  // --- People ------------------------------------------------------------------
-  "People/sam-cole/identity.json": JSON.stringify(
+  // --- people -----------------------------------------------------------------
+  [`${FOLDER.people}/sam-cole/identity.json`]: JSON.stringify(
     {
       person_id: "sam-cole",
       name: "Sam Cole",
@@ -826,7 +827,7 @@ platform during onboarding, ahead of the incremental production migration.
     2,
   ),
 
-  "People/sam-cole/context.md": `# Sam Cole — Person Context
+  [`${FOLDER.people}/sam-cole/context.md`]: `# Sam Cole — Person Context
 
 **Role:** Senior Solutions Engineer, OnFinance · **Since:** 2024-03
 
@@ -847,7 +848,7 @@ platform during onboarding, ahead of the incremental production migration.
 Closing the Acme infosec conditions (SBOM review 2026-07-18) and unblocking
 the Northwind dedupe bug before their UAT window closes.`,
 
-  "People/sam-cole/interactions.jsonl": jsonl([
+  [`${FOLDER.people}/sam-cole/interactions.jsonl`]: jsonl([
     {
       interaction_id: "INT-8841",
       person_id: "sam-cole",
@@ -870,7 +871,7 @@ the Northwind dedupe bug before their UAT window closes.`,
     },
   ]),
 
-  "People/sam-cole/roles_and_responsibilities.md": `# Sam Cole — Roles & Responsibilities
+  [`${FOLDER.people}/sam-cole/roles_and_responsibilities.md`]: `# Sam Cole — Roles & Responsibilities
 
 **Role:** Senior Solutions Engineer, OnFinance
 

@@ -22,6 +22,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { FOLDER, ROOT_FOLDERS } from "../agent/lib/dataroom-folders.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const source = (p) => readFileSync(join(ROOT, p), "utf8");
@@ -51,28 +52,28 @@ const check = (label, condition) => {
 
 console.log("Which paths are data-room pdfs:");
 
-const REAL = "Uploads/priyesh-onfinance-in/SEBI LODR Q3 FY26.pdf";
+const REAL = `${FOLDER.uploads}/priyesh-onfinance-in/SEBI LODR Q3 FY26.pdf`;
 check("a real uploaded filing is one", isPreviewablePdfPath(REAL));
-check("…and so is an investor deck with an uppercase extension", isPreviewablePdfPath("Uploads/a-b-c/Deck.PDF"));
-check("a data-room path under another domain is one", isPreviewablePdfPath("Customers/axis-bank/brief.pdf"));
+check("…and so is an investor deck with an uppercase extension", isPreviewablePdfPath(`${FOLDER.uploads}/a-b-c/Deck.PDF`));
+check("a data-room path under another domain is one", isPreviewablePdfPath(`${FOLDER.accounts}/axis-bank/brief.pdf`));
 
-check("traversal out of the room is not", !isDataroomPath("Uploads/../../etc/passwd"));
-check("…nor is traversal spelled with a domain prefix", !isPreviewablePdfPath("Uploads/../Customers/x.pdf"));
-check("a backslash is not a path separator here", !isDataroomPath("Uploads\\x\\y.pdf"));
-check("an absolute path is not one", !isDataroomPath("/Uploads/x/y.pdf"));
-check("a trailing slash is not one", !isDataroomPath("Uploads/x/"));
-check("a bare domain with no file is not one", !isDataroomPath("Uploads"));
+check("traversal out of the room is not", !isDataroomPath(`${FOLDER.uploads}/../../etc/passwd`));
+check("…nor is traversal spelled with a domain prefix", !isPreviewablePdfPath(`${FOLDER.uploads}/../${FOLDER.accounts}/x.pdf`));
+check("a backslash is not a path separator here", !isDataroomPath(`${FOLDER.uploads}\\x\\y.pdf`));
+check("an absolute path is not one", !isDataroomPath(`/${FOLDER.uploads}/x/y.pdf`));
+check("a trailing slash is not one", !isDataroomPath(`${FOLDER.uploads}/x/`));
+check("a bare domain with no file is not one", !isDataroomPath(FOLDER.uploads));
 check("a domain nobody serves is not one", !isDataroomPath("Secrets/x/y.pdf"));
-check("a hidden dotfile segment is not one", !isDataroomPath("Uploads/.ssh/id_rsa.pdf"));
-check("an empty segment is not one", !isDataroomPath("Uploads//y.pdf"));
+check("a hidden dotfile segment is not one", !isDataroomPath(`${FOLDER.uploads}/.ssh/id_rsa.pdf`));
+check("an empty segment is not one", !isDataroomPath(`${FOLDER.uploads}//y.pdf`));
 check("a non-string is not one", !isDataroomPath(undefined) && !isDataroomPath(null) && !isDataroomPath(42));
 
 /* A valid data-room path that is not a pdf must not open the pdf viewer — the
  * mode exists for the one type pdf.js draws, not as a raw-bytes door onto every
  * object in the room. */
-check("a workbook is a data-room path but not previewable", isDataroomPath("Customers/x/Master.xlsx") && !isPreviewablePdfPath("Customers/x/Master.xlsx"));
-check("audio is left exactly as it was", !isPreviewablePdfPath("Tickets/x/call.m4a"));
-check("a name that merely CONTAINS pdf is not one", !isPreviewablePdfPath("Uploads/x/pdf-notes.txt"));
+check("a workbook is a data-room path but not previewable", isDataroomPath(`${FOLDER.accounts}/x/Master.xlsx`) && !isPreviewablePdfPath(`${FOLDER.accounts}/x/Master.xlsx`));
+check("audio is left exactly as it was", !isPreviewablePdfPath(`${FOLDER.tickets}/x/call.m4a`));
+check("a name that merely CONTAINS pdf is not one", !isPreviewablePdfPath(`${FOLDER.uploads}/x/pdf-notes.txt`));
 
 /* The twin. `isSafeDataroomPath` in lib/dataroom-blob.ts is the guard that
  * ENFORCES; it is `server-only` and cannot be imported by a client component, so
@@ -82,10 +83,15 @@ check("a name that merely CONTAINS pdf is not one", !isPreviewablePdfPath("Uploa
  * pack, so comparing them is comparing what ships. */
 {
   const server = source("lib/dataroom-blob.ts");
-  const domains = [...server.matchAll(/^\s*"([A-Z][A-Za-z]*)",$/gm)].map((m) => m[1]);
-  check("the server declares its domain roots where this can read them", domains.length >= 8);
-  for (const domain of domains) {
-    check(`domain "${domain}" is accepted by the client twin too`, isDataroomPath(`${domain}/x/y.pdf`));
+  // Neither copy spells a folder: both take the roots from the deployment profile (agent/lib/dataroom-folders.ts),
+  // so they cannot disagree on one, and a profile that pins other names moves both at once.
+  check(
+    "the server and this twin take their folder roots from the same place, the deployment profile",
+    /const DOMAINS = new Set\(ROOT_FOLDERS\);/.test(server) && /const DATAROOM_DOMAINS = new Set\(ROOT_FOLDERS\);/.test(source("lib/pdf-preview.ts")),
+  );
+  check("the profile names eight roots: the seven domains and the attached files' folder", ROOT_FOLDERS.length === 8 && new Set(ROOT_FOLDERS).size === 8);
+  for (const folder of ROOT_FOLDERS) {
+    check(`folder "${folder}" is accepted by the client twin`, isDataroomPath(`${folder}/x/y.pdf`));
   }
   const segment = /const SAFE_SEGMENT = (\/.*\/);/.exec(server);
   check("the server's per-segment pattern is still the one this twin copies", segment?.[1] === "/^[A-Za-z0-9][A-Za-z0-9._ -]*$/");
@@ -117,7 +123,7 @@ check("a 3 MB filing sails through", refuseStoredPdf({ path: REAL, size: 3 * MB 
 check("an unknown size is allowed through to the streaming cap", refuseStoredPdf({ path: REAL, size: null }) === null);
 check("…and so is a size that is not a number", refuseStoredPdf({ path: REAL, size: Number.NaN }) === null);
 check("a bad path is refused before size is even considered", refuseStoredPdf({ path: "../x.pdf", size: 1 }) === "bad_path");
-check("a non-pdf in the room is refused", refuseStoredPdf({ path: "Customers/x/Master.xlsx", size: 1 }) === "not_pdf");
+check("a non-pdf in the room is refused", refuseStoredPdf({ path: `${FOLDER.accounts}/x/Master.xlsx`, size: 1 }) === "not_pdf");
 
 check("too large answers 413, the status the viewer already reads as 'too large'", statusForRefusal("too_large") === 413);
 check("not a pdf answers 415", statusForRefusal("not_pdf") === 415);
@@ -147,9 +153,9 @@ check("the viewer reads same-origin, from this app", href.startsWith("/api/datar
 check("…in the bytes mode", href.includes("as=bytes"));
 check("no blob host appears in the url the browser sees", !/vercel-storage\.com/.test(href));
 check("no presigned signature appears in it", !/delegation|signature|X-Amz|token=/i.test(href));
-check("the path is encoded, so a space cannot end the parameter", dataroomPdfHref("Uploads/a b/c d.pdf").includes("Uploads%2Fa%20b%2Fc%20d.pdf"));
-check("…and an ampersand cannot add one", !dataroomPdfHref("Uploads/x/a&as=bytes&path=y.pdf").includes("&as=bytes&path=y"));
-check("…and a hash cannot truncate it", dataroomPdfHref("Uploads/x/a#b.pdf").includes("%23"));
+check("the path is encoded, so a space cannot end the parameter", dataroomPdfHref(`${FOLDER.uploads}/a b/c d.pdf`).includes(`${encodeURIComponent(FOLDER.uploads)}%2Fa%20b%2Fc%20d.pdf`));
+check("…and an ampersand cannot add one", !dataroomPdfHref(`${FOLDER.uploads}/x/a&as=bytes&path=y.pdf`).includes("&as=bytes&path=y"));
+check("…and a hash cannot truncate it", dataroomPdfHref(`${FOLDER.uploads}/x/a#b.pdf`).includes("%23"));
 check("the path round-trips exactly", decodeURIComponent(new URLSearchParams(href.split("?")[1]).get("path")) === REAL);
 
 /* --- 4. The ratchet on what actually ships --------------------------------

@@ -41,6 +41,8 @@ export const inertToolContext = () => ({
   opsUrl: "https://example.com",
   webOrigin: "https://example.com",
   readSpec: async () => "",
+  // Each folder named by its domain id: the names are a deployment's, and no handler here ever runs.
+  folders: Object.fromEntries(["accounts", "platform", "deliveries", "solutions", "projects", "tickets", "people", "uploads"].map((id) => [id, id])),
   customFields: undefined,
   blobStore: () => null,
   // Present so the session tools are INCLUDED: a gate that silently checks a

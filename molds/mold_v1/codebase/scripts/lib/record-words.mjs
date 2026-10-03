@@ -2,8 +2,8 @@
  * THE RECORD-WORD RATCHET: the base product's record words as PROSE in base text.
  *
  * The base was written for a delivery team that manages customers, their deployments and their
- * implementation rollouts. Storage keeps those names for ever (the `customers` table, `customer_id`, the
- * `Customers/` folder, `list_customers`, `deploymentId`): they are contracts. What a person or the model READS
+ * implementation rollouts. Storage keeps those names for ever (the `customers` table, `customer_id`,
+ * `list_customers`, `deploymentId`): they are contracts. What a person or the model READS
  * is not a contract: base text writes a placeholder the deployment profile fills (`{account}`, `{deployment}`,
  * `{implementation}`, `{rollout}`, agent/lib/agent-vocabulary.ts), or takes the word from lib/ui-words.ts (`W`).
  *
@@ -16,20 +16,23 @@
  *
  * and inside that text only where the word is prose, not a name:
  *
- *   - not part of an identifier or a path: `customer_id`, `customerId`, `list_customers`, `Customers/acme`,
+ *   - not part of an identifier or a path: `customer_id`, `customerId`, `list_customers`, a path segment,
  *     `/api/ops/customers`, `record.customer`, `customer.name`, `customers[]`, `customer:acme` (a memory scope),
  *     `customer=`, `=customers`, `customers(`, `--customer` (a command-line flag);
  *   - not written as code: inside a `code span`, or a whole quoted value ('customer', "deployments");
  *   - not a text that is ONE token (`"customers"`, `"deployment"`): a key, an enum value or a table name. A
  *     capitalised record word alone (`"Customer"`, `"Rollouts"`) IS counted: it is a label somebody reads, unless
- *     it is a data-room domain's stored name or a listed value (names: `"\"Customer\""`, quoted);
+ *     it is a listed value (names: `"\"Customer\""`, quoted);
  *   - not a listed NAME (scripts/neutral-names.allow.json `record_words.names`): a specialist's directory name
  *     (`customer-context`, `deployment`, written **deployment** or `deployment` where it is delegated to), an enum
  *     value with a hyphen (`customer-vpc`);
- *   - not inside a placeholder (`{customer}`, `{customer_id}`, `${customer}`);
- *   - not a data-room DOMAIN by its stored folder name, capitalised inside a sentence ("across Customers, Platform,
- *     Deployments"): the folder, a path token exactly like `Customers/`. A profile's label for it is what a
- *     relabelling deployment's reader gets (agent/lib/agent-vocabulary.ts).
+ *   - not inside a placeholder (`{customer}`, `{customer_id}`, `${customer}`).
+ *
+ * A data-room domain is never an exception. Its folder once carried a record word, and base text named the domain
+ * by it ("across <the three folders>"); the folder's name is the deployment profile's now, so base text writes the
+ * domain as a placeholder (`{domain:accounts}`, `{folder:accounts}/…`: agent/lib/dataroom-folders.ts) and a
+ * capitalised record word in a sentence is the word, counted like any other. scripts/lib/stored-folders.mjs holds
+ * the folder names themselves.
  *
  * A compound is prose: "customer-facing", "per-customer", "customer's".
  *
@@ -53,9 +56,6 @@ export const RECORD_STEMS = ["customer", "deployment", "implementation", "rollou
 const WORD = new RegExp(`(${RECORD_STEMS.join("|")})s?`, "gi");
 const LABEL = new RegExp(`^(${RECORD_STEMS.map((s) => s[0].toUpperCase() + s.slice(1)).join("|")})s?$`);
 const ONE_TOKEN = /^[A-Za-z0-9_\-./:$#@[\]{}<>*]+$/;
-
-/** The data-room domains that carry a record word, by their stored folder name. */
-const DOMAIN_NAMES = new Set(["Customers", "Deployments", "Implementation"]);
 
 /**
  * Does the word at `at` open a sentence, a paragraph, a heading, a bullet or a table cell? A single newline is a
@@ -88,9 +88,9 @@ export function proseRecordWords(text, names = new Set()) {
   if (typeof text !== "string" || !text) return out;
   if (!/\s/.test(text.trim()) && ONE_TOKEN.test(text.trim())) {
     // One token: a key, a value, a path. Except a record word alone with a capital ("Customer", "Rollouts"): a
-    // label somebody reads, unless it is a data-room domain's stored name or a listed value.
+    // label somebody reads, unless it is a listed value.
     const one = text.trim();
-    if (LABEL.test(one) && !DOMAIN_NAMES.has(one) && !names.has(`"${one}"`)) out.push({ word: one, index: text.indexOf(one), line: 1, text: one });
+    if (LABEL.test(one) && !names.has(`"${one}"`)) out.push({ word: one, index: text.indexOf(one), line: 1, text: one });
     return out;
   }
   // Listed names of more than one word ("Waiting on Customer", a stored enum value) are values wherever they stand.
@@ -122,9 +122,6 @@ export function proseRecordWords(text, names = new Set()) {
     const run = text.slice(a, b).replace(/^-+|-+$/g, "");
     if (run !== m[0] && names.has(run)) continue;
     if (run === m[0] && names.has(run) && text.slice(at - 2, at) === "**" && text.slice(end, end + 2) === "**") continue;
-    // A data-room domain by its stored name (`Customers`, `Deployments`, `Implementation`), capitalised inside a
-    // sentence: the folder, a path token like `Customers/`. At the start of a sentence it is read as the word.
-    if (DOMAIN_NAMES.has(m[0]) && !startsSentence(text, at)) continue;
     const line = text.lastIndexOf("\n", at - 1) + 1;
     const lineNo = text.slice(0, at).split("\n").length;
     const lineEnd = text.indexOf("\n", at);

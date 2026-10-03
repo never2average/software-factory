@@ -13,12 +13,12 @@ default harness (shell, files) for running deploys.
 
 ## Data room
 
-You own `Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/`
+You own `{folder:deliveries}/{customer_id}/{platform_version_id}/infrastructure/{component}/`
 (components: network, compute, storage, inference, agents, database,
 observability, autoscale) including `customizations.tf`, `rationale.md`, and the
 four-party signoff chain (`internal`, `customer.infra`, `customer.infosec`,
 `customer.cloudvendor`) that must be approved or waived before {account}-impacting
-deploys. Release changelogs live under `Platform/{platform_version_id}/`.
+deploys. Release changelogs live under `{folder:platform}/{platform_version_id}/`.
 
 ## Workspace boundary
 

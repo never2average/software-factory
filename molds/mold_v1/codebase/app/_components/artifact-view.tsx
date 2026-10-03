@@ -15,7 +15,7 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { CodeBlock } from "@/components/ai-elements/code-block";
 import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
-import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { DATAROOM_DOMAIN_IDS, FOLDER, labelOf } from "@/agent/lib/dataroom-folders";
 import { headerLabel } from "@/lib/ui-keys";
 import { opsFetch } from "./ops/lib";
 
@@ -158,10 +158,10 @@ export function useLiveArtifactUrl(url?: string): {
 }
 
 /** A human filename: strip the extension and the trailing content hash, turn
- *  separators into spaces. "People.Master-20kaIFvc…xlsx" → "People Master",
- *  "Customers_Master.xlsx" → "Customers Master". A domain's Master workbook is
+ *  separators into spaces. "<folder>.Master-20kaIFvc…xlsx" → "<folder> Master",
+ *  "<folder>_Master.xlsx" → "<folder> Master". A domain's Master workbook is
  *  named the way the deployment profile labels that domain (the file itself keeps
- *  its real name): with Customers labelled "Companies" it reads "Companies Master". */
+ *  its real name): with the accounts domain labelled "Companies" it reads "Companies Master". */
 export function readableArtifactName(filename: string): string {
   let s = decodeURIComponent(filename).replace(/\.[a-z0-9]{1,5}$/i, "");
   s = s.replace(/[-_. ]+[A-Za-z0-9]{16,}$/, ""); // trailing blob hash
@@ -176,10 +176,9 @@ export function readableArtifactName(filename: string): string {
     .join(" ");
   const master = /^(\S+) Master$/.exec(s);
   if (master) {
-    const domain = Object.keys(DEPLOYMENT_PROFILE.dataroom.domains).find(
-      (d) => d.toLowerCase() === master[1].toLowerCase(),
-    );
-    if (domain) s = `${DEPLOYMENT_PROFILE.dataroom.domains[domain].label} Master`;
+    // The file is named by the domain's stored folder; a person reads the domain's label.
+    const domain = DATAROOM_DOMAIN_IDS.find((d) => FOLDER[d].toLowerCase() === master[1].toLowerCase());
+    if (domain) s = `${labelOf(domain)} Master`;
   }
   return s || filename;
 }

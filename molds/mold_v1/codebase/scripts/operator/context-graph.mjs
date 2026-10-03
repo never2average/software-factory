@@ -1,9 +1,9 @@
 // operator:context-graph — show the dm.md context graph for a data-room folder: what it
 // must contain, what's present, what's missing, and its live [[edges]].
 //
-//   npm run operator:context-graph -- --path "Customers/contoso-bank"
-//   npm run operator:context-graph -- --customer contoso-bank --org <workspace id>   # shorthand for Customers/<id>
-//   npm run operator:context-graph -- --path "Deployments/contoso-bank/v2.4.0/infrastructure/inference"
+//   npm run operator:context-graph -- --path "{folder:accounts}/contoso-bank"
+//   npm run operator:context-graph -- --customer contoso-bank --org <workspace id>   # shorthand for {folder:accounts}/<id>
+//   npm run operator:context-graph -- --path "{folder:deliveries}/contoso-bank/v2.4.0/infrastructure/inference"
 //
 // This is the COMPUTED projection of DATAROOM_PATH_TEMPLATES (the dm.md grammar)
 // onto one folder — no hidden file is stored; the graph is derived on demand, so
@@ -11,9 +11,10 @@
 import { getDb, closeDb, dataroom, workspaceFor, nowIso } from "./lib/customer.mjs";
 import { buildContextGraph } from "./lib/context-graph.mjs";
 import { glyph, flag } from "./lib/operator.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 async function main() {
-  const path = flag("path").trim() || (flag("customer").trim() ? `Customers/${flag("customer").trim()}` : "");
+  const path = flag("path").trim() || (flag("customer").trim() ? `${FOLDER.accounts}/${flag("customer").trim()}` : "");
   if (!path) {
     console.error(`${glyph.bad} --path "<Domain/…>" (or --customer <id>) is required.`);
     process.exit(1);

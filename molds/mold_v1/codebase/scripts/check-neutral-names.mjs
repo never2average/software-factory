@@ -4,18 +4,23 @@
  * scripts/neutral-names.allow.json says it may (see scripts/lib/neutral-names.mjs
  * for the three kinds of allowance and why each exists), and its record words
  * (customer, deployment, implementation, rollout) are written as prose in base
- * text only under a per-file ceiling (scripts/lib/record-words.mjs).
+ * text only under a per-file ceiling (scripts/lib/record-words.mjs), and no data-room
+ * folder name is spelled in base code at all: the names are the deployment
+ * profile's (scripts/lib/stored-folders.mjs).
  *
  *   node scripts/check-neutral-names.mjs                 the gate (CI)
  *   node scripts/check-neutral-names.mjs --report        bare-word count per file, for lowering ceilings
  *   node scripts/check-neutral-names.mjs --records [prefix] [--lines]
  *                                                        the record words still written as prose, per file (and line)
+ *   node scripts/check-neutral-names.mjs --folders [prefix] [--lines]
+ *                                                        the stored folder names spelled in base code, per file (and line)
  *   node scripts/check-neutral-names.mjs --root <dir> --allow <file>   check another tree (the test uses this)
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkTree, readAllowList } from "./lib/neutral-names.mjs";
 import { checkRecordWords, readRecordAllow } from "./lib/record-words.mjs";
+import { checkStoredFolders, readFolderAllow, storedFolderNames } from "./lib/stored-folders.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name) => {
@@ -32,6 +37,18 @@ const { problems, seenContracts, baseCounts } = checkTree(ROOT, allow);
 const recordAllow = readRecordAllow(JSON.parse(readFileSync(ALLOW, "utf8")));
 const records = checkRecordWords(ROOT, recordAllow);
 
+// The data-room folder names (the former ones and the default profile's) spelled anywhere in base code.
+const folderNames = storedFolderNames(ROOT);
+const folders = checkStoredFolders(ROOT, readFolderAllow(JSON.parse(readFileSync(ALLOW, "utf8"))), folderNames);
+
+if (args.includes("--folders")) {
+  const only = opt("--folders");
+  for (const [file, hits] of [...folders.hits].sort((a, b) => b[1].length - a[1].length)) {
+    if (only && !only.startsWith("--") && !file.startsWith(only)) continue;
+    console.log(`${String(hits.length).padStart(4)}  ${file}`);
+    if (args.includes("--lines")) for (const h of hits) console.log(`        ${h.line || h.at}: [${h.kind} ${h.name}] ${h.text}`);
+  }
+}
 if (args.includes("--report")) {
   for (const [file, n] of [...baseCounts].sort((a, b) => b[1] - a[1])) console.log(`${String(n).padStart(4)}  ${file}`);
 }
@@ -52,7 +69,11 @@ if (records.problems.length) {
   console.error(`${problems.length ? "\n" : ""}check-neutral-names: ${records.problems.length} record-word problem(s). Base text writes a placeholder the deployment profile fills, never a record word (customer, deployment, implementation, rollout); what remains is held by a per-file ceiling (record_words in scripts/neutral-names.allow.json).\n`);
   for (const p of records.problems) console.error(`  - ${p}`);
 }
-if (problems.length || records.problems.length) process.exit(1);
+if (folders.problems.length) {
+  console.error(`${problems.length || records.problems.length ? "\n" : ""}check-neutral-names: ${folders.problems.length} stored-folder problem(s). A data-room folder's name is the deployment profile's (dataroom.domains.<id>.folder): base code builds a path from FOLDER.<id> and base text writes {folder:<id>}, so a deployment that pins the names it already has keeps every file where it is. What remains is held by a per-file ceiling (stored_folders in scripts/neutral-names.allow.json).\n`);
+  for (const p of folders.problems) console.error(`  - ${p}`);
+}
+if (problems.length || records.problems.length || folders.problems.length) process.exit(1);
 const total = [...baseCounts.values()].reduce((a, b) => a + b, 0);
 const recordTotal = [...records.counts.values()].reduce((a, b) => a + b, 0);
 console.log(
@@ -60,3 +81,5 @@ console.log(
     `${total} bare-word occurrence(s) under ${baseCounts.size} file ceiling(s), ${allow.prefixes.length} exempt path(s).`,
 );
 console.log(`check-neutral-names: record words as prose in base text: ${recordTotal} under ${records.counts.size} file ceiling(s); every other scanned file carries none.`);
+const folderTotal = [...folders.counts.values()].reduce((a, b) => a + b, 0);
+console.log(`check-neutral-names: stored folder names (${folderNames.length} known: the former ones and the default profile's) spelled in base code: ${folderTotal} under ${folders.counts.size} file ceiling(s); every other scanned file spells none.`);

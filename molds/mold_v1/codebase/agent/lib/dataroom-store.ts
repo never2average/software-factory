@@ -6,9 +6,9 @@
  * docs, signoff records, pipeline configs, ticket/interaction JSONL streams)
  * is addressed by its dm.md path, e.g.
  *
- *   Customers/acme-bank/interactions.jsonl
- *   Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md
- *   Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl
+ *   {folder:accounts}/acme-bank/interactions.jsonl
+ *   {folder:deliveries}/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md
+ *   {folder:tickets}/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl
  *
  * Paths are validated against the schema layer (./dataroom-schema.ts enums +
  * the dm.md folder templates below) before any I/O happens, so a typo'd or
@@ -43,6 +43,8 @@ import {
   type DataroomDomain,
   type JsonValue,
 } from "./dataroom-schema.ts";
+import { FOLDER } from "./dataroom-folders.ts";
+import { DataroomFoldersNotPinnedError, UNPINNED_FORMER_FOLDERS, findStranded } from "./dataroom-folder-guard.ts";
 import { EXTRA_DATAROOM_PATH_TEMPLATES } from "./subagent-registry.generated.ts";
 import { isListedPath, requireWorkspace, workspaceBlobPrefix, workspaceDir } from "../../lib/dataroom-keyspace.ts";
 
@@ -98,101 +100,103 @@ const TOKEN_PATTERNS: Record<string, string> = {
     "agents",
     "pipeline_config",
     "integromat",
-    // SLA contract: the shape of Customers/{id}/agreements/sla.json, streamlined
+    // SLA contract: the shape of {folder:accounts}/{id}/agreements/sla.json, streamlined
     // into infra / platform / solutions tiers. See system-cron / read_customer_slas.
     "slas",
   ]),
 };
 
 /**
- * File-path templates transcribed from dm.md (the canonical data model).
+ * File-path templates transcribed from dm.md (the canonical data model). Each starts with its domain's STORED
+ * folder, which is the deployment profile's (./dataroom-folders.ts): the tree below is the same under every profile,
+ * and only the first segment's name differs.
  * `{token}` segments match per TOKEN_PATTERNS; a trailing `**` matches any
  * non-empty file subtree (free-form folders like agreements/, recipe/ seeds,
  * helm/ variants, syncs/ landing zones).
  */
 export const DATAROOM_PATH_TEMPLATES: readonly string[] = [
-  // --- Customers -----------------------------------------------------------
-  "Customers/Master.xlsx",
-  "Customers/{customer_id}/interactions.jsonl",
-  "Customers/{customer_id}/context.md",
-  "Customers/{customer_id}/personas.jsonl",
-  "Customers/{customer_id}/agreements/**",
-  "Customers/syncs/**",
-  // --- Platform ------------------------------------------------------------
-  "Platform/Master.xlsx",
-  "Platform/{platform_version_id}/{date}_changelog_manager.md",
-  "Platform/{platform_version_id}/architecture/helm/**",
-  "Platform/{platform_version_id}/architecture/diagrams/**",
-  "Platform/{platform_version_id}/architecture/infrastructure/**",
-  "Platform/{platform_version_id}/design_decisions/{design_doc}.schemas.json",
-  "Platform/{platform_version_id}/tests/**",
-  "Platform/{platform_version_id}/security/**",
-  "Platform/{platform_version_id}/integromat/**",
-  "Platform/syncs/**",
-  // --- Deployments ---------------------------------------------------------
-  "Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/customizations.tf",
-  "Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/rationale.md",
-  "Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/signoff/{signoff_role}.md",
-  "Deployments/{customer_id}/{platform_version_id}/platform/organization.json",
-  "Deployments/{customer_id}/{platform_version_id}/platform/dataplatform.json",
-  "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/dataengineering.approach.json",
-  "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/context.md",
-  "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/interactions.jsonl",
-  "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/codebase/**",
-  "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/credentials/**",
-  "Deployments/{customer_id}/{platform_version_id}/platform/agents/{agent_id}/**",
-  "Deployments/{customer_id}/{platform_version_id}/platform/pipelines/{pipeline_id}/pipeline_config.json",
-  "Deployments/{customer_id}/{platform_version_id}/platform/pipelines/{pipeline_id}/private.integromat.json",
-  "Deployments/{customer_id}/{platform_version_id}/platform/integromat.json",
-  "Deployments/syncs/**",
-  // --- Solutions -----------------------------------------------------------
-  "Solutions/{platform_version_id}/supported.personas.jsonl",
-  "Solutions/{platform_version_id}/agents/{agent_id}/dataplatform.schemas.json",
-  "Solutions/{platform_version_id}/agents/{agent_id}/run_configs.schema.json",
-  "Solutions/{platform_version_id}/agents/{agent_id}/recipe.md",
-  "Solutions/{platform_version_id}/agents/{agent_id}/recipe/**",
-  "Solutions/{platform_version_id}/agents/{agent_id}/evals/dataset.jsonl",
-  "Solutions/{platform_version_id}/agents/{agent_id}/evals/benchmark.jsonl",
-  "Solutions/{platform_version_id}/agents/{agent_id}/evals/{run_id}/run_configs.json",
-  "Solutions/{platform_version_id}/agents/{agent_id}/evals/{run_id}/output.jsonl",
-  "Solutions/{platform_version_id}/agents/{agent_id}/evals/{run_id}/trace.jsonl",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/pipeline_config.json",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/run_configs.schema.json",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/integromat.schema.json",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/dataengineering.approach.json",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/context.md",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/interactions.jsonl",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/run_configs.json",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/output.jsonl",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/trace.jsonl",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/background_research/{person_id}/context.md",
-  "Solutions/{platform_version_id}/pipelines/{pipeline_id}/background_research/{person_id}/interaction.jsonl",
-  // --- Implementation ------------------------------------------------------
-  "Implementation/{customer_id}/migrations/{migration_id}/dataengineering.approach.json",
-  "Implementation/{customer_id}/migrations/{migration_id}/context.md",
-  "Implementation/{customer_id}/migrations/{migration_id}/interactions.jsonl",
-  "Implementation/{customer_id}/migrations/{migration_id}/credentials/**",
-  "Implementation/{customer_id}/migrations/{migration_id}/codebase/**",
-  "Implementation/{customer_id}/agents/{agent_id}/**",
-  "Implementation/{customer_id}/pipelines/{pipeline_id}/pipeline_config.json",
-  "Implementation/{customer_id}/pipelines/{pipeline_id}/private.integromat.json",
-  "Implementation/{customer_id}/integromat.json",
-  "Implementation/{customer_id}/evals/agents/**",
-  "Implementation/{customer_id}/evals/pipelines/**",
-  // --- Tickets -------------------------------------------------------------
-  "Tickets/{ticket_folder}/{customer_id}/{platform_id}/tickets_{id}.jsonl",
-  "Tickets/syncs/**",
-  // --- People --------------------------------------------------------------
-  "People/Master.xlsx",
-  "People/{person_id}/interactions.jsonl",
-  "People/{person_id}/context.md",
-  "People/{person_id}/identity.json",
-  "People/{person_id}/roles_and_responsibilities.md",
-  "People/{person_id}/agreements/**",
-  "People/syncs/**",
-  // --- Uploads -------------------------------------------------------------
+  // --- accounts --------------------------------------------------------------
+  `${FOLDER.accounts}/Master.xlsx`,
+  `${FOLDER.accounts}/{customer_id}/interactions.jsonl`,
+  `${FOLDER.accounts}/{customer_id}/context.md`,
+  `${FOLDER.accounts}/{customer_id}/personas.jsonl`,
+  `${FOLDER.accounts}/{customer_id}/agreements/**`,
+  `${FOLDER.accounts}/syncs/**`,
+  // --- platform --------------------------------------------------------------
+  `${FOLDER.platform}/Master.xlsx`,
+  `${FOLDER.platform}/{platform_version_id}/{date}_changelog_manager.md`,
+  `${FOLDER.platform}/{platform_version_id}/architecture/helm/**`,
+  `${FOLDER.platform}/{platform_version_id}/architecture/diagrams/**`,
+  `${FOLDER.platform}/{platform_version_id}/architecture/infrastructure/**`,
+  `${FOLDER.platform}/{platform_version_id}/design_decisions/{design_doc}.schemas.json`,
+  `${FOLDER.platform}/{platform_version_id}/tests/**`,
+  `${FOLDER.platform}/{platform_version_id}/security/**`,
+  `${FOLDER.platform}/{platform_version_id}/integromat/**`,
+  `${FOLDER.platform}/syncs/**`,
+  // --- deliveries ------------------------------------------------------------
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/infrastructure/{component}/customizations.tf`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/infrastructure/{component}/rationale.md`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/infrastructure/{component}/signoff/{signoff_role}.md`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/organization.json`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/dataplatform.json`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/dataengineering.approach.json`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/context.md`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/interactions.jsonl`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/codebase/**`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/credentials/**`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/agents/{agent_id}/**`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/pipelines/{pipeline_id}/pipeline_config.json`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/pipelines/{pipeline_id}/private.integromat.json`,
+  `${FOLDER.deliveries}/{customer_id}/{platform_version_id}/platform/integromat.json`,
+  `${FOLDER.deliveries}/syncs/**`,
+  // --- solutions -------------------------------------------------------------
+  `${FOLDER.solutions}/{platform_version_id}/supported.personas.jsonl`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/dataplatform.schemas.json`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/run_configs.schema.json`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/recipe.md`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/recipe/**`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/evals/dataset.jsonl`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/evals/benchmark.jsonl`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/evals/{run_id}/run_configs.json`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/evals/{run_id}/output.jsonl`,
+  `${FOLDER.solutions}/{platform_version_id}/agents/{agent_id}/evals/{run_id}/trace.jsonl`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/pipeline_config.json`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/run_configs.schema.json`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/integromat.schema.json`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/dataengineering.approach.json`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/context.md`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/interactions.jsonl`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/run_configs.json`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/output.jsonl`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/trace.jsonl`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/background_research/{person_id}/context.md`,
+  `${FOLDER.solutions}/{platform_version_id}/pipelines/{pipeline_id}/background_research/{person_id}/interaction.jsonl`,
+  // --- projects --------------------------------------------------------------
+  `${FOLDER.projects}/{customer_id}/migrations/{migration_id}/dataengineering.approach.json`,
+  `${FOLDER.projects}/{customer_id}/migrations/{migration_id}/context.md`,
+  `${FOLDER.projects}/{customer_id}/migrations/{migration_id}/interactions.jsonl`,
+  `${FOLDER.projects}/{customer_id}/migrations/{migration_id}/credentials/**`,
+  `${FOLDER.projects}/{customer_id}/migrations/{migration_id}/codebase/**`,
+  `${FOLDER.projects}/{customer_id}/agents/{agent_id}/**`,
+  `${FOLDER.projects}/{customer_id}/pipelines/{pipeline_id}/pipeline_config.json`,
+  `${FOLDER.projects}/{customer_id}/pipelines/{pipeline_id}/private.integromat.json`,
+  `${FOLDER.projects}/{customer_id}/integromat.json`,
+  `${FOLDER.projects}/{customer_id}/evals/agents/**`,
+  `${FOLDER.projects}/{customer_id}/evals/pipelines/**`,
+  // --- tickets ---------------------------------------------------------------
+  `${FOLDER.tickets}/{ticket_folder}/{customer_id}/{platform_id}/tickets_{id}.jsonl`,
+  `${FOLDER.tickets}/syncs/**`,
+  // --- people ----------------------------------------------------------------
+  `${FOLDER.people}/Master.xlsx`,
+  `${FOLDER.people}/{person_id}/interactions.jsonl`,
+  `${FOLDER.people}/{person_id}/context.md`,
+  `${FOLDER.people}/{person_id}/identity.json`,
+  `${FOLDER.people}/{person_id}/roles_and_responsibilities.md`,
+  `${FOLDER.people}/{person_id}/agreements/**`,
+  `${FOLDER.people}/syncs/**`,
+  // --- uploads ---------------------------------------------------------------
   // Files a signed-in user uploads through the chat, filed under their identity.
-  "Uploads/{person_id}/**",
+  `${FOLDER.uploads}/{person_id}/**`,
   // --- Contributed by subagents ---------------------------------------------
   // A subagent that keeps its own files declares their templates in its subagent.json ("dataroomPaths");
   // scripts/gen-subagent-meta.mjs validates and collects them. dm.md stays the canonical core.
@@ -312,6 +316,12 @@ export interface DataroomBackend {
    * something that looks like bytes.
    */
   readBytes?(path: string): Promise<Uint8Array | null>;
+  /**
+   * Does this workspace hold ANY file under the top-level folder `name`? One cheap look (a directory, a listing
+   * capped at one object), for the write guard: a data room that still has a former folder the profile stores
+   * nothing under is refused before a second set of folders is started (./dataroom-folder-guard.ts).
+   */
+  hasFolder?(name: string): Promise<boolean>;
 }
 
 function ensureTrailingNewline(text: string): string {
@@ -411,6 +421,15 @@ export class LocalDataroomBackend implements DataroomBackend {
     await fs.mkdir(nodePath.dirname(abs), { recursive: true });
     // True append: O_APPEND, no read-modify-write of existing content.
     await fs.appendFile(abs, ensureTrailingNewline(lines.join("\n")), "utf8");
+  }
+
+  async hasFolder(name: string): Promise<boolean> {
+    try {
+      return (await fs.readdir(this.absolute(name))).length > 0;
+    } catch (error) {
+      if (isEnoent(error) || (error as NodeJS.ErrnoException).code === "ENOTDIR") return false;
+      throw error;
+    }
   }
 }
 
@@ -581,6 +600,11 @@ export class BlobDataroomBackend implements DataroomBackend {
     return [...logical].sort();
   }
 
+  async hasFolder(name: string): Promise<boolean> {
+    const page = await listBlobs({ token: this.token, prefix: `${this.storePrefix}/${name}/`, limit: 1 });
+    return page.blobs.length > 0;
+  }
+
   async appendLines(path: string, lines: readonly string[]): Promise<void> {
     // Append-object convention: never read-modify-write the base object.
     // Each append lands as its own immutable part whose key sorts by time,
@@ -638,9 +662,34 @@ function normalizeListPrefix(prefix: string): string {
 
 export class DataroomStore {
   readonly backend: DataroomBackend;
+  /** The workspace this store is for, when it is one's (named in the write guard's refusal). */
+  private readonly workspace: string | undefined;
+  private folderCheck: Promise<void> | undefined;
 
-  constructor(backend: DataroomBackend) {
+  constructor(backend: DataroomBackend, workspace?: string) {
     this.backend = backend;
+    this.workspace = workspace;
+  }
+
+  /**
+   * Before the first write through this store: refuse when the data room still holds a former folder this build's
+   * profile stores nothing under (./dataroom-folder-guard.ts). Looked at once per store, so once per workspace per
+   * process; not at all when the profile pins every former name, which is every deployment that predates the
+   * setting. A look that fails (the store unreachable) is not remembered.
+   */
+  private guardWrite(): Promise<void> {
+    if (UNPINNED_FORMER_FOLDERS.length === 0 || !this.backend.hasFolder) return Promise.resolve();
+    if (!this.folderCheck) {
+      const where = this.workspace ? `The data room of workspace "${this.workspace}"` : "This data room";
+      const check = findStranded((name) => this.backend.hasFolder!(name)).then((stranded) => {
+        if (stranded.length) throw new DataroomFoldersNotPinnedError(where, stranded);
+      });
+      this.folderCheck = check;
+      check.catch((error) => {
+        if (!(error instanceof DataroomFoldersNotPinnedError) && this.folderCheck === check) this.folderCheck = undefined;
+      });
+    }
+    return this.folderCheck;
   }
   /** See DataroomBackend.downloadUrl — null when the backend cannot mint one. */
   async downloadUrl(path: string): Promise<string | null> {
@@ -692,13 +741,14 @@ export class DataroomStore {
   /** Create or replace a dm.md file. `.jsonl` content is newline-normalized. */
   async write(path: string, content: string): Promise<void> {
     validateDataroomPath(path);
+    await this.guardWrite();
     const body = path.endsWith(".jsonl") ? ensureTrailingNewline(content) : content;
     await this.backend.write(path, body);
   }
 
   /**
    * Logical file paths at or under `prefix` (directory-boundary semantics:
-   * "Customers/acme" does NOT match "Customers/acme-bank/..."). Empty prefix
+   * "{folder:accounts}/acme" does NOT match "{folder:accounts}/acme-bank/..."). Empty prefix
    * lists the whole data room.
    */
   async list(prefix = ""): Promise<string[]> {
@@ -726,6 +776,7 @@ export class DataroomStore {
       }
       return line;
     });
+    await this.guardWrite();
     await this.backend.appendLines(path, lines);
     return lines.length;
   }
@@ -769,7 +820,7 @@ export function createLocalDataroomStore(rootDir?: string): DataroomStore {
 
 /** Vercel Blob store for one workspace (throws without a token or a workspace). */
 export function createBlobDataroomStore(options: BlobDataroomBackendOptions & { orgId: string }): DataroomStore {
-  return new DataroomStore(new BlobDataroomBackend({ ...options, storePrefix: workspaceBlobPrefix(options.orgId) }));
+  return new DataroomStore(new BlobDataroomBackend({ ...options, storePrefix: workspaceBlobPrefix(options.orgId) }), options.orgId);
 }
 
 /**
@@ -782,10 +833,10 @@ export function createDataroomStore(options: CreateDataroomStoreOptions = {}): D
   const orgId = requireWorkspace(options.orgId);
   const token = options.blobToken ?? process.env.BLOB_READ_WRITE_TOKEN;
   if (token) {
-    return new DataroomStore(new BlobDataroomBackend({ token, storePrefix: workspaceBlobPrefix(orgId) }));
+    return new DataroomStore(new BlobDataroomBackend({ token, storePrefix: workspaceBlobPrefix(orgId) }), orgId);
   }
   const base = options.localRootDir ?? defaultLocalDataroomRoot();
-  return new DataroomStore(new LocalDataroomBackend(localRootForOrg(base, orgId)));
+  return new DataroomStore(new LocalDataroomBackend(localRootForOrg(base, orgId)), orgId);
 }
 
 /** One cached store per workspace. */

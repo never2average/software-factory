@@ -29,7 +29,13 @@ export interface DeploymentProfile {
   };
   dataroom: {
     root_label: string;
-    domains: Record<string, { label: string; visible: boolean; description?: string }>;
+    /**
+     * By domain id. `folder`: the name the domain's files are STORED under (the first segment of every path in
+     * it). `label`: what people and the model read (the folder's name when the profile gives none).
+     */
+    domains: Record<DataroomDomainId, { folder: string; label: string; visible: boolean; description?: string }>;
+    /** The folder files a person attaches are stored under. */
+    uploads_folder: string;
     /** null = the built-in starter tree; otherwise the files a new workspace is seeded with. */
     seed: { path: string; content: string }[] | null;
   };
@@ -50,6 +56,10 @@ export interface DeploymentProfile {
    */
   account_fields: { hidden: string[]; custom_fields: CustomFieldSpec[] };
 }
+
+/** The data-room domains, by the id code and profiles call them. Their stored folder names are the profile's. */
+export type DataroomDomainId = "accounts" | "platform" | "deliveries" | "solutions" | "projects" | "tickets" | "people";
+export const DATAROOM_DOMAIN_IDS: readonly DataroomDomainId[] = ["accounts","platform","deliveries","solutions","projects","tickets","people"];
 
 export interface DomainFieldSpec {
   label?: string;
@@ -160,35 +170,43 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
   "dataroom": {
     "root_label": "Data Room",
     "domains": {
-      "Customers": {
-        "label": "Customers",
-        "visible": true
+      "accounts": {
+        "folder": "Accounts",
+        "visible": true,
+        "label": "Accounts"
       },
-      "Platform": {
-        "label": "Platform",
-        "visible": true
+      "platform": {
+        "folder": "Platform",
+        "visible": true,
+        "label": "Platform"
       },
-      "Deployments": {
-        "label": "Deployments",
-        "visible": true
+      "deliveries": {
+        "folder": "Deliveries",
+        "visible": true,
+        "label": "Deliveries"
       },
-      "Solutions": {
-        "label": "Solutions",
-        "visible": true
+      "solutions": {
+        "folder": "Solutions",
+        "visible": true,
+        "label": "Solutions"
       },
-      "Implementation": {
-        "label": "Implementation",
-        "visible": true
+      "projects": {
+        "folder": "Projects",
+        "visible": true,
+        "label": "Projects"
       },
-      "Tickets": {
-        "label": "Tickets",
-        "visible": true
+      "tickets": {
+        "folder": "Tickets",
+        "visible": true,
+        "label": "Tickets"
       },
-      "People": {
-        "label": "People",
-        "visible": true
+      "people": {
+        "folder": "People",
+        "visible": true,
+        "label": "People"
       }
     },
+    "uploads_folder": "Uploads",
     "seed": null
   },
   "domains": {

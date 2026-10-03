@@ -72,10 +72,10 @@ function table(headers, rows) {
 
 /** A markdown table of roughly `kb` kilobytes — the answer people actually ask for. */
 function bigTable(kb) {
-  let out = "| customer | tier | stage | owner | ARR | health | last touch |\n|---|---|---|---|---|---|---|\n";
+  let out = "| borrower | tier | stage | owner | ARR | health | last touch |\n|---|---|---|---|---|---|---|\n";
   let i = 0;
   while (out.length < kb * 1024) {
-    out += `| customer-${i} | enterprise | pilot | member-${i % 7}@onfinance.in | $${(i * 1237) % 900000} | ${i % 3 ? "green" : "amber"} | 2026-0${(i % 9) + 1}-1${i % 9} |\n`;
+    out += `| borrower-${i} | enterprise | pilot | member-${i % 7}@onfinance.in | $${(i * 1237) % 900000} | ${i % 3 ? "green" : "amber"} | 2026-0${(i % 9) + 1}-1${i % 9} |\n`;
     i++;
   }
   return out;
@@ -90,7 +90,7 @@ function bigTable(kb) {
 function buildTurn(count, answer) {
   const events = [
     { type: "session.waiting", data: { continuationToken: "tok-0" } },
-    { type: "message.received", data: { role: "user", content: [{ type: "text", text: "Give me the customer table." }] } },
+    { type: "message.received", data: { role: "user", content: [{ type: "text", text: "Give me the borrower table." }] } },
   ];
   const deltas = Math.max(1, count - 4);
   for (let i = 1; i <= deltas; i++) {
@@ -203,7 +203,7 @@ function main() {
   const activeChat = (events, p) => ({
     id: "chat-active",
     clientKey: "new-active",
-    title: "Customer table",
+    title: "Borrower table",
     preview: answer.slice(0, 200),
     messageCount: 2,
     customers: ["acme"],

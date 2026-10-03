@@ -51,6 +51,8 @@ export interface McpDeps {
   verifyAuth: (authorization: string | null) => Promise<McpIdentity | null>;
   /** Text of dm.md, for dataroom_structure. */
   readSpec: () => Promise<string>;
+  /** The name this deployment stores each data-room folder under, by id (agent/lib/dataroom-folders.ts FOLDER). */
+  folders: Record<string, string>;
   /** The profile's custom_fields per record (the two areas, the account), so the write tools can name them. Absent = described generically. */
   customFields?: { deployments: unknown[]; implementations: unknown[]; account?: unknown[] };
   /** Injected for tests. Defaults to global fetch. */
@@ -214,6 +216,7 @@ export async function handleMcpRequest(request: Request, deps: McpDeps): Promise
     opsUrl: publicOrigin,
     webOrigin: publicOrigin,
     readSpec: deps.readSpec,
+    folders: deps.folders,
     customFields: deps.customFields,
     // No direct blob access: the data room is reached through the Ops API, as the caller, org-scoped and audited.
     blobStore: () => null,

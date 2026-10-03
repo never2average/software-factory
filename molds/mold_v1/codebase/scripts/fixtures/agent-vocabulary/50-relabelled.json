@@ -1,5 +1,5 @@
 {
-  "$comment": "Fixture for scripts/check-agent-vocabulary.mjs: a copy of the hfc-research pack's profile (a deployment that relabels every domain the base product names). Its own wording is written the way a relabelled deployment's must be: in its words only. The check renders the agent's whole model-facing surface under it and fails on any base word.",
+  "$comment": "Fixture for scripts/check-agent-vocabulary.mjs: a copy of the hfc-research pack's profile (a deployment that relabels every domain the base product names). Like that deployment, it already holds files: it names each domain by the key it had before folder names were a profile setting, and pins the folder its files are stored under (\"folder\"), so nothing moves. Its own wording is written the way a relabelled deployment's must be: in its words only. The check renders the agent's whole model-facing surface under it and fails on any base word.",
   "product": {
     "tagline": "Research workspace for Indian housing finance companies.",
     "description": "{product} — a research workspace for analysts covering Indian housing finance companies: an agent that fetches SEBI LODR filings and investor presentations, reads them, and builds cited KPI tables."
@@ -47,32 +47,39 @@
     "root_label": "Research Room",
     "domains": {
       "Customers": {
+        "folder": "Customers",
         "label": "Companies",
         "description": "One folder per covered company: its SEBI LODR filings, investor presentations and concalls, and the KPI tables built from them.",
         "visible": true
       },
       "People": {
+        "folder": "People",
         "label": "People",
         "description": "Management and investor-relations contacts at covered companies.",
         "visible": true
       },
       "Platform": {
+        "folder": "Platform",
         "visible": false
       },
       "Deployments": {
+        "folder": "Deployments",
         "label": "Coverage reports",
         "visible": true,
         "description": "One row per company per report: what was published, for which period, and how complete its data is."
       },
       "Solutions": {
+        "folder": "Solutions",
         "visible": false
       },
       "Implementation": {
+        "folder": "Implementation",
         "label": "Portfolios",
         "visible": true,
         "description": "The sets of companies a desk covers, and how far each company's coverage has been built out."
       },
       "Tickets": {
+        "folder": "Tickets",
         "visible": false
       }
     },

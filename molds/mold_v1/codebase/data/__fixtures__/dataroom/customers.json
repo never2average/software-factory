@@ -23,7 +23,7 @@
     }
   ],
   "context": {
-    "path": "Customers/example-bank/context.md",
+    "path": "{folder:accounts}/example-bank/context.md",
     "title": "Example Bank — account context",
     "summary": "Live research-copilot customer; SSO rollout is the current gating workstream.",
     "content": "# Example Bank\n\nExample Bank runs the research copilot in production for the wealth desk. Current focus: SAML SSO rollout pending customer infosec review; renewal proof points tracked in the Solutions sheet.\n",
@@ -43,7 +43,7 @@
       "expirationDate": "2027-08-31",
       "signedByEmails": ["sam@examplebank.com", "rohan@onfinance.in"],
       "fileName": "example-bank-msa-2025.pdf",
-      "storagePath": "Customers/example-bank/agreements/example-bank-msa-2025.pdf",
+      "storagePath": "{folder:accounts}/example-bank/agreements/example-bank-msa-2025.pdf",
       "uploadedByEmail": "rohan@onfinance.in",
       "uploadedAt": "2025-09-03T10:00:00Z",
       "notes": "Includes the AI addendum covering zero-retention model usage."

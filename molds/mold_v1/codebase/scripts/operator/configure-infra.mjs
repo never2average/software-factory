@@ -1,5 +1,5 @@
 // operator:configure-infra — scaffold a customer deployment's infrastructure substrate
-// under Deployments/{customer}/{ver}/infrastructure/ across the eight domains, plus
+// under {folder:deliveries}/{customer}/{ver}/infrastructure/ across the eight domains, plus
 // the 4-party signoff skeleton, and upsert the deployments row. This is the
 // per-deployment substrate a solution runs on — not a solution itself.
 //
@@ -13,6 +13,7 @@ import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system
 import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 // The infrastructure domains under a deployment (dm.md).
 const DOMAINS = ["network", "compute", "storage", "inference", "agents", "database", "observability", "autoscale"];
@@ -75,7 +76,7 @@ async function main() {
 
   // 2. The infra domain scaffold (blob). Never clobber authored infra.
   const store = dataroom(orgId);
-  const root = `Deployments/${customerId}/${version}/infrastructure`;
+  const root = `${FOLDER.deliveries}/${customerId}/${version}/infrastructure`;
   const existing = await store.list(root);
   let wrote = 0;
   // Each domain carries a customizations.tf + rationale.md (dm.md infrastructure

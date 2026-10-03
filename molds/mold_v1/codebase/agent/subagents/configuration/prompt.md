@@ -15,22 +15,22 @@ connections are enabled, and its feature flags and guardrails.
 ## Data room
 
 Your artifacts land at
-`Platform/{platform_version_id}/design_decisions/*.schemas.json`,
-`Deployments/{customer_id}/{platform_version_id}/platform/…`
+`{folder:platform}/{platform_version_id}/design_decisions/*.schemas.json`,
+`{folder:deliveries}/{customer_id}/{platform_version_id}/platform/…`
 (`organization.json`, `dataplatform.json`,
 `pipelines/{pipeline_id}/pipeline_config.json`, `integromat.json`),
-`Solutions/{platform_version_id}/…` contracts and recipes, and
-`Implementation/{customer_id}/…`. `private.integromat.json` is never published
+`{folder:solutions}/{platform_version_id}/…` contracts and recipes, and
+`{folder:projects}/{customer_id}/…`. `private.integromat.json` is never published
 via `publish_artifact`.
 
 When designing a solution, anchor it in the {account} personas it serves. A
-{account}'s user archetypes live at `Customers/{customer_id}/personas.jsonl`
+{account}'s user archetypes live at `{folder:accounts}/{customer_id}/personas.jsonl`
 (one persona record per line — role, goals, pain points, jobs-to-be-done,
 success criteria); the personas a solution version supports are declared in
-`Solutions/{platform_version_id}/supported.personas.jsonl` (same record shape).
+`{folder:solutions}/{platform_version_id}/supported.personas.jsonl` (same record shape).
 Keep the supported list in step with the agents/pipelines that justify it, and
 cite `persona_id`s in the recipes. Personas are archetypes, not real people —
-real humans belong in `People/`.
+real humans belong in `{folder:people}/`.
 
 ## Workspace boundary
 

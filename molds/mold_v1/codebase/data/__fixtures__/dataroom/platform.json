@@ -3,7 +3,7 @@
   "changelogs": [
     {
       "date": "2026-06-14",
-      "path": "Platform/2026.06.3/2026-06-14_changelog_manager.md",
+      "path": "{folder:platform}/2026.06.3/2026-06-14_changelog_manager.md",
       "title": "2026.06.3 — guardrail policy engine v2, SAML SCIM sync fixes"
     }
   ],
@@ -32,9 +32,9 @@
     }
   },
   "helmVariants": [
-    "Platform/2026.06.3/architecture/helm/single-tenant-vpc",
-    "Platform/2026.06.3/architecture/helm/customer-cloud-byoc"
+    "{folder:platform}/2026.06.3/architecture/helm/single-tenant-vpc",
+    "{folder:platform}/2026.06.3/architecture/helm/customer-cloud-byoc"
   ],
-  "terraformVariants": ["Platform/2026.06.3/architecture/infrastructure/aws-vpc-baseline"],
-  "securityArtifacts": ["Platform/2026.06.3/security/sbom-2026.06.3.spdx.json"]
+  "terraformVariants": ["{folder:platform}/2026.06.3/architecture/infrastructure/aws-vpc-baseline"],
+  "securityArtifacts": ["{folder:platform}/2026.06.3/security/sbom-2026.06.3.spdx.json"]
 }

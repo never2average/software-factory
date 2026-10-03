@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 let passed = 0;
 const check = (label, condition) => {
@@ -48,6 +49,7 @@ const deps = {
     return email ? { email } : null;
   },
   readSpec: async () => "# dm.md",
+  folders: FOLDER,
   fetchImpl,
 };
 const post = (body, headers = {}) =>
@@ -118,7 +120,7 @@ check("a non-JSON content type -> 415", res.status === 415);
 
 body = await (await post(rpc(2, "tools/list"))).json();
 const hosted = body.result.tools.map((t) => t.name);
-const shared = createTools({ api: async () => ({}), getOrg: () => null, setOrg() {}, identity: async () => null }).map((t) => t.name);
+const shared = createTools({ api: async () => ({}), getOrg: () => null, setOrg() {}, identity: async () => null, folders: FOLDER }).map((t) => t.name);
 assert.deepEqual(hosted, shared, "hosted tools/list === the shared definitions");
 passed++;
 
@@ -213,7 +215,7 @@ check("an unknown tool -> -32602", body.error?.code === -32602);
 
 /* ---- caps ----------------------------------------------------------------- */
 
-res = await post(rpc(1, "tools/call", { name: "dataroom_write", arguments: { path: "Customers/a/b.md", content: "x".repeat(MAX_BODY_BYTES) } }));
+res = await post(rpc(1, "tools/call", { name: "dataroom_write", arguments: { path: `${FOLDER.accounts}/a/b.md`, content: "x".repeat(MAX_BODY_BYTES) } }));
 check("an oversized body -> 413", res.status === 413 && (await res.json()).error.code === -32600);
 res = await handleMcpRequest(
   new Request(`${ORIGIN}/api/mcp`, {
@@ -233,7 +235,7 @@ check("…even when Content-Length lies about it", res.status === 413);
 res = await post(Array.from({ length: MAX_BATCH + 1 }, (_, i) => rpc(i, "ping")));
 check("an oversized batch -> 400", res.status === 400);
 opsReply = () => Response.json({ found: true, content: "y".repeat(MAX_RESULT_CHARS + 5000) });
-body = await (await post(rpc(9, "tools/call", { name: "dataroom_read", arguments: { path: "Customers/a/b.md" } }))).json();
+body = await (await post(rpc(9, "tools/call", { name: "dataroom_read", arguments: { path: `${FOLDER.accounts}/a/b.md` } }))).json();
 check("an oversized tool result is truncated, and says so", body.result.content[0].text.length < MAX_RESULT_CHARS + 400 && body.result.content[0].text.includes("[truncated"));
 
 /* ---- what a person is told to type ---------------------------------------- */

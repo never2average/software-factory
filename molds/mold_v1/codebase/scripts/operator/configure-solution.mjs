@@ -1,5 +1,5 @@
 // operator:configure-solution — scaffold a reusable pipeline solution as a self-describing
-// "minified solution-manager" under Solutions/{ver}/pipelines/{id}/: its schema
+// "minified solution-manager" under {folder:solutions}/{ver}/pipelines/{id}/: its schema
 // (contract), its config (artifact), its recipe (staged authoring), plus evals,
 // migrations and grounding. Optionally, with --customer, upsert the solutions row
 // and seed the customer's Deployments instance from the recipe.
@@ -13,6 +13,7 @@ import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIf
 import { solutions } from "../../agent/lib/db/schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 async function main() {
   const version = flag("version").trim();
@@ -36,7 +37,7 @@ async function main() {
   // ({migration_id}/…) and background_research ({person_id}/…) are created per
   // run/change, not pre-seeded empty. The authoring recipe lives in the skill.
   const store = dataroom(workspaceFor());
-  const base = `Solutions/${version}/pipelines/${id}`;
+  const base = `${FOLDER.solutions}/${version}/pipelines/${id}`;
   const existing = await store.list(base);
   const files = {
     "run_configs.schema.json": schemaStub(`run_configs — ${id}`),
@@ -69,8 +70,8 @@ async function main() {
       .values({ orgId, customerId, solutionId: id, useCase, modulesEnabled: [], solutionStatus: "configuring", solutionOwner: me, solutionFdeOwner: me })
       .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, solutionStatus: "configuring", solutionOwner: me, solutionFdeOwner: me } }));
     // Seed the customer's deployment instance from the recipe (dm.md recipe seam).
-    const dep = `Deployments/${customerId}/${version}/platform/pipelines/${id}`;
-    // In the workspace's own data room: Deployments/{customer_id}/… is per company, and so per workspace.
+    const dep = `${FOLDER.deliveries}/${customerId}/${version}/platform/pipelines/${id}`;
+    // In the workspace's own data room: {folder:deliveries}/{customer_id}/… is per company, and so per workspace.
     const customerStore = dataroom(orgId);
     const depExisting = await customerStore.list(dep);
     await writeIfAbsent(customerStore, depExisting, `${dep}/pipeline_config.json`, JSON.stringify({ pipeline_id: id, use_case: useCase, seeded_from: base, steps: [] }, null, 2) + "\n");

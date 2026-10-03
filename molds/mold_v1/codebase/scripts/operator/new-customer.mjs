@@ -6,7 +6,7 @@
 //
 // Writes ONE `customers` row in the workspace (idempotent by (id, workspace): another workspace may hold the
 // same id, mold_v1-118) + assigns you as the solution
-// engineer in `internal_staff`, and seeds `Customers/{id}/context.md` +
+// engineer in `internal_staff`, and seeds `{folder:accounts}/{id}/context.md` +
 // `interactions.jsonl` in the data room. See docs/OPERATOR_WORKFLOW.md (stage 1).
 import { getDb, closeDb, slugify, dataroom, getCustomer, nowIso, appendInteraction, workspaceFor, withOrgDb } from "./lib/customer.mjs";
 import { customers, internalStaff } from "../../agent/lib/db/schema.ts";
@@ -14,6 +14,7 @@ import { and, eq } from "drizzle-orm";
 import { glyph, flag, hasFlag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 async function main() {
   const name = flag("name").trim();
@@ -79,21 +80,21 @@ async function main() {
 
   // Seed the data-room context. Only create context.md if absent — never clobber.
   const store = dataroom(orgId);
-  const ctxPath = `Customers/${id}/context.md`;
-  const present = await store.list(`Customers/${id}`);
+  const ctxPath = `${FOLDER.accounts}/${id}/context.md`;
+  const present = await store.list(`${FOLDER.accounts}/${id}`);
   if (!present.includes(ctxPath) || hasFlag("force")) {
     await store.write(ctxPath, contextTemplate(name, id, me, row));
     console.log(`${glyph.ok} Seeded ${ctxPath}.`);
   } else {
     console.log(`${glyph.info} ${ctxPath} already exists — left as is.`);
   }
-  await appendInteraction(store, `Customers/${id}/interactions.jsonl`, {
+  await appendInteraction(store, `${FOLDER.accounts}/${id}/interactions.jsonl`, {
     ts: nowIso(),
     type: "account_created",
     actor: me,
     summary: `${W.Account} "${name}" onboarded by ${me}.`,
   });
-  console.log(`${glyph.ok} Logged account_created to Customers/${id}/interactions.jsonl.`);
+  console.log(`${glyph.ok} Logged account_created to ${FOLDER.accounts}/${id}/interactions.jsonl.`);
 
   await closeDb();
   console.log(`\n${glyph.info} Next: research the account, then use backfill-customization-history / backfill-integration-history for prior state.`);

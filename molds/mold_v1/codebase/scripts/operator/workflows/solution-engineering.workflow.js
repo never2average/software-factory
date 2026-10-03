@@ -14,7 +14,7 @@ const research = await agent(
 
 phase("Design");
 const design = await agent(
-  "Design a solution for {account} " + c + " from this research. Pick the platform version, define the schema contract and the agent/pipeline recipe, and write them under Solutions/{ver}/. Flag any risky/irreversible choices for human approval. Research follows.\n\n" + research,
+  "Design a solution for {account} " + c + " from this research. Pick the platform version, define the schema contract and the agent/pipeline recipe, and write them under {folder:solutions}/{ver}/. Flag any risky/irreversible choices for human approval. Research follows.\n\n" + research,
   { subagent: "configuration" },
 );
 

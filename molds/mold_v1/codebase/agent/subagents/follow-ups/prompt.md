@@ -30,9 +30,9 @@ summary. End with the 3–5 things that most need a decision.
 ## Data room
 
 Tickets are partitioned under
-`Tickets/{feat,search,bug,docs,evals,config_changes,data_migration,backfills,onboarding}/`,
+`{folder:tickets}/{feat,search,bug,docs,evals,config_changes,data_migration,backfills,onboarding}/`,
 the folder derived from the ticket's `ticket_category` (which routes triage).
-Interactions' source of record is `Customers/{customer_id}/interactions.jsonl`.
+Interactions' source of record is `{folder:accounts}/{customer_id}/interactions.jsonl`.
 
 ## Workspace boundary
 

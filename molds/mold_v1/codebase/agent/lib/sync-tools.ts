@@ -2,7 +2,7 @@
  * sync-tools.ts — model-facing tools over the `syncs.ts` ingestion facade.
  *
  * `syncPullTool` pulls one upstream source into the data room (and, for
- * Customers-domain items, into the system of record). It writes to the shared
+ * accounts-domain items, into the system of record). It writes to the shared
  * data room and possibly the SoR, so it is approval-gated with `once()`,
  * mirroring `upsertCustomerTool` / `dataroomWriteTool`.
  *
@@ -20,6 +20,7 @@ import { getDataroomStore } from "#lib/dataroom-store.js";
 import { orgForSession } from "#lib/org-context.js";
 import {
   ingestSource,
+  SYNC_DOMAINS,
   SYNC_SOURCE_FOLDERS,
   type SyncDomain,
 } from "#lib/syncs.js";
@@ -27,7 +28,7 @@ import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { fill } from "./agent-vocabulary.ts";
 
 // The five dm.md domains that carry a `syncs/**` landing subtree.
-const syncDomainSchema = z.enum(["Customers", "Platform", "Deployments", "Tickets", "People"]);
+const syncDomainSchema = z.enum(SYNC_DOMAINS as [string, ...string[]]);
 
 /**
  * The verified caller's email from the session auth, never from the model.
@@ -57,7 +58,7 @@ function emailOrUndefined(value: string | undefined): string | undefined {
 
 export const syncPullTool = modelFacing("sync_pull", defineTool({
   description:
-    "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.",
+    "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the {domain:accounts} domain, also record items as interactions in the system of record. Sources per domain: `{domain:accounts}` {manual_entry, email, slack, granola}; `{domain:platform}` {manual_entry, github, aws, slack, miro}; `{domain:deliveries}` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `{domain:tickets}` {manual_entry, call, email, slack}; `{domain:people}` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.",
   approval: once(),
   inputSchema: z.object({
     domain: syncDomainSchema,
@@ -80,7 +81,7 @@ export const syncPullTool = modelFacing("sync_pull", defineTool({
     normalize: z
       .boolean()
       .optional()
-      .describe("Also record Customers-domain items as interactions (default true)."),
+      .describe(fill("Also record {domain:accounts}-domain items as interactions (default true).")),
   }),
   async execute(input, ctx) {
     return await ingestSource({

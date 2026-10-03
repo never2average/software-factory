@@ -7,12 +7,13 @@
 //     --deployment-model single_tenant --residency in-country --primary-model claude-opus-4.8 \
 //     --use-case "collections triage"
 //
-// Version-scoped writes go to Platform/{ver}/ (shared, blob-only). The per-customer
+// Version-scoped writes go to {folder:platform}/{ver}/ (shared, blob-only). The per-customer
 // governance row is the `platform` table. See docs/OPERATOR_WORKFLOW.md (stage 3).
 import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIfAbsent, schemaStub } from "./lib/customer.mjs";
 import { platform } from "../../agent/lib/db/schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 // The seven design-decision schemas that make up the platform contract (dm.md).
 const DESIGN_SCHEMAS = [
@@ -41,15 +42,15 @@ async function main() {
 
   // 1. The version contract (blob, shared). Never clobber authored schemas.
   const store = dataroom(workspaceFor());
-  const existing = await store.list(`Platform/${version}`);
+  const existing = await store.list(`${FOLDER.platform}/${version}`);
   let wrote = 0;
   for (const name of DESIGN_SCHEMAS) {
-    const p = `Platform/${version}/design_decisions/${name}.schemas.json`;
+    const p = `${FOLDER.platform}/${version}/design_decisions/${name}.schemas.json`;
     if (await writeIfAbsent(store, existing, p, schemaStub(`${name} — ${version}`))) wrote++;
   }
-  if (await writeIfAbsent(store, existing, `Platform/${version}/architecture/helm/values.yaml`, `# ${version} helm values — TODO\n`)) wrote++;
-  if (await writeIfAbsent(store, existing, `Platform/${version}/architecture/infrastructure/main.tf`, `# ${version} reference terraform — TODO\n`)) wrote++;
-  console.log(`${glyph.ok} Platform/${version} contract: ${wrote} file(s) scaffolded (${DESIGN_SCHEMAS.length} schemas + architecture).`);
+  if (await writeIfAbsent(store, existing, `${FOLDER.platform}/${version}/architecture/helm/values.yaml`, `# ${version} helm values — TODO\n`)) wrote++;
+  if (await writeIfAbsent(store, existing, `${FOLDER.platform}/${version}/architecture/infrastructure/main.tf`, `# ${version} reference terraform — TODO\n`)) wrote++;
+  console.log(`${glyph.ok} ${FOLDER.platform}/${version} contract: ${wrote} file(s) scaffolded (${DESIGN_SCHEMAS.length} schemas + architecture).`);
 
   // 2. Optional: the customer's platform-governance row (per-customer instance).
   const customerId = flag("customer").trim();

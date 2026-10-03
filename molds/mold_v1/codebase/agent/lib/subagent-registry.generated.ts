@@ -39,7 +39,7 @@ export const SUBAGENT_SUMMARIES: Record<string, string> = {
   "deployment": "Deploy and operate {account} platforms on Vercel: releases, rollbacks, and health checks.",
   "evals": "Build, run, and improve eval suites and interpret regressions for a {account}.",
   "follow-ups": "Chase open {account} follow-ups and prepare the daily stand-up summary.",
-  "research": "Thoroughly research an {account} and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders.",
+  "research": "Thoroughly research an {account} and build out its schema-specific system of record across {domain:accounts}, {domain:platform}, {domain:deliveries}, {domain:solutions}, {domain:projects}, {domain:tickets}, Interactions, Internal Staff, and Customer Stakeholders.",
   "workflow-author": "Write, lint and review Ops Center workflow scripts."
 };
 

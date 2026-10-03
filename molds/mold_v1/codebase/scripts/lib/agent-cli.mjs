@@ -6,6 +6,7 @@
  */
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { storedFolders } from "./profile-words.mjs";
 
 // ------------------------------------------------------------------ inputs
 
@@ -119,6 +120,8 @@ export function renderDeploymentModule(d) {
     origin: d.origin ?? null,
     mcpEndpoint: d.mcpEndpoint ?? null,
     vocabulary: d.vocabulary,
+    // The data-room folders' stored names in this deployment, by domain id: the tools build every path from them.
+    folders: d.folders,
     commands: d.commands,
     legacyCommands: d.legacyCommands ?? null,
     modules: d.modules,
@@ -131,7 +134,7 @@ export function renderDeploymentModule(d) {
 // file names); a package built for one deployment carries that deployment's own. See
 // docs/AGENT_CLI.md.
 export const DEPLOYMENT = ${JSON.stringify(data, null, 2)};
-export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;
+export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, folders, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;
 `;
 }
 
@@ -152,6 +155,7 @@ export function defaultDeployment({ packageName, profile, slug }) {
     origin: null,
     mcpEndpoint: null,
     vocabulary: profile.vocabulary,
+    folders: storedFolders(profile),
     commands: GENERIC_COMMANDS,
     legacyCommands: LEGACY_GENERIC_COMMANDS,
     modules: moduleSpecifiers(GENERIC_MODULE_FILES),
@@ -162,25 +166,30 @@ export function defaultDeployment({ packageName, profile, slug }) {
 
 // ------------------------------------------------------------------ dm.md
 
-const DOMAIN_LINE = /^ {2}\|-([A-Za-z]+)[ \t]*$/;
-/** Which record area lives in which data-room folder. */
-const AREA_FOLDER = { deployments: "Deployments", implementations: "Implementation" };
+/** A domain's line in dm.md: two spaces, `|-`, the folder placeholder (`{folder:accounts}`). */
+const DOMAIN_LINE = /^ {2}\|-\{folder:([a-z]+)\}[ \t]*$/;
+/** Which record area lives in which data-room domain. */
+const AREA_DOMAIN = { deployments: "deliveries", implementations: "projects" };
 
 /**
- * The package's dm.md: the repo's dm.md as THIS deployment shows it. Hidden domains are
- * removed; a relabelled one reads "Label [Folder]" (the bracketed name is the real one a
- * tool's path uses); redefined record areas are summarised and lose the default tree under their folder; subagent path templates are
- * appended under their domain. Under the default profile with no templates the result is
- * the source, byte for byte.
+ * The package's dm.md: the repo's dm.md as THIS deployment shows it. The source names each domain by a placeholder
+ * (`{folder:accounts}`), filled here with the folder THIS deployment stores it under (profile
+ * `dataroom.domains.<id>.folder`). Hidden domains are removed; a relabelled one reads "Label [Folder]" (the
+ * bracketed name is the real one a tool's path uses); redefined record areas are summarised and lose the default
+ * tree under their folder; subagent path templates are appended under their domain. Under the default profile with
+ * no templates the result is the source with its placeholders filled, and nothing else.
  */
 export function renderDmMd({ source, profile, defaultDomains, extraTemplates = [], productName }) {
+  const folders = storedFolders(profile);
+  const fill = (text) => text.replace(/\{folder:([a-z]+)\}/g, (whole, id) => folders[id] ?? whole);
   const lines = source.split("\n");
-  const blocks = []; // { folder, lines }
+  const blocks = []; // { id, folder, lines }
   let head = [];
   let cur = null;
   for (const line of lines) {
     const m = DOMAIN_LINE.exec(line);
-    if (m) { cur = { folder: m[1], lines: [line] }; blocks.push(cur); } else if (cur) cur.lines.push(line); else head.push(line);
+    if (m && !(m[1] in folders)) throw new Error(`dm.md: {folder:${m[1]}} is not a data-room domain`);
+    if (m) { cur = { id: m[1], folder: folders[m[1]], lines: [fill(line)] }; blocks.push(cur); } else if (cur) cur.lines.push(fill(line)); else head.push(fill(line));
   }
   const domains = profile.dataroom.domains;
   const extrasByFolder = new Map();
@@ -192,10 +201,10 @@ export function renderDmMd({ source, profile, defaultDomains, extraTemplates = [
   const unknown = [...extrasByFolder.keys()].filter((f) => !blocks.some((b) => b.folder === f));
   if (unknown.length) throw new Error(`dm.md: a subagent path template starts with ${unknown.join(", ")}, which is not a domain in dm.md`);
 
-  const hidden = blocks.filter((b) => domains[b.folder]?.visible === false).map((b) => b.folder);
-  const relabelled = blocks.filter((b) => domains[b.folder]?.visible !== false && domains[b.folder]?.label && domains[b.folder].label !== b.folder);
-  const redefined = Object.keys(AREA_FOLDER).filter((a) => !isDeepStrictEqual(profile.domains[a], defaultDomains[a]));
-  if (!hidden.length && !relabelled.length && !redefined.length && !extraTemplates.length) return source;
+  const hidden = blocks.filter((b) => domains[b.id]?.visible === false).map((b) => b.folder);
+  const relabelled = blocks.filter((b) => domains[b.id]?.visible !== false && domains[b.id]?.label && domains[b.id].label !== b.folder);
+  const redefined = Object.keys(AREA_DOMAIN).filter((a) => !isDeepStrictEqual(profile.domains[a], defaultDomains[a]));
+  if (!hidden.length && !relabelled.length && !redefined.length && !extraTemplates.length) return fill(source);
 
   const out = [];
   out.push(`${productName} data room.`);
@@ -205,18 +214,18 @@ export function renderDmMd({ source, profile, defaultDomains, extraTemplates = [
     const d = profile.domains[a];
     const shown = a === "implementations" && d.group_by ? d.group_label.plural : d.label.plural;
     const rows = a === "implementations" && d.group_by ? `; each row is a ${d.label.singular}` : "";
-    out.push(`${shown} (stored as ${AREA_FOLDER[a]}${rows}): ${d.description}`);
+    out.push(`${shown} (stored as ${folders[AREA_DOMAIN[a]]}${rows}): ${d.description}`);
   }
   out.push("");
   out.push(...head);
   for (const b of blocks) {
-    const spec = domains[b.folder];
+    const spec = domains[b.id];
     const extras = extrasByFolder.get(b.folder) ?? [];
     const isHidden = spec?.visible === false;
     if (isHidden && !extras.length) continue;
     // A redefined record area keeps its rows in the database; the default tree under its folder describes
     // the DEFAULT meaning of the area, so listing it would describe files this deployment never has.
-    const isRedefined = redefined.some((a) => AREA_FOLDER[a] === b.folder);
+    const isRedefined = redefined.some((a) => AREA_DOMAIN[a] === b.id);
     const kept = b.lines.slice(1);
     const body = isHidden ? [] : isRedefined
       ? ["    (records, not files: read and write them with the record tools; nothing is laid out under this folder by default)", ...kept.filter((l) => l.trim() === "")]

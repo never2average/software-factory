@@ -1,12 +1,12 @@
 // operator:backfill-integrations — reconstruct a customer's pipeline/integration
-// history into the canonical Implementation/ layout + the `implementation` row.
+// history into the canonical {folder:projects}/ layout + the `implementation` row.
 //
 //   npm run operator:backfill-integrations -- --customer contoso-bank --org <workspace id> \
 //     [--pipeline pl-collections] [--summary "Collections ETL via Integromat"] \
 //     [--from-file integrations.json]
 //
 // Writes/updates ONE `implementation` row (idempotent by customer) and materialises
-// Implementation/{id}/pipelines/{pid}/pipeline_config.json + integromat.json.
+// {folder:projects}/{id}/pipelines/{pid}/pipeline_config.json + integromat.json.
 // --from-file takes an array of { pipelineId, summary, config }. See
 // docs/OPERATOR_WORKFLOW.md (stage 5).
 import { getDb, closeDb, dataroom, workspaceFor, nowIso, appendInteraction, readFromFile, checkValues } from "./lib/customer.mjs";
@@ -14,6 +14,7 @@ import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system
 import { implementationSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 async function main() {
   const customerId = flag("customer").trim();
@@ -83,20 +84,20 @@ async function main() {
       integromat: false,
     };
     await store.write(
-      `Implementation/${customerId}/pipelines/${pid}/pipeline_config.json`,
+      `${FOLDER.projects}/${customerId}/pipelines/${pid}/pipeline_config.json`,
       JSON.stringify(cfg, null, 2) + "\n",
     );
-    console.log(`${glyph.ok} Wrote Implementation/${customerId}/pipelines/${pid}/pipeline_config.json`);
+    console.log(`${glyph.ok} Wrote ${FOLDER.projects}/${customerId}/pipelines/${pid}/pipeline_config.json`);
   }
 
   // 3. The account-level integromat manifest (list of pipelines wired to it).
   await store.write(
-    `Implementation/${customerId}/integromat.json`,
+    `${FOLDER.projects}/${customerId}/integromat.json`,
     JSON.stringify({ customer: customerId, pipelines: pipelines.map((p) => p.pipelineId), updatedAt: nowIso() }, null, 2) + "\n",
   );
-  console.log(`${glyph.ok} Wrote Implementation/${customerId}/integromat.json`);
+  console.log(`${glyph.ok} Wrote ${FOLDER.projects}/${customerId}/integromat.json`);
 
-  await appendInteraction(store, `Customers/${customerId}/interactions.jsonl`, {
+  await appendInteraction(store, `${FOLDER.accounts}/${customerId}/interactions.jsonl`, {
     ts: nowIso(),
     type: "integration_backfilled",
     actor: me,

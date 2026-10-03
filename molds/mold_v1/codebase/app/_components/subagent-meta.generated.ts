@@ -27,7 +27,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     "tools": [
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
       },
       {
         "name": "dataroom_read",
@@ -83,7 +83,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "read_customer_slas",
-        "description": "Read EVERY account's SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-account urgency/breach filters from each account's own commitments instead of one global rule, and (b) check whether that account's Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Accounts in `missing` have no sla.json — fall back to the platform default."
+        "description": "Read EVERY account's SLA agreement (Accounts/{id}/agreements/sla.json) AND their Projects customization footprint (Projects/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-account urgency/breach filters from each account's own commitments instead of one global rule, and (b) check whether that account's Projects VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Accounts in `missing` have no sla.json — fall back to the platform default."
       },
       {
         "name": "web_search",
@@ -121,7 +121,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
       },
       {
         "name": "dataroom_read",
@@ -174,7 +174,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
       },
       {
         "name": "dataroom_read",
@@ -222,7 +222,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "record_interaction",
-        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
+        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Accounts/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
       },
       {
         "name": "record_interactions",
@@ -234,7 +234,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "sync_pull",
-        "description": "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth."
+        "description": "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Accounts domain, also record items as interactions in the system of record. Sources per domain: `Accounts` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deliveries` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth."
       },
       {
         "name": "upsert_customer",
@@ -259,7 +259,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
       },
       {
         "name": "dataroom_read",
@@ -300,7 +300,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "record_signoff",
-        "description": "Record an authoritative delivery signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deployments/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision."
+        "description": "Record an authoritative delivery signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deliveries/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision."
       }
     ]
   },
@@ -325,7 +325,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
       },
       {
         "name": "dataroom_read",
@@ -358,7 +358,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
       },
       {
         "name": "dataroom_read",
@@ -418,7 +418,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "record_interaction",
-        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
+        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Accounts/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
       },
       {
         "name": "record_interactions",
@@ -436,8 +436,8 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
   },
   "research": {
     "name": "Research",
-    "summary": "Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders.",
-    "description": "Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders. Delegate here to enrich or (re)build an account's data room: it pulls the current record, meeting notes, and the web, writes findings back, and produces the six per-section Excel workbooks (Customers, Platform, Deployments, Solutions, Implementation, Tickets).",
+    "summary": "Thoroughly research an account and build out its schema-specific system of record across Accounts, Platform, Deliveries, Solutions, Projects, Tickets, Interactions, Internal Staff, and Customer Stakeholders.",
+    "description": "Thoroughly research an account and build out its schema-specific system of record across Accounts, Platform, Deliveries, Solutions, Projects, Tickets, Interactions, Internal Staff, and Customer Stakeholders. Delegate here to enrich or (re)build an account's data room: it pulls the current record, meeting notes, and the web, writes findings back, and produces the six per-section Excel workbooks (Accounts, Platform, Deliveries, Solutions, Projects, Tickets).",
     "skillNames": [],
     "skillsSummary": "Guided, step-at-a-time procedures for this subagent (SKILL.md files).",
     "tools": [
@@ -459,7 +459,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
       },
       {
         "name": "dataroom_read",
@@ -495,7 +495,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "record_interaction",
-        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
+        "description": "Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Accounts/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly."
       },
       {
         "name": "record_interactions",
@@ -507,7 +507,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "sync_pull",
-        "description": "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth."
+        "description": "Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Accounts domain, also record items as interactions in the system of record. Sources per domain: `Accounts` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deliveries` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth."
       },
       {
         "name": "upsert_customer",

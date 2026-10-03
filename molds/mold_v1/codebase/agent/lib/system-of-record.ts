@@ -16,7 +16,7 @@
  * Document artifacts (context.md, agreements, helm/terraform, eval jsonl,
  * signoffs) are NOT stored here — they live in the data-room store
  * (`./dataroom-store.ts`). `recordInteraction` additionally mirrors each
- * interaction into `Customers/{id}/interactions.jsonl` for the document view,
+ * interaction into `{folder:accounts}/{id}/interactions.jsonl` for the document view,
  * best-effort; Postgres (or the JSON fallback) remains the record.
  */
 import { and, eq, getTableColumns, ilike, notInArray, or, sql } from "drizzle-orm";
@@ -55,6 +55,7 @@ import {
   tickets as ticketsTable,
 } from "./db/schema.ts";
 import { getDataroomStore } from "./dataroom-store.ts";
+import { FOLDER } from "./dataroom-folders.ts";
 import { DEFAULT_ORG } from "./org-context.ts";
 import { LONG_TEXT_LIMIT, asCustomValues, customDelta, customFieldsOf, replacedKeys, validateAppend, validateCustom, type CustomDelta, type CustomValues } from "./custom-fields.ts";
 import { customMergeSql } from "./custom-merge-sql.ts";
@@ -1260,7 +1261,7 @@ export async function createTicket(
 
 /**
  * Mirror an interaction into the data room's document view
- * (`Customers/{id}/interactions.jsonl`). Best-effort: the system of record
+ * (`{folder:accounts}/{id}/interactions.jsonl`). Best-effort: the system of record
  * (Postgres or the JSON fallback) has already been written by the caller.
  */
 async function appendInteractionArtifact(
@@ -1278,11 +1279,11 @@ async function appendInteractionArtifacts(
 ): Promise<void> {
   if (interactions.length === 0) return;
   try {
-    // The workspace's own data room (dataroom/orgs/<org>/Customers/<id>/…). The in-memory fallback, which holds one
+    // The workspace's own data room (dataroom/orgs/<org>/<the accounts folder>/<id>/…). The in-memory fallback, which holds one
     // workspace and names none, writes the default one's, as it always has — named explicitly: the store has no
     // default workspace and refuses a missing one (lib/dataroom-keyspace.ts).
     await getDataroomStore(getDb() ? scopeFor(customerId, orgId) : orgId || DEFAULT_ORG).appendJsonl(
-      `Customers/${customerId}/interactions.jsonl`,
+      `${FOLDER.accounts}/${customerId}/interactions.jsonl`,
       interactions.length === 1 ? interactions[0] : [...interactions],
       interactionSchema,
     );

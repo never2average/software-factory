@@ -23,11 +23,11 @@ data-room folders:
 | Stage | What happens | System of record | Data room |
 | --- | --- | --- | --- |
 | **0. Onboard yourself** | Get wired to the platform and known to the system | `memories` (team) | — |
-| **1. Onboard a customer** | Create the account, seed context, assign owners | `customers`, `internal_staff`, `customer_stakeholders` | `Customers/{id}/` |
-| **2. Research the account** | Build the domain workbooks & relationship map | `interactions` | `Customers/{id}/context.md`, `syncs/` |
+| **1. Onboard a customer** | Create the account, seed context, assign owners | `customers`, `internal_staff`, `customer_stakeholders` | `Accounts/{id}/` |
+| **2. Research the account** | Build the domain workbooks & relationship map | `interactions` | `Accounts/{id}/context.md`, `syncs/` |
 | **3. Scope & design** | Pick platform version, design decisions | `platform`, `solutions` | `Platform/`, `Solutions/` |
-| **4. Deploy** | Stand up infra; run the 4-party signoff chain | `deployments` | `Deployments/{id}/{ver}/` |
-| **5. Migrate & integrate** | Backfill data; wire pipelines/integromat | `implementation` | `Implementation/{id}/`, `Deployments/{id}/{ver}/platform/` |
+| **4. Deploy** | Stand up infra; run the 4-party signoff chain | `deployments` | `Deliveries/{id}/{ver}/` |
+| **5. Migrate & integrate** | Backfill data; wire pipelines/integromat | `implementation` | `Projects/{id}/`, `Deliveries/{id}/{ver}/platform/` |
 | **6. Operate** | Tickets, evals, follow-ups, SLAs | `tickets`, `automation_runs` | `Tickets/`, `Solutions/.../evals/` |
 
 The **subagents** the orchestrator delegates to line up with the stages:
@@ -42,17 +42,17 @@ Skills annotate these paths with `← you write this`. The canonical tree is `dm
 the high-traffic operator paths:
 
 ```
-Customers/{customer_id}/
+Accounts/{customer_id}/
   context.md              ← account context, curated by the operator / customer-context
   interactions.jsonl      ← append-only log of touchpoints (mirrors `interactions`)
   agreements/             ← MSAs, order forms
-Deployments/{customer_id}/{platform_version_id}/
+Deliveries/{customer_id}/{platform_version_id}/
   infrastructure/.../signoff/   ← 4-party signoff (internal, infra, infosec, cloud)
   platform/
     migrations/{migration_id}/  ← the migration approach + interactions
     pipelines/{pipeline_id}/    ← pipeline_config.json (+ private.integromat.json)
     integromat.json
-Implementation/{customer_id}/
+Projects/{customer_id}/
   migrations/{migration_id}/    ← in-flight migration working set
   pipelines/{pipeline_id}/
 Tickets/{feat|bug|docs|...}/{customer_id}/{platform_id}/tickets_*.jsonl
@@ -83,8 +83,8 @@ Without it the script stops before reading anything.
 | `configure-solution` | Scaffold a reusable pipeline solution (a minified solution-manager) | `operator:configure-solution` |
 | `configure-agents` | Scaffold a reusable agent solution (the agents sibling) | `operator:configure-agents` |
 | `configure-infra` | Scaffold a deployment's infra substrate + the 4-party signoff | `operator:configure-infra` |
-| `backfill-customization-history` | Reconstruct a customer's deployment/customization history into `Deployments/` | `operator:backfill-customizations` |
-| `backfill-integration-history` | Reconstruct pipeline/integromat integration history into `Implementation/` | `operator:backfill-integrations` |
+| `backfill-customization-history` | Reconstruct a customer's deployment/customization history into `Deliveries/` | `operator:backfill-customizations` |
+| `backfill-integration-history` | Reconstruct pipeline/integromat integration history into `Projects/` | `operator:backfill-integrations` |
 
 Shared gate: **`operator:validate-solution`** structurally validates any configured
 solution (schema parses, artifact/recipe filled, evals seeded) — advisory by
@@ -115,7 +115,7 @@ one); the script prints how to pull it.
 Every folder's required structure is **derived** from the dm.md grammar
 (`DATAROOM_PATH_TEMPLATES`), never hand-authored — so it can't drift:
 
-- **`operator:context-graph -- --path "Customers/{id}" --org {workspace}`** (or `--customer {id}`) — the
+- **`operator:context-graph -- --path "Accounts/{id}" --org {workspace}`** (or `--customer {id}`) — the
   computed graph for a folder: required files/dirs (from the templates), what's
   present, what's missing, and live `[[edges]]` (a customer → its deployments,
   implementation, tickets, stakeholders — the same `[[wikilink]]` vocabulary the
@@ -144,5 +144,5 @@ Start with **`onboard-self`** — you can't do the rest until you're wired in. T
   runs. The `OnFinance/solution-manager` PR gate maps onto **eval acceptance + the
   deployment signoff**, not git.
 - **`configure-infra`** provisions the per-deployment **substrate** the solution
-  runs on, and a customer's `Deployments/.../platform/{pipelines,agents}/{id}/` is
+  runs on, and a customer's `Deliveries/.../platform/{pipelines,agents}/{id}/` is
   the **instance** seeded from a solution's recipe.

@@ -8,7 +8,7 @@
  *
  *   orgs/…                         already in a workspace: left alone.
  *   _versions/<org>/…              a version snapshot, filed by its workspace in its own key → orgs/<org>/_versions/<org>/…
- *   a COMPANY path                 Customers/<id>/…, Deployments/<id>/…, Implementation/<id>/…, Tickets/<folder>/<id>/…:
+ *   a COMPANY path                 {folder:accounts}/<id>/…, {folder:deliveries}/<id>/…, {folder:projects}/<id>/…, {folder:tickets}/<folder>/<id>/…:
  *                                  moves to the ONE workspace whose customers table holds <id> (read-only, each
  *                                  workspace in its own scope). Held by two workspaces, or by none: AMBIGUOUS — it
  *                                  stays, and is reported.
@@ -26,9 +26,9 @@
  * DRY RUN BY DEFAULT: every root object is listed with what would happen to it and why (`--json` for the full list).
  *
  *   DATABASE_URL=…app_rw… node scripts/migrate-dataroom-root.mjs                    # blob store, dry run
- *   … --only Uploads/ --to onfinance-ai                                             # name a prefix for a workspace
+ *   … --only {folder:uploads}/ --to onfinance-ai                                             # name a prefix for a workspace
  *   … --move-file moves.txt --to icici-hfc                                          # name exact objects
- *   … --delete-unowned Customers/surface-probe-co                                   # probe/sample data
+ *   … --delete-unowned {folder:accounts}/surface-probe-co                                   # probe/sample data
  *   … --apply    … --json    … --driver local --dir .dataroom    … --self-test
  *
  * Run by the factory after the deploy that ships lib/dataroom-keyspace.ts, dry run first, a person reading the list.
@@ -38,6 +38,7 @@ import { promises as fs, readFileSync } from "node:fs";
 import nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { DATAROOM_ROOT, VERSIONS_DIR, WORKSPACES_DIR, requireWorkspace } from "../lib/dataroom-keyspace.ts";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 
@@ -151,12 +152,12 @@ export function localDriver(dir = process.env.DATAROOM_DIR ?? nodePath.join(proc
 
 /**
  * The company id a data-room path belongs to, or null when the path is not company-scoped. From the dm.md templates
- * (agent/lib/dataroom-store.ts DATAROOM_PATH_TEMPLATES): Customers/{customer_id}/…, Deployments/{customer_id}/…,
- * Implementation/{customer_id}/…, Tickets/{ticket_folder}/{customer_id}/…. `Master.xlsx` and `syncs/` are not.
+ * (agent/lib/dataroom-store.ts DATAROOM_PATH_TEMPLATES): {folder:accounts}/{customer_id}/…, {folder:deliveries}/{customer_id}/…,
+ * {folder:projects}/{customer_id}/…, {folder:tickets}/{ticket_folder}/{customer_id}/…. `Master.xlsx` and `syncs/` are not.
  */
 export function companyOf(rel) {
   const seg = rel.split("/");
-  const at = { Customers: 1, Deployments: 1, Implementation: 1, Tickets: 2 }[seg[0]];
+  const at = { [FOLDER.accounts]: 1, [FOLDER.deliveries]: 1, [FOLDER.projects]: 1, [FOLDER.tickets]: 2 }[seg[0]];
   if (at === undefined || seg.length <= at + 1) return null;
   const id = seg[at];
   return !id || id === "syncs" ? null : id;
@@ -380,27 +381,27 @@ async function selfTest() {
   const quiet = () => {};
   const owners = new Map([["acme", new Set(["org-a"])], ["both", new Set(["org-a", "org-b"])]]);
   const seed = () => [
-    { pathname: "Customers/acme/context.md", body: "acme" },
-    { pathname: "Customers/both/context.md", body: "both" },
-    { pathname: "Customers/Master.xlsx", body: "sheet" },
-    { pathname: "Uploads/p/deck.pdf", body: "ROOT-A\n" },
-    { pathname: "orgs/org-b/Uploads/p/deck.pdf", body: "LIVE-B\n" },
-    { pathname: "_versions/org-a/1-Customers/acme/context.md", body: "old" },
+    { pathname: `${FOLDER.accounts}/acme/context.md`, body: "acme" },
+    { pathname: `${FOLDER.accounts}/both/context.md`, body: "both" },
+    { pathname: `${FOLDER.accounts}/Master.xlsx`, body: "sheet" },
+    { pathname: `${FOLDER.uploads}/p/deck.pdf`, body: "ROOT-A\n" },
+    { pathname: `orgs/org-b/${FOLDER.uploads}/p/deck.pdf`, body: "LIVE-B\n" },
+    { pathname: `_versions/org-a/1-${FOLDER.accounts}/acme/context.md`, body: "old" },
     { pathname: "_versions/%2e%2e/evil", body: "x" },
   ];
   const d = memoryDriver(seed());
   const dry = await migrateDataroomRoot({ driver: d, companyOwners: owners, log: quiet });
   ok("dry run: nothing changes", d.objects.size === 7);
   ok("dry run: 2 moves (acme, its snapshot), 1 ambiguous, 2 left, 1 unplaceable", dry.counts.move === 2 && dry.counts.ambiguous === 1 && dry.counts.stay === 2 && dry.counts.unplaceable === 1, dry.counts);
-  const named = await migrateDataroomRoot({ driver: d, companyOwners: owners, only: ["Uploads/"], to: "org-b", apply: true, log: quiet });
-  ok("same size, different bytes at the destination: a conflict, both kept", named.counts.conflict === 1 && d.objects.get("Uploads/p/deck.pdf")?.body === "ROOT-A\n" && d.objects.get("orgs/org-b/Uploads/p/deck.pdf")?.body === "LIVE-B\n", named.counts);
-  ok("the attributed company moved to its workspace", d.objects.has("orgs/org-a/Customers/acme/context.md") && !d.objects.has("Customers/acme/context.md"));
-  const bad = memoryDriver([{ pathname: "Customers/acme/context.md", body: "acme" }], { corruptCopies: true });
+  const named = await migrateDataroomRoot({ driver: d, companyOwners: owners, only: [`${FOLDER.uploads}/`], to: "org-b", apply: true, log: quiet });
+  ok("same size, different bytes at the destination: a conflict, both kept", named.counts.conflict === 1 && d.objects.get(`${FOLDER.uploads}/p/deck.pdf`)?.body === "ROOT-A\n" && d.objects.get(`orgs/org-b/${FOLDER.uploads}/p/deck.pdf`)?.body === "LIVE-B\n", named.counts);
+  ok("the attributed company moved to its workspace", d.objects.has(`orgs/org-a/${FOLDER.accounts}/acme/context.md`) && !d.objects.has(`${FOLDER.accounts}/acme/context.md`));
+  const bad = memoryDriver([{ pathname: `${FOLDER.accounts}/acme/context.md`, body: "acme" }], { corruptCopies: true });
   const r = await migrateDataroomRoot({ driver: bad, companyOwners: owners, apply: true, log: quiet });
-  ok("a copy that does not verify keeps its source, and is reported", r.applied.failed === 1 && r.applied.moved === 0 && bad.objects.has("Customers/acme/context.md"), r.applied);
+  ok("a copy that does not verify keeps its source, and is reported", r.applied.failed === 1 && r.applied.moved === 0 && bad.objects.has(`${FOLDER.accounts}/acme/context.md`), r.applied);
   let refused = false;
   try {
-    await migrateDataroomRoot({ driver: d, only: ["Uploads/"], log: quiet });
+    await migrateDataroomRoot({ driver: d, only: [`${FOLDER.uploads}/`], log: quiet });
   } catch {
     refused = true;
   }

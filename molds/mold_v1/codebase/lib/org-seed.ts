@@ -4,12 +4,14 @@ import { lowerFirst } from "@/lib/profile-domains";
 import { an } from "@/lib/ui-words";
 
 import { createVocabulary, speakWith, verbatimWith, type Vocabulary, type VocabularyProfile } from "../agent/lib/agent-vocabulary.ts";
+import { foldersOf, type DataroomDomainId } from "../agent/lib/dataroom-folders.ts";
 
 /**
  * The built-in tree never spells a role or record word: the account and the member are the PROFILE's words
- * (`vocabulary.account`, `vocabulary.member`), written into the text as they are. What is left for the translation
- * the model's text goes through (agent/lib/agent-vocabulary.ts) is what storage names: the stored folders at the head
- * of a path and identifiers such as `customer_id`, which a relabelling profile reads in its own words. What is not
+ * (`vocabulary.account`, `vocabulary.member`), written into the text as they are, and a folder is a placeholder
+ * (`{folder:accounts}`, agent/lib/dataroom-folders.ts) filled with the name this profile's reader addresses it by.
+ * What is left for the translation the model's text goes through (agent/lib/agent-vocabulary.ts) is what storage
+ * names: identifiers such as `customer_id`, which a relabelling profile reads in its own words. What is not
  * ours to rename is kept verbatim: the workspace's own name and id, and the coding-agent skills' names, which are
  * real slugs.
  */
@@ -42,17 +44,17 @@ function speaker(profile: DeploymentProfile): Speak {
 function readme(orgId: string, name: string, profile: DeploymentProfile): string {
   const { v, keep, member, account } = speaker(profile);
   // A record area the profile hides has no folder to describe.
-  const shown = (domain: string) => profile.dataroom.domains[domain]?.visible !== false;
+  const shown = (domain: DataroomDomainId) => profile.dataroom.domains[domain]?.visible !== false;
   // Spoken here as well as below: the tree's lines are text a person reads (speaking is idempotent).
   const tree = speakWith(v, [
-    "Customers/{customer_id}/",
+    "{folder:accounts}/{customer_id}/",
     `  context.md              ${account} context, curated by the ${member}`,
     "  interactions.jsonl      append-only log of touchpoints",
     "  agreements/             MSAs, order forms",
-    ...(shown("Deployments") ? ["Deployments/{customer_id}/{platform_version_id}/"] : []),
-    ...(shown("Implementation") ? ["Implementation/{customer_id}/"] : []),
-    ...(shown("Tickets") ? ["Tickets/{feat|bug|docs}/{customer_id}/..."] : []),
-    "People/{person_id}/       EXTERNAL people only — stakeholders and contacts",
+    ...(shown("deliveries") ? ["{folder:deliveries}/{customer_id}/{platform_version_id}/"] : []),
+    ...(shown("projects") ? ["{folder:projects}/{customer_id}/"] : []),
+    ...(shown("tickets") ? ["{folder:tickets}/{feat|bug|docs}/{customer_id}/..."] : []),
+    "{folder:people}/{person_id}/       EXTERNAL people only — stakeholders and contacts",
   ].join("\n"));
   return speakWith(v, `# ${keep(name)} — data room
 
@@ -68,7 +70,7 @@ ${tree}
 Two rules the whole room depends on:
 
 1. Never write ${account} content outside its own \`{customer_id}\` subtree.
-2. \`People/\` is external-only. Internal staff are recorded as team memories,
+2. \`{folder:people}/\` is external-only. Internal staff are recorded as team memories,
    not as people here.
 
 ## Getting started
@@ -91,9 +93,9 @@ One subtree per ${account}, keyed by \`customer_id\`. Create them with the
 **${keep("onboard-customer")}** skill rather than by hand — it also creates the matching
 database rows, so the console and the data room stay in agreement.
 
-    Customers/acme/context.md
-    Customers/acme/interactions.jsonl
-    Customers/acme/agreements/
+    {folder:accounts}/acme/context.md
+    {folder:accounts}/acme/interactions.jsonl
+    {folder:accounts}/acme/agreements/
 
 \`context.md\` is the document the agent reads first when asked about ${anAccount}.
 Keep it current; it is worth more than any other file in the tree.
@@ -102,7 +104,7 @@ Keep it current; it is worth more than any other file in the tree.
 
 function peopleReadme(profile: DeploymentProfile): string {
   const { v, keep, members, account } = speaker(profile);
-  return speakWith(v, `# People
+  return speakWith(v, `# {domain:people}
 
 External people only — ${account} stakeholders, champions, procurement contacts.
 One subtree per person, keyed by \`person_id\`.
@@ -138,10 +140,11 @@ export function starterFiles(orgId: string, name: string, profile: DeploymentPro
   if (Array.isArray(seed)) {
     return seed.map((f): [string, string] => [f.path, fillProfileText(f.content, { workspace: name, org_id: orgId })]);
   }
+  const folders = foldersOf(profile);
   return [
     ["README.md", readme(orgId, name, profile)],
-    ["Customers/README.md", customersReadme(profile)],
-    ["People/README.md", peopleReadme(profile)],
+    [`${folders.accounts}/README.md`, customersReadme(profile)],
+    [`${folders.people}/README.md`, peopleReadme(profile)],
   ];
 }
 

@@ -35,6 +35,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import postgres from "postgres";
+import { readJsonFixture } from "./lib/read-fixture.mjs";
 
 // eve's `.js` -> `.ts` specifiers (agent/lib/tools.ts is imported as the agent imports it), as test-agent-vocabulary.
 register(
@@ -91,7 +92,7 @@ const ONLY_A = `shared-only-a-${PID}`; // an id only A holds
 const NOW = "2026-09-29T12:00:00Z";
 const TABLES = ["platform", "deployments", "solutions", "implementation", "tickets", "interactions", "internal_staff", "customer_stakeholders"];
 
-const fixture = JSON.parse(readFileSync(new URL("./fixtures/customers.fixture.json", import.meta.url), "utf8"));
+const fixture = readJsonFixture(new URL("./fixtures/customers.fixture.json", import.meta.url));
 const base = fixture.customers.find((c) => c.id === "acme-bank");
 /**
  * The same company as each desk records it: every part present, the SAME nested ids (DEP/SOL/TCK/INT/ROLL) in both,

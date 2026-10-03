@@ -40,6 +40,8 @@ import { storeForSession } from "./dataroom-session.ts";
 
 import { inheritedScope } from "./session-scope.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
+import { fill } from "./agent-vocabulary.ts";
+import { FOLDER } from "./dataroom-folders.ts";
 /** Re-throw as a model-readable message when the store rejects a path. */
 function pathErrorMessage(error: unknown): string | null {
   if (error instanceof DataroomPathError) return error.message;
@@ -76,7 +78,7 @@ export const dataroomFetchToSandboxTool = modelFacing("dataroom_fetch_to_sandbox
     path: z
       .string()
       .min(1)
-      .describe("Data-room path, e.g. 'Uploads/sam-example-com/Tracker.xlsx'."),
+      .describe(fill("Data-room path, e.g. '{folder:uploads}/sam-example-com/Tracker.xlsx'.")),
     destination: z
       .string()
       .optional()
@@ -121,7 +123,7 @@ export const dataroomReadTool = modelFacing("dataroom_read", defineTool({
       .string()
       .min(1)
       .describe(
-        "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'.",
+        fill("dm.md data-room path, e.g. '{folder:accounts}/acme-bank/context.md' or '{folder:tickets}/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."),
       ),
   }),
   async execute({ path }, ctx) {
@@ -143,13 +145,13 @@ export const dataroomReadTool = modelFacing("dataroom_read", defineTool({
 
 export const dataroomListTool = modelFacing("dataroom_list", defineTool({
   description:
-    "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.",
+    "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: '{folder:accounts}/acme' does NOT match '{folder:accounts}/acme-bank/...'). Omit `prefix` to list the whole data room.",
   inputSchema: z.object({
     prefix: z
       .string()
       .optional()
       .describe(
-        "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+        fill("Folder prefix with directory-boundary semantics, e.g. '{folder:deliveries}/acme-bank'. Omit to list the whole data room."),
       ),
   }),
   async execute({ prefix }, ctx) {
@@ -171,7 +173,7 @@ export const dataroomWriteTool = modelFacing("dataroom_write", defineTool({
     path: z
       .string()
       .min(1)
-      .describe("dm.md data-room path to write, e.g. 'Customers/acme-bank/context.md'."),
+      .describe(fill("dm.md data-room path to write, e.g. '{folder:accounts}/acme-bank/context.md'.")),
     content: z.string().min(1).describe("Full text content of the file."),
     changesetId: z
       .string()
@@ -211,11 +213,11 @@ export const dataroomWriteTool = modelFacing("dataroom_write", defineTool({
  */
 function schemaForJsonlPath(path: string): ZodType | undefined {
   if (/interactions\.jsonl$/.test(path)) {
-    if (path.startsWith("People/")) return personInteractionRecordSchema;
-    if (path.startsWith("Customers/")) return interactionSchema;
+    if (path.startsWith(`${FOLDER.people}/`)) return personInteractionRecordSchema;
+    if (path.startsWith(`${FOLDER.accounts}/`)) return interactionSchema;
     return undefined;
   }
-  // Matches both Customers/{id}/personas.jsonl and Solutions/{v}/supported.personas.jsonl.
+  // Matches both an account's personas.jsonl and a solution version's supported.personas.jsonl.
   if (/personas\.jsonl$/.test(path)) return personaSchema;
   if (/tickets_[^/]+\.jsonl$/.test(path)) return ticketSchema;
   if (/evals\/dataset\.jsonl$/.test(path)) return evalDatasetRecordSchema;
@@ -230,7 +232,7 @@ export const dataroomAppendJsonlTool = modelFacing("dataroom_append_jsonl", defi
     "Durably append one record (or an array of records) to a `.jsonl` artifact in the dm.md data room (interactions, tickets, eval dataset/benchmark/output/trace streams), creating it on demand. Records are validated against their dm.md contract when the path has one. Gated on approval since it mutates the team's shared streams.",
   approval: once(),
   inputSchema: z.object({
-    path: z.string().min(1).describe("A `.jsonl` data-room path, e.g. 'Customers/acme-bank/interactions.jsonl'."),
+    path: z.string().min(1).describe(fill("A `.jsonl` data-room path, e.g. '{folder:accounts}/acme-bank/interactions.jsonl'.")),
     records: z
       .union([jsonObjectSchema, z.array(jsonObjectSchema).min(1)])
       .describe("A single JSON object record, or a non-empty array of JSON object records."),

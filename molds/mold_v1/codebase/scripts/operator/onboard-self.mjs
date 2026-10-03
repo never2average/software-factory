@@ -6,7 +6,7 @@
 // Idempotent. Writes ONE team-scoped memory (`member-profile:<email>`; a profile
 // recorded under the old `fde-profile:<email>` key is found and moved to the new one)
 // so every agent and teammate knows who the team is — there is no internal-people table, and the
-// People/ data-room tree is external-only (see docs/OPERATOR_WORKFLOW.md). Also prints a
+// {folder:people}/ data-room tree is external-only (see docs/OPERATOR_WORKFLOW.md). Also prints a
 // readiness checklist: identity, platform health, and the local env the MCP needs.
 //
 // Run with DATABASE_URL in the environment (it's in .env.local):
@@ -19,13 +19,14 @@ import { createDataroomStore } from "../../agent/lib/dataroom-store.ts";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 import { glyph, flag, resolveIdentity, isOnfinance, checkHealth, envReady, operatorEnv, memberProfileKeys, pickMemberProfile } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 /** The deployment's own word for a team member (the default profile's is the base product's role word). */
 const MEMBER = DEPLOYMENT_PROFILE.vocabulary.member.singular;
 /** The member word as a title or the start of a line ("Member", "Analyst"). */
 const Member = MEMBER.charAt(0).toUpperCase() + MEMBER.slice(1);
 
-/** person_id slug for People/ — email-derived, collision-free. */
+/** person_id slug for {folder:people}/ — email-derived, collision-free. */
 function personSlug(email) {
   return email.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
 }
@@ -107,7 +108,7 @@ async function main() {
     console.log(`${glyph.ok} Recorded you as a team member (team memory \`${key}\`).`);
   }
 
-  // 5. Register the member as a first-class People/ roster entry (kind MEMBER_KIND, a stored value).
+  // 5. Register the member as a first-class {folder:people}/ roster entry (kind MEMBER_KIND, a stored value).
   //    Reverses the old "People is external-only" rule FOR INTERNAL members: the
   //    kind tag keeps them distinct, and list_members reads these (entries written with the
   //    earlier "internal-fde" value too; agent/lib/member-kind.ts).
@@ -116,7 +117,7 @@ async function main() {
   const rosterOrg = (flag("org") || operatorEnv("WORKSPACE_ORG")).trim();
   const store = rosterOrg ? createDataroomStore({ orgId: rosterOrg }) : null;
   if (!store) {
-    console.log(`${glyph.warn} Not added to a workspace's People/ roster: pass --org <workspace id> (or set WORKSPACE_ORG).`);
+    console.log(`${glyph.warn} Not added to a workspace's ${FOLDER.people}/ roster: pass --org <workspace id> (or set WORKSPACE_ORG).`);
   } else if (store.backend?.kind === "vercel-blob") {
     const slug = personSlug(email);
     const skills = flag("skills").trim() ? flag("skills").split(",").map((s) => s.trim()).filter(Boolean) : [];
@@ -135,21 +136,21 @@ async function main() {
       startedAt: new Date().toISOString(),
       pagerdutyUserId: null,
     };
-    await store.write(`People/${slug}/identity.json`, JSON.stringify(identity, null, 2) + "\n");
-    const existingContext = await store.read(`People/${slug}/context.md`).catch(() => null);
+    await store.write(`${FOLDER.people}/${slug}/identity.json`, JSON.stringify(identity, null, 2) + "\n");
+    const existingContext = await store.read(`${FOLDER.people}/${slug}/context.md`).catch(() => null);
     if (!existingContext) {
       await store.write(
-        `People/${slug}/context.md`,
+        `${FOLDER.people}/${slug}/context.md`,
         `# ${name || email} — ${MEMBER}\n\n- **Email:** ${email}\n- **Title:** ${title}\n${pod ? `- **Pod:** ${pod}\n` : ""}${timezone ? `- **Timezone:** ${timezone}\n` : ""}${skills.length ? `- **Skills:** ${skills.join(", ")}\n` : ""}- **Capacity target:** ${capacity} accounts\n\n_Onboarded ${new Date().toISOString().slice(0, 10)} via operator:onboard-self._\n`,
       );
       await store.write(
-        `People/${slug}/roles_and_responsibilities.md`,
+        `${FOLDER.people}/${slug}/roles_and_responsibilities.md`,
         `# Roles & responsibilities — ${name || email}\n\n${Member}. Owns assigned ${W.accounts} end to end (onboarding, configuration, deploys, migration, evals, follow-ups) and takes on-call rotations for incidents.\n`,
       );
     }
-    console.log(`${glyph.ok} Registered you in the ${MEMBER} roster (People/${slug}/, kind ${MEMBER_KIND}).`);
+    console.log(`${glyph.ok} Registered you in the ${MEMBER} roster (${FOLDER.people}/${slug}/, kind ${MEMBER_KIND}).`);
   } else {
-    console.log(`${glyph.warn} No blob data room (BLOB_READ_WRITE_TOKEN) — skipped the People/ roster entry.`);
+    console.log(`${glyph.warn} No blob data room (BLOB_READ_WRITE_TOKEN) — skipped the ${FOLDER.people}/ roster entry.`);
   }
 
   await closeDb();

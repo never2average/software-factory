@@ -18,6 +18,10 @@
  *   opsUrl / webOrigin        THIS deployment's address. Never a default: a host
  *                             that does not know its address must not guess one.
  *   readSpec()                the text of dm.md
+ *   folders                   { accounts, platform, deliveries, solutions, projects, tickets, people, uploads }:
+ *                             the name THIS deployment stores each data-room folder under (its profile's
+ *                             `dataroom.domains.<id>.folder`). Required: a path is built from these and from
+ *                             nothing else, so no folder name is written in this file
  *   customFields              optional { deployments: [...], implementations: [...], account?: [...] }: the
  *                             fields this deployment's profile declares on the two record areas and on the
  *                             account record (custom_fields). The hosted endpoint knows them; the package
@@ -84,8 +88,16 @@ export function compatEnv(env, name, onLegacy) {
   return old;
 }
 
+/** The data-room domains, by id, in the data model's order (the host's `ctx.folders` names each one's folder). */
+const DOMAIN_IDS = ["accounts", "platform", "deliveries", "solutions", "projects", "tickets", "people"];
+
 export function createTools(ctx) {
   const api = ctx.api;
+  // The folder names are the deployment's: a host that does not know them must say so, not have one guessed.
+  const F = ctx.folders;
+  if (!F || [...DOMAIN_IDS, "uploads"].some((id) => typeof F[id] !== "string" || !F[id])) {
+    throw new Error("workspace tools: the host must supply ctx.folders, the name this deployment stores each data-room folder under");
+  }
   /**
    * The `custom` input of the record write tools (the two areas', and customer_create's for the account record
    * itself): this deployment's OWN fields, by key. The Ops API
@@ -477,11 +489,11 @@ const TOOLS = [
       return `removed ${name} from connector ${id}`;
     },
   },
-  // ------------------------------------------------------------- Customers
+  // -------------------------------------------------------------- accounts
   {
     name: "customer_create",
     description:
-      "Create (or update) a customer. DO THIS FIRST when onboarding a new account — `implementation_upsert` and `deployment_upsert` both hold a foreign key to this record, so without it they fail and the customer exists only as data-room files with nothing structured behind them. Idempotent: calling it again updates the fields you pass and leaves the rest alone. customerId is a lowercase slug and is the SAME id used in data-room paths (Customers/<id>/…).",
+      "Create (or update) a customer. DO THIS FIRST when onboarding a new account — `implementation_upsert` and `deployment_upsert` both hold a foreign key to this record, so without it they fail and the customer exists only as data-room files with nothing structured behind them. Idempotent: calling it again updates the fields you pass and leaves the rest alone. customerId is a lowercase slug and is the SAME id used in data-room paths (" + F.accounts + "/<id>/…).",
     inputSchema: {
       type: "object",
       properties: {
@@ -912,7 +924,7 @@ const TOOLS = [
   {
     name: "dataroom_structure",
     description:
-      "READ THIS BEFORE WRITING TO THE DATA ROOM. Returns dm.md — the canonical folder/file contract (Customers/ Platform/ Deployments/ Solutions/ Implementation/ Tickets/ People/) showing exactly where each artifact belongs and which files are .jsonl streams. Paths must start with one of those domains and have at least two segments; a root-level file is rejected.",
+      `READ THIS BEFORE WRITING TO THE DATA ROOM. Returns dm.md — the canonical folder/file contract (${DOMAIN_IDS.map((id) => `${F[id]}/`).join(" ")}) showing exactly where each artifact belongs and which files are .jsonl streams. Paths must start with one of those domains and have at least two segments; a root-level file is rejected.`,
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
       const spec = await ctx.readSpec().catch(() => null);
@@ -921,7 +933,7 @@ const TOOLS = [
   },
   {
     name: "dataroom_list",
-    description: "List object paths in the data-room blob store under a prefix (e.g. 'Customers/'). Empty prefix lists everything.",
+    description: `List object paths in the data-room blob store under a prefix (e.g. '${F.accounts}/'). Empty prefix lists everything.`,
     inputSchema: { type: "object", properties: { prefix: { type: "string" } } },
     handler: async ({ prefix = "" }) => (await dataroom.list(prefix)).join("\n") || "(empty)",
   },
@@ -1054,7 +1066,7 @@ const TOOLS = [
   {
     name: "record_coding_session",
     requires: "sessions",
-    description: "Redact a Claude Code .jsonl transcript and land it as a Deployments/syncs/claude record for a customer. Secrets are stripped before anything is stored.",
+    description: `Redact a Claude Code .jsonl transcript and land it as a ${F.deliveries}/syncs/claude record for a customer. Secrets are stripped before anything is stored.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -1068,7 +1080,7 @@ const TOOLS = [
       const session = ctx.parseClaudeTranscript(transcript, `mcp-${customerId}`);
       if (!session) return "no session could be parsed from that transcript";
       const day = date ?? new Date().toISOString().slice(0, 10);
-      const path = `Deployments/syncs/claude/${customerId}/${day}.jsonl`;
+      const path = `${F.deliveries}/syncs/claude/${customerId}/${day}.jsonl`;
       const n = await dataroom.appendJsonl(path, [ctx.sessionToSyncItem(session)]);
       return `landed ${n} redacted session → ${path} (repo: ${session.repo ?? "?"}, ${session.userTurns} turns)`;
     },

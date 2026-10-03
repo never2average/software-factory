@@ -1,7 +1,7 @@
 /**
  * coding-sessions.ts — turn a local coding-agent transcript into a compact,
  * REDACTED session summary that lands through the existing sync framework
- * (ingestSource, domain "Deployments", source "claude" | "codex").
+ * (ingestSource, the deliveries domain, source "claude" | "codex").
  *
  * This is the spike from the "MCP for coding-agent history" discussion. The
  * conclusion there decides the shape:
@@ -209,7 +209,7 @@ export function parseClaudeTranscript(jsonl: string, fallbackId: string): Coding
 }
 
 /**
- * The `items[]` payload handed to `ingestSource({ domain: "Deployments",
+ * The `items[]` payload handed to `ingestSource({ domain: FOLDER.deliveries,
  * source: "claude", items })`. It is the summary itself — the passthrough
  * adapter lands it verbatim as the RawSyncRecord payload, and `id`/`sourceId`
  * is the session id so a re-ingest of the same session is recognisable.

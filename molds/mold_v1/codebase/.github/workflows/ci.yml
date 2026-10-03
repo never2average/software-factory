@@ -110,6 +110,17 @@ jobs:
         if: always()
         run: npm run test:dataroom-isolation
 
+      # The data room's folder names are the deployment profile's (dataroom.domains.<id>.folder), never the code's.
+      # A copy of the checkout stamped with the pin a deployment that already holds files carries must store every
+      # path where it always did: the stored-path census (the grammar, a file written/listed/read at every template,
+      # the agent's tools, the workbooks, the web guards, the starter tree, both seeders) and the object keys every
+      # door asks the store for are held byte for byte to before-images taken on the last commit that had the names
+      # in the code. The default profile stores the same tree under its own names, and a data room that holds a
+      # former folder its profile does not use is refused at build and at the first write, never forked.
+      - name: Data room folder names (the profile's; a pinned deployment moves nothing; an unpinned one is refused)
+        if: always()
+        run: npm run test:dataroom-folders
+
       # A link to a chat names its workspace and the tab adopts it; each tab keeps its own workspace and names it on
       # every request, the /eve proxy included (the agent side is in test:session-guard, isolation job).
       - name: Deep links and tabs carry their workspace
@@ -534,8 +545,8 @@ jobs:
         run: npm run check:wire-names
 
       # The same bug one layer further in: what the eve agent's MODEL reads. A research deployment whose profile
-      # calls customers "Companies" had an agent reasoning "Customers/ is shown as Companies… companies under
-      # Customers/{customer_id}/", because its prompt, its tools (list_customers, customer_id), its folders and
+      # calls customers "Companies" had an agent reasoning "the stored folder is shown as Companies… companies under
+      # the stored folder", because its prompt, its tools (list_customers, customer_id), its folders and
       # its per-turn briefing all spoke the base product's words. This renders the whole model-facing surface
       # (prompts, briefing, every tool's name/description/parameters, the roster and every specialist's prompt,
       # real tool results) under a copy of that profile and fails on any base word; and holds the DEFAULT
@@ -563,7 +574,9 @@ jobs:
       # The rest of the tree, which none of the gates above walks: the base product's role word may appear only
       # as a listed contract (a column, a variable, a bin, a script name, each with its migration plan), under a
       # per-file ceiling that equals today's count, or under an exempt path. A new identifier, file name or
-      # comment carrying it fails, and so does a ceiling left higher than the file needs.
+      # comment carrying it fails, and so does a ceiling left higher than the file needs. The same check holds the
+      # record words written as prose, and the data-room folder names (the former ones and the default profile's):
+      # no file spells one as the head of a path or as a value, outside the profile and the one legacy definition.
       - name: Neutral names (no new occurrence of the base role word outside the contracts)
         if: always()
         run: npm run test:neutral-names && npm run check:neutral-names

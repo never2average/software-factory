@@ -26,7 +26,7 @@ multi-use-case or multi-environment {account} into one row. These nine sheets ar
 packaged into the seven domain workbooks (`<Domain>/Master.xlsx`) — see "The seven
 workbooks" below.
 
-1. **`Customers`** — one row per {account} (the spine): `customer_id`,
+1. **`{domain:accounts}`** — one row per {account} (the spine): `customer_id`,
    `customer_name`, `tier`, `lifecycle_stage`, `status`, `health_score`,
    `fde_owner`, `ae_owner`, `arr` (number), `arr_currency`, `seats`,
    `external_account_id`, `legal_entity_name`, `account_region`,
@@ -39,7 +39,7 @@ workbooks" below.
    `value_evidence_url`, `last_business_review_date`,
    `next_business_review_date`, `contract_start`, `renewal_date`,
    `industry_segment`.
-2. **Platform** — one row per {account} (config only, no health/version):
+2. **{domain:platform}** — one row per {account} (config only, no health/version):
    `customer_id`, `tenant_id`, `platform_config_status`, `deployment_model`,
    `data_residency_constraint`, `auth_mode`, `data_classification`,
    `pii_handling`, `audit_logging_enabled`, `retention_days`,
@@ -53,7 +53,7 @@ workbooks" below.
    `minimum_eval_score_pct`, `last_governance_review_at`,
    `monthly_spend_limit_usd`, `enabled_connectors`, `feature_flags`,
    `primary_use_case`, `last_health_check_at`.
-3. **`Deployments`** — one row per deployable {account} runtime instance:
+3. **`{domain:deliveries}`** — one row per deployable {account} runtime instance:
    `customer_id`,
    `deployment_id`, `environment`, `region`, `cloud_provider`, `runtime`,
    `deployment_strategy`, `deployed_version`, `last_deploy_at`,
@@ -64,21 +64,21 @@ workbooks" below.
    telemetry, budget, incident, dashboard, runbook, and telemetry timestamp
    fields from `docs/data-model.md`.
    Version/health/uptime/routing/cost live ONLY here.
-4. **Solutions** — one row per ({account}, solution_id): `solution_id`,
+4. **{domain:solutions}** — one row per ({account}, solution_id): `solution_id`,
    `customer_id`, `use_case`, `workflow_id`, workflow ownership and shape
    fields, value metric and evidence fields, modules/status/usage fields,
    eval status/run/pass/coverage fields, quality/safety rates,
    human-review fields, readiness fields, solution-level expansion fields,
    `solution_fde_owner`, `last_reviewed_date`.
    Eval results live here (per solution/workflow) — there is no separate Evals sheet.
-5. **`Implementation`** — one row per {account}: `customer_id`,
+5. **`{domain:projects}`** — one row per {account}: `customer_id`,
    `rollout_id`, `launch_scope_solution_ids`, `implementation_stage`,
    `implementation_owner_email`,
    `implementation_progress_pct`, `implementation_risk_level`,
    governance, data readiness, integration readiness, security/privacy/eval
    acceptance, launch, runbook, support handoff, billing readiness, blocker,
    and next-step fields from `docs/data-model.md`.
-6. **Tickets** — one row per ticket: `ticket_id`, `customer_id`, `summary`,
+6. **{domain:tickets}** — one row per ticket: `ticket_id`, `customer_id`, `summary`,
    `description`, affected schema/solution/deployment/workflow/connector/model
    fields, external IDs, `ticket_type`, `ticket_category`,
    status/priority/severity, support intake, SLA/escalation, {account} impact,
@@ -100,9 +100,9 @@ workbooks" below.
    `customer_id`, `stakeholder_role`, `name`, `title`, `employer_org`,
    `email`, `last_contact`. This is NOT the same schema as internal staff.
 
-Ownership is single-source: `Customers.fde_owner` / `ae_owner` (emails) are
-canonical {account} pointers — `Solutions.solution_fde_owner`,
-`Tickets.ticket_owner_email`, and `Internal Staff` rows must resolve to the same
+Ownership is single-source: `{domain:accounts}.fde_owner` / `ae_owner` (emails) are
+canonical {account} pointers — `{domain:solutions}.solution_fde_owner`,
+`{domain:tickets}.ticket_owner_email`, and `Internal Staff` rows must resolve to the same
 {account}-scoped internal staff emails.
 
 ## The seven workbooks (`<Domain>/Master.xlsx`)
@@ -111,16 +111,16 @@ Package the nine sheets (plus one derived sheet) into the seven domain workbooks
 each named `Master.xlsx` at its domain root. Build each workbook multi-sheet where
 noted, with the sheets in the order listed:
 
-1. **`Customers/Master.xlsx`** — sheet: `Customers`.
-2. **`Platform/Master.xlsx`** — sheet: Platform.
-3. **`Deployments/Master.xlsx`** — sheet: `Deployments`.
-4. **`Solutions/Master.xlsx`** — sheet: Solutions.
-5. **`Implementation/Master.xlsx`** — sheet: `Implementation`.
-6. **`Tickets/Master.xlsx`** — sheets: Tickets, Interactions, **Interaction
+1. **`{folder:accounts}/Master.xlsx`** — sheet: `{domain:accounts}`.
+2. **`{folder:platform}/Master.xlsx`** — sheet: {domain:platform}.
+3. **`{folder:deliveries}/Master.xlsx`** — sheet: `{domain:deliveries}`.
+4. **`{folder:solutions}/Master.xlsx`** — sheet: {domain:solutions}.
+5. **`{folder:projects}/Master.xlsx`** — sheet: `{domain:projects}`.
+6. **`{folder:tickets}/Master.xlsx`** — sheets: {domain:tickets}, Interactions, **Interaction
    Digest** (derived, per-{account} rollup: `customer_id`, `customer_name`,
    `interactions`, `date_range`, `last_touch`, `open_next_actions`, `sentiment`,
    `digest` — regenerate from Interactions, never hand-edit).
-7. **`People/Master.xlsx`** — sheets: Internal Staff, Customer Stakeholders.
+7. **`{folder:people}/Master.xlsx`** — sheets: Internal Staff, Customer Stakeholders.
 
 A sheet's columns and grain do not change based on which workbook carries it.
 Cross-sheet references still resolve by `customer_id` / email / ID across

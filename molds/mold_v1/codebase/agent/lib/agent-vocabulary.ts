@@ -2,10 +2,11 @@
  * THE AGENT'S VOCABULARY — what the model reads, in the deployment's own words.
  *
  * The base product was written for one use: a delivery team managing customers. Its storage keeps those names
- * (the `customers` table, `customer_id`, the `Customers/` folder) and always will: code, stored data and other
- * systems key on them. A deployment for something else relabels the domains in its profile (profiles/*.json):
- * customers are "companies", deployments are "Coverage reports", implementation is "Portfolios", members are
- * "analysts".
+ * (the `customers` table, `customer_id`) and always will: code, stored data and other systems key on them. The
+ * data-room FOLDERS are the profile's (agent/lib/dataroom-folders.ts): a deployment that already holds files pins
+ * the names it has, a new one takes the default profile's neutral ones. A deployment for something else relabels
+ * the domains in its profile (profiles/*.json): customers are "companies", deployments are "Coverage reports",
+ * implementation is "Portfolios", members are "analysts".
  *
  * The ROLE words (the member and the account owner) and the RECORD words (the account, the two record areas, the
  * group of the second) are not translated: base text never spells them. It writes a placeholder: `{member}`,
@@ -18,12 +19,12 @@
  * hold. Under the default profile those are contracts and data and are left exactly as they are.
  *
  * Until this module, that relabelling stopped at the UI. The model was handed `list_customers`, `customer_id`
- * and `Customers/…`, a customer-management persona, and a per-turn note that "the identifiers do not change",
- * and it reasoned in the base product's words ("Customers/ is shown as Companies…"). Here the profile's words
- * reach every model-facing surface, and are translated back at the boundary so storage never moves:
+ * and the stored folder's name, a customer-management persona, and a per-turn note that "the identifiers do not
+ * change", and it reasoned in the base product's words ("the stored folder is shown as Companies…"). Here the
+ * profile's words reach every model-facing surface, and are translated back at the boundary so storage never moves:
  *
  *   speak(text)              prose, identifiers inside it (`customer_id`, `list_customers`, `deploymentId`),
- *                            data-room paths (`Customers/x` -> `Companies/x`) and memory scopes, in one pass
+ *                            data-room paths (the stored folder -> `Companies/x`) and memory scopes, in one pass
  *   speakIdentifier(key)     one identifier (a tool name, a parameter, a result key)
  *   toDisplayPath / toStoredPath    the data-room folder at the head of a path, both ways
  *   schemaForModel / inputFromModel / outputForModel   a tool's JSON Schema out, its input back, its result out
@@ -35,11 +36,9 @@
  */
 import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type DeploymentProfile } from "./deployment-profile.generated.ts";
 import { SUBAGENT_KEYS } from "./subagent-registry.generated.ts";
+import { DATAROOM_DOMAIN_IDS, DATAROOM_FOLDER_IDS, foldersOf, type DataroomDomainId, type DataroomFolderId } from "./dataroom-folders.ts";
 import { LEGACY_MEMBER } from "./legacy-member.ts";
 import { withOwnerKeyTwins } from "./owner-keys.ts";
-
-/** The data-room domains whose folder a profile may relabel, by stored name. */
-const DOMAIN_KEYS = ["Customers", "Platform", "Deployments", "Solutions", "Implementation", "Tickets", "People"] as const;
 
 /**
  * What the base product calls things: the neutral words profiles/00-default.json carries. A term is relabelled
@@ -56,7 +55,7 @@ const BASE = {
 
 /**
  * The record words as the identifiers, the data-room folders and stored text spell them, and always will
- * (`customer_id`, `list_customers`, `Customers/`, `deploymentId`, `implementationStage`, `rolloutId`). Base TEXT
+ * (`customer_id`, `list_customers`, `deploymentId`, `implementationStage`, `rolloutId`). Base TEXT
  * never uses them: it writes a record placeholder the profile fills. Under a profile whose word for a record is
  * not the base one, its legacy spelling is translated to the profile's word wherever the model would meet it;
  * under the default profile it is a contract and is left alone.
@@ -82,6 +81,10 @@ export interface Vocabulary {
   relabelled: boolean;
   /** base token (lower case) -> the profile's word(s), as the profile spells them. */
   words: Map<string, string>;
+  /** Every top-level data-room folder's STORED name under this profile, by id (agent/lib/dataroom-folders.ts). */
+  stored: Record<DataroomFolderId, string>;
+  /** What a person and the model read for each domain: the profile's label. */
+  labels: Record<DataroomDomainId, string>;
   /** Stored data-room folder -> the folder the model reads and writes (filesystem-safe form of the label). */
   folders: Map<string, string>;
   /** The reverse of `folders`. */
@@ -104,6 +107,7 @@ export interface Vocabulary {
   specialists: string[];
 }
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const lowerFirst = (s: string) => (/^[A-Z][a-z]/.test(s) || /^[A-Z]$/.test(s) ? s[0].toLowerCase() + s.slice(1) : s);
 const upperFirst = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const sameWord = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -147,10 +151,16 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
   add(BASE.implementations, LEGACY_RECORDS.implementations, profile.domains.implementations.label);
   add(BASE.rollouts, LEGACY_RECORDS.rollouts, profile.domains.implementations.group_label);
 
+  // A domain is stored under the profile's folder and read under its label. A label that IS the stored name
+  // translates nothing: that is the default profile, and a deployment that pins the names it already has.
+  const stored = foldersOf(profile);
+  const labels = {} as Record<DataroomDomainId, string>;
   const folders = new Map<string, string>();
   const domainLabels = new Map<string, string>();
-  for (const key of DOMAIN_KEYS) {
-    const label = profile.dataroom.domains[key]?.label ?? key;
+  for (const id of DATAROOM_DOMAIN_IDS) {
+    const key = stored[id];
+    const label = profile.dataroom.domains[id].label || key;
+    labels[id] = label;
     if (label === key) continue;
     domainLabels.set(key, label);
     const folder = folderNameFor(label);
@@ -166,6 +176,8 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
   return {
     relabelled,
     words,
+    stored,
+    labels,
     folders,
     storedFolders,
     domainLabels,
@@ -296,7 +308,7 @@ function sentenceStart(text: string, at: number): boolean {
 function proseWord(v: Vocabulary, word: string, text: string, at: number): string | null {
   const key = word.toLowerCase();
   const to = v.words.get(key);
-  // A domain's name standing alone ("Customers", "Implementation") is the domain: say its label.
+  // A domain's stored name standing alone is the domain: say its label.
   if (v.domainLabels.has(word)) return v.domainLabels.get(word)!;
   if (!to) return null;
   const acronym = key === LEGACY_WORD || key === LEGACY_WORDS;
@@ -339,8 +351,9 @@ function speakSegment(v: Vocabulary, text: string, protectSpecialists: boolean):
   }
   // 2. Data-room folders at the head of a path, and memory scopes.
   if (v.folders.size) {
-    // Only at the head of a path: `Uploads/x/Top Customers/y` names a person's folder, not the domain.
-    out = out.replace(/(?<![A-Za-z0-9_\-\/])(Customers|Platform|Deployments|Solutions|Implementation|Tickets|People)(?=\/)/g, (m) =>
+    // Only at the head of a path: a domain's name deeper in one (a person's own folder under the attached files)
+    // is not the domain.
+    out = out.replace(new RegExp(`(?<![A-Za-z0-9_\\-\\/])(${[...v.folders.keys()].map(escapeRegExp).join("|")})(?=\\/)`, "g"), (m) =>
       v.folders.has(m) ? mark(v.folders.get(m)!) : m,
     );
   }
@@ -400,9 +413,14 @@ export const RECORD_KEYS = [
   "rollout", "rollouts", "Rollout", "Rollouts",
 ] as const;
 export const PLACEHOLDER_KEYS: readonly string[] = [...ROLE_KEYS, ...RECORD_KEYS];
+/**
+ * The data-room placeholders (agent/lib/dataroom-folders.ts): `{folder:accounts}` is the domain's folder as this
+ * deployment's reader addresses it (the head of a path), `{domain:accounts}` the domain in a sentence (its label).
+ */
+export const FOLDER_PLACEHOLDER_KEYS: readonly string[] = DATAROOM_FOLDER_IDS.flatMap((id) => [`folder:${id}`, `domain:${id}`]);
 // `${owner}` is a template interpolation in quoted code, never a placeholder.
-const ROLE_PLACEHOLDER = new RegExp(`(?<!\\$)\\{(${PLACEHOLDER_KEYS.join("|")})\\}`, "g");
-/** Does this text hold a role or record placeholder? */
+const ROLE_PLACEHOLDER = new RegExp(`(?<!\\$)\\{(${[...PLACEHOLDER_KEYS, ...FOLDER_PLACEHOLDER_KEYS].join("|")})\\}`, "g");
+/** Does this text hold a role, record, folder or domain placeholder? */
 export const hasRolePlaceholder = (text: string): boolean => typeof text === "string" && text.includes("{") && new RegExp(ROLE_PLACEHOLDER.source).test(text);
 
 /**
@@ -412,6 +430,14 @@ export const hasRolePlaceholder = (text: string): boolean => typeof text === "st
  * sentence from parts (`${wordFor("Account")} ${id} not found`).
  */
 export function wordForWith(v: Vocabulary, key: string): string {
+  if (key.includes(":")) {
+    // A data-room placeholder. The folder is the one the reader addresses (the label's folder form under a
+    // relabelling profile, the stored name otherwise); the domain in a sentence is its label.
+    const [kind, id] = key.split(":") as ["folder" | "domain", DataroomFolderId];
+    const name = v.stored[id];
+    if (kind === "folder" || id === "uploads") return v.folders.get(name) ?? name;
+    return v.labels[id];
+  }
   const r = v.roles;
   const lower = key[0].toLowerCase() + key.slice(1);
   const plural = lower.endsWith("s");
@@ -429,8 +455,9 @@ function fillMarked(v: Vocabulary, text: string): string {
 const unmark = (text: string) => text.replace(new RegExp(`[${OPEN}${CLOSE}]`, "g"), "");
 
 /**
- * Base text with its role placeholders filled from the profile (`a {member}` -> "a member", "an analyst"), and
- * nothing else changed. speakWith does this first, under every profile.
+ * Base text with its role, record, folder and domain placeholders filled from the profile (`a {member}` -> "a
+ * member", "an analyst"; `{folder:accounts}/acme` -> the folder this deployment's reader addresses), and nothing else
+ * changed. speakWith does this first, under every profile.
  */
 export function fillWith(v: Vocabulary, text: string): string {
   if (!text || !text.includes("{")) return text;
@@ -486,7 +513,7 @@ export const speakPrompt = (text: string): string => speakPromptWith(VOCABULARY,
 
 /**
  * A value written as code (an enum value, a stored kind): `deployment` -> `coverageReport`, `customer-vpc` ->
- * `company-vpc`, `Customers` -> the domain's label. Values with spaces are prose ("Waiting on Customer").
+ * `company-vpc`, a domain's stored name -> its label. Values with spaces are prose ("Waiting on Customer").
  */
 export function speakCodeWith(v: Vocabulary, value: string): string {
   // A value is never a specialist's name, so nothing in it is protected as one.
@@ -498,7 +525,7 @@ export const speakIdentifier = (id: string): string => speakIdentifierWith(VOCAB
 
 // ------------------------------------------------------------------------------------------------ paths
 
-/** The folder the model reads for a stored one (`Customers` -> `Companies`). */
+/** The folder the model reads for a stored one (the label's folder form when the profile relabels the domain). */
 export function displayFolder(stored: string): string {
   return VOCABULARY.folders.get(stored) ?? stored;
 }
@@ -797,7 +824,11 @@ function isProductToken(token: string): boolean {
   return PRODUCT_KEYS.has(token) || MODEL_NAMES.has(token);
 }
 
-const PATH_HEAD = /^(\/?)(Customers|Platform|Deployments|Solutions|Implementation|Tickets|People)\//;
+/** A token that starts with a stored domain folder this profile reads under another name. */
+const startsWithRelabelledFolder = (v: Vocabulary, token: string): boolean => {
+  const head = /^\/?([^/]+)\//.exec(token);
+  return head !== null && v.folders.has(head[1]);
+};
 
 /**
  * A message the product writes to the model (a tool's `error` / `next`, a thrown error), in the deployment's
@@ -814,7 +845,7 @@ export function speakMessageWith(v: Vocabulary, text: string): string {
   if (!v.relabelled || !text) return text;
   const token = (t: string): string => {
     if (isProductToken(t)) return speakIdentifierWith(v, t);
-    if (PATH_HEAD.test(t)) return toDisplayPathWith(v, t);
+    if (startsWithRelabelledFolder(v, t)) return toDisplayPathWith(v, t);
     return t;
   };
   const out: string[] = [];

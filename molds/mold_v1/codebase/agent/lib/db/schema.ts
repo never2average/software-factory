@@ -528,7 +528,7 @@ export const interactions = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
-/* People — Internal Staff + Customer Stakeholders (People/Master.xlsx)       */
+/* People — Internal Staff + Customer Stakeholders ({folder:people}/Master.xlsx)       */
 /* -------------------------------------------------------------------------- */
 
 export const internalStaff = pgTable(

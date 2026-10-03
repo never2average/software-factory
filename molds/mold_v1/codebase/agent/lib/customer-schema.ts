@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FOLDER } from "./dataroom-folders.ts";
 
 export const ticketStatusSchema = z.enum([
   "Open",
@@ -314,13 +315,15 @@ export const ticketSchema = z.object({
   ticketId: z.string().min(1),
   summary: z.string().min(1),
   description: z.string().optional(),
+  // A ticket names the part of the data model it touches by that part's sheet: a domain's main sheet carries the
+  // domain's stored folder name (the deployment profile's: ./dataroom-folders.ts).
   affectedSchema: z.enum([
-    "Customers",
-    "Platform",
-    "Deployments",
-    "Solutions",
-    "Implementation",
-    "Tickets",
+    FOLDER.accounts,
+    FOLDER.platform,
+    FOLDER.deliveries,
+    FOLDER.solutions,
+    FOLDER.projects,
+    FOLDER.tickets,
     "Interactions",
     "Internal Staff",
     "Customer Stakeholders",

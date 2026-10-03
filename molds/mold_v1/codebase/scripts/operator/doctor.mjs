@@ -18,6 +18,7 @@ import { buildContextGraph } from "./lib/context-graph.mjs";
 import { glyph, flag, hasFlag, operatorEnv } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
+import { FOLDER, pathPattern } from "../../agent/lib/dataroom-folders.ts";
 
 async function main() {
   const db = getDb();
@@ -63,7 +64,7 @@ async function doctorWorkspace(db, orgId, only) {
   console.log(`Doctor — ${orgId}: checking ${rows.length} ${W.account} folder(s)\n`);
   let problems = 0;
   for (const { customerId } of rows) {
-    const g = await buildContextGraph(store, db, `Customers/${customerId}`, nowIso(), orgId);
+    const g = await buildContextGraph(store, db, `${FOLDER.accounts}/${customerId}`, nowIso(), orgId);
     const miss = [...g.missing.files, ...g.missing.dirs.map((d) => d + "/")];
     if (miss.length === 0) {
       console.log(`${glyph.ok} ${customerId}: complete (${g.edges.length} edge(s))`);
@@ -73,10 +74,10 @@ async function doctorWorkspace(db, orgId, only) {
     }
   }
 
-  // Roster reconciliation: unassigned accounts + owners not in the People/ roster.
+  // Roster reconciliation: unassigned accounts + owners not in the {folder:people}/ roster.
   let rosterProblems = 0;
   if (!only) {
-    const rosterPaths = (await store.list("People")).filter((p) => /^People\/[^/]+\/identity\.json$/.test(p));
+    const rosterPaths = (await store.list(FOLDER.people)).filter((p) => pathPattern("people", "[^/]+/identity\\.json").test(p));
     const rosterEmails = new Set();
     for (const p of rosterPaths) {
       try {

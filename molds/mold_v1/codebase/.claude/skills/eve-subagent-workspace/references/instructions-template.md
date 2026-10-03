@@ -18,7 +18,7 @@ You hand <neighbouring work> to `<sibling-key>`.
 
 | Source | Where it lives | Used for |
 |---|---|---|
-| <document kind> | `Customers/{customer_id}/<folder>/<...>` | <facts> |
+| <document kind> | `{folder:accounts}/{customer_id}/<folder>/<...>` | <facts> |
 
 Work only from documents that are in the data room. Get a binary file (PDF, XLSX, PPTX)
 into the sandbox with `dataroom_fetch_to_sandbox`; `dataroom_read` is for text.
@@ -36,7 +36,7 @@ over this file.
 
 | File | Path | Schema | Validator |
 |---|---|---|---|
-| `<rows>.jsonl` | `Customers/{customer_id}/<folder>/<rows>.jsonl` | `/workspace/schemas/<rows>.schema.json` | `validate_<rows>.py` |
+| `<rows>.jsonl` | `{folder:accounts}/{customer_id}/<folder>/<rows>.jsonl` | `/workspace/schemas/<rows>.schema.json` | `validate_<rows>.py` |
 
 - Every value carries `source_doc` and `page`.
 - A value you could not establish is written with status `not_found` or `needs_review`,

@@ -22,6 +22,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { register } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 // The JSON-fallback system of record starts empty unless a local demo asks for the sample accounts; this test
 // ingests against the sample's `acme-bank` (agent/lib/sample-data.ts). Inherited by both phase processes.
@@ -52,8 +53,8 @@ const { DEFAULT_ORG } = await import("../agent/lib/org-context.ts");
 
 const SELF = fileURLToPath(import.meta.url);
 const TODAY = new Date().toISOString().slice(0, 10);
-const LANDING_PATH = `Customers/syncs/manual_entry/acme-bank/${TODAY}.jsonl`;
-const INTERACTIONS_PATH = "Customers/acme-bank/interactions.jsonl";
+const LANDING_PATH = `${FOLDER.accounts}/syncs/manual_entry/acme-bank/${TODAY}.jsonl`;
+const INTERACTIONS_PATH = `${FOLDER.accounts}/acme-bank/interactions.jsonl`;
 
 // The two manual_entry items driven end-to-end (the demo sample's customer id
 // `acme-bank`, data/sample/customers.json, loaded by DEMO_SAMPLE_DATA above).
@@ -85,7 +86,7 @@ async function phaseIngest() {
 
   // --- happy path: manual_entry lands 2 raw records + normalizes 2 interactions ---
   const res = await ingestSource({
-    domain: "Customers",
+    domain: FOLDER.accounts,
     customerId: "acme-bank",
     source: "manual_entry",
     items: ITEMS,
@@ -100,33 +101,33 @@ async function phaseIngest() {
   );
 
   // --- graceful degradation: no external creds → structured skip, never throws ---
-  const granola = await ingestSource({ domain: "Customers", customerId: "acme-bank", source: "granola" });
+  const granola = await ingestSource({ domain: FOLDER.accounts, customerId: "acme-bank", source: "granola" });
   assert(granola.ok === false, "granola with no key must be a structured skip");
   assert(granola.landed === 0, "granola with no key lands nothing");
   assert(typeof granola.reason === "string" && granola.reason.length > 0, "granola skip carries a reason");
   assert(granola.landingPath === null, "granola skip has no landing path");
 
-  const email = await ingestSource({ domain: "Customers", customerId: "acme-bank", source: "email" });
+  const email = await ingestSource({ domain: FOLDER.accounts, customerId: "acme-bank", source: "email" });
   assert(email.ok === false, "email with no IMAP must be a structured skip");
   assert(email.landed === 0, "email with no IMAP lands nothing");
   assert(typeof email.reason === "string" && email.reason.length > 0, "email skip carries a reason (EmailNotConfiguredError caught)");
 
   // --- unknown source → structured skip ---
-  const unknown = await ingestSource({ domain: "Customers", customerId: "acme-bank", source: "carrier-pigeon" });
+  const unknown = await ingestSource({ domain: FOLDER.accounts, customerId: "acme-bank", source: "carrier-pigeon" });
   assert(unknown.ok === false && unknown.landed === 0, "unknown source is a structured skip");
   assert(/not a dm\.md syncs source/.test(unknown.reason ?? ""), "unknown-source reason names the misuse");
 
   // --- Solutions has NO syncs subtree → rejected up front ---
-  const solutions = await ingestSource({ domain: "Solutions", customerId: "acme-bank", source: "manual_entry", items: ITEMS });
+  const solutions = await ingestSource({ domain: FOLDER.solutions, customerId: "acme-bank", source: "manual_entry", items: ITEMS });
   assert(solutions.ok === false && solutions.landed === 0, "Solutions domain has no syncs subtree → skip");
   assert(/no dm\.md syncs subtree/.test(solutions.reason ?? ""), "Solutions reason names the missing subtree");
 
   // --- manual_entry with no items → lands nothing (offline, zero external calls) ---
-  const empty = await ingestSource({ domain: "Customers", customerId: "acme-bank", source: "manual_entry" });
+  const empty = await ingestSource({ domain: FOLDER.accounts, customerId: "acme-bank", source: "manual_entry" });
   assert(empty.ok === false && empty.landed === 0, "manual_entry with no items lands nothing");
   assert(/requires items/.test(empty.reason ?? ""), "empty manual_entry reason asks for items[]");
 
-  console.log("ingest ok (2 landed + 2 normalized; granola/email/unknown/Solutions/empty all skipped, none threw)");
+  console.log(`ingest ok (2 landed + 2 normalized; granola/email/unknown/${FOLDER.solutions}/empty all skipped, none threw)`);
 }
 
 async function phaseVerify() {
@@ -138,7 +139,7 @@ async function phaseVerify() {
   for (const rec of raw) {
     const parsed = rawSyncRecordSchema.parse(rec); // parses under the raw envelope
     assert(parsed.source === "manual_entry", "raw record source is manual_entry");
-    assert(parsed.domain === "Customers", "raw record domain is Customers");
+    assert(parsed.domain === FOLDER.accounts, "raw record domain is Customers");
     assert(parsed.customerId === "acme-bank", "raw record customerId round-trips");
     assert(typeof parsed.syncId === "string" && parsed.syncId.startsWith("SYNC-"), "raw record carries a SYNC- id");
   }
@@ -153,13 +154,13 @@ async function phaseVerify() {
     assert(typeof it.interactionId === "string" && it.interactionId.length > 0, "mirrored interaction has an id");
   }
 
-  // --- list() sees exactly the one landing file under Customers/syncs ---
-  const listed = await store.list("Customers/syncs");
-  assert(listed.length === 1 && listed[0] === LANDING_PATH, `Customers/syncs should list only ${LANDING_PATH}, got ${JSON.stringify(listed)}`);
+  // --- list() sees exactly the one landing file under {folder:accounts}/syncs ---
+  const listed = await store.list(`${FOLDER.accounts}/syncs`);
+  assert(listed.length === 1 && listed[0] === LANDING_PATH, `${FOLDER.accounts}/syncs should list only ${LANDING_PATH}, got ${JSON.stringify(listed)}`);
 
   // --- a second ingest APPENDS rather than clobbers (durable O_APPEND) ---
   const again = await ingestSource({
-    domain: "Customers",
+    domain: FOLDER.accounts,
     customerId: "acme-bank",
     source: "manual_entry",
     items: ITEMS,

@@ -9,6 +9,7 @@
  *   node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-workbook-spec.mjs
  */
 import assert from "node:assert/strict";
+import { FOLDER, domainIdOf } from "../agent/lib/dataroom-folders.ts";
 
 // Force the fallback path: no DB URL.
 delete process.env.DATABASE_URL;
@@ -37,7 +38,7 @@ const NOW = "2026-07-10T12:00:00Z";
 /* -------------------------------------------------------------------------- */
 
 const specs = await buildCustomerWorkbookSpecs({ customerId: "acme-bank", now: NOW });
-const DOMAIN_ORDER = ["Customers", "Platform", "Deployments", "Solutions", "Implementation", "Tickets", "People"];
+const DOMAIN_ORDER = [FOLDER.accounts, FOLDER.platform, FOLDER.deliveries, FOLDER.solutions, FOLDER.projects, FOLDER.tickets, FOLDER.people];
 
 assert.equal(specs.length, 7, "one spec per domain");
 assert.deepEqual([...WORKBOOK_DOMAINS], DOMAIN_ORDER, "WORKBOOK_DOMAINS is the fixed data-model order");
@@ -46,19 +47,20 @@ for (const s of specs) {
   assert.equal(s.workbook, `${s.domain}/Master.xlsx`, `workbook path for ${s.domain}`);
 }
 
-const byDomain = Object.fromEntries(specs.map((s) => [s.domain, s]));
+// By domain id: a spec carries the domain's stored folder name, which is the deployment profile's.
+const byDomain = Object.fromEntries(specs.map((s) => [domainIdOf(s.domain), s]));
 
 /* -------------------------------------------------------------------------- */
 /* (2) Tickets carries three sheets                                            */
 /* -------------------------------------------------------------------------- */
 
 assert.deepEqual(
-  byDomain.Tickets.sheets.map((sh) => sh.name),
-  ["Tickets", "Interactions", "Interaction Digest"],
+  byDomain.tickets.sheets.map((sh) => sh.name),
+  [FOLDER.tickets, "Interactions", "Interaction Digest"],
   "Tickets workbook: Tickets + Interactions + Interaction Digest",
 );
-assert.deepEqual(byDomain.Customers.sheets.map((s) => s.name), ["Customers"]);
-assert.deepEqual(byDomain.People.sheets.map((s) => s.name), ["Internal Staff", "Customer Stakeholders"]);
+assert.deepEqual(byDomain.accounts.sheets.map((s) => s.name), [FOLDER.accounts]);
+assert.deepEqual(byDomain.people.sheets.map((s) => s.name), ["Internal Staff", "Customer Stakeholders"]);
 
 /* -------------------------------------------------------------------------- */
 /* (3) Columns — exact for anchor sheets, length for the rest                  */
@@ -86,12 +88,12 @@ const INTERNAL_STAFF_COLUMNS = ["customer_id", "staff_role", "name", "title", "e
 const CUSTOMER_STAKEHOLDERS_COLUMNS = ["customer_id", "stakeholder_role", "name", "title", "employer_org", "email", "last_contact"];
 const INTERACTION_DIGEST_COLUMNS = ["customer_id", "customer_name", "interactions", "date_range", "last_touch", "open_next_actions", "sentiment", "digest"];
 
-const customersSheet = byDomain.Customers.sheets[0];
-const ticketsSheet = byDomain.Tickets.sheets[0];
-const interactionsSheet = byDomain.Tickets.sheets[1];
-const digestSheet = byDomain.Tickets.sheets[2];
-const staffSheet = byDomain.People.sheets[0];
-const stakeholderSheet = byDomain.People.sheets[1];
+const customersSheet = byDomain.accounts.sheets[0];
+const ticketsSheet = byDomain.tickets.sheets[0];
+const interactionsSheet = byDomain.tickets.sheets[1];
+const digestSheet = byDomain.tickets.sheets[2];
+const staffSheet = byDomain.people.sheets[0];
+const stakeholderSheet = byDomain.people.sheets[1];
 
 assert.deepEqual(customersSheet.columns, CUSTOMERS_COLUMNS, "Customers columns exact");
 assert.equal(customersSheet.columns.length, 38, "Customers has 38 columns");
@@ -101,10 +103,10 @@ assert.deepEqual(staffSheet.columns, INTERNAL_STAFF_COLUMNS, "Internal Staff col
 assert.deepEqual(stakeholderSheet.columns, CUSTOMER_STAKEHOLDERS_COLUMNS, "Customer Stakeholders columns exact");
 assert.deepEqual(digestSheet.columns, INTERACTION_DIGEST_COLUMNS, "Interaction Digest columns exact");
 
-assert.equal(byDomain.Platform.sheets[0].columns.length, 35, "Platform has 35 columns");
-assert.equal(byDomain.Deployments.sheets[0].columns.length, 53, "Deployments has 53 columns");
-assert.equal(byDomain.Solutions.sheets[0].columns.length, 75, "Solutions has 75 columns");
-assert.equal(byDomain.Implementation.sheets[0].columns.length, 51, "Implementation has 51 columns");
+assert.equal(byDomain.platform.sheets[0].columns.length, 35, "Platform has 35 columns");
+assert.equal(byDomain.deliveries.sheets[0].columns.length, 53, "Deployments has 53 columns");
+assert.equal(byDomain.solutions.sheets[0].columns.length, 75, "Solutions has 75 columns");
+assert.equal(byDomain.projects.sheets[0].columns.length, 51, "Implementation has 51 columns");
 assert.equal(ticketsSheet.columns.length, 65, "Tickets has 65 columns");
 
 /* -------------------------------------------------------------------------- */
@@ -168,8 +170,8 @@ for (const r of stakeholderSheet.rows) assert.equal(r[0], "acme-bank", "stakehol
 /* buildDomainWorkbookSpec parity + determinism                                */
 /* -------------------------------------------------------------------------- */
 
-const oneTickets = await buildDomainWorkbookSpec({ customerId: "acme-bank", domain: "Tickets", now: NOW });
-assert.deepEqual(oneTickets, byDomain.Tickets, "single-domain build == the same domain in the full build");
+const oneTickets = await buildDomainWorkbookSpec({ customerId: "acme-bank", domain: FOLDER.tickets, now: NOW });
+assert.deepEqual(oneTickets, byDomain.tickets, "single-domain build == the same domain in the full build");
 assert.deepEqual(
   await buildCustomerWorkbookSpecs({ customerId: "acme-bank", now: NOW }),
   specs,
@@ -186,7 +188,7 @@ await assert.rejects(
   "unknown customer rejects (all-domains)",
 );
 await assert.rejects(
-  () => buildDomainWorkbookSpec({ customerId: "no-such-customer", domain: "Customers", now: NOW }),
+  () => buildDomainWorkbookSpec({ customerId: "no-such-customer", domain: FOLDER.accounts, now: NOW }),
   /Unknown account: no-such-customer/,
   "unknown customer rejects (single-domain)",
 );
@@ -209,15 +211,15 @@ await assert.rejects(
   const depId = acme.deployments[0].deploymentId;
   await upsertCustomer({ id: "acme-bank", custom: { house_view: "Positive" }, deployments: [{ deploymentId: depId, custom: { rating: "Buy", target_price: "1,250" } }], implementation: { custom: { coverage_priority: "Core" } } }, undefined, { declared });
   const sheetOf = async (domain, name) => (await buildDomainWorkbookSpec({ customerId: "acme-bank", domain, now: NOW, declared })).sheets.find((x) => x.name === name);
-  const dep = await sheetOf("Deployments", "Deployments");
+  const dep = await sheetOf(FOLDER.deliveries, FOLDER.deliveries);
   assert.deepEqual(dep.columns.slice(-2), ["rating", "target_price"], "the deployments' own fields are the last columns, by key");
   assert.deepEqual(dep.rows[0].slice(-2), ["Buy", 1250], "…with each row's values (a number stays a number)");
-  const cust = await sheetOf("Customers", "Customers");
+  const cust = await sheetOf(FOLDER.accounts, FOLDER.accounts);
   assert.equal(cust.columns.at(-1), "house_view");
   assert.equal(cust.rows[0].at(-1), "Positive");
-  const impl = await sheetOf("Implementation", "Implementation");
+  const impl = await sheetOf(FOLDER.projects, FOLDER.projects);
   assert.deepEqual([impl.columns.at(-1), impl.rows[0].at(-1)], ["coverage_priority", "Core"]);
-  const none = await buildDomainWorkbookSpec({ customerId: "acme-bank", domain: "Deployments", now: NOW });
+  const none = await buildDomainWorkbookSpec({ customerId: "acme-bank", domain: FOLDER.deliveries, now: NOW });
   assert.equal(none.sheets[0].columns.length, dep.columns.length - 2, "a profile that declares none gets the sheet it always got");
 }
 

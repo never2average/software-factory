@@ -17,7 +17,7 @@
  * Every label a person reads that names one of the base product's words (the account, its owner, the deployment
  * record area, the data room) comes from the deployment profile (`reportWords`), the owner through the same
  * vocabulary the model's text goes through (agent/lib/agent-vocabulary.ts): the default profile reads exactly as
- * before, a relabelled one reads its own words, and a record area the profile hides (Platform) is left out. Data
+ * before, a relabelled one reads its own words, and a record area the profile hides (the platform domain) is left out. Data
  * values (names, ids, enum values) are printed as stored. A caller may pass another profile (tests do).
  *
  * Keep the relative `.ts` import specifiers below: plain
@@ -68,7 +68,7 @@ export interface ReportWords {
   version: string;
   releaseStatus: string;
   health: string;
-  /** Show the platform section: false when the profile hides the Platform area. */
+  /** Show the platform section: false when the profile hides the platform domain. */
   platform: boolean;
   /** The platform's hosting model. "Deployment" there means the software install, so once the profile names its
    *  deployment record area something else, the install is called what it is: hosting. */
@@ -98,7 +98,7 @@ export function reportWords(profile: VocabularyProfile = DEPLOYMENT_PROFILE as V
     version: field("deployedVersion", "Version"),
     releaseStatus: field("releaseStatus", "Release Status"),
     health: field("healthStatus", "Health"),
-    platform: profile.dataroom.domains.Platform?.visible !== false,
+    platform: profile.dataroom.domains.platform?.visible !== false,
     deploymentModel: `${relabelledDeployments ? "Hosting" : titleCase(dep.label.singular)} Model`,
     room: titleCase(profile.dataroom.root_label || "Data Room"),
   };

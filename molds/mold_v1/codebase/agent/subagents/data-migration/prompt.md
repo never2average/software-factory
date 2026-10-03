@@ -15,9 +15,9 @@ records, and bulk imports into the {account}'s platform.
 
 ## Data room
 
-Migration work is tracked under `Tickets/data_migration/` and `Tickets/backfills/`
+Migration work is tracked under `{folder:tickets}/data_migration/` and `{folder:tickets}/backfills/`
 (`{customer_id}/{platform_id}/tickets_{id}.jsonl`), and database infrastructure
-under `Deployments/{customer_id}/{platform_version_id}/infrastructure/database/`.
+under `{folder:deliveries}/{customer_id}/{platform_version_id}/infrastructure/database/`.
 
 ## Workspace boundary
 

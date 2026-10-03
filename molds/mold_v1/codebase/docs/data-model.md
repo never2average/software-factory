@@ -9,11 +9,11 @@
 
 The seven canonical domains (top-level folders in `dm.md`) are:
 
-1. `Customers`
+1. `Accounts`
 2. `Platform`
-3. `Deployments`
+3. `Deliveries`
 4. `Solutions`
-5. `Implementation`
+5. `Projects`
 6. `Tickets`
 7. `People`
 
@@ -22,7 +22,7 @@ system of record (`customers.customer_id`, for example `acme-bank`).
 
 Important boundary: customer accounts, internal OnFinance staff, and customer
 stakeholders are three different schemas. Customer accounts live in the
-`customers` table and the `Customers` sheet. Solution engineers and account
+`customers` table and the `Accounts` sheet. Solution engineers and account
 executives live in `internal_staff` (`internalStaffAssignments` in the source
 JSON) and the `Internal Staff` sheet. Customer users, champions, and decision
 makers live in `customer_stakeholders` (`customerStakeholders`) and the
@@ -40,13 +40,13 @@ table that could not be read is said on its sheet, never shown as empty
 ## Workbook naming: `<Domain>/Master.xlsx`
 
 Each of the seven domains carries exactly one workbook at its domain root,
-always named **`Master.xlsx`** — i.e. `Customers/Master.xlsx`,
-`Platform/Master.xlsx`, `Deployments/Master.xlsx`, `Solutions/Master.xlsx`,
-`Implementation/Master.xlsx`, `Tickets/Master.xlsx`, `People/Master.xlsx`.
+always named **`Master.xlsx`** — i.e. `Accounts/Master.xlsx`,
+`Platform/Master.xlsx`, `Deliveries/Master.xlsx`, `Solutions/Master.xlsx`,
+`Projects/Master.xlsx`, `Tickets/Master.xlsx`, `People/Master.xlsx`.
 
-`dm.md` shows `Master.xlsx` explicitly under `Customers`, `Platform`, and
+`dm.md` shows `Master.xlsx` explicitly under `Accounts`, `Platform`, and
 `People`. This packaging spec extends the same convention to the remaining
-four domains (`Deployments`, `Solutions`, `Implementation`, `Tickets`): every
+four domains (`Deliveries`, `Solutions`, `Projects`, `Tickets`): every
 domain root gets a `Master.xlsx` holding that domain's sheets. The domain
 folder name disambiguates; the file name is always `Master.xlsx`.
 
@@ -55,12 +55,12 @@ into new work; this section exists so the spec and the code do not silently
 contradict each other):**
 
 - `app/_components/dataroom.tsx` currently names each workbook
-  `${label}.xlsx` after the tab label (e.g. `People.xlsx`, `Customers.xlsx`).
+  `${label}.xlsx` after the tab label (e.g. `People.xlsx`, `Accounts.xlsx`).
   Canonical target: `<Domain>/Master.xlsx`, with the people sheets in
   `People/Master.xlsx`.
 - `agent/subagents/research/prompt.md` currently builds six
   `<customer>-<Section>.xlsx` files and packs Internal Staff / Customer
-  Stakeholders into the Customers workbook. Canonical target: seven
+  Stakeholders into the Accounts workbook. Canonical target: seven
   `Master.xlsx` workbooks with people sheets in `People/Master.xlsx`.
 
 Neither deviation changes any sheet's columns or grain — both are packaging
@@ -97,11 +97,11 @@ Join through `customer_id`.
 
 The nine canonical flat sheets, in fixed order:
 
-1. `Customers`
+1. `Accounts`
 2. `Platform`
-3. `Deployments`
+3. `Deliveries`
 4. `Solutions`
-5. `Implementation`
+5. `Projects`
 6. `Tickets`
 7. `Interactions`
 8. `Internal Staff`
@@ -112,11 +112,11 @@ packaged into seven `Master.xlsx` workbooks):
 
 | Domain workbook              | Sheets carried (in order)                                | `Master.xlsx` explicit in `dm.md`? |
 | ---------------------------- | -------------------------------------------------------- | ---------------------------------- |
-| `Customers/Master.xlsx`      | Customers                                                 | Yes                                |
+| `Accounts/Master.xlsx`      | Accounts                                                 | Yes                                |
 | `Platform/Master.xlsx`       | Platform                                                  | Yes                                |
-| `Deployments/Master.xlsx`    | Deployments                                               | Extended by this spec              |
+| `Deliveries/Master.xlsx`    | Deliveries                                               | Extended by this spec              |
 | `Solutions/Master.xlsx`      | Solutions                                                 | Extended by this spec              |
-| `Implementation/Master.xlsx` | Implementation                                            | Extended by this spec              |
+| `Projects/Master.xlsx` | Projects                                            | Extended by this spec              |
 | `Tickets/Master.xlsx`        | Tickets, Interactions, Interaction Digest (derived)       | Extended by this spec              |
 | `People/Master.xlsx`         | Internal Staff, Customer Stakeholders                     | Yes                                |
 
@@ -126,7 +126,7 @@ Notes:
   `People/Master.xlsx`, matching the `People` domain in `dm.md`.
 - `Interactions` is packaged with Tickets because interactions and tickets
   cross-reference each other heavily (`related_ticket_ids` both ways); its
-  source of record is `Customers/{CustomerID}/interactions.jsonl`.
+  source of record is `Accounts/{CustomerID}/interactions.jsonl`.
 - **`Interaction Digest` is a derived sheet and stays in `Tickets/Master.xlsx`.**
   It is a per-customer rollup computed at packaging time (columns:
   `customer_id`, `customer_name`, `interactions`, `date_range`, `last_touch`,
@@ -200,18 +200,18 @@ subagents in `agent/subagents/` (`research`, `customer-context`,
 Tools are in `agent/tools/`; connections in `agent/connections/`. Connector
 wiring marked *(deferred)* is specified but not yet linked.
 
-### `Customers/`
+### `Accounts/`
 
 | Path | Artifact type | Producer (agent/tool) |
 | --- | --- | --- |
-| `Customers/Master.xlsx` | Excel workbook (Customers sheet) | `research` subagent — openpyxl in sandbox, delivered via `publish_artifact` |
-| `Customers/{CustomerID}/interactions.jsonl` | JSONL interaction log (source of `Interactions` sheet) | `record_interaction` tool (orchestrator + any subagent) |
-| `Customers/{CustomerID}/context.md` | Markdown account context brief | `customer-context` subagent |
-| `Customers/{CustomerID}/agreements/` | Contract binaries (PDF/DOCX) | Human upload (data room Uploads) |
-| `Customers/syncs/manual_entry/` | Raw manual sync drops | Human upload (data room Uploads) |
-| `Customers/syncs/email/` | Email export payloads | `email_list_inbox` tool (Gmail connection) |
-| `Customers/syncs/slack/` | Slack export payloads | Slack connection/channel (`agent/connections/slack.ts`, `agent/channels/slack.ts`) |
-| `Customers/syncs/meeting_notes/granola/` | Meeting-note payloads | `granola_search_notes` tool (`agent/lib/granola.ts`) |
+| `Accounts/Master.xlsx` | Excel workbook (Accounts sheet) | `research` subagent — openpyxl in sandbox, delivered via `publish_artifact` |
+| `Accounts/{CustomerID}/interactions.jsonl` | JSONL interaction log (source of `Interactions` sheet) | `record_interaction` tool (orchestrator + any subagent) |
+| `Accounts/{CustomerID}/context.md` | Markdown account context brief | `customer-context` subagent |
+| `Accounts/{CustomerID}/agreements/` | Contract binaries (PDF/DOCX) | Human upload (data room Uploads) |
+| `Accounts/syncs/manual_entry/` | Raw manual sync drops | Human upload (data room Uploads) |
+| `Accounts/syncs/email/` | Email export payloads | `email_list_inbox` tool (Gmail connection) |
+| `Accounts/syncs/slack/` | Slack export payloads | Slack connection/channel (`agent/connections/slack.ts`, `agent/channels/slack.ts`) |
+| `Accounts/syncs/meeting_notes/granola/` | Meeting-note payloads | `granola_search_notes` tool (`agent/lib/granola.ts`) |
 
 ### `Platform/`
 
@@ -237,12 +237,12 @@ wiring marked *(deferred)* is specified but not yet linked.
 | `Platform/syncs/slack/` | Slack sync payloads | Slack connection |
 | `Platform/syncs/miro/` | Miro board exports | Miro sync *(deferred)* |
 
-### `Deployments/`
+### `Deliveries/`
 
 | Path | Artifact type | Producer (agent/tool) |
 | --- | --- | --- |
-| `Deployments/Master.xlsx` *(extended by this spec)* | Excel workbook (Deployments sheet) | `research` subagent — openpyxl + `publish_artifact` |
-| `Deployments/{customer_id}/{platform_version_id}/infrastructure/network/` | Terraform/IaC | `deployment` subagent |
+| `Deliveries/Master.xlsx` *(extended by this spec)* | Excel workbook (Deliveries sheet) | `research` subagent — openpyxl + `publish_artifact` |
+| `Deliveries/{customer_id}/{platform_version_id}/infrastructure/network/` | Terraform/IaC | `deployment` subagent |
 | `.../infrastructure/compute/` | Terraform/IaC | `deployment` subagent |
 | `.../infrastructure/storage/` | Terraform/IaC | `deployment` subagent |
 | `.../infrastructure/inference/customizations.tf` | Terraform (inference customizations) | `deployment` subagent |
@@ -261,18 +261,18 @@ wiring marked *(deferred)* is specified but not yet linked.
 | `.../platform/pipelines/{pipeline_id}/pipeline_config.json` | JSON config (pipeline) | `configuration` subagent |
 | `.../platform/pipelines/{pipeline_id}/private.integromat.json` | JSON config (private integration credentials) | `configuration` subagent — never published via `publish_artifact` |
 | `.../platform/integromat.json` | JSON config (integrations) | `configuration` subagent |
-| `Deployments/syncs/manual_input/` | Raw manual sync drops | Human upload |
-| `Deployments/syncs/claude/` | Coding-agent session logs | `deployment` subagent runs (Claude Code) |
-| `Deployments/syncs/codex/` | Coding-agent session logs | `deployment` subagent runs (Codex) |
-| `Deployments/syncs/email/` | Email export payloads | `email_list_inbox` tool |
-| `Deployments/syncs/github/` | GitHub sync payloads | GitHub connection |
-| `Deployments/syncs/aws/` | AWS sync payloads | AWS sync *(deferred)* |
-| `Deployments/syncs/azure/` | Azure sync payloads | Azure sync *(deferred)* |
-| `Deployments/syncs/gcp/` | GCP sync payloads | GCP sync *(deferred)* |
-| `Deployments/syncs/oci/` | OCI sync payloads | OCI sync *(deferred)* |
-| `Deployments/syncs/bare_metal/oc/` | OpenShift cluster sync payloads | Bare-metal sync *(deferred)* |
-| `Deployments/syncs/bare_metal/nkp/` | Nutanix NKP sync payloads | Bare-metal sync *(deferred)* |
-| `Deployments/syncs/bare_metal/custom_k8s/` | Custom k8s sync payloads | Bare-metal sync *(deferred)* |
+| `Deliveries/syncs/manual_input/` | Raw manual sync drops | Human upload |
+| `Deliveries/syncs/claude/` | Coding-agent session logs | `deployment` subagent runs (Claude Code) |
+| `Deliveries/syncs/codex/` | Coding-agent session logs | `deployment` subagent runs (Codex) |
+| `Deliveries/syncs/email/` | Email export payloads | `email_list_inbox` tool |
+| `Deliveries/syncs/github/` | GitHub sync payloads | GitHub connection |
+| `Deliveries/syncs/aws/` | AWS sync payloads | AWS sync *(deferred)* |
+| `Deliveries/syncs/azure/` | Azure sync payloads | Azure sync *(deferred)* |
+| `Deliveries/syncs/gcp/` | GCP sync payloads | GCP sync *(deferred)* |
+| `Deliveries/syncs/oci/` | OCI sync payloads | OCI sync *(deferred)* |
+| `Deliveries/syncs/bare_metal/oc/` | OpenShift cluster sync payloads | Bare-metal sync *(deferred)* |
+| `Deliveries/syncs/bare_metal/nkp/` | Nutanix NKP sync payloads | Bare-metal sync *(deferred)* |
+| `Deliveries/syncs/bare_metal/custom_k8s/` | Custom k8s sync payloads | Bare-metal sync *(deferred)* |
 
 ### `Solutions/`
 
@@ -297,17 +297,17 @@ wiring marked *(deferred)* is specified but not yet linked.
 | `.../pipelines/{pipeline_id}/background_research/{person_id}/context.md` | Markdown person research brief | `research` subagent (`web_search`/Exa + `granola_search_notes`) |
 | `.../pipelines/{pipeline_id}/background_research/{person_id}/interaction.jsonl` | JSONL interaction log | `record_interaction` tool |
 
-### `Implementation/`
+### `Projects/`
 
 | Path | Artifact type | Producer (agent/tool) |
 | --- | --- | --- |
-| `Implementation/Master.xlsx` *(extended by this spec)* | Excel workbook (Implementation sheet) | `research` subagent — openpyxl + `publish_artifact` |
-| `Implementation/{customer_id}/agents/{agent_id}/` | Recipe folder (seed workspace for the agent) | `configuration` subagent |
-| `Implementation/{customer_id}/pipelines/{pipeline_id}/pipeline_config.json` | JSON config (pipeline) | `configuration` subagent |
-| `Implementation/{customer_id}/pipelines/{pipeline_id}/private.integromat.json` | JSON config (private integration credentials) | `configuration` subagent — never published |
-| `Implementation/{customer_id}/integromat.json` | JSON config (integrations) | `configuration` subagent |
-| `Implementation/{customer_id}/evals/agents/` | Eval artifacts (agent acceptance) | `evals` subagent |
-| `Implementation/{customer_id}/evals/pipelines/` | Eval artifacts (pipeline acceptance) | `evals` subagent |
+| `Projects/Master.xlsx` *(extended by this spec)* | Excel workbook (Projects sheet) | `research` subagent — openpyxl + `publish_artifact` |
+| `Projects/{customer_id}/agents/{agent_id}/` | Recipe folder (seed workspace for the agent) | `configuration` subagent |
+| `Projects/{customer_id}/pipelines/{pipeline_id}/pipeline_config.json` | JSON config (pipeline) | `configuration` subagent |
+| `Projects/{customer_id}/pipelines/{pipeline_id}/private.integromat.json` | JSON config (private integration credentials) | `configuration` subagent — never published |
+| `Projects/{customer_id}/integromat.json` | JSON config (integrations) | `configuration` subagent |
+| `Projects/{customer_id}/evals/agents/` | Eval artifacts (agent acceptance) | `evals` subagent |
+| `Projects/{customer_id}/evals/pipelines/` | Eval artifacts (pipeline acceptance) | `evals` subagent |
 
 ### `Tickets/`
 
@@ -339,7 +339,7 @@ wiring marked *(deferred)* is specified but not yet linked.
 
 ## Sheet schemas (column contracts)
 
-### Customers
+### Accounts
 
 Grain: one row per customer account. This is the account spine and must not
 include person/staff attributes like title, employer organization, staff role,
@@ -377,7 +377,7 @@ person reads is the profile's `vocabulary.secondary_owner`.
 
 Grain: one row per customer platform configuration. This sheet is for tenant,
 security, governance, and default model policy. Runtime version, canary,
-traffic split, uptime, and deployment telemetry belong in `Deployments`.
+traffic split, uptime, and deployment telemetry belong in `Deliveries`.
 
 Core columns:
 `customer_id`, `tenant_id`, `platform_config_status`, `deployment_model`,
@@ -394,7 +394,7 @@ Core columns:
 `monthly_spend_limit_usd`, `enabled_connectors`, `feature_flags`,
 `primary_use_case`, `last_health_check_at`.
 
-### Deployments
+### Deliveries
 
 Grain: one row per deployable customer runtime instance, keyed by
 `customer_id + deployment_id`. `environment` and `region` are dimensions, not
@@ -426,8 +426,8 @@ category.
 
 This sheet owns workflow shape, use-case value delivery, AI evals, quality and
 safety metrics, human review operations, readiness, and solution-level
-expansion signals. Account ARR and renewal fields stay in `Customers`.
-Runtime release and cost telemetry stay in `Deployments`.
+expansion signals. Account ARR and renewal fields stay in `Accounts`.
+Runtime release and cost telemetry stay in `Deliveries`.
 
 Core columns include:
 `solution_id`, `customer_id`, `use_case`, `workflow_id`, `workflow_name`,
@@ -445,7 +445,7 @@ status, eval suite/run fields, quality/safety rates, human review fields,
 `runbook_url`, `solution_next_step`, expansion fields, `solution_fde_owner`,
 and `last_reviewed_date`.
 
-### Implementation
+### Projects
 
 Grain: one row per customer rollout plan. This sheet owns rollout governance,
 data/integration readiness, security/privacy/eval acceptance, launch criteria,
@@ -504,7 +504,7 @@ under `Tickets/` is derived from the category — see
 
 Grain: one row per customer touchpoint/event. Interactions are append-mostly
 activity/audit records. They do not replace tickets. Source of record:
-`Customers/{CustomerID}/interactions.jsonl` (and
+`Accounts/{CustomerID}/interactions.jsonl` (and
 `People/{person_id}/interactions.jsonl` for person-scoped rows), written by
 `record_interaction`.
 
@@ -541,11 +541,11 @@ Allowed `stakeholder_role`: `key_user`, `decision_maker`, `champion`.
 
 ## Cross-sheet rules
 
-- `Customers.fde_owner` must reference a same-customer `Internal Staff.email`
+- `Accounts.fde_owner` must reference a same-customer `Internal Staff.email`
   row with `staff_role = solution_engineer`.
-- `Customers.ae_owner` must reference a same-customer `Internal Staff.email`
+- `Accounts.ae_owner` must reference a same-customer `Internal Staff.email`
   row with `staff_role = account_executive`.
-- `Customers.business_owner_email`, `technical_owner_email`, and
+- `Accounts.business_owner_email`, `technical_owner_email`, and
   `executive_sponsor_email` should reference same-customer
   `Customer Stakeholders.email` rows.
 - `Solutions.solution_fde_owner` must reference a same-customer solution
@@ -553,13 +553,13 @@ Allowed `stakeholder_role`: `key_user`, `decision_maker`, `champion`.
 - `Solutions.workflow_owner_email` and `risk_owner_email` should reference
   same-customer customer stakeholders.
 - Version, health, uptime, runtime cost, canary, rollback, model routing, and
-  active deployment model refs live only on `Deployments`.
+  active deployment model refs live only on `Deliveries`.
 - Eval score, eval run, task quality, safety, and human review metrics live on
   `Solutions` per workflow.
-- `Implementation.launch_scope_solution_ids` and
+- `Projects.launch_scope_solution_ids` and
   `Tickets.affected_solution_id` reference same-customer solution IDs.
-- `Deployments.last_incident_ref`, `Deployments.active_incident_refs`,
-  `Implementation.critical_blocker_ticket_ids`, `Tickets.related_ticket_ids`,
+- `Deliveries.last_incident_ref`, `Deliveries.active_incident_refs`,
+  `Projects.critical_blocker_ticket_ids`, `Tickets.related_ticket_ids`,
   and `Interactions.related_ticket_ids` reference same-customer ticket IDs.
 - `Tickets.affected_deployment_id` and `Interactions.related_deployment_ids`
   reference same-customer deployment IDs.

@@ -28,6 +28,7 @@
  */
 import { readFileSync } from "node:fs";
 import * as att from "../lib/chat-attachments.ts";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 let passed = 0;
 const failed = [];
@@ -77,7 +78,7 @@ console.log("1. Every directive the app ever sent is hidden:");
   check("an attachment-only first message titles as the fallback, never as its directives", titled(att.wrapDirectives(ALL), "New chat") === "New chat");
   check(
     "the model-only attachment block goes; the chip token stays for the renderer",
-    shown(`${WORDS} [file: a.pdf]\n\n⁦attachments⁩ The user attached this file:\n- Customers/a.pdf ⁦/attachments⁩`) ===
+    shown(`${WORDS} [file: a.pdf]\n\n⁦attachments⁩ The user attached this file:\n- ${FOLDER.accounts}/a.pdf ⁦/attachments⁩`) ===
       `${WORDS} [file: a.pdf]`,
   );
   check("empty and missing text are empty", shown("") === "" && shown(undefined) === "" && shown(null) === "");

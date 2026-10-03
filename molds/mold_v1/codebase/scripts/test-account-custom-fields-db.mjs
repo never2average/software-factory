@@ -29,6 +29,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 const adminUrl = process.env.ADMIN_URL;
 const url = process.env.DATABASE_URL;
@@ -115,7 +116,7 @@ try {
   check(`a note saved while upsert_customer rewrites the record is never lost (${ROUNDS} rounds, lost ${lost})`, lost === 0, `lost in ${lost} of ${ROUNDS} rounds`);
   const declared = { account: [{ key: "notes", label: "Notes", type: "long_text" }, { key: "house_view", label: "House view", type: "pick_list", options: ["Positive", "Neutral", "Negative"] }] };
   // Text a person writes: line breaks, folder names and the base product's words are data, never the product's.
-  const NOTE = "Read Customers/acme/filings/q1.pdf and Deployments/acme/v1.\nThe deployment of the rights-issue money is the open question; customer_id stays as is.";
+  const NOTE = `Read ${FOLDER.accounts}/acme/filings/q1.pdf and ${FOLDER.deliveries}/acme/v1.\nThe deployment of the rights-issue money is the open question; customer_id stays as is.`;
   // What upsertCustomer runs, with a profile that declares the fields (this build's declares none).
   const write = async (patch) => {
     const existing = await sor.getCustomer(patch.id, ORG);

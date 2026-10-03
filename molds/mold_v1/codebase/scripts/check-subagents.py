@@ -47,7 +47,7 @@ SHARED_DIR = "scripts/subagent-shared"
 KEY_OK = re.compile(r"^[a-z][a-z0-9-]{0,79}$")  # the same shape setup/workspace-mcp.mjs accepts
 DECL_FIELDS = ("name", "summary", "dataroomPaths")
 # Kept identical to TEMPLATE_OK in scripts/gen-subagent-meta.mjs.
-TEMPLATE_OK = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*(/(\{[a-z_]+\}|[A-Za-z0-9_.{}-]+))*/(\*\*|[A-Za-z0-9_.{}-]+)$")
+TEMPLATE_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/(\{[a-z_]+\}|[A-Za-z0-9_.{}-]+))*/(\*\*|[A-Za-z0-9_.{}-]+)$")
 
 
 def read(path):
@@ -119,16 +119,52 @@ def generated_registry(root):
     return out
 
 
+def stored_folders(root):
+    """{domain id (or "uploads"): the folder this deployment stores it under}, read from its profile files the way
+    scripts/lib/profile-folders.mjs reads them: profiles/NN-*.json in name order, a later file's value winning, and
+    a domain named by the key it had before folder names were a profile setting (scripts/lib/legacy-dataroom-folders.json)
+    read as its id. {} when there is no profile to read."""
+    out = {}
+    profiles = os.environ.get("PROFILES_DIR") or os.path.join(root, "profiles")
+    if not os.path.isdir(profiles):
+        return out
+    id_of_old_key = {}
+    try:
+        legacy = json.loads(read(os.path.join(root, "scripts/lib/legacy-dataroom-folders.json")))
+        id_of_old_key = {name: key for key, name in legacy.items() if not key.startswith("$") and key != "uploads"}
+    except (OSError, ValueError):
+        pass
+    for name in sorted(f for f in os.listdir(profiles) if re.match(r"^\d{2}-[a-z0-9-]+\.json$", f)):
+        try:
+            room = json.loads(read(os.path.join(profiles, name))).get("dataroom")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if not isinstance(room, dict):
+            continue
+        if isinstance(room.get("uploads_folder"), str):
+            out["uploads"] = room["uploads_folder"]
+        for key, entry in (room.get("domains") or {}).items():
+            if isinstance(entry, dict) and isinstance(entry.get("folder"), str):
+                out[id_of_old_key.get(key, key)] = entry["folder"]
+    return out
+
+
+def with_stored_folder(t, folders):
+    """`{folder:accounts}/{customer_id}/x` as this deployment stores it (what the generator writes to the registry)."""
+    if not isinstance(t, str):
+        return t
+    m = re.match(r"^\{folder:([a-z]+)\}(?=/)", t)
+    return folders[m.group(1)] + t[m.end():] if m and m.group(1) in folders else t
+
+
 def dataroom_grammar(root):
-    """(domains, tokens) the data-room store will accept, read from its source; (None, None) when unreadable.
-    agent/lib/dataroom-store.ts compiles every template at import time and THROWS on an unknown domain or token,
+    """(folders, tokens) the data-room store will accept; (None, None) when unreadable. The tokens are read from the
+    store's source and the folders from the deployment profile (a domain's stored name is the profile's).
+    agent/lib/dataroom-store.ts compiles every template at import time and THROWS on an unknown folder or token,
     which takes every data-room tool down - the generator's regex does not catch either."""
-    domains = tokens = None
-    schema = os.path.join(root, "agent/lib/dataroom-schema.ts")
-    if os.path.isfile(schema):
-        m = re.search(r"dataroomDomainSchema\s*=\s*z\.enum\(\[(.*?)\]\)", read(schema), re.S)
-        if m:
-            domains = re.findall(r"^\s*\"([^\"]+)\"", m.group(1), re.M)
+    tokens = None
+    by_id = stored_folders(root)
+    domains = list(by_id.values())
     store = os.path.join(root, "agent/lib/dataroom-store.ts")
     if os.path.isfile(store):
         m = re.search(r"const TOKEN_PATTERNS[^=]*=\s*\{(.*?)\n\};", read(store), re.S)
@@ -144,7 +180,7 @@ def template_problem(t, domains, tokens):
     if not TEMPLATE_OK.match(t) or ".." in t:
         return "is not a data-room path template (Domain/segment/.../file-or-**, tokens as {lower_snake})"
     if domains is not None and t.split("/")[0] not in domains:
-        return "starts with \"%s\", which is not a data-room domain (%s)" % (t.split("/")[0], ", ".join(domains))
+        return "starts with \"%s\", which is not one of this deployment's data-room folders (%s)" % (t.split("/")[0], ", ".join(domains))
     if re.search(r"[{}]", re.sub(r"\{[a-z_]+\}", "", t)):
         return "has a stray or malformed brace (a token is {lower_snake})"
     unknown = sorted(set(re.findall(r"\{([a-z_]+)\}", t)) - set(tokens)) if tokens is not None else []
@@ -172,11 +208,13 @@ def check_declaration(r, root, key, reg, grammar):
             r.check(isinstance(decl[f], str) and decl[f].strip() != "", "subagent.json \"%s\" must be a non-empty string" % f)
     paths = decl.get("dataroomPaths", [])
     if r.check(isinstance(paths, list), "subagent.json \"dataroomPaths\" must be a list of path templates"):
-        for t in paths:
+        folders = stored_folders(root)
+        for declared in paths:
+            t = with_stored_folder(declared, folders)
             why = template_problem(t, *grammar)
-            if r.check(why is None, "subagent.json dataroomPaths entry %s %s" % (json.dumps(t), why)):
+            if r.check(why is None, "subagent.json dataroomPaths entry %s %s" % (json.dumps(declared), why)):
                 r.check(t in reg["templates"],
-                        "dataroomPaths entry %s is not in %s - run: npm run build:subagent-meta" % (json.dumps(t), GENERATED_REGISTRY))
+                        "dataroomPaths entry %s is not in %s - run: npm run build:subagent-meta" % (json.dumps(declared), GENERATED_REGISTRY))
     # A declared name/summary that the generated files do not carry means they are stale.
     for f, table in (("name", reg["labels"]), ("summary", reg["summaries"])):
         if isinstance(decl.get(f), str) and decl[f].strip() and key in table:
@@ -465,7 +503,7 @@ def check_registry(root, reg=None, grammar=None, skip=()):
             r.passed += sub.passed
         try:
             decl = json.loads(read(os.path.join(root, "agent/subagents", key, "subagent.json")))
-            wanted += [t for t in decl.get("dataroomPaths", []) if isinstance(t, str)] if isinstance(decl, dict) else []
+            wanted += [with_stored_folder(t, stored_folders(root)) for t in decl.get("dataroomPaths", []) if isinstance(t, str)] if isinstance(decl, dict) else []
         except (OSError, ValueError):
             pass
     stale = [t for t in reg["templates"] if t not in wanted]
@@ -685,14 +723,14 @@ def self_test():
         _write(os.path.join(tmp, "agent/subagents/legacy/hooks/usage.ts"), 'const WORKFLOW = "legacy";\\nevents: { async "turn.started"(event, ctx) { await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id); } }\\n')
         sub = lambda key, *parts: os.path.join(tmp, "agent/subagents", key, *parts)
         # the data-room grammar the store would enforce
-        _write(os.path.join(tmp, "agent/lib/dataroom-schema.ts"), 'export const dataroomDomainSchema = z.enum([\n  "Customers",\n  "Uploads",\n]);\n')
+        _write(os.path.join(tmp, "profiles/00-default.json"), json.dumps({"dataroom": {"domains": {"accounts": {"folder": "Vault"}}, "uploads_folder": "Inbox"}}))
         _write(os.path.join(tmp, "agent/lib/dataroom-store.ts"),
                'const TOKEN_PATTERNS: Record<string, string> = {\n  customer_id: SLUG,\n  date: "x",\n};\n')
         # subagent.json: a good one, and one with every kind of mistake
-        good_template = "Customers/{customer_id}/invoices/**"
+        good_template = "Vault/{customer_id}/invoices/**"
         _write(sub("good-one", "subagent.json"), json.dumps({"name": "Good One", "summary": "Reads things.", "dataroomPaths": [good_template]}))
         _write(sub("bad-one", "subagent.json"), json.dumps({"name": "", "colour": "red", "dataroomPaths": [
-            "Invoices/{customer_id}/**", "Customers/{vendor_id}/x.json", "Customers/../x", "Customers/**/x.json", 7]}))
+            "Invoices/{customer_id}/**", "Vault/{vendor_id}/x.json", "Vault/../x", "Vault/**/x.json", 7]}))
         # a shared family: good-one carries the synced copy, bad-one a hand-edited one, unbuilt-one a copy nobody syncs
         _write(os.path.join(tmp, SHARED_DIR, "doclib/targets.json"), json.dumps({"subagents": ["good-one", "bad-one", "gone"]}))
         _write(os.path.join(tmp, SHARED_DIR, "doclib/__init__.py"), "VERSION = 1\n")
@@ -700,7 +738,7 @@ def self_test():
         _write(sub("bad-one", "sandbox/workspace/scripts/doclib/__init__.py"), "VERSION = 2  # edited in place\n")
         _write(sub("unbuilt-one", "sandbox/workspace/scripts/doclib/__init__.py"), "VERSION = 1\n")
         # the generated files as they were before unbuilt-one was added and after "removed" was deleted
-        _generated(tmp, ["bad-one", "good-one", "legacy", "removed"], templates=[good_template, "Customers/{customer_id}/old/**"],
+        _generated(tmp, ["bad-one", "good-one", "legacy", "removed"], templates=[good_template, "Vault/{customer_id}/old/**"],
                    labels={"good-one": "Good One"}, summaries={"good-one": "Reads things."})
 
         cases = []
@@ -710,14 +748,14 @@ def self_test():
                   "no top-level \"type\"", "extra_log.jsonl", "WEB_SEARCH_ENABLED",
                   "unknown field(s) colour", "\"name\" must be a non-empty string",
                   "\"Invoices/{customer_id}/**\" starts with \"Invoices\"", "unknown token(s) {vendor_id}",
-                  "\"Customers/../x\" is not a data-room path template", "\"Customers/**/x.json\" is not a data-room path template",
+                  "\"Vault/../x\" is not a data-room path template", "\"Vault/**/x.json\" is not a data-room path template",
                   "7 is not a string", "doclib copy differs from scripts/subagent-shared/doclib (__init__.py)"]
         for e in expect:
             cases.append(("a broken workspace reports: " + e, any(e in f for f in bad.failures), bad.failures))
         for e in ["is not in %s" % GENERATED_META, "is not in %s" % GENERATED_REGISTRY, "targets.json does not name \"unbuilt-one\""]:
             cases.append(("a subagent added without the build reports: " + e, any(e in f for f in unbuilt.failures), unbuilt.failures))
         registry = check_registry(tmp)
-        for e in ["does not list unbuilt-one", "still lists removed", "no subagent.json declares (Customers/{customer_id}/old/**)",
+        for e in ["does not list unbuilt-one", "still lists removed", "no subagent.json declares (Vault/{customer_id}/old/**)",
                   "targets.json names \"gone\"", "agent/subagents/bad-one: subagent.json has unknown field",
                   "agent/subagents/bad-one/tools/web_search.ts does not gate",
                   "agent/subagents/bad-one/tools/read_image.ts does not gate",
@@ -751,8 +789,11 @@ def self_test():
         _write(sub("good-one", "subagent.json"), "{not json")
         broken = check_subagent(tmp, "good-one", 30)
         cases.append(("an unparseable subagent.json is reported", any("not valid JSON" in f for f in broken.failures), broken.failures))
-        cases.append(("a mixed literal-and-token segment is a template", template_problem("Customers/{customer_id}/{date}_notes.md", ["Customers"], ["customer_id", "date"]) is None, None))
-        cases.append(("a one-segment template is refused", template_problem("Customers", ["Customers"], []) is not None, None))
+        cases.append(("a mixed literal-and-token segment is a template", template_problem("Vault/{customer_id}/{date}_notes.md", ["Vault"], ["customer_id", "date"]) is None, None))
+        cases.append(("a one-segment template is refused", template_problem("Vault", ["Vault"], []) is not None, None))
+        cases.append(("a template may name its folder by domain id", with_stored_folder("{folder:accounts}/{customer_id}/x.json", {"accounts": "Vault"}) == "Vault/{customer_id}/x.json", None))
+        cases.append(("a profile's folder is read, and a later profile's wins",
+                      stored_folders(tmp) == {"accounts": "Vault", "uploads": "Inbox"}, stored_folders(tmp)))
         cases.append(("generated JSON is read back", _json_after('export const X: readonly string[] = [\n  "a"\n];\n', "export const X") == ["a"], None))
         cases.append(("folded description frontmatter is read", frontmatter_description("---\ndescription: >\n  Use when x.\n---\n") == "Use when x.", None))
         cases.append(("unquoted description with a colon is YAML-unsafe", yaml_unsafe_description("---\ndescription: Use when x: the gate.\n---\n"), None))

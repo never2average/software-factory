@@ -1,13 +1,17 @@
 ---
 name: configure-platform
-description: Author a platform version's design-decision schemas and reference architecture — the contract every solution binds to — and optionally a customer's platform-governance row. Use when standing up a new platform version, when someone says "configure the platform", "set up the platform version", "define the platform schemas/contract", or when a customer needs governance (model policy, guardrails, residency, connectors) configured. The version contract is shared across customers (Platform/{ver}/, blob-only); the governance row is per-customer (the platform table).
+description: Author a platform version's design-decision schemas and reference architecture — the contract every solution binds to — and optionally a customer's platform-governance row. Use when standing up a new platform version, when someone says "configure the platform", "set up the platform version", "define the platform schemas/contract", or when a customer needs governance (model policy, guardrails, residency, connectors) configured. The version contract is shared across customers ({folder:platform}/{ver}/, blob-only); the governance row is per-customer (the platform table).
 ---
 
 # Configure platform
 
+> `{folder:<id>}` below is the data-room folder this deployment stores that domain under: its profile's
+> `dataroom.domains.<id>.folder` (`uploads_folder` for `{folder:uploads}`). Read the real name with
+> `node --experimental-strip-types -e 'import("./agent/lib/dataroom-folders.ts").then((m) => console.log(m.FOLDER))'`.
+
 Two layers, one skill:
 
-1. **The version contract** (`Platform/{ver}/`, shared) — the design-decision
+1. **The version contract** (`{folder:platform}/{ver}/`, shared) — the design-decision
    schemas (tenancy, organization, dataplatform, dataengineering, agents,
    pipeline_config, integromat) + reference architecture (helm, terraform) that
    **every solution at that version validates against**. Authored once per version.
@@ -24,7 +28,7 @@ This is the **contract layer** below `configure-solution` / `configure-agents`. 
 npm run operator:configure-platform -- --version v2.4.0
 ```
 Scaffolds the seven `design_decisions/*.schemas.json` stubs + architecture
-placeholders under `Platform/v2.4.0/` (never clobbers authored schemas). **Fill the
+placeholders under `{folder:platform}/v2.4.0/` (never clobbers authored schemas). **Fill the
 stubs** — they are the contract solutions bind to.
 
 **2. Customer governance (optional).** When a customer's platform settings need
@@ -39,15 +43,15 @@ Upserts the `platform` governance row (requires the customer to exist).
 ## Where this reads / writes
 
 WRITE:
-- `Platform/{ver}/design_decisions/{tenancy,organization,dataplatform,dataengineering,agents,pipeline_config,integromat}.schemas.json`
-- `Platform/{ver}/architecture/{helm/values.yaml, infrastructure/main.tf}`
+- `{folder:platform}/{ver}/design_decisions/{tenancy,organization,dataplatform,dataengineering,agents,pipeline_config,integromat}.schemas.json`
+- `{folder:platform}/{ver}/architecture/{helm/values.yaml, infrastructure/main.tf}`
 - `platform` governance row (only with `--customer`)
 
 ## Never
 
 - Never overwrite an authored schema — the scaffolder only writes absent files.
-- Never put customer-specific config in the shared `Platform/{ver}/` tree — that's
-  the version contract; per-customer state is the `platform` row and `Deployments/`.
+- Never put customer-specific config in the shared `{folder:platform}/{ver}/` tree — that's
+  the version contract; per-customer state is the `platform` row and `{folder:deliveries}/`.
 
 ## Quick reference
 

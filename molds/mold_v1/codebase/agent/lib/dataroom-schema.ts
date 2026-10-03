@@ -1,8 +1,9 @@
 // Zod contract for the dm.md data-room entities.
 //
 // dm.md at the repository root is the CANONICAL data model (seven domains:
-// Customers, Platform, Deployments, Solutions, Implementation, Tickets,
-// People). docs/data-model.md is the derived sheet-packaging view.
+// accounts, platform, deliveries, solutions, projects, tickets, people; each
+// stored under the folder the deployment profile names, ./dataroom-folders.ts).
+// docs/data-model.md is the derived sheet-packaging view.
 //
 // This module models the *artifact* layer of dm.md — the JSON/JSONL/Markdown
 // records that live inside the domain folder trees. The flat sheet schemas in
@@ -15,6 +16,7 @@
 import { z } from "zod";
 import { interactionSchema, ticketSchema } from "./customer-schema.ts";
 import { fill } from "./agent-vocabulary.ts";
+import { ROOT_FOLDERS } from "./dataroom-folders.ts";
 
 // ---------------------------------------------------------------------------
 // Keys
@@ -30,9 +32,9 @@ const slug = z
 export const customerIdSchema = slug;
 
 /**
- * `platform_version_id` — the first-class key of the Platform domain.
- * It partitions Platform/, Deployments/{customer_id}/, Solutions/, and
- * People/{person_id}/ subtrees (e.g. "2026.06.3").
+ * `platform_version_id` — the first-class key of the platform domain.
+ * It partitions {folder:platform}/, {folder:deliveries}/{customer_id}/, {folder:solutions}/, and
+ * {folder:people}/{person_id}/ subtrees (e.g. "2026.06.3").
  */
 export const platformVersionIdSchema = slug.brand<"PlatformVersionId">();
 export type PlatformVersionId = z.infer<typeof platformVersionIdSchema>;
@@ -70,7 +72,7 @@ export const jsonObjectSchema = z.record(z.string(), jsonValueSchema);
 
 /**
  * A JSON Schema *document* artifact (e.g. `run_configs.schema.json`,
- * `Platform/{v}/design_decisions/*.schemas.json`). Deliberately loose: the
+ * `{folder:platform}/{v}/design_decisions/*.schemas.json`). Deliberately loose: the
  * document itself is the contract; here we only guarantee it is a JSON object
  * that self-identifies as a schema.
  */
@@ -104,7 +106,7 @@ export const markdownDocSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Agreements (Customers/{CustomerID}/agreements/, People/{person_id}/agreements/)
+// Agreements ({folder:accounts}/{CustomerID}/agreements/, {folder:people}/{person_id}/agreements/)
 // ---------------------------------------------------------------------------
 
 export const agreementTypeSchema = z.enum([
@@ -141,7 +143,7 @@ export const agreementSchema = z
     expirationDate: z.string().optional(),
     signedByEmails: z.array(z.string().email()).optional(),
     fileName: z.string().min(1),
-    /** Path under the data room, e.g. Customers/acme-bank/agreements/msa.pdf */
+    /** Path under the data room, e.g. {folder:accounts}/acme-bank/agreements/msa.pdf */
     storagePath: z.string().min(1),
     uploadedByEmail: z.string().email().optional(),
     uploadedAt: isoDateTime.optional(),
@@ -153,10 +155,10 @@ export const agreementSchema = z
   );
 
 // ---------------------------------------------------------------------------
-// Person domain (People/{person_id}/)
+// Person domain ({folder:people}/{person_id}/)
 // ---------------------------------------------------------------------------
 
-/** People/{person_id}/identity.json */
+/** {folder:people}/{person_id}/identity.json */
 export const personIdentitySchema = z.object({
   personId: personIdSchema,
   kind: z.enum(["internal", "external"]),
@@ -178,7 +180,7 @@ export const personIdentitySchema = z.object({
 });
 
 /**
- * One record of People/{person_id}/interactions.jsonl. Same row shape as the
+ * One record of {folder:people}/{person_id}/interactions.jsonl. Same row shape as the
  * customer-level Interactions sheet, plus the person spine key.
  */
 export const personInteractionRecordSchema = interactionSchema.extend({
@@ -186,12 +188,12 @@ export const personInteractionRecordSchema = interactionSchema.extend({
   customerId: customerIdSchema.optional(),
 });
 
-/** People/{person_id}/context.md */
+/** {folder:people}/{person_id}/context.md */
 export const personContextDocSchema = markdownDocSchema.extend({
   personId: personIdSchema,
 });
 
-/** People/{person_id}/{platform_version_id}/ access + enablement record. */
+/** {folder:people}/{person_id}/{platform_version_id}/ access + enablement record. */
 export const personPlatformAccessRecordSchema = z.object({
   personId: personIdSchema,
   platformVersionId: platformVersionIdSchema,
@@ -203,7 +205,7 @@ export const personPlatformAccessRecordSchema = z.object({
   notes: z.string().optional(),
 });
 
-/** The whole People/{person_id}/ folder for one external person. */
+/** The whole {folder:people}/{person_id}/ folder for one external person. */
 export const personFolderSchema = z.object({
   personId: personIdSchema,
   identity: personIdentitySchema,
@@ -236,8 +238,8 @@ export const pipelineStepSchema = z.object({
 });
 
 /**
- * pipeline_config.json — appears under Deployments/.../platform/pipelines/,
- * Solutions/{v}/pipelines/, and Implementation/{customer_id}/pipelines/.
+ * pipeline_config.json — appears under {folder:deliveries}/.../platform/pipelines/,
+ * {folder:solutions}/{v}/pipelines/, and {folder:projects}/{customer_id}/pipelines/.
  */
 export const pipelineConfigSchema = z
   .object({
@@ -296,9 +298,9 @@ export const recipeFileSchema = z.object({
 
 /**
  * Recipe — recipe.md + recipe/ seed folder for an agent
- * (Solutions/{v}/agents/{agent_id}/, and the seed workspaces under
- * Deployments/.../platform/agents/{agent_id}/ and
- * Implementation/{customer_id}/agents/{agent_id}/).
+ * ({folder:solutions}/{v}/agents/{agent_id}/, and the seed workspaces under
+ * {folder:deliveries}/.../platform/agents/{agent_id}/ and
+ * {folder:projects}/{customer_id}/agents/{agent_id}/).
  */
 export const recipeSchema = z.object({
   agentId: agentIdSchema,
@@ -314,7 +316,7 @@ export const recipeSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Eval-run artifacts (Solutions/{v}/{agents|pipelines}/{id}/evals/)
+// Eval-run artifacts ({folder:solutions}/{v}/{agents|pipelines}/{id}/evals/)
 // ---------------------------------------------------------------------------
 
 /** One row of evals/dataset.jsonl. */
@@ -437,7 +439,7 @@ export const evalRunSchema = z
 
 // ---------------------------------------------------------------------------
 // Deployment signoff records
-// (Deployments/{customer_id}/{platform_version_id}/infrastructure/*/signoff/)
+// ({folder:deliveries}/{customer_id}/{platform_version_id}/infrastructure/*/signoff/)
 // ---------------------------------------------------------------------------
 
 /** The four signoff parties, matching the signoff/ file names in dm.md. */
@@ -554,27 +556,20 @@ export function isSignoffChainComplete(chain: z.infer<typeof signoffChainSchema>
 // Domain folder composites — one per dm.md top-level domain
 // ---------------------------------------------------------------------------
 
-export const dataroomDomainSchema = z.enum([
-  "Customers",
-  "Platform",
-  "Deployments",
-  "Solutions",
-  "Implementation",
-  "Tickets",
-  "People",
-  // Files a signed-in user uploads through the chat, filed under their own
-  // identity folder (Uploads/{person_id}/…). Internal-user scratch/inbox — not
-  // the external People/ tree.
-  "Uploads",
-]);
+/**
+ * A top-level folder of the data room, by its STORED name: the seven domains' folders, then the folder files a
+ * signed-in user attaches through the chat are filed under (by their own identity; an internal scratch/inbox, not
+ * the external people tree). The names are the deployment profile's (./dataroom-folders.ts), never spelled here.
+ */
+export const dataroomDomainSchema = z.enum(ROOT_FOLDERS as [string, ...string[]]);
 export type DataroomDomain = z.infer<typeof dataroomDomainSchema>;
 
 /**
  * One customer-persona record. Lives as jsonl lines in two places:
- * `Customers/{customer_id}/personas.jsonl` — the archetypes at that customer —
- * and `Solutions/{platform_version_id}/supported.personas.jsonl` — the personas
+ * `{folder:accounts}/{customer_id}/personas.jsonl` — the archetypes at that customer —
+ * and `{folder:solutions}/{platform_version_id}/supported.personas.jsonl` — the personas
  * a solution version supports (recipes cite persona_ids). Personas are
- * archetypes, NOT real people: real humans live in People/ (and in
+ * archetypes, NOT real people: real humans live in {folder:people}/ (and in
  * background_research/{person_id}/ on a pipeline).
  */
 export const personaSchema = z.object({
@@ -596,7 +591,7 @@ export const personaSchema = z.object({
 });
 export type Persona = z.infer<typeof personaSchema>;
 
-/** Customers/{CustomerID}/ — interactions.jsonl + context.md + personas.jsonl + agreements/. */
+/** {folder:accounts}/{CustomerID}/ — interactions.jsonl + context.md + personas.jsonl + agreements/. */
 export const customerFolderSchema = z.object({
   customerId: customerIdSchema,
   interactions: z.array(interactionSchema),
@@ -605,14 +600,14 @@ export const customerFolderSchema = z.object({
   agreements: z.array(agreementSchema).optional(),
 });
 
-/** Platform/{platform_version_id}/ release folder. */
+/** {folder:platform}/{platform_version_id}/ release folder. */
 export const platformVersionFolderSchema = z.object({
   platformVersionId: platformVersionIdSchema,
   changelogs: z
     .array(
       z.object({
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        /** e.g. Platform/2026.06.3/2026-06-14_changelog_manager.md */
+        /** e.g. {folder:platform}/2026.06.3/2026-06-14_changelog_manager.md */
         path: z.string().min(1),
         title: z.string().optional(),
       }),
@@ -633,7 +628,7 @@ export const platformVersionFolderSchema = z.object({
   securityArtifacts: z.array(z.string()).optional(),
 });
 
-/** Deployments/{customer_id}/{platform_version_id}/ workspace. */
+/** {folder:deliveries}/{customer_id}/{platform_version_id}/ workspace. */
 export const deploymentFolderSchema = z.object({
   customerId: customerIdSchema,
   platformVersionId: platformVersionIdSchema,
@@ -667,7 +662,7 @@ export const deploymentFolderSchema = z.object({
     .optional(),
 });
 
-/** Solutions/{platform_version_id}/agents/{agent_id}/ folder. */
+/** {folder:solutions}/{platform_version_id}/agents/{agent_id}/ folder. */
 export const solutionAgentFolderSchema = z.object({
   platformVersionId: platformVersionIdSchema,
   agentId: agentIdSchema,
@@ -683,7 +678,7 @@ export const solutionAgentFolderSchema = z.object({
     .optional(),
 });
 
-/** Solutions/{platform_version_id}/pipelines/{pipeline_id}/ folder. */
+/** {folder:solutions}/{platform_version_id}/pipelines/{pipeline_id}/ folder. */
 export const solutionPipelineFolderSchema = z.object({
   platformVersionId: platformVersionIdSchema,
   pipelineId: pipelineIdSchema,
@@ -706,7 +701,7 @@ export const solutionPipelineFolderSchema = z.object({
     .optional(),
 });
 
-/** Implementation/{customer_id}/ workspace. */
+/** {folder:projects}/{customer_id}/ workspace. */
 export const implementationFolderSchema = z.object({
   customerId: customerIdSchema,
   agents: z.array(recipeSchema).optional(),
@@ -728,7 +723,7 @@ export const implementationFolderSchema = z.object({
     .optional(),
 });
 
-/** The nine storage partitions under Tickets/ (see docs/data-model.md). */
+/** The nine storage partitions under {folder:tickets}/ (see docs/data-model.md). */
 export const ticketFolderSchema = z.enum([
   "feat",
   "search",
@@ -742,7 +737,7 @@ export const ticketFolderSchema = z.enum([
 ]);
 export type TicketFolder = z.infer<typeof ticketFolderSchema>;
 
-/** Tickets/{folder}/{customer_id}/{platform_id}/tickets_{id}.jsonl */
+/** {folder:tickets}/{folder}/{customer_id}/{platform_id}/tickets_{id}.jsonl */
 export const ticketFileSchema = z.object({
   folder: ticketFolderSchema,
   customerId: customerIdSchema,

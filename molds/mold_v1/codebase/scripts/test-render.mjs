@@ -228,7 +228,7 @@ const w = reportWords(relabelled);
 assert.equal(w.deployments, "coverage reports", "relabelled profile: \"No coverage reports on record.\"");
 assert.deepEqual(baseWords(Object.values(w).filter((x) => typeof x === "string").join("\n")), [], "relabelled profile: no report word is a base word");
 // A profile that renames the deployment area but shows Platform calls the install's model what it is.
-const withPlatform = reportWords(mergedProfile((p) => ({ ...p, dataroom: { ...p.dataroom, domains: { ...p.dataroom.domains, Platform: { label: "Platform", visible: true } } } })));
+const withPlatform = reportWords(mergedProfile((p) => ({ ...p, dataroom: { ...p.dataroom, domains: { ...p.dataroom.domains, platform: { ...p.dataroom.domains.platform, visible: true } } } })));
 assert.equal(withPlatform.platform, true);
 assert.equal(withPlatform.deploymentModel, "Hosting Model", "deployment area renamed: the platform's deployment model is its hosting model");
 

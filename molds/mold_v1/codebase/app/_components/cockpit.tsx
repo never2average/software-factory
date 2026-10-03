@@ -61,7 +61,7 @@ import { type ApiWorkflowVersion, authToken, opsFetch, type OpsSection, unkebab 
 import { pickSubagentName } from "@/lib/subagent-names";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
-import { W } from "@/lib/ui-words";
+import { W, domainLabel } from "@/lib/ui-words";
 
 /** The two record areas as this deployment names them (`domains` in the deployment profile). */
 const DEP = domainView("deployments");
@@ -69,11 +69,11 @@ const IMP = domainView("implementations");
 const countOf = (n: number, view: { noun: string; nouns: string }) => `${n} ${n === 1 ? view.noun : view.nouns}`;
 
 /** A deployment can hide a data-room domain; its ownership panels and counts go with it. */
-const domainVisible = (key: "Tickets" | "Deployments" | "Implementation") =>
+const domainVisible = (key: "tickets" | "deliveries" | "projects") =>
   DEPLOYMENT_PROFILE.dataroom.domains[key]?.visible !== false;
-const SHOW_TICKETS = domainVisible("Tickets");
-const SHOW_DEPLOYMENTS = domainVisible("Deployments");
-const SHOW_IMPLEMENTATIONS = domainVisible("Implementation");
+const SHOW_TICKETS = domainVisible("tickets");
+const SHOW_DEPLOYMENTS = domainVisible("deliveries");
+const SHOW_IMPLEMENTATIONS = domainVisible("projects");
 /** "customer" -> "Customer", for field labels. */
 const ACCOUNT_LABEL =
   DEPLOYMENT_PROFILE.vocabulary.account.singular.charAt(0).toUpperCase() +
@@ -977,7 +977,7 @@ export function Cockpit({
               list_customers call would otherwise dump the whole roster into this
               rail. */}
           {merged.people.length > 0 ? (
-            <Section icon={Users} title="People" count={merged.people.length}>
+            <Section icon={Users} title={domainLabel("people")} count={merged.people.length}>
               <PeopleList people={merged.people} onSelect={setSelectedPerson} />
             </Section>
           ) : null}
@@ -1904,7 +1904,7 @@ function PersonModal({
                   {/* Ownership across the data room (scoped to the account chip) */}
                   <div className="flex flex-col gap-5">
                     {SHOW_TICKETS ? (
-                    <OwnPanel icon={TicketIcon} title="Tickets" count={fTickets.length}>
+                    <OwnPanel icon={TicketIcon} title={domainLabel("tickets")} count={fTickets.length}>
                       {fTickets.map((t) => (
                         <OwnRow
                           key={`${t.customer}-${t.id}`}

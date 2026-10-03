@@ -21,6 +21,7 @@ import { LEGACY_GENERIC_COMMANDS, defaultDeployment, isSemver, moduleFileNames, 
 import { hasPlaceholder } from "./lib/profile-words.mjs";
 import { declaredAliases } from "./lib/wire-names.mjs";
 import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
+import { FOLDER, fillFolders } from "../agent/lib/dataroom-folders.ts";
 /** The base product's role word as a word (not inside an identifier), built from its one spelling. */
 const ROLE_WORD = new RegExp(`(^|[^A-Za-z0-9_])${BASE_PRODUCT_WORD}([^A-Za-z0-9_]|$)`, "i");
 
@@ -333,9 +334,20 @@ try {
     rmSync(join(HOME, ".config"), { recursive: true, force: true });
   }
 
-  await check("dm.md equals setup/dm.md (and the repo's) byte for byte", () => {
+  await check("dm.md equals setup/dm.md byte for byte: the repo's, with each domain's folder as the default profile stores it", () => {
     assert.ok(readFileSync(join(D, "dm.md")).equals(readFileSync(join(ROOT, "setup/dm.md"))));
-    assert.ok(readFileSync(join(D, "dm.md")).equals(readFileSync(join(ROOT, "dm.md"))));
+    // The repo's dm.md names a folder by a placeholder ({folder:accounts}); a package's has the stored name.
+    const source = readFileSync(join(ROOT, "dm.md"), "utf8");
+    assert.match(source, /^ {2}\|-\{folder:accounts\}$/m);
+    assert.equal(readFileSync(join(D, "dm.md"), "utf8"), fillFolders(source));
+    assert.doesNotMatch(readFileSync(join(D, "dm.md"), "utf8"), /\{folder:/);
+  });
+  await check("the package carries the deployment's folder names, and its tools build paths from them", () => {
+    const baked = readFileSync(join(D, "deployment.generated.mjs"), "utf8");
+    const deployment = JSON.parse(baked.slice(baked.indexOf("export const DEPLOYMENT = ") + "export const DEPLOYMENT = ".length, baked.indexOf(";\nexport const {")));
+    assert.deepEqual(deployment.folders, { ...FOLDER }, "deployment.generated.mjs names the folders");
+    // …and the stdio host hands them to the tools, which refuse to start without them rather than guess a name.
+    assert.match(readFileSync(join(D, MODULES.mcp), "utf8"), /folders: DEPLOYMENT\.folders,/);
   });
   await check("the base skill ships, renamed to this package", () => {
     assert.deepEqual(readdirSync(join(D, "skills")), readdirSync(join(ROOT, "skills")));
@@ -606,31 +618,36 @@ try {
   });
   const dm = readFileSync(join(P, "dm.md"), "utf8");
   await check("dm.md hides hidden domains", () => {
-    for (const gone of ["  |-Platform", "  |-Solutions", "  |-Tickets", "supported.personas.jsonl", "tickets_{id}.jsonl"]) assert.ok(!dm.includes(gone), gone);
-    assert.match(dm, /Not used in this deployment, so not listed: Platform, Solutions, Tickets\./);
+    for (const gone of [`  |-${FOLDER.platform}`, `  |-${FOLDER.solutions}`, `  |-${FOLDER.tickets}`, "supported.personas.jsonl", "tickets_{id}.jsonl"]) assert.ok(!dm.includes(gone), gone);
+    assert.ok(dm.includes(`Not used in this deployment, so not listed: ${FOLDER.platform}, ${FOLDER.solutions}, ${FOLDER.tickets}.`));
   });
   await check("dm.md relabels visible domains and keeps the real folder name in brackets", () => {
-    assert.ok(dm.includes("  |-Companies [Customers]"));
-    assert.match(dm, /^ {2}\|-Coverage reports \[Deployments\]/m);
-    assert.match(dm, /^ {2}\|-Portfolios \[Implementation\]/m);
-    assert.ok(dm.includes("  |-People\n"), "an unrelabelled domain is unchanged");
+    assert.ok(dm.includes(`  |-Companies [${FOLDER.accounts}]`));
+    assert.ok(dm.includes(`\n  |-Coverage reports [${FOLDER.deliveries}]`));
+    assert.ok(dm.includes(`\n  |-Portfolios [${FOLDER.projects}]`));
+    assert.ok(dm.includes(`  |-${FOLDER.people}\n`), "an unrelabelled domain is unchanged");
     assert.ok(dm.includes("       |-interactions.jsonl") && dm.includes("    |-{CustomerID}"), "the paths under a domain are the real ones");
   });
   await check("dm.md summarises the redefined record areas", () => {
-    assert.match(dm, /^Coverage reports \(stored as Deployments\): /m);
-    assert.match(dm, /^Portfolios \(stored as Implementation; each row is a Portfolio entry\): /m);
+    assert.ok(dm.includes(`\nCoverage reports (stored as ${FOLDER.deliveries}): `));
+    assert.ok(dm.includes(`\nPortfolios (stored as ${FOLDER.projects}; each row is a Portfolio entry): `));
     for (const gone of ["{platform_version_id}", "customizations.tf", "customer.infosec.md"]) assert.ok(!dm.includes(gone), `${gone} is the default tree of a redefined area`);
-    assert.match(dm, /\|-Coverage reports \[Deployments\].*\n {4}\(records, not files/);
+    assert.match(dm, new RegExp(`\\|-Coverage reports \\[${FOLDER.deliveries}\\].*\\n {4}\\(records, not files`));
   });
   await check("subagent path templates are appended under their domain (and an unknown domain is refused)", () => {
     const source = readFileSync(join(ROOT, "dm.md"), "utf8");
     const base = JSON.parse(JSON.stringify(baseProfile, (k, v) => (k === "$comment" ? undefined : v)));
     for (const dom of Object.values(base.dataroom.domains)) dom.visible ??= true;
-    const out = renderDmMd({ source, profile: base, defaultDomains: base.domains, extraTemplates: ["Customers/{customer_id}/invoices/**"], productName: "X" });
+    const out = renderDmMd({ source, profile: base, defaultDomains: base.domains, extraTemplates: [`${FOLDER.accounts}/{customer_id}/invoices/**`], productName: "X" });
     const lines = out.split("\n");
     const at = lines.indexOf("    |-{customer_id}/invoices/** (added by a subagent)");
-    assert.ok(at > lines.indexOf("  |-Customers") && at < lines.indexOf("  |-Platform"));
-    assert.equal(renderDmMd({ source, profile: base, defaultDomains: base.domains, extraTemplates: [], productName: "X" }), source);
+    assert.ok(at > lines.indexOf(`  |-${FOLDER.accounts}`) && at < lines.indexOf(`  |-${FOLDER.platform}`));
+    assert.equal(renderDmMd({ source, profile: base, defaultDomains: base.domains, extraTemplates: [], productName: "X" }), fillFolders(source));
+    // A profile that pins other folders: the tree is the same, under the names that deployment stores.
+    const pinned = structuredClone(base);
+    pinned.dataroom.domains.accounts.folder = "Ledger";
+    const under = renderDmMd({ source, profile: pinned, defaultDomains: base.domains, extraTemplates: ["Ledger/{customer_id}/invoices/**"], productName: "X" });
+    assert.ok(under.includes("\n  |-Ledger\n") && !under.includes(`  |-${FOLDER.accounts}\n`) && under.includes("    |-{customer_id}/invoices/** (added by a subagent)"));
     assert.throws(() => renderDmMd({ source, profile: base, defaultDomains: base.domains, extraTemplates: ["Nowhere/x"], productName: "X" }), /not a domain/);
   });
   await check("with agent-kit skills, the base setup skill is left out and the kit's ship with their references", () => {

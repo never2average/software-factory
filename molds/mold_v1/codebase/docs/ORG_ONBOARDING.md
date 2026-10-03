@@ -125,7 +125,7 @@ These are now DONE (org scoping has fully permeated):
   `/api/dataroom` defaults to onfinance and would need auth + `?org=` (it's
   currently ungated) to serve another workspace. Until then a second org's tree
   is reachable by explicitly passing its `orgId`, and is populated the moment its
-  first customer is onboarded (context.md lands under `orgs/{id}/Customers/…`).
+  first customer is onboarded (context.md lands under `orgs/{id}/Accounts/…`).
 - Secrets: `connector_secrets.org_id` is the hook for per-org derived keys
   (HKDF of `OPS_SECRETS_KEY`) in Phase 3 so one org's dump can't decrypt another.
 

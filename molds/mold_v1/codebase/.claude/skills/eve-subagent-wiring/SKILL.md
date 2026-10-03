@@ -44,7 +44,7 @@ Next to `agent.ts`. Every field is optional; the file itself is optional.
 {
   "name": "Invoice Extraction",
   "summary": "Reads supplier invoices already in the data room and tabulates their line items with citations.",
-  "dataroomPaths": ["Customers/{customer_id}/invoices/**"]
+  "dataroomPaths": ["{folder:accounts}/{customer_id}/invoices/**"]
 }
 ```
 
@@ -70,20 +70,26 @@ A template is `/`-separated segments. The generator accepts it when it matches
 `TEMPLATE_OK` (`scripts/gen-subagent-meta.mjs:59`) and contains no `..`:
 
 ```
-^[A-Za-z][A-Za-z0-9_-]*(/(\{[a-z_]+\}|[A-Za-z0-9_.{}-]+))*/(\*\*|[A-Za-z0-9_.{}-]+)$
+^[A-Za-z0-9][A-Za-z0-9._-]*(/(\{[a-z_]+\}|[A-Za-z0-9_.{}-]+))*/(\*\*|[A-Za-z0-9_.{}-]+)$
 ```
 
 In words:
 
-- **At least two segments.** The first is a literal and must be a data-room **domain**:
-  `Customers`, `Platform`, `Deployments`, `Solutions`, `Implementation`, `Tickets`,
-  `People`, `Uploads` (`dataroomDomainSchema`, `agent/lib/dataroom-schema.ts:556`). A pack
-  cannot add a domain.
+- **At least two segments.** The first must be one of the data room's top-level **folders**,
+  which are the deployment profile's (`dataroom.domains.<id>.folder`, `dataroom.uploads_folder`;
+  `agent/lib/dataroom-folders.ts`). Write it as `{folder:<id>}` (`{folder:accounts}`,
+  `{folder:platform}`, `{folder:deliveries}`, `{folder:solutions}`, `{folder:projects}`,
+  `{folder:tickets}`, `{folder:people}`, `{folder:uploads}`) and the template is right under
+  every profile; the generator writes the stored name into the registry. A pack that ships
+  its own profile may write the stored name that profile gives instead, but `{folder:<id>}`
+  is the safe choice: a deployment that already held files keeps its former folder names
+  (docs/DEPLOYMENT_PROFILE.md, "Stored folder names"), so a name copied from the default
+  profile is refused at build there. A pack cannot add a folder.
 - **Middle segments** are a `{token}`, a literal (`invoices`), or a mix
   (`{date}_summary.md`). Literal characters are letters, digits, `_`, `.`, `-`. No spaces.
 - **The last segment** is a file name (literal, token or mix) or `**`. `**` is allowed
   **only** as the last segment and matches any non-empty subtree of files, so
-  `Customers/{customer_id}/invoices/**` admits `.../invoices/2026/03/INV-0001.pdf`.
+  `{folder:accounts}/{customer_id}/invoices/**` admits `.../invoices/2026/03/INV-0001.pdf`.
 - **Tokens** are `{lower_snake}` and must be one the store knows (`TOKEN_PATTERNS`,
   `agent/lib/dataroom-store.ts:78`): `customer_id`, `platform_version_id`, `platform_id`,
   `person_id`, `agent_id`, `pipeline_id`, `migration_id`, `run_id`, `id` (slugs), `date`
@@ -101,7 +107,7 @@ Concrete paths must still pass the per-segment safety rule (`SAFE_SEGMENT`,
 only letters, digits, `.`, `_`, space and `-`.
 
 Prefer one `**` template per folder the subagent owns over many file templates, and keep
-it under an existing entity (`Customers/{customer_id}/<your-folder>/**`). Name a new
+it under an existing entity (`{folder:accounts}/{customer_id}/<your-folder>/**`). Name a new
 `.jsonl` so it does not end in `interactions.jsonl`, `personas.jsonl`, `output.jsonl`,
 `trace.jsonl`, or match `tickets_*.jsonl`, `evals/dataset.jsonl`, `evals/benchmark.jsonl`:
 `dataroom_append_jsonl` would validate it against that built-in contract
@@ -124,7 +130,7 @@ a file:
 
 - **invoice-extraction** — tabulates supplier invoices that are already in the data room:
   - Use for "pull the line items from ...", "what did <supplier> bill us in March".
-  - Works only from files under `Customers/{customer_id}/invoices/`. It does not fetch.
+  - Works only from files under `{folder:accounts}/{customer_id}/invoices/`. It does not fetch.
   - It sees only your message: name the customer, the period and the file paths.
 ```
 

@@ -10,11 +10,11 @@
 // blindly).
 //
 // What it populates (per the task + docs/data-model.md):
-//   - Customers/{cid}/interactions.jsonl   (every customer, even with 0 rows)
-//   - Customers/{cid}/context.md           (stub brief)
-//   - Customers/{cid}/agreements/README.md (agreements/ placeholder)
-//   - People/{person_id}/identity.json + context.md   (every people.json row)
-//   - Tickets/{folder}/{cid}/{v1}/tickets_{id}.jsonl  (category -> folder map)
+//   - {folder:accounts}/{cid}/interactions.jsonl   (every customer, even with 0 rows)
+//   - {folder:accounts}/{cid}/context.md           (stub brief)
+//   - {folder:accounts}/{cid}/agreements/README.md (agreements/ placeholder)
+//   - {folder:people}/{person_id}/identity.json + context.md   (every people.json row)
+//   - {folder:tickets}/{folder}/{cid}/{v1}/tickets_{id}.jsonl  (category -> folder map)
 //   - platform / deployments / solutions / implementation rows landed at the
 //     closest valid dm.md template under a single synthetic platform_version_id.
 //
@@ -41,10 +41,11 @@ import {
 } from "#lib/customer-schema.ts";
 import type { TicketFolder } from "#lib/dataroom-schema.ts";
 import { domainLabel, W } from "../lib/ui-words.ts";
+import { FOLDER, pathPattern } from "../agent/lib/dataroom-folders.ts";
 
 // What the report below calls each data-room folder: this deployment's label for it (lib/ui-words.ts). The paths
 // written and counted are the stored ones.
-const ROOM = { accounts: domainLabel("Customers"), deployments: domainLabel("Deployments"), implementation: domainLabel("Implementation") };
+const ROOM = { accounts: domainLabel("accounts"), platform: domainLabel("platform"), deployments: domainLabel("deliveries"), solutions: domainLabel("solutions"), implementation: domainLabel("projects"), tickets: domainLabel("tickets") };
 
 // A single synthetic platform_version_id partitions every version-scoped path.
 // The real platform_version_id spine is populated by a later iteration; this
@@ -72,7 +73,7 @@ const peopleStore = peopleStoreSchema.parse(
 /**
  * Folder-safe person id derived from the person's email (the join key). Two
  * people.json rows that share an email (e.g. one member assigned to two accounts)
- * collapse to a single People/{person_id}/ folder.
+ * collapse to a single {folder:people}/{person_id}/ folder.
  */
 function personIdFromEmail(email: string): string {
   return email.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
@@ -130,9 +131,9 @@ interface Counts {
 async function seedCustomer(store: DataroomStore, customer: Customer, counts: Counts): Promise<void> {
   const cid = customer.id;
 
-  // --- Customers/{cid}/interactions.jsonl (always present) ---
+  // --- {folder:accounts}/{cid}/interactions.jsonl (always present) ---
   const interactions = customer.interactions ?? [];
-  const interactionsPath = `Customers/${cid}/interactions.jsonl`;
+  const interactionsPath = `${FOLDER.accounts}/${cid}/interactions.jsonl`;
   if (interactions.length > 0) {
     // Rebuild the file so re-running the seed is idempotent (no double lines).
     await store.write(interactionsPath, "");
@@ -146,7 +147,7 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
   }
   counts.interactionsFiles += 1;
 
-  // --- Customers/{cid}/context.md (stub brief) ---
+  // --- {folder:accounts}/{cid}/context.md (stub brief) ---
   const contextLines = [
     `# ${customer.name} — ${W.account} context`,
     "",
@@ -158,12 +159,12 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
     "_Seeded stub. Owned by the customer-context subagent; expand with the real brief._",
     "",
   ].filter((line): line is string => line !== null);
-  await store.write(`Customers/${cid}/context.md`, `${contextLines.join("\n")}\n`);
+  await store.write(`${FOLDER.accounts}/${cid}/context.md`, `${contextLines.join("\n")}\n`);
   counts.contextDocs += 1;
 
-  // --- Customers/{cid}/agreements/ placeholder ---
+  // --- {folder:accounts}/{cid}/agreements/ placeholder ---
   await store.write(
-    `Customers/${cid}/agreements/README.md`,
+    `${FOLDER.accounts}/${cid}/agreements/README.md`,
     `# Agreements — ${customer.name}\n\nDrop executed contract binaries (MSA/DPA/SOW/Order Form) here.\n`,
   );
   counts.agreementsPlaceholders += 1;
@@ -171,7 +172,7 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
   // --- platform row -> customer platform/tenant config under Deployments ---
   if (customer.platform) {
     await store.write(
-      `Deployments/${cid}/${PLATFORM_VERSION_ID}/platform/organization.json`,
+      `${FOLDER.deliveries}/${cid}/${PLATFORM_VERSION_ID}/platform/organization.json`,
       `${JSON.stringify(customer.platform, null, 2)}\n`,
     );
     counts.platform += 1;
@@ -180,7 +181,7 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
   // --- deployment rows -> one JSON per deployment ---
   for (const deployment of customer.deployments ?? []) {
     await store.write(
-      `Deployments/${cid}/${PLATFORM_VERSION_ID}/platform/pipelines/${deployment.deploymentId}/pipeline_config.json`,
+      `${FOLDER.deliveries}/${cid}/${PLATFORM_VERSION_ID}/platform/pipelines/${deployment.deploymentId}/pipeline_config.json`,
       `${JSON.stringify(deployment, null, 2)}\n`,
     );
     counts.deployments += 1;
@@ -189,7 +190,7 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
   // --- solution rows -> one JSON per solution ---
   for (const solution of customer.solutions ?? []) {
     await store.write(
-      `Solutions/${PLATFORM_VERSION_ID}/pipelines/${solution.solutionId}/pipeline_config.json`,
+      `${FOLDER.solutions}/${PLATFORM_VERSION_ID}/pipelines/${solution.solutionId}/pipeline_config.json`,
       `${JSON.stringify(solution, null, 2)}\n`,
     );
     counts.solutions += 1;
@@ -198,7 +199,7 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
   // --- implementation row -> one JSON per customer rollout ---
   if (customer.implementation) {
     await store.write(
-      `Implementation/${cid}/integromat.json`,
+      `${FOLDER.projects}/${cid}/integromat.json`,
       `${JSON.stringify(customer.implementation, null, 2)}\n`,
     );
     counts.implementation += 1;
@@ -208,7 +209,7 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
   for (const ticket of customer.tickets ?? []) {
     const category = ticketCategorySchema.parse(ticket.ticketCategory);
     const folder = ticketFolderFor(category, ticket.tags ?? []);
-    const path = `Tickets/${folder}/${cid}/${PLATFORM_VERSION_ID}/tickets_${ticket.ticketId}.jsonl`;
+    const path = `${FOLDER.tickets}/${folder}/${cid}/${PLATFORM_VERSION_ID}/tickets_${ticket.ticketId}.jsonl`;
     // Rebuild so re-runs stay idempotent (one row per ticket file).
     await store.write(path, "");
     counts.tickets += await store.appendJsonl(path, ticket, ticketSchema);
@@ -288,7 +289,7 @@ async function seedPerson(store: DataroomStore, person: AggregatedPerson): Promi
     customerIds,
   };
   await store.write(
-    `People/${person.personId}/identity.json`,
+    `${FOLDER.people}/${person.personId}/identity.json`,
     `${JSON.stringify(identity, null, 2)}\n`,
   );
 
@@ -306,7 +307,7 @@ async function seedPerson(store: DataroomStore, person: AggregatedPerson): Promi
     "_Seeded stub. Owned by the research subagent; expand with the real brief._",
     "",
   ].filter((line): line is string => line !== null);
-  await store.write(`People/${person.personId}/context.md`, `${contextLines.join("\n")}\n`);
+  await store.write(`${FOLDER.people}/${person.personId}/context.md`, `${contextLines.join("\n")}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -318,16 +319,16 @@ async function verify(store: DataroomStore, counts: Counts, sourcePeopleRows: nu
   const count = (pred: (p: string) => boolean) => all.filter(pred).length;
 
   const checks: Array<[string, number, number]> = [
-    [`${ROOM.accounts} interactions.jsonl`, counts.interactionsFiles, count((p) => /^Customers\/[^/]+\/interactions\.jsonl$/.test(p))],
-    [`${ROOM.accounts} context.md`, counts.contextDocs, count((p) => /^Customers\/[^/]+\/context\.md$/.test(p))],
-    [`${ROOM.accounts} agreements/`, counts.agreementsPlaceholders, count((p) => /^Customers\/[^/]+\/agreements\//.test(p))],
-    ["Platform rows", counts.platform, count((p) => /^Deployments\/[^/]+\/[^/]+\/platform\/organization\.json$/.test(p))],
-    [`${ROOM.deployments} rows`, counts.deployments, count((p) => /^Deployments\/[^/]+\/[^/]+\/platform\/pipelines\/[^/]+\/pipeline_config\.json$/.test(p))],
-    ["Solutions rows", counts.solutions, count((p) => /^Solutions\/[^/]+\/pipelines\/[^/]+\/pipeline_config\.json$/.test(p))],
-    [`${ROOM.implementation} rows`, counts.implementation, count((p) => /^Implementation\/[^/]+\/integromat\.json$/.test(p))],
-    ["Tickets rows", counts.tickets, count((p) => /^Tickets\/[^/]+\/[^/]+\/[^/]+\/tickets_.+\.jsonl$/.test(p))],
-    ["Person identity.json", counts.persons, count((p) => /^People\/[^/]+\/identity\.json$/.test(p))],
-    ["Person context.md", counts.persons, count((p) => /^People\/[^/]+\/context\.md$/.test(p))],
+    [`${ROOM.accounts} interactions.jsonl`, counts.interactionsFiles, count((p) => pathPattern("accounts", "[^/]+/interactions\\.jsonl").test(p))],
+    [`${ROOM.accounts} context.md`, counts.contextDocs, count((p) => pathPattern("accounts", "[^/]+/context\\.md").test(p))],
+    [`${ROOM.accounts} agreements/`, counts.agreementsPlaceholders, count((p) => p.split("/")[0] === FOLDER.accounts && p.split("/")[2] === "agreements" && p.split("/").length > 3)],
+    [`${ROOM.platform} rows`, counts.platform, count((p) => pathPattern("deliveries", "[^/]+/[^/]+/platform/organization\\.json").test(p))],
+    [`${ROOM.deployments} rows`, counts.deployments, count((p) => pathPattern("deliveries", "[^/]+/[^/]+/platform/pipelines/[^/]+/pipeline_config\\.json").test(p))],
+    [`${ROOM.solutions} rows`, counts.solutions, count((p) => pathPattern("solutions", "[^/]+/pipelines/[^/]+/pipeline_config\\.json").test(p))],
+    [`${ROOM.implementation} rows`, counts.implementation, count((p) => pathPattern("projects", "[^/]+/integromat\\.json").test(p))],
+    [`${ROOM.tickets} rows`, counts.tickets, count((p) => pathPattern("tickets", "[^/]+/[^/]+/[^/]+/tickets_.+\\.jsonl").test(p))],
+    ["Person identity.json", counts.persons, count((p) => pathPattern("people", "[^/]+/identity\\.json").test(p))],
+    ["Person context.md", counts.persons, count((p) => pathPattern("people", "[^/]+/context\\.md").test(p))],
   ];
 
   for (const [label, expected, actual] of checks) {
@@ -338,24 +339,24 @@ async function verify(store: DataroomStore, counts: Counts, sourcePeopleRows: nu
 
   // Every customer must have interactions.jsonl + context.md.
   for (const customer of customerStore.customers) {
-    if (!all.includes(`Customers/${customer.id}/interactions.jsonl`)) {
+    if (!all.includes(`${FOLDER.accounts}/${customer.id}/interactions.jsonl`)) {
       throw new Error(`verify failed: ${customer.id} missing interactions.jsonl`);
     }
-    if (!all.includes(`Customers/${customer.id}/context.md`)) {
+    if (!all.includes(`${FOLDER.accounts}/${customer.id}/context.md`)) {
       throw new Error(`verify failed: ${customer.id} missing context.md`);
     }
   }
 
-  // Every people.json row must resolve to a People/{person_id}/ folder.
+  // Every people.json row must resolve to a {folder:people}/{person_id}/ folder.
   const seenPersonIds = new Set(
     all
-      .map((p) => /^People\/([^/]+)\/identity\.json$/.exec(p)?.[1])
+      .map((p) => pathPattern("people", "([^/]+)/identity\\.json").exec(p)?.[1])
       .filter((id): id is string => id !== undefined),
   );
   const allRows = [...peopleStore.internalStaffAssignments, ...peopleStore.customerStakeholders];
   for (const row of allRows) {
     if (!seenPersonIds.has(personIdFromEmail(row.email))) {
-      throw new Error(`verify failed: people.json row (${row.email}) has no People/ folder`);
+      throw new Error(`verify failed: people.json row (${row.email}) has no ${FOLDER.people}/ folder`);
     }
   }
   if (allRows.length !== sourcePeopleRows) {
@@ -369,12 +370,12 @@ function printSummary(counts: Counts, sourcePeopleRows: number): void {
     ["  interaction records", totalInteractions(), counts.interactionRecords],
     [`${ROOM.accounts} (context.md)`, customerStore.customers.length, counts.contextDocs],
     [`${ROOM.accounts} (agreements/)`, customerStore.customers.length, counts.agreementsPlaceholders],
-    ["Platform", totalPlatform(), counts.platform],
+    [ROOM.platform, totalPlatform(), counts.platform],
     [ROOM.deployments, totalDeployments(), counts.deployments],
-    ["Solutions", totalSolutions(), counts.solutions],
+    [ROOM.solutions, totalSolutions(), counts.solutions],
     [ROOM.implementation, totalImplementation(), counts.implementation],
-    ["Tickets", totalTickets(), counts.tickets],
-    // People rows dedupe by email into unique People/ folders, so the fair
+    [ROOM.tickets, totalTickets(), counts.tickets],
+    // People rows dedupe by email into unique {folder:people}/ folders, so the fair
     // comparison is unique-persons vs folders written (see note printed below).
     ["Person (unique persons)", counts.persons, counts.persons],
   ];
@@ -392,7 +393,7 @@ function printSummary(counts: Counts, sourcePeopleRows: number): void {
   }
   console.log("");
   console.log(
-    `note: ${sourcePeopleRows} people.json rows deduped by email into ${counts.persons} unique People/ folders.`,
+    `note: ${sourcePeopleRows} people.json rows deduped by email into ${counts.persons} unique ${FOLDER.people}/ folders.`,
   );
   console.log("");
 }

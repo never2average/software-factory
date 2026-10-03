@@ -1,5 +1,5 @@
 // operator:configure-agents — scaffold a reusable AGENT solution under
-// Solutions/{ver}/agents/{id}/ (the agents sibling of configure-solution): its data
+// {folder:solutions}/{ver}/agents/{id}/ (the agents sibling of configure-solution): its data
 // schema, run-config contract, recipe + recipe seed folder, and eval dataset/benchmark.
 // Optionally, with --customer, upsert the solutions row and seed the customer's
 // Deployments agent recipe folder.
@@ -12,6 +12,7 @@ import { getDb, closeDb, dataroom, getCustomer, workspaceFor, withOrgDb, writeIf
 import { solutions } from "../../agent/lib/db/schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 async function main() {
   const version = flag("version").trim();
@@ -30,7 +31,7 @@ async function main() {
   console.log(`Configure agent solution: ${id} @ ${version}\n`);
 
   const store = dataroom(workspaceFor());
-  const base = `Solutions/${version}/agents/${id}`;
+  const base = `${FOLDER.solutions}/${version}/agents/${id}`;
   const existing = await store.list(base);
   const files = {
     "dataplatform.schemas.json": schemaStub(`dataplatform — ${id}`),
@@ -65,8 +66,8 @@ async function main() {
       .values({ orgId, customerId, solutionId: id, useCase, businessProcess: "agent", modulesEnabled: [], solutionStatus: "configuring", solutionOwner: me, solutionFdeOwner: me })
       .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, businessProcess: "agent", solutionStatus: "configuring", solutionOwner: me, solutionFdeOwner: me } }));
     // Seed the customer's deployment agent recipe folder (dm.md recipe seam).
-    const dep = `Deployments/${customerId}/${version}/platform/agents/${id}`;
-    // In the workspace's own data room: Deployments/{customer_id}/… is per company, and so per workspace.
+    const dep = `${FOLDER.deliveries}/${customerId}/${version}/platform/agents/${id}`;
+    // In the workspace's own data room: {folder:deliveries}/{customer_id}/… is per company, and so per workspace.
     const customerStore = dataroom(orgId);
     const depExisting = await customerStore.list(dep);
     await writeIfAbsent(customerStore, depExisting, `${dep}/recipe.md`, `# ${id} — seeded for ${customerId}\n\nSeeded from ${base}. Configure before first run.\n`);

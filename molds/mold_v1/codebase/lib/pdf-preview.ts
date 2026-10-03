@@ -2,7 +2,7 @@
  * The rules that decide whether a PDF in the DATA ROOM can be previewed, and
  * where its bytes come from.
  *
- * Pure, dependency-free, and in `lib/` with no `server-only`, so the three
+ * Pure (its one import is the deployment profile's folder names, plain data), and in `lib/` with no `server-only`, so the three
  * places that must agree import the same copy instead of each carrying a
  * number:
  *
@@ -37,6 +37,8 @@
 export const MAX_PDF_PREVIEW_BYTES = 40 * 1024 * 1024;
 
 /** Why a preview was refused. The viewer maps each to a sentence a person reads. */
+import { ROOT_FOLDERS } from "../agent/lib/dataroom-folders.ts";
+
 export type PdfPreviewRefusal = "bad_path" | "not_pdf" | "too_large";
 
 /** 40 MB → "40 MB". For the one message that has to name the limit. */
@@ -55,21 +57,12 @@ export function megabytes(bytes: number): string {
  * therefore attacker-shaped input — never becomes a request at all, and so a
  * chip for something that is not a data-room file is not rendered as clickable.
  *
- * It is deliberately no LOOSER than the server's: same eight domain roots, same
+ * It is deliberately no LOOSER than the server's: same eight folder roots (the profile's), same
  * per-segment pattern, same refusal of "\", a leading "/" and a trailing "/".
  * Being stricter here would only hide files; being looser would only produce a
  * 400. Neither can grant a read the server would not.
  */
-const DATAROOM_DOMAINS = new Set([
-  "Customers",
-  "Platform",
-  "Deployments",
-  "Solutions",
-  "Implementation",
-  "Tickets",
-  "People",
-  "Uploads",
-]);
+const DATAROOM_DOMAINS = new Set(ROOT_FOLDERS);
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._ -]*$/;
 
 export function isDataroomPath(path: unknown): path is string {

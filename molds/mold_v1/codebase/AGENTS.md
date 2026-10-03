@@ -61,7 +61,12 @@ migration plan, under a per-file ceiling, or under an exempt path (`scripts/neut
 never spells a role or a record word: it writes a placeholder the profile fills (`{member}`, `{owner}`, `{account}`,
 `{deployment}`, `{implementation}`, `{rollout}`; `speak()` / `fill()` in `agent/lib/agent-vocabulary.ts`, `W` in
 `lib/ui-words.ts`), the default profile's words are neutral, and the same check holds every record word still written
-as prose to a per-file ceiling (`record_words` in the allow-list). Every tool is
+as prose to a per-file ceiling (`record_words` in the allow-list). The data room's FOLDER names are the
+profile's too (`dataroom.domains.<id>.folder`): code builds a path from `FOLDER.<id>` (`agent/lib/dataroom-folders.ts`),
+text writes `{folder:<id>}` / `{domain:<id>}`, and no file spells one (`stored_folders` in the same allow-list). A
+deployment that already holds files pins the names it has and nothing moves; one that does not is refused at build
+(`npm run check:dataroom-folders`) and at its first write, never forked. See "Stored folder names" in
+[`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md). Every tool is
 exported through `modelFacing(...)`; the root prompt is `agent/prompt-*.md`, rendered by
 `agent/instructions.ts`, and a base specialist's is its `prompt.md`.
 

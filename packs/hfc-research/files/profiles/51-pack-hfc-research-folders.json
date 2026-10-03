@@ -1,0 +1,15 @@
+{
+  "$comment": "Where this deployment's data room is ALREADY stored. Its files were written while the data-room folder names were part of the base code, and they stay under those names: nothing is moved and no row is rewritten. This file says only where files are; what people and the model read is in 50-pack-hfc-research.json.",
+  "dataroom": {
+    "domains": {
+      "accounts": { "folder": "Customers" },
+      "platform": { "folder": "Platform" },
+      "deliveries": { "folder": "Deployments" },
+      "solutions": { "folder": "Solutions" },
+      "projects": { "folder": "Implementation" },
+      "tickets": { "folder": "Tickets" },
+      "people": { "folder": "People" }
+    },
+    "uploads_folder": "Uploads"
+  }
+}

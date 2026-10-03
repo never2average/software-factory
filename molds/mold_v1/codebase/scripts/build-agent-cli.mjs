@@ -35,7 +35,7 @@ import {
   moduleFileNames, moduleSpecifiers, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter,
   renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate,
 } from "./lib/agent-cli.mjs";
-import { fillPlaceholders } from "./lib/profile-words.mjs";
+import { fillPlaceholders, storedFolders } from "./lib/profile-words.mjs";
 // The migration tables the wire-name gate allows and nothing else, read from the modules that
 // HONOUR them, so the gate and the compatibility shim can never drift into disagreeing about
 // what is deliberate.
@@ -83,7 +83,9 @@ if (writeDefault) {
   const profile = baseProfile();
   const text = renderDeploymentModule(defaultDeployment({ packageName: basePackage.name, profile, slug: productSlug(profile.product.name) }));
   writeFileSync(join(SETUP, "deployment.generated.mjs"), text);
-  console.log(`wrote setup/deployment.generated.mjs (${basePackage.name}, "${profile.product.name}", no built-in address)`);
+  // The generic package's dm.md: the repo's, with each domain's folder as the default profile stores it.
+  writeFileSync(join(SETUP, "dm.md"), renderDmMd({ source: readFileSync(join(ROOT, "dm.md"), "utf8"), profile, defaultDomains: profile.domains, productName: profile.product.name }));
+  console.log(`wrote setup/deployment.generated.mjs and setup/dm.md (${basePackage.name}, "${profile.product.name}", no built-in address)`);
   process.exit(0);
 }
 
@@ -181,7 +183,7 @@ const write = (rel, text) => { mkdirSync(dirname(join(OUT, rel)), { recursive: t
 // name, product word or folder of their own, only lookups into the generated module below.
 for (const [role, source] of Object.entries(GENERIC_MODULE_FILES)) write(moduleFiles[role], readFileSync(join(SETUP, source)));
 write("deployment.generated.mjs", renderDeploymentModule({
-  packageName: name, name: productName, slug, tagline, origin, mcpEndpoint: connect.endpoint, vocabulary: profile.vocabulary,
+  packageName: name, name: productName, slug, tagline, origin, mcpEndpoint: connect.endpoint, vocabulary: profile.vocabulary, folders: storedFolders(profile),
   commands, modules: moduleSpecifiers(moduleFiles), configDir,
   connect: { claudeCommand: connect.claudeCommand, tokenCommands: connect.tokenCommands, tokenNote: connect.tokenNote, packageAlternative: connect.packageAlternative },
 }));

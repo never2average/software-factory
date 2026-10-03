@@ -30,6 +30,7 @@ import { existsSync, readdirSync, readFileSync, statSync, mkdtempSync, rmSync } 
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 register(
   "data:text/javascript," +
@@ -263,7 +264,7 @@ const PROBES = [
   ["dataroom_fetch_to_sandbox", (t, v) => ({ path: `${v.accountFolder}/${SEED_ID}/context.md` })],
   ["read_customer_slas", () => ({})],
   ["list_members", () => ({})],
-  ["build_workbook_spec", (t, v) => v.model({ customerId: SEED_ID, domain: "Implementation" })],
+  ["build_workbook_spec", (t, v) => v.model({ customerId: SEED_ID, domain: FOLDER.projects })],
 ];
 
 async function collectResults(root, vocab) {
@@ -272,8 +273,8 @@ async function collectResults(root, vocab) {
   const store = await import(pathToFileURL(join(AGENT, "lib", "dataroom-store.ts")).href);
   // No database: a session resolves to the default workspace, and its data room is `orgs/<id>/` like any other's.
   const { DEFAULT_ORG } = await import(pathToFileURL(join(AGENT, "lib", "org-context.ts")).href);
-  await store.getDataroomStore(DEFAULT_ORG).write(`Customers/${SEED_ID}/context.md`, "# Surface Probe Co\n");
-  await store.getDataroomStore(DEFAULT_ORG).write("People/sam-example-com/identity.json", JSON.stringify({ kind: "internal-fde", email: "sam@example.com", name: "Sam" }));
+  await store.getDataroomStore(DEFAULT_ORG).write(`${FOLDER.accounts}/${SEED_ID}/context.md`, "# Surface Probe Co\n");
+  await store.getDataroomStore(DEFAULT_ORG).write(`${FOLDER.people}/sam-example-com/identity.json`, JSON.stringify({ kind: "internal-fde", email: "sam@example.com", name: "Sam" }));
   const byBase = new Map();
   for (const t of root.tools) byBase.set(t.baseName ?? t.name, t);
   for (const [base, build] of PROBES) {
@@ -298,14 +299,14 @@ async function collectResults(root, vocab) {
 async function vocabularyView() {
   // After the vocabulary change the agent exposes its own mapping; before it, the base names are the only ones.
   const p = join(AGENT, "lib", "agent-vocabulary.ts");
-  if (!existsSync(p)) return { accountFolder: "Customers", memoryPrefix: "customer", baseNameOf: (n) => n, model: (x) => x };
+  if (!existsSync(p)) return { accountFolder: FOLDER.accounts, memoryPrefix: "customer", baseNameOf: (n) => n, model: (x) => x };
   const v = await import(pathToFileURL(p).href);
   /** A base-shaped input as the model writes it: keys as its schema names them, code values as it is told them. */
   const model = (x) => Array.isArray(x) ? x.map(model)
     : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).map(([k, val]) => [v.speakIdentifier(k), model(val)]))
     : typeof x === "string" && !/\s/.test(x) ? v.speakCode(x) : x;
   return {
-    accountFolder: v.displayFolder("Customers"),
+    accountFolder: v.displayFolder(FOLDER.accounts),
     memoryPrefix: v.MEMORY_ACCOUNT_PREFIX,
     baseNameOf: (n) => v.baseToolName(n),
     model,

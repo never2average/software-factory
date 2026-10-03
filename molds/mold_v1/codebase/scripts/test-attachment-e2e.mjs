@@ -24,6 +24,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateRawSync, crc32 } from "node:zlib";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 const WEB = process.env.WEB_ORIGIN ?? "https://delivered.useimmaculate.com";
 process.env.AUTH_JWT_PRIVATE_KEY ||= readFileSync(".auth-jwt-private.b64", "utf8").trim();
@@ -129,7 +130,7 @@ const userText = "Please read this workbook and tell me the code for Ada Lovelac
 const message = composeAttachmentMessage(userText, [{ name: filename, path: uploaded.path }]);
 check("the model is given the data-room path", message.includes(uploaded.path));
 check("the reader sees ONLY their own words", visibleText(message) === userText);
-check("no path leaks into the visible text", !visibleText(message).includes("Uploads/"));
+check("no path leaks into the visible text", !visibleText(message).includes(`${FOLDER.uploads}/`));
 
 /* ---- 3. a real turn, and the agent must actually read it ---------------- */
 const started = await fetch(`${WEB}/eve/v1/session`, {

@@ -7,13 +7,13 @@ import { an, domainLabel, W } from "../lib/ui-words.ts";
 
 // What a person reads in these rows names the account, the record areas and the data-room folders in this
 // deployment's words (lib/ui-words.ts), never a literal record word. A row's `name` and `kind` are identifiers.
-const ROOM = { accounts: domainLabel("Customers"), tickets: domainLabel("Tickets"), people: domainLabel("People"), platform: domainLabel("Platform"), deployments: domainLabel("Deployments") };
+const ROOM = { accounts: domainLabel("accounts"), tickets: domainLabel("tickets"), people: domainLabel("people"), platform: domainLabel("platform"), deployments: domainLabel("deliveries") };
 
 const CONNECTORS = [
   { name: "System of record", kind: "system_of_record", access: "read_write", status: "connected",
     detail: `Neon Postgres — ${W.accounts}, tickets, ${W.deployments}, interactions`,
     lands: `Postgres (Drizzle) · mirrored to ${ROOM.accounts}/{id}/interactions.jsonl`,
-    synced: [W.Accounts, "People", "Workbook sheets"] },
+    synced: [W.Accounts, ROOM.people, "Workbook sheets"] },
   { name: "Slack", kind: "slack", access: "read_write", status: "connected",
     detail: `${W.Account} channels & alerts via Vercel Connect`,
     lands: `${ROOM.accounts}/·/${ROOM.tickets}/·/${ROOM.people}/syncs/slack`,

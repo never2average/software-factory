@@ -1,5 +1,5 @@
 {
-  "$comment": "The deployment profile: everything a person or the model READS that is specific to what this deployment is for. These defaults are the base product in NEUTRAL words: an account, a member, its account owner, a delivery, a project and its plan. Base text never spells a role or a record word; it writes a placeholder ({account}, {deployment}, {implementation}, {rollout}, {member}, {owner}) filled from here, and a deployment's own profile supplies its domain's words. A deployment changes them by ADDING profiles/NN-<name>.json files (later files win, objects merge deeply, arrays replace); nothing here is edited. Identifiers never change with a profile: database columns, API routes, tool names and data-room path tokens stay as they are. See docs/DEPLOYMENT_PROFILE.md.",
+  "$comment": "The deployment profile: everything a person or the model READS that is specific to what this deployment is for. These defaults are the base product in NEUTRAL words: an account, a member, its account owner, a delivery, a project and its plan. Base text never spells a role or a record word; it writes a placeholder ({account}, {deployment}, {implementation}, {rollout}, {member}, {owner}) filled from here, and a deployment's own profile supplies its domain's words. A deployment changes them by ADDING profiles/NN-<name>.json files (later files win, objects merge deeply, arrays replace); nothing here is edited. Identifiers never change with a profile: database columns, API routes, tool names and data-room path tokens stay as they are. The data-room folder names are the profile's too (dataroom.domains.<id>.folder): neutral here, and pinned by a deployment that already stores files under other names. See docs/DEPLOYMENT_PROFILE.md.",
   "product": {
     "name": "Delivered",
     "tagline": "The operations console for teams that run account work.",
@@ -41,16 +41,18 @@
     }
   },
   "dataroom": {
+    "$comment": "Each data-room domain has an id (the key below: what code and other profiles call it), a `folder` (the name its files are STORED under, the first segment of every path in it) and a `label` (what people and the model read; when a profile gives none it is the folder's name). The folder is a setting of the deployment, not of the code: a deployment that already holds files states the folder names it has, and they are never moved. `uploads_folder` is where files a person attaches are stored. See docs/DEPLOYMENT_PROFILE.md, \"Stored folder names\".",
     "root_label": "Data Room",
     "domains": {
-      "Customers": { "label": "Customers", "visible": true },
-      "Platform": { "label": "Platform", "visible": true },
-      "Deployments": { "label": "Deployments", "visible": true },
-      "Solutions": { "label": "Solutions", "visible": true },
-      "Implementation": { "label": "Implementation", "visible": true },
-      "Tickets": { "label": "Tickets", "visible": true },
-      "People": { "label": "People", "visible": true }
+      "accounts": { "folder": "Accounts", "visible": true },
+      "platform": { "folder": "Platform", "visible": true },
+      "deliveries": { "folder": "Deliveries", "visible": true },
+      "solutions": { "folder": "Solutions", "visible": true },
+      "projects": { "folder": "Projects", "visible": true },
+      "tickets": { "folder": "Tickets", "visible": true },
+      "people": { "folder": "People", "visible": true }
     },
+    "uploads_folder": "Uploads",
     "seed": null
   },
   "domains": {

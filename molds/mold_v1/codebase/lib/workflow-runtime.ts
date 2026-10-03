@@ -43,7 +43,7 @@ const DEFAULT_WALL_CLOCK_MS = 240_000;
 export interface WorkflowData {
   /** Customers in this workspace: id, name, tier, status, owner. */
   customers?: () => Promise<unknown>;
-  /** Data-room paths under a prefix, e.g. "Customers/". */
+  /** Data-room paths under a prefix, e.g. "{folder:accounts}/". */
   dataroomList?: (prefix: string) => Promise<string[]>;
   /** One data-room file's text. */
   dataroomRead?: (path: string) => Promise<string | null>;

@@ -8,12 +8,12 @@
   },
   "dataroom": {
     "domains": {
-      "Customers": { "label": "Companies" },
-      "Platform": { "visible": false },
-      "Deployments": { "label": "Coverage reports", "visible": true, "description": "One row per company per report: what was published, for which period, and how complete its data is." },
-      "Solutions": { "visible": false },
-      "Implementation": { "label": "Portfolios", "visible": true, "description": "The sets of companies a desk covers, and how far each company's coverage has been built out." },
-      "Tickets": { "visible": false }
+      "accounts": { "label": "Companies" },
+      "platform": { "visible": false },
+      "deliveries": { "label": "Coverage reports", "visible": true, "description": "One row per company per report: what was published, for which period, and how complete its data is." },
+      "solutions": { "visible": false },
+      "projects": { "label": "Portfolios", "visible": true, "description": "The sets of companies a desk covers, and how far each company's coverage has been built out." },
+      "tickets": { "visible": false }
     }
   },
   "domains": {

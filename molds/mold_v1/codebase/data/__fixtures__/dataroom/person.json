@@ -18,7 +18,7 @@
   },
   "context": {
     "personId": "sam-whitfield",
-    "path": "People/sam-whitfield/context.md",
+    "path": "{folder:people}/sam-whitfield/context.md",
     "title": "Sam Whitfield — research brief",
     "summary": "Technical decision maker for the Example Bank rollout; owns the SSO workstream.",
     "content": "# Sam Whitfield\n\nHead of Wealth Technology at Example Bank. Sponsor of the research copilot rollout and approver for the infra signoff. Prefers async email updates with a weekly live checkpoint.\n",
@@ -68,7 +68,7 @@
       "effectiveDate": "2025-08-20",
       "signedByEmails": ["sam@examplebank.com"],
       "fileName": "sam-whitfield-nda-2025.pdf",
-      "storagePath": "People/sam-whitfield/agreements/sam-whitfield-nda-2025.pdf",
+      "storagePath": "{folder:people}/sam-whitfield/agreements/sam-whitfield-nda-2025.pdf",
       "uploadedByEmail": "rohan@onfinance.in",
       "uploadedAt": "2025-08-21T10:00:00Z"
     }

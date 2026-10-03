@@ -19,7 +19,6 @@
  * cwd stays as a belt for any other write a test path makes.
  */
 import { mkdtempSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -47,7 +46,9 @@ export async function seedFixtureStore() {
   // Keep every write out of the repo. Do this before the store module loads.
   process.chdir(mkdtempSync(join(tmpdir(), "workspace-fixture-")));
 
-  const { customers } = JSON.parse(await readFile(FIXTURE, "utf8"));
+  // Read as this build stores things: the fixture names a data-room folder by a placeholder (./read-fixture.mjs).
+  const { readJsonFixture } = await import("./read-fixture.mjs");
+  const { customers } = readJsonFixture(FIXTURE);
   const { upsertCustomer } = await import("../../agent/lib/system-of-record.ts");
 
   const seeded = [];

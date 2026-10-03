@@ -1,12 +1,16 @@
 ---
 name: backfill-integration-history
-description: Reconstruct a customer's pipeline and integration (Integromat) history into the canonical Implementation/ layout and the implementation row. Use when an existing customer's data pipelines or integrations aren't yet recorded, when someone says "backfill the integrations", "record the pipeline history", "their Integromat scenarios aren't tracked", or before an eval/go-live review that needs the integration surface captured. Requires the customer to exist (onboard-customer). Materialises pipeline_config.json per pipeline plus the account integromat.json, and upserts the implementation row with integration-readiness state.
+description: Reconstruct a customer's pipeline and integration (Integromat) history into the canonical {folder:projects}/ layout and the implementation row. Use when an existing customer's data pipelines or integrations aren't yet recorded, when someone says "backfill the integrations", "record the pipeline history", "their Integromat scenarios aren't tracked", or before an eval/go-live review that needs the integration surface captured. Requires the customer to exist (onboard-customer). Materialises pipeline_config.json per pipeline plus the account integromat.json, and upserts the implementation row with integration-readiness state.
 ---
 
 # Backfill integration history
 
+> `{folder:<id>}` below is the data-room folder this deployment stores that domain under: its profile's
+> `dataroom.domains.<id>.folder` (`uploads_folder` for `{folder:uploads}`). Read the real name with
+> `node --experimental-strip-types -e 'import("./agent/lib/dataroom-folders.ts").then((m) => console.log(m.FOLDER))'`.
+
 Reconstruct a customer's data pipelines and integrations into the canonical
-`Implementation/{id}/…` layout and the `implementation` system-of-record row. This
+`{folder:projects}/{id}/…` layout and the `implementation` system-of-record row. This
 is **stage 5** — see [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md).
 
 Use it when pipelines/integrations exist operationally but were never recorded, or
@@ -14,7 +18,7 @@ before an eval / go-live review that needs the integration surface captured.
 
 ## Working style
 
-Gather the real pipelines (from `Deployments/syncs`, the Integromat account, the
+Gather the real pipelines (from `{folder:deliveries}/syncs`, the Integromat account, the
 owning engineer's knowledge) before writing. Each `pipeline_config.json` starts as a skeleton —
 its `steps` are the owning engineer's to fill; don't invent them.
 
@@ -36,8 +40,8 @@ npm run operator:backfill-integrations -- --customer contoso-bank --org <workspa
   --from-file integrations.json
 ```
 This upserts the `implementation` row (stage `integration`, the pipeline ids as its
-launch scope), writes `Implementation/{id}/pipelines/{pid}/pipeline_config.json` per
-pipeline and the account `Implementation/{id}/integromat.json`, and logs an
+launch scope), writes `{folder:projects}/{id}/pipelines/{pid}/pipeline_config.json` per
+pipeline and the account `{folder:projects}/{id}/integromat.json`, and logs an
 `integration_backfilled` interaction.
 
 **4. Fill and validate.** Complete each pipeline's `steps` and config, then run
@@ -50,9 +54,9 @@ READ: the `customers` row (must exist); your gathered pipeline inventory.
 WRITE:
 - `implementation` row (upsert by customer; stage, owner, launch scope, connector
   provisioning status)
-- `Implementation/{id}/pipelines/{pid}/pipeline_config.json` per pipeline
-- `Implementation/{id}/integromat.json` — the account's pipeline manifest
-- `Customers/{id}/interactions.jsonl` — an `integration_backfilled` event
+- `{folder:projects}/{id}/pipelines/{pid}/pipeline_config.json` per pipeline
+- `{folder:projects}/{id}/integromat.json` — the account's pipeline manifest
+- `{folder:accounts}/{id}/interactions.jsonl` — an `integration_backfilled` event
 
 ## Never
 

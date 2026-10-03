@@ -27,6 +27,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
+import { readJsonFixture } from "./lib/read-fixture.mjs";
 
 const adminUrl = process.env.ADMIN_URL;
 const url = process.env.DATABASE_URL;
@@ -225,7 +226,7 @@ try {
     check(`…${before} kept, one added (${after})`, before > 0 && after === before + 1, { before, after });
   });
   await attempt("tickets: a field of one ticket changes, the rest of it and the other tickets are kept", async () => {
-    const FX = JSON.parse(readFileSync(new URL("./fixtures/customers.fixture.json", import.meta.url), "utf8")).customers[0];
+    const FX = readJsonFixture(new URL("./fixtures/customers.fixture.json", import.meta.url)).customers[0];
     await upsert({ tickets: [{ ...FX.tickets[0], ticketId: "T1" }, { ...FX.tickets[0], ticketId: "T2" }] });
     await upsert({ tickets: [{ ticketId: "T1", ticketNextStep: "changed" }] });
     const rows = await admin`select ticket_id, ticket_next_step, summary from tickets where customer_id = ${CO} order by 1`;
@@ -250,7 +251,7 @@ try {
   // write is to ITS OWN company of that id, created on first use; the nested rows it writes carry OTHER and hang off
   // OTHER's company (the foreign key names both columns). Nothing may land under THIS workspace's account, and a row
   // stamped OTHER with no company of OTHER's to hang off is refused by the database.
-  const FIXTURE = JSON.parse(readFileSync(new URL("./fixtures/customers.fixture.json", import.meta.url), "utf8")).customers[0];
+  const FIXTURE = readJsonFixture(new URL("./fixtures/customers.fixture.json", import.meta.url)).customers[0];
   const mineNow = async () => {
     const out = {};
     for (const t of ["customers", "deployments", "implementation", "platform", "solutions", "tickets", "interactions"]) {

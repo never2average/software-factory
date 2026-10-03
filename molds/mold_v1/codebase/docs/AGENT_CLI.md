@@ -135,12 +135,17 @@ file costs nothing next to signing someone out with no message. The generic pack
 one made earlier from `~/.config/fde-mcp/` (`LEGACY_CONFIG_DIR`), copying it over on first
 use.
 
-**`dm.md`.** Hidden data-room domains are removed. A relabelled domain reads
-`Label [Folder]`, for example `Companies [Customers]`: the bracketed name is the real one,
-and the one every tool path uses. Redefined record areas are summarised at the top, for
-example `Portfolios (stored as Implementation; each row is a Portfolio entry): …`. Path
+**`dm.md`.** The repo's `dm.md` names each domain by a placeholder (`{folder:accounts}`);
+the package's has the folder THIS deployment stores it under (its profile's
+`dataroom.domains.<id>.folder`). Hidden data-room domains are removed. A relabelled domain
+reads `Label [Folder]`, for example `Companies [Accounts]`: the bracketed name is the real
+one, and the one every tool path uses. Redefined record areas are summarised at the top,
+for example `Portfolios (stored as Projects; each row is a Portfolio entry): …`. Path
 templates subagents add (`EXTRA_DATAROOM_PATH_TEMPLATES`) are appended under their domain.
-Under the default profile the result is `setup/dm.md` byte for byte; a test asserts it.
+Under the default profile the result is `setup/dm.md` byte for byte (which
+`npm run build:agent-cli -- --write-default` writes); a test asserts it. The package's
+`deployment.generated.mjs` carries the same folder names (`folders`), and its tools build
+every path from them.
 
 ## Skills and the `agent-kit/` convention
 

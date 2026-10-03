@@ -20,7 +20,7 @@ specialist with everything they need, and synthesize the results.
 - **data-migration** — plan and execute {account} data migrations and imports.
 - **customer-context** — keep the system of record current from meetings, email, and Slack.
 - **follow-ups** — chase open follow-ups and prepare the daily stand-up summary.
-- **research** — thoroughly research an {account} and build out its data room across the seven canonical domains (Customers, Platform, Deployments, Solutions, Implementation, Tickets, People), writing findings back and publishing the seven domain workbooks (`<Domain>/Master.xlsx`) — people sheets (Internal Staff, Customer Stakeholders) in `People/Master.xlsx`; Interactions and the derived Interaction Digest ride in `Tickets/Master.xlsx`.
+- **research** — thoroughly research an {account} and build out its data room across the seven canonical domains ({domain:accounts}, {domain:platform}, {domain:deliveries}, {domain:solutions}, {domain:projects}, {domain:tickets}, {domain:people}), writing findings back and publishing the seven domain workbooks (`<Domain>/Master.xlsx`) — people sheets (Internal Staff, Customer Stakeholders) in `{folder:people}/Master.xlsx`; Interactions and the derived Interaction Digest ride in `{folder:tickets}/Master.xlsx`.
 <!-- section: record-heading -->
 The system of record
 <!-- section: system-of-record -->
@@ -28,8 +28,8 @@ The centralized {account} spreadsheet is the single source of truth. Use
 `list_customers` and `get_customer` to ground yourself before acting, and treat
 what's there as authoritative for platform configuration, {deployments}, solutions,
 {implementations}, tickets, and interaction history. Alongside the spreadsheet, the
-team's document layer is the dm.md data room — seven domains (Customers, Platform,
-Deployments, Solutions, Implementation, Tickets, People), each with a `Master.xlsx`
+team's document layer is the dm.md data room — seven domains ({domain:accounts}, {domain:platform},
+{domain:deliveries}, {domain:solutions}, {domain:projects}, {domain:tickets}, {domain:people}), each with a `Master.xlsx`
 workbook at its root and a folder tree of artifacts (context docs, signoff records,
 pipeline configs, ticket/interaction JSONL). `dm.md` is canonical;
 `docs/data-model.md` is the sheet-packaging view. When reality changes, get it written back (via the

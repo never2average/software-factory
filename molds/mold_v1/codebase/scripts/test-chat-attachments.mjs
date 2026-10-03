@@ -21,6 +21,7 @@ import {
   stripAgentOnly,
   visibleText,
 } from "../lib/chat-attachments.ts";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 let passed = 0;
 const check = (label, condition) => {
@@ -30,7 +31,7 @@ const check = (label, condition) => {
 };
 
 const TEXT = "Please populate my customers from this.";
-const FILE = { name: "Latest Deployment Tracker - v2.0 (1).xlsx", path: "Uploads/priyesh-onfinance-in/Latest Deployment Tracker - v2.0 _1_.xlsx" };
+const FILE = { name: "Latest Deployment Tracker - v2.0 (1).xlsx", path: `${FOLDER.uploads}/priyesh-onfinance-in/Latest Deployment Tracker - v2.0 _1_.xlsx` };
 
 console.log("Attachment message contract:");
 
@@ -38,7 +39,7 @@ const one = composeAttachmentMessage(TEXT, [FILE]);
 check("the model gets the data-room path", one.includes(FILE.path));
 check("the model is told to read it with its tools", /data-room tools/.test(one));
 check("the reader sees exactly their own words", visibleText(one) === TEXT);
-check("no path leaks to the reader", !visibleText(one).includes("Uploads/"));
+check("no path leaks to the reader", !visibleText(one).includes(`${FOLDER.uploads}/`));
 check("no instruction leaks to the reader", !/data-room tools/.test(visibleText(one)));
 // The chip is how the reader knows a file went with the message at all.
 check("a chip token is present for the transcript", one.includes(`[file: ${FILE.name}]`));
@@ -48,10 +49,10 @@ check("a chip token is present for the transcript", one.includes(`[file: ${FILE.
  * paired sentinels were chosen. */
 const nasty = {
   name: "Q3 (final) [v2] — notes).xlsx",
-  path: "Uploads/x/Q3 _final_ [v2] — notes_.xlsx",
+  path: `${FOLDER.uploads}/x/Q3 _final_ [v2] — notes_.xlsx`,
 };
 const hostile = composeAttachmentMessage("hi", [nasty]);
-check("a filename full of brackets does not leak the block", !visibleText(hostile).includes("Uploads/"));
+check("a filename full of brackets does not leak the block", !visibleText(hostile).includes(`${FOLDER.uploads}/`));
 check("…and the reader still sees only their words", visibleText(hostile) === "hi");
 
 const many = composeAttachmentMessage(TEXT, [FILE, nasty]);
@@ -115,13 +116,13 @@ const { isPreviewablePdfPath } = await import("../lib/pdf-preview.ts");
 
 console.log("\nRecovering an attachment:");
 
-const PDF = { name: "SEBI LODR Q3 FY26.pdf", path: "Uploads/priyesh-onfinance-in/SEBI LODR Q3 FY26.pdf" };
+const PDF = { name: "SEBI LODR Q3 FY26.pdf", path: `${FOLDER.uploads}/priyesh-onfinance-in/SEBI LODR Q3 FY26.pdf` };
 const refsOne = extractAttachmentRefs(composeAttachmentMessage(TEXT, [PDF]));
 check("one attachment comes back with its name", refsOne.length === 1 && refsOne[0].name === PDF.name);
 check("…and with the path it was stored at", refsOne[0].path === PDF.path);
 check("…which the viewer will accept", isPreviewablePdfPath(refsOne[0].path));
 
-const DECK = { name: "Investor Deck FY26.pdf", path: "Uploads/priyesh-onfinance-in/Investor Deck FY26.pdf" };
+const DECK = { name: "Investor Deck FY26.pdf", path: `${FOLDER.uploads}/priyesh-onfinance-in/Investor Deck FY26.pdf` };
 const refsMany = extractAttachmentRefs(composeAttachmentMessage(TEXT, [PDF, FILE, DECK]));
 check(
   "three attachments come back in the order they were sent",
@@ -163,11 +164,11 @@ check(
   "a hand-typed blob url is refused too",
   !isPreviewablePdfPath("https://abc.private.blob.vercel-storage.com/dataroom/orgs/other/x.pdf?vercel-blob-delegation=z"),
 );
-check("…and so is another workspace's prefix spelled out by hand", !isPreviewablePdfPath("orgs/org-someone-else/Uploads/x/y.pdf"));
+check("…and so is another workspace's prefix spelled out by hand", !isPreviewablePdfPath(`orgs/org-someone-else/${FOLDER.uploads}/x/y.pdf`));
 
 /* Recovering the path must not change a character of what is displayed — the
  * two invariants at the top of this file still hold afterwards. */
 check("the reader still sees exactly their own words", visibleText(composeAttachmentMessage(TEXT, [PDF, DECK])) === TEXT);
-check("…and still no path leaks into the bubble", !visibleText(composeAttachmentMessage(TEXT, [PDF])).includes("Uploads/"));
+check("…and still no path leaks into the bubble", !visibleText(composeAttachmentMessage(TEXT, [PDF])).includes(`${FOLDER.uploads}/`));
 
 console.log(`\nchat attachments + directives: ${passed}/${passed} checks passed`);

@@ -12,6 +12,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 delete process.env.DATABASE_URL;
 delete process.env.POSTGRES_URL;
@@ -170,7 +171,7 @@ if (customFieldsOf("account").length === 0) {
   refused(validateCustom("account", { notes: "x" }, { mode: "update", existing: {} }), /no custom field "notes" here: this workspace's profile declares none/);
 }
 // The text a person writes is stored as written: line breaks, a folder name, the base product's words.
-const NOTE = "Filed under Customers/hdfc/filings/Q1.pdf.\nAsked about the deployment of the rights-issue money; customer_id is not ours to change.";
+const NOTE = `Filed under ${FOLDER.accounts}/hdfc/filings/Q1.pdf.\nAsked about the deployment of the rights-issue money; customer_id is not ours to change.`;
 assert.deepEqual(validateCustom("account", { notes: NOTE, house_view: "positive" }, { mode: "create", fields: ACCOUNT }).values, { notes: NOTE.trim(), house_view: "Positive" });
 refused(validateCustom("account", { note: "x" }, { mode: "create", fields: ACCOUNT }), /There is no custom field "note" here\. The custom fields are: `notes` \("Notes", long text\)/);
 refused(validateCustom("account", { notes: 12, house_view: "Bullish" }, { mode: "create", fields: ACCOUNT }), /"House view" \(house_view\) must be one of: "Positive", "Neutral", "Negative"\./);
@@ -259,7 +260,7 @@ assert.equal(customForNewRow({ set: {}, clear: ["a"], append: {} }), null);
 // --- the MCP tools: `custom` on both write tools, named from the profile when the host knows it ---------------------
 
 const { createTools } = await import("../setup/workspace-tools.mjs");
-const base = { api: async () => ({}), getOrg: () => null, setOrg() {}, identity: async () => null };
+const base = { api: async () => ({}), getOrg: () => null, setOrg() {}, identity: async () => null, folders: FOLDER };
 const toolsOf = (ctx) => Object.fromEntries(createTools({ ...base, ...ctx }).map((t) => [t.name, t]));
 const generic = toolsOf({});
 for (const [tool, list] of [["deployment_upsert", "deployment_list"], ["implementation_upsert", "implementation_list"]]) {

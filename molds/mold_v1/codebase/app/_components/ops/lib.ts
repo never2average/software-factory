@@ -23,8 +23,8 @@ import { isWorkspaceRefusalBody, noteWorkspaceRefused } from "@/lib/workspace-re
 /** What a TODO is filed under, as a person reads it — only the containers whose data-room domain this deployment
  *  shows, in the profile's words ("deployment/implementation" by default). */
 const TODO_CONTAINERS = [
-  DEPLOYMENT_PROFILE.dataroom.domains.Deployments?.visible !== false ? W.deployment : null,
-  DEPLOYMENT_PROFILE.dataroom.domains.Implementation?.visible !== false ? W.implementation : null,
+  DEPLOYMENT_PROFILE.dataroom.domains.deliveries?.visible !== false ? W.deployment : null,
+  DEPLOYMENT_PROFILE.dataroom.domains.projects?.visible !== false ? W.implementation : null,
 ].filter((w): w is string => Boolean(w));
 
 /* -------------------------------- Sections ------------------------------- */

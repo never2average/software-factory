@@ -141,7 +141,7 @@ Everything below lands in the live web app — refresh the Ops Center and it's
 there.
 
 **Data Room.** For coding work, `record_coding_session` with the transcript and a
-`customerId` (it redacts, then lands under `Deployments/syncs/claude/…`). For
+`customerId` (it redacts, then lands under `syncs/claude/…` in the deliveries folder). For
 anything else, `dataroom_write` / `dataroom_append_jsonl` at the right dm.md path
 (`docs/data-model.md` is the tree). Building the `record_coding_session` habit is
 the point — *you* supply the customer id, the one thing the data can't infer.

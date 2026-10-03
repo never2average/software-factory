@@ -38,6 +38,7 @@ import { compatEnv } from "./compat-env.ts";
 import { wordFor } from "./agent-vocabulary.ts";
 import { customFieldsOf } from "./custom-fields.ts";
 import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
+import { DOMAIN_FOLDERS, FOLDER, domainIdOf } from "./dataroom-folders.ts";
 import { samplePeople } from "./sample-data.ts";
 
 /* -------------------------------------------------------------------------- */
@@ -52,25 +53,14 @@ export interface SheetSpec {
   rows: CellValue[][];
 }
 
-export type WorkbookDomain =
-  | "Customers"
-  | "Platform"
-  | "Deployments"
-  | "Solutions"
-  | "Implementation"
-  | "Tickets"
-  | "People";
+/**
+ * A workbook's domain, by its STORED folder name (the deployment profile's: ./dataroom-folders.ts). That name is
+ * also the name of the domain's main sheet, as it always was.
+ */
+export type WorkbookDomain = string;
 
 /** Fixed data-model order (docs/data-model.md workbook table). */
-export const WORKBOOK_DOMAINS: readonly WorkbookDomain[] = [
-  "Customers",
-  "Platform",
-  "Deployments",
-  "Solutions",
-  "Implementation",
-  "Tickets",
-  "People",
-] as const;
+export const WORKBOOK_DOMAINS: readonly WorkbookDomain[] = DOMAIN_FOLDERS;
 
 export interface WorkbookSpec {
   workbook: `${WorkbookDomain}/Master.xlsx`;
@@ -621,11 +611,11 @@ const ownFieldsOf = (declared: DeclaredOwnFields | undefined, area: CustomFieldA
 
 function domainSheets(customer: Customer, domain: WorkbookDomain, declared?: DeclaredOwnFields): SheetSpec[] {
   return baseDomainSheets(customer, domain).map((sheet) =>
-    sheet.name === "Customers"
+    sheet.name === FOLDER.accounts
       ? withOwnFields(sheet, ownFieldsOf(declared, "account"), [customer])
-      : sheet.name === "Deployments"
+      : sheet.name === FOLDER.deliveries
         ? withOwnFields(sheet, ownFieldsOf(declared, "deployments"), customer.deployments ?? [])
-        : sheet.name === "Implementation"
+        : sheet.name === FOLDER.projects
           ? withOwnFields(sheet, ownFieldsOf(declared, "implementations"), customer.implementation ? [customer.implementation] : [])
           : sheet,
   );
@@ -634,49 +624,49 @@ function domainSheets(customer: Customer, domain: WorkbookDomain, declared?: Dec
 function baseDomainSheets(customer: Customer, domain: WorkbookDomain): SheetSpec[] {
   const cid = customer.id;
   const cname = customer.name;
-  switch (domain) {
-    case "Customers":
+  switch (domainIdOf(domain)) {
+    case "accounts":
       return [
         {
-          name: "Customers",
+          name: FOLDER.accounts,
           columns: [...CUSTOMERS_COLUMNS],
           rows: [mapRow(CUSTOMERS_COLUMNS, customer as Record<string, unknown>, cid, cname)],
         },
       ];
-    case "Platform":
+    case "platform":
       return [
         {
-          name: "Platform",
+          name: FOLDER.platform,
           columns: [...PLATFORM_COLUMNS],
           rows: customer.platform
             ? [mapRow(PLATFORM_COLUMNS, customer.platform as Record<string, unknown>, cid, cname)]
             : [],
         },
       ];
-    case "Deployments":
+    case "deliveries":
       return [
         {
-          name: "Deployments",
+          name: FOLDER.deliveries,
           columns: [...DEPLOYMENTS_COLUMNS],
           rows: (customer.deployments ?? []).map((d) =>
             mapRow(DEPLOYMENTS_COLUMNS, d as Record<string, unknown>, cid, cname),
           ),
         },
       ];
-    case "Solutions":
+    case "solutions":
       return [
         {
-          name: "Solutions",
+          name: FOLDER.solutions,
           columns: [...SOLUTIONS_COLUMNS],
           rows: (customer.solutions ?? []).map((s) =>
             mapRow(SOLUTIONS_COLUMNS, s as Record<string, unknown>, cid, cname),
           ),
         },
       ];
-    case "Implementation":
+    case "projects":
       return [
         {
-          name: "Implementation",
+          name: FOLDER.projects,
           columns: [...IMPLEMENTATION_COLUMNS],
           rows: customer.implementation
             ? [
@@ -690,13 +680,13 @@ function baseDomainSheets(customer: Customer, domain: WorkbookDomain): SheetSpec
             : [],
         },
       ];
-    case "Tickets": {
+    case "tickets": {
       const interactionsAsc = (customer.interactions ?? [])
         .slice()
         .sort((a, b) => String(a.interactionAt ?? "").localeCompare(String(b.interactionAt ?? "")));
       return [
         {
-          name: "Tickets",
+          name: FOLDER.tickets,
           columns: [...TICKETS_COLUMNS],
           rows: (customer.tickets ?? []).map((t) =>
             mapRow(TICKETS_COLUMNS, t as Record<string, unknown>, cid, cname),
@@ -716,7 +706,7 @@ function baseDomainSheets(customer: Customer, domain: WorkbookDomain): SheetSpec
         },
       ];
     }
-    case "People": {
+    case "people": {
       const staff = peopleSeed.internalStaffAssignments.filter((p) => p.customer_id === cid);
       const stakeholders = peopleSeed.customerStakeholders.filter((p) => p.customer_id === cid);
       return [
@@ -736,6 +726,8 @@ function baseDomainSheets(customer: Customer, domain: WorkbookDomain): SheetSpec
         },
       ];
     }
+    default:
+      throw new Error(`"${domain}" is not a data-room domain of this workspace (${WORKBOOK_DOMAINS.join(", ")})`);
   }
 }
 

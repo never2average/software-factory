@@ -16,15 +16,16 @@ import {
   solutionAgentFolderSchema,
   ticketFileSchema,
 } from "../agent/lib/dataroom-schema.ts";
+import { FOLDER, fillFolders } from "../agent/lib/dataroom-folders.ts";
 
 const fixtures = [
-  ["Customers", "customers.json", customerFolderSchema],
-  ["Platform", "platform.json", platformVersionFolderSchema],
-  ["Deployments", "deployments.json", deploymentFolderSchema],
-  ["Solutions", "solutions.json", solutionAgentFolderSchema],
-  ["Implementation", "implementation.json", implementationFolderSchema],
-  ["Tickets", "tickets.json", ticketFileSchema],
-  ["People", "person.json", personFolderSchema],
+  [FOLDER.accounts, "customers.json", customerFolderSchema],
+  [FOLDER.platform, "platform.json", platformVersionFolderSchema],
+  [FOLDER.deliveries, "deployments.json", deploymentFolderSchema],
+  [FOLDER.solutions, "solutions.json", solutionAgentFolderSchema],
+  [FOLDER.projects, "implementation.json", implementationFolderSchema],
+  [FOLDER.tickets, "tickets.json", ticketFileSchema],
+  [FOLDER.people, "person.json", personFolderSchema],
 ];
 
 function assert(condition, message) {
@@ -34,7 +35,8 @@ function assert(condition, message) {
 const parsed = new Map();
 for (const [domain, fileName, schema] of fixtures) {
   const url = new URL(`../data/__fixtures__/dataroom/${fileName}`, import.meta.url);
-  const result = schema.safeParse(JSON.parse(readFileSync(url, "utf8")));
+  // A fixture writes each folder as a placeholder ({folder:accounts}); it is read as this deployment stores it.
+  const result = schema.safeParse(JSON.parse(fillFolders(readFileSync(url, "utf8"))));
   if (!result.success) {
     console.error(`${domain} fixture failed to parse (${fileName}):`);
     console.error(result.error.issues);
@@ -45,16 +47,16 @@ for (const [domain, fileName, schema] of fixtures) {
 }
 
 // A few cross-artifact sanity checks on the fixture content.
-const deployment = parsed.get("Deployments");
+const deployment = parsed.get(FOLDER.deliveries);
 const signoffs = deployment.infrastructure?.inference?.signoffs;
-assert(signoffs, "Deployments fixture must include an inference signoff chain");
+assert(signoffs, `${FOLDER.deliveries} fixture must include an inference signoff chain`);
 assert(
   !isSignoffChainComplete(signoffs),
   "fixture signoff chain has customer.infosec in_review, so it must not read as complete",
 );
 
-const solution = parsed.get("Solutions");
-assert((solution.evals?.runs?.length ?? 0) >= 1, "Solutions fixture must include an eval run");
+const solution = parsed.get(FOLDER.solutions);
+assert((solution.evals?.runs?.length ?? 0) >= 1, `${FOLDER.solutions} fixture must include an eval run`);
 for (const run of solution.evals.runs) {
   const caseIds = new Set(solution.evals.dataset.map((record) => record.caseId));
   for (const output of run.outputs) {
@@ -65,7 +67,7 @@ for (const run of solution.evals.runs) {
   }
 }
 
-const person = parsed.get("People");
+const person = parsed.get(FOLDER.people);
 assert(
   person.interactions.every((row) => row.personId === person.personId),
   "Person fixture interactions must share the folder's personId",

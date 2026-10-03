@@ -8,7 +8,7 @@
       "ticketId": "TCK-1001",
       "summary": "Confirm SSO rollout date after customer's security review",
       "description": "Security team needs final confirmation before enabling SAML SSO for the expanded wealth desk rollout.",
-      "affectedSchema": "Platform",
+      "affectedSchema": "{folder:platform}",
       "ticketType": "Config Change",
       "ticketCategory": "Configuration Change Request",
       "ticketStatus": "Waiting on Customer",

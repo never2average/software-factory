@@ -88,7 +88,7 @@ but its runs and tokens are not recorded and it has no operator override.
 {
   "name": "Invoice Extraction",
   "summary": "Reads supplier invoices already in the data room and tabulates their line items with citations.",
-  "dataroomPaths": ["Customers/{customer_id}/invoices/**"]
+  "dataroomPaths": ["{folder:accounts}/{customer_id}/invoices/**"]
 }
 ```
 
@@ -98,9 +98,13 @@ but its runs and tokens are not recorded and it has no operator override.
   Default: the first sentence of the `agent.ts` `description`.
 - `dataroomPaths`: path templates the subagent may read and write, beyond the built-in
   ones in `dm.md`. A template is `Domain/segment/.../last`:
-  - the first segment is an existing data-room domain (`Customers`, `Platform`,
-    `Deployments`, `Solutions`, `Implementation`, `Tickets`, `People`, `Uploads`); a pack
-    cannot add a domain;
+  - the first segment is one of the data room's top-level folders. Their names are the
+    deployment profile's (`dataroom.domains.<id>.folder`; see "Stored folder names" in
+    [`DEPLOYMENT_PROFILE.md`](DEPLOYMENT_PROFILE.md)), so write it as `{folder:<id>}`
+    (`{folder:accounts}/{customer_id}/invoices/**`) and it is right under every profile; a
+    pack that ships its own profile may write the stored name instead (`Accounts`,
+    `Platform`, `Deliveries`, `Solutions`, `Projects`, `Tickets`, `People`, `Uploads` under
+    the default profile). A pack cannot add a folder;
   - a segment is a literal (`invoices`), a `{token}`, or a mix (`{date}_summary.md`);
   - tokens are the ones the store knows: `{customer_id}`, `{platform_version_id}`,
     `{platform_id}`, `{person_id}`, `{agent_id}`, `{pipeline_id}`, `{migration_id}`,
@@ -109,7 +113,7 @@ but its runs and tokens are not recorded and it has no operator override.
   - `**` is allowed only as the last segment and admits any file subtree.
 
   Prefer one `**` template per folder the pack owns, under an existing entity:
-  `Customers/{customer_id}/<pack-folder>/**`. Unknown fields, an unknown domain or token,
+  `{folder:accounts}/{customer_id}/<pack-folder>/**`. Unknown fields, an unknown domain or token,
   and a malformed template all fail `npm run check:subagents`. The full grammar, with file
   and line, is in `.claude/skills/eve-subagent-wiring/SKILL.md`.
 
@@ -146,7 +150,7 @@ When the pack's profile gives the domains words of their own (customers are "com
 is given the base tools, fields and folders under those words: `get_company` / `upsert_company`, `company_id`,
 `Companies/{company_id}/…`, `coverageReports[]`. The base product's own prompts are translated for it. The
 pack's text is the pack's, and must use the same words, or its specialists will be told to call
-`get_customer` and write under `Customers/`, which the model is not given:
+`get_customer` and write under `Accounts/`, which the model is not given:
 
 - **Write the pack's prompts, skills, rulebooks and sandbox README text in the profile's words.** The pack
   ships its profile, so it knows them. `npm run check:agent-vocabulary -- --dump <file>` (with the pack
@@ -163,7 +167,7 @@ pack's text is the pack's, and must use the same words, or its specialists will 
   `speakPrompt` from `#lib/agent-vocabulary.js`, `SUBAGENT_PROMPTS` from `#lib/prompts.generated.js`), and
   run `node scripts/gen-prompts.mjs` after applying the pack. `check:subagents` accepts this in place of
   `instructions.md`.
-- **Paths a sandbox script computes may stay as stored** (`Customers/<id>/filings/…`): a data-room tool
+- **Paths a sandbox script computes may stay as stored** (`Accounts/<id>/filings/…`): a data-room tool
   accepts a stored path as well as a display one, and answers with the display one.
 - **Data inside stored files is not translated.** A `.jsonl` row keeps the keys it is written with, so a
   schema and its validator keep theirs.
@@ -256,7 +260,7 @@ invoices-pack/
 
 - **invoice-extraction** — tabulates supplier invoices that are already in the data room:
   - Use for "pull the line items from ...", "what did <supplier> bill us in March".
-  - Works only from files under `Customers/{customer_id}/invoices/`. It does not fetch.
+  - Works only from files under `Accounts/{customer_id}/invoices/`. It does not fetch.
   - It sees only your message: name the customer, the period and the file paths.
 ```
 
@@ -265,7 +269,7 @@ files above as added, plus:
 
 ```
  M agent/lib/subagent-registry.generated.ts      "invoice-extraction" in SUBAGENT_KEYS / LABELS / SUMMARIES,
-                                                 "Customers/{customer_id}/invoices/**" in EXTRA_DATAROOM_PATH_TEMPLATES
+                                                 "Accounts/{customer_id}/invoices/**" in EXTRA_DATAROOM_PATH_TEMPLATES
  M app/_components/subagent-meta.generated.ts    its name, summary, description, six skill names, five tools
 ```
 

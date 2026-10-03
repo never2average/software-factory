@@ -1,11 +1,15 @@
 ---
 name: configure-agents
-description: Scaffold a reusable agent solution under Solutions/{ver}/agents/{id}/ — the agents sibling of configure-solution — with its data schema, run-config contract, recipe + recipe seed folder, and eval dataset/benchmark. Use when authoring a new agent solution, when someone says "configure an agent", "create an agent solution", "add an agent recipe", or when a customer needs an agent instance seeded into their deployment. Agents are solutions too: same validate + eval gate. Optionally registers the customer's solutions row and seeds the Deployments agent recipe folder.
+description: Scaffold a reusable agent solution under {folder:solutions}/{ver}/agents/{id}/ — the agents sibling of configure-solution — with its data schema, run-config contract, recipe + recipe seed folder, and eval dataset/benchmark. Use when authoring a new agent solution, when someone says "configure an agent", "create an agent solution", "add an agent recipe", or when a customer needs an agent instance seeded into their deployment. Agents are solutions too: same validate + eval gate. Optionally registers the customer's solutions row and seeds the Deployments agent recipe folder.
 ---
 
 # Configure agents
 
-Agents are the **other kind of solution** — `Solutions/{ver}/agents/{id}/` sits
+> `{folder:<id>}` below is the data-room folder this deployment stores that domain under: its profile's
+> `dataroom.domains.<id>.folder` (`uploads_folder` for `{folder:uploads}`). Read the real name with
+> `node --experimental-strip-types -e 'import("./agent/lib/dataroom-folders.ts").then((m) => console.log(m.FOLDER))'`.
+
+Agents are the **other kind of solution** — `{folder:solutions}/{ver}/agents/{id}/` sits
 parallel to `pipelines/`, with the same "minified solution-manager" discipline but an
 agent-shaped file set: a data-platform schema, a run-config contract, a `recipe.md`
 (+ `recipe/` seed folder the agent instantiates before its first run), and eval
@@ -22,7 +26,7 @@ npm run operator:configure-agents -- --version v2.4.0 --id collections-agent \
 ```
 Writes `dataplatform.schemas.json`, `run_configs.schema.json`, `recipe.md`,
 `recipe/README.md`, and empty `evals/{dataset,benchmark}.jsonl` under
-`Solutions/v2.4.0/agents/collections-agent/` (never clobbers authored files).
+`{folder:solutions}/v2.4.0/agents/collections-agent/` (never clobbers authored files).
 
 **2. Author.** Fill `recipe.md` (role, tools, guardrails), define
 `run_configs.schema.json` (the contract), put the seed files the agent needs in
@@ -35,7 +39,7 @@ npm run operator:configure-agents -- --version v2.4.0 --id collections-agent \
   --use-case "…" --customer contoso-bank
 ```
 Upserts the `solutions` row (marked as an agent) and seeds
-`Deployments/{customer}/{ver}/platform/agents/{id}/recipe.md`.
+`{folder:deliveries}/{customer}/{ver}/platform/agents/{id}/recipe.md`.
 
 **4. Gate.**
 ```bash
@@ -45,8 +49,8 @@ npm run operator:validate-solution -- --version v2.4.0 --id collections-agent --
 ## Where this reads / writes
 
 WRITE:
-- `Solutions/{ver}/agents/{id}/{dataplatform.schemas.json, run_configs.schema.json, recipe.md, recipe/…, evals/dataset.jsonl, evals/benchmark.jsonl}`
-- `solutions` row + `Deployments/{customer}/{ver}/platform/agents/{id}/recipe.md` (with `--customer`)
+- `{folder:solutions}/{ver}/agents/{id}/{dataplatform.schemas.json, run_configs.schema.json, recipe.md, recipe/…, evals/dataset.jsonl, evals/benchmark.jsonl}`
+- `solutions` row + `{folder:deliveries}/{customer}/{ver}/platform/agents/{id}/recipe.md` (with `--customer`)
 
 ## Never
 

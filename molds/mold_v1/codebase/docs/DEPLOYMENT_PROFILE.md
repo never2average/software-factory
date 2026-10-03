@@ -40,7 +40,7 @@ survives as literal text).
 The rule for new UI copy: if a sentence names the product, a customer, a member, a deployment, an
 implementation, a rollout or a data-room domain, it reads the profile. It never hardcodes the word.
 `lib/ui-words.ts` has every one of them ready (`W.account`, `W.Accounts`, `W.owner`, `W.Deployment`,
-`W.implementations`, `W.install` for "this deployment", `an(word)`, `domainLabel("Customers")`), and
+`W.implementations`, `W.install` for "this deployment", `an(word)`, `domainLabel("accounts")`), and
 `lib/ui-keys.ts` shows a stored key in the profile's words (`speakKey`, `humanizeKey`). See
 [How a person sees it](#how-a-person-sees-it); `npm run check:ui-vocabulary` enforces it.
 
@@ -61,7 +61,7 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
 
 | Key | Meaning | Default |
 |---|---|---|
-| `vocabulary.account.singular` / `.plural` | What the thing every record hangs off is called in prose ("the account's data room", "Search accounts…"). Lower-case; the UI capitalises where it needs to. Base text never spells it: it writes `{account}` / `{accounts}` (see "Record placeholders" below). The identifiers keep the stored word (`customer_id`, `list_customers`, `Customers/`). | `"account"` / `"accounts"` |
+| `vocabulary.account.singular` / `.plural` | What the thing every record hangs off is called in prose ("the account's data room", "Search accounts…"). Lower-case; the UI capitalises where it needs to. Base text never spells it: it writes `{account}` / `{accounts}` (see "Record placeholders" below). The identifiers keep the stored word (`customer_id`, `list_customers`). | `"account"` / `"accounts"` |
 | `vocabulary.member.singular` / `.plural` | What a person who works in the console is called. Base text never spells it: it writes `{member}` / `{members}` (see "Role placeholders" below). | `"member"` / `"members"` |
 | `vocabulary.owner` | The label for the member responsible for an account. Base text writes `{owner}`. | `"Account owner"` |
 | `vocabulary.secondary_owner` | The label for an account's second owner: what a person reads for the `aeOwner` / `secondaryOwner` field (`ae_owner` / `secondary_owner` in the database) in an export or a table header. A deployment names its own role here ("Account executive", "Relationship manager"). | `"Secondary owner"` |
@@ -90,13 +90,77 @@ Every key, what it means, and its default. Strings marked *slots* are passed thr
 | Key | Meaning | Default |
 |---|---|---|
 | `dataroom.root_label` | The data-room browser's title (dialog title and title bar) and the tree root's name. | `"Data Room"` |
-| `dataroom.domains.<Domain>.label` | What people read for that domain: its tab, its folder in the tree, the breadcrumb on a search hit, and "`<label>` Master" as the display name of its `Master.xlsx`. | the domain's own name |
-| `dataroom.domains.<Domain>.visible` | `false` removes the domain from the browser: no tab, no tree node, no "jump to" affordance; live files under it are not listed; a request to open a hidden domain's tab opens the first visible one instead. | `true` |
-| `dataroom.domains.<Domain>.description` | Optional. The folder's tooltip in the tree. | none |
-| `dataroom.seed` | `null`: a new workspace is seeded with the built-in three-file starter tree (`README.md`, `Customers/README.md`, `People/README.md`; `lib/org-seed.ts`). A list of `{ "path", "content" }`: THOSE files are written instead, all of them, replacing the built-in tree. *slots in `content`: `{workspace}` (the workspace's name), `{org_id}`, `{product}`*. A path is relative, has no `..`, and is `README.md` or starts with a domain name or `Uploads`. The content type follows the extension (`.md`, `.json`, `.jsonl`, `.csv`, otherwise plain text). | `null` |
+| `dataroom.domains.<id>.folder` | The name the domain's files are **stored** under: the first segment of every path in it, the name of its `Master.xlsx`'s main sheet, and the domain's value wherever one is stored or sent (a sync's `domain`, a ticket's `affectedSchema`). One path segment: letters, digits, `.`, `_`, `-`. See "Stored folder names" below before changing it on a deployment that has files. | `Accounts`, `Platform`, `Deliveries`, `Solutions`, `Projects`, `Tickets`, `People` |
+| `dataroom.domains.<id>.label` | What people read for that domain: its tab, its folder in the tree, the breadcrumb on a search hit, and "`<label>` Master" as the display name of its `Master.xlsx`. | the domain's `folder` |
+| `dataroom.domains.<id>.visible` | `false` removes the domain from the browser: no tab, no tree node, no "jump to" affordance; live files under it are not listed; a request to open a hidden domain's tab opens the first visible one instead. | `true` |
+| `dataroom.domains.<id>.description` | Optional. The folder's tooltip in the tree. | none |
+| `dataroom.uploads_folder` | The folder files a person attaches in chat are stored under (`<uploads_folder>/{person_id}/…`). | `"Uploads"` |
+| `dataroom.seed` | `null`: a new workspace is seeded with the built-in three-file starter tree (`README.md` and a `README.md` in the accounts and the people folders; `lib/org-seed.ts`). A list of `{ "path", "content" }`: THOSE files are written instead, all of them, replacing the built-in tree. *slots in `content`: `{workspace}` (the workspace's name), `{org_id}`, `{product}`*. A path is relative, has no `..`, and is `README.md` or starts with one of THIS profile's folders (a domain's `folder`, or `uploads_folder`). The content type follows the extension (`.md`, `.json`, `.jsonl`, `.csv`, otherwise plain text). | `null` |
 
-`<Domain>` is one of `Customers`, `Platform`, `Deployments`, `Solutions`,
-`Implementation`, `Tickets`, `People`.
+`<id>` is one of `accounts`, `platform`, `deliveries`, `solutions`, `projects`, `tickets`, `people`: what code
+and profiles call a domain. It is not a folder name and never changes.
+
+#### Stored folder names
+
+A domain has three things: its **id** (above), the **folder** its files are stored under, and the **label** people
+and the model read. The folder is a setting of the deployment, not of the code: base code builds every path from
+`FOLDER.<id>` (`agent/lib/dataroom-folders.ts`) and base text writes `{folder:<id>}`, so no folder name is written
+anywhere but in a profile (`npm run check:neutral-names` holds that).
+
+**A new deployment** takes the default profile's folders and needs to say nothing.
+
+**A deployment that already holds files keeps every one of them where it is by PINNING the names it has.** The
+folder names used to be part of the code (`scripts/lib/legacy-dataroom-folders.json` is the one place they are still
+spelled), so every data room filled before stores its files under those. Such a deployment adds one file to its
+profile, and nothing is moved, no row is rewritten, and every path in an old conversation still resolves:
+
+```json
+{
+  "dataroom": {
+    "domains": {
+      "accounts": { "folder": "Customers" },
+      "platform": { "folder": "Platform" },
+      "deliveries": { "folder": "Deployments" },
+      "solutions": { "folder": "Solutions" },
+      "projects": { "folder": "Implementation" },
+      "tickets": { "folder": "Tickets" },
+      "people": { "folder": "People" }
+    },
+    "uploads_folder": "Uploads"
+  }
+}
+```
+
+(`scripts/fixtures/dataroom-folders/50-legacy-folders.json` is this file. `npm run test:dataroom-folders` builds a
+copy of the checkout with it and holds every stored path, every object key every door asks the store for, the
+starter tree and both seeders' trees to what they were before the names became a setting, byte for byte;
+`npm run check:agent-vocabulary` does the same for everything the model reads.) With the pin and no `label`, a
+domain reads under its folder's own name, exactly as before. With a `label`, people and the model read the label,
+and the folder is still where the files are.
+
+A profile written when the folders had those names calls each domain by its former name
+(`"Customers": { "label": "Companies" }`). That still works: the key is read as the domain's id. Such a profile is
+**refused at build** until it says where its files are, because without that the build would store the domain under
+the default folder, leave the existing files behind and start a second set beside them. The message names the line
+to add.
+
+**The safety net.** A deployment whose data room holds a former folder that its profile stores nothing under is
+never allowed to write into a second set of folders:
+
+- at build, `npm run check:dataroom-folders` (run by `prebuild` and `prebuild:eve`) looks at the store the build
+  is configured for (Vercel Blob with `BLOB_READ_WRITE_TOKEN`, else a local `.dataroom/`), and stops the build
+  with the workspaces, the folders it found and the lines to add. A stopped build leaves the running deployment
+  serving. With nothing to look at (CI, a fork, a first build) it says so and passes; a profile that pins every
+  former name is not looked at at all. `DATAROOM_FOLDERS_CHECK=skip` turns it off for a build that cannot reach
+  its store;
+- at run time, the first write to a workspace looks once for such a folder (`agent/lib/dataroom-folder-guard.ts`,
+  in the agent's store and the web app's writer) and, if there is one, writes nothing and says what to add.
+
+It refuses rather than falling back to the names it finds, on purpose: the folder names are fixed into a build (its
+path grammar, its prompts, its seeded files, the paths it shows), so a store that answered to whichever names it
+found would make them a per-workspace fact, two workspaces of one deployment could disagree, and the missing line
+would never be noticed. Nothing in this is a migration: no file is renamed in either direction.
+
 
 ### `domains`
 
@@ -312,7 +376,7 @@ What differs from the areas:
   `` - Own fields of each customer, by key in its `custom` (read with `get_customer`, write with `upsert_customer`;
   send only changed keys; null clears; other keys are refused; add to a long text with `custom_append` instead of resending it (replace one: null in `custom` plus the new text in `custom_append`); `list_customers` carries none of them): `notes`="Notes" (long_text). ``
 - **Under a relabel** the keys, labels, choices and every stored value pass through verbatim, both ways: a note
-  that says "Customers/acme" or "deployment" is user data, and reaches the model and storage as written.
+  that names a stored path or says "deployment" is user data, and reaches the model and storage as written.
 - **With `account_fields.hidden`**: hiding built-in fields and declaring own ones combine as expected. A hidden key
   the model sends is dropped while its `custom` is written, and a stored hidden value survives either write.
 - **Long notes** (`long_text`) are never resent whole just to add to them. `upsert_customer` takes
@@ -356,12 +420,12 @@ What differs from the areas:
 3. **Arrays and scalars replace.** `chat.hero_lines` and `dataroom.seed` are taken whole
    from the last file that sets them; lists are never concatenated.
 4. **Unknown keys are rejected.** A key that `00-default.json` does not have fails the
-   build with the file and the key's path: it is a typo, not an extension. (The one
-   optional key is `description` on a data-room domain.) `$comment` is ignored anywhere.
+   build with the file and the key's path: it is a typo, not an extension. (The
+   optional keys are `label` and `description` on a data-room domain.) `$comment` is ignored anywhere.
 5. **Domains can be relabelled or hidden, not added.** A key under `dataroom.domains`
    that is not one of the seven domains fails the build. A new domain is a change to the
    data model (`dm.md`, the path templates, the workbook), not to a profile.
-6. **`Customers` cannot be hidden.** Every record hangs off it. Relabel it instead.
+6. **The `accounts` domain cannot be hidden.** Every record hangs off it. Relabel it instead.
 7. **`domains` is checked against the source.** The generator reads the field keys and enum values out of
    `agent/lib/customer-schema.ts` and `agent/lib/db/schema.ts`, so these fail the build with the path and the
    reason: an unknown field key (`domains.deployments.fields.releaseStatuss: unknown field key`), an `options` key
@@ -390,12 +454,12 @@ server and the coding-agent CLI key on these, and a deployment that renamed them
 to read its own data or take an upstream update. (What the eve agent's MODEL reads is translated at the
 tool boundary instead: see "How the agent sees it" below.)
 
-- **Data-room folder names and path templates**: `Customers/`, `Platform/`,
-  `Deployments/`, `Solutions/`, `Implementation/`, `Tickets/`, `People/`, `Uploads/`,
-  `{customer_id}`, `{person_id}`, `Master.xlsx`, and every entry of
-  `DATAROOM_PATH_TEMPLATES`. A domain labelled "Companies" is still `Customers/` on disk.
-- **Workbook sheet names and column names**: the `Customers` sheet, `customer_id`,
-  `customer_name`, `fde_owner`… They are data, and the agent reads them by name.
+- **The data-room tree below each folder, and the path tokens**: `{customer_id}`, `{person_id}`, `Master.xlsx`,
+  and every entry of `DATAROOM_PATH_TEMPLATES` after its first segment. (The first segment, the folder's own name,
+  IS the profile's: `dataroom.domains.<id>.folder`. A label never moves it: a domain labelled "Companies" is still
+  stored under its `folder`.)
+- **Workbook column names**: `customer_id`, `customer_name`, `fde_owner`… They are data, and the agent reads them
+  by name. (A domain's main sheet carries the domain's stored folder name.)
 - **Database tables and fields**, and the JSON keys of every API payload.
 - **API routes** (`/api/ops/*`, `/api/dataroom`…).
 - **Tool, skill and subagent names, as code and the MCP server know them**: `list_customers`,
@@ -432,7 +496,7 @@ has a word of its own), the model reads only the profile's words, everywhere
 | tool names | `list_customers`, `get_customer`, `upsert_customer`, `list_members`, `read_customer_slas` | `list_companies`, `get_company`, `upsert_company`, `list_analysts`, `read_company_slas` |
 | parameters and result keys | `customerId`, `customer_id`, `fdeOwner`, `deployments[].deploymentId`, `implementation.rolloutId` | `companyId`, `company_id`, `analystOwner`, `coverageReports[].coverageReportId`, `portfolioEntry.portfolioId` |
 | enum values | `Waiting on Customer`, `customer-vpc`, TODO `containerType` `deployment` | `Waiting on Company`, `company-vpc`, `coverageReport` |
-| data-room paths (in and out) | `Customers/acme/…`, `Deployments/…`, `Implementation/…` | `Companies/acme/…`, `Coverage-reports/…`, `Portfolios/…` (the label as a folder name) |
+| data-room paths (in and out) | the stored folders: `Accounts/acme/…`, `Deliveries/…`, `Projects/…` (or the names a deployment pins) | `Companies/acme/…`, `Coverage-reports/…`, `Portfolios/…` (the label as a folder name) |
 | memory scopes | `customer:{id}` | `company:{id}` |
 | descriptions, prompts, the per-turn block | "{account}" (filled: "account"), "{owner}" (filled: "account owner"), "{deployment}" (filled: "delivery") | "company", "covering analyst", "coverage report" |
 
@@ -448,6 +512,17 @@ fill them from the profile under every profile:
 | `{implementation}` / `{implementations}` | `domains.implementations.label` | project / projects | portfolio entry / portfolio entries |
 | `{rollout}` / `{rollouts}` | `domains.implementations.group_label` | plan / plans | portfolio / portfolios |
 
+**Folder placeholders.** A data-room folder is written the same way, because its name is the profile's too:
+
+| Placeholder | Filled with | Default profile | A profile that pins `Customers` and labels it "Companies" |
+|---|---|---|---|
+| `{folder:accounts}` (and `platform`, `deliveries`, `solutions`, `projects`, `tickets`, `people`, `uploads`) | the folder its reader addresses, at the head of a path: `{folder:accounts}/{customer_id}/context.md` | `Accounts/…` | the model reads `Companies/…` (and what it sends back is stored under `Customers/…`); a script, a seeded file and `dm.md` get the stored `Customers/…` |
+| `{domain:accounts}` (…) | the domain in a sentence: its label | Accounts | Companies |
+
+In code, a path is `` `${FOLDER.accounts}/${id}/context.md` `` and a pattern is `pathPattern("accounts", "[^/]+/context\\.md")`
+(`agent/lib/dataroom-folders.ts`); a JSON fixture writes the placeholder and is read through
+`scripts/lib/read-fixture.mjs`; a subagent's `dataroomPaths` template may start with `{folder:<id>}`.
+
 In a prompt, a tool description, a library workflow's step or the base skill, write the placeholder; `speak()` /
 `fill()` fill it (`modelFacing` fills a tool's description in place; a parameter description is written
 `.describe(fill("…"))`; a message a tool builds takes one word with `wordFor("account")`). In the UI, take the
@@ -457,7 +532,7 @@ mirrored into a package: from `profiles/00-default.json` for the generic one, fr
 its own (`scripts/lib/profile-words.mjs`).
 
 The default profile's words are neutral ones, and the identifiers are not: `customer_id`, `list_customers`,
-`Customers/`, `deploymentId`, `implementation`, `rolloutId` are contracts and never move with a profile. Under the
+`deploymentId`, `implementation`, `rolloutId` are contracts and never move with a profile. Under the
 default profile they reach the model exactly as stored, and the per-turn block ties the two together in four short
 lines ("A **delivery** is a `deployment` in the identifiers: …"). A profile whose words ARE the identifiers' own
 (`scripts/fixtures/legacy-record-words/50-legacy-record-words.json`, the words the default carried before) gets no
@@ -522,7 +597,7 @@ How each surface gets there:
   `agent/instructions/runtime-context.ts`) states the deployment's words and fields, written with the base
   identifiers and spoken through the same translation the tools use, so the two cannot disagree. It never
   names a base identifier: the old "the identifiers do not change: `list_customers`, `customer_id`,
-  `Customers/` refer to companies" taught the model a second vocabulary, and it reasoned in that one.
+  the stored folder refer to companies" taught the model a second vocabulary, and it reasoned in that one.
 - **Context blocks** (memory recall, schedules, roster) are translated like tool results: keys and memory scope
   prefixes, never the saved values.
 - **The workflow library** a workspace is provisioned with (`agent/lib/workflow-library-view.ts`): workflows that
@@ -588,15 +663,15 @@ icon and the colour tokens are still files: `app/icon.svg`, `app/globals.css`.)
 
 ## Worked example: an equity-research deployment
 
-Analysts cover listed companies. "Customers" are **companies**, members are **analysts**,
-the `Customers/` domain is shown as "Companies", the five delivery domains are hidden, and
+Analysts cover listed companies. Accounts are **companies**, members are **analysts**,
+the accounts domain is shown as "Companies", the five delivery domains are hidden, and
 a new workspace starts with a tree that explains `filings/`, `lodr/` and `presentations/`.
 
 `profiles/50-pack-equity-research.json`:
 
 ```json
 {
-  "$comment": "Equity-research deployment: analysts covering listed companies. Words and visibility only; every identifier (customer_id, list_customers, Customers/) stays as it is.",
+  "$comment": "Equity-research deployment: analysts covering listed companies. Words and visibility only; every identifier (customer_id, list_customers, Accounts/) stays as it is.",
   "product": {
     "tagline": "The research desk for listed-company coverage.",
     "description": "{product} — the research workspace: an agent that reads filings, exchange disclosures and investor presentations for the companies your analysts cover."
@@ -621,22 +696,22 @@ a new workspace starts with a tree that explains `filings/`, `lodr/` and `presen
   "dataroom": {
     "root_label": "Research Room",
     "domains": {
-      "Customers": { "label": "Companies", "description": "One folder per covered company: filings, exchange disclosures, investor presentations." },
-      "Platform": { "visible": false },
-      "Deployments": { "visible": false },
-      "Solutions": { "visible": false },
-      "Implementation": { "visible": false },
-      "Tickets": { "visible": false },
-      "People": { "label": "Contacts" }
+      "accounts": { "label": "Companies", "description": "One folder per covered company: filings, exchange disclosures, investor presentations." },
+      "platform": { "visible": false },
+      "deliveries": { "visible": false },
+      "solutions": { "visible": false },
+      "projects": { "visible": false },
+      "tickets": { "visible": false },
+      "people": { "label": "Contacts" }
     },
     "seed": [
       {
         "path": "README.md",
-        "content": "# {workspace} — research room\n\nEverything {product} and the analysts know about a covered company lives here as plain files.\n\nThe folder shown as **Companies** is `Customers/` on disk, and a company's id is its `customer_id`. Those names are fixed; only the labels differ.\n\nWorkspace id: `{org_id}`\n"
+        "content": "# {workspace} — research room\n\nEverything {product} and the analysts know about a covered company lives here as plain files.\n\nThe folder shown as **Companies** is `Accounts/` on disk, and a company's id is its `customer_id`. Those names are fixed; only the labels differ.\n\nWorkspace id: `{org_id}`\n"
       },
       {
-        "path": "Customers/README.md",
-        "content": "# Companies\n\nOne subtree per covered company, keyed by `customer_id` (use the exchange ticker, lower-case).\n\n    Customers/{customer_id}/context.md        the coverage note the agent reads first\n    Customers/{customer_id}/filings/          annual reports, quarterly results, offer documents\n    Customers/{customer_id}/lodr/             exchange disclosures under the listing regulations (LODR)\n    Customers/{customer_id}/presentations/    investor decks and earnings-call transcripts\n\nFile documents under the period they report on, for example `filings/FY25-Q4-results.pdf`.\n"
+        "path": "Accounts/README.md",
+        "content": "# Companies\n\nOne subtree per covered company, keyed by `customer_id` (use the exchange ticker, lower-case).\n\n    Accounts/{customer_id}/context.md        the coverage note the agent reads first\n    Accounts/{customer_id}/filings/          annual reports, quarterly results, offer documents\n    Accounts/{customer_id}/lodr/             exchange disclosures under the listing regulations (LODR)\n    Accounts/{customer_id}/presentations/    investor decks and earnings-call transcripts\n\nFile documents under the period they report on, for example `filings/FY25-Q4-results.pdf`.\n"
       },
       {
         "path": "People/README.md",
@@ -645,7 +720,7 @@ a new workspace starts with a tree that explains `filings/`, `lodr/` and `presen
     ]
   },
   "agent": {
-    "briefing": "This workspace is an equity-research desk. Each company's documents sit under Customers/{customer_id}/ in three folders: filings/ (annual and quarterly reports), lodr/ (exchange disclosures), presentations/ (investor decks and call transcripts). Cite the document and page for every figure you state, and say which reporting period it belongs to. Never give investment advice or a price target."
+    "briefing": "This workspace is an equity-research desk. Each company's documents sit under Accounts/{customer_id}/ in three folders: filings/ (annual and quarterly reports), lodr/ (exchange disclosures), presentations/ (investor decks and call transcripts). Cite the document and page for every figure you state, and say which reporting period it belongs to. Never give investment advice or a price target."
   }
 }
 ```
@@ -656,13 +731,13 @@ npm run build:deployment-profile
 ```
 
 What that changes: the data-room browser is titled "Research Room" and shows two
-folders, "Companies" and "Contacts" (plus Uploads); `Customers_Master.xlsx` reads
+folders, "Companies" and "Contacts" (plus Uploads); `Accounts_Master.xlsx` reads
 "Companies Master"; the picker says "Search companies…"; a new workspace gets the three
 files above with its own name and id filled in; and on every turn the model is told that
-a customer is a company, that five domains are out of use, that `Customers/` is shown as
+a customer is a company, that five domains are out of use, that `Accounts/` is shown as
 "Companies", followed by the briefing.
 
-What it does not change: the folder is still `Customers/`, the id is still `customer_id`,
+What it does not change: the folder is still `Accounts/`, the id is still `customer_id`,
 the tool is still `list_customers`, and the product is still called "Delivered" until a
 `90-brand.json` says otherwise.
 
@@ -781,17 +856,20 @@ handed to `speak()`, a console line):
   party's own noun.
 
 `node scripts/lib/record-literals.mjs --list` prints them all. What a person still reads in a stored name under
-the default profile is three kinds of identifier, on purpose: a data-room domain (`Customers`, `Deployments`,
-`Implementation`: the label is the stored folder name until a profile gives another), a key shown as a key (a
-sheet's `customer_id` column), and the identifiers and paths inside a tool's description in the roster.
+the default profile is two kinds of identifier, on purpose: a key shown as a key (a sheet's `customer_id` column),
+and the identifiers inside a tool's description in the roster. A data-room domain is no longer one of them: its
+folder, its `Master.xlsx` and its sheet take their name from the profile (`FOLDER.<id>`), the default profile's are
+neutral, and a deployment that pins a former name shows it only where it gives no label of its own.
 
 ## Checks
 
 ```bash
 npm run build:deployment-profile   # merge + validate + write both generated files
 npm run test:deployment-profile    # merge rules, domains (defaults exact, example validates, bad profiles fail), the briefing; offline
-npm run check:agent-vocabulary     # the model-facing surface under a relabelling fixture has no base word and carries the profile's; the default's is unchanged and reads no record word as prose
-npm run check:neutral-names        # the role word only as a listed contract; the record words as prose only under a per-file ceiling
+npm run check:agent-vocabulary     # the model-facing surface under a relabelling fixture has no base word and carries the profile's; the default's is unchanged and reads no record word as prose; under the folder pin it is byte for byte what it was before folder names were a setting
+npm run check:neutral-names        # the role word only as a listed contract; the record words as prose only under a per-file ceiling; no data-room folder name spelled in base code
+npm run test:dataroom-folders      # the folder names are the profile's; a pinned deployment's stored paths, object keys, starter tree and seeders are byte for byte what they were; an unpinned one is refused
+npm run check:dataroom-folders     # the store this build is configured for holds no former folder its profile does not use (run by prebuild and prebuild:eve)
 npm run check:ui-vocabulary        # what a PERSON reads (source text, the built client bundle, prerendered pages) under the same fixture has no base word; the default's words are unchanged
 npm run check:vocabulary           # its static half, in seconds (no build)
 npm run test:ui-vocabulary         # keys in JSON and exports, ops API errors, library rows, unlabelled enum values, the generator during a build; the record words (labels, kinds, the README, the seeders) under the default, the relabelled and a neutral-records profile; the record-word audit

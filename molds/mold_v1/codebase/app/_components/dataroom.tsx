@@ -33,6 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PdfView } from "./pdf-view";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { FOLDER, domainIdOf, type DataroomDomainId } from "@/agent/lib/dataroom-folders";
 import { jsonForPeople } from "@/lib/ui-keys";
 import { W, an, storedValueLabel } from "@/lib/ui-words";
 import { listedOwnFields, orderPhrase, sameKey, sheetColumnKey, workbookHidden, type WorkbookTable, type WorkbookTableInfo } from "@/lib/workbook-fields";
@@ -526,36 +527,37 @@ export type DataroomTab =
   | "customer-stakeholders";
 
 /**
- * What the deployment profile says about one data-room domain. `domain` is the REAL domain name (the folder,
- * the Master.xlsx, the sheet): a profile only changes the label people read and whether the domain is shown.
+ * What the deployment profile says about one data-room domain, by its id: the label people read and whether the
+ * domain is shown. The folder, the Master.xlsx and the main sheet carry the domain's STORED name, which is the
+ * profile's too (agent/lib/dataroom-folders.ts) and is never spelled here.
  */
-function domainDisplay(domain: string): { label: string; visible: boolean; description?: string } {
+function domainDisplay(domain: DataroomDomainId): { label: string; visible: boolean; description?: string } {
   const entry = DEPLOYMENT_PROFILE.dataroom.domains[domain];
-  return { label: entry?.label || domain, visible: entry?.visible !== false, description: entry?.description };
+  return { label: entry.label || entry.folder, visible: entry.visible !== false, description: entry.description };
 }
 
 /**
- * A sheet's tab, as a person reads it. The sheet NAME inside the workbook never changes ("Deployments",
- * "Implementation": the agent reads sheets by name); a deployment that renames the area sees its plural.
+ * A sheet's tab, as a person reads it. The sheet NAME inside the workbook is the domain's stored one (the agent
+ * reads sheets by name); a deployment that renames the area sees its plural.
  */
-const SHEET_AREA: Record<string, "deployments" | "implementations"> = { Deployments: "deployments", Implementation: "implementations" };
+const SHEET_AREA: Record<string, "deployments" | "implementations"> = { [FOLDER.deliveries]: "deployments", [FOLDER.projects]: "implementations" };
 function sheetTitle(name: string): string {
   const area = SHEET_AREA[name];
   if (area) return domainView(area).name(name);
   // The account's own sheet reads as its domain's label ("Companies"). The stakeholders sheet is NAMED in the
   // profile's word already (SECTION_SHEET).
-  if (name === SECTION_SHEET.customers) return domainDisplay(name).label;
+  if (name === SECTION_SHEET.customers) return domainDisplay("accounts").label;
   return name;
 }
 
-const ALL_DATAROOM_SECTIONS: { key: DataroomTab; domain: string; icon: typeof Users }[] = [
-  { key: "customers", domain: "Customers", icon: Building2 },
-  { key: "platform", domain: "Platform", icon: ServerIcon },
-  { key: "deployments", domain: "Deployments", icon: Rocket },
-  { key: "solutions", domain: "Solutions", icon: PuzzleIcon },
-  { key: "implementation", domain: "Implementation", icon: WrenchIcon },
-  { key: "tickets", domain: "Tickets", icon: TicketIcon },
-  { key: "people", domain: "People", icon: Users },
+const ALL_DATAROOM_SECTIONS: { key: DataroomTab; domain: DataroomDomainId; icon: typeof Users }[] = [
+  { key: "customers", domain: "accounts", icon: Building2 },
+  { key: "platform", domain: "platform", icon: ServerIcon },
+  { key: "deployments", domain: "deliveries", icon: Rocket },
+  { key: "solutions", domain: "solutions", icon: PuzzleIcon },
+  { key: "implementation", domain: "projects", icon: WrenchIcon },
+  { key: "tickets", domain: "tickets", icon: TicketIcon },
+  { key: "people", domain: "people", icon: Users },
 ];
 
 /** The domains this deployment shows, labelled the way it names them. Hidden domains are absent. */
@@ -585,12 +587,12 @@ function formatPercent(value?: number): string | undefined {
 }
 
 const SECTION_SHEET: Record<DataroomTab, string> = {
-  customers: "Customers",
-  platform: "Platform",
-  deployments: "Deployments",
-  solutions: "Solutions",
-  implementation: "Implementation",
-  tickets: "Tickets",
+  customers: FOLDER.accounts,
+  platform: FOLDER.platform,
+  deployments: FOLDER.deliveries,
+  solutions: FOLDER.solutions,
+  implementation: FOLDER.projects,
+  tickets: FOLDER.tickets,
   people: "Internal Staff",
   interactions: "Interactions",
   "internal-staff": "Internal Staff",
@@ -609,7 +611,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
   );
   return [
     {
-      name: "Customers",
+      name: FOLDER.accounts,
       head: [
         "customer_id",
         "customer_name",
@@ -692,7 +694,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
       ]),
     },
     {
-      name: "Platform",
+      name: FOLDER.platform,
       head: [
         "customer_id",
         "tenant_id",
@@ -769,7 +771,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
       ]),
     },
     {
-      name: "Deployments",
+      name: FOLDER.deliveries,
       head: [
         "customer_id",
         "deployment_id",
@@ -884,7 +886,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
       ),
     },
     {
-      name: "Solutions",
+      name: FOLDER.solutions,
       head: [
         "solution_id",
         "customer_id",
@@ -1043,7 +1045,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
       ),
     },
     {
-      name: "Implementation",
+      name: FOLDER.projects,
       head: [
         "customer_id",
         "rollout_id",
@@ -1154,7 +1156,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
       ]),
     },
     {
-      name: "Tickets",
+      name: FOLDER.tickets,
       head: [
         "ticket_id",
         "customer_id",
@@ -1441,8 +1443,8 @@ function kindFromName(name: string): FileKind {
 
 // --- The dm.md data room: seven domains, one Master.xlsx per domain ----------
 //
-// The file tree mirrors dm.md (the canonical data-room structure): Customers,
-// Platform, Deployments, Solutions, Implementation, Tickets, People. Each
+// The file tree mirrors dm.md (the canonical data-room structure): the accounts,
+// platform, deliveries, solutions, projects, tickets and people domains. Each
 // domain root carries a Master.xlsx holding that domain's sheets (see
 // docs/data-model.md for the packaging map), surrounded by the domain's real
 // artifacts — context briefs, interaction logs, Terraform, Helm values,
@@ -1450,7 +1452,7 @@ function kindFromName(name: string): FileKind {
 
 // A derived sheet: one row per customer, a narrative summary of every
 // interaction — the "data room of the summary of all the interactions". Lives
-// in the Tickets workbook alongside the raw Interactions detail sheet.
+// in the tickets workbook alongside the raw Interactions detail sheet.
 function interactionDigest(c: Customer): {
   count: string;
   range?: string;
@@ -1531,11 +1533,11 @@ function sheetsByName(data: WorkbookData): Record<string, Sheet> {
     .filter((s) => !HIDDEN_SHEETS.has(s.name))
     .map((s) => withoutHidden(s, SHEET_HIDDEN[s.name]))
     .map((s) =>
-      s.name === "Customers"
+      s.name === FOLDER.accounts
         ? withOwnColumns(s, listedOwnFields("account"), c)
-        : s.name === "Deployments"
+        : s.name === FOLDER.deliveries
           ? withOwnColumns(s, listedOwnFields("deployments"), c.flatMap((x) => x.deployments ?? []))
-          : s.name === "Implementation"
+          : s.name === FOLDER.projects
             ? withOwnColumns(s, listedOwnFields("implementations"), c.map((x) => x.implementation))
             : s,
     );
@@ -1550,11 +1552,11 @@ function sheetsByName(data: WorkbookData): Record<string, Sheet> {
  */
 const HIDDEN = workbookHidden();
 const SHEET_HIDDEN: Record<string, ReadonlySet<string>> = {
-  Customers: HIDDEN.account,
-  Deployments: HIDDEN.deployments,
-  Implementation: HIDDEN.implementation,
+  [FOLDER.accounts]: HIDDEN.account,
+  [FOLDER.deliveries]: HIDDEN.deployments,
+  [FOLDER.projects]: HIDDEN.implementation,
 };
-const TABLE_SHEET: Partial<Record<WorkbookTable, string>> = { platform: "Platform", solutions: "Solutions", tickets: "Tickets" };
+const TABLE_SHEET: Partial<Record<WorkbookTable, string>> = { platform: FOLDER.platform, solutions: FOLDER.solutions, tickets: FOLDER.tickets };
 const HIDDEN_SHEETS = new Set([...HIDDEN.tables].map((t) => TABLE_SHEET[t]).filter((n): n is string => Boolean(n)));
 
 function withoutHidden(sheet: Sheet, hidden: ReadonlySet<string> | undefined): Sheet {
@@ -1592,12 +1594,12 @@ function withOwnColumns(sheet: Sheet, specs: CustomFieldSpec[], owners: ({ custo
  * accounts too: past the accounts' cap, the rest of the accounts' rows are not there either.
  */
 const SHEET_TABLES: Record<string, WorkbookTable[]> = {
-  Customers: ["customers"],
-  Platform: ["platform", "customers"],
-  Deployments: ["deployments", "customers"],
-  Solutions: ["solutions", "customers"],
-  Implementation: ["implementation", "customers"],
-  Tickets: ["tickets", "customers"],
+  [FOLDER.accounts]: ["customers"],
+  [FOLDER.platform]: ["platform", "customers"],
+  [FOLDER.deliveries]: ["deployments", "customers"],
+  [FOLDER.solutions]: ["solutions", "customers"],
+  [FOLDER.projects]: ["implementation", "customers"],
+  [FOLDER.tickets]: ["tickets", "customers"],
   Interactions: ["interactions", "customers"],
   "Interaction Digest": ["interactions", "customers"],
   "Internal Staff": ["internal_staff"],
@@ -1606,12 +1608,12 @@ const SHEET_TABLES: Record<string, WorkbookTable[]> = {
 
 /** Which sheets live in each workbook. Keyed on the data-room tab. */
 const WORKBOOK_SHEETS: Record<DataroomTab, string[]> = {
-  customers: ["Customers"],
-  platform: ["Platform"],
-  deployments: ["Deployments"],
-  solutions: ["Solutions"],
-  implementation: ["Implementation"],
-  tickets: ["Tickets", "Interactions", "Interaction Digest"],
+  customers: [FOLDER.accounts],
+  platform: [FOLDER.platform],
+  deployments: [FOLDER.deliveries],
+  solutions: [FOLDER.solutions],
+  implementation: [FOLDER.projects],
+  tickets: [FOLDER.tickets, "Interactions", "Interaction Digest"],
   // Personnel: OnFinance staff assignments + external customer stakeholders.
   people: ["Internal Staff", SECTION_SHEET["customer-stakeholders"]],
   // Supporting tabs, if ever opened directly, resolve to a single-sheet book.
@@ -1670,7 +1672,7 @@ function masterFile(domain: string, tab: DataroomTab): FileItem {
 
 const CUSTOMERS_DOMAIN: FolderNode = dir(
   "dom:customers",
-  "Customers",
+  FOLDER.accounts,
   [masterFile("customers", "customers")],
   [
     dir(
@@ -1694,7 +1696,7 @@ const CUSTOMERS_DOMAIN: FolderNode = dir(
 
 const PLATFORM_DOMAIN: FolderNode = dir(
   "dom:platform",
-  "Platform",
+  FOLDER.platform,
   [masterFile("platform", "platform")],
   [
     dir(
@@ -1714,7 +1716,7 @@ const PLATFORM_DOMAIN: FolderNode = dir(
 
 const DEPLOYMENTS_DOMAIN: FolderNode = dir(
   "dom:deployments",
-  "Deployments",
+  FOLDER.deliveries,
   [masterFile("deployments", "deployments")],
   [
     dir(
@@ -1748,21 +1750,21 @@ const DEPLOYMENTS_DOMAIN: FolderNode = dir(
 
 const SOLUTIONS_DOMAIN: FolderNode = dir(
   "dom:solutions",
-  "Solutions",
+  FOLDER.solutions,
   [masterFile("solutions", "solutions")],
   [],
 );
 
 const IMPLEMENTATION_DOMAIN: FolderNode = dir(
   "dom:implementation",
-  "Implementation",
+  FOLDER.projects,
   [masterFile("implementation", "implementation")],
   [],
 );
 
 const TICKETS_DOMAIN: FolderNode = dir(
   "dom:tickets",
-  "Tickets",
+  FOLDER.tickets,
   [masterFile("tickets", "tickets")],
   [
     dir("tickets/feat", "feat"),
@@ -1790,7 +1792,7 @@ const TICKETS_DOMAIN: FolderNode = dir(
 
 const PEOPLE_DOMAIN: FolderNode = dir(
   "dom:people",
-  "People",
+  FOLDER.people,
   [masterFile("person", "people")],
   [
     dir(
@@ -1827,9 +1829,10 @@ const DATA_ROOM_DOMAINS: FolderNode[] = [
   TICKETS_DOMAIN,
   PEOPLE_DOMAIN,
 ]
-  .filter((node) => domainDisplay(node.name).visible)
+  // A domain's node is NAMED by its stored folder (a live path's first segment finds it); people read its label.
+  .filter((node) => domainDisplay(domainIdOf(node.name) as DataroomDomainId).visible)
   .map((node) => {
-    const { label, description } = domainDisplay(node.name);
+    const { label, description } = domainDisplay(domainIdOf(node.name) as DataroomDomainId);
     return { ...node, label, description };
   });
 
@@ -1858,21 +1861,21 @@ const DOMAIN_MASTER_TAB: Record<string, DataroomTab> = {
   person: "people",
 };
 
-/** Domain key → the real domain name the deployment profile is keyed on. */
-const DOMAIN_KEY_NAME: Record<string, string> = {
-  customers: "Customers",
-  platform: "Platform",
-  deployments: "Deployments",
-  solutions: "Solutions",
-  implementation: "Implementation",
-  tickets: "Tickets",
-  person: "People",
+/** Domain key → the domain's id, which the deployment profile is keyed on. */
+const DOMAIN_KEY_NAME: Record<string, DataroomDomainId> = {
+  customers: "accounts",
+  platform: "platform",
+  deployments: "deliveries",
+  solutions: "solutions",
+  implementation: "projects",
+  tickets: "tickets",
+  person: "people",
 };
 
-/** A tab whose domain this deployment hides falls back to the first visible one (Customers is always visible). */
+/** A tab whose domain this deployment hides falls back to the first visible one (the accounts domain is always visible). */
 function visibleTab(tab: DataroomTab): DataroomTab {
   const domain = TAB_DOMAIN_KEY[tab];
-  if (domainDisplay(DOMAIN_KEY_NAME[domain] ?? domain).visible) return tab;
+  if (domainDisplay(DOMAIN_KEY_NAME[domain]).visible) return tab;
   return DATAROOM_SECTIONS[0]?.key ?? "customers";
 }
 
@@ -1919,8 +1922,8 @@ function mergeLiveDomains(livePaths: string[] | null): FolderNode[] {
     if (segments.length < 2) continue;
     const name = segments[segments.length - 1];
     if (name === "Master.xlsx") continue;
-    // Resolve by domain id, not display name — ids are the stable key.
-    const domain = domains.find((d) => d.id === `dom:${segments[0].toLowerCase()}`);
+    // Resolve by the stored folder (the node's name), never by the label a person reads.
+    const domain = domains.find((d) => d.name === segments[0]);
     if (!domain) continue;
     let node = domain;
     let prefix = segments[0];
@@ -1941,17 +1944,17 @@ function mergeLiveDomains(livePaths: string[] | null): FolderNode[] {
 }
 
 /**
- * The Uploads folder, built from the live data-room paths under `Uploads/` so
+ * The attached-files folder, built from the live data-room paths under it so
  * every persisted upload appears nested under its uploader's identity folder
- * (Uploads/{person_id}/file). `pending` holds just-uploaded files that may not
+ * (<uploads folder>/{person_id}/file). `pending` holds just-uploaded files that may not
  * be in the live list yet (optimistic), merged in under the same nesting.
  */
 function buildUploadsFolder(livePaths: string[] | null, pending: FileItem[]): FolderNode {
-  const root: FolderNode = { id: "uploads", name: "Uploads", folders: [], files: [] };
+  const root: FolderNode = { id: "uploads", name: FOLDER.uploads, folders: [], files: [] };
   const place = (path: string, item: FileItem) => {
     const segments = path.split("/");
     let node = root;
-    let prefix = "Uploads";
+    let prefix: string = FOLDER.uploads;
     for (const segment of segments.slice(1, -1)) {
       prefix = `${prefix}/${segment}`;
       let child = node.folders.find((f) => f.name === segment);
@@ -1963,7 +1966,7 @@ function buildUploadsFolder(livePaths: string[] | null, pending: FileItem[]): Fo
     }
     if (!node.files.some((f) => f.path === path)) node.files.push(item);
   };
-  const livedUploads = (livePaths ?? []).filter((p) => p.startsWith("Uploads/") && p.split("/").length >= 3);
+  const livedUploads = (livePaths ?? []).filter((p) => p.startsWith(`${FOLDER.uploads}/`) && p.split("/").length >= 3);
   for (const path of livedUploads) {
     const name = path.split("/").pop() as string;
     place(path, { id: path, name, kind: kindFromName(name), path, live: true });
@@ -1975,7 +1978,7 @@ function buildUploadsFolder(livePaths: string[] | null, pending: FileItem[]): Fo
   return root;
 }
 
-/** The whole data room: the seven (live-merged) domains + the Uploads folder. */
+/** The whole data room: the seven (live-merged) domains + the attached-files folder. */
 function buildDataroomRoot(domains: FolderNode[], uploads: FolderNode): FolderNode {
   return {
     id: "root",
@@ -2263,7 +2266,7 @@ export function Dataroom({
         const data = (await res.json().catch(() => ({}))) as { path?: string; name?: string; error?: string };
         if (res.ok && data.path) {
           // Optimistic: show it immediately under its identity folder; the live
-          // refetch below reconciles it to the canonical Uploads/{me}/ path.
+          // refetch below reconciles it to the canonical <uploads folder>/{me}/ path.
           const path = data.path;
           const name = data.name ?? f.name;
           setUploads((prev) => [
@@ -2947,7 +2950,7 @@ export const TOOL_META: Record<string, { color: string; synced: string[]; lastRe
   "System of record": {
     color: "#64748b",
     // What it holds, in the profile's words: the records themselves, never the name of a file.
-    synced: [W.Accounts, "People", "Workbook sheets"],
+    synced: [W.Accounts, domainDisplay("people").label, "Workbook sheets"],
     lastRefreshed: "2026-07-10 09:12",
   },
   Salesforce: {

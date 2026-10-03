@@ -1,9 +1,13 @@
 ---
 name: configure-solution
-description: Scaffold a reusable pipeline solution as a self-describing "minified solution-manager" under Solutions/{ver}/pipelines/{id}/ — its contract (run_configs + integromat schemas), its artifact (pipeline_config.json), gated by evals not PRs. Use when authoring a new pipeline solution, when someone says "configure a solution", "create a pipeline", "add a solution", or when a customer needs a pipeline instance seeded into their deployment. Optionally registers the customer's solutions row and seeds the Deployments instance from the recipe. Its sibling for agents is the configure-agents skill.
+description: Scaffold a reusable pipeline solution as a self-describing "minified solution-manager" under {folder:solutions}/{ver}/pipelines/{id}/ — its contract (run_configs + integromat schemas), its artifact (pipeline_config.json), gated by evals not PRs. Use when authoring a new pipeline solution, when someone says "configure a solution", "create a pipeline", "add a solution", or when a customer needs a pipeline instance seeded into their deployment. Optionally registers the customer's solutions row and seeds the Deployments instance from the recipe. Its sibling for agents is the configure-agents skill.
 ---
 
 # Configure solution (pipeline)
+
+> `{folder:<id>}` below is the data-room folder this deployment stores that domain under: its profile's
+> `dataroom.domains.<id>.folder` (`uploads_folder` for `{folder:uploads}`). Read the real name with
+> `node --experimental-strip-types -e 'import("./agent/lib/dataroom-folders.ts").then((m) => console.log(m.FOLDER))'`.
 
 A configured solution is a **self-contained, independently versionable, eval-gated
 unit** — a *minified solution-manager*. The key idea: the "solution-manager" is the
@@ -25,7 +29,7 @@ npm run operator:configure-solution -- --version v2.4.0 --id pl-collections \
   --use-case "Collections triage"
 ```
 Writes the contract (`run_configs.schema.json`, `integromat.schema.json`) and the
-artifact (`pipeline_config.json`) under `Solutions/v2.4.0/pipelines/pl-collections/`
+artifact (`pipeline_config.json`) under `{folder:solutions}/v2.4.0/pipelines/pl-collections/`
 (never clobbers authored files).
 
 **2. Author it.** Define `run_configs.schema.json` (the contract, bound to the
@@ -40,7 +44,7 @@ npm run operator:configure-solution -- --version v2.4.0 --id pl-collections \
   --use-case "Collections triage" --customer contoso-bank
 ```
 Upserts the `solutions` row and seeds
-`Deployments/{customer}/{ver}/platform/pipelines/{id}/pipeline_config.json` (the
+`{folder:deliveries}/{customer}/{ver}/platform/pipelines/{id}/pipeline_config.json` (the
 dm.md recipe seam — the deployment instance).
 
 **4. Gate it.**
@@ -51,8 +55,8 @@ npm run operator:validate-solution -- --version v2.4.0 --id pl-collections --str
 ## Where this reads / writes
 
 WRITE:
-- `Solutions/{ver}/pipelines/{id}/{run_configs.schema.json, integromat.schema.json, pipeline_config.json}`
-- `solutions` row + `Deployments/{customer}/{ver}/platform/pipelines/{id}/pipeline_config.json` (with `--customer`)
+- `{folder:solutions}/{ver}/pipelines/{id}/{run_configs.schema.json, integromat.schema.json, pipeline_config.json}`
+- `solutions` row + `{folder:deliveries}/{customer}/{ver}/platform/pipelines/{id}/pipeline_config.json` (with `--customer`)
 
 ## Never
 

@@ -214,7 +214,7 @@ export function PdfView({
   readonly storedSrc?: string;
   /** A PDF on someone else's https host — read through /api/ops/pdf-fetch. */
   readonly externalUrl?: string;
-  /** A logical data-room path ("Uploads/<person>/<file>.pdf") — read through
+  /** A logical data-room path ("{folder:uploads}/<person>/<file>.pdf") — read through
    *  /api/dataroom, which resolves it inside the CALLER'S workspace. */
   readonly dataroomPath?: string;
   /** Where "Open original" goes: the real address, in a new tab. */

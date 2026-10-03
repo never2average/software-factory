@@ -4,7 +4,7 @@
  *
  * The property that matters: with only profiles/00-default.json the product reads exactly as it did before
  * profiles existed (same copy, no extra prompt block), and a deployment that changes the profile gets its
- * own words while every IDENTIFIER (`list_customers`, `Customers/`) stays put.
+ * own words while every IDENTIFIER (`list_customers`, `customer_id`) stays put.
  *
  * Runs offline with plain node + assert — no database, no network. Expects the generated files to be built
  * from the default profile alone (npm run build:deployment-profile).
@@ -17,6 +17,7 @@ import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 const { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } = await import("../lib/deployment-profile.generated.ts");
 const agentSide = await import("../agent/lib/deployment-profile.generated.ts");
 const { renderDeploymentBriefing } = await import("../agent/lib/deployment-briefing.ts");
+const { FOLDER } = await import("../agent/lib/dataroom-folders.ts");
 
 // --- the default profile reproduces today's product -------------------------
 
@@ -54,9 +55,9 @@ for (const d of Object.values(DEPLOYMENT_PROFILE.dataroom.domains)) assert.equal
 const DEFAULT_BLOCK = [
   "## This workspace",
   "",
-  '- An **account** (plural: accounts) is a `customer` in the identifiers. Say "account" to people. The identifiers do not change: tools such as `list_customers` and `get_customer`, the `customer_id` field and the `Customers/` data-room folder all refer to accounts.',
-  "- A **delivery** (plural: deliveries) is a `deployment` in the identifiers: `deployments[]` on the record, files under `Deployments/`, TODO containerType `deployment`.",
-  "- A **project** (plural: projects) is an `implementation` in the identifiers: `implementation` on the record, files under `Implementation/`, TODO containerType `implementation`.",
+  `- An **account** (plural: accounts) is a \`customer\` in the identifiers. Say "account" to people. The identifiers do not change: tools such as \`list_customers\` and \`get_customer\`, the \`customer_id\` field and the \`${FOLDER.accounts}/\` data-room folder all refer to accounts.`,
+  `- A **delivery** (plural: deliveries) is a \`deployment\` in the identifiers: \`deployments[]\` on the record, files under \`${FOLDER.deliveries}/\`, TODO containerType \`deployment\`.`,
+  `- A **project** (plural: projects) is an \`implementation\` in the identifiers: \`implementation\` on the record, files under \`${FOLDER.projects}/\`, TODO containerType \`implementation\`.`,
   "- A **plan** (plural: plans) is a `rollout` in the identifiers: the `rolloutId` its `implementation` rows share.",
 ].join("\n");
 assert.equal(renderDeploymentBriefing(), DEFAULT_BLOCK, "the default deployment's block ties its record words to the identifiers");
@@ -70,14 +71,14 @@ const research = structuredClone(DEPLOYMENT_PROFILE);
 research.vocabulary.account = { singular: "company", plural: "companies" };
 research.vocabulary.member = { singular: "analyst", plural: "analysts" };
 research.vocabulary.owner = "lead analyst";
-research.dataroom.domains.Tickets.visible = false;
-research.dataroom.domains.Customers.label = "Companies";
+research.dataroom.domains.tickets.visible = false;
+research.dataroom.domains.accounts.label = "Companies";
 research.agent.briefing = "This workspace researches housing finance companies.";
 
 const block = renderDeploymentBriefing(research);
 assert.ok(block, "a changed profile renders a block");
 assert.ok(block.startsWith("## This workspace"));
-for (const word of ["company", "companies", "analyst", "analysts", "lead analyst", "Tickets", "Companies", "housing finance"]) {
+for (const word of ["company", "companies", "analyst", "analysts", "lead analyst", FOLDER.tickets, "Companies", "housing finance"]) {
   assert.ok(block.includes(word), `briefing mentions "${word}"`);
 }
 // A relabelled deployment's model is GIVEN the tools, fields and folders in its words (agent/lib/agent-vocabulary.ts),
@@ -180,10 +181,12 @@ function generate(overlay) {
 const built = generate(readFileSync(join(ROOT, "docs/examples/profile-equity-research.json"), "utf8"));
 assert.equal(built.status, 0, `the example profile validates: ${built.stderr}`);
 const example = JSON.parse(built.stdout);
-assert.deepEqual(example.dataroom.domains.Deployments, { label: "Coverage reports", visible: true, description: example.dataroom.domains.Deployments.description });
-assert.equal(example.dataroom.domains.Implementation.label, "Portfolios");
-assert.equal(example.dataroom.domains.Implementation.visible, true);
-for (const d of ["Platform", "Solutions", "Tickets"]) assert.equal(example.dataroom.domains[d].visible, false, `${d} stays hidden`);
+// A NEW deployment: it names each domain by its id and takes the default profile's stored folders.
+assert.deepEqual(example.dataroom.domains.deliveries, { folder: FOLDER.deliveries, label: "Coverage reports", visible: true, description: example.dataroom.domains.deliveries.description });
+assert.equal(example.dataroom.domains.projects.label, "Portfolios");
+assert.equal(example.dataroom.domains.projects.visible, true);
+assert.equal(example.dataroom.domains.accounts.folder, FOLDER.accounts, "relabelling a domain does not move where it is stored");
+for (const d of ["platform", "solutions", "tickets"]) assert.equal(example.dataroom.domains[d].visible, false, `${d} stays hidden`);
 
 const reports = domainView("deployments", example.domains);
 const portfolios = domainView("implementations", example.domains);

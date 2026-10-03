@@ -1,5 +1,5 @@
 // operator:validate-solution — the shared hard gate for a configured solution. Reads a
-// Solutions/{ver}/{pipelines|agents}/{id}/ instance and checks it is well-formed:
+// {folder:solutions}/{ver}/{pipelines|agents}/{id}/ instance and checks it is well-formed:
 // the contract schema parses, the artifact/recipe exists, no TODO markers remain,
 // and evals are seeded. Advisory by default; `--strict` exits non-zero on any
 // hard failure (for CI / a finish gate). Dependency-free — no ajv (package.json
@@ -9,6 +9,7 @@
 //   npm run operator:validate-solution -- --version v2.4.0 --id collections-agent --kind agent --strict
 import { dataroom, workspaceFor } from "./lib/customer.mjs";
 import { glyph, flag, hasFlag } from "./lib/operator.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 async function main() {
   const version = flag("version").trim();
@@ -19,7 +20,7 @@ async function main() {
     process.exit(1);
   }
   const sub = kind === "agent" ? "agents" : "pipelines";
-  const base = `Solutions/${version}/${sub}/${id}`;
+  const base = `${FOLDER.solutions}/${version}/${sub}/${id}`;
   const store = dataroom(workspaceFor());
   const present = await store.list(base);
   if (present.length === 0) {

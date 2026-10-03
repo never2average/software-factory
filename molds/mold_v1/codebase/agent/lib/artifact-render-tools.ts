@@ -107,7 +107,7 @@ export const renderAccountReportTool = modelFacing("render_account_report", defi
 
 export const buildWorkbookSpecTool = modelFacing("build_workbook_spec", defineTool({
   description:
-    "Build the DETERMINISTIC workbook spec(s) for a {account} per docs/data-model.md: for each <Domain>/Master.xlsx the exact sheet names, column headers, and data rows from the system of record (Tickets carries Tickets + Interactions + derived Interaction Digest; People carries Internal Staff + Customer Stakeholders). Returns JSON to serialize verbatim to .xlsx in the bash sandbox with openpyxl (one sheet per SheetSpec, columns as row 1), then publish via publish_artifact with the sandbox path. Do NOT invent or reorder columns.",
+    "Build the DETERMINISTIC workbook spec(s) for a {account} per docs/data-model.md: for each <Domain>/Master.xlsx the exact sheet names, column headers, and data rows from the system of record ({domain:tickets} carries {domain:tickets} + Interactions + derived Interaction Digest; {domain:people} carries Internal Staff + Customer Stakeholders). Returns JSON to serialize verbatim to .xlsx in the bash sandbox with openpyxl (one sheet per SheetSpec, columns as row 1), then publish via publish_artifact with the sandbox path. Do NOT invent or reorder columns.",
   inputSchema: z.object({
     customerId: z.string().min(1),
     domain: z

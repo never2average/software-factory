@@ -1,7 +1,7 @@
 /**
  * THE ROOT MIGRATION ATTRIBUTES A COMPANY'S FILES BY ITS WORKSPACES' OWN RECORDS — against a real Postgres, as app_rw.
  *
- * scripts/migrate-dataroom-root.mjs moves a `Customers/<id>/…` (or other company-scoped) object from the data room's
+ * scripts/migrate-dataroom-root.mjs moves a `{folder:accounts}/<id>/…` (or other company-scoped) object from the data room's
  * root only to the ONE workspace whose customers table holds `<id>`; held by two, or by none, it stays (ambiguous).
  * This drives its `loadCompanyOwners()` — each workspace read inside its own RLS scope, read-only — and the plan it
  * feeds, so the attribution is the database's, not a guess.
@@ -9,6 +9,7 @@
  *   ADMIN_URL=… DATABASE_URL=…app_rw… npm run test:migrate-attribution-db
  */
 import postgres from "postgres";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 const adminUrl = process.env.ADMIN_URL;
 const appUrl = process.env.DATABASE_URL;
@@ -50,16 +51,16 @@ try {
     check("a company both hold maps to both", JSON.stringify(of(`both-${stamp}`)) === JSON.stringify([A, B].sort()), of(`both-${stamp}`));
     const plan = migrate.planRootObjects(
       [
-        { pathname: `Customers/only-a-${stamp}/context.md`, size: 1 },
-        { pathname: `Customers/both-${stamp}/context.md`, size: 1 },
-        { pathname: `Deployments/only-a-${stamp}/v1/platform/organization.json`, size: 1 },
-        { pathname: `Customers/nobody-${stamp}/context.md`, size: 1 },
+        { pathname: `${FOLDER.accounts}/only-a-${stamp}/context.md`, size: 1 },
+        { pathname: `${FOLDER.accounts}/both-${stamp}/context.md`, size: 1 },
+        { pathname: `${FOLDER.deliveries}/only-a-${stamp}/v1/platform/organization.json`, size: 1 },
+        { pathname: `${FOLDER.accounts}/nobody-${stamp}/context.md`, size: 1 },
       ],
       { companyOwners: owners },
     );
     const act = (p) => plan.find((o) => o.pathname === p);
-    check("…so its files are planned into that workspace", act(`Customers/only-a-${stamp}/context.md`)?.to === `orgs/${A}/Customers/only-a-${stamp}/context.md` && act(`Deployments/only-a-${stamp}/v1/platform/organization.json`)?.to?.startsWith(`orgs/${A}/`), plan);
-    check("…and a company held by both, or by nobody, stays at the root as ambiguous", act(`Customers/both-${stamp}/context.md`)?.action === "ambiguous" && act(`Customers/nobody-${stamp}/context.md`)?.action === "ambiguous", plan);
+    check("…so its files are planned into that workspace", act(`${FOLDER.accounts}/only-a-${stamp}/context.md`)?.to === `orgs/${A}/${FOLDER.accounts}/only-a-${stamp}/context.md` && act(`${FOLDER.deliveries}/only-a-${stamp}/v1/platform/organization.json`)?.to?.startsWith(`orgs/${A}/`), plan);
+    check("…and a company held by both, or by nobody, stays at the root as ambiguous", act(`${FOLDER.accounts}/both-${stamp}/context.md`)?.action === "ambiguous" && act(`${FOLDER.accounts}/nobody-${stamp}/context.md`)?.action === "ambiguous", plan);
   }
 } finally {
   await admin`delete from customers where org_id in (${A}, ${B})`.catch(() => {});

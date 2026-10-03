@@ -1,8 +1,8 @@
 [
   {
-    "source": "^(lib/org-seed\\.ts|app/api/ops/export/route\\.ts|scripts/seed-dataroom(-blob\\.mjs|\\.ts))$",
-    "literal": "^(Customers|Deployments|Implementation|Tickets)/\\S*$",
-    "why": "A data-room path as STORED: the folder at its head and the `{customer_id}` token are storage's names (dm.md, DATAROOM_PATH_TEMPLATES), which never move. Where a person reads one, the folder shows under the domain's profile label (domainLabel / the path translation of agent/lib/agent-vocabulary.ts)."
+    "source": "^(lib/org-seed\\.ts|scripts/seed-dataroom-blob\\.mjs)$",
+    "literal": "^(\\{folder:[a-z]+\\})?/\\S*$",
+    "why": "A data-room path as STORED, below its folder: the folder at its head is never spelled (a placeholder, `{folder:accounts}`, or FOLDER.<id> interpolated before this text: agent/lib/dataroom-folders.ts), and what follows are storage's own tokens, which never move (the `{customer_id}` token of a path template, a signoff party's file name such as `customer.infra.md`). Where a person reads one, the folder shows under the domain's profile label."
   },
   {
     "source": "^app/api/ops/(orgs/\\[id\\]/health|summary)/route\\.ts$",

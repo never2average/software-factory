@@ -1,14 +1,18 @@
 ---
 name: configure-infra
-description: Scaffold a customer deployment's infrastructure substrate under Deployments/{customer}/{ver}/infrastructure/ across the eight domains (network, compute, storage, inference, agents, database, observability, autoscale) plus the 4-party signoff chain, and upsert the deployments row. Use when standing up a customer deployment's infra, when someone says "configure infra", "set up the deployment infrastructure", "scaffold the infra", or before driving the signoff chain. This is the per-deployment substrate a solution runs on — not a solution itself.
+description: Scaffold a customer deployment's infrastructure substrate under {folder:deliveries}/{customer}/{ver}/infrastructure/ across the eight domains (network, compute, storage, inference, agents, database, observability, autoscale) plus the 4-party signoff chain, and upsert the deployments row. Use when standing up a customer deployment's infra, when someone says "configure infra", "set up the deployment infrastructure", "scaffold the infra", or before driving the signoff chain. This is the per-deployment substrate a solution runs on — not a solution itself.
 ---
 
 # Configure infra
 
+> `{folder:<id>}` below is the data-room folder this deployment stores that domain under: its profile's
+> `dataroom.domains.<id>.folder` (`uploads_folder` for `{folder:uploads}`). Read the real name with
+> `node --experimental-strip-types -e 'import("./agent/lib/dataroom-folders.ts").then((m) => console.log(m.FOLDER))'`.
+
 The **per-deployment substrate** — what a configured solution runs *on*. Scaffolds
 the eight infrastructure domains under
-`Deployments/{customer}/{ver}/infrastructure/` and the 4-party signoff chain, and
-upserts the `deployments` row. Customer-scoped (unlike the shared `Platform/{ver}/`
+`{folder:deliveries}/{customer}/{ver}/infrastructure/` and the 4-party signoff chain, and
+upserts the `deployments` row. Customer-scoped (unlike the shared `{folder:platform}/{ver}/`
 architecture). See [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md) (stage 4).
 
 ## Steps
@@ -34,14 +38,14 @@ deployment is not done until all four sign.**
 
 WRITE:
 - `deployments` row (upsert by customer + deploymentId = version)
-- `Deployments/{customer}/{ver}/infrastructure/{domain}/{customizations.tf,rationale.md}` for each of the 8 domains
-- `Deployments/{customer}/{ver}/infrastructure/inference/signoff/{internal,customer.infra,customer.infosec,customer.cloudvendor}.md`
+- `{folder:deliveries}/{customer}/{ver}/infrastructure/{domain}/{customizations.tf,rationale.md}` for each of the 8 domains
+- `{folder:deliveries}/{customer}/{ver}/infrastructure/inference/signoff/{internal,customer.infra,customer.infosec,customer.cloudvendor}.md`
 
 ## Never
 
 - Never mark a deployment ready while any signoff is `PENDING`.
 - Never fabricate terraform — leave `TODO`.
-- Never put shared/reference architecture here — that's `Platform/{ver}/architecture/`
+- Never put shared/reference architecture here — that's `{folder:platform}/{ver}/architecture/`
   (configure-platform); this tree is the customer's own substrate.
 
 ## Quick reference

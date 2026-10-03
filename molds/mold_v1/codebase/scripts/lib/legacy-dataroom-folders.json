@@ -1,0 +1,11 @@
+{
+  "$comment": "THE ONE LEGACY DEFINITION: the names the data-room folders had while they were written into the code, by domain id. Nothing else in base code spells them. A deployment whose data room was filled before the folder names became a profile setting pins these in its profile (dataroom.domains.<id>.folder, dataroom.uploads_folder), and its files never move. Read by scripts/gen-deployment-profile.mjs (a profile that still names a domain by its old key is understood, and refused when it does not also say which folder its files are in), by scripts/check-dataroom-folders.mjs and the store's write guard (a data room that holds one of these folders while the profile names another is refused, never silently forked), and by the tests that prove a pinned profile stores every path exactly where it always did.",
+  "accounts": "Customers",
+  "platform": "Platform",
+  "deliveries": "Deployments",
+  "solutions": "Solutions",
+  "projects": "Implementation",
+  "tickets": "Tickets",
+  "people": "People",
+  "uploads": "Uploads"
+}

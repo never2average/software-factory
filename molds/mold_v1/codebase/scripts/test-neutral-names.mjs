@@ -6,7 +6,11 @@
  * (customer, deployment, implementation, rollout; scripts/lib/record-words.mjs):
  * prose in a prompt, a string literal, JSX text or a JSON value is caught; an
  * identifier, a path, a code span, a quoted value, a placeholder or a listed
- * name is not; and the per-file ceilings ratchet both ways.
+ * name is not; and the per-file ceilings ratchet both ways. And the same for the
+ * data-room folder names (scripts/lib/stored-folders.mjs): a path that starts
+ * with one, in code or in a comment, and a value that is exactly one, are caught
+ * in a file with no ceiling; a placeholder, FOLDER.<id> and the one legacy
+ * definition are not.
  *
  * A gate whose failing cases are never exercised quietly stops working, so each
  * kind of offender is PLANTED in a throwaway tree (no git, so the plain walk is
@@ -25,6 +29,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { occurrencesIn } from "./lib/neutral-names.mjs";
 import { proseRecordWords, recordWordsInFile } from "./lib/record-words.mjs";
+import { legacyFolders } from "./lib/profile-folders.mjs";
+import { storedFolderNames, storedFoldersInFile } from "./lib/stored-folders.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const CHECK = join(ROOT, "scripts/check-neutral-names.mjs");
@@ -60,14 +66,32 @@ const prose = (s, n = new Set(["customer-context", "deployment"])) => proseRecor
 check("a record word in a sentence is prose, in any case and number", prose("Each Customer has deployments; one implementation per rollout.").join() === "Customer,deployments,implementation,rollout");
 check("a compound is prose", prose("customer-facing, per-customer, the customer's own").length === 3);
 check("identifiers are not prose", prose("customer_id customerId list_customers deploymentId implementationStage rolloutId CUSTOMER_ID").length === 0);
-check("paths, routes, scopes, flags and query values are not prose", prose("Customers/acme /api/ops/customers customer:acme customer:{id} --customer ?tab=deployments record.customer customer.name deployments[]").length === 0);
+check("paths, routes, scopes, flags and query values are not prose", prose("records/customers/acme /api/ops/customers customer:acme customer:{id} --customer ?tab=deployments record.customer customer.name deployments[]").length === 0);
 check("code spans and quoted values are not prose", prose("set `customer` or 'deployment' or \"rollout\"; ```\nkey: `implementation`\n```").length === 0);
 check("placeholders are not prose", prose("{account} {customer} {customer_id} ${customer} <customer>").length === 0);
 check("a specialist's name is a name: hyphenated anywhere, a single word only in bold", prose("ask customer-context, or **deployment**").length === 0 && prose("ask deployment").length === 1);
-check("a data-room domain's stored name inside a sentence is the folder", prose("across Customers, Platform, Deployments and Implementation").length === 0);
-check("…and at the start of a sentence it is the word", prose("Customers are listed first.").join() === "Customers");
-check("a wrapped line is not a new sentence", prose("the seven domains (Platform,\nDeployments, Solutions)").length === 0);
-check("one token is a key or a value; a capitalised record word alone is a label", prose("customers").length === 0 && prose("deployment").length === 0 && prose("Rollouts").length === 1 && prose("Customers").length === 0);
+// The names the data-room folders once had (read from their one definition, never written here): three of them
+// are record words. A domain is written as a placeholder now, so such a word in a sentence is the word.
+const OLD = legacyFolders(ROOT);
+check("a data-room domain's former folder name in a sentence is a record word like any other", prose(`across ${OLD.accounts}, ${OLD.platform}, ${OLD.deliveries} and ${OLD.projects}`).join() === [OLD.accounts, OLD.deliveries, OLD.projects].join());
+check("…and so is one standing alone as a label", prose(OLD.accounts).length === 1 && prose(OLD.projects).length === 1);
+check("a domain written as a placeholder is not prose", prose("across {domain:accounts} and {domain:deliveries}; read {folder:projects}/{customer_id}/x").length === 0);
+check("one token is a key or a value; a capitalised record word alone is a label", prose("customers").length === 0 && prose("deployment").length === 0 && prose("Rollouts").length === 1);
+
+/* 1c. The stored-folder matcher: a path head anywhere, an exact value in a literal. */
+{
+  const names = ["Ledger", "Oldbooks", "Inbox"];
+  const found = (path, text, opt) => storedFoldersInFile(path, text, names, opt).map((h) => `${h.kind}:${h.name}`).join();
+  check("a path that starts with a folder name is found, in a string and in a comment", found("src/a.ts", "// reads Ledger/{id}/x.md\nconst p = `Ledger/${id}/x.md`;\n") === "path:Ledger,path:Ledger");
+  check("…deeper in a longer path too", found("src/a.ts", 'const p = "orgs/a/Oldbooks/acme/context.md";\n') === "path:Oldbooks");
+  check("a value that is exactly a folder name is found", found("src/a.ts", 'store.list("Ledger");\n') === "value:Ledger");
+  check("…and in a JSON value, never in a key", found("data/x.json", '{"Ledger": {"sheet": "Ledger", "path": "Inbox/a/b.pdf"}}\n') === "path:Inbox,value:Ledger");
+  check("a placeholder, an interpolation and an identifier are not a name", found("src/a.ts", "const p = `${FOLDER.accounts}/x`; const t = '{folder:accounts}/x and {domain:accounts}'; const LedgerView = 1; const u = 'my.Ledger/x'; const k = 'SubLedger/x';\n") === "");
+  check("the word in a sentence is not a folder", found("src/a.ts", 'const t = "The Ledger is closed and the Inbox is empty";\n') === "");
+  check("a test's strings are read for path heads only", found("src/a.test.ts", 'eq(label, "Ledger"); read("Ledger/x");\n', { values: false }) === "path:Ledger");
+  const real = storedFolderNames(ROOT);
+  check("the names are read from the one legacy definition and the default profile, and from nowhere else", Object.values(OLD).every((n) => real.includes(n)) && real.length >= Object.keys(OLD).length);
+}
 check("a source file is read for its texts only", recordWordsInFile("x.ts", '// customer\nconst customer = "a customer";\n').length === 1);
 
 /* 2. The gate, against a planted tree. -------------------------------------------- */
@@ -95,8 +119,18 @@ const baseAllow = () => ({
     names: { "customer-context": "a specialist's directory name", deployment: "a specialist's directory name", "Waiting on Customer": "a stored enum value" },
     ceilings: {},
   },
+  stored_folders: {
+    scan: { "src/**": "source", "tests/**": "tests", "prompt.md": "a prompt", "data/**": "fixtures" },
+    values_in: { "src/**": "source", "data/**": "fixtures" },
+    skip: { "src/**/*.generated.ts": "derived", "scripts/lib/legacy-dataroom-folders.json": "the one legacy definition" },
+    ceilings: {},
+  },
 });
 const clean = {
+  // The planted tree's own folder names: a former one and the default profile's. Made up, so that no real one is
+  // written in this file.
+  "scripts/lib/legacy-dataroom-folders.json": '{"$comment": "the former names", "accounts": "Oldbooks", "uploads": "Inbox"}\n',
+  "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}}\n',
   "src/a.ts": `select ${w}_owner from customers; // the contract, anywhere\nconst owner = 1;\n`,
   "prompt.md": `You help an ${U} and their ${U} owner.\n`,
   "history/0001.json": `{"${w}Thing": "${U}_OLD"}\n`,
@@ -136,7 +170,7 @@ const cases = [
     {
       "src/b.ts":
         '// the customer of a deployment\nimport x from "./customer";\nconst k = "customer";\nconst q = sql`select * from customers where rollout = 1`;\n' +
-        "export const m = \"Read customer_id and customerId from Customers/acme with list_customers; `customer` is 'deployment' in deployments[]; customer:acme; --customer <id>; {account} {customer_id} ${customer}; ask customer-context or **deployment**; status Waiting on Customer; across Customers, Deployments and Implementation\";\n",
+        "export const m = \"Read customer_id and customerId from records/customers/acme with list_customers; `customer` is 'deployment' in deployments[]; customer:acme; --customer <id>; {account} {customer_id} ${customer}; ask customer-context or **deployment**; status Waiting on Customer; across {domain:accounts}, {domain:deliveries} and {domain:projects}\";\n",
       "src/c.generated.ts": 'export const m = "every customer";\n',
     },
     null,
@@ -150,6 +184,32 @@ const cases = [
   ["a ceiling group with no reason is refused", {}, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { files: { "prompt.md": 1 } } } } }), 1, /needs a "why" and "files"/],
   ["an allow-list with no record_words section is refused, not treated as nothing to check", {}, (a) => ({ ...a, record_words: undefined }), 1, /has no "record_words" section/],
   ["an empty scan list is refused", {}, (a) => ({ ...a, record_words: { ...a.record_words, scan: {} } }), 1, /scan parsed as empty/],
+
+  // The data-room folder names: the default profile's and the former ones, spelled nowhere in base code.
+  ["a path built on the default profile's folder name fails", { "src/b.ts": "export const p = (id) => `Ledger/${id}/context.md`;\n" }, null, 1, /src\/b\.ts: 1 stored folder name\(s\) spelled in a file with no ceiling \(1: "Ledger\/"/],
+  ["a path built on a former folder name fails", { "src/b.ts": 'export const p = "Oldbooks/acme/context.md";\n' }, null, 1, /src\/b\.ts: 1 stored folder name\(s\) spelled in a file with no ceiling \(1: "Oldbooks\/"/],
+  ["a path in a comment fails: the next edit copies it", { "src/b.ts": "// writes Ledger/{id}/notes.md\nexport {};\n" }, null, 1, /src\/b\.ts: 1 stored folder name/],
+  ["a path in a prompt fails", { "prompt.md": `You help an ${U} and their ${U} owner. Read Inbox/{person_id}/ first.\n` }, null, 1, /prompt\.md: 1 stored folder name/],
+  ["a value that is exactly a folder name fails in code that ships", { "src/b.ts": 'export const all = store.list("Ledger");\n' }, null, 1, /src\/b\.ts: 1 stored folder name\(s\) spelled in a file with no ceiling \(1: "Ledger" in/],
+  ["a fixture's path fails; its placeholder does not", { "data/x.json": '{"path": "Ledger/a/context.md", "other": "{folder:accounts}/a/context.md"}\n' }, null, 1, /data\/x\.json: 1 stored folder name/],
+  ["a test may compare a label with the word, and may not hardcode a path", { "tests/a.ts": 'eq(label, "Ledger");\nread("Ledger/a/x.md");\n' }, null, 1, /tests\/a\.ts: 1 stored folder name\(s\) spelled in a file with no ceiling \(2: "Ledger\/"/],
+  [
+    "FOLDER.<id>, a placeholder, the word in a sentence, a generated file and the legacy definition itself are not spellings",
+    {
+      "src/b.ts": "import { FOLDER } from './folders';\nexport const p = (id) => `${FOLDER.accounts}/${id}/context.md`;\nexport const t = 'Read {folder:accounts}/{customer_id}/context.md; the Ledger is shared';\n",
+      "src/c.generated.ts": 'export const folders = { accounts: "Ledger" }; export const p = "Ledger/x";\n',
+    },
+    null,
+    0,
+    /stored folder names \(3 known: the former ones and the default profile's\) spelled in base code: 0 under 0 file ceiling/,
+  ],
+  ["a folder name over its ceiling fails", { "src/b.ts": 'export const a = "Ledger/x"; export const b = "Ledger/y";\n' }, (a) => ({ ...a, stored_folders: { ...a.stored_folders, ceilings: { later: { why: "another PR", files: { "src/b.ts": 1 } } } } }), 1, /src\/b\.ts: 2 stored folder name\(s\) spelled, over its ceiling of 1/],
+  ["a folder name under its ceiling passes", { "src/b.ts": 'export const a = "Ledger/x";\n' }, (a) => ({ ...a, stored_folders: { ...a.stored_folders, ceilings: { later: { why: "another PR", files: { "src/b.ts": 1 } } } } }), 0, /spelled in base code: 1 under 1 file ceiling/],
+  ["fewer than the ceiling fails, naming the new ceiling", { "src/b.ts": 'export const a = "Ledger/x";\n' }, (a) => ({ ...a, stored_folders: { ...a.stored_folders, ceilings: { later: { why: "another PR", files: { "src/b.ts": 2 } } } } }), 1, /under its ceiling of 2: lower stored_folders\.ceilings\["later"\]\.files\["src\/b\.ts"\] to 1/],
+  ["a ceiling on a file that spells none fails", {}, (a) => ({ ...a, stored_folders: { ...a.stored_folders, ceilings: { later: { why: "another PR", files: { "src/b.ts": 1 } } } } }), 1, /src\/b\.ts: has a stored-folder ceiling but spells none now/],
+  ["a ceiling group with no reason is refused", {}, (a) => ({ ...a, stored_folders: { ...a.stored_folders, ceilings: { later: { files: { "src/b.ts": 1 } } } } }), 1, /stored_folders\.ceilings\["later"\] needs a "why" and "files"/],
+  ["an allow-list with no stored_folders section is refused, not treated as nothing to check", {}, (a) => ({ ...a, stored_folders: undefined }), 1, /has no "stored_folders" section/],
+  ["an empty scan list is refused", {}, (a) => ({ ...a, stored_folders: { ...a.stored_folders, scan: {} } }), 1, /stored_folders\.scan parsed as empty/],
 ];
 for (const [name, plant, editAllow, status, pattern] of cases) {
   const allow = editAllow ? editAllow(baseAllow()) : baseAllow();
@@ -167,4 +227,4 @@ const real = spawnSync(process.execPath, [CHECK], { cwd: ROOT, encoding: "utf8" 
 check("this repository passes its own list", real.status === 0, `${real.stdout}${real.stderr}`.trim().split("\n").slice(0, 6).join(" | "));
 
 assert.equal(failures, 0, `${failures} neutral-names check(s) failed`);
-console.log("\ntest-neutral-names: every kind of new occurrence is caught (the role word, and the record words as prose); every declared allowance holds");
+console.log("\ntest-neutral-names: every kind of new occurrence is caught (the role word, the record words as prose, a data-room folder name); every declared allowance holds");

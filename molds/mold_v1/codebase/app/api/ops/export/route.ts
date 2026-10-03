@@ -14,6 +14,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isSafeDataroomPath, parseJsonlRecords, readDataroomFile } from "@/lib/dataroom-blob";
 import { W } from "@/lib/ui-words";
+import { FOLDER } from "@/agent/lib/dataroom-folders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ type Bundle = {
 /** Read a customer's data-room context: context.md prose + a little structured
  *  context (personas, latest interactions, SLA) when present. Best-effort — a
  *  missing file just yields null. In the CALLER's workspace's data room
- *  (dataroom/orgs/<org>/Customers/<id>/…): it read the default workspace's for
+ *  (dataroom/orgs/<org>/<the accounts folder>/<id>/…): it read the default workspace's for
  *  every caller, which with the same company id in two workspaces (mold_v1-118)
  *  handed one workspace's files to the other. */
 async function readCustomerContext(
@@ -48,7 +49,7 @@ async function readCustomerContext(
   customerId: string | null,
 ): Promise<{ context: string | null; files: Record<string, unknown> }> {
   if (!customerId) return { context: null, files: {} };
-  const base = `Customers/${customerId}`;
+  const base = `${FOLDER.accounts}/${customerId}`;
   const files: Record<string, unknown> = {};
   const read = async (rel: string) => {
     const path = `${base}/${rel}`;

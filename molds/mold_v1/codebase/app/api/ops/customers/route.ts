@@ -190,7 +190,7 @@ const upsertCustomerSchema = z.object({
     .string()
     .min(1)
     .max(64)
-    // The id shows up in data-room paths (Customers/<id>/…) which have their own
+    // The id shows up in data-room paths (<the accounts folder>/<id>/…) which have their own
     // safe-segment rule, so keep it to a slug and the two can never disagree.
     .regex(/^[a-z0-9][a-z0-9-]*$/, "Use a lowercase slug, e.g. 'northwind-capital'."),
   customerName: z.string().min(1).max(200),

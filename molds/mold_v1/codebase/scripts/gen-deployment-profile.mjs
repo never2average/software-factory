@@ -19,7 +19,7 @@ function merge(base, over, path, shape) {
     if (k === "$comment") continue;
     const here = path ? `${path}.${k}` : k;
     // dataroom.domains keys and free-form maps aside, a key the default does not have is a typo, not an extension.
-    if (shape && !(k in shape) && !FREE.some((f) => path === f) && !FIELD_MAP.test(path) && !(k === "description" && path.startsWith("dataroom.domains."))) fail(`${here}: unknown key (not in profiles/00-default.json)`);
+    if (shape && !(k in shape) && !FREE.some((f) => path === f) && !FIELD_MAP.test(path) && !((k === "description" || k === "label") && path.startsWith("dataroom.domains."))) fail(`${here}: unknown key (not in profiles/00-default.json)`);
     out[k] = isObj(v) && isObj(base[k]) ? merge(base[k], v, here, shape?.[k]) : v;
   }
   return out;
@@ -34,6 +34,36 @@ function fail(msg) { console.error(`profiles/${current}: ${msg}`); process.exit(
 
 const files = readdirSync(DIR).filter((f) => /^\d{2}-[a-z0-9-]+\.json$/.test(f)).sort();
 if (files[0] !== "00-default.json") { console.error("profiles/00-default.json is missing"); process.exit(1); }
+// --- the data-room domains: an id, the folder its files are STORED under, the label people read ------------------
+// The ids are what code and profiles call a domain. The folder is the profile's (dataroom.domains.<id>.folder), so
+// base code spells no stored name; the names the folders had while they WERE in the code are in one place,
+// scripts/lib/legacy-dataroom-folders.json, and a profile written then (keyed by them) is still understood.
+const DOMAINS = ["accounts", "platform", "deliveries", "solutions", "projects", "tickets", "people"];
+const LEGACY_FOLDERS = uncomment(JSON.parse(readFileSync(join(ROOT, "scripts/lib/legacy-dataroom-folders.json"), "utf8")));
+for (const id of [...DOMAINS, "uploads"]) if (typeof LEGACY_FOLDERS[id] !== "string") { console.error(`scripts/lib/legacy-dataroom-folders.json: no legacy folder for "${id}"`); process.exit(1); }
+const LEGACY_KEY = new Map(DOMAINS.map((id) => [LEGACY_FOLDERS[id], id]));
+/** domain id -> the profile file and the old key it named the domain by. */
+const namedByLegacyKey = new Map();
+/** Domain ids (and "uploads") whose stored folder a profile other than the default states. */
+const folderStated = new Set();
+/** A profile's dataroom.domains with every old key (the folder's former name) read as the domain's id. */
+function readDomains(doc, file) {
+  const domains = doc.dataroom?.domains;
+  if (file !== "00-default.json" && doc.dataroom && "uploads_folder" in doc.dataroom) folderStated.add("uploads");
+  if (!isObj(domains)) return;
+  for (const key of Object.keys(domains)) {
+    const id = DOMAINS.includes(key) ? key : LEGACY_KEY.get(key);
+    if (!id) continue; // refused below, with the list of domains
+    if (id !== key) {
+      if (file === "00-default.json") fail(`dataroom.domains.${key}: the default profile names a domain by its id ("${id}")`);
+      if (id in domains) fail(`dataroom.domains.${key} and dataroom.domains.${id} are the same domain ("${key}" is its former name). Keep one entry, under "${id}".`);
+      domains[id] = domains[key];
+      delete domains[key];
+      if (!namedByLegacyKey.has(id)) namedByLegacyKey.set(id, { file, key });
+    }
+    if (file !== "00-default.json" && isObj(domains[id]) && "folder" in domains[id]) folderStated.add(id);
+  }
+}
 let profile = {}; let shape = null; let defaults = null;
 for (const f of files) {
   current = f;
@@ -41,21 +71,58 @@ for (const f of files) {
   try { doc = JSON.parse(readFileSync(join(DIR, f), "utf8")); } catch (e) { fail(`not valid JSON: ${e.message}`); }
   if (!isObj(doc)) fail("must be a JSON object");
   doc = uncomment(doc);
+  readDomains(doc, f);
   profile = shape ? merge(profile, doc, "", shape) : merge({}, doc, "", null);
   if (!shape) { shape = profile; defaults = structuredClone(profile); }
 }
 
 // What the rest of the code relies on. Fail the build, never the page.
 current = files.at(-1);
-const DOMAINS = ["Customers", "Platform", "Deployments", "Solutions", "Implementation", "Tickets", "People"];
-for (const d of Object.keys(profile.dataroom.domains)) if (!DOMAINS.includes(d)) fail(`dataroom.domains.${d}: not a data-room domain (${DOMAINS.join(", ")}). A profile relabels or hides domains; it cannot add one.`);
+for (const d of Object.keys(profile.dataroom.domains)) if (!DOMAINS.includes(d)) fail(`dataroom.domains.${d}: not a data-room domain (${DOMAINS.join(", ")}). A profile relabels or hides domains, and says where each is stored; it cannot add one.`);
+// A stored folder is one path segment a file system and a blob key both take, and never a name the store itself uses.
+const FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const RESERVED_FOLDERS = ["orgs", "_versions"];
+const checkFolder = (at, name) => {
+  if (typeof name !== "string" || !FOLDER_NAME.test(name) || name.includes("..")) fail(`${at}: ${JSON.stringify(name)} is not a folder name. Use letters, digits, ".", "_" or "-", starting with a letter or a digit (for example "Accounts").`);
+  if (RESERVED_FOLDERS.includes(name) || /\.[A-Za-z0-9]+$/.test(name)) fail(`${at}: "${name}" is a name the data room keeps for itself (or reads as a file). Pick another folder name.`);
+};
 for (const d of DOMAINS) {
-  const v = (profile.dataroom.domains[d] ??= { label: d, visible: true });
-  if (typeof v.label !== "string" || !v.label.trim()) v.label = d;
+  const v = profile.dataroom.domains[d];
+  if (!isObj(v)) fail(`dataroom.domains.${d} must be an object with a "folder"`);
+  for (const k of Object.keys(v)) if (!["folder", "label", "visible", "description"].includes(k)) fail(`dataroom.domains.${d}.${k}: unknown key (a domain takes folder, label, visible, description)`);
+  checkFolder(`dataroom.domains.${d}.folder`, v.folder);
+  // No label of its own: people read the folder's name.
+  if (typeof v.label !== "string" || !v.label.trim()) v.label = v.folder;
   if (typeof v.visible !== "boolean") v.visible = true;
   if ("description" in v && (typeof v.description !== "string" || !v.description.trim())) delete v.description;
 }
-if (!profile.dataroom.domains.Customers.visible) fail("dataroom.domains.Customers cannot be hidden: every record hangs off it");
+checkFolder("dataroom.uploads_folder", profile.dataroom.uploads_folder);
+{
+  const seen = new Map();
+  for (const [at, name] of [...DOMAINS.map((d) => [`dataroom.domains.${d}.folder`, profile.dataroom.domains[d].folder]), ["dataroom.uploads_folder", profile.dataroom.uploads_folder]]) {
+    const other = seen.get(name.toLowerCase());
+    if (other) fail(`${at}: "${name}" is also ${other}. Two domains cannot be stored in one folder.`);
+    seen.set(name.toLowerCase(), at);
+  }
+}
+// THE SAFETY NET for a deployment that already holds files. A profile that names a domain by its former key was
+// written when the folder had that name, so its data room is, as far as anyone can tell from here, stored under it.
+// Building it with another folder would leave those files behind and write new ones beside them. Refused, with the
+// line to add: nothing is ever moved or guessed.
+for (const [id, { file, key }] of namedByLegacyKey) {
+  const folder = profile.dataroom.domains[id].folder;
+  if (folderStated.has(id) || folder === LEGACY_FOLDERS[id]) continue;
+  current = file;
+  fail(
+    `dataroom.domains.${key}: this profile calls the domain by the name its folder used to have. That folder name is now a setting, ` +
+      `and without one this deployment would store the domain under "${folder}/": files already under "${key}/" would be left behind ` +
+      `and new ones written beside them. Nothing was built. If this deployment's data room already has a "${key}/" folder, add ` +
+      `"folder": "${key}" to that entry (or, in any profile file: {"dataroom": {"domains": {"${id}": {"folder": "${key}"}}}}); ` +
+      `its files stay exactly where they are. If it has no files yet, add "folder": "${folder}" to say so.`,
+  );
+}
+current = files.at(-1);
+if (!profile.dataroom.domains.accounts.visible) fail("dataroom.domains.accounts cannot be hidden: every record hangs off it");
 if (!Array.isArray(profile.chat.hero_lines) || !profile.chat.hero_lines.length || profile.chat.hero_lines.some((l) => typeof l !== "string" || !l.trim())) fail("chat.hero_lines must be a non-empty list of strings");
 if (typeof profile.chat.user_messages.collapse !== "boolean") fail("chat.user_messages.collapse must be true or false");
 if (!Number.isInteger(profile.chat.user_messages.collapsed_lines) || profile.chat.user_messages.collapsed_lines < 2 || profile.chat.user_messages.collapsed_lines > 40) fail("chat.user_messages.collapsed_lines must be a whole number from 2 to 40");
@@ -65,7 +132,8 @@ if (profile.dataroom.seed !== null) {
   if (!Array.isArray(profile.dataroom.seed)) fail("dataroom.seed must be null (the built-in starter tree) or a list of { path, content }");
   for (const s of profile.dataroom.seed) {
     if (typeof s?.path !== "string" || typeof s?.content !== "string" || s.path.includes("..") || s.path.startsWith("/")) fail(`dataroom.seed entry ${JSON.stringify(s?.path)}: needs a relative "path" and a "content" string`);
-    if (s.path !== "README.md" && !DOMAINS.concat("Uploads").includes(s.path.split("/")[0])) fail(`dataroom.seed path "${s.path}" does not start with a data-room domain`);
+    const roots = [...DOMAINS.map((d) => profile.dataroom.domains[d].folder), profile.dataroom.uploads_folder];
+    if (s.path !== "README.md" && !roots.includes(s.path.split("/")[0])) fail(`dataroom.seed path "${s.path}" does not start with one of this profile's data-room folders (${roots.join(", ")})`);
   }
 }
 // --- domains: the two record areas a deployment may redefine ---------------------------------------------------
@@ -257,21 +325,22 @@ for (const [i, key] of profile.specialists.exclude.entries()) {
 if (new Set(profile.specialists.exclude).size !== profile.specialists.exclude.length) fail("specialists.exclude lists a subagent twice");
 
 // --- the data-room folders the MODEL reads: a relabelled domain's label as a folder name (agent/lib/agent-vocabulary.ts)
-// "Coverage reports" is read and written as `Coverage-reports/` and stored as `Deployments/`. Two domains must not
-// meet on one folder name, and none may take a stored name another domain already has.
+// "Coverage reports" is read and written as `Coverage-reports/` and stored under the domain's own folder. Two
+// domains must not meet on one folder name, and none may take a stored name another domain already has.
 {
   const folderNameFor = (label) => label.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._-]/g, "").replace(/-+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+  const storedOf = (d) => profile.dataroom.domains[d].folder;
   const seen = new Map();
   for (const d of DOMAINS) {
     const label = profile.dataroom.domains[d].label;
-    const folder = label === d ? d : folderNameFor(label);
+    const folder = label === storedOf(d) ? storedOf(d) : folderNameFor(label);
     if (!folder) fail(`dataroom.domains.${d}.label: "${label}" leaves no letters or digits to name its folder`);
     const other = seen.get(folder.toLowerCase());
     if (other) fail(`dataroom.domains.${d}.label: "${label}" would be read as the folder "${folder}/", and so would ${other}. Pick a label that names a different folder.`);
-    const stored = folder !== d && DOMAINS.find((o) => o !== d && o.toLowerCase() === folder.toLowerCase());
+    const stored = folder !== storedOf(d) && DOMAINS.find((o) => o !== d && storedOf(o).toLowerCase() === folder.toLowerCase());
     if (stored) fail(`dataroom.domains.${d}.label: "${label}" would be read as the folder "${folder}/", which is where ${stored} is stored. Pick a label that names a different folder.`);
     seen.set(folder.toLowerCase(), d);
-    if (["Uploads", "orgs"].includes(folder)) fail(`dataroom.domains.${d}.label: "${label}" would be read as "${folder}/", a folder the data room already has`);
+    if ([profile.dataroom.uploads_folder, ...RESERVED_FOLDERS].some((r) => r.toLowerCase() === folder.toLowerCase())) fail(`dataroom.domains.${d}.label: "${label}" would be read as "${folder}/", a folder the data room already has`);
   }
 }
 
@@ -307,7 +376,13 @@ export interface DeploymentProfile {
   };
   dataroom: {
     root_label: string;
-    domains: Record<string, { label: string; visible: boolean; description?: string }>;
+    /**
+     * By domain id. \`folder\`: the name the domain's files are STORED under (the first segment of every path in
+     * it). \`label\`: what people and the model read (the folder's name when the profile gives none).
+     */
+    domains: Record<DataroomDomainId, { folder: string; label: string; visible: boolean; description?: string }>;
+    /** The folder files a person attaches are stored under. */
+    uploads_folder: string;
     /** null = the built-in starter tree; otherwise the files a new workspace is seeded with. */
     seed: { path: string; content: string }[] | null;
   };
@@ -328,6 +403,10 @@ export interface DeploymentProfile {
    */
   account_fields: { hidden: string[]; custom_fields: CustomFieldSpec[] };
 }
+
+/** The data-room domains, by the id code and profiles call them. Their stored folder names are the profile's. */
+export type DataroomDomainId = ${DOMAINS.map((d) => JSON.stringify(d)).join(" | ")};
+export const DATAROOM_DOMAIN_IDS: readonly DataroomDomainId[] = ${JSON.stringify(DOMAINS)};
 
 export interface DomainFieldSpec {
   label?: string;
@@ -393,6 +472,23 @@ export function fillProfileText(text: string, slots: Record<string, string | num
 }
 `;
 if (!CHECK_ONLY) for (const target of ["lib/deployment-profile.generated.ts", "agent/lib/deployment-profile.generated.ts"]) writeFileSync(join(ROOT, target), body);
+// The former folder names as a module the SERVER can import (the store's write guard). Kept out of the profile
+// module on purpose: that one is bundled for the browser, and no page has a use for them.
+if (!CHECK_ONLY) {
+  writeFileSync(
+    join(ROOT, "agent/lib/legacy-dataroom-folders.generated.ts"),
+    `// AUTO-GENERATED by scripts/gen-deployment-profile.mjs from scripts/lib/legacy-dataroom-folders.json — do not edit by hand.
+import type { DataroomDomainId } from "./deployment-profile.generated.ts";
+
+/**
+ * The names the data-room folders had while they were written into the code, by domain id. A data room that holds
+ * one of these while the profile stores that domain under another name was filled before the profile said where:
+ * it is refused (agent/lib/dataroom-folders.ts), never silently forked.
+ */
+export const LEGACY_DATAROOM_FOLDERS: Record<DataroomDomainId | "uploads", string> = ${JSON.stringify(Object.fromEntries([...DOMAINS, "uploads"].map((id) => [id, LEGACY_FOLDERS[id]])))};
+`,
+  );
+}
 
 /**
  * specialists.exclude is a LIST, honoured where things are generated and built — nothing is moved:

@@ -20,9 +20,9 @@ and Slack, and write structured updates back.
 ## Data room
 
 The dm.md data room has seven domains. Your writes mirror to
-`Customers/{customer_id}/interactions.jsonl` and
-`Customers/{customer_id}/context.md`, and person identity to
-`People/{person_id}/identity.json`. Join people through `customer_id`, never by
+`{folder:accounts}/{customer_id}/interactions.jsonl` and
+`{folder:accounts}/{customer_id}/context.md`, and person identity to
+`{folder:people}/{person_id}/identity.json`. Join people through `customer_id`, never by
 fuzzy name matching.
 
 ## Workspace boundary

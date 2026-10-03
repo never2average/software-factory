@@ -332,7 +332,7 @@
       "new-customer": "npm script and operator tool name (operator:new-customer), a contract (scripts/test-operator-tooling.mjs)"
     },
     "ceilings": {
-      "$comment": "Per file, the exact count of record words written as prose today, grouped by why they remain. More fails; fewer fails with the number to lower it to; a ceiling on a file that carries none fails. The agent side (prompts, tool and parameter descriptions, messages, the library workflows, the base skill, the default profile, the operator tooling) carries none: PR 7a.",
+      "$comment": "Per file, the exact count of record words written as prose today, grouped by why they remain. More fails; fewer fails with the number to lower it to; a ceiling on a file that carries none fails. The agent side (prompts, tool and parameter descriptions, messages, the library workflows, the base skill, the default profile, the operator tooling) carries none: PR 7a. A data-room domain's name is no exception any more (mold_v1-148): its folder is the deployment profile's, base text writes it as a placeholder ({domain:accounts}), and a capitalised record word in a sentence is counted like any other.",
       "stored": {
         "why": "A stored enum value that is the record word itself (`blockerOwner: \"Customer\"`, a ticket's waiting party). Rows are never rewritten here: changing a stored value is a data migration. A relabelling profile's reader gets the profile's label for it (domains.<area>.fields.<key>.options).",
         "files": {
@@ -347,13 +347,79 @@
       },
       "seeders": {
         "why": "The seeders (scripts/seed*): the sample data room and demo database they write. PR 7b of mold_v1-103 owns these; sample CONTENT (a fictional account's notes) is data and may stay under its ceiling, the seeders' own labels and messages move to the profile's words.",
+        "files": {}
+      },
+      "third_party": {
+        "why": "Another product's own word for what it syncs, on that product's connector card: the Vercel card lists Vercel's \"Deployments\" beside its build logs and regions. It names the third party's builds, not this product's record area, and is the same under every profile. Counted since a data-room domain's former folder name stopped being an exception (mold_v1-148): before that the word was passed over as \"a stored folder name\".",
         "files": {
+          "app/_components/dataroom.tsx": 1,
+          "scripts/seed-ops.mjs": 1
+        }
+      }
+    }
+  },
+  "stored_folders": {
+    "$comment": "The data-room folder names (the names the folders had while they were written into the code, scripts/lib/legacy-dataroom-folders.json, and the default profile's) spelled in base code: as the head of a path anywhere in a file, comments included, or as a string that is exactly a name. Base code builds a path from FOLDER.<id> (agent/lib/dataroom-folders.ts) and base text writes {folder:<id>} or {domain:<id>}, so the names are the deployment profile's and a deployment that already holds files keeps them by pinning. `node scripts/check-neutral-names.mjs --folders --lines` lists what is left.",
+    "scan": {
+      "$comment": "Globs of the files read: everything that runs, ships or is handed to a reader, and the tests and checks that exercise it.",
+      "agent/**": "the agent: tools, stores, prompts, skills and sandbox files",
+      "app/**": "the web app and its API routes",
+      "components/**": "shared UI components",
+      "lib/**": "server and client libraries",
+      "services/**": "the task-workflow service",
+      "skills/**": "the base skill a coding assistant installs",
+      "setup/**": "the package a coding agent installs: its tools and hosts",
+      "scripts/**": "the seeders, the operator tooling, the library workflows, the generators, the checks and the tests",
+      "tests/**": "the browser tests",
+      "data/**": "sample and fixture records",
+      "dm.md": "the data-room description served to coding assistants",
+      "proxy.ts": "the request gate",
+      ".claude/**": "the skills, agents and scripts a coding agent follows in this repository (the eve-* subagent skills a pack author copies paths from included): a path written there is copied into a pack's subagent.json or an operator run, so it is written {folder:<id>}",
+      "*.md": "the root instructions a coding agent reads first (AGENTS.md, CLAUDE.md)"
+    },
+    "values_in": {
+      "$comment": "Globs, within the scan, of the files whose string literals are also read for a value that is exactly a folder name: the code that runs or ships. A test's or a check's strings are read for path heads only (a string that is exactly one of these words there is the word: a record area's label, a heading).",
+      "agent/**": "the agent",
+      "app/**": "the web app and its API routes",
+      "components/**": "shared UI components",
+      "lib/**": "server and client libraries",
+      "services/**": "the task-workflow service",
+      "setup/**": "the package a coding agent installs",
+      "scripts/operator/**": "the operator tooling and the library workflows",
+      "scripts/seed*": "the seeders",
+      "scripts/migrate*": "the data-room migration",
+      "scripts/validate*": "the fixture validators",
+      "proxy.ts": "the request gate"
+    },
+    "skip": {
+      "$comment": "Globs left out of the scan, each for a reason.",
+      "**/*.generated.*": "derived from a scanned source and the profile (the profile itself, the prompts, the registry, the workflow library, the package's deployment module)",
+      "scripts/lib/legacy-dataroom-folders.json": "THE ONE LEGACY DEFINITION: the names the folders had while they were written into the code",
+      "setup/dm.md": "the generic package's dm.md: generated from dm.md and the default profile (npm run build:agent-cli -- --write-default)",
+      "setup/skills/**": "the base skill as the generic package ships it: generated from skills/ and the default profile",
+      "scripts/fixtures/**": "pinned before-images and profile fixtures: what a deployment read and stored before folder names were a profile setting, kept verbatim so the tests can prove a pinned profile against it",
+      "scripts/neutral-names.allow.json": "this list"
+    },
+    "ceilings": {
+      "$comment": "Per file, the exact count of folder names spelled today, grouped by why they remain. More fails; fewer fails with the number to lower it to; a ceiling on a file that spells none fails.",
+      "placeholder_keys": {
+        "why": "The record placeholders' own keys ({Accounts}, {Deployments}, {Implementation}; RECORD_KEYS): the capitalised plural of a record WORD, which is what base text writes to have the profile's word filled in. Words of the placeholder grammar, never a folder: a path is built from FOLDER.<id> and a folder is written {folder:<id>}.",
+        "files": {
+          "agent/lib/agent-vocabulary.ts": 3
         }
       },
-      "rig": {
-        "why": "A performance rig's synthetic chat content (a made-up table and the question asked about it): never shown to a deployment's reader and not base text, but under scripts/operator/ and so read by the scan.",
+      "third_party": {
+        "why": "Another product's own word for what it syncs, on that product's connector card (Salesforce's \"Accounts\", Vercel's \"Deployments\"): the third party's objects, the same under every profile, never a data-room folder.",
         "files": {
-          "scripts/operator/chat-persist-perf.mjs": 4
+          "app/_components/dataroom.tsx": 2,
+          "scripts/seed-ops.mjs": 1
+        }
+      },
+      "roster": {
+        "why": "The workspace's own People tab and the roster workbook's sheet (Workspace > People > Import roster): the members of the workspace. Not the data room's people domain, whose folder and label come from the profile.",
+        "files": {
+          "app/_components/ops/workspace-panel.tsx": 2,
+          "lib/roster-workbook.ts": 1
         }
       }
     }

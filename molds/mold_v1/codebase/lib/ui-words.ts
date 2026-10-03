@@ -6,8 +6,9 @@
  * (profiles/*.json: `vocabulary`, `domains.<area>.label`, `domains.implementations.group_label`). The default
  * profile's words are neutral ones, chosen to name no line of work: account, member, "Account owner", delivery,
  * project, and plan for the group. A pack's profile replaces them with its own (company, analyst, coverage report).
- * Storage keeps its own, older names for the same things (`customer_id`, `Deployments/`, `implementationStage`,
- * `rolloutId`): those are identifiers and never move, and no sentence may spell one.
+ * Storage keeps its own, older names for the same things (`customer_id`, `implementationStage`, `rolloutId`): those
+ * are identifiers and never move, and no sentence may spell one. A data-room folder's stored name is the profile's
+ * too (agent/lib/dataroom-folders.ts): a person reads the domain's label, `domainLabel("accounts")`.
  *
  * So any sentence the UI, an ops API, a published report, a seeded file or a seeder writes that names one of them
  * takes the word from HERE, never from a literal, the default profile's words included: `${W.Account} not found`,
@@ -26,6 +27,7 @@
  *
  * Pure: plain data from the generated profile, safe on the client and the server.
  */
+import { labelOf, type DataroomDomainId } from "../agent/lib/dataroom-folders.ts";
 import { LEGACY_MEMBER } from "../agent/lib/legacy-member.ts";
 import { DEPLOYMENT_PROFILE } from "./deployment-profile.generated.ts";
 import { domainView, lowerFirst } from "./profile-domains.ts";
@@ -70,9 +72,9 @@ export const W = {
   install: "workspace",
 } as const;
 
-/** A data-room domain (its stored name: "Customers", "Tickets") as a person reads it: the profile's label. */
-export function domainLabel(domain: string): string {
-  return DEPLOYMENT_PROFILE.dataroom.domains[domain]?.label || domain;
+/** A data-room domain (by its id: "accounts", "tickets") as a person reads it: the profile's label. */
+export function domainLabel(domain: DataroomDomainId): string {
+  return labelOf(domain);
 }
 
 /** "a" or "an" before a word: `${an(W.member)} ${W.member}` reads "a member", "an analyst", "a company". */

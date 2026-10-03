@@ -7,22 +7,22 @@
  * items, …) into the data room. This module:
  *
  *   1. maps (domain, source) to the exact dm.md syncs folder (see
- *      SYNC_SOURCE_FOLDERS — note the Deployments `manual_entry` -> `manual_input`
+ *      SYNC_SOURCE_FOLDERS — note the deliveries domain's `manual_entry` -> `manual_input`
  *      alias and the `meeting_notes/granola` / `bare_metal/*` nested folders);
  *   2. fetches (or accepts pre-fetched `items`) via per-source adapters, each of
  *      which degrades gracefully to a STRUCTURED SKIP instead of throwing when
  *      its credentials/client are unavailable;
  *   3. lands every raw item verbatim as a RawSyncRecord in a single durable
  *      append to one `.jsonl` stream per (domain, source, customer, day); and
- *   4. optionally normalizes Customers-domain items into the system of record via
- *      `recordInteraction` (which mirrors to Customers/{id}/interactions.jsonl).
+ *   4. optionally normalizes accounts-domain items into the system of record via
+ *      `recordInteraction` (which mirrors to {folder:accounts}/{id}/interactions.jsonl).
  *
  * Raw landing is the source of truth: per-item normalization failures are
  * COUNTED (normalized < landed, with a `reason`) rather than failing the pull.
  * ingestSource never throws for operational failures — only zod would throw for
  * a programmer error (an invalid domain enum), which the E2 tool guards anyway.
  *
- * Solutions and Implementation have NO syncs subtree in dm.md, so they are
+ * The solutions and projects domains have NO syncs subtree in dm.md, so they are
  * rejected up front with a structured skip.
  */
 import { nanoid } from "nanoid";
@@ -33,6 +33,7 @@ import {
   type JsonValue,
 } from "#lib/dataroom-schema.js";
 import { getDataroomStore } from "#lib/dataroom-store.js";
+import { FOLDER } from "#lib/dataroom-folders.js";
 import { getDb } from "#lib/db/index.js";
 import { DEFAULT_ORG } from "#lib/org-context.js";
 import { interactionSchema } from "#lib/customer-schema.js";
@@ -45,37 +46,39 @@ import { EmailNotConfiguredError, listInbox } from "#lib/email.js";
 // ---------------------------------------------------------------------------
 
 /** The five dm.md domains that carry a `syncs/**` landing subtree. */
-export type SyncDomain = "Customers" | "Platform" | "Deployments" | "Tickets" | "People";
+/** A sync domain is named by its STORED folder (the deployment profile's: ./dataroom-folders.ts), as its path is. */
+export type SyncDomain = string;
 
 export const SYNC_DOMAINS: readonly SyncDomain[] = [
-  "Customers",
-  "Platform",
-  "Deployments",
-  "Tickets",
-  "People",
+  FOLDER.accounts,
+  FOLDER.platform,
+  FOLDER.deliveries,
+  FOLDER.tickets,
+  FOLDER.people,
 ];
+const syncDomainEnum = z.enum(SYNC_DOMAINS as [string, ...string[]]);
 
 /**
  * (domain -> logical source name -> dm.md syncs folder). Callers always say the
- * logical source (e.g. `manual_entry`); for Deployments that lands in the
+ * logical source (e.g. `manual_entry`); for the deliveries domain that lands in the
  * dm.md-spelled `manual_input/` folder. Nested folders (`meeting_notes/granola`,
  * `bare_metal/oc`) are admitted by the `{domain}/syncs/**` path templates.
  */
 export const SYNC_SOURCE_FOLDERS: Record<SyncDomain, Record<string, string>> = {
-  Customers: {
+  [FOLDER.accounts]: {
     manual_entry: "manual_entry",
     email: "email",
     slack: "slack",
     granola: "meeting_notes/granola",
   },
-  Platform: {
+  [FOLDER.platform]: {
     manual_entry: "manual_entry",
     github: "github",
     aws: "aws",
     slack: "slack",
     miro: "miro",
   },
-  Deployments: {
+  [FOLDER.deliveries]: {
     manual_entry: "manual_input",
     claude: "claude",
     codex: "codex",
@@ -89,13 +92,13 @@ export const SYNC_SOURCE_FOLDERS: Record<SyncDomain, Record<string, string>> = {
     bare_metal_nkp: "bare_metal/nkp",
     bare_metal_custom_k8s: "bare_metal/custom_k8s",
   },
-  Tickets: {
+  [FOLDER.tickets]: {
     manual_entry: "manual_entry",
     call: "call",
     email: "email",
     slack: "slack",
   },
-  People: {
+  [FOLDER.people]: {
     manual_entry: "manual_entry",
     email: "email",
     slack: "slack",
@@ -118,7 +121,7 @@ export function listSyncSources(domain: SyncDomain): string[] {
 /**
  * The landing path for one (domain, source, customer, day):
  *   "{domain}/syncs/{folder}/{customerId}/{YYYY-MM-DD}.jsonl"
- * e.g. "Customers/syncs/meeting_notes/granola/acme-bank/2026-07-10.jsonl".
+ * e.g. "{folder:accounts}/syncs/meeting_notes/granola/acme-bank/2026-07-10.jsonl".
  * `date` defaults to today (UTC). Throws for an unknown (domain, source) — an
  * ingest caller resolves the pair to a structured skip before ever calling this.
  */
@@ -142,7 +145,7 @@ export function syncLandingPath(
 
 export const rawSyncRecordSchema = z.object({
   syncId: z.string().min(1), // `SYNC-${nanoid(10)}`
-  domain: z.enum(["Customers", "Platform", "Deployments", "Tickets", "People"]),
+  domain: syncDomainEnum,
   source: z.string().min(1), // logical source name, e.g. "granola"
   customerId: z.string().min(1),
   fetchedAt: z.string().min(1), // ISO timestamp of the pull
@@ -167,7 +170,7 @@ export interface IngestInput {
   query?: string;
   /** Caller-supplied raw items (manual_entry, and MCP-mediated slack/github). */
   items?: unknown[];
-  /** Default true; only effective for domain "Customers". */
+  /** Default true; only effective for the accounts domain. */
   normalize?: boolean;
   /** Verified caller stamp, passed by the E2 tool. */
   recordedByEmail?: string;
@@ -207,7 +210,7 @@ interface FetchedItem {
   /** Upstream id (note id, IMAP uid, slack ts), if any. */
   sourceId?: string;
   /**
-   * Interaction fields for Customers-domain normalization (omit for raw-only
+   * Interaction fields for accounts-domain normalization (omit for raw-only
    * sources). Merged over `{ interactionId, sourceId: syncId }` and stamped
    * with recordedAt/recordedByEmail by ingestSource, then validated by
    * interactionSchema before recordInteraction.
@@ -450,7 +453,7 @@ function emailStamp(value: string | undefined): string | undefined {
 /**
  * Pull one source into the data room. Validates the (domain, source) pair,
  * runs the adapter (or accepts `items`), lands raw records in one durable
- * append, and optionally normalizes Customers-domain items to interactions.
+ * append, and optionally normalizes accounts-domain items to interactions.
  * Returns a structured skip (`ok:false`) for unknown domains/sources and for
  * every "no creds"/"no items"/fetch-failure path — never throws for those.
  */
@@ -468,7 +471,7 @@ export async function ingestSource(input: IngestInput): Promise<IngestResult> {
     reason,
   });
 
-  // Reject domains without a dm.md syncs subtree (Solutions/Implementation, or
+  // Reject domains without a dm.md syncs subtree (solutions and projects, or
   // any bad enum value reaching us at runtime) and unknown (domain, source).
   const folders = SYNC_SOURCE_FOLDERS[domain];
   if (!folders) {
@@ -529,12 +532,12 @@ export async function ingestSource(input: IngestInput): Promise<IngestResult> {
     return skip(errMessage(error), output.skipped);
   }
 
-  // 3. Normalize Customers-domain items into the system of record. Per-item
+  // 3. Normalize accounts-domain items into the system of record. Per-item
   //    failures are counted (raw landing already succeeded), not thrown.
   let normalized = 0;
   let normalizable = 0;
   let normReason: string | undefined;
-  if (domain === "Customers" && input.normalize !== false) {
+  if (domain === FOLDER.accounts && input.normalize !== false) {
     for (const { syncId, interactionDraft } of wrapped) {
       if (!interactionDraft) continue;
       normalizable++;

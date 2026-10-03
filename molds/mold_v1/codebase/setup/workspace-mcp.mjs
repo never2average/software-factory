@@ -317,6 +317,8 @@ const ctx = {
   opsUrl: OPS_URL || "(WORKSPACE_OPS_URL not set)",
   webOrigin: (process.env.WEB_ORIGIN?.trim() || OPS_URL).replace(/\/$/, ""),
   readSpec: () => readPkgFile(new URL("./dm.md", import.meta.url), "utf8"),
+  // The folder names of the deployment this package was built for (deployment.generated.mjs).
+  folders: DEPLOYMENT.folders,
   blobStore: currentStore,
   parseClaudeTranscript,
   sessionToSyncItem,

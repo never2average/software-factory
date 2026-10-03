@@ -51,9 +51,9 @@
     "why": "A code value, never a label: an enum value or record type (a TODO's containerType / linkType, a workflow's entity, an export `type`), a data-room tab or ops view key, a URL `?dataroom=` / `?view=` value, or an object key read by name. What a person reads for it comes from the profile (lib/ui-words.ts, domainView(...))."
   },
   {
-    "source": ".*",
-    "literal": "^(Customers|Deployments|Implementation)$",
-    "why": "A data-room domain's STORED name: the folder, its Master.xlsx and sheet, and the profile's dataroom.domains key are all named by it. Every place a person reads a domain shows its profile label instead (domainDisplay / domainLabel / sheetTitle / domainView(...).name). (One more \"Deployments\" in app/_components/dataroom.tsx is Vercel's own word on the Vercel connector card, \"Syncs Deployments · Build logs · …\": it names the third-party product's builds, not this product's record area.)"
+    "source": "^(app/_components/dataroom\\.tsx|scripts/seed-ops\\.mjs)$",
+    "literal": "^Deployments$",
+    "why": "Vercel's own word on the Vercel connector card and in the seeded Vercel connector row (\"Syncs Deployments · Build logs · …\"): it names the third-party product's builds, not this product's record area, and is the same under every profile. A data-room domain's stored name is no longer an exception here: the folder, its Master.xlsx and its sheet take their name from the profile (FOLDER.<id>, agent/lib/dataroom-folders.ts), no component spells one, and every place a person reads a domain shows its profile label (domainDisplay / domainLabel / sheetTitle)."
   },
   {
     "source": ".*",

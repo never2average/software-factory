@@ -46,6 +46,7 @@ import { z } from "zod";
 // access-control rule no test can execute is a comment. model.ts and dataroom-versions.ts
 // already import this way.
 import { DataroomPathError } from "./dataroom-store.ts";
+import { fill } from "./agent-vocabulary.ts";
 import { LAST_RESORT_SENTENCE, RECOVERY_REASONING_MODELS, refusedReasoningField } from "./empty-model-response.ts";
 import { storeForSession } from "./dataroom-session.ts";
 import { agentModel, agentModelId, modelOutputBudgetTokens, visionReasoning } from "./model.ts";
@@ -288,7 +289,7 @@ export const readImageTool = modelFacing("read_image", defineTool({
     path: z
       .string()
       .optional()
-      .describe("Data-room path, e.g. 'Uploads/priya-example-in/LODR-Q2.pdf'. Provide this OR sandboxPath."),
+      .describe(fill("Data-room path, e.g. '{folder:uploads}/priya-example-in/LODR-Q2.pdf'. Provide this OR sandboxPath.")),
     sandboxPath: z
       .string()
       .optional()

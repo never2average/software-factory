@@ -29,6 +29,7 @@ import {
 } from "#lib/system-of-record.js";
 import { searchGranolaNotes } from "#lib/granola.js";
 import { getDataroomStore } from "#lib/dataroom-store.js";
+import { FOLDER } from "#lib/dataroom-folders.js";
 import { orgForSession } from "#lib/org-context.js";
 import { getDb } from "#lib/db/index.js";
 import { createDraft, listInbox } from "#lib/email.js";
@@ -267,7 +268,7 @@ function toInteractionRow(input: InteractionInput, recordedByEmail: string | und
 
 export const recordInteractionTool = modelFacing("record_interaction", defineTool({
   description:
-    "Append ONE interaction (meeting, email, call, Slack thread) to a {account}'s history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.",
+    "Append ONE interaction (meeting, email, call, Slack thread) to a {account}'s history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's {folder:accounts}/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.",
   inputSchema: z.object({
     customerId: z.string().min(1),
     ...interactionInputShape,
@@ -322,7 +323,7 @@ export const listStaleCustomersTool = modelFacing("list_stale_customers", define
 
 export const readCustomerSlasTool = modelFacing("read_customer_slas", defineTool({
   description:
-    "Read EVERY {account}'s SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-{account} urgency/breach filters from each {account}'s own commitments instead of one global rule, and (b) check whether that {account}'s Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. {Accounts} in `missing` have no sla.json — fall back to the platform default.",
+    "Read EVERY {account}'s SLA agreement ({folder:accounts}/{id}/agreements/sla.json) AND their {domain:projects} customization footprint ({folder:projects}/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-{account} urgency/breach filters from each {account}'s own commitments instead of one global rule, and (b) check whether that {account}'s {domain:projects} VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. {Accounts} in `missing` have no sla.json — fall back to the platform default.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const org = await orgForSession(ctx);
@@ -336,7 +337,7 @@ export const readCustomerSlasTool = modelFacing("read_customer_slas", defineTool
       customers.map(async (c) => {
         // SLA agreement
         try {
-          const content = await store.read(`Customers/${c.id}/agreements/sla.json`);
+          const content = await store.read(`${FOLDER.accounts}/${c.id}/agreements/sla.json`);
           if (content == null) {
             missing.push(c.id);
           } else {
@@ -349,9 +350,9 @@ export const readCustomerSlasTool = modelFacing("read_customer_slas", defineTool
         } catch {
           missing.push(c.id);
         }
-        // Implementation customization footprint (what may void an SLA).
+        // The projects domain's customization footprint (what may void an SLA).
         try {
-          const paths = await store.list(`Implementation/${c.id}`);
+          const paths = await store.list(`${FOLDER.projects}/${c.id}`);
           if (paths.length > 0) customizations[c.id] = paths;
         } catch {
           /* none */
@@ -397,13 +398,13 @@ export const getOncallTool = modelFacing("get_oncall", defineTool({
 
 export const listMembersTool = modelFacing("list_members", defineTool({
   description:
-    "List the {member} roster with live load. Reads every People/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the {accounts} each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.",
+    "List the {member} roster with live load. Reads every {folder:people}/{id}/identity.json marked as a team member (kind:'internal-member'; entries written before that carry an earlier kind and are read too) and joins the {accounts} each one owns plus their open-ticket count — so you can see who owns what, who is unassigned, and who is overloaded vs their capacity target. Read-only.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const org = await orgForSession(ctx);
     const store = getDataroomStore(org);
-    const paths = await store.list("People");
-    const identityPaths = paths.filter((p) => /^People\/[^/]+\/identity\.json$/.test(p));
+    const paths = await store.list(FOLDER.people);
+    const identityPaths = paths.filter((p) => { const s = p.split("/"); return s.length === 3 && s[0] === FOLDER.people && s[1] !== "" && s[2] === "identity.json"; });
     const members: Array<Record<string, unknown> & { email?: string; slug: string }> = [];
     await Promise.all(
       identityPaths.map(async (p) => {

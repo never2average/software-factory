@@ -1,12 +1,16 @@
 ---
 name: backfill-customization-history
-description: Reconstruct a customer's deployment and customization history into the canonical Deployments/ layout and the deployments row. Use when an existing customer's platform customizations (model routing, guardrails, infra, inference config) aren't yet recorded, when someone says "backfill the customizations", "record the deployment history", "we deployed X for them but it's not in the system", or before an upgrade/audit that needs the current customized state. Requires the customer to exist (onboard-customer). Materialises customizations.tf, rationale.md, and the 4-party signoff skeleton per platform version, and upserts the deployment row.
+description: Reconstruct a customer's deployment and customization history into the canonical {folder:deliveries}/ layout and the deployments row. Use when an existing customer's platform customizations (model routing, guardrails, infra, inference config) aren't yet recorded, when someone says "backfill the customizations", "record the deployment history", "we deployed X for them but it's not in the system", or before an upgrade/audit that needs the current customized state. Requires the customer to exist (onboard-customer). Materialises customizations.tf, rationale.md, and the 4-party signoff skeleton per platform version, and upserts the deployment row.
 ---
 
 # Backfill customization history
 
+> `{folder:<id>}` below is the data-room folder this deployment stores that domain under: its profile's
+> `dataroom.domains.<id>.folder` (`uploads_folder` for `{folder:uploads}`). Read the real name with
+> `node --experimental-strip-types -e 'import("./agent/lib/dataroom-folders.ts").then((m) => console.log(m.FOLDER))'`.
+
 Reconstruct what was customized in a customer's deployment(s) into the canonical
-`Deployments/{id}/{version}/…` layout and the `deployments` system-of-record row.
+`{folder:deliveries}/{id}/{version}/…` layout and the `deployments` system-of-record row.
 This is **stage 4** — see [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md).
 
 Use it when a deployment happened but its customizations were never recorded, or
@@ -15,7 +19,7 @@ before an upgrade/audit that needs the current customized state captured.
 ## Working style
 
 One version at a time. Gather the real customizations from wherever they live
-(terraform, PRs, `Deployments/syncs/{github,aws}`, the owning engineer's memory) before writing —
+(terraform, PRs, `{folder:deliveries}/syncs/{github,aws}`, the owning engineer's memory) before writing —
 don't invent config. The signoff chain is a **gate**: the skill seeds it as
 `PENDING`, it is not done until the four parties actually sign.
 
@@ -49,12 +53,12 @@ signoff chain (`internal`, `customer.infra`, `customer.infosec`,
 
 READ: the `customers` row (must exist); your gathered customization inputs.
 
-WRITE (per `Deployments/{id}/{version}/infrastructure/inference/`):
+WRITE (per `{folder:deliveries}/{id}/{version}/infrastructure/inference/`):
 - `customizations.tf`, `rationale.md`
 - `signoff/{internal,customer.infra,customer.infosec,customer.cloudvendor}.md` (only
   if absent — never overwrites an existing signoff)
 - the `deployments` row (upsert by customer + deploymentId)
-- `Customers/{id}/interactions.jsonl` — a `customization_backfilled` event
+- `{folder:accounts}/{id}/interactions.jsonl` — a `customization_backfilled` event
 
 ## Never
 

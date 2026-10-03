@@ -10,6 +10,7 @@ import { DATAROOM_PATH_TEMPLATES } from "../../../agent/lib/dataroom-store.ts";
 import { deployments, implementation, tickets, customerStakeholders } from "../../../agent/lib/db/schema.ts";
 import { withOrgDb } from "../../../agent/lib/db/index.ts";
 import { and, eq } from "drizzle-orm";
+import { FOLDER } from "../../../agent/lib/dataroom-folders.ts";
 
 const isToken = (seg) => /^\{[a-z_]+\}$/.test(seg);
 
@@ -87,9 +88,9 @@ async function customerEdges(db, orgId, customerId) {
       tx.select({ e: customerStakeholders.email }).from(customerStakeholders).where(and(eq(customerStakeholders.orgId, orgId), eq(customerStakeholders.customerId, customerId))),
     ]),
   );
-  for (const d of deps) edges.push(`[[Deployments/${customerId}/${d.v}]]`);
-  if (impl.length) edges.push(`[[Implementation/${customerId}]]`);
-  for (const t of tks) edges.push(`[[Tickets/${t.type ?? "feat"}/${customerId}]]`);
+  for (const d of deps) edges.push(`[[${FOLDER.deliveries}/${customerId}/${d.v}]]`);
+  if (impl.length) edges.push(`[[${FOLDER.projects}/${customerId}]]`);
+  for (const t of tks) edges.push(`[[${FOLDER.tickets}/${t.type ?? "feat"}/${customerId}]]`);
   for (const s of stk) edges.push(`[[person:${s.e}]]`);
   return edges;
 }
@@ -105,10 +106,10 @@ export async function buildContextGraph(store, db, folderPath, stampIso, orgId) 
   const missingFiles = req.requiredFiles.filter((f) => !present.files.includes(f));
   const missingDirs = req.requiredDirs.filter((d) => !present.dirs.includes(d));
 
-  // Edges: customer nodes (Customers/{id}) get live DB relations.
+  // Edges: customer nodes ({folder:accounts}/{id}) get live DB relations.
   const segs = folderPath.split("/").filter(Boolean);
   let edges = [];
-  if (segs.length === 2 && segs[0] === "Customers") {
+  if (segs.length === 2 && segs[0] === FOLDER.accounts) {
     edges = await customerEdges(db, orgId, segs[1]);
   }
 

@@ -25,6 +25,9 @@ import { list as listBlobs, put } from "@vercel/blob";
 import { presignBlobRead } from "@/lib/blob-read";
 import { isListedPath, isOwnSnapshotKey, workspaceBlobPrefix } from "@/lib/dataroom-keyspace";
 
+import { ROOT_FOLDERS } from "../agent/lib/dataroom-folders.ts";
+import { guardWorkspaceWrites } from "../agent/lib/dataroom-folder-guard.ts";
+
 /**
  * A workspace's Blob prefix: `dataroom/orgs/<id>`, for EVERY workspace, and a thrown error for none. The mapping is
  * lib/dataroom-keyspace.ts — shared with the agent's store, no longer a hand-kept twin. It used to map workspace #1
@@ -40,16 +43,8 @@ const READ_LINK_TTL_MS = 5 * 60 * 1000;
 
 /** One path segment: no traversal, no hidden dotfiles, filesystem-safe. */
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._ -]*$/;
-const DOMAINS = new Set([
-  "Customers",
-  "Platform",
-  "Deployments",
-  "Solutions",
-  "Implementation",
-  "Tickets",
-  "People",
-  "Uploads",
-]);
+// The first segment of a path: one of this deployment's stored folders (the profile's, never spelled here).
+const DOMAINS = new Set(ROOT_FOLDERS);
 
 export function blobToken(): string | null {
   return process.env.BLOB_READ_WRITE_TOKEN ?? null;
@@ -57,7 +52,7 @@ export function blobToken(): string | null {
 
 /**
  * True when `path` is a plausible dm.md file path: rooted in one of the seven
- * domains, forward slashes only, every segment traversal-safe. (The full
+ * domains' folders or the attached files', forward slashes only, every segment traversal-safe. (The full
  * template grammar lives agent-side; this guard is what the read-only route
  * needs to stay inside the data room.)
  */
@@ -88,6 +83,10 @@ export async function writeDataroomFile(
   const prefix = storePrefixForOrg(orgId);
   const token = blobToken();
   if (!token) throw new Error("BLOB_READ_WRITE_TOKEN is not set");
+  // The same write guard as the agent's store: a data room that still holds a former folder this profile stores
+  // nothing under is refused before a second set of folders is started (agent/lib/dataroom-folder-guard.ts). A
+  // no-op, with no listing, when the profile pins every former name.
+  await guardWorkspaceWrites(orgId, async (folder) => (await listBlobs({ token, prefix: `${prefix}/${folder}/`, limit: 1 })).blobs.length > 0);
   await put(`${prefix}/${path}`, body, {
     access: "private",
     token,
@@ -170,8 +169,8 @@ export async function readDataroomFile(path: string, orgId: string): Promise<str
  * Node function is not a refusal — it is the same stall one layer down, plus the
  * egress.
  *
- * Exact-match on the object key, so `Uploads/x/a.pdf` never reports the size of
- * `Uploads/x/a.pdf.appends/0001`.
+ * Exact-match on the object key, so `{folder:uploads}/x/a.pdf` never reports the size of
+ * `{folder:uploads}/x/a.pdf.appends/0001`.
  */
 export async function statDataroomObject(
   path: string,

@@ -1,4 +1,4 @@
-  |-Customers
+  |-{folder:accounts}
     |-Master.xlsx (Main workbook with the relevant sheets)
     |-{CustomerID}
        |-interactions.jsonl
@@ -11,7 +11,7 @@
        |-slack/
        |-meeting_notes/
           |-granola/
-  |-Platform
+  |-{folder:platform}
     |-Master.xlsx (Main workbook with the relevant sheets)
     |-{platform_version_id}/
          |-{YYYY-MM-DD_changelog_manager.md
@@ -36,7 +36,7 @@
        |-aws/
        |-slack/
        |-miro/
-  |-Deployments
+  |-{folder:deliveries}
      |-{customer_id}
         |-{platform_version_id}
            |-infrastructure
@@ -87,9 +87,9 @@
            |-oc
            |-nkp
            |-custom_k8s
-  |-Solutions
+  |-{folder:solutions}
       |-{platform_version_id}
-         |-supported.personas.jsonl (the personas this solution version supports — one persona record per line; recipes cite persona_ids; the personas of one {CustomerID} live in Customers/{CustomerID}/personas.jsonl)
+         |-supported.personas.jsonl (the personas this solution version supports — one persona record per line; recipes cite persona_ids; the personas of one {CustomerID} live in {folder:accounts}/{CustomerID}/personas.jsonl)
          |-agents/
            |-{agent_id}
               |-dataplatform.schemas.json
@@ -123,7 +123,7 @@
                    |-context.md
                    |-interaction.jsonl
              
-  |-Implementation
+  |-{folder:projects}
       |-{customer_id}
         |-migrations/
            |-{migration_id}
@@ -143,7 +143,7 @@
         |-evals/
            |-agents/
            |-pipelines/
-  |-Tickets
+  |-{folder:tickets}
       |-feat/
          |-{customer_id}/
             |-{platform_id}/
@@ -162,7 +162,7 @@
         |-call/
         |-email/
         |-slack/
-  |-People
+  |-{folder:people}
     |-Master.xlsx (Main workbook with the relevant sheets)
     |-{person_id} (if the person is external)
        |-interactions.jsonl

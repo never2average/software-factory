@@ -33,6 +33,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import postgres from "postgres";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
+import { readJsonFixture } from "./lib/read-fixture.mjs";
 
 const adminUrl = process.env.ADMIN_URL;
 const appUrl = process.env.DATABASE_URL;
@@ -82,7 +84,7 @@ const CONTACT = `treasurer-${PID}@xws-probe.test`;
 const DOMAIN = `xws-${PID}.test`;
 const NOW = "2026-09-24T12:00:00Z";
 
-const fixture = JSON.parse(readFileSync(new URL("./fixtures/customers.fixture.json", import.meta.url), "utf8"));
+const fixture = readJsonFixture(new URL("./fixtures/customers.fixture.json", import.meta.url));
 const base = fixture.customers.find((c) => c.id === "acme-bank");
 /** A fixture account under a new id: scalar fields, its tickets and interactions; no platform/deployment rows. */
 const account = (id, name, reason, contact, domain) => {
@@ -246,7 +248,7 @@ try {
   check("B's data-room index lists none of A's or Y's accounts", !bIndex.includes(SECRET_NAME) && !bIndex.includes(`Y Holdings ${PID}`));
   check("A's data-room index lists its own", (await renderDataroomSummary({ now: NOW, orgId: A })).includes(SECRET_NAME));
   check("B building A's workbooks is refused", /Unknown account/.test(messageOf(await errorOf(() => buildCustomerWorkbookSpecs({ customerId: X, now: NOW, orgId: B })))));
-  check("B building one of A's workbooks is refused", /Unknown account/.test(messageOf(await errorOf(() => buildDomainWorkbookSpec({ customerId: X, domain: "Tickets", now: NOW, orgId: B })))));
+  check("B building one of A's workbooks is refused", /Unknown account/.test(messageOf(await errorOf(() => buildDomainWorkbookSpec({ customerId: X, domain: FOLDER.tickets, now: NOW, orgId: B })))));
   const aBooks = await buildCustomerWorkbookSpecs({ customerId: X, now: NOW, orgId: A }).catch((e) => e);
   check("A builds its own", Array.isArray(aBooks) && aBooks.length > 0, messageOf(aBooks));
 

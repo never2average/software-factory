@@ -4,7 +4,7 @@
  *
  * dm.md addresses each signoff decision at:
  *
- *   Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/signoff/{signoff_role}.md
+ *   {folder:deliveries}/{customer_id}/{platform_version_id}/infrastructure/{component}/signoff/{signoff_role}.md
  *
  * where {component} is one of the eight infrastructure components and
  * {signoff_role} is one of the four parties (internal, customer.infra,
@@ -25,6 +25,7 @@ import { defineTool } from "eve/tools";
 import { once } from "eve/tools/approval";
 import { z } from "zod";
 import { getDataroomStore } from "#lib/dataroom-store.js";
+import { FOLDER } from "#lib/dataroom-folders.js";
 import { writeVersioned } from "#lib/dataroom-versions.js";
 import { orgForSession } from "#lib/org-context.js";
 import {
@@ -99,7 +100,7 @@ function signoffPath(
   component: string,
   role: string,
 ): string {
-  return `Deployments/${customerId}/${platformVersionId}/infrastructure/${component}/signoff/${role}.md`;
+  return `${FOLDER.deliveries}/${customerId}/${platformVersionId}/infrastructure/${component}/signoff/${role}.md`;
 }
 
 /** Render a validated record to Markdown: JSON-scalar YAML front matter + body. */
@@ -158,7 +159,7 @@ function parseSignoffFrontMatter(text: string): Record<string, unknown> {
 
 export const recordSignoffTool = modelFacing("record_signoff", defineTool({
   description:
-    "Record an authoritative {deployment} signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deployments/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision.",
+    "Record an authoritative {deployment} signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under {folder:deliveries}/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision.",
   approval: once(),
   inputSchema: z.object({
     customerId: z.string().min(1),
@@ -274,7 +275,7 @@ export const getSignoffStatusTool = modelFacing("get_signoff_status", defineTool
   async execute({ customerId, platformVersionId, component }, ctx) {
     // The caller's workspace. Resolved from the customer id, another workspace's signoff chain was readable by id.
     const store = getDataroomStore(await orgForSession(ctx));
-    const prefix = `Deployments/${customerId}/${platformVersionId}/infrastructure`;
+    const prefix = `${FOLDER.deliveries}/${customerId}/${platformVersionId}/infrastructure`;
     const paths = await store.list(prefix);
 
     const wantSignoff = component

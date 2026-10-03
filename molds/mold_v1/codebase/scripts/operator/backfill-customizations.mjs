@@ -1,5 +1,5 @@
 // operator:backfill-customizations — reconstruct a customer's deployment/customization
-// history into the canonical Deployments/ layout + the `deployments` row.
+// history into the canonical {folder:deliveries}/ layout + the `deployments` row.
 //
 //   npm run operator:backfill-customizations -- --customer contoso-bank --org <workspace id> --version v2.4.0 \
 //     [--region ap-south-1] [--cloud aws] [--summary "GPU inference, custom guardrails"] \
@@ -8,7 +8,7 @@
 // Writes/updates ONE `deployments` row (idempotent by customer+deploymentId; through the system of record, so the
 // schema and the profile's own-field validator apply; --region must be one of the schema's regions unless the
 // profile fixes one; --environment defaults to prod) and
-// materialises Deployments/{id}/{ver}/infrastructure/inference/{customizations.tf,
+// materialises {folder:deliveries}/{id}/{ver}/infrastructure/inference/{customizations.tf,
 // rationale.md} plus the 4-party signoff skeleton. --from-file takes an array of
 // { title, tf, rationale } customizations. See docs/OPERATOR_WORKFLOW.md (stage 4).
 import { getDb, closeDb, dataroom, workspaceFor, nowIso, appendInteraction, readFromFile, checkValues, fixedOr } from "./lib/customer.mjs";
@@ -16,6 +16,7 @@ import { getCustomer as getRecord, upsertCustomer } from "../../agent/lib/system
 import { deploymentSchema } from "../../agent/lib/customer-schema.ts";
 import { glyph, flag, resolveIdentity, isOnfinance } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
+import { FOLDER } from "../../agent/lib/dataroom-folders.ts";
 
 async function main() {
   const customerId = flag("customer").trim();
@@ -79,7 +80,7 @@ async function main() {
 
   // 2. The canonical data-room artifacts.
   const store = dataroom(orgId);
-  const base = `Deployments/${customerId}/${version}/infrastructure/inference`;
+  const base = `${FOLDER.deliveries}/${customerId}/${version}/infrastructure/inference`;
   const items = readFromFile() ?? [
     {
       title: flag("summary").trim() || "Baseline customization",
@@ -109,7 +110,7 @@ async function main() {
   }
   console.log(`${glyph.ok} Ensured 4-party signoff skeleton under ${base}/signoff/.`);
 
-  await appendInteraction(store, `Customers/${customerId}/interactions.jsonl`, {
+  await appendInteraction(store, `${FOLDER.accounts}/${customerId}/interactions.jsonl`, {
     ts: nowIso(),
     type: "customization_backfilled",
     actor: me,

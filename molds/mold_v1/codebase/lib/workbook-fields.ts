@@ -17,6 +17,7 @@
  */
 import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type CustomFieldSpec } from "./deployment-profile.generated.ts";
 import { speakIdentifier, VOCABULARY_RELABELLED } from "../agent/lib/agent-vocabulary.ts";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 import { neutralSecondaryOwnerKey, withOwnerKeyTwins } from "../agent/lib/owner-keys.ts";
 import { speakKey } from "./ui-keys.ts";
 
@@ -193,14 +194,14 @@ export const sameKey = (a: string, b: string): boolean =>
   a.toLowerCase().replace(/[^a-z0-9]/g, "") === b.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** The sheets that hold a record area's own rows. */
-const SHEET_AREA: Partial<Record<string, "deployments" | "implementations">> = { Deployments: "deployments", Implementation: "implementations" };
+const SHEET_AREA: Partial<Record<string, "deployments" | "implementations">> = { [FOLDER.deliveries]: "deployments", [FOLDER.projects]: "implementations" };
 
 /**
  * A sheet's column key as a person reads it: lib/ui-keys.ts speakKey, plus the one case it leaves alone on purpose.
  *
  * speakKey keeps a key such as `deployment_strategy` or `deployment_model` as written, because across the product
  * "deployment" in those keys describes software deployment, not the record area. On the record area's OWN sheet it
- * is a field of that record, and under a relabel (Deployments -> Coverage reports) the header read
+ * is a field of that record, and under a relabel (the deliveries domain -> Coverage reports) the header read
  * `deployment_strategy` whenever a workspace had rows (review of #62). There it is named as the model is given it
  * (`coverage_report_strategy`), so a person and the agent call the column the same thing. Every other sheet, and the
  * default profile, reads exactly as before.

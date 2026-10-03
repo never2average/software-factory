@@ -7,7 +7,7 @@
  *
  * When the profile RELABELS the domains (agent/lib/agent-vocabulary.ts), the model already reads every tool,
  * field and folder in the profile's words — `list_companies`, `company_id`, `Companies/` — so this block states
- * those words and nothing else: it never names the base product's (`list_customers`, "customer", `Customers/`),
+ * those words and nothing else: it never names the base product's (`list_customers`, "customer", the stored folder),
  * which only taught the model a second vocabulary to reason in. Everything it says is written with the base
  * identifiers and then spoken through the same translation the tools use, so the two cannot disagree.
  *
@@ -22,6 +22,7 @@
  */
 import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, type CustomFieldSpec, type DeploymentProfile, type DomainArea } from "./deployment-profile.generated.ts";
 import { createVocabulary, LEGACY_RECORDS, speakCodeWith, speakWith, verbatimWith, VOCABULARY, type Vocabulary, type VocabularyProfile } from "./agent-vocabulary.ts";
+import { DATAROOM_DOMAIN_IDS, type DataroomDomainId, type DataroomFolderId } from "./dataroom-folders.ts";
 
 /** The account as the identifiers spell it: a profile whose word is this one needs no line saying so. */
 const DEFAULT_ACCOUNT = LEGACY_RECORDS.account.singular;
@@ -33,10 +34,15 @@ const DEFAULT_MEMBER = "member";
  * data-room folder, its id field and the TODO container type. Reads go through `get_customer`, writes through
  * `upsert_customer` (agent/lib/tools.ts): neither tool, nor any field, is renamed by a profile.
  */
-const AREA_IDENTIFIERS: Record<DomainArea, { was: string; record: string; folder: string; id: string; container: string }> = {
-  deployments: { was: "deployment", record: "deployments[]", folder: "Deployments/", id: "deploymentId", container: "deployment" },
-  implementations: { was: "implementation", record: "implementation", folder: "Implementation/", id: "rolloutId", container: "implementation" },
+const AREA_IDENTIFIERS: Record<DomainArea, { was: string; record: string; domain: DataroomDomainId; id: string; container: string }> = {
+  deployments: { was: "deployment", record: "deployments[]", domain: "deliveries", id: "deploymentId", container: "deployment" },
+  implementations: { was: "implementation", record: "implementation", domain: "projects", id: "rolloutId", container: "implementation" },
 };
+type Folders = Record<DataroomFolderId, string>;
+/** An area's identifiers, with the folder its files are stored under in this profile (`<stored name>/`). */
+const areaIdentifiers = (area: DomainArea, folders: Folders) => ({ ...AREA_IDENTIFIERS[area], folder: `${folders[AREA_IDENTIFIERS[area].domain]}/` });
+/** The domains of a profile as [stored folder name, entry], in the data model's order. */
+const domainEntries = (dataroom: DeploymentProfile["dataroom"]) => DATAROOM_DOMAIN_IDS.map((id) => [dataroom.domains[id].folder, dataroom.domains[id]] as const);
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const sameWord = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -49,10 +55,10 @@ const upperFirst = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
  * ties the two together ("A **delivery** is a `deployment` in the identifiers…"). Nothing when the profile's word
  * is the identifiers' own, and nothing for an area the profile redefines (renderDomainBriefing says it there).
  */
-function renderAreaIdentifiers(area: DomainArea, domains: DeploymentProfile["domains"]): string[] {
+function renderAreaIdentifiers(area: DomainArea, domains: DeploymentProfile["domains"], folders: Folders): string[] {
   const spec = domains[area];
   if (!same(spec, DEFAULT_DOMAINS[area])) return [];
-  const ids = AREA_IDENTIFIERS[area];
+  const ids = areaIdentifiers(area, folders);
   const word = lowerFirst(spec.label.singular);
   const lines: string[] = [];
   if (!sameWord(word, ids.was)) {
@@ -95,12 +101,12 @@ export function renderAccountFieldsBriefing(profile: Pick<DeploymentProfile, "ac
  * One redefined area, tersely: what it MEANS here, how its fields and enum values are shown to people, what is
  * not used (and what to write there anyway), and that the identifiers stay. Nothing for an area left at default.
  */
-export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfile["domains"], v?: Vocabulary, accountWord: string = (v ?? VOCABULARY).records.account.singular): string[] {
+export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfile["domains"], v?: Vocabulary, accountWord: string = (v ?? VOCABULARY).records.account.singular, folders: Folders = (v ?? VOCABULARY).stored): string[] {
   const relabelled = Boolean(v?.relabelled);
   const spec = domains[area];
   const def = DEFAULT_DOMAINS[area];
   if (same(spec, def)) return [];
-  const ids = AREA_IDENTIFIERS[area];
+  const ids = areaIdentifiers(area, folders);
   // An area that differs from the default only in its WORDS, and whose word is the identifiers' own (the record
   // words the default carried before it spoke neutrally): the model already reads that word everywhere.
   const structure = ({ label: _l, description: _d, id_label: _i, ...rest }: Record<string, unknown>) => ({ ...rest, group_label: undefined });
@@ -161,22 +167,22 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE): string |
   const lines: string[] = [];
   if (voc.account.singular !== DEFAULT_ACCOUNT) {
     lines.push(
-      `- ${upperFirst(an(voc.account.singular))} **${voc.account.singular}** (plural: ${voc.account.plural}) is a \`${DEFAULT_ACCOUNT}\` in the identifiers. Say "${voc.account.singular}" to people. The identifiers do not change: tools such as \`list_customers\` and \`get_customer\`, the \`customer_id\` field and the \`Customers/\` data-room folder all refer to ${voc.account.plural}.`,
+      `- ${upperFirst(an(voc.account.singular))} **${voc.account.singular}** (plural: ${voc.account.plural}) is a \`${DEFAULT_ACCOUNT}\` in the identifiers. Say "${voc.account.singular}" to people. The identifiers do not change: tools such as \`list_customers\` and \`get_customer\`, the \`customer_id\` field and the \`${v.stored.accounts}/\` data-room folder all refer to ${voc.account.plural}.`,
     );
   }
-  const hidden = Object.entries(dataroom.domains).filter(([, d]) => !d.visible).map(([k]) => k);
+  const hidden = domainEntries(dataroom).filter(([, d]) => !d.visible).map(([k]) => k);
   if (hidden.length > 0) {
     lines.push(
       `- This workspace does not use these parts of the product: ${hidden.join(", ")}. Do not offer, plan or write work under them, and ignore the sections of your instructions that are only about them, unless a person explicitly asks.`,
     );
   }
-  const relabelled = Object.entries(dataroom.domains).filter(([k, d]) => d.visible && d.label !== k);
+  const relabelled = domainEntries(dataroom).filter(([k, d]) => d.visible && d.label !== k);
   if (relabelled.length > 0) {
     lines.push(`- People see these data-room folders under other names: ${relabelled.map(([k, d]) => `\`${k}/\` is shown as "${d.label}"`).join("; ")}. Paths you read and write keep the folder's real name.`);
   }
   lines.push(...renderAccountFieldsBriefing(profile));
-  for (const area of ["deployments", "implementations"] as const) lines.push(...renderAreaIdentifiers(area, profile.domains));
-  for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, undefined, voc.account.singular));
+  for (const area of ["deployments", "implementations"] as const) lines.push(...renderAreaIdentifiers(area, profile.domains, v.stored));
+  for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, undefined, voc.account.singular, v.stored));
   const body = [lines.join("\n"), agent.briefing?.trim() ?? ""].filter(Boolean).join("\n\n");
   return body ? `## This workspace\n\n${body}` : null;
 }
@@ -191,19 +197,19 @@ function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary): st
   const lines: string[] = [];
   if (voc.account.singular.trim().toLowerCase() !== DEFAULT_ACCOUNT) {
     lines.push(
-      `- Each record you keep is a **${own(voc.account.singular)}** (plural: ${own(voc.account.plural)}). Your tools, their fields and the data room use the same word: \`list_customers\`, \`get_customer\`, \`customer_id\`, \`Customers/\`.`,
+      `- Each record you keep is a **${own(voc.account.singular)}** (plural: ${own(voc.account.plural)}). Your tools, their fields and the data room use the same word: \`list_customers\`, \`get_customer\`, \`customer_id\`, \`${v.stored.accounts}/\`.`,
     );
   }
   if (voc.member.singular.toLowerCase() !== DEFAULT_MEMBER) {
     lines.push(`- The people you work for are **${own(voc.member.plural)}**; the one responsible for a ${own(voc.account.singular)} is its **${own(voc.owner)}**.`);
   }
-  const hidden = Object.entries(dataroom.domains).filter(([, d]) => !d.visible).map(([k]) => k);
+  const hidden = domainEntries(dataroom).filter(([, d]) => !d.visible).map(([k]) => k);
   if (hidden.length > 0) {
     lines.push(
       `- This workspace does not use these parts of the product: ${hidden.join(", ")}. Do not offer, plan or write work under them, and ignore the sections of your instructions that are only about them, unless a person explicitly asks.`,
     );
   }
-  const folders = Object.entries(dataroom.domains).filter(([k, d]) => d.visible && d.label !== k);
+  const folders = domainEntries(dataroom).filter(([k, d]) => d.visible && d.label !== k);
   if (folders.length > 0) {
     lines.push(`- Data-room folders by name: ${folders.map(([k, d]) => `\`${k}/\` holds ${own(d.label)}`).join("; ")}. Read and write them by exactly these paths.`);
   }

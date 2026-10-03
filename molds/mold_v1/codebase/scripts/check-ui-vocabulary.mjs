@@ -294,7 +294,7 @@ async function enumLabels(dir) {
   const { domainView } = await import(pathToFileURL(join(dir, "lib/profile-domains.ts")).href);
   const { DOMAIN_FIELDS, DEPLOYMENT_PROFILE } = await import(pathToFileURL(join(dir, "lib/deployment-profile.generated.ts")).href);
   const out = [];
-  for (const [area, domain] of [["deployments", "Deployments"], ["implementations", "Implementation"]]) {
+  for (const [area, domain] of [["deployments", "deliveries"], ["implementations", "projects"]]) {
     if (DEPLOYMENT_PROFILE.dataroom.domains[domain]?.visible === false) continue;
     const view = domainView(area);
     for (const [key, meta] of Object.entries(DOMAIN_FIELDS[area])) {
@@ -453,6 +453,18 @@ const copy = rescan ? join(ROOT, ".ui-vocabulary", copyName) : makeCopy(copyName
 try {
   if (!rescan && PACK && existsSync(join(copy, "scripts/sync-subagent-shared.mjs"))) run(copy, process.execPath, ["scripts/sync-subagent-shared.mjs"], "npm run sync:subagent-shared");
   if (!rescan) run(copy, "npm", ["run", "-s", "build:generated"], "npm run build:generated");
+
+  // THE COPY'S OWN FOLDER NAMES. A deployment that already holds files pins the names its data room is stored under
+  // (profile `dataroom.domains.<id>.folder`), and those may be the base product's former ones, which carry a record
+  // word. They are this deployment's data, like its labels: the paths its files have, the name of each domain's
+  // Master.xlsx and sheet. No component spells one (check:neutral-names holds that); they reach the bundle only as
+  // the profile's values, and every place a person reads a domain shows its label. So a string that IS one of them,
+  // or a stored path that starts with one, is not a word the product put in front of anyone.
+  {
+    const { ROOT_FOLDERS } = await import(pathToFileURL(join(copy, "agent/lib/dataroom-folders.ts")).href);
+    const names = ROOT_FOLDERS.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    ALLOW.push({ source: /.*/, literal: new RegExp(`^(${names})(/\\S*)?$`), why: "this profile's own stored folder names (dataroom.domains.<id>.folder)", rendered: false, file: "(the profile)", index: -1, used: 0 });
+  }
 
   const src = sourceText(copy);
   const srcBad = report(`${label}, SOURCE TEXT a person reads`, src, (b) => `${b.line}: [${b.kind}] "${b.words.join('", "')}" in ${JSON.stringify(b.text.replace(/\s+/g, " ").slice(0, 160))}`);

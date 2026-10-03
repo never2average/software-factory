@@ -7,7 +7,7 @@
  *   blob.objects                             // Map<pathname, { body: Buffer, uploadedAt: number }>
  *   blob.calls                               // every request: { op, pathname?, prefix? }
  *
- * Only what the code under test uses: list (prefix, cursor, limit), put, copy, delete, signed-token, and a GET of a
+ * Only what the code under test uses: list (prefix, cursor, limit, folded), put, copy, delete, signed-token, and a GET of a
  * presigned object URL. Anything else answers 501, loudly.
  */
 import { MockAgent, setGlobalDispatcher } from "undici";
@@ -72,6 +72,12 @@ export function installFakeBlob() {
       const cursor = Number(url.searchParams.get("cursor") ?? 0);
       calls.push({ op: "list", prefix });
       const all = [...objects.keys()].filter((k) => k.startsWith(prefix)).sort();
+      if (url.searchParams.get("mode") === "folded") {
+        // As the real API folds: objects directly under the prefix are blobs, everything deeper is its first folder.
+        const folders = [...new Set(all.filter((k) => k.slice(prefix.length).includes("/")).map((k) => `${prefix}${k.slice(prefix.length).split("/")[0]}/`))];
+        const direct = all.filter((k) => !k.slice(prefix.length).includes("/"));
+        return json(200, { blobs: direct.map((k) => describe(k, objects.get(k))), folders, hasMore: false });
+      }
       const page = all.slice(cursor, cursor + limit);
       const hasMore = cursor + limit < all.length;
       return json(200, { blobs: page.map((k) => describe(k, objects.get(k))), cursor: hasMore ? String(cursor + limit) : undefined, hasMore });

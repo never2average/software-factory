@@ -738,7 +738,7 @@ function ConnectorWizard({
             <OpsInput
               value={lands}
               onChange={(e) => setLands(e.target.value)}
-              placeholder={`${domainLabel("Customers")}/·/${domainLabel("Tickets")}/·/${domainLabel("People")}/syncs/slack`}
+              placeholder={`${domainLabel("accounts")}/·/${domainLabel("tickets")}/·/${domainLabel("people")}/syncs/slack`}
             />
           </Field>
           <Field label="Synced" hint="Which workflows this connector feeds.">
@@ -1090,7 +1090,7 @@ function CustomConnectorWizard({
             <OpsInput
               value={lands}
               onChange={(e) => setLands(e.target.value)}
-              placeholder={`${domainLabel("Customers")}/·/${domainLabel("Tickets")}/`}
+              placeholder={`${domainLabel("accounts")}/·/${domainLabel("tickets")}/`}
             />
           </Field>
           <NotifyEmailField recipients={notifyEmails} onRecipients={setNotifyEmails} />

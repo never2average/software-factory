@@ -1,4 +1,4 @@
-  |-Customers
+  |-Accounts
     |-Master.xlsx (Main workbook with the relevant sheets)
     |-{CustomerID}
        |-interactions.jsonl
@@ -36,7 +36,7 @@
        |-aws/
        |-slack/
        |-miro/
-  |-Deployments
+  |-Deliveries
      |-{customer_id}
         |-{platform_version_id}
            |-infrastructure
@@ -89,7 +89,7 @@
            |-custom_k8s
   |-Solutions
       |-{platform_version_id}
-         |-supported.personas.jsonl (the personas this solution version supports — one persona record per line; recipes cite persona_ids; the personas of one {CustomerID} live in Customers/{CustomerID}/personas.jsonl)
+         |-supported.personas.jsonl (the personas this solution version supports — one persona record per line; recipes cite persona_ids; the personas of one {CustomerID} live in Accounts/{CustomerID}/personas.jsonl)
          |-agents/
            |-{agent_id}
               |-dataplatform.schemas.json
@@ -123,7 +123,7 @@
                    |-context.md
                    |-interaction.jsonl
              
-  |-Implementation
+  |-Projects
       |-{customer_id}
         |-migrations/
            |-{migration_id}

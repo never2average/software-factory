@@ -36,6 +36,7 @@ import { join } from "node:path";
 import http from "node:http";
 import { MOCKS } from "./lib/rendered-text.mjs";
 import { freePort, waitForNextStart } from "./lib/own-listener.mjs";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const argAfter = (flag) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : null);
@@ -228,7 +229,7 @@ const SCENARIOS = [
   { name: "a mermaid chart in a dashboard", turns: [["Show me", DASH_MERMAID]], expect: DIAGRAM, loads: ["mermaid", "recharts"] },
   {
     name: "an attached PDF",
-    turns: [[composeAttachmentMessage("Read this filing", [{ name: "filing.pdf", path: "Customers/acme/filing.pdf" }]), "Read it."]],
+    turns: [[composeAttachmentMessage("Read this filing", [{ name: "filing.pdf", path: `${FOLDER.accounts}/acme/filing.pdf` }]), "Read it."]],
     click: "css:[data-testid=attachment-preview-chip]",
     expect: "css:canvas",
     loads: ["pdf.js"],

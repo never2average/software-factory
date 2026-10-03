@@ -6,10 +6,10 @@
  * `check:vocabulary` keeps the base role word out of the UI; `check:wire-names` keeps it out of the identifiers a coding
  * assistant is served. Neither looks at what the eve agent's MODEL reads, and that is where it survived: a
  * research deployment whose profile says Customers are "Companies", Deployments are "Coverage reports" and
- * Implementation is "Portfolios" had a live agent reasoning 'Given the deployment mapping: Customers/ is shown
- * as "Companies". The data room has companies under Customers/{customer_id}/filings/' — because the root
+ * Implementation is "Portfolios" had a live agent reasoning 'Given the deployment mapping: {folder:accounts}/ is shown
+ * as "Companies". The data room has companies under {folder:accounts}/{customer_id}/filings/' — because the root
  * prompt was a customer-management persona, the tools were list_customers / customer_id, the paths were
- * Customers/…, and the per-turn briefing TOLD it the identifiers do not change.
+ * {folder:accounts}/…, and the per-turn briefing TOLD it the identifiers do not change.
  *
  * This gate builds two throwaway copies of this checkout and renders the complete model-facing surface of each
  * with scripts/lib/model-surface.mjs (system prompts, the per-turn briefing, every tool's name, description
@@ -20,7 +20,7 @@
  *      the hfc-research pack's profile). No base word may appear anywhere: customer(s), deployment(s),
  *      implementation(s), rollout(s), the member's legacy word. Matched as whole words case-insensitively, where `_`, `-`, `/`,
  *      `.` and a camelCase hump are word boundaries too — `customer_id`, `list_customers`, `deploymentId` and
- *      `Customers/` are exactly the leaks this exists for, and a plain \b would pass every one of them.
+ *      `{folder:accounts}/` are exactly the leaks this exists for, and a plain \b would pass every one of them.
  *   2. DEFAULT — profiles/00-default.json alone. The rendered prompts, tools and roster must be byte-identical
  *      to scripts/fixtures/agent-vocabulary/default-surface.txt (first taken BEFORE the vocabulary work, re-taken
  *      when the default profile's role words became neutral, and again when its record words did). A deployment
@@ -53,6 +53,14 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const FIXTURES = join(ROOT, "scripts", "fixtures", "agent-vocabulary");
 const FIXTURE = process.env.AGENT_VOCABULARY_FIXTURE || join(FIXTURES, "50-relabelled.json");
 const BASELINE = join(FIXTURES, "default-surface.txt");
+/**
+ * The pin a deployment that already holds files adds to its profile (each domain stored under the name its folder
+ * had while folder names were written into the code), and what the DEFAULT deployment's model read at the last
+ * commit before they became a profile setting, kept verbatim. Under the pin the model must read exactly that.
+ */
+const FOLDER_FIXTURES = join(ROOT, "scripts", "fixtures", "dataroom-folders");
+const LEGACY_FOLDERS_PIN = join(FOLDER_FIXTURES, "50-legacy-folders.json");
+const SURFACE_BEFORE = join(FOLDER_FIXTURES, "surface-before-folders-were-a-setting.txt");
 const UPDATE = process.argv.includes("--update-baseline");
 /** --dump <file>: also write the relabelled surface there, to read what the model gets. */
 const DUMP = process.argv.includes("--dump") ? process.argv[process.argv.indexOf("--dump") + 1] : null;
@@ -73,7 +81,7 @@ const LEGACY_AS_WORD = new RegExp(`(?<![A-Za-z0-9_\\-.])(${BASE_PRODUCT_WORD}s?)
 const LEGACY_STORED_VALUES = new Set([BASE_PRODUCT_WORD.toUpperCase(), `${BASE_PRODUCT_WORD.toUpperCase()} Verified`]);
 const isStoredValueLine = (line) => LEGACY_STORED_VALUES.has(line.trim().replace(/^"|",?$|"$/g, ""));
 /** A role or record placeholder base text writes, which every boundary must fill from the profile. */
-const UNFILLED = /(?<!\$)\{(members?|Members?|owner|Owner|accounts?|Accounts?|deployments?|Deployments?|implementations?|Implementations?|rollouts?|Rollouts?)\}/g;
+const UNFILLED = /(?<!\$)\{(members?|Members?|owner|Owner|accounts?|Accounts?|deployments?|Deployments?|implementations?|Implementations?|rollouts?|Rollouts?|(?:folder|domain):[a-z]+)\}/g;
 /** Names that are not prose where they stand (a specialist's directory name, a stored enum value): the ratchet's own list. */
 const RECORD_NAMES = readRecordAllow(JSON.parse(readFileSync(join(ROOT, "scripts", "neutral-names.allow.json"), "utf8"))).names;
 /**
@@ -289,6 +297,27 @@ if (PACK) {
     console.error(`  baseline: ${JSON.stringify(a[i] ?? "<end>").slice(0, 300)}`);
     console.error(`  now:      ${JSON.stringify(b[i] ?? "<end>").slice(0, 300)}`);
     console.error("A deployment that relabels nothing must read exactly what it read before. If the change is deliberate, re-snapshot with --update-baseline and say why in the PR.");
+  }
+}
+
+/* 3. PINNED FOLDERS -------------------------------------------------------------------------------------- */
+// A deployment whose data room was filled before the folder names were a profile setting pins the names it has.
+// Its model must read what it read then, to the byte: every prompt, every tool description, every path.
+if (!PACK) {
+  const pinned = render([["50-legacy-folders.json", LEGACY_FOLDERS_PIN]], ["--snapshot", "--no-results"]);
+  const before = readFileSync(SURFACE_BEFORE, "utf8");
+  if (pinned === before) {
+    console.log(`check-agent-vocabulary: pinned folders — a profile that pins the former folder names reads byte for byte what the default deployment read before folder names became a profile setting (${pinned.length} bytes)`);
+  } else {
+    failed = true;
+    const a = before.split("\n"), b = pinned.split("\n");
+    let i = 0;
+    while (i < a.length && a[i] === b[i]) i++;
+    const section = [...a.slice(0, i + 1)].reverse().find((l) => l.startsWith("=== ")) ?? "(start)";
+    console.error(`check-agent-vocabulary: PINNED FOLDERS — a deployment that pins its stored folder names no longer reads what it read before (first difference at line ${i + 1}, in ${section}):`);
+    console.error(`  before: ${JSON.stringify(a[i] ?? "<end>").slice(0, 300)}`);
+    console.error(`  now:    ${JSON.stringify(b[i] ?? "<end>").slice(0, 300)}`);
+    console.error("A deployment that already holds files keeps its folder names by pinning them, and nothing its model reads may change. This fixture is a before-image and is never re-snapshotted: a deliberate change to a prompt is made so that it fills to the same text under the pin.");
   }
 }
 

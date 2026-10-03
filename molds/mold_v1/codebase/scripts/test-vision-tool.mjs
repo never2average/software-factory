@@ -38,6 +38,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freePort, spawnFakeModel } from "./lib/own-listener.mjs";
 import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 let passed = 0;
@@ -667,8 +668,8 @@ const { DEFAULT_ORG } = await import("../agent/lib/org-context.ts");
 
 // A real image at a real data-room path, written through the store itself.
 const store = getDataroomStore(DEFAULT_ORG);
-const IMAGE_PATH = "Uploads/priya-example-in/scan.png";
-await fs.mkdir(join(process.env.DATAROOM_DIR, "orgs", DEFAULT_ORG, "Uploads/priya-example-in"), { recursive: true });
+const IMAGE_PATH = `${FOLDER.uploads}/priya-example-in/scan.png`;
+await fs.mkdir(join(process.env.DATAROOM_DIR, "orgs", DEFAULT_ORG, `${FOLDER.uploads}/priya-example-in`), { recursive: true });
 await fs.writeFile(join(process.env.DATAROOM_DIR, "orgs", DEFAULT_ORG, IMAGE_PATH), png(500));
 
 const ctx = ctxWith(fakeSandbox(join(WORK, "sb-dr")));
@@ -694,14 +695,14 @@ check(
 
 const PROBES = [
   IMAGE_PATH,
-  "Uploads/priya-example-in/../../etc/passwd",
+  `${FOLDER.uploads}/priya-example-in/../../etc/passwd`,
   "../../etc/passwd",
   "/etc/passwd",
   "Secrets/keys.png",
-  "Uploads/../Uploads/priya-example-in/scan.png",
+  `${FOLDER.uploads}/../${FOLDER.uploads}/priya-example-in/scan.png`,
   "https://example.com/x.png",
-  "Customers/acme-bank/context.md",
-  "Customers/acme-bank/nope.png",
+  `${FOLDER.accounts}/acme-bank/context.md`,
+  `${FOLDER.accounts}/acme-bank/nope.png`,
 ];
 for (const probe of PROBES) {
   let storeRefusal = null;

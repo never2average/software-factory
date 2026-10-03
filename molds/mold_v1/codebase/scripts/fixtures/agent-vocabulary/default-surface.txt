@@ -20,7 +20,7 @@ specialist with everything they need, and synthesize the results.
 - **data-migration** — plan and execute account data migrations and imports.
 - **customer-context** — keep the system of record current from meetings, email, and Slack.
 - **follow-ups** — chase open follow-ups and prepare the daily stand-up summary.
-- **research** — thoroughly research an account and build out its data room across the seven canonical domains (Customers, Platform, Deployments, Solutions, Implementation, Tickets, People), writing findings back and publishing the seven domain workbooks (`<Domain>/Master.xlsx`) — people sheets (Internal Staff, Customer Stakeholders) in `People/Master.xlsx`; Interactions and the derived Interaction Digest ride in `Tickets/Master.xlsx`.
+- **research** — thoroughly research an account and build out its data room across the seven canonical domains (Accounts, Platform, Deliveries, Solutions, Projects, Tickets, People), writing findings back and publishing the seven domain workbooks (`<Domain>/Master.xlsx`) — people sheets (Internal Staff, Customer Stakeholders) in `People/Master.xlsx`; Interactions and the derived Interaction Digest ride in `Tickets/Master.xlsx`.
 
 ## The system of record
 
@@ -35,8 +35,8 @@ The centralized account spreadsheet is the single source of truth. Use
 `list_customers` and `get_customer` to ground yourself before acting, and treat
 what's there as authoritative for platform configuration, deliveries, solutions,
 projects, tickets, and interaction history. Alongside the spreadsheet, the
-team's document layer is the dm.md data room — seven domains (Customers, Platform,
-Deployments, Solutions, Implementation, Tickets, People), each with a `Master.xlsx`
+team's document layer is the dm.md data room — seven domains (Accounts, Platform,
+Deliveries, Solutions, Projects, Tickets, People), each with a `Master.xlsx`
 workbook at its root and a folder tree of artifacts (context docs, signoff records,
 pipeline configs, ticket/interaction JSONL). `dm.md` is canonical;
 `docs/data-model.md` is the sheet-packaging view. When reality changes, get it written back (via the
@@ -174,9 +174,9 @@ You work for **your workspace**. Use this name — not any other company's — w
 
 ## This workspace
 
-- An **account** (plural: accounts) is a `customer` in the identifiers. Say "account" to people. The identifiers do not change: tools such as `list_customers` and `get_customer`, the `customer_id` field and the `Customers/` data-room folder all refer to accounts.
-- A **delivery** (plural: deliveries) is a `deployment` in the identifiers: `deployments[]` on the record, files under `Deployments/`, TODO containerType `deployment`.
-- A **project** (plural: projects) is an `implementation` in the identifiers: `implementation` on the record, files under `Implementation/`, TODO containerType `implementation`.
+- An **account** (plural: accounts) is a `customer` in the identifiers. Say "account" to people. The identifiers do not change: tools such as `list_customers` and `get_customer`, the `customer_id` field and the `Accounts/` data-room folder all refer to accounts.
+- A **delivery** (plural: deliveries) is a `deployment` in the identifiers: `deployments[]` on the record, files under `Deliveries/`, TODO containerType `deployment`.
+- A **project** (plural: projects) is an `implementation` in the identifiers: `implementation` on the record, files under `Projects/`, TODO containerType `implementation`.
 - A **plan** (plural: plans) is a `rollout` in the identifiers: the `rolloutId` its `implementation` rows share.
 
 === root :: tool :: build_workbook_spec
@@ -194,11 +194,11 @@ Build the DETERMINISTIC workbook spec(s) for an account per docs/data-model.md: 
       "description": "One domain workbook; omit for all seven.",
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Solutions",
-        "Implementation",
+        "Projects",
         "Tickets",
         "People"
       ]
@@ -562,13 +562,13 @@ Get a data-room file into your bash sandbox so you can PARSE it (spreadsheets, P
 
 === root :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "prefix": {
-      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
     }
   }
@@ -584,7 +584,7 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+      "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
     }
   },
   "required": [
@@ -891,9 +891,9 @@ List the landed sync .jsonl streams in the data room under a (domain, source?, c
     "domain": {
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Tickets",
         "People"
       ]
@@ -1140,7 +1140,7 @@ Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link 
 
 === root :: tool :: read_customer_slas
 read_customer_slas
-Read EVERY account's SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-account urgency/breach filters from each account's own commitments instead of one global rule, and (b) check whether that account's Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Accounts in `missing` have no sla.json — fall back to the platform default.
+Read EVERY account's SLA agreement (Accounts/{id}/agreements/sla.json) AND their Projects customization footprint (Projects/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-account urgency/breach filters from each account's own commitments instead of one global rule, and (b) check whether that account's Projects VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Accounts in `missing` have no sla.json — fall back to the platform default.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -1213,7 +1213,7 @@ Reassign the durable account owner of an account (updates the account's ownershi
 
 === root :: tool :: record_interaction
 record_interaction
-Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.
+Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Accounts/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -1529,7 +1529,7 @@ Run the FULL email intake in one deterministic step: read unread inbox mail (las
 
 === root :: tool :: sync_pull
 sync_pull
-Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.
+Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Accounts domain, also record items as interactions in the system of record. Sources per domain: `Accounts` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deliveries` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -1537,9 +1537,9 @@ Pull one upstream source into the data room's dm.md syncs landing zone (one dura
     "domain": {
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Tickets",
         "People"
       ]
@@ -1576,7 +1576,7 @@ Pull one upstream source into the data room's dm.md syncs landing zone (one dura
       }
     },
     "normalize": {
-      "description": "Also record Customers-domain items as interactions (default true).",
+      "description": "Also record Accounts-domain items as interactions (default true).",
       "type": "boolean"
     }
   },
@@ -4665,11 +4665,11 @@ Create or update an account record in the system of record (Postgres when config
               {
                 "type": "string",
                 "enum": [
-                  "Customers",
+                  "Accounts",
                   "Platform",
-                  "Deployments",
+                  "Deliveries",
                   "Solutions",
-                  "Implementation",
+                  "Projects",
                   "Tickets",
                   "Interactions",
                   "Internal Staff",
@@ -6078,13 +6078,13 @@ Complete the bounded task without waiting for chat input; make side effects idem
 
 === root/app-author :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "prefix": {
-      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
     }
   }
@@ -6100,7 +6100,7 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+      "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
     }
   },
   "required": [
@@ -6233,9 +6233,9 @@ List the landed sync .jsonl streams in the data room under a (domain, source?, c
     "domain": {
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Tickets",
         "People"
       ]
@@ -6292,7 +6292,7 @@ Deterministically match an inbound email sender to an account — use this inste
 
 === root/app-author :: tool :: read_customer_slas
 read_customer_slas
-Read EVERY account's SLA agreement (Customers/{id}/agreements/sla.json) AND their Implementation customization footprint (Implementation/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-account urgency/breach filters from each account's own commitments instead of one global rule, and (b) check whether that account's Implementation VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Accounts in `missing` have no sla.json — fall back to the platform default.
+Read EVERY account's SLA agreement (Accounts/{id}/agreements/sla.json) AND their Projects customization footprint (Projects/{id}/… paths) from the data room, and return a compound JSON. SLAs are streamlined into three tiers — INFRA (uptime/RPO/RTO), PLATFORM (performance/throughput), SOLUTIONS (accuracy/TAT, per agent/workflow). Use this to (a) COMPOSE per-account urgency/breach filters from each account's own commitments instead of one global rule, and (b) check whether that account's Projects VOIDS a commitment: a commitment marked voidableByCustomization whose service/scope (agentId/workflowId/deploymentId or tier) is customized in `customizations` is VOIDED — do not count it as a breach; surface it as 'SLA voided by customization'. Accounts in `missing` have no sla.json — fall back to the platform default.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -6656,15 +6656,15 @@ connections are enabled, and its feature flags and guardrails.
 
 Your artifacts land at
 `Platform/{platform_version_id}/design_decisions/*.schemas.json`,
-`Deployments/{customer_id}/{platform_version_id}/platform/…`
+`Deliveries/{customer_id}/{platform_version_id}/platform/…`
 (`organization.json`, `dataplatform.json`,
 `pipelines/{pipeline_id}/pipeline_config.json`, `integromat.json`),
 `Solutions/{platform_version_id}/…` contracts and recipes, and
-`Implementation/{customer_id}/…`. `private.integromat.json` is never published
+`Projects/{customer_id}/…`. `private.integromat.json` is never published
 via `publish_artifact`.
 
 When designing a solution, anchor it in the account personas it serves. An
-account's user archetypes live at `Customers/{customer_id}/personas.jsonl`
+account's user archetypes live at `Accounts/{customer_id}/personas.jsonl`
 (one persona record per line — role, goals, pain points, jobs-to-be-done,
 success criteria); the personas a solution version supports are declared in
 `Solutions/{platform_version_id}/supported.personas.jsonl` (same record shape).
@@ -6732,13 +6732,13 @@ Open a CHANGESET before a bulk write, then pass its id as `changesetId` on every
 
 === root/configuration :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "prefix": {
-      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
     }
   }
@@ -6754,7 +6754,7 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+      "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
     }
   },
   "required": [
@@ -6772,7 +6772,7 @@ Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path to write, e.g. 'Customers/acme-bank/context.md'."
+      "description": "dm.md data-room path to write, e.g. 'Accounts/acme-bank/context.md'."
     },
     "content": {
       "type": "string",
@@ -6879,8 +6879,8 @@ and Slack, and write structured updates back.
 ## Data room
 
 The dm.md data room has seven domains. Your writes mirror to
-`Customers/{customer_id}/interactions.jsonl` and
-`Customers/{customer_id}/context.md`, and person identity to
+`Accounts/{customer_id}/interactions.jsonl` and
+`Accounts/{customer_id}/context.md`, and person identity to
 `People/{person_id}/identity.json`. Join people through `customer_id`, never by
 fuzzy name matching.
 
@@ -6957,11 +6957,11 @@ Build the DETERMINISTIC workbook spec(s) for an account per docs/data-model.md: 
       "description": "One domain workbook; omit for all seven.",
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Solutions",
-        "Implementation",
+        "Projects",
         "Tickets",
         "People"
       ]
@@ -7091,7 +7091,7 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "A `.jsonl` data-room path, e.g. 'Customers/acme-bank/interactions.jsonl'."
+      "description": "A `.jsonl` data-room path, e.g. 'Accounts/acme-bank/interactions.jsonl'."
     },
     "records": {
       "anyOf": [
@@ -7162,13 +7162,13 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
 
 === root/customer-context :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "prefix": {
-      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
     }
   }
@@ -7184,7 +7184,7 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+      "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
     }
   },
   "required": [
@@ -7202,7 +7202,7 @@ Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path to write, e.g. 'Customers/acme-bank/context.md'."
+      "description": "dm.md data-room path to write, e.g. 'Accounts/acme-bank/context.md'."
     },
     "content": {
       "type": "string",
@@ -7335,9 +7335,9 @@ List the landed sync .jsonl streams in the data room under a (domain, source?, c
     "domain": {
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Tickets",
         "People"
       ]
@@ -7414,7 +7414,7 @@ Reassign the durable account owner of an account (updates the account's ownershi
 
 === root/customer-context :: tool :: record_interaction
 record_interaction
-Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.
+Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Accounts/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -7625,7 +7625,7 @@ Render a deterministic, self-contained HTML report for one account straight from
 
 === root/customer-context :: tool :: sync_pull
 sync_pull
-Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.
+Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Accounts domain, also record items as interactions in the system of record. Sources per domain: `Accounts` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deliveries` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -7633,9 +7633,9 @@ Pull one upstream source into the data room's dm.md syncs landing zone (one dura
     "domain": {
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Tickets",
         "People"
       ]
@@ -7672,7 +7672,7 @@ Pull one upstream source into the data room's dm.md syncs landing zone (one dura
       }
     },
     "normalize": {
-      "description": "Also record Customers-domain items as interactions (default true).",
+      "description": "Also record Accounts-domain items as interactions (default true).",
       "type": "boolean"
     }
   },
@@ -10591,11 +10591,11 @@ Create or update an account record in the system of record (Postgres when config
               {
                 "type": "string",
                 "enum": [
-                  "Customers",
+                  "Accounts",
                   "Platform",
-                  "Deployments",
+                  "Deliveries",
                   "Solutions",
-                  "Implementation",
+                  "Projects",
                   "Tickets",
                   "Interactions",
                   "Internal Staff",
@@ -11611,7 +11611,7 @@ records, and bulk imports into the account's platform.
 
 Migration work is tracked under `Tickets/data_migration/` and `Tickets/backfills/`
 (`{customer_id}/{platform_id}/tickets_{id}.jsonl`), and database infrastructure
-under `Deployments/{customer_id}/{platform_version_id}/infrastructure/database/`.
+under `Deliveries/{customer_id}/{platform_version_id}/infrastructure/database/`.
 
 ## Workspace boundary
 
@@ -11741,13 +11741,13 @@ Create a ticket in the system of record for an account — e.g. an account doubt
 
 === root/data-migration :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "prefix": {
-      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
     }
   }
@@ -11763,7 +11763,7 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+      "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
     }
   },
   "required": [
@@ -11886,7 +11886,7 @@ default harness (shell, files) for running deploys.
 
 ## Data room
 
-You own `Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/`
+You own `Deliveries/{customer_id}/{platform_version_id}/infrastructure/{component}/`
 (components: network, compute, storage, inference, agents, database,
 observability, autoscale) including `customizations.tf`, `rationale.md`, and the
 four-party signoff chain (`internal`, `customer.infra`, `customer.infosec`,
@@ -11978,7 +11978,7 @@ Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link 
 
 === root/deployment :: tool :: record_signoff
 record_signoff
-Record an authoritative delivery signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deployments/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision.
+Record an authoritative delivery signoff decision for one infrastructure component and one party of the four-party chain (internal, customer.infra, customer.infosec, customer.cloudvendor). Writes the dm.md signoff/{party}.md record under Deliveries/{customerId}/{platformVersionId}/infrastructure/{component}/signoff/. approved/rejected decisions must carry a decision date and signer email; internal signoffs default the signer email to the verified caller. Gated on approval since it records an authoritative approval decision.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12097,7 +12097,7 @@ Eval artifacts live in the Solutions domain:
 `Solutions/{platform_version_id}/{agents|pipelines}/{id}/evals/`
 (`dataset.jsonl`, `benchmark.jsonl`, `{run_id}/run_configs.json` +
 `output.jsonl` + `trace.jsonl`), and acceptance evals under
-`Implementation/{customer_id}/evals/{agents|pipelines}/`. Eval *results* roll up
+`Projects/{customer_id}/evals/{agents|pipelines}/`. Eval *results* roll up
 to the Solutions sheet, not a separate Evals sheet.
 
 ## Workspace boundary
@@ -12168,7 +12168,7 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "A `.jsonl` data-room path, e.g. 'Customers/acme-bank/interactions.jsonl'."
+      "description": "A `.jsonl` data-room path, e.g. 'Accounts/acme-bank/interactions.jsonl'."
     },
     "records": {
       "anyOf": [
@@ -12239,13 +12239,13 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
 
 === root/evals :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "prefix": {
-      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
     }
   }
@@ -12261,7 +12261,7 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+      "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
     }
   },
   "required": [
@@ -12279,7 +12279,7 @@ Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path to write, e.g. 'Customers/acme-bank/context.md'."
+      "description": "dm.md data-room path to write, e.g. 'Accounts/acme-bank/context.md'."
     },
     "content": {
       "type": "string",
@@ -12371,7 +12371,7 @@ summary. End with the 3–5 things that most need a decision.
 Tickets are partitioned under
 `Tickets/{feat,search,bug,docs,evals,config_changes,data_migration,backfills,onboarding}/`,
 the folder derived from the ticket's `ticket_category` (which routes triage).
-Interactions' source of record is `Customers/{customer_id}/interactions.jsonl`.
+Interactions' source of record is `Accounts/{customer_id}/interactions.jsonl`.
 
 ## Workspace boundary
 
@@ -12599,13 +12599,13 @@ Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') fo
 
 === root/follow-ups :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "prefix": {
-      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
     }
   }
@@ -12621,7 +12621,7 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+      "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
     }
   },
   "required": [
@@ -12918,7 +12918,7 @@ Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link 
 
 === root/follow-ups :: tool :: record_interaction
 record_interaction
-Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.
+Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Accounts/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -13156,7 +13156,7 @@ Guided, step-at-a-time procedures for this subagent (SKILL.md files).
 
 
 === root/research :: roster entry
-research: Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders. Delegate here to enrich or (re)build an account's data room: it pulls the current record, meeting notes, and the web, writes findings back, and produces the six per-section Excel workbooks (Customers, Platform, Deployments, Solutions, Implementation, Tickets).
+research: Thoroughly research an account and build out its schema-specific system of record across Accounts, Platform, Deliveries, Solutions, Projects, Tickets, Interactions, Internal Staff, and Customer Stakeholders. Delegate here to enrich or (re)build an account's data room: it pulls the current record, meeting notes, and the web, writes findings back, and produces the six per-section Excel workbooks (Accounts, Platform, Deliveries, Solutions, Projects, Tickets).
 
 === root/research :: prompt
 # Research & data-room builder
@@ -13187,7 +13187,7 @@ multi-use-case or multi-environment account into one row. These nine sheets are
 packaged into the seven domain workbooks (`<Domain>/Master.xlsx`) — see "The seven
 workbooks" below.
 
-1. **`Customers`** — one row per account (the spine): `customer_id`,
+1. **`Accounts`** — one row per account (the spine): `customer_id`,
    `customer_name`, `tier`, `lifecycle_stage`, `status`, `health_score`,
    `fde_owner`, `ae_owner`, `arr` (number), `arr_currency`, `seats`,
    `external_account_id`, `legal_entity_name`, `account_region`,
@@ -13214,7 +13214,7 @@ workbooks" below.
    `minimum_eval_score_pct`, `last_governance_review_at`,
    `monthly_spend_limit_usd`, `enabled_connectors`, `feature_flags`,
    `primary_use_case`, `last_health_check_at`.
-3. **`Deployments`** — one row per deployable account runtime instance:
+3. **`Deliveries`** — one row per deployable account runtime instance:
    `customer_id`,
    `deployment_id`, `environment`, `region`, `cloud_provider`, `runtime`,
    `deployment_strategy`, `deployed_version`, `last_deploy_at`,
@@ -13232,7 +13232,7 @@ workbooks" below.
    human-review fields, readiness fields, solution-level expansion fields,
    `solution_fde_owner`, `last_reviewed_date`.
    Eval results live here (per solution/workflow) — there is no separate Evals sheet.
-5. **`Implementation`** — one row per account: `customer_id`,
+5. **`Projects`** — one row per account: `customer_id`,
    `rollout_id`, `launch_scope_solution_ids`, `implementation_stage`,
    `implementation_owner_email`,
    `implementation_progress_pct`, `implementation_risk_level`,
@@ -13261,7 +13261,7 @@ workbooks" below.
    `customer_id`, `stakeholder_role`, `name`, `title`, `employer_org`,
    `email`, `last_contact`. This is NOT the same schema as internal staff.
 
-Ownership is single-source: `Customers.fde_owner` / `ae_owner` (emails) are
+Ownership is single-source: `Accounts.fde_owner` / `ae_owner` (emails) are
 canonical account pointers — `Solutions.solution_fde_owner`,
 `Tickets.ticket_owner_email`, and `Internal Staff` rows must resolve to the same
 account-scoped internal staff emails.
@@ -13272,11 +13272,11 @@ Package the nine sheets (plus one derived sheet) into the seven domain workbooks
 each named `Master.xlsx` at its domain root. Build each workbook multi-sheet where
 noted, with the sheets in the order listed:
 
-1. **`Customers/Master.xlsx`** — sheet: `Customers`.
+1. **`Accounts/Master.xlsx`** — sheet: `Accounts`.
 2. **`Platform/Master.xlsx`** — sheet: Platform.
-3. **`Deployments/Master.xlsx`** — sheet: `Deployments`.
+3. **`Deliveries/Master.xlsx`** — sheet: `Deliveries`.
 4. **`Solutions/Master.xlsx`** — sheet: Solutions.
-5. **`Implementation/Master.xlsx`** — sheet: `Implementation`.
+5. **`Projects/Master.xlsx`** — sheet: `Projects`.
 6. **`Tickets/Master.xlsx`** — sheets: Tickets, Interactions, **Interaction
    Digest** (derived, per-account rollup: `customer_id`, `customer_name`,
    `interactions`, `date_range`, `last_touch`, `open_next_actions`, `sentiment`,
@@ -13388,11 +13388,11 @@ Build the DETERMINISTIC workbook spec(s) for an account per docs/data-model.md: 
       "description": "One domain workbook; omit for all seven.",
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Solutions",
-        "Implementation",
+        "Projects",
         "Tickets",
         "People"
       ]
@@ -13413,7 +13413,7 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "A `.jsonl` data-room path, e.g. 'Customers/acme-bank/interactions.jsonl'."
+      "description": "A `.jsonl` data-room path, e.g. 'Accounts/acme-bank/interactions.jsonl'."
     },
     "records": {
       "anyOf": [
@@ -13484,13 +13484,13 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
 
 === root/research :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Customers/acme' does NOT match 'Customers/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "prefix": {
-      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deployments/acme-bank'. Omit to list the whole data room.",
+      "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
     }
   }
@@ -13506,7 +13506,7 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path, e.g. 'Customers/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+      "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
     }
   },
   "required": [
@@ -13524,7 +13524,7 @@ Create or replace a TEXT artifact in the dm.md data room (context.md, rationale.
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "dm.md data-room path to write, e.g. 'Customers/acme-bank/context.md'."
+      "description": "dm.md data-room path to write, e.g. 'Accounts/acme-bank/context.md'."
     },
     "content": {
       "type": "string",
@@ -13615,9 +13615,9 @@ List the landed sync .jsonl streams in the data room under a (domain, source?, c
     "domain": {
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Tickets",
         "People"
       ]
@@ -13668,7 +13668,7 @@ Generate and PUBLISH an artifact, returning a PRIVATE, time-limited signed link 
 
 === root/research :: tool :: record_interaction
 record_interaction
-Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Customers/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.
+Append ONE interaction (meeting, email, call, Slack thread) to an account's history in the system of record (an interactions row in Postgres when configured, bundled-JSON fallback otherwise; also mirrored to the data room's Accounts/{id}/interactions.jsonl document view). To log SEVERAL at once, use record_interactions (batch) instead of calling this repeatedly.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -13879,7 +13879,7 @@ Render a deterministic, self-contained HTML report for one account straight from
 
 === root/research :: tool :: sync_pull
 sync_pull
-Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.
+Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Accounts domain, also record items as interactions in the system of record. Sources per domain: `Accounts` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deliveries` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -13887,9 +13887,9 @@ Pull one upstream source into the data room's dm.md syncs landing zone (one dura
     "domain": {
       "type": "string",
       "enum": [
-        "Customers",
+        "Accounts",
         "Platform",
-        "Deployments",
+        "Deliveries",
         "Tickets",
         "People"
       ]
@@ -13926,7 +13926,7 @@ Pull one upstream source into the data room's dm.md syncs landing zone (one dura
       }
     },
     "normalize": {
-      "description": "Also record Customers-domain items as interactions (default true).",
+      "description": "Also record Accounts-domain items as interactions (default true).",
       "type": "boolean"
     }
   },
@@ -16845,11 +16845,11 @@ Create or update an account record in the system of record (Postgres when config
               {
                 "type": "string",
                 "enum": [
-                  "Customers",
+                  "Accounts",
                   "Platform",
-                  "Deployments",
+                  "Deliveries",
                   "Solutions",
-                  "Implementation",
+                  "Projects",
                   "Tickets",
                   "Interactions",
                   "Internal Staff",
@@ -17964,7 +17964,7 @@ Complete the bounded task without waiting for chat input; make side effects idem
 - `deployment` — Deploy and operate account platforms on Vercel: releases, rollbacks, and health checks.
 - `evals` — Build, run, and improve eval suites and interpret regressions for an account.
 - `follow-ups` — Chase open account follow-ups and prepare the daily stand-up summary.
-- `research` — Thoroughly research an account and build out its schema-specific system of record across Customers, Platform, Deployments, Solutions, Implementation, Tickets, Interactions, Internal Staff, and Customer Stakeholders.
+- `research` — Thoroughly research an account and build out its schema-specific system of record across Accounts, Platform, Deliveries, Solutions, Projects, Tickets, Interactions, Internal Staff, and Customer Stakeholders.
 
 === root/workflow-author :: file :: skills/README.md
 # skills/
@@ -17975,7 +17975,7 @@ Guided, step-at-a-time procedures for this subagent (SKILL.md files).
 === root :: per-turn briefing
 ## This workspace
 
-- An **account** (plural: accounts) is a `customer` in the identifiers. Say "account" to people. The identifiers do not change: tools such as `list_customers` and `get_customer`, the `customer_id` field and the `Customers/` data-room folder all refer to accounts.
-- A **delivery** (plural: deliveries) is a `deployment` in the identifiers: `deployments[]` on the record, files under `Deployments/`, TODO containerType `deployment`.
-- A **project** (plural: projects) is an `implementation` in the identifiers: `implementation` on the record, files under `Implementation/`, TODO containerType `implementation`.
+- An **account** (plural: accounts) is a `customer` in the identifiers. Say "account" to people. The identifiers do not change: tools such as `list_customers` and `get_customer`, the `customer_id` field and the `Accounts/` data-room folder all refer to accounts.
+- A **delivery** (plural: deliveries) is a `deployment` in the identifiers: `deployments[]` on the record, files under `Deliveries/`, TODO containerType `deployment`.
+- A **project** (plural: projects) is an `implementation` in the identifiers: `implementation` on the record, files under `Projects/`, TODO containerType `implementation`.
 - A **plan** (plural: plans) is a `rollout` in the identifiers: the `rolloutId` its `implementation` rows share.

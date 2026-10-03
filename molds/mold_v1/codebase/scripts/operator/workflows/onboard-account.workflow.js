@@ -8,7 +8,7 @@ const name = (args && args.customerName) || c;
 
 phase("Seed");
 const seeded = await agent(
-  "Onboard new {account} " + c + " (" + name + "): confirm/create the {account} record at lifecycle Onboarding, seed Customers/" + c + "/context.md from what's known, and log an account-created interaction. Return what was seeded.",
+  "Onboard new {account} " + c + " (" + name + "): confirm/create the {account} record at lifecycle Onboarding, seed {folder:accounts}/" + c + "/context.md from what's known, and log an account-created interaction. Return what was seeded.",
   { subagent: "customer-context" },
 );
 

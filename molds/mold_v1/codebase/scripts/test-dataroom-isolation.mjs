@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 // The web app's `@/` alias and extensionless imports, so lib/dataroom-blob.ts loads as the app loads it.
 register(
@@ -49,6 +50,18 @@ register(
 
 const { installFakeBlob } = await import("./lib/fake-blob.mjs");
 const blob = installFakeBlob();
+
+// DATAROOM_KEY_CENSUS=<file>: every object key and listing prefix that any door below asks the store for, written
+// out when the run ends. scripts/test-dataroom-folders.mjs runs this file in a copy stamped with the folder pin and
+// holds the result equal to its before-image: under the pin, every door addresses the keys it always did.
+const keyCensus = new Set();
+if (process.env.DATAROOM_KEY_CENSUS) {
+  const push = blob.calls.push.bind(blob.calls);
+  blob.calls.push = (...calls) => {
+    for (const c of calls) keyCensus.add(`${c.op} ${c.pathname ?? c.prefix ?? ""}${c.from ? ` <- ${c.from}` : ""}`);
+    return push(...calls);
+  };
+}
 
 let passed = 0;
 const failed = [];
@@ -77,9 +90,9 @@ const src = (path) => (existsSync(path) ? decomment(readFileSync(path, "utf8")) 
 const A = "icici-hfc";
 const B = "onfinance-ai";
 const LEGACY = ["org-onfinance-ai", "org-onfinance"];
-const A_FILES = ["Customers/acme-bank/context.md", "Uploads/priya-icici-com/board-pack.pdf"];
-const A_JSONL = "Customers/acme-bank/interactions.jsonl";
-const LEG_FILE = "Customers/legacy-co/context.md";
+const A_FILES = [`${FOLDER.accounts}/acme-bank/context.md`, `${FOLDER.uploads}/priya-icici-com/board-pack.pdf`];
+const A_JSONL = `${FOLDER.accounts}/acme-bank/interactions.jsonl`;
+const LEG_FILE = `${FOLDER.accounts}/legacy-co/context.md`;
 
 const store = await import("../agent/lib/dataroom-store.ts");
 
@@ -94,7 +107,7 @@ async function storeSuite(driver, make) {
 
   const bList = await b.list("");
   check("workspace B lists none of A's files", !bList.some((p) => A_FILES.includes(p) || p === A_JSONL || p.includes(A)), bList);
-  check("…nor under a prefix (Customers/, Uploads/)", (await b.list("Customers")).length === 0 && (await b.list("Uploads")).length === 0);
+  check(`…nor under a prefix (${FOLDER.accounts}/, ${FOLDER.uploads}/)`, (await b.list(FOLDER.accounts)).length === 0 && (await b.list(FOLDER.uploads)).length === 0);
   const bReads = await Promise.all([...A_FILES, A_JSONL].map((p) => b.read(p)));
   check("workspace B reads none of A's files at the same paths", bReads.every((v) => v === null), bReads);
   check("…nor their bytes", (await b.readBytes(A_FILES[1])) === null);
@@ -173,7 +186,7 @@ console.log("\n3. The web app's data-room reader (lib/dataroom-blob.ts: /api/dat
   const noOrg = [
     ["listDataroomPaths()", () => web.listDataroomPaths()],
     ["readDataroomFile(path) — the export route's call", () => web.readDataroomFile(A_FILES[0])],
-    ["writeDataroomFile(path, body) — an upload", () => web.writeDataroomFile("Uploads/x/y.txt", "y")],
+    ["writeDataroomFile(path, body) — an upload", () => web.writeDataroomFile(`${FOLDER.uploads}/x/y.txt`, "y")],
     ["statDataroomObject(path)", () => web.statDataroomObject(A_FILES[1])],
     ["openDataroomObject(path)", () => web.openDataroomObject(A_FILES[1])],
   ];
@@ -182,7 +195,7 @@ console.log("\n3. The web app's data-room reader (lib/dataroom-blob.ts: /api/dat
     const r = await attempt(call);
     check(`${label} with no workspace refuses (throws)`, r.threw, r);
   }
-  check("…and none of them wrote anything", blob.keys().length === before && !blob.keys().includes("dataroom/Uploads/x/y.txt"));
+  check("…and none of them wrote anything", blob.keys().length === before && !blob.keys().includes(`dataroom/${FOLDER.uploads}/x/y.txt`));
 }
 
 /* ---- 3b. the four listing doors, driven for real ---------------------------------------------------------------- */
@@ -285,19 +298,19 @@ console.log("\n5. The root's objects move only where they are PROVEN to belong (
       blob.reset();
       // On the live deployment NEITHER workspace used the root: it holds what callers that named no workspace wrote,
       // from either workspace, plus seed and probe files. So nothing may move on a guess.
-      blob.seed("dataroom/Customers/acme-bank/context.md", "# acme, written with no workspace\n", 1000);
-      blob.seed("dataroom/Tickets/bug/acme-bank/v1/tickets_TCK-1.jsonl", '{"t":1}\n', 1000);
-      blob.seed("dataroom/Customers/shared-co/context.md", "# held by both\n", 1000);
-      blob.seed("dataroom/Customers/ghost-co/context.md", "# held by nobody\n", 1000);
-      blob.seed("dataroom/Customers/surface-probe-co/context.md", "# probe\n", 1000);
-      blob.seed("dataroom/People/sam-example-com/identity.json", "{}\n", 1000);
-      blob.seed(`dataroom/_versions/${A}/1700000000000-Customers/x/context.md`, "# A's snapshot\n", 1000);
+      blob.seed(`dataroom/${FOLDER.accounts}/acme-bank/context.md`, "# acme, written with no workspace\n", 1000);
+      blob.seed(`dataroom/${FOLDER.tickets}/bug/acme-bank/v1/tickets_TCK-1.jsonl`, '{"t":1}\n', 1000);
+      blob.seed(`dataroom/${FOLDER.accounts}/shared-co/context.md`, "# held by both\n", 1000);
+      blob.seed(`dataroom/${FOLDER.accounts}/ghost-co/context.md`, "# held by nobody\n", 1000);
+      blob.seed(`dataroom/${FOLDER.accounts}/surface-probe-co/context.md`, "# probe\n", 1000);
+      blob.seed(`dataroom/${FOLDER.people}/sam-example-com/identity.json`, "{}\n", 1000);
+      blob.seed(`dataroom/_versions/${A}/1700000000000-${FOLDER.accounts}/x/context.md`, "# A's snapshot\n", 1000);
       // The reviewer's reproduction: the same size, a NEWER destination, DIFFERENT bytes.
-      blob.seed("dataroom/Uploads/sam-example-com/deck.pdf", "ROOT-A\n", 1000);
-      blob.seed(`dataroom/orgs/${LIVE}/Uploads/sam-example-com/deck.pdf`, "LIVE-B\n", 2000);
+      blob.seed(`dataroom/${FOLDER.uploads}/sam-example-com/deck.pdf`, "ROOT-A\n", 1000);
+      blob.seed(`dataroom/orgs/${LIVE}/${FOLDER.uploads}/sam-example-com/deck.pdf`, "LIVE-B\n", 2000);
       // …and a destination that really is the same object (a copy an earlier run made).
-      blob.seed("dataroom/Uploads/sam-example-com/notes.md", "same bytes\n", 1000);
-      blob.seed(`dataroom/orgs/${LIVE}/Uploads/sam-example-com/notes.md`, "same bytes\n", 2000);
+      blob.seed(`dataroom/${FOLDER.uploads}/sam-example-com/notes.md`, "same bytes\n", 1000);
+      blob.seed(`dataroom/orgs/${LIVE}/${FOLDER.uploads}/sam-example-com/notes.md`, "same bytes\n", 2000);
     };
     // Which workspaces hold each company id (read-only from each workspace's customers table in production).
     const companyOwners = new Map([
@@ -315,38 +328,38 @@ console.log("\n5. The root's objects move only where they are PROVEN to belong (
     check("the dry run changes nothing", blob.objects.size === before.size && [...before].every(([k, v]) => where(k) === v));
     const planned = (p) => (dry.objects ?? []).find((o) => o.pathname === p);
     check("the dry run lists EVERY root object with what would happen to it", Array.isArray(dry.objects) && dry.objects.filter((o) => !o.pathname.startsWith("orgs/")).length === 9, dry.objects);
-    check("a company path goes to the ONE workspace whose customers table holds it — not to --to", planned("Customers/acme-bank/context.md")?.to === `orgs/${A}/Customers/acme-bank/context.md` && planned("Tickets/bug/acme-bank/v1/tickets_TCK-1.jsonl")?.to === `orgs/${A}/Tickets/bug/acme-bank/v1/tickets_TCK-1.jsonl`, [planned("Customers/acme-bank/context.md"), planned("Tickets/bug/acme-bank/v1/tickets_TCK-1.jsonl")]);
-    check("a company held by BOTH workspaces is ambiguous and stays", planned("Customers/shared-co/context.md")?.action === "ambiguous", planned("Customers/shared-co/context.md"));
-    check("a company held by NEITHER is ambiguous and stays", planned("Customers/ghost-co/context.md")?.action === "ambiguous", planned("Customers/ghost-co/context.md"));
-    check("anything not attributable and not named explicitly stays (People/, Uploads/), whatever --to says", ["People/sam-example-com/identity.json", "Uploads/sam-example-com/deck.pdf", "Uploads/sam-example-com/notes.md"].every((p) => planned(p)?.action === "stay"), ["People/sam-example-com/identity.json", "Uploads/sam-example-com/deck.pdf"].map(planned));
-    check("a snapshot goes to its own workspace", planned(`_versions/${A}/1700000000000-Customers/x/context.md`)?.to === `orgs/${A}/_versions/${A}/1700000000000-Customers/x/context.md`);
+    check("a company path goes to the ONE workspace whose customers table holds it — not to --to", planned(`${FOLDER.accounts}/acme-bank/context.md`)?.to === `orgs/${A}/${FOLDER.accounts}/acme-bank/context.md` && planned(`${FOLDER.tickets}/bug/acme-bank/v1/tickets_TCK-1.jsonl`)?.to === `orgs/${A}/${FOLDER.tickets}/bug/acme-bank/v1/tickets_TCK-1.jsonl`, [planned(`${FOLDER.accounts}/acme-bank/context.md`), planned(`${FOLDER.tickets}/bug/acme-bank/v1/tickets_TCK-1.jsonl`)]);
+    check("a company held by BOTH workspaces is ambiguous and stays", planned(`${FOLDER.accounts}/shared-co/context.md`)?.action === "ambiguous", planned(`${FOLDER.accounts}/shared-co/context.md`));
+    check("a company held by NEITHER is ambiguous and stays", planned(`${FOLDER.accounts}/ghost-co/context.md`)?.action === "ambiguous", planned(`${FOLDER.accounts}/ghost-co/context.md`));
+    check(`anything not attributable and not named explicitly stays (${FOLDER.people}/, ${FOLDER.uploads}/), whatever --to says`, [`${FOLDER.people}/sam-example-com/identity.json`, `${FOLDER.uploads}/sam-example-com/deck.pdf`, `${FOLDER.uploads}/sam-example-com/notes.md`].every((p) => planned(p)?.action === "stay"), [`${FOLDER.people}/sam-example-com/identity.json`, `${FOLDER.uploads}/sam-example-com/deck.pdf`].map(planned));
+    check("a snapshot goes to its own workspace", planned(`_versions/${A}/1700000000000-${FOLDER.accounts}/x/context.md`)?.to === `orgs/${A}/_versions/${A}/1700000000000-${FOLDER.accounts}/x/context.md`);
 
     const applied = await run({ to: LIVE, apply: true });
     check("applying moves only the attributed objects", applied.applied?.moved === 3 && applied.applied?.failed === 0, applied.applied);
-    check("…acme-bank's files are in ITS workspace", where(`dataroom/orgs/${A}/Customers/acme-bank/context.md`) === "# acme, written with no workspace\n" && !blob.objects.has("dataroom/Customers/acme-bank/context.md") && !blob.objects.has(`dataroom/orgs/${LIVE}/Customers/acme-bank/context.md`));
-    check("…and nothing unattributed moved to --to", ["Customers/shared-co/context.md", "Customers/ghost-co/context.md", "People/sam-example-com/identity.json", "Uploads/sam-example-com/deck.pdf"].every((p) => blob.objects.has(`dataroom/${p}`)));
+    check("…acme-bank's files are in ITS workspace", where(`dataroom/orgs/${A}/${FOLDER.accounts}/acme-bank/context.md`) === "# acme, written with no workspace\n" && !blob.objects.has(`dataroom/${FOLDER.accounts}/acme-bank/context.md`) && !blob.objects.has(`dataroom/orgs/${LIVE}/${FOLDER.accounts}/acme-bank/context.md`));
+    check("…and nothing unattributed moved to --to", [`${FOLDER.accounts}/shared-co/context.md`, `${FOLDER.accounts}/ghost-co/context.md`, `${FOLDER.people}/sam-example-com/identity.json`, `${FOLDER.uploads}/sam-example-com/deck.pdf`].every((p) => blob.objects.has(`dataroom/${p}`)));
 
-    const named = await run({ to: LIVE, only: ["Uploads/"], apply: true });
-    check("REVIEWER'S BLOCKER: same size, newer destination, different bytes is a CONFLICT — the root copy is kept", where("dataroom/Uploads/sam-example-com/deck.pdf") === "ROOT-A\n" && where(`dataroom/orgs/${LIVE}/Uploads/sam-example-com/deck.pdf`) === "LIVE-B\n", named.conflicts);
-    check("…reported as a conflict", (named.conflicts ?? []).some((c) => c.from === "Uploads/sam-example-com/deck.pdf"), named.conflicts);
-    check("a destination with the SAME bytes is done: the root copy is removed", !blob.objects.has("dataroom/Uploads/sam-example-com/notes.md") && where(`dataroom/orgs/${LIVE}/Uploads/sam-example-com/notes.md`) === "same bytes\n");
-    check("--only moves nothing outside its prefix", blob.objects.has("dataroom/People/sam-example-com/identity.json"));
+    const named = await run({ to: LIVE, only: [`${FOLDER.uploads}/`], apply: true });
+    check("REVIEWER'S BLOCKER: same size, newer destination, different bytes is a CONFLICT — the root copy is kept", where(`dataroom/${FOLDER.uploads}/sam-example-com/deck.pdf`) === "ROOT-A\n" && where(`dataroom/orgs/${LIVE}/${FOLDER.uploads}/sam-example-com/deck.pdf`) === "LIVE-B\n", named.conflicts);
+    check("…reported as a conflict", (named.conflicts ?? []).some((c) => c.from === `${FOLDER.uploads}/sam-example-com/deck.pdf`), named.conflicts);
+    check("a destination with the SAME bytes is done: the root copy is removed", !blob.objects.has(`dataroom/${FOLDER.uploads}/sam-example-com/notes.md`) && where(`dataroom/orgs/${LIVE}/${FOLDER.uploads}/sam-example-com/notes.md`) === "same bytes\n");
+    check("--only moves nothing outside its prefix", blob.objects.has(`dataroom/${FOLDER.people}/sam-example-com/identity.json`));
 
-    await run({ to: LIVE, moveFiles: ["People/sam-example-com/identity.json"], apply: true });
-    check("--move-file moves exactly the named object to --to", where(`dataroom/orgs/${LIVE}/People/sam-example-com/identity.json`) === "{}\n" && !blob.objects.has("dataroom/People/sam-example-com/identity.json"));
-    await run({ to: LIVE, moveFiles: ["Customers/shared-co/context.md"], apply: true });
-    check("…but never a company path attributed to both workspaces", blob.objects.has("dataroom/Customers/shared-co/context.md"));
+    await run({ to: LIVE, moveFiles: [`${FOLDER.people}/sam-example-com/identity.json`], apply: true });
+    check("--move-file moves exactly the named object to --to", where(`dataroom/orgs/${LIVE}/${FOLDER.people}/sam-example-com/identity.json`) === "{}\n" && !blob.objects.has(`dataroom/${FOLDER.people}/sam-example-com/identity.json`));
+    await run({ to: LIVE, moveFiles: [`${FOLDER.accounts}/shared-co/context.md`], apply: true });
+    check("…but never a company path attributed to both workspaces", blob.objects.has(`dataroom/${FOLDER.accounts}/shared-co/context.md`));
 
-    const delDry = await run({ deleteUnowned: ["Customers/surface-probe-co"] });
-    check("--delete-unowned lists what it would delete on a dry run, and deletes nothing", (delDry.objects ?? []).some((o) => o.pathname === "Customers/surface-probe-co/context.md" && o.action === "delete") && blob.objects.has("dataroom/Customers/surface-probe-co/context.md"));
-    await run({ deleteUnowned: ["Customers/surface-probe-co", "Customers/acme-bank"], apply: true });
-    check("…and on --apply deletes the unowned objects under it only", !blob.objects.has("dataroom/Customers/surface-probe-co/context.md") && where(`dataroom/orgs/${A}/Customers/acme-bank/context.md`) !== undefined);
+    const delDry = await run({ deleteUnowned: [`${FOLDER.accounts}/surface-probe-co`] });
+    check("--delete-unowned lists what it would delete on a dry run, and deletes nothing", (delDry.objects ?? []).some((o) => o.pathname === `${FOLDER.accounts}/surface-probe-co/context.md` && o.action === "delete") && blob.objects.has(`dataroom/${FOLDER.accounts}/surface-probe-co/context.md`));
+    await run({ deleteUnowned: [`${FOLDER.accounts}/surface-probe-co`, `${FOLDER.accounts}/acme-bank`], apply: true });
+    check("…and on --apply deletes the unowned objects under it only", !blob.objects.has(`dataroom/${FOLDER.accounts}/surface-probe-co/context.md`) && where(`dataroom/orgs/${A}/${FOLDER.accounts}/acme-bank/context.md`) !== undefined);
 
-    const again = await run({ to: LIVE, only: ["Uploads/"], apply: true });
+    const again = await run({ to: LIVE, only: [`${FOLDER.uploads}/`], apply: true });
     check("re-running is idempotent: nothing moves, the conflict is still reported", again.applied?.moved === 0 && again.counts?.conflict === 1, again.counts);
     const a = store.createDataroomStore({ orgId: A });
-    check("workspace A reads the moved files at its own prefix", (await a.read("Customers/acme-bank/context.md")) === "# acme, written with no workspace\n");
-    const refusedNoTarget = await attempt(() => migrateDataroomRoot({ driver: blobDriver(), companyOwners, log: quiet, to: "", moveFiles: ["People/x"], apply: false }));
+    check("workspace A reads the moved files at its own prefix", (await a.read(`${FOLDER.accounts}/acme-bank/context.md`)) === "# acme, written with no workspace\n");
+    const refusedNoTarget = await attempt(() => migrateDataroomRoot({ driver: blobDriver(), companyOwners, log: quiet, to: "", moveFiles: [`${FOLDER.people}/x`], apply: false }));
     check("naming objects without a target workspace is refused", refusedNoTarget.threw, refusedNoTarget);
   }
 }
@@ -371,6 +384,12 @@ console.log("\n6. Snapshot keys and artifact links cannot be bent into another w
   }
 }
 
+if (process.env.DATAROOM_KEY_CENSUS) {
+  // A snapshot's timestamp and an append part's stamp differ on every run; the path they belong to does not.
+  const stable = (k) => k.replace(/(_versions\/[^/]+\/)\d+-/g, "$1<at>-").replace(/\.appends\/[0-9]+-[0-9]+-[0-9a-f]+\.part/g, ".appends/<part>");
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(process.env.DATAROOM_KEY_CENSUS, `${JSON.stringify([...new Set([...keyCensus].map(stable))].sort(), null, 2)}\n`);
+}
 console.log(`\n${passed} passed, ${failed.length} failed`);
 if (failed.length) {
   for (const f of failed) console.log(`  ✗ ${f}`);

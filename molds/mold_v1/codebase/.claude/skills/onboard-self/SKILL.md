@@ -5,6 +5,10 @@ description: Onboard yourself as a team member on this eve platform before doing
 
 # Onboard yourself as a team member
 
+> `{folder:<id>}` below is the data-room folder this deployment stores that domain under: its profile's
+> `dataroom.domains.<id>.folder` (`uploads_folder` for `{folder:uploads}`). Read the real name with
+> `node --experimental-strip-types -e 'import("./agent/lib/dataroom-folders.ts").then((m) => console.log(m.FOLDER))'`.
+
 This gets a new team member from a fresh checkout to fully
 operational: signed in, MCP wired, recorded in the system, and verified against the
 live platform. **Do this before any customer work** — the customer skills assume
@@ -86,7 +90,7 @@ WRITE (only this):
 
 ## Never
 
-- Never write your profile anywhere under `People/` — that tree is **external
+- Never write your profile anywhere under `{folder:people}/` — that tree is **external
   people only**. Team members live in team memory.
 - Never record a non-`@onfinance.in` identity — the script refuses it, and the Ops
   API rejects it.

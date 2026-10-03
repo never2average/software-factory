@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { orgContextForRequest } from "@/lib/org-context";
 import { blobToken, isSafeDataroomPath, writeDataroomFile } from "@/lib/dataroom-blob";
+import { FOLDER } from "@/agent/lib/dataroom-folders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
  * POST /api/ops/upload  (multipart/form-data, field `file`)
  *
  * Persists a user-uploaded file into the data room under the UPLOADER'S OWN
- * identity folder — Uploads/{person_id}/{filename} — so every upload lands as a
+ * identity folder — {folder:uploads}/{person_id}/{filename} — so every upload lands as a
  * folder + file keyed to who uploaded it. The folder is derived from the
  * VERIFIED Google identity on the request (never from the client), so it can't
  * be spoofed. Returns the logical data-room path it was stored at.
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `File exceeds ${MAX_BYTES / (1024 * 1024)} MB.` }, { status: 413 });
   }
 
-  const path = `Uploads/${personSlug(identity.email)}/${safeFilename(file.name)}`;
+  const path = `${FOLDER.uploads}/${personSlug(identity.email)}/${safeFilename(file.name)}`;
   if (!isSafeDataroomPath(path)) {
     return NextResponse.json({ error: "Could not derive a safe data-room path." }, { status: 400 });
   }

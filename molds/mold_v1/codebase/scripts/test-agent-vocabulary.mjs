@@ -72,15 +72,19 @@ async function phaseUnits() {
   const { DEPLOYMENT_PROFILE } = await imp("agent/lib/deployment-profile.generated.ts");
   const base = v.createVocabulary(DEPLOYMENT_PROFILE);
   const voc = v.createVocabulary(fixtureProfile(), ["app-author", "browser", "evals", "follow-ups", "research", "workflow-author", "customer-portal"]);
+  // The folders each profile STORES its domains under, by id (agent/lib/dataroom-folders.ts): this build's (B) and
+  // the fixture's (S), which pins the names its data room already holds. No stored name is spelled in this file.
+  const B = base.stored;
+  const S = voc.stored;
 
   console.log("The default profile changes nothing:");
   await check("nothing is relabelled", () => assert.equal(base.relabelled, false));
   await check("base text's role placeholders are filled with the default profile's neutral words", () => {
     assert.equal(v.speakWith(base, "The {member} who owns it — usually the customer's {owner}."), "The member who owns it — usually the customer's account owner.");
     assert.equal(v.speakWith(base, "Ask an {member}; the {Members} decide; {Owner} first."), "Ask a member; the Members decide; Account owner first.");
-    assert.equal(v.fillWith(base, "People/{id}/identity.json and {customer_id}"), "People/{id}/identity.json and {customer_id}", "only the role placeholders");
+    assert.equal(v.fillWith(base, `${B.people}/{id}/identity.json and {customer_id}`), `${B.people}/{id}/identity.json and {customer_id}`, "only the role placeholders");
     assert.equal(v.hasRolePlaceholder("the {owner}"), true);
-    assert.equal(v.hasRolePlaceholder("People/{id}"), false);
+    assert.equal(v.hasRolePlaceholder(`${B.people}/{id}`), false);
   });
   await check("base text's record placeholders are filled with the default profile's neutral words", () => {
     assert.equal(
@@ -94,8 +98,34 @@ async function phaseUnits() {
     assert.equal(v.wordForWith(base, "account"), "account");
     assert.equal(v.wordForWith(base, "Deployments"), "Deliveries");
   });
+  await check("a folder placeholder is the folder the profile stores the domain under; a domain placeholder its label", () => {
+    // The default profile: base text names no folder, it writes a placeholder, and the profile fills it.
+    assert.equal(v.fillWith(base, "{folder:accounts}/{customer_id}/context.md, across {domain:accounts} and {domain:tickets}"), `${B.accounts}/{customer_id}/context.md, across ${base.labels.accounts} and ${base.labels.tickets}`);
+    assert.equal(v.speakWith(base, "under {folder:deliveries}/{id}/ and {folder:uploads}/{person_id}/"), `under ${B.deliveries}/{id}/ and ${B.uploads}/{person_id}/`);
+    assert.equal(v.hasRolePlaceholder("{folder:people}/{id}"), true);
+    assert.equal(v.hasRolePlaceholder("{folder:nowhere}/{id}"), false, "only a real domain id is a placeholder");
+    assert.equal(v.fillWith(base, "${folder:accounts} stays"), "${folder:accounts} stays");
+    for (const id of Object.keys(base.labels)) assert.equal(base.labels[id], B[id], `the default label of ${id} is its folder's name: nothing to translate`);
+    assert.equal(base.folders.size, 0);
+    // A deployment that pins other stored names and relabels: the model addresses the label's folder form, reads
+    // the label in a sentence, and what it sends back lands in the pinned folder.
+    assert.equal(v.fillWith(voc, "{folder:deliveries}/acme and {domain:deliveries}"), "Coverage-reports/acme and Coverage reports");
+    assert.equal(v.speakWith(voc, "Read {folder:accounts}/{id}/sla.json across {domain:accounts}"), "Read Companies/{id}/sla.json across Companies");
+    assert.equal(v.toStoredPathWith(voc, "Coverage-reports/acme/x.md"), `${S.deliveries}/acme/x.md`);
+    assert.notEqual(S.accounts, B.accounts, "the fixture pins a stored name that is not this build's default");
+  });
+  await check("a profile that pins a stored folder and gives no label reads the folder's own name: nothing is translated", async () => {
+    const { foldersOf } = await imp("agent/lib/dataroom-folders.ts");
+    const pinned = structuredClone(DEPLOYMENT_PROFILE);
+    for (const id of Object.keys(pinned.dataroom.domains)) pinned.dataroom.domains[id] = { ...pinned.dataroom.domains[id], folder: S[id], label: S[id] };
+    const pv = v.createVocabulary(pinned);
+    assert.equal(pv.relabelled, false);
+    assert.deepEqual(foldersOf(pinned), { ...S, uploads: B.uploads });
+    assert.equal(v.speakWith(pv, "{folder:accounts}/{id}/context.md in {domain:accounts}"), `${S.accounts}/{id}/context.md in ${S.accounts}`);
+    assert.equal(v.toStoredPathWith(pv, `${S.accounts}/x`), `${S.accounts}/x`);
+  });
   await check("the record words' legacy spelling is a contract under the default profile: never translated", () => {
-    const t = "customer_id, list_customers, Customers/acme, deploymentId, implementationStage, rolloutId; an old note says the customer's deployment and its rollout";
+    const t = `customer_id, list_customers, ${B.accounts}/acme, deploymentId, implementationStage, rolloutId; an old note says the customer's deployment and its rollout`;
     assert.equal(v.speakWith(base, t), t);
     for (const id of ["customer_id", "list_customers", "deployments", "implementation", "rolloutId"]) assert.equal(v.speakIdentifierWith(base, id), id);
     assert.equal(base.words.size, 0);
@@ -114,14 +144,14 @@ async function phaseUnits() {
     const { fillPlaceholders, hasPlaceholder } = await imp("scripts/lib/profile-words.mjs");
     const fixture = fixtureProfile();
     for (const [profile, vocab] of [[DEPLOYMENT_PROFILE, base], [fixture, voc]]) {
-      for (const key of v.PLACEHOLDER_KEYS) {
+      for (const key of [...v.PLACEHOLDER_KEYS, ...v.FOLDER_PLACEHOLDER_KEYS]) {
         for (const text of [`{${key}}`, `a {${key}} here`, `An **{${key}}** and an {${key}}'s id; \${${key}} stays`]) {
           assert.equal(fillPlaceholders(text, profile), v.fillWith(vocab, text), text);
         }
         assert.equal(hasPlaceholder(`x {${key}} y`), true);
       }
     }
-    assert.equal(hasPlaceholder("People/{id}/x and ${account}"), false);
+    assert.equal(hasPlaceholder(`${B.people}/{id}/x and \${account}`), false);
   });
   await check("the member's legacy word is data under the default profile: not translated, not a base word", () => {
     const t = `${L.owner} reassigned; ownerTeam ${L.singular}`;
@@ -129,10 +159,10 @@ async function phaseUnits() {
     assert.equal(v.speakIdentifierWith(base, "fdeOwner"), "fdeOwner");
   });
   await check("speak, identifiers, paths, JSON: all the identity", () => {
-    const t = `List all customers (\`customer_id\`, Customers/acme, ${L.owner}, deploymentId).`;
+    const t = `List all customers (\`customer_id\`, ${B.accounts}/acme, ${L.owner}, deploymentId).`;
     assert.equal(v.speakWith(base, t), t);
     assert.equal(v.speakIdentifierWith(base, "list_customers"), "list_customers");
-    assert.equal(v.toStoredPathWith(base, "Customers/x"), "Customers/x");
+    assert.equal(v.toStoredPathWith(base, `${B.accounts}/x`), `${B.accounts}/x`);
     const o = { customerId: "x" };
     assert.equal(v.outputForModelWith(base, o), o);
     assert.equal(v.inputFromModelWith(base, o, { root: undefined, keysBack: new WeakMap(), enumsBack: new WeakMap() }), o);
@@ -162,8 +192,8 @@ async function phaseUnits() {
     ["List all {accounts}: a {account}'s {deployments}. {Account} id.", "List all companies: a company's coverage reports. Company id."],
     ["an {implementation} in one {rollout}; {Deployments} and {Implementations}", "a portfolio entry in one portfolio; Coverage reports and Portfolio entries"],
     ["{Accounts} in `missing`; per-{account} filters; {account}-facing", "Companies in `missing`; per-company filters; company-facing"],
-    ["Read Customers/{id}/sla.json and Implementation/{id}/x and Deployments/{customer_id}/", "Read Companies/{id}/sla.json and Portfolios/{id}/x and Coverage-reports/{company_id}/"],
-    ["seven domains (Customers, Deployments, Implementation, People)", "seven domains (Companies, Coverage reports, Portfolios, People)"],
+    [`Read ${S.accounts}/{id}/sla.json and ${S.projects}/{id}/x and ${S.deliveries}/{customer_id}/`, "Read Companies/{id}/sla.json and Portfolios/{id}/x and Coverage-reports/{company_id}/"],
+    [`seven domains (${S.accounts}, ${S.deliveries}, ${S.projects}, ${S.people})`, "seven domains (Companies, Coverage reports, Portfolios, People)"],
     ["scope 'customer:{id}' e.g. 'customer:acme-bank'", "scope 'company:{id}' e.g. 'company:acme-bank'"],
     ["This deployment's own fields", "This workspace's own fields"],
     ["write `deployments[].custom` and `implementation.custom`", "write `coverageReports[].custom` and `portfolioEntry.custom`"],
@@ -175,17 +205,17 @@ async function phaseUnits() {
     assert.equal(v.speakCodeWith(voc, "deployment"), "coverageReport");
     assert.equal(v.speakCodeWith(voc, "customer-vpc"), "company-vpc");
     assert.equal(v.speakCodeWith(voc, "Waiting on Customer"), "Waiting on Company");
-    assert.equal(v.speakCodeWith(voc, "Customers"), "Companies");
+    assert.equal(v.speakCodeWith(voc, S.accounts), "Companies");
   });
   await check("paths: display <-> stored, stored accepted as is, free text left alone", () => {
-    assert.equal(v.toDisplayPathWith(voc, "Deployments/acme/x.md"), "Coverage-reports/acme/x.md");
-    assert.equal(v.toStoredPathWith(voc, "Coverage-reports/acme/x.md"), "Deployments/acme/x.md");
-    assert.equal(v.toStoredPathWith(voc, "Customers/acme/x.md"), "Customers/acme/x.md");
-    assert.equal(v.toStoredPathWith(voc, "Portfolios"), "Implementation");
+    assert.equal(v.toDisplayPathWith(voc, `${S.deliveries}/acme/x.md`), "Coverage-reports/acme/x.md");
+    assert.equal(v.toStoredPathWith(voc, "Coverage-reports/acme/x.md"), `${S.deliveries}/acme/x.md`);
+    assert.equal(v.toStoredPathWith(voc, `${S.accounts}/acme/x.md`), `${S.accounts}/acme/x.md`);
+    assert.equal(v.toStoredPathWith(voc, "Portfolios"), S.projects);
     const map = { root: undefined, keysBack: new WeakMap(), enumsBack: new WeakMap() };
     const roles = { paths: new Set(["prefix", "path"]) };
     assert.deepEqual(v.inputFromModelWith(voc, { note: "see Companies/acme/x.md today", name: "Portfolios" }, map, roles), { note: "see Companies/acme/x.md today", name: "Portfolios" });
-    assert.deepEqual(v.inputFromModelWith(voc, { prefix: "Portfolios" }, map, roles), { prefix: "Implementation" });
+    assert.deepEqual(v.inputFromModelWith(voc, { prefix: "Portfolios" }, map, roles), { prefix: S.projects });
   });
   await check("memory: both spellings are one scope, shown in the profile's", () => {
     assert.deepEqual(v.memoryScopeVariants("company:acme", voc), ["company:acme", "customer:acme"]);
@@ -206,8 +236,8 @@ async function phaseUnits() {
     assert.deepEqual(v.outputForModelWith(voc, back), { companyId: "acme", coverageReports: [{ coverageReportId: "r1", region: "company-vpc" }] });
   });
   await check("results: opaque content untouched, keys and paths spoken, messages spoken", () => {
-    const out = v.outputForModelWith(voc, { path: "Customers/a/x.jsonl", records: [{ customerId: "a", note: "Customers/a" }], error: "Customer a not found" }, new Set(["records"]));
-    assert.deepEqual(out, { path: "Companies/a/x.jsonl", records: [{ customerId: "a", note: "Customers/a" }], error: "Company a not found" });
+    const out = v.outputForModelWith(voc, { path: `${S.accounts}/a/x.jsonl`, records: [{ customerId: "a", note: `${S.accounts}/a` }], error: "Customer a not found" }, new Set(["records"]));
+    assert.deepEqual(out, { path: "Companies/a/x.jsonl", records: [{ customerId: "a", note: `${S.accounts}/a` }], error: "Company a not found" });
   });
   await check("two parameters that would read alike are refused, not merged", () => {
     assert.throws(() => v.schemaForModelWith(voc, { type: "object", properties: { customerName: {}, companyName: {} } }), /already a parameter/);
@@ -263,7 +293,7 @@ async function phaseUnits() {
     assert.deepEqual(out, { ticketStatus: "Waiting on Company", summary: "Waiting on Customer", name: "Implementation" });
   });
   await check("R3 nested note/reason/hint/warning are record data: untouched", () => {
-    const rec = { interactions: [{ note: "The customer wants Customers/x", reason: "deployment slipped", hint: L.owner, warning: "customer" }] };
+    const rec = { interactions: [{ note: `The customer wants ${S.accounts}/x`, reason: "deployment slipped", hint: L.owner, warning: "customer" }] };
     assert.deepEqual(v.outputForModelWith(voc, rec), rec);
   });
   await check("R3 an error message keeps the ids and names it embeds", () => {
@@ -271,12 +301,12 @@ async function phaseUnits() {
     assert.equal(out.error, 'Company "Deployment Holdings" (acme-deployments) was not found.');
   });
   await check("R4 a folder is rewritten only as the FIRST segment of a path", () => {
-    const out = v.outputForModelWith(voc, { paths: ["Uploads/sam-example-com/Top Customers/notes.md", "Customers/acme/context.md"] });
-    assert.deepEqual(out.paths, ["Uploads/sam-example-com/Top Customers/notes.md", "Companies/acme/context.md"]);
-    assert.equal(v.toStoredPathWith(voc, "Uploads/sam/Companies/x.md"), "Uploads/sam/Companies/x.md");
+    const out = v.outputForModelWith(voc, { paths: [`${S.uploads}/sam-example-com/Top ${S.accounts}/notes.md`, `${S.accounts}/acme/context.md`] });
+    assert.deepEqual(out.paths, [`${S.uploads}/sam-example-com/Top ${S.accounts}/notes.md`, "Companies/acme/context.md"]);
+    assert.equal(v.toStoredPathWith(voc, `${S.uploads}/sam/Companies/x.md`), `${S.uploads}/sam/Companies/x.md`);
   });
   await check("R4 a presigned URL (key in the path AND the query string) is left exactly as issued", () => {
-    const url = "https://x.blob.vercel-storage.com/Customers/acme/f.pdf?download=1&key=Customers%2Facme&p=Customers/acme";
+    const url = `https://x.blob.vercel-storage.com/${S.accounts}/acme/f.pdf?download=1&key=${S.accounts}%2Facme&p=${S.accounts}/acme`;
     assert.deepEqual(v.outputForModelWith(voc, { url, command: `curl -sSL -o "/workspace/f.pdf" "${url}"` }), { url, command: `curl -sSL -o "/workspace/f.pdf" "${url}"` });
   });
   await check("C every run path refuses an unavailable workflow (run routes, cron, app refresh) and the list reports it", () => {
@@ -320,6 +350,8 @@ async function phaseStamped() {
   console.log("\nStamped with the fixture (a build copy):");
   const v = await imp("agent/lib/agent-vocabulary.ts");
   await check("the vocabulary is relabelled at module load", () => assert.equal(v.VOCABULARY_RELABELLED, true));
+  // The folders this stamped copy stores its domains under: the fixture pins the names its data room already holds.
+  const S = v.VOCABULARY.stored;
   const tools = await imp("agent/lib/tools.ts");
   const dataroom = await imp("agent/lib/dataroom-tools.ts");
   const memory = await imp("agent/lib/memory-tools.ts");
@@ -414,8 +446,8 @@ async function phaseStamped() {
 
   // R12: the account record's OWN fields (account_fields.custom_fields: `notes`, `house_view` in the fixture). Offered
   // as `custom` beside the hidden fields' absence, stored and read back VERBATIM (user data: a note that says
-  // "Customers/…" or "deployment" is not the product's words), merged per key, and refused when undeclared.
-  const NOTE = `Read Customers/acme/filings/q1.pdf and Deployments/acme/v1 again.\nThe deployment of capital into affordable housing is the customer_id question; ${L.owner}: n/a; list_customers said 3 customers.`;
+  // a stored path or "deployment" is not the product's words), merged per key, and refused when undeclared.
+  const NOTE = `Read ${S.accounts}/acme/filings/q1.pdf and ${S.deliveries}/acme/v1 again.\nThe deployment of capital into affordable housing is the customer_id question; ${L.owner}: n/a; list_customers said 3 customers.`;
   await check("R12 the account's own fields are an upsert_company parameter (`custom`), hidden account fields still are not", () => {
     assert.ok("custom" in props, Object.keys(props).join(","));
     assert.ok(!("arr" in props) && !("seats" in props));
@@ -455,7 +487,7 @@ async function phaseStamped() {
     assert.deepEqual(both.custom, { notes: "Met the CFO." });
   });
   await check("R12 `custom_append` is offered for the long-text notes, so a long note is never resent whole", () => assert.ok("custom_append" in props, Object.keys(props).join(",")));
-  await upsert.upsert_company.execute({ id: "notes-co", custom_append: { notes: "Customers/acme: follow-up call booked." } }, ctx);
+  await upsert.upsert_company.execute({ id: "notes-co", custom_append: { notes: `${S.accounts}/acme: follow-up call booked.` } }, ctx);
   await check("R12 an append lands after the stored note, verbatim", async () => {
     assert.equal((await sorNotes.getCustomer("notes-co")).custom.notes, `${NOTE}\n\nCustomers/acme: follow-up call booked.`);
   });
@@ -465,7 +497,7 @@ async function phaseStamped() {
   });
 
   const store = (await imp("agent/lib/dataroom-store.ts")).getDataroomStore((await imp("agent/lib/org-context.ts")).DEFAULT_ORG);
-  await store.write("Deployments/stamp-co/v1/platform/organization.json", "{}\n");
+  await store.write(`${S.deliveries}/stamp-co/v1/platform/organization.json`, "{}\n");
   const read = await dataroom.dataroomReadTool.execute({ path: "Coverage-reports/stamp-co/v1/platform/organization.json" }, ctx);
   await check("a display path reads the stored folder, and comes back displayed", () => assert.deepEqual(read, { path: "Coverage-reports/stamp-co/v1/platform/organization.json", content: "{}\n" }));
   const saved = await memory.rememberTool.execute({ scope: "company:stamp-co", key: "k", value: "v" }, ctx);
@@ -554,18 +586,18 @@ async function phaseStamped() {
   const pc = await imp("agent/lib/prompt-context.ts");
   const block = pc.renderContextBlock({
     name: "Long-term team memory (recall)", guidance: "Memories.", viewer: { orgId: "o" }, maxItems: 5, maxTokens: 2000,
-    entries: [{ id: "m1", source: "memories", provenance: "p", audience: { orgId: "o" }, observedAt: "2026-01-01", trust: "untrusted", data: { scope: "customer:acme", key: "k", value: "The customer's deployment is Customers/acme" } }],
+    entries: [{ id: "m1", source: "memories", provenance: "p", audience: { orgId: "o" }, observedAt: "2026-01-01", trust: "untrusted", data: { scope: "customer:acme", key: "k", value: `The customer's deployment is ${S.accounts}/acme` } }],
   });
   await check("R3 recalled memories keep their saved value (context blocks translate keys, not data)", () => {
-    assert.ok(block.includes("The customer's deployment is Customers/acme"), block);
+    assert.ok(block.includes(`The customer's deployment is ${S.accounts}/acme`), block);
     assert.ok(block.includes("company:acme"), block);
   });
 
   // R4: a folder deep inside a path is not a domain folder.
-  await store.write("Uploads/sam-example-com/Top Customers/notes.md", "hi\n");
-  const listed = await dataroom.dataroomListTool.execute({ prefix: "Uploads/sam-example-com" }, ctx);
-  await check("R4 an upload under 'Top Customers/' is listed at its real path", () => assert.ok(listed.paths?.includes("Uploads/sam-example-com/Top Customers/notes.md"), JSON.stringify(listed)));
-  const readBack = await dataroom.dataroomReadTool.execute({ path: "Uploads/sam-example-com/Top Customers/notes.md" }, ctx);
+  await store.write(`${S.uploads}/sam-example-com/Top ${S.accounts}/notes.md`, "hi\n");
+  const listed = await dataroom.dataroomListTool.execute({ prefix: `${S.uploads}/sam-example-com` }, ctx);
+  await check(`R4 an upload under 'Top ${S.accounts}/' is listed at its real path`, () => assert.ok(listed.paths?.includes(`${S.uploads}/sam-example-com/Top ${S.accounts}/notes.md`), JSON.stringify(listed)));
+  const readBack = await dataroom.dataroomReadTool.execute({ path: `${S.uploads}/sam-example-com/Top ${S.accounts}/notes.md` }, ctx);
   await check("R4 …and reads back from it", () => assert.equal(readBack.content, "hi\n", JSON.stringify(readBack)));
 
   // R5: publish_artifact's `path` is a SANDBOX path: never converted.

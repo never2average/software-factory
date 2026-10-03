@@ -392,7 +392,7 @@ export function EmptyCell() {
 /**
  * `connectors.lands` is free text, but in practice it always says the same two
  * things: WHICH parts of the dm.md tree a connector writes into, and WHERE
- * under them the sync lands — "Customers/·/Tickets/·/People/syncs/slack".
+ * under them the sync lands — "<accounts>/·/<tickets>/·/<people>/syncs/slack", each a domain's label.
  * Printed raw into a cell, that is line noise that gets cut mid-word and hides
  * the rest behind a hover.
  *
@@ -406,7 +406,7 @@ export function parseContexts(raw: string): { containers: string[]; leaf: string
   const rest: string[] = [];
   for (const token of raw.split(/[·,/]+/).map((t) => t.trim()).filter(Boolean)) {
     // Order matters: once the path has dropped into lowercase it is the leaf,
-    // and a capitalised word inside it ("mirrored to Customers/{id}/…") is part
+    // and a capitalised word inside it ("mirrored to <the accounts folder>/{id}/…") is part
     // of the leaf, not another container.
     if (rest.length === 0 && /^[A-Z]/.test(token)) containers.push(token);
     else rest.push(token);

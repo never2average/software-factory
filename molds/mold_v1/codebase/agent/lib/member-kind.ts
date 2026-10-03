@@ -1,5 +1,5 @@
 /**
- * The `kind` a team member's roster entry carries (People/{id}/identity.json), which separates the workspace's own
+ * The `kind` a team member's roster entry carries ({folder:people}/{id}/identity.json), which separates the workspace's own
  * people from the external contacts the same folder holds.
  *
  * New entries are written with MEMBER_KIND. Entries written before it carry the original value, a stored value in

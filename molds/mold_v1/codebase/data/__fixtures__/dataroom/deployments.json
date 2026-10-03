@@ -3,9 +3,9 @@
   "platformVersionId": "2026.06.3",
   "infrastructure": {
     "inference": {
-      "customizationsPath": "Deployments/example-bank/2026.06.3/infrastructure/inference/customizations.tf",
+      "customizationsPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/customizations.tf",
       "rationale": {
-        "path": "Deployments/example-bank/2026.06.3/infrastructure/inference/rationale.md",
+        "path": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/rationale.md",
         "title": "Inference customizations rationale",
         "content": "# Why dedicated inference capacity\n\nExample Bank requires in-region inference with a dedicated capacity pool to meet the wealth desk latency SLO and data-residency constraint.\n",
         "updatedAt": "2026-06-10T09:00:00Z",
@@ -27,7 +27,7 @@
             "approverOrg": "OnFinance",
             "requestedAt": "2026-06-10T09:30:00Z",
             "decidedAt": "2026-06-11T14:00:00Z",
-            "documentPath": "Deployments/example-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+            "documentPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
             "notes": "Capacity plan and rollback path reviewed."
           },
           {
@@ -41,7 +41,7 @@
             "approverOrg": "Example Bank",
             "requestedAt": "2026-06-11T15:00:00Z",
             "decidedAt": "2026-06-16T11:30:00Z",
-            "documentPath": "Deployments/example-bank/2026.06.3/infrastructure/inference/signoff/customer.infra.md",
+            "documentPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/signoff/customer.infra.md",
             "conditions": ["Capacity review repeats at next platform version upgrade"]
           },
           {
@@ -54,7 +54,7 @@
             "approverEmail": "dana@examplebank.com",
             "approverOrg": "Example Bank",
             "requestedAt": "2026-06-16T12:00:00Z",
-            "documentPath": "Deployments/example-bank/2026.06.3/infrastructure/inference/signoff/customer.infosec.md",
+            "documentPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/signoff/customer.infosec.md",
             "notes": "Pending completion of the SAML SSO security review."
           },
           {
@@ -63,7 +63,7 @@
             "component": "inference",
             "role": "customer.cloudvendor",
             "status": "waived",
-            "documentPath": "Deployments/example-bank/2026.06.3/infrastructure/inference/signoff/customer.cloudvendor.md",
+            "documentPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/signoff/customer.cloudvendor.md",
             "notes": "Deployment runs in OnFinance-managed VPC; no customer cloud-vendor approval applies."
           }
         ]
@@ -111,7 +111,7 @@
             }
           ],
           "connectors": ["edgar", "sharepoint"],
-          "runConfigsSchemaRef": "Solutions/2026.06.3/pipelines/pl-research-briefs/run_configs.schema.json",
+          "runConfigsSchemaRef": "{folder:solutions}/2026.06.3/pipelines/pl-research-briefs/run_configs.schema.json",
           "createdAt": "2026-05-02T08:00:00Z",
           "updatedAt": "2026-06-12T10:00:00Z"
         },

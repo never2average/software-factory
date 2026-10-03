@@ -16,12 +16,12 @@ You build, run, and improve eval suites (`eve eval`) and interpret the results.
 
 ## Data room
 
-Eval artifacts live in the Solutions domain:
-`Solutions/{platform_version_id}/{agents|pipelines}/{id}/evals/`
+Eval artifacts live in the {domain:solutions} domain:
+`{folder:solutions}/{platform_version_id}/{agents|pipelines}/{id}/evals/`
 (`dataset.jsonl`, `benchmark.jsonl`, `{run_id}/run_configs.json` +
 `output.jsonl` + `trace.jsonl`), and acceptance evals under
-`Implementation/{customer_id}/evals/{agents|pipelines}/`. Eval *results* roll up
-to the Solutions sheet, not a separate Evals sheet.
+`{folder:projects}/{customer_id}/evals/{agents|pipelines}/`. Eval *results* roll up
+to the {domain:solutions} sheet, not a separate Evals sheet.
 
 ## Workspace boundary
 

@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { FOLDER } from "../agent/lib/dataroom-folders.ts";
+import { readJsonFixture } from "./lib/read-fixture.mjs";
 
 // Force the fallback path and isolate every disk write: no DB URL, a scratch
 // cwd, and a scratch data-room root. (The store no longer persists to disk at
@@ -40,7 +42,7 @@ assert.equal(getDb(), null, "no DB URL is set, getDb() must return null (fallbac
 // shipped file — which c7b929c correctly emptied of dummy customers, leaving
 // this comparing the store against nothing.
 const seedUrl = new URL("./fixtures/customers.fixture.json", import.meta.url);
-const reference = customerStoreSchema.parse(JSON.parse(readFileSync(seedUrl, "utf8")));
+const reference = customerStoreSchema.parse(readJsonFixture(seedUrl));
 const referenceById = new Map(reference.customers.map((c) => [c.id, c]));
 assert.ok(referenceById.has("acme-bank") && referenceById.has("northwind-cap"));
 
@@ -159,10 +161,10 @@ await assert.rejects(
   /Unknown account: no-such-customer/,
 );
 
-// Document-view mirror: Customers/{id}/interactions.jsonl in the data room — the default workspace's own tree (no
+// Document-view mirror: {folder:accounts}/{id}/interactions.jsonl in the data room — the default workspace's own tree (no
 // database here, so that is the workspace the account resolves to), never the store's root.
 const mirrored = readFileSync(
-  path.join(process.env.DATAROOM_DIR, "orgs", "org-onfinance", "Customers", "acme-bank", "interactions.jsonl"),
+  path.join(process.env.DATAROOM_DIR, "orgs", "org-onfinance", FOLDER.accounts, "acme-bank", "interactions.jsonl"),
   "utf8",
 );
 assert.deepEqual(JSON.parse(mirrored.trim().split("\n").at(-1)), interaction);

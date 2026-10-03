@@ -4869,8 +4869,8 @@ export function AgentChat({
 /** The hero's rotating lines come from the deployment profile ("{product}" is the product name). */
 const HERO_LINES = DEPLOYMENT_PROFILE.chat.hero_lines.map((line) => fillProfileText(line));
 
-/** A deployment that hides the Tickets data-room domain gets no ticket-based home-screen cards. */
-const TICKETS_VISIBLE = DEPLOYMENT_PROFILE.dataroom.domains.Tickets?.visible !== false;
+/** A deployment that hides the tickets data-room domain gets no ticket-based home-screen cards. */
+const TICKETS_VISIBLE = DEPLOYMENT_PROFILE.dataroom.domains.tickets?.visible !== false;
 
 function RotatingHero() {
   const [i, setI] = useState(0);
