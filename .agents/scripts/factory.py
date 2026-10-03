@@ -9,6 +9,8 @@
   factory.py close <task_id> "<evidence>"    marks done and appends evidence; bumps product stage if advances_stage
   factory.py validate                    every state/*.json[l] file and every molds/*/testing/*/lane.json
                                          checks its required fields + enums
+  factory.py validate --app-dir <dir>    only the four application files in <dir> (a fixture outside state/),
+                                         against the same schemas and the same rules
 """
 import json, sys, os, datetime, re
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -189,7 +191,7 @@ def _vm_url(app_id, docs):
             f"delete the vm.production_url line from state/application/{app_id}/infrastructure.json"]
 # The object each target owns; the other must be absent (lane-url.py reads vercel.production_url whatever the target;
 # nothing reads vm.production_url any more, so a URL typed under `vercel` on a vm app is the only door left, and this closes it).
-TARGET_OBJECT = {"vercel": "vercel", "vm": "vm"}
+TARGET_OBJECT = {"vercel": "vercel", "vm": "vm", "vm_remote": "vm_remote"}
 def _target_objects(app_id, docs):
     """A target=vm app must carry no `vercel` object, a target=vercel app no `vm` object (mold_v1-053).
 
@@ -204,19 +206,148 @@ def _target_objects(app_id, docs):
     never a key that a different target's deploy is supposed to write."""
     infra = docs.get("infrastructure") or {}; target = infra.get("target")
     if target not in TARGET_OBJECT: return []           # an unknown target is already a schema enum error
-    other = next(o for t, o in TARGET_OBJECT.items() if t != target)
-    if other not in infra: return []
-    keys = ", ".join(sorted(infra[other])) if isinstance(infra[other], dict) and infra[other] else "empty"
-    if target == "vm":
-        return [f"{app_id}/infrastructure.json: target is 'vm' but a vercel object is present ({keys}), and lanes.py grades "
+    out = []
+    for other in (o for t, o in TARGET_OBJECT.items() if t != target):
+        if other not in infra: continue
+        keys = ", ".join(sorted(infra[other])) if isinstance(infra[other], dict) and infra[other] else "empty"
+        if target == "vm" and other == "vercel":
+            out.append(f"{app_id}/infrastructure.json: target is 'vm' but a vercel object is present ({keys}), and lanes.py grades "
                 f"vercel.production_url as this app's URL while nothing on the vm lane deploys one, so whatever server is typed "
                 f"there would be graded as this app — delete the whole \"vercel\" object from "
                 f"state/application/{app_id}/infrastructure.json, or set target to 'vercel' and run: "
-                f"python3 .claude/scripts/provision.py {app_id} --deploy"]
-    return [f"{app_id}/infrastructure.json: target is 'vercel' but a vm object is present ({keys}); the vm object describes the "
-            f"local-verification host of a vm app, which this app is not, so nothing here reads it and a host typed there is a "
-            f"dead claim — delete the whole \"vm\" object from state/application/{app_id}/infrastructure.json, or set target "
-            f"to 'vm' if this app is meant for local verification only"]
+                f"python3 .claude/scripts/provision.py {app_id} --deploy")
+        elif target == "vercel" and other == "vm":
+            out.append(f"{app_id}/infrastructure.json: target is 'vercel' but a vm object is present ({keys}); the vm object describes the "
+                f"local-verification host of a vm app, which this app is not, so nothing here reads it and a host typed there is a "
+                f"dead claim — delete the whole \"vm\" object from state/application/{app_id}/infrastructure.json, or set target "
+                f"to 'vm' if this app is meant for local verification only")
+        else:
+            # vm_remote (mold_v1-075): the same one-object-per-target rule, in one sentence for every other pairing.
+            out.append(f"{app_id}/infrastructure.json: target is {target!r} but a {other} object is present ({keys}); each target owns "
+                f"exactly one of the vercel / vm / vm_remote objects and nothing reads another target's, so a URL or host typed there "
+                f"is either a dead claim or a server this factory did not deploy — delete the whole \"{other}\" object from "
+                f"state/application/{app_id}/infrastructure.json, or set target to '{other}' if that is where this app runs")
+    return out
+# The networks agent-run code must never reach from a vm_remote sandbox (reports/vm-spike-mold_v1-072.md: under eve's
+# default policy the sandbox reached the cloud metadata address and the host's private bridges).
+VM_REMOTE_DENY = ("169.254.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")
+KEY_MATERIAL = re.compile(r"-----BEGIN|^ssh-(rsa|ed25519|dss)\s|^ecdsa-sha2-|AAAA[0-9A-Za-z+/]{24,}|://[^/\s:@]+:[^/\s@]+@")
+def _vm_remote(app_id, docs):
+    """What the schema cannot say about a `target: vm_remote` app (mold_v1-075).
+
+    The schema fixes the shape (closed object, names by pattern); these are the cross-field rules, each a
+    sentence naming the file and the value to write. Unlike `vm`, a vm_remote app SERVES, so it may hold a
+    deployed status — but then it must carry what only a deploy writes (host, domain, production_url,
+    deployed_at), and production_url is refused without deployed_at for the reason vm.production_url is
+    refused outright: a URL nobody deployed would be graded by lanes.py as this app."""
+    infra = docs.get("infrastructure") or {}
+    if infra.get("target") != "vm_remote": return []
+    f = f"{app_id}/infrastructure.json"; fix = f"state/application/{app_id}/infrastructure.json"
+    vr = infra.get("vm_remote")
+    if not isinstance(vr, dict):
+        return [f"{f}: target is 'vm_remote' but there is no vm_remote object, so nothing says which server, key name or sandbox "
+                f"this app uses — add it to {fix} (state/application/app_id/infrastructure.schema.json lists the keys)"]
+    out = []; ds = docs.get("datastores") or {}; pg = ds.get("postgres") or {}; st = (docs.get("application") or {}).get("status")
+    want = f"/opt/software-factory/{app_id}"
+    if vr.get("install_path") != want:
+        out.append(f"{f}: vm_remote.install_path is {vr.get('install_path')!r} but it is fixed at {want!r} (the build embeds "
+                   f"absolute paths, so the app is built where it runs) — set it to that in {fix}")
+    if infra.get("secret_store") != "vm_remote_env_file":
+        out.append(f"{f}: secret_store is {infra.get('secret_store')!r} but a vm_remote app keeps its values in one env file on its "
+                   f"own server — set \"secret_store\": \"vm_remote_env_file\" in {fix}")
+    if (infra.get("sandbox") or {}).get("provider") != "microsandbox":
+        out.append(f"{f}: sandbox.provider is {(infra.get('sandbox') or {}).get('provider')!r} but off Vercel the only sandbox that "
+                   f"runs without root or a Docker socket is the KVM microVM — set sandbox.provider to \"microsandbox\" in {fix}")
+    sb = vr.get("sandbox") if isinstance(vr.get("sandbox"), dict) else {}
+    lack = [n for n in VM_REMOTE_DENY if n not in (sb.get("deny_subnets") or [])]
+    if lack:
+        out.append(f"{f}: vm_remote.sandbox.deny_subnets lacks {', '.join(lack)}, so code the agent runs could reach the cloud "
+                   f"metadata address or a private network — add them in {fix}")
+    # This validator reads type, enum and pattern; a number's floor is a rule, so it is here (the schema states the same).
+    for key, floor, why in (("cpus", 2, "with 1 the sandbox froze in 5 of 12 runs"), ("memory_mib", 1024, "the document libraries need that much")):
+        v = sb.get(key)
+        if isinstance(v, int) and not isinstance(v, bool) and v < floor:
+            out.append(f"{f}: vm_remote.sandbox.{key} is {v} but must be at least {floor} ({why}) — raise it in {fix}")
+    port = vr.get("ssh_port")
+    if isinstance(port, int) and not isinstance(port, bool) and not 1 <= port <= 65535:
+        out.append(f"{f}: vm_remote.ssh_port is {port}, which is not a port number (1-65535); 22 unless the server's SSH was moved — fix it in {fix}")
+    sg = vr.get("storage") if isinstance(vr.get("storage"), dict) else {}
+    blob = (ds.get("blob") or {}).get("provider")
+    if sg.get("driver") == "fs":
+        sd = f"/var/lib/software-factory/{app_id}/storage"
+        if sg.get("dir") != sd:
+            out.append(f"{f}: vm_remote.storage.dir is {sg.get('dir')!r} but files live at {sd!r}, outside the build directory so a "
+                       f"redeploy keeps them — set it to that in {fix}")
+    elif sg.get("driver") == "s3":
+        for k in ("bucket", "access_key_ref", "secret_key_ref"):
+            if not sg.get(k): out.append(f"{f}: vm_remote.storage.driver is 's3' but storage.{k} is missing — add it in {fix}"
+                                         + (" (the NAME of the env value, never the value)" if k.endswith("_ref") else ""))
+        for k in ("access_key_ref", "secret_key_ref"):
+            if sg.get(k) and sg[k] not in (infra.get("secrets_user") or []):
+                out.append(f"{f}: vm_remote.storage.{k} names {sg[k]} but secrets_user does not list it, so the deploy would never "
+                           f"ask for it — add {sg[k]} to secrets and secrets_user in {fix}")
+    if sg.get("driver") and blob != sg.get("driver"):
+        out.append(f"{app_id}/datastores.json: blob.provider is {blob!r} but infrastructure.vm_remote.storage.driver is "
+                   f"{sg.get('driver')!r}; the two describe one file store — set blob.provider to {sg.get('driver')!r} in "
+                   f"state/application/{app_id}/datastores.json")
+    dfix = f"state/application/{app_id}/datastores.json"
+    if pg.get("provider") != "self_hosted" or pg.get("exposure") != "remote_loopback" or pg.get("host") not in ("127.0.0.1", "localhost"):
+        out.append(f"{app_id}/datastores.json: a vm_remote app runs its own Postgres on its server, on loopback only, but postgres "
+                   f"says provider {pg.get('provider')!r}, exposure {pg.get('exposure')!r}, host {pg.get('host')!r} — set provider "
+                   f"\"self_hosted\", exposure \"remote_loopback\" and host \"127.0.0.1\" in {dfix}")
+    vp = vr.get("postgres") if isinstance(vr.get("postgres"), dict) else {}
+    if vp.get("tls") == "migration_switch" and not vp.get("migration_switch_env"):
+        out.append(f"{f}: vm_remote.postgres.tls is 'migration_switch' but migration_switch_env does not name the switch — name it "
+                   f"in {fix}, or set tls to \"on\" (Postgres on the server then answers TLS, which needs no code change)")
+    sslmode = {"on": "require", "migration_switch": "disable"}.get(vp.get("tls"))
+    if sslmode and pg.get("sslmode") != sslmode:
+        out.append(f"{app_id}/datastores.json: postgres.sslmode is {pg.get('sslmode')!r} but infrastructure.vm_remote.postgres.tls is "
+                   f"{vp.get('tls')!r}, which means sslmode {sslmode!r} — set it in {dfix}")
+    dom = vr.get("domain"); purl = vr.get("production_url")
+    if purl is not None:
+        if not dom or purl != f"https://{dom}":
+            out.append(f"{f}: vm_remote.production_url is {purl!r} but this app's address is https://<vm_remote.domain> "
+                       f"({('https://' + dom) if dom else 'no domain is set'}); lanes.py grades production_url, so anything else "
+                       f"would grade another server as this app — delete the production_url line from {fix}; the deploy writes it")
+        if not _ts(str(infra.get("deployed_at") or "")):
+            out.append(f"{f}: vm_remote.production_url is set but there is no deployed_at, so nothing deployed that address and "
+                       f"lanes.py would grade a server this factory did not deploy — delete the production_url line from {fix}, "
+                       f"then run: python3 .claude/scripts/provision.py {app_id} --deploy-remote")
+    if st in DEPLOYED + ("stamping",):
+        lack = [k for k in ("host", "domain", "production_url") if not vr.get(k)]
+        if lack:
+            out.append(f"{app_id}/application.json: status is {st!r} but infrastructure.vm_remote has no {', '.join(lack)}, which only "
+                       f"a deploy to a real server writes — set status back to 'planned' in state/application/{app_id}/"
+                       f"application.json, or run: python3 .claude/scripts/provision.py {app_id} --deploy-remote")
+    def walk(o, path):
+        if isinstance(o, dict):
+            for k, v in o.items(): yield from walk(v, f"{path}.{k}")
+        elif isinstance(o, list):
+            for i, v in enumerate(o): yield from walk(v, f"{path}[{i}]")
+        elif isinstance(o, str): yield path, o
+    for path, v in walk(vr, "vm_remote"):
+        if path == "vm_remote.production_url": continue
+        if KEY_MATERIAL.search(v):
+            out.append(f"{f}: {path} looks like a key, a password or a URL with a password in it; this file holds NAMES only "
+                       f"(the value lives on the server) — replace it with the name in {fix} and treat the value as exposed")
+    return out
+def _vm_remote_hosts(apps):
+    """One server is one Caddyfile, one env file layout and one cluster-global app_rw role (docs/STATE.md), so two
+    live vm_remote apps on one host would overwrite each other. `apps` is {app_id: docs}."""
+    seen = {}; out = []
+    for app_id in sorted(apps):
+        docs = apps[app_id]; infra = docs.get("infrastructure") or {}
+        if infra.get("target") != "vm_remote" or (docs.get("application") or {}).get("status") in ("retired",): continue
+        vr = infra.get("vm_remote") if isinstance(infra.get("vm_remote"), dict) else {}
+        for k in ("host", "domain"):
+            v = (vr.get(k) or "").lower()
+            if not v: continue
+            if (k, v) in seen:
+                out.append(f"{app_id}/infrastructure.json: vm_remote.{k} {v!r} is also {seen[(k, v)]}'s; one server serves one "
+                           f"application (one Caddy site, one app_rw role) — give this app its own server and domain in "
+                           f"state/application/{app_id}/infrastructure.json")
+            else: seen[(k, v)] = app_id
+    return out
 def _rls_claim(app_id, docs):
     """`"rls": "fail_closed"` used to be a string literal that nothing in the factory ever read: intake
     stamped it into every app regardless of provider, scope or tenancy, validate checked it against a
@@ -239,6 +370,7 @@ def _rls_claim(app_id, docs):
     fix = f"Run: python3 .claude/scripts/provision.py {app_id} --verify-rls"
     # --deploy is the ONLY thing that replaces the build in front of traffic.
     redeploy = f"Run: python3 .claude/scripts/provision.py {app_id} --deploy"
+    if (docs.get("infrastructure") or {}).get("target") == "vm_remote": redeploy += "-remote"   # the only deploy a vm_remote app has
     if not ev or str(ev.get("source", "")).startswith("not verified"):
         return [f"{w} on a {st} app but nothing has measured it" + (f" ({ev.get('source')})" if ev else "") + f". {fix}"]
     out = []
@@ -383,6 +515,25 @@ def _lane_specs():
                                 f"the other's result. {LANE_FIX}")
     return errs
 
+def _lane_overlays():
+    """.claude/scripts/lane-overlays/<target>/<lane>.json: checks lanes.py appends to a lane for one deploy target
+    (mold_v1-078). Same check shape as a lane.json, so the same schema; a typo here would otherwise sit unnoticed
+    until an application of that target ran its lanes."""
+    errs = []; od = os.path.join(ROOT, ".claude/scripts/lane-overlays")
+    sp = os.path.join(ROOT, "molds", "mold_v1", "testing", "lane.schema.json")
+    for target in sorted(os.listdir(od) if os.path.isdir(od) else []):
+        for name in sorted(os.listdir(os.path.join(od, target))):
+            if not name.endswith(".json"): continue
+            f = os.path.join(od, target, name); rel = os.path.relpath(f, ROOT); lane = name[:-5]
+            try: ov = load(f)
+            except Exception as x: errs.append(f"{rel}: not valid JSON ({x}). {LANE_FIX}"); continue
+            if target not in TARGET_OBJECT: errs.append(f"{rel}: {target!r} is not a deploy target ({', '.join(TARGET_OBJECT)}), so no application would ever run these checks. {LANE_FIX}")
+            if ov.get("lane") != lane or ov.get("target") != target:
+                errs.append(f"{rel}: declares lane {ov.get('lane')!r} for target {ov.get('target')!r} but sits at {target}/{name}. {LANE_FIX}")
+            if os.path.exists(sp):
+                sch = load(sp); errs += _check({"lane": lane, "checks": ov.get("checks", [])}, sch, rel, sch)
+    return errs
+
 def _operator_identity(app_id, docs):
     """workspace.operator_self names who the app was stamped for. Its pre-rename spelling, fde_self, is still
     accepted for one release, so the schema requires neither and this requires exactly one of the two."""
@@ -412,7 +563,25 @@ def _agent_keys(app_id, docs):
             errs.append(f"{app_id}/application.json: subagent '{k}' exists neither in {mold} nor in this application's packs "
                         f"({', '.join(packs) or 'none'}), so its instructions would reach nothing")
     return errs
+def _app_errors(app, adir):
+    """(errors, docs) for one application directory: the four files against their schemas, then every rule the
+    schemas cannot express. One function for state/application/<app_id>/ and for a fixture named with --app-dir."""
+    errs = []; docs = {}; sdir = os.path.join(ST, "application", "app_id")
+    for name in ["application","infrastructure","datastores","datainfra"]:
+        f = os.path.join(adir, f"{name}.json")
+        if os.path.exists(f):
+            docs[name] = load(f); errs += _check(docs[name], load(os.path.join(sdir, f"{name}.schema.json")), f"{app}/{name}.json")
+        else: errs.append(f"{app}: missing {name}.json")
+    errs += (_vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _vm_remote(app, docs) + _rls_claim(app, docs)
+             + _agent_keys(app, docs) + _operator_identity(app, docs))
+    return errs, docs
 def cmd_validate(a):
+    if "--app-dir" in a:
+        d = os.path.abspath(a[a.index("--app-dir") + 1]) if a.index("--app-dir") + 1 < len(a) else sys.exit(__doc__)
+        if not os.path.isdir(d): sys.exit(f"{d} is not a directory, so there is no application there to check.")
+        errs, _ = _app_errors(os.path.basename(d.rstrip("/")), d)
+        for e in errs: print(e)
+        print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
     errs = []
     fs = load(os.path.join(ST,"factory.schema.json")); fj = load(os.path.join(ST,"factory.json"))
     errs += _check(fj, fs, "factory.json", fs)
@@ -430,17 +599,13 @@ def cmd_validate(a):
             errs += _check(t, tsch, t.get("task_id","?"))
             for d in t.get("depends_on", []):
                 if d not in idx: errs.append(f"{t['task_id']}: depends on unknown {d}")
-    appdir = os.path.join(ST,"application")
+    appdir = os.path.join(ST,"application"); apps = {}
     for app in os.listdir(appdir):
         if app=="app_id": continue
-        docs = {}
-        for name in ["application","infrastructure","datastores","datainfra"]:
-            f = os.path.join(appdir, app, f"{name}.json")
-            if os.path.exists(f):
-                docs[name] = load(f); errs += _check(docs[name], load(os.path.join(appdir,"app_id",f"{name}.schema.json")), f"{app}/{name}.json")
-            else: errs.append(f"{app}: missing {name}.json")
-        errs += _vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _rls_claim(app, docs) + _agent_keys(app, docs) + _operator_identity(app, docs)
-    errs += _lane_specs()
+        e, apps[app] = _app_errors(app, os.path.join(appdir, app))
+        errs += e
+    errs += _vm_remote_hosts(apps)
+    errs += _lane_specs() + _lane_overlays()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
 if __name__ == "__main__":

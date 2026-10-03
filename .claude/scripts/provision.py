@@ -3,6 +3,9 @@
 
   provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]
   provision.py --self-test   offline checks of the deadlines, deploy watch and VM-headroom logic
+  provision.py --self-test-remote   offline checks of the vm_remote target (same as lib/vm_remote.py --self-test)
+  provision.py <app_id> [--set-remote host=.. domain=..] [--remote-key] [--qualify-remote]
+                        [--deploy-remote [--dry-run [--out DIR]]]      target=vm_remote only; see below
 
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
   projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare
@@ -52,6 +55,15 @@ See infra/vm/README.md for why (three deployables, four crons and a Vercel-injec
 the mold cannot get off Vercel without a fork, which HARD RULE 1 forbids). A vm app therefore ENDS at
 --verify-db, and --deploy says so immediately; it requires postgres.provider self_hosted, because the
 only artifact this lane builds is that local database and the artifact must match the state.
+
+TARGET vm_remote (mold_v1-075..077) is a server reached over SSH that DOES serve the application: three
+systemd units behind Caddy, its own Postgres on loopback, a rootless KVM microVM sandbox. Everything for it
+lives in lib/vm_remote.py, which main() hands over to before any Vercel or local-database code runs:
+--check is offline (it connects to nothing); --deploy-remote --dry-run prints every local and remote
+command and every generated file without connecting; --deploy-remote qualifies the host first and refuses
+in plain words, then runs the SAME database chain as below ON the server (SCHEMA_CHAIN through _run_chain,
+with the URLs read from the server's own env file) and the same /api/ops/health gate. Values only the
+operator holds are typed at a hidden prompt and reach the server on stdin, never a command line.
 
 DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier is exhausted;
 Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.
@@ -2592,6 +2604,9 @@ def _on_signal(signum, _frame):
 
 def main(a):
     if a and a[0] == "--self-test": return self_test()
+    if a and a[0] == "--self-test-remote":
+        sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
+        return sys.exit(vm_remote.cli(["--self-test"]))
     if not a or a[0].startswith("-"): sys.exit(__doc__)   # `--help`, or a flag where the app id goes
     app_id = a[0]; deploy = "--deploy" in a
     adir = os.path.join(ST, "application", app_id)
@@ -2606,6 +2621,11 @@ def main(a):
     global ADMIN_KEYS
     ADMIN_KEYS = (ds.get("postgres", {}).get("admin_url_ref") or PROVIDER_ADMIN.get(prov, "POSTGRES_ADMIN_URL"),)
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
+    if target == "vm_remote":
+        # A server over SSH that serves the app (mold_v1-075/076). Nothing below this line applies to it: no
+        # Vercel project, no local docker database, and --check must not reach for either. One module owns it.
+        sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
+        sys.exit(vm_remote.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__]))
     if target == "vm" and not deploy and app.get("status") not in VM_STATUSES:
         # The same refusal factory.py validate makes (_vm_status), at the writer: a vm app never serves
         # traffic, and this lane never writes a status that says it does, so one that says so was set

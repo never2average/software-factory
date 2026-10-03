@@ -1,0 +1,90 @@
+{
+  "$schema": "../../../../../state/application/app_id/infrastructure.schema.json",
+  "target": "vm_remote",
+  "secret_store": "vm_remote_env_file",
+  "inference": {
+    "provider": "cloudflare_workers_ai",
+    "account_ref": "CLOUDFLARE_ACCOUNT_ID"
+  },
+  "sandbox": {
+    "provider": "microsandbox",
+    "prewarm": true
+  },
+  "secrets": [
+    "AUTH_JWT_PRIVATE_KEY",
+    "AUTH_JWT_PUBLIC_KEY",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "CRON_SECRET",
+    "DATABASE_URL",
+    "EXA_API_KEY",
+    "GOOGLE_CLIENT_ID",
+    "MODEL_PROVIDER",
+    "NEXT_PUBLIC_EVE_API_URL",
+    "NEXT_PUBLIC_GOOGLE_CLIENT_ID",
+    "OPS_SECRETS_KEY",
+    "PLATFORM_NOTIFY_FROM",
+    "POSTGRES_ADMIN_URL",
+    "RESEND_API_KEY",
+    "TASK_WORKFLOW_SERVICE_TOKEN",
+    "TASK_WORKFLOW_SERVICE_URL"
+  ],
+  "secrets_user": [
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "RESEND_API_KEY",
+    "PLATFORM_NOTIFY_FROM",
+    "EXA_API_KEY",
+    "GOOGLE_CLIENT_ID",
+    "NEXT_PUBLIC_GOOGLE_CLIENT_ID"
+  ],
+  "secrets_derived": [
+    "DATABASE_URL",
+    "POSTGRES_ADMIN_URL",
+    "CRON_SECRET",
+    "OPS_SECRETS_KEY",
+    "AUTH_JWT_PRIVATE_KEY",
+    "AUTH_JWT_PUBLIC_KEY",
+    "MODEL_PROVIDER",
+    "TASK_WORKFLOW_SERVICE_TOKEN",
+    "TASK_WORKFLOW_SERVICE_URL",
+    "NEXT_PUBLIC_EVE_API_URL"
+  ],
+  "secrets_optional": [],
+  "runtime_env": {
+    "OPS_MULTI_TENANT": "1",
+    "ENABLE_WEB_SEARCH": "true",
+    "ENABLE_BROWSER": "false",
+    "MODEL_PROVIDER": "cloudflare"
+  },
+  "vm_remote": {
+    "provider": "digitalocean",
+    "host": "203.0.113.10",
+    "ssh_user": "root",
+    "ssh_port": 22,
+    "ssh_key_ref": "sf_vm_remote_fixture",
+    "domain": "app.example.com",
+    "install_path": "/opt/software-factory/vm_remote_fixture",
+    "kvm": "required",
+    "sandbox": {
+      "backend": "microsandbox",
+      "cpus": 2,
+      "memory_mib": 1024,
+      "deny_subnets": [
+        "169.254.0.0/16",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8"
+      ]
+    },
+    "storage": {
+      "driver": "fs",
+      "dir": "/var/lib/software-factory/vm_remote_fixture/storage"
+    },
+    "postgres": {
+      "version": 17,
+      "tls": "on"
+    }
+  }
+}
