@@ -1,0 +1,19 @@
+{
+  "deploy_target": "vm_remote",
+  "postgres_provider": "self_hosted",
+  "postgres_ref": "DATABASE_URL",
+  "postgres_scope": "fresh",
+  "blob_provider": "fs",
+  "inference_provider": "cloudflare_workers_ai",
+  "inference_account": "CLOUDFLARE_ACCOUNT_ID",
+  "secret_store": "vm_remote_env_file",
+  "web_search": true,
+  "browser": false,
+  "multi_tenant": true,
+  "customer_id": "internal",
+  "custom_domain": "",
+  "vercel_project": "onfinance-hfc-onfinance-hfc-vm",
+  "workspace_name": "OnFinance",
+  "operator_email": "priyesh@onfinance.in",
+  "library": "all"
+}
