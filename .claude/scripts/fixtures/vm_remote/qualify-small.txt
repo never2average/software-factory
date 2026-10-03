@@ -8,3 +8,4 @@ DISK_FREE_KB=9437184
 SUDO=ok
 DOCKER=absent
 SYSTEMD=yes
+PROXY=none

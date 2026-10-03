@@ -8,7 +8,7 @@ goes to a fake runner, and for the whole test the process refuses to open a sock
 a test that reached for the network fails instead of connecting. Generated scripts are syntax-checked
 (`bash -n`), never executed. Files are written only under a temp directory that is removed afterwards.
 """
-import contextlib, hashlib, importlib.util, io, json, os, shutil, socket, stat, subprocess, sys, tempfile
+import contextlib, hashlib, importlib.util, io, json, os, re, shutil, socket, stat, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -256,6 +256,20 @@ def _generated_files(check, tmp):
     if shutil.which("node"):
         r = subprocess.run(["node", "--check", os.path.join(out, "prewarm-serial.mjs")], capture_output=True, text=True)
         check("prewarm-serial.mjs parses", r.returncode == 0, r.stderr)
+    # Two more read-only parsers, used only where this machine has them: systemd's own unit checker, and nft's
+    # check mode (-c: parsed and validated against the kernel, never applied). The service user does not exist
+    # here, so the rule is checked with `nobody` standing in for it.
+    sa = shutil.which("systemd-analyze")
+    if sa and os.path.exists("/usr/bin/node"):
+        units = sorted(os.path.join(out, "units", n) for n in os.listdir(os.path.join(out, "units")))
+        r = subprocess.run([sa, "verify", "--man=no", *units], capture_output=True, text=True, timeout=60)
+        check("every unit and timer passes `systemd-analyze verify` (read-only)", r.returncode == 0 and not r.stderr.strip(), r.stderr[-400:])
+    nft = shutil.which("nft") or ("/usr/sbin/nft" if os.path.exists("/usr/sbin/nft") else None)
+    if nft and os.geteuid() == 0:
+        probe = os.path.join(tmp, "egress-check.nft")
+        with open(probe, "w") as f: f.write(B["egress.nft"][0].replace(f'"{V.SERVICE_USER}"', '"nobody"'))
+        r = subprocess.run([nft, "-c", "-f", probe], capture_output=True, text=True, timeout=30)
+        check("the egress rule is valid nftables (`nft -c`: checked, never applied)", r.returncode == 0, r.stderr[-400:])
     pw = B["prewarm-serial.mjs"][0]
     check("the prewarm builds one template at a time, three tries each", "chain.then(() => once(job))" in pw and "attempt <= 3" in pw and "prewarmBuiltAppSandboxes" in pw)
     pre = B["api-prestart.sh"][0]
@@ -367,7 +381,7 @@ def _env_file(check, tmp):
 # ---- 076: host qualification -------------------------------------------------------------------------------------
 def _qualification(check):
     ok = V.parse_kv(fx("qualify-ok.txt"))
-    check("the probe's answer parses into facts", ok["KVM"] == "present" and ok["VCPU"] == "4" and ok["OS_VERSION"] == "24.04" and len(ok) == 10, ok)
+    check("the probe's answer parses into facts", ok["KVM"] == "present" and ok["VCPU"] == "4" and ok["OS_VERSION"] == "24.04" and ok["PROXY"] == "none" and len(ok) == 11, ok)
     check("an 8 GB / 4 vCPU Ubuntu 24.04 host with KVM and no Docker qualifies", V.qualify(ok) == [])
     bad = V.qualify(V.parse_kv(fx("qualify-no-kvm.txt")))
     check("no /dev/kvm is refused, in words the operator can act on", len(bad) == 1 and "nested virtualization" in bad[0] and "Nothing was installed" in bad[0], bad)
@@ -375,13 +389,17 @@ def _qualification(check):
     check("a 4 GB / 2 vCPU / 9 GB-free host is refused on each count", len(bad) == 3 and "3.8 GB of memory" in bad[0] and "2 virtual CPU" in bad[1] and "9.0 GB of free disk" in bad[2], bad)
     bad = V.qualify(V.parse_kv(fx("qualify-wrong-os.txt")))
     check("the wrong OS, an ARM processor, no sudo and Docker are each refused", len(bad) == 4 and "Ubuntu 24.04" in bad[0] and "aarch64" in bad[1] and "sudo" in bad[2] and "Docker is installed" in bad[3], bad)
+    bad = V.qualify(V.parse_kv(fx("qualify-nginx.txt")))
+    check("a server with another web server on it (nginx) is refused: Caddy is the one reverse proxy", len(bad) == 1 and "nginx" in bad[0] and "Caddy" in bad[0] and bad[0].endswith("."), bad)
+    check("  ...and nothing the deploy installs is a second web server", not any(re.search(r"\b(nginx|apache2|haproxy|traefik)\b", text) for name, (text, _) in V.bundle(_settings(), list(V.CRONS)).items()
+          if name not in ("qualify.sh",)) and "caddy" in V.packages_sh(_settings()))
     bad = V.qualify(V.parse_kv(fx("qualify-garbled.txt")))
     check("an answer that could not be read is a refusal, never a pass", len(bad) == 1 and "could not read" in bad[0] and "VCPU" in bad[0], bad)
     check("an empty answer is a refusal too", len(V.qualify({})) == 1)
     for sentence in V.qualify(V.parse_kv(fx("qualify-wrong-os.txt"))) + V.qualify(V.parse_kv(fx("qualify-small.txt"))):
         check("every refusal is a plain sentence (no key=value, no code)", "=" not in sentence and "KVM=" not in sentence and sentence.endswith("."), sentence)
     q = V.QUALIFY_SH
-    check("the probe is read-only and reports every fact the rules read", all(f"{k}=" in q for k in ("OS_ID", "OS_VERSION", "ARCH", "KVM", "MEM_KB", "VCPU", "DISK_FREE_KB", "SUDO", "DOCKER", "SYSTEMD"))
+    check("the probe is read-only and reports every fact the rules read", all(f"{k}=" in q for k in ("OS_ID", "OS_VERSION", "ARCH", "KVM", "MEM_KB", "VCPU", "DISK_FREE_KB", "SUDO", "DOCKER", "SYSTEMD", "PROXY"))
           and not any(w in q for w in ("apt", "install ", "rm ", "systemctl", ">/etc", "tee ")), q)
 
 # ---- 076: the plan and the dry run -------------------------------------------------------------------------------

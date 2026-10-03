@@ -8,7 +8,7 @@ goes to a fake runner, and for the whole test the process refuses to open a sock
 a test that reached for the network fails instead of connecting. Generated scripts are syntax-checked
 (`bash -n`), never executed. Files are written only under a temp directory that is removed afterwards.
 """
-import contextlib, hashlib, importlib.util, io, json, os, shutil, socket, stat, subprocess, sys, tempfile
+import contextlib, hashlib, importlib.util, io, json, os, re, shutil, socket, stat, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -23,6 +23,7 @@ import lane_url
 
 FX = os.path.dirname(V.FIXTURE)
 CP = subprocess.CompletedProcess
+MOLD = os.path.join(ROOT, "molds", "mold_v1", "codebase")
 SECRET = "s3cr3t-VALUE-9f2b7c"          # a stand-in for an operator value; it must never surface anywhere but one stdin
 
 def load(p): return json.load(open(p))
@@ -127,6 +128,8 @@ def _state_rules(check):
         ("a 1-vCPU sandbox (it froze in the spike)", lambda d: vr(d)["sandbox"].update(cpus=1), "at least 2"),
         ("a 512 MiB sandbox", lambda d: vr(d)["sandbox"].update(memory_mib=512), "at least 1024"),
         ("an SSH port that is not a port", lambda d: vr(d).update(ssh_port=70000), "ssh_port"),
+        ("an SSH source limit with no address for the deploy itself to log in to", lambda d: vr(d).update(ssh_allow_from="10.44.0.0/24"), "ssh_host"),
+        ("an SSH source of every address", lambda d: vr(d).update(ssh_allow_from="0.0.0.0/0", ssh_host="10.44.0.2"), "every address"),
         ("the Vercel secret store", lambda d: d["infrastructure"].update(secret_store="vercel_env"), "vm_remote_env_file"),
         ("the Vercel sandbox", lambda d: d["infrastructure"]["sandbox"].update(provider="vercel_sandbox"), "microsandbox"),
         ("a deny list without the metadata range", lambda d: vr(d)["sandbox"].update(deny_subnets=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "100.64.0.0/10"]), "169.254.0.0/16"),
@@ -225,6 +228,16 @@ def _generated_files(check, tmp):
     check("  ...and is unchanged by a second run (it compares before it resets)", 'if [ "$have" != "$want" ]' in fw)
     fw2 = V.firewall_sh(_settings(lambda d: d["infrastructure"]["vm_remote"].update(ssh_port=2222)))
     check("a moved SSH port is the one allowed", "ufw allow 2222/tcp" in fw2 and "ufw allow 22/tcp" not in fw2 and "port = 2222" in V.fail2ban_jail(_settings(lambda d: d["infrastructure"]["vm_remote"].update(ssh_port=2222))))
+    tun = lambda d: d["infrastructure"]["vm_remote"].update(ssh_host="10.44.0.2", ssh_allow_from="10.44.0.0/24")
+    S4 = _settings(tun); fw4 = V.firewall_sh(S4)
+    check("the allowed SSH source is a parameter: named, only that network reaches the SSH port (room for a private tunnel, mold_v1-156)",
+          V.ufw_rules(S4) == ["ufw allow 443/tcp", "ufw allow 80/tcp", "ufw allow from 10.44.0.0/24 to any port 22 proto tcp"]
+          and "  ufw allow from 10.44.0.0/24 to any port 22 proto tcp" in fw4 and "ufw allow 22/tcp" not in fw4, V.ufw_rules(S4))
+    check("  ...and absent, the rule is today's", V.ufw_rules(S) == ["ufw allow 22/tcp", "ufw allow 443/tcp", "ufw allow 80/tcp"])
+    p4 = {s["id"]: s for s in V.plan(S4, mold)}
+    check("  ...SSH then goes to the tunnel address, while DNS and the sandbox deny list keep the public one",
+          "root@10.44.0.2" in p4["packages"]["argv"] and "203.0.113.10/32" in V.config_pairs(S4)["SANDBOX_DENY_SUBNETS"] and V.dns_problem(S4, lambda d: ["203.0.113.10"]) is None
+          and V.dns_problem(S4, lambda d: ["10.44.0.2"]) is not None)
     nft = V.egress_nft(S)
     check("the egress rule keeps the service user off metadata and private ranges, and leaves loopback", all(x in nft for x in V.EGRESS_DENY) and "127.0.0.0/8" not in nft and 'meta skuid "sfapp"' in nft, nft)
     B = V.bundle(S, crons)
@@ -243,6 +256,20 @@ def _generated_files(check, tmp):
     if shutil.which("node"):
         r = subprocess.run(["node", "--check", os.path.join(out, "prewarm-serial.mjs")], capture_output=True, text=True)
         check("prewarm-serial.mjs parses", r.returncode == 0, r.stderr)
+    # Two more read-only parsers, used only where this machine has them: systemd's own unit checker, and nft's
+    # check mode (-c: parsed and validated against the kernel, never applied). The service user does not exist
+    # here, so the rule is checked with `nobody` standing in for it.
+    sa = shutil.which("systemd-analyze")
+    if sa and os.path.exists("/usr/bin/node"):
+        units = sorted(os.path.join(out, "units", n) for n in os.listdir(os.path.join(out, "units")))
+        r = subprocess.run([sa, "verify", "--man=no", *units], capture_output=True, text=True, timeout=60)
+        check("every unit and timer passes `systemd-analyze verify` (read-only)", r.returncode == 0 and not r.stderr.strip(), r.stderr[-400:])
+    nft = shutil.which("nft") or ("/usr/sbin/nft" if os.path.exists("/usr/sbin/nft") else None)
+    if nft and os.geteuid() == 0:
+        probe = os.path.join(tmp, "egress-check.nft")
+        with open(probe, "w") as f: f.write(B["egress.nft"][0].replace(f'"{V.SERVICE_USER}"', '"nobody"'))
+        r = subprocess.run([nft, "-c", "-f", probe], capture_output=True, text=True, timeout=30)
+        check("the egress rule is valid nftables (`nft -c`: checked, never applied)", r.returncode == 0, r.stderr[-400:])
     pw = B["prewarm-serial.mjs"][0]
     check("the prewarm builds one template at a time, three tries each", "chain.then(() => once(job))" in pw and "attempt <= 3" in pw and "prewarmBuiltAppSandboxes" in pw)
     pre = B["api-prestart.sh"][0]
@@ -354,7 +381,7 @@ def _env_file(check, tmp):
 # ---- 076: host qualification -------------------------------------------------------------------------------------
 def _qualification(check):
     ok = V.parse_kv(fx("qualify-ok.txt"))
-    check("the probe's answer parses into facts", ok["KVM"] == "present" and ok["VCPU"] == "4" and ok["OS_VERSION"] == "24.04" and len(ok) == 10, ok)
+    check("the probe's answer parses into facts", ok["KVM"] == "present" and ok["VCPU"] == "4" and ok["OS_VERSION"] == "24.04" and ok["PROXY"] == "none" and len(ok) == 11, ok)
     check("an 8 GB / 4 vCPU Ubuntu 24.04 host with KVM and no Docker qualifies", V.qualify(ok) == [])
     bad = V.qualify(V.parse_kv(fx("qualify-no-kvm.txt")))
     check("no /dev/kvm is refused, in words the operator can act on", len(bad) == 1 and "nested virtualization" in bad[0] and "Nothing was installed" in bad[0], bad)
@@ -362,13 +389,17 @@ def _qualification(check):
     check("a 4 GB / 2 vCPU / 9 GB-free host is refused on each count", len(bad) == 3 and "3.8 GB of memory" in bad[0] and "2 virtual CPU" in bad[1] and "9.0 GB of free disk" in bad[2], bad)
     bad = V.qualify(V.parse_kv(fx("qualify-wrong-os.txt")))
     check("the wrong OS, an ARM processor, no sudo and Docker are each refused", len(bad) == 4 and "Ubuntu 24.04" in bad[0] and "aarch64" in bad[1] and "sudo" in bad[2] and "Docker is installed" in bad[3], bad)
+    bad = V.qualify(V.parse_kv(fx("qualify-nginx.txt")))
+    check("a server with another web server on it (nginx) is refused: Caddy is the one reverse proxy", len(bad) == 1 and "nginx" in bad[0] and "Caddy" in bad[0] and bad[0].endswith("."), bad)
+    check("  ...and nothing the deploy installs is a second web server", not any(re.search(r"\b(nginx|apache2|haproxy|traefik)\b", text) for name, (text, _) in V.bundle(_settings(), list(V.CRONS)).items()
+          if name not in ("qualify.sh",)) and "caddy" in V.packages_sh(_settings()))
     bad = V.qualify(V.parse_kv(fx("qualify-garbled.txt")))
     check("an answer that could not be read is a refusal, never a pass", len(bad) == 1 and "could not read" in bad[0] and "VCPU" in bad[0], bad)
     check("an empty answer is a refusal too", len(V.qualify({})) == 1)
     for sentence in V.qualify(V.parse_kv(fx("qualify-wrong-os.txt"))) + V.qualify(V.parse_kv(fx("qualify-small.txt"))):
         check("every refusal is a plain sentence (no key=value, no code)", "=" not in sentence and "KVM=" not in sentence and sentence.endswith("."), sentence)
     q = V.QUALIFY_SH
-    check("the probe is read-only and reports every fact the rules read", all(f"{k}=" in q for k in ("OS_ID", "OS_VERSION", "ARCH", "KVM", "MEM_KB", "VCPU", "DISK_FREE_KB", "SUDO", "DOCKER", "SYSTEMD"))
+    check("the probe is read-only and reports every fact the rules read", all(f"{k}=" in q for k in ("OS_ID", "OS_VERSION", "ARCH", "KVM", "MEM_KB", "VCPU", "DISK_FREE_KB", "SUDO", "DOCKER", "SYSTEMD", "PROXY"))
           and not any(w in q for w in ("apt", "install ", "rm ", "systemctl", ">/etc", "tee ")), q)
 
 # ---- 076: the plan and the dry run -------------------------------------------------------------------------------
@@ -414,8 +445,9 @@ def _plan_and_dry_run(check, tmp):
 def _deploy_sequence(check, tmp):
     S = _settings(); mold = os.path.join(ROOT, "molds/mold_v1/codebase"); crons = V.read_crons(mold)
     ev_line = "  isolation proof: {...}\nEVIDENCE " + json.dumps({"at": "x", "mode": "fail_closed", "backend": "self_hosted", "protected": 58})
+    waits = []
     def attempt(answers, names_present="", secrets=None, resolver=lambda d: ["203.0.113.10"], fail_at=None):
-        log, said, asked, started = [], [], [], []
+        log, said, asked, started = [], [], [], []; waits.clear()
         def runner(step, stdin=None):
             log.append((step["id"], list(step["argv"]), stdin))
             if step["id"] == fail_at: return CP(step["argv"], 1, "", "npm ERR! build failed")
@@ -423,7 +455,7 @@ def _deploy_sequence(check, tmp):
             return CP(step["argv"], 0, out, "")
         def secrets_for(names): asked.append(list(names)); return {k: f"{SECRET}-{k}" for k in names} if secrets is None else secrets
         try: res = V.deploy(S, mold, crons, runner=runner, secrets_for=secrets_for, resolver=resolver, read_health=lambda u: ("200", HEALTH_DOC, ""),
-                            say=said.append, bundle_dir=os.path.join(tmp, f"deploy-{len(os.listdir(tmp))}"), on_started=lambda: started.append(1))
+                            say=said.append, bundle_dir=os.path.join(tmp, f"deploy-{len(os.listdir(tmp))}"), on_started=lambda: started.append(1), wait=waits.append)
         except V.Stop as e: res = e
         return res, log, said, asked, started
     res, log, said, asked, started = attempt(fx("qualify-ok.txt"))
@@ -449,6 +481,11 @@ def _deploy_sequence(check, tmp):
     check("a failed build stops there, says so, and nothing after it runs", isinstance(res, V.Stop) and "step build stopped" in str(res) and [x[0] for x in log][-1] == "build" and "safe to run again" in str(res), str(res))
     res, log, said, asked, started = attempt(fx("qualify-ok.txt"), secrets={})
     check("a value the operator did not supply stops it before the build", isinstance(res, V.Stop) and "still missing" in str(res) and "build" not in [x[0] for x in log])
+    answers = iter([("", None, "nothing answered"), ("", None, "nothing answered"), ("200", HEALTH_DOC, ""), ("200", None, "")]); slept = []
+    res = V.deploy(S, mold, crons, runner=lambda st, stdin=None: CP(st["argv"], 0, {"qualify": fx("qualify-ok.txt"), "env-names": "\n".join(V.operator_names(S)), "db-chain": ev_line,
+                   "health": fx("health-ok.txt")}.get(st["id"], "ok"), ""), resolver=lambda d: ["203.0.113.10"], read_health=lambda u: next(answers), say=lambda *_: None,
+                   bundle_dir=os.path.join(tmp, "deploy-wait"), wait=slept.append)
+    check("the outside health read waits for the certificate instead of failing a first deploy", slept == [10, 10] and res["public"][0] == "200" and res["problems"] == [], (slept, res["problems"]))
     step = {"id": "t", "argv": ["sh", "-c", "cat; echo err >&2; exit 3"], "timeout": 10}
     r = V.real_runner(step, "from-stdin")
     check("the real runner feeds stdin from memory and returns output and exit code", r.stdout == "from-stdin" and r.returncode == 3 and "err" in r.stderr)
@@ -523,13 +560,13 @@ def _records(check, tmp):
     hv = {"workflow": "200", "api": "200", "web": "200", "kvm": "ok"}
     good = {"health": hv, "problems": [], "evidence": evd, "facts": {}, "public": ("200", HEALTH_DOC, "")}
     def fake(res=None, stop=None, start=True):
-        def deploy_fn(S, src, crons, on_started=None, secrets_for=None, read_health=None):
+        def deploy_fn(S, src, crons, on_started=None, secrets_for=None, read_health=None, **_):
             if start and on_started: on_started()
             if stop: raise V.Stop(stop)
             return res
         return deploy_fn
     d, docs, S = stage("ok")
-    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, "src", list(V.CRONS), fake(good))
+    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS), fake(good))
     app, infra, ds = (load(os.path.join(d, f"{k}.json")) for k in ("application", "infrastructure", "datastores"))
     check("a deploy that passes every gate records stamped, the URL, the instant and the health", rc == 0 and app["status"] == "stamped" and infra["vm_remote"]["production_url"] == "https://app.example.com"
           and infra["deployed_at"] == P.NOW and infra["vm_remote"]["health"]["kvm"] == "ok" and infra["vm_remote"]["health"]["qualified_at"] == P.NOW, printed[-300:])
@@ -539,21 +576,24 @@ def _records(check, tmp):
     check("  ...which the lanes then grade at its own URL", lane_url.target_url(infra) == "https://app.example.com")
     d, docs, S = stage("unproven")
     bad = dict(good, public=("502", None, "HTTP 502, and the body is not a health document"))
-    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, "src", list(V.CRONS), fake(bad))
+    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS), fake(bad))
     app, infra = load(os.path.join(d, "application.json")), load(os.path.join(d, "infrastructure.json"))
     check("an app whose health cannot be read from outside is reverted, never stamped, and gets no URL", rc == 1 and app["status"] == "reverted" and "unmeasured" in app["revert"]["reason"]
           and "production_url" not in infra["vm_remote"] and "deployed_at" not in infra, app.get("revert"))
     check("  ...and that state validates too (a reverted app claims nothing)", F._app_errors("vm_remote_fixture", d)[0] == [], F._app_errors("vm_remote_fixture", d)[0])
     d, docs, S = stage("sick")
-    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, "src", list(V.CRONS),
+    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS),
                         fake(dict(good, problems=["something on the server listens to the internet on port(s) 5432; only 22, 80, 443 may"])))
     check("a server left with a public database port is reverted with that sentence", rc == 1 and "5432" in load(os.path.join(d, "application.json"))["revert"]["reason"])
     d, docs, S = stage("stopped")
-    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, "src", list(V.CRONS), fake(stop="step build stopped (exit 1): npm ERR!"))
+    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS), fake(stop="step build stopped (exit 1): npm ERR!"))
     app = load(os.path.join(d, "application.json"))
     check("a deploy that stops after it began is recorded reverted with the reason", rc == 1 and app["status"] == "reverted" and "step build stopped" in app["revert"]["reason"], app)
+    d, docs, S = stage("nosrc")
+    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, os.path.join(tmp, "not-a-source"), list(V.CRONS), fake(good))
+    check("a source directory that is not the application is refused before anything is copied", rc == 1 and "not the application's source" in printed and load(os.path.join(d, "application.json"))["status"] == "planned", printed)
     d, docs, S = stage("refused")
-    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, "src", list(V.CRONS), fake(stop="This server cannot run the app", start=False))
+    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS), fake(stop="This server cannot run the app", start=False))
     check("a refusal before anything changed leaves the status alone and says so", rc == 1 and load(os.path.join(d, "application.json"))["status"] == "planned" and "status is unchanged" in printed, printed)
     d, docs, S = stage("verify")
     runner = lambda step: CP(step["argv"], 0, '  isolation proof: {"role":"app_rw"}\nEVIDENCE ' + json.dumps(evd), "")

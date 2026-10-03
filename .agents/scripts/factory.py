@@ -271,6 +271,14 @@ def _vm_remote(app_id, docs):
     port = vr.get("ssh_port")
     if isinstance(port, int) and not isinstance(port, bool) and not 1 <= port <= 65535:
         out.append(f"{f}: vm_remote.ssh_port is {port}, which is not a port number (1-65535); 22 unless the server's SSH was moved — fix it in {fix}")
+    allow = vr.get("ssh_allow_from")
+    if allow is not None:
+        if str(allow).startswith("0.0.0.0"):
+            out.append(f"{f}: vm_remote.ssh_allow_from is {allow!r}, which is every address; to leave SSH open to all, delete the line from {fix}")
+        elif not vr.get("ssh_host"):
+            out.append(f"{f}: vm_remote.ssh_allow_from limits who may reach SSH, but there is no ssh_host saying which address the deploy "
+                       f"itself logs in to, so the firewall could close the door the deploy uses — add ssh_host (the server's address on "
+                       f"that private network) in {fix}, or delete ssh_allow_from")
     sg = vr.get("storage") if isinstance(vr.get("storage"), dict) else {}
     blob = (ds.get("blob") or {}).get("provider")
     if sg.get("driver") == "fs":
