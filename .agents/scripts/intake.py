@@ -2,6 +2,7 @@
 """Intake: brief -> four application state files, asking only what the schemas cannot resolve.
 
   intake.py <brief.md> --app <app_id> [--mold mold_v1] [--answers answers.json] [--ask]
+  intake.py --self-test [app_id]   re-run on a temp copy of a deployed app; nothing it did not write is dropped
 
 Without --ask (the subagent path) it never prompts: it drafts what it can, writes
 state/application/<app_id>/questions.json for anything unresolved, and exits 2.
@@ -21,6 +22,8 @@ EMAIL = r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"
 def parse_brief(text):
     """Deterministic hints from the brief. Interpretation beyond this is the intake subagent's job."""
     t = text.lower(); h = {}
+    m = re.search(r"^\s*product name:\s*\"?([^\n\".]+?)\"?\s*(?:\.|$)", text, re.I | re.M)
+    if m: h["product_name"] = m.group(1).strip()
     vm = bool(re.search(r"\b(vm|droplet|self.?host|on.prem|single machine)\b", t))
     # "vercel" anywhere used to pick the deploy target, so "inference through the Vercel AI Gateway" moved
     # an app that asked for the vm onto Vercel (and paired it with a self_hosted database provision.py
@@ -29,7 +32,16 @@ def parse_brief(text):
     # The possessive lives INSIDE the lookahead: as an optional group before it, "vercel's ai gateway"
     # backtracked out of the 's and matched a bare "vercel" that the lookahead could no longer see.
     vercel = bool(re.search(r"\bvercel\b(?!(?:['\u2019]s)?[\s-]+(?:ai[\s-]+)?gateway\b)", t))
-    if vm and vercel:
+    # A server of the customer's own that SERVES the app (mold_v1-075), as opposed to `vm`, which only verifies a
+    # database on this box. Named explicitly, so the older vm words keep meaning what they meant.
+    remote = bool(re.search(r"\bvm_remote\b|\b(?:remote|own|dedicated|customer(?:['\u2019]s)?) (?:server|machine)\b", t))
+    if remote and not vercel:
+        h["deploy_target"] = "vm_remote"; vm = False
+        m = re.search(r"\bserver(?: address)?:\s*([0-9a-z][0-9a-z.-]*[0-9a-z])", t)
+        if m: h["remote_host"] = m.group(1)
+    elif remote: h["deploy_target_conflict"] = True
+    if h.get("deploy_target") == "vm_remote" or h.get("deploy_target_conflict"): pass
+    elif vm and vercel:
         # A brief that names BOTH is a question, not an answer. The last rule to run used to win, so
         # intake wrote target=vercel for a brief that asked for the vm. deploy_target stays pending.
         h["deploy_target_conflict"] = True
@@ -37,8 +49,8 @@ def parse_brief(text):
     elif vercel: h["deploy_target"] = "vercel"
     if re.search(r"\bai[\s-]+gateway\b|\bvercel(?:['\u2019]s)?[\s-]+gateway\b", t): h["inference_provider"] = "vercel_ai_gateway"
     elif re.search(r"\bworkers\s+ai\b|\bcloudflare\b", t): h["inference_provider"] = "cloudflare_workers_ai"
-    if re.search(r"\bno (web )?search\b|without (web )?search|disable (web )?search", t): h["web_search"] = False
-    if re.search(r"\bno browser\b|without (a )?browser|disable (the )?browser|no outbound", t): h["browser"] = False
+    if re.search(r"\bno (web )?search\b|without (web )?search|disable (web )?search|\b(web )?search(ing)?:? (is )?off\b", t): h["web_search"] = False
+    if re.search(r"\bno browser\b|without (a )?browser|disable (the )?browser|no outbound|\bbrowser( use)?:? (is )?off\b", t): h["browser"] = False
     if re.search(r"single.?tenant|single workspace|one workspace", t): h["multi_tenant"] = False
     if re.search(r"\bneon\b", t): h["postgres_provider"] = "neon"
     elif re.search(r"\bsupabase\b|\bmanaged postgres\b", t): h["postgres_provider"] = "supabase"
@@ -52,7 +64,8 @@ def parse_brief(text):
     if m: h["custom_domain"] = m.group(1)
     m = re.search(r"\bmold[_ ]?v?([123])\b", t)
     if m: h["mold_id"] = f"mold_v{m.group(1)}"
-    m = re.search(r"\b(?:workspace|org(?:anisation|anization)?):\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I)
+    # Only a line that STARTS with the label: "Multi-organization: no, one workspace" once named a workspace "no, one workspace".
+    m = re.search(r"^\s*(?:workspace|org(?:anisation|anization)?)(?: name)?:\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I | re.M)
     if m: h["workspace_name"] = m.group(1).strip()
     # "fde:" is the pre-rename label; still read for one release so older briefs keep stamping.
     m = re.search(r"\b(?:operator|owner|fde):\s*(" + EMAIL + ")", t)
@@ -118,7 +131,7 @@ def unforwarded(target, provider):
     an unmeasured default. The list is READ from provision.py, not copied here, so this refusal lifts by
     itself the day provision.py forwards the name. target=vm starts no process at all (provision.py:
     "target vm serves nothing"), so there is nothing to forward and nothing to refuse."""
-    if target != "vm":
+    if target not in ("vm", "vm_remote"):      # vm_remote: every declared name goes into the one env file all three services read
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import provision                     # stdlib-only module, no side effects at import
         return [n for n in INFERENCE_SECRETS.get(provider, []) if n not in provision.API_ENV]
@@ -167,26 +180,26 @@ def match(phrases, table):
 
 QUESTIONS = [
  # id, state path, prompt, options or None, resolver(defaults, hints, ctx) -> value or None
- ("deploy_target", "infrastructure.target", "Where should this application run?", ["vercel","vm"],
+ ("deploy_target", "infrastructure.target", "Where should this application run?", ["vercel","vm","vm_remote"],
    lambda d,h,c: None if h.get("deploy_target_conflict") else h.get("deploy_target") or d.get("deploy_target")),
  # the hint was ignored here — alone among the sixteen questions — so a brief could never land on a
  # provider and intake silently stamped the factory default. self_hosted is LOCAL-ONLY (no host port),
  # so it forces target=vm; provision.py refuses to pair it with a Vercel deployment.
  ("postgres_provider", "datastores.postgres.provider", "Which Postgres provider?", ["neon","supabase","rds","self_hosted"],
-   lambda d,h,c: h.get("postgres_provider") or d.get("postgres_provider")),
+   lambda d,h,c: "self_hosted" if answered(c, h, d, "deploy_target")=="vm_remote" else h.get("postgres_provider") or d.get("postgres_provider")),
  ("postgres_ref", "datastores.postgres.url_ref", "Name of the secret holding the Postgres URL (e.g. DATABASE_URL). Name only, never the value.", None,
    lambda d,h,c: "DATABASE_URL"),
  ("postgres_scope", "datastores.postgres.scope", "Fresh database for this app, or shared with the live source deployment's data?", ["fresh","shared_with_live"],
    lambda d,h,c: h.get("postgres_scope") or d.get("postgres_scope", "fresh")),
- ("blob_provider", "datastores.blob.provider", "Which blob store for the data room?", ["vercel_blob","s3","gcs","azure_blob"],
-   lambda d,h,c: d.get("blob_provider")),
+ ("blob_provider", "datastores.blob.provider", "Which blob store for the data room?", ["vercel_blob","s3","gcs","azure_blob","fs"],
+   lambda d,h,c: "fs" if answered(c, h, d, "deploy_target")=="vm_remote" else d.get("blob_provider")),
  ("inference_provider", "infrastructure.inference.provider", "Which inference provider serves the agent?", ["cloudflare_workers_ai","vercel_ai_gateway"],
    lambda d,h,c: h.get("inference_provider") or d.get("inference_provider")),
  # the first name the provider reads: CLOUDFLARE_ACCOUNT_ID on Workers AI, AI_GATEWAY_API_KEY on the gateway
  ("inference_account", "infrastructure.inference.account_ref", "Name of the secret holding the inference account id (e.g. CLOUDFLARE_ACCOUNT_ID).", None,
    lambda d,h,c: (INFERENCE_SECRETS.get(answered(c, h, d, "inference_provider")) or [None])[0]),
- ("secret_store", "infrastructure.secret_store", "Where do secret values live?", ["vercel_env","vm_env_file"],
-   lambda d,h,c: "vm_env_file" if answered(c, h, d, "deploy_target")=="vm" else d.get("secret_store")),
+ ("secret_store", "infrastructure.secret_store", "Where do secret values live?", ["vercel_env","vm_env_file","vm_remote_env_file"],
+   lambda d,h,c: {"vm": "vm_env_file", "vm_remote": "vm_remote_env_file"}.get(answered(c, h, d, "deploy_target")) or d.get("secret_store")),
  ("web_search", "application.capabilities.web_search", "Enable web search (Exa) in the agent?", ["true","false"],
    lambda d,h,c: h.get("web_search", True)),
  ("browser", "application.capabilities.browser", "Enable the browser subagent?", ["true","false"],
@@ -222,10 +235,73 @@ def pick_product(mold_id, hints, existing=None):
         hit = next((p for p in prods if p["product_id"] == want), None)
         if hit: return hit
         if hints.get("product_id"): sys.exit(f"no product {want!r} on {mold_id}; have: " + ", ".join(p["product_id"] for p in prods))
+    if hints.get("product_name"):
+        # A brief that names its own product ("Product name: Rooftop Desk") IS a new product: nobody minting an
+        # application should have to know the factory's product ids, or borrow another brand's. It takes the mold's
+        # base product's gates (the first product, which carries no pack and no brand of its own).
+        pid = re.sub(r"[^a-z0-9]+", "_", hints["product_name"].lower()).strip("_")
+        hit = next((p for p in prods if p["product_id"] == pid), None)
+        if hit: return hit
+        base = prods[0]; P = load(os.path.join(ST, "products.json"))
+        new = {"product_id": pid, "mold_id": mold_id, "name": hints["product_name"], "tagline": hints.get("tagline", ""), "stage": "defined",
+               "target_model": base.get("target_model"), "gates": base.get("gates"), "app_ids": [],
+               "deploy_targets": [hints.get("target", "vercel")], "vercel_project": pid.replace("_", "-"), "packs": hints.get("packs") or []}
+        P["products"].append({k: v for k, v in new.items() if v not in (None, "")}); save(os.path.join(ST, "products.json"), P)
+        print(f"new product {pid!r} ({hints['product_name']}) on {mold_id}, with the gates of {base['product_id']}")
+        return P["products"][-1]
     if len(prods) > 1:
-        sys.exit(f"{mold_id} carries {len(prods)} products (" + ", ".join(p["product_id"] for p in prods) +
-                 "); say which one in the brief, e.g. `product: " + prods[0]["product_id"] + "`")
+        # No product named and no product name given: the mold as it comes, under its base product.
+        return prods[0]
     return prods[0]
+
+# ---- a re-run keeps what other writers recorded (mold_v1-081) ------------------------------------------
+# Intake owns the fields it derives from the brief and answers. Everything else in an app's state was
+# written by something that MEASURED or DID it — provision.py (rls_verified, deployed_at, health, google,
+# mold_commit), agent_cli.py, domain.py, mint handoff — and a re-run used to rebuild the four files from
+# scratch and drop whatever it had no line for (on onfinance_hfc: the whole rls_verified proof, the Google
+# client, the agent CLI package, handoff_url). So every key the old file has and the new one lacks is carried
+# forward, recursively, EXCEPT the paths intake decides by leaving out: those below disappear on purpose
+# when the brief or answers change (a vm app has no `vercel` block, a single-pack brief drops a pack, a neon
+# app has no self-hosted network). Lists are values, not merged.
+OWNED_BY_OMISSION = {
+  "application": {"customer_id", "packs", "clone_of", "surface.branding", "surface.primary_context.entity_vocabulary.note"},
+  "infrastructure": {"vercel", "vm", "vm_remote"},
+  "datastores": {"postgres.network", "postgres.host", "postgres.port", "postgres.database", "postgres.exposure",
+                 "postgres.admin_url_ref", "postgres.pooling", "postgres.rls_verified"},
+  "datainfra": set(),
+}
+def carry_forward(new, old, owned, path=""):
+    """Copy into `new` every key of `old` it lacks (recursing into dicts both have), except `owned` paths."""
+    for k, v in old.items():
+        p = f"{path}.{k}" if path else k
+        if p in owned: continue
+        if k not in new: new[k] = v
+        elif isinstance(new[k], dict) and isinstance(v, dict): carry_forward(new[k], v, owned, p)
+    return new
+
+def keep_measured(app, infra, ds, existing):
+    """The carry-forward, plus the three fields intake writes but a later writer knows better."""
+    ex_app, ex_inf, ex_ds = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores"))
+    # workspace.fde_self is the pre-rename name of workspace.operator_self: migrate it, never carry both.
+    ex_ws = ex_app.get("workspace") or {}
+    if "fde_self" in ex_ws:
+        ex_ws = dict(ex_ws); legacy = ex_ws.pop("fde_self"); ex_ws.setdefault("operator_self", legacy)
+        ex_app = dict(ex_app, workspace=ex_ws)
+    # mold_commit is what is IN FRONT OF TRAFFIC once provision.py deployed it; mint.py compares it with the
+    # snapshot to know a redeploy is due, so resetting it to the snapshot's commit would hide a pending deploy.
+    if ex_app.get("mold_commit") and ex_app.get("status") not in (None, "planned"): app["mold_commit"] = ex_app["mold_commit"]
+    # The brief never names a model; intake only fills the factory default. An operator's later choice (roles,
+    # a newer model) is kept while the provider is the same, and reset only when the provider itself changed.
+    if (ex_app.get("model") or {}).get("provider") == app["model"]["provider"]: app["model"] = ex_app["model"]
+    # rls_verified is a measurement OF A DATABASE: kept only while the provider it measured is still the one.
+    rv = (ex_ds.get("postgres") or {}).get("rls_verified")
+    if rv and rv.get("backend") == ds["postgres"]["provider"]: ds["postgres"]["rls_verified"] = rv
+    for name, new, old in (("application", app, ex_app), ("infrastructure", infra, ex_inf), ("datastores", ds, ex_ds)):
+        carry_forward(new, old, OWNED_BY_OMISSION[name])
+    # a target switch drops the other target's block, but the SAME target keeps its whole block's history
+    for t in ("vercel", "vm", "vm_remote"):
+        if t in infra and isinstance(ex_inf.get(t), dict): carry_forward(infra[t], ex_inf[t], set())
+    return app, infra, ds
 
 def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     d = factory.get("defaults", {}); mold = next(m for m in factory["molds"] if m["mold_id"]==mold_id)
@@ -351,7 +427,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         infra["vercel"]={"team":d.get("vercel_team","your-vercel-team"),"project":ans["vercel_project"],
           "functions":{"api":"vercel.api.json","eve":"vercel.eve.json"}}
         if ans.get("custom_domain"): infra["vercel"]["custom_domain"]=ans["custom_domain"]
-    else:
+    elif ans["deploy_target"]=="vm":
         infra["vm"]=dict(d.get("vm",{})); infra["vm"]["compose"]=f"infra/vm/apps/{app_id}/docker-compose.yml"
     ex_inf = existing.get("infrastructure", {})
     for k in ("datastores", "deployed_at", "configured_at"):
@@ -399,9 +475,80 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         ex_di = existing.get("datainfra", {})
         for k in ("platforms", "deployments", "pipelines", "agents", "dataroom"):
             if ex_di.get(k): di[k] = ex_di[k]
+    if ans["deploy_target"]=="vm_remote":
+        # One function owns the vm_remote shape (lib/vm_remote.py), so intake, the fixture and the validator agree.
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); import vm_remote
+        vm_remote.shape_state(app_id, infra, ds, di, host=hints.get("remote_host"), domain=hints.get("custom_domain"))
+    if existing:
+        app, infra, ds = keep_measured(app, infra, ds, existing)
+        carry_forward(di, existing.get("datainfra", {}), OWNED_BY_OMISSION["datainfra"])
     return app, infra, ds, di
 
+def self_test(app_id="onfinance_hfc"):
+    """Re-run intake on a COPY of a deployed app's state, in a temp tree, and prove nothing a deploy or a
+    verify wrote is dropped. The real state/ is read, never written: the run happens under a temp ROOT
+    (scripts and state copied; packs, molds and briefs linked read-only) and state/ is hashed around it."""
+    import hashlib, shutil, tempfile
+    def digest(d):
+        h = hashlib.sha256()
+        for r, _, fs in sorted(os.walk(d)):
+            for f in sorted(fs): h.update(f.encode()); h.update(open(os.path.join(r, f), "rb").read())
+        return h.hexdigest()
+    def paths(o, p=""):
+        if isinstance(o, dict):
+            for k, v in o.items(): yield from paths(v, f"{p}.{k}" if p else k)
+        else: yield p, o
+    real = digest(ST); fails, n = [], 0
+    src = os.path.join(ST, "application", app_id)
+    if not os.path.exists(os.path.join(src, "answers.json")): sys.exit(f"self-test needs a deployed app with answers.json; {app_id} has none")
+    T = tempfile.mkdtemp(prefix="intake-selftest-")
+    try:
+        shutil.copytree(os.path.dirname(os.path.abspath(__file__)), os.path.join(T, ".claude", "scripts"))
+        shutil.copytree(ST, os.path.join(T, "state"))
+        for d in ("packs", "molds", "briefs"): os.symlink(os.path.join(ROOT, d), os.path.join(T, d))
+        tapp = os.path.join(T, "state", "application", app_id)
+        before = {nm: load(os.path.join(src, f"{nm}.json")) for nm in ("application", "infrastructure", "datastores", "datainfra")}
+        brief = before["application"]["brief"]
+        def rerun(answers):
+            save(os.path.join(T, "answers.in.json"), answers)
+            return subprocess.run([sys.executable, os.path.join(T, ".claude/scripts/intake.py"), os.path.join(T, brief), "--app", app_id,
+                                   "--answers", os.path.join(T, "answers.in.json")], cwd=T, capture_output=True, text=True)
+        answers = load(os.path.join(src, "answers.json"))
+        r = rerun(answers); n += 1
+        if r.returncode: fails.append(f"re-run exited {r.returncode}: {(r.stdout + r.stderr).strip()[-400:]}")
+        for nm, old in before.items():
+            new = load(os.path.join(tapp, f"{nm}.json"))
+            renamed = lambda p: p.replace("workspace.fde_self", "workspace.operator_self", 1)   # migrated on purpose
+            lost = [p for p, _ in paths(old) if renamed(p) not in dict(paths(new))]
+            n += 1
+            if lost: fails.append(f"{nm}: a same-answers re-run dropped {len(lost)} field(s): {', '.join(lost[:8])}")
+        after = {nm: load(os.path.join(tapp, f"{nm}.json")) for nm in ("application", "datastores")}
+        n += 1
+        if after["datastores"]["postgres"].get("rls_verified") != before["datastores"]["postgres"].get("rls_verified"):
+            fails.append("datastores.postgres.rls_verified changed on a same-answers re-run")
+        n += 1
+        if after["application"].get("mold_commit") != before["application"].get("mold_commit"):
+            fails.append(f"mold_commit (what is deployed) changed: {before['application'].get('mold_commit')} -> {after['application'].get('mold_commit')}")
+        n += 1
+        if after["application"]["model"] != before["application"]["model"]:
+            fails.append("the operator's model choice was reset by a re-run that did not change the provider")
+        # a real change of database provider must NOT keep the old database's isolation proof
+        for nm in before: save(os.path.join(tapp, f"{nm}.json"), before[nm])
+        other = "supabase" if answers.get("postgres_provider") != "supabase" else "neon"
+        r = rerun(dict(answers, postgres_provider=other)); n += 1
+        ds2 = load(os.path.join(tapp, "datastores.json"))
+        if "rls_verified" in ds2.get("postgres", {}): fails.append(f"switching postgres to {other} kept the old database's rls_verified")
+        n += 1
+        if other != "neon" and "pooling" in ds2["postgres"]: fails.append("switching away from neon kept postgres.pooling")
+    finally:
+        shutil.rmtree(T, ignore_errors=True)
+    n += 1
+    if digest(ST) != real: fails.append("the REAL state/ changed during the self-test")
+    if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
+    print(f"intake: {n} checks passed (re-run on a temp copy of {app_id}; real state untouched)")
+
 def main(a):
+    if a and a[0] == "--self-test": return self_test(*a[1:2])
     if not a or a[0].startswith("-"): sys.exit(__doc__)
     brief_path = os.path.abspath(a[0]); opts = a[1:]
     def opt(k, d=None): return opts[opts.index(k)+1] if k in opts else d

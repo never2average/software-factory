@@ -81,6 +81,11 @@ For the VM target it instead REGENERATES `infra/vm/apps/x/` from the four state 
 private-network Postgres, `.env.example`, README) and checks `.env`. The VM target verifies; it does not deploy — see
 `infra/vm/README.md`.
 
+For `target: vm_remote` (a server over SSH that does serve the app; `infra/vm_remote/README.md`) the check is offline: it
+connects to nothing, validates the state, lists the eighteen steps a deploy runs and says what is still missing (the
+server address, the domain, the SSH key). `--deploy-remote --dry-run` prints every local command, every remote command
+and every generated file without connecting.
+
 **Provision, deploy mode.** `provision.py x --deploy`, once the plan is printed, every operator secret is present and the projects and datastores exist, mirrors the mold's own `Makefile deploy` target:
 
 1. `drizzle-kit push` (the schema is the source of truth; the journal is two tables behind it), then the Drizzle migration journal, then the database bootstrap for a fresh Postgres. Drizzle does not model row-level security or the `app_rw` login role, so the mold's `.bootstrap-supabase.mjs` applies the org-isolation policies and creates that role without bypass rights; `DATABASE_URL` on all three projects then points at it — and `.claude/scripts/lib/verify-apprw.mjs` proves that exact URL is `app_rw`, `NOBYPASSRLS`, policied, encrypted and pooler-safe before it is written anywhere. Skipping this leaves the app connecting as a superuser with every isolation policy silently ignored. Re-runs reuse the deployed password only when the `DATABASE_URL` already on `<project>` is `app_rw`'s own (`postgres://app_rw...`); any other value — unset, a superuser URL, a hand edit — ROTATES it, and every deployment built against the older password stops connecting until it is rebuilt (the check plan says so in advance; it reads names, not values, so it cannot tell which case applies).

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "infrastructure.schema.json",
   "title": "Infrastructure",
-  "description": "Where the application runs. Targets map to infra/vercel and infra/vm.",
+  "description": "Where the application runs. Targets map to infra/vercel, infra/vm and infra/vm_remote.",
   "type": "object",
   "required": [
     "target"
@@ -12,9 +12,10 @@
       "type": "string",
       "enum": [
         "vercel",
-        "vm"
+        "vm",
+        "vm_remote"
       ],
-      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app \u2014 which this factory never deploys \u2014 with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here."
+      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app \u2014 which this factory never deploys \u2014 with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here. `vm_remote` (mold_v1-075) is a server this factory deploys to over SSH and that DOES serve the application; it owns the `vm_remote` object and neither of the other two. The same one-object-per-target rule applies, and factory.py validate adds the vm_remote rules the schema cannot express (install_path names this app, production_url is https://<domain> and present only once a deploy recorded it, the datastores and the sandbox agree with the target)."
     },
     "vercel": {
       "type": "object",
@@ -115,6 +116,234 @@
       "description": "Only what the lane provisions, and nothing else (additionalProperties is false): the vm lane never starts a web process (infra/vm/README.md; provision.py VM_NO_PROCESS), so a URL under ANY key here would name a server this factory did not deploy. production_url was removed and is also refused by name in factory.py validate (mold_v1-053); an open object let any other spelling validate silently, so the object is now closed. A target=vercel app must not carry this object at all \u2014 validate refuses it, see `target`.",
       "additionalProperties": false
     },
+    "vm_remote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ssh_user",
+        "ssh_port",
+        "ssh_key_ref",
+        "install_path",
+        "kvm",
+        "sandbox",
+        "storage",
+        "postgres"
+      ],
+      "description": "A server reached over SSH that serves the application: three systemd units behind Caddy, Postgres on loopback, a rootless KVM microVM sandbox (mold_v1-075/076, reports/vm-spike-mold_v1-072.md). Closed like `vercel` and `vm`: every key is read by .claude/scripts/lib/vm_remote.py, lanes.py or factory.py validate. `host` and `domain` are the two values the operator supplies (provision.py <app_id> --set-remote host=... domain=...); until both are present --check says so and --deploy-remote refuses. Secrets appear by NAME only: no key material, password or token is ever a value here.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "digitalocean",
+            "aws",
+            "gcp",
+            "azure",
+            "oci",
+            "hetzner",
+            "bare_metal"
+          ],
+          "description": "Who rents the server. Informational: it picks the wording of the operator's click-by-click steps in docs/RUNBOOK.md and the cost line in docs/COST_MODEL.md; nothing is called on the provider's API."
+        },
+        "host": {
+          "type": "string",
+          "pattern": "^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$",
+          "description": "The server's public IPv4 address or host name, as the operator supplies it. Not a secret. Absent until the server exists."
+        },
+        "ssh_host": {
+          "type": "string",
+          "pattern": "^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$",
+          "description": "Optional: the address the deploy's SSH connects to when it is not the public `host`, for example the server's address on a private administration tunnel (mold_v1-156). `host` stays the public address the domain's DNS record points at and the sandbox deny list names; absent, SSH connects to `host`."
+        },
+        "ssh_user": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "description": "The login the deploy connects as: root, or a user that may run sudo without a password. Never the service user the application runs as (that one is fixed: sfapp, no login shell, no sudo)."
+        },
+        "ssh_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "SSH port on the server; 22 unless the operator moved it. The firewall allows exactly this port, 80 and 443."
+        },
+        "ssh_allow_from": {
+          "type": "string",
+          "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}(/[0-9]{1,2})?$",
+          "description": "Optional: the only source address or network the firewall lets reach the SSH port (an IPv4 address or CIDR), for example a private tunnel's network (mold_v1-156). Absent, the SSH port is open to any address, which is today's rule; 80 and 443 are always open to all. validate refuses 0.0.0.0/0 (say nothing instead) and requires ssh_host with it, so a deploy cannot lock itself out by closing the address it logs in from."
+        },
+        "ssh_key_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$",
+          "description": "The NAME of the SSH key, never the key: the file name of the private key under ~/.ssh/ on the factory VM, and the name the operator gives its public half when adding it at the server provider. A path, a public key or key material here is a schema error."
+        },
+        "domain": {
+          "type": "string",
+          "pattern": "^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$",
+          "description": "The host name people open, lower case, with a DNS A record pointing at `host`. Caddy obtains the TLS certificate for exactly this name. Absent until the operator supplies it."
+        },
+        "production_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://[a-z0-9.-]+$",
+          "description": "https://<domain>, written by provision.py --deploy-remote once the deployed app answered its health checks; never by hand. lanes.py grades this URL for a vm_remote app (mold_v1-078). factory.py validate refuses it when it is not https://<domain> or when infrastructure.deployed_at is absent (nothing deployed it)."
+        },
+        "install_path": {
+          "type": "string",
+          "pattern": "^/opt/software-factory/[a-z0-9_]+$",
+          "description": "Fixed: /opt/software-factory/<app_id>. The eve build embeds absolute paths and is not relocatable, so the source is copied here and built here; validate refuses any other value."
+        },
+        "kvm": {
+          "type": "string",
+          "enum": [
+            "required"
+          ],
+          "description": "The sandbox is a KVM microVM started by a non-root user, so the server must expose /dev/kvm. There is no other value: a host without it is refused at qualification, before anything is installed."
+        },
+        "sandbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "backend",
+            "cpus",
+            "memory_mib",
+            "deny_subnets"
+          ],
+          "description": "What each agent sandbox gets, written to the server's env file as SANDBOX_BACKEND, SANDBOX_CPUS, SANDBOX_MEMORY_MIB and SANDBOX_DENY_SUBNETS.",
+          "properties": {
+            "backend": {
+              "type": "string",
+              "enum": [
+                "microsandbox"
+              ]
+            },
+            "cpus": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 8,
+              "description": "Virtual CPUs per sandbox. 2 is the floor: with 1 the microVM froze in 5 of 12 runs in the spike."
+            },
+            "memory_mib": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 8192,
+              "description": "Memory per sandbox in MiB. 1024 is the floor the document libraries need."
+            },
+            "deny_subnets": {
+              "type": "array",
+              "minItems": 5,
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$"
+              },
+              "description": "Networks agent-run code may never reach: cloud metadata, the private ranges and loopback. validate requires 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and 127.0.0.0/8; the deploy adds the server's own public address as a /32."
+            }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "driver"
+          ],
+          "description": "The file store behind the data room and artifacts off Vercel (mold_v1-073), written to the env file as STORAGE_DRIVER and the names below. Credentials by NAME only.",
+          "properties": {
+            "driver": {
+              "type": "string",
+              "enum": [
+                "fs",
+                "s3"
+              ]
+            },
+            "dir": {
+              "type": "string",
+              "pattern": "^/var/lib/software-factory/[a-z0-9_]+/storage$",
+              "description": "driver fs: where files live on the server, outside the build directory so a redeploy keeps them."
+            },
+            "bucket": {
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://"
+            },
+            "access_key_ref": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+              "description": "driver s3: NAME of the access key id in the env file"
+            },
+            "secret_key_ref": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+              "description": "driver s3: NAME of the secret key in the env file"
+            }
+          }
+        },
+        "postgres": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "tls"
+          ],
+          "description": "The app's own Postgres cluster on the server, listening on 127.0.0.1 only.",
+          "properties": {
+            "version": {
+              "type": "integer",
+              "enum": [
+                16,
+                17
+              ]
+            },
+            "tls": {
+              "type": "string",
+              "enum": [
+                "on",
+                "migration_switch"
+              ],
+              "description": "on: the server's Postgres has ssl=on with a self-signed certificate, which is what the mold's migration scripts need (`ssl: \"require\"` is hard-coded and does not verify the certificate). migration_switch: TLS stays off and the env file sets the switch named in migration_switch_env to `disable`; only valid once the mold carries that switch."
+            },
+            "migration_switch_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+              "description": "NAME of the upstream migration sslmode switch; required when tls is migration_switch."
+            }
+          }
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The deploy's own verdict, written by --deploy-remote and never by hand. workflow/api/web are HTTP statuses as strings (\"200\") or \"no answer\", as under `vercel.health`; kvm is what the server said about /dev/kvm and the API process's groups.",
+          "properties": {
+            "workflow": {
+              "type": "string"
+            },
+            "api": {
+              "type": "string"
+            },
+            "web": {
+              "type": "string"
+            },
+            "kvm": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "device_missing",
+                "api_not_in_kvm_group",
+                "unmeasured"
+              ]
+            },
+            "qualified_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+            }
+          }
+        }
+      }
+    },
     "inference": {
       "type": "object",
       "properties": {
@@ -139,6 +368,7 @@
           "enum": [
             "vercel_sandbox",
             "modal",
+            "microsandbox",
             "none"
           ]
         },
@@ -158,7 +388,8 @@
       "type": "string",
       "enum": [
         "vercel_env",
-        "vm_env_file"
+        "vm_env_file",
+        "vm_remote_env_file"
       ]
     },
     "secrets_user": {

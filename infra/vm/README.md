@@ -6,7 +6,11 @@ engine + compose, Vercel CLI, Playwright + chromium with system deps.
 
 ---
 
-## The factory has ONE deploy target: Vercel
+## The factory has ONE deploy target proven in production: Vercel
+
+(A second one, `target: vm_remote`, deploys to a server of the customer's own over SSH. It is built and tested offline and has not
+yet been run against a real server: `infra/vm_remote/README.md`. Nothing below is about it. The upstream changes the table below
+calls impossible without a fork are the ones mold_v1-073 and -074 send upstream as pull requests.)
 
 `target: vm` is a **local verification** target. It generates the app's database artifact and runs
 the mold's own schema chain against it. It does not serve the application, and `--deploy` on a vm
