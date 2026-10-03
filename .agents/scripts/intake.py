@@ -131,7 +131,7 @@ def unforwarded(target, provider):
     an unmeasured default. The list is READ from provision.py, not copied here, so this refusal lifts by
     itself the day provision.py forwards the name. target=vm starts no process at all (provision.py:
     "target vm serves nothing"), so there is nothing to forward and nothing to refuse."""
-    if target not in ("vm", "vm_remote"):      # vm_remote: every declared name goes into the one env file all three services read
+    if target not in ("vm", "vm_remote"):      # vm_remote: every declared name goes into the master env file; web and agent get it from there
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import provision                     # stdlib-only module, no side effects at import
         return [n for n in INFERENCE_SECRETS.get(provider, []) if n not in provision.API_ENV]

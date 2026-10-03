@@ -8,3 +8,5 @@ PUBLIC_LISTENERS=22 80 443
 TIMERS=6
 UFW=active
 ENV_MODE=600 root
+ENV_FILES=web=600-root api=600-root workflow=600-root cron=600-root 
+API_PRIVATE_KEY=no
