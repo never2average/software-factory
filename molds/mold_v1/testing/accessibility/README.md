@@ -209,7 +209,8 @@ is printed, so grading a real deployment cannot change it.
   `node_modules` and no network at run time. `npm --prefix molds/mold_v1/testing/accessibility run vendor`
   re-vendors it; `package.json` pins the version.
 - The browser aborts any request to `fde-agent`, `fde-agent-api` or `fde-task-workflow`, and to the
-  `/eve/v1/` and `/.well-known/workflow/` proxy paths. A mold built without `EVE_API_URL` bakes a
+  `/eve/v1/` and `/.well-known/workflow/` proxy paths. A mold built without `EVE_API_URL` (which off
+  Vercel now also takes `EVE_API_URL_OPTIONAL=1`, see "Measuring a vm fixture") bakes a
   rewrite to the **live** agent into `routes-manifest.json`, so without this guard a local run would
   quietly drive production traffic. Blocked requests are counted and reported.
 - Signed out, the lane reads no secret and holds no credential: its only input is a public URL.
@@ -339,7 +340,15 @@ outputs quoted are the ones it printed:
    wrote exactly four names into `infra/vm/apps/v040fix/.env` (mode 600): `POSTGRES_ADMIN_URL`,
    `DATABASE_URL`, `AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY` (`generated AUTH_JWT key pair`).
 2. The mold copied to a scratch directory — never built in place — with a hard-linked `node_modules`,
-   `npm run build` (exit 0), then `next start -H 127.0.0.1 -p 3123`. **The env the app needed was those
+   `npm run build` (exit 0), then `next start -H 127.0.0.1 -p 3123`. **Today both need
+   `EVE_API_URL_OPTIONAL=1` in front of them** (`EVE_API_URL_OPTIONAL=1 npm run build`, then
+   `EVE_API_URL_OPTIONAL=1 npx next start -H 127.0.0.1 -p 3123`): since mold snapshot `da581f2`
+   (fde-agent #101, `lib/agent-url.ts`) a production build or server off Vercel refuses to build or start
+   without an agent address (`AgentUrlNotConfiguredError`), and this fixture runs no agent. That switch is
+   the one `agent-url.ts` keeps for "a test build that talks to no agent"; it keeps the old fallback to the
+   live agent's address, which the browser guard in **Safety** blocks. Do not instead point
+   `NEXT_PUBLIC_EVE_API_URL` at a local address with nothing listening there, and never at the live agent.
+   On 2026-09-10 neither was needed. **The env the app needed was those
    four names and nothing else** (plus `NEXT_TELEMETRY_DISABLED=1`), with the database host in the two
    URLs rewritten from the network alias `db` to the container's address (`docker inspect` of
    `pg-v040fix`), because the mold ran on the host rather than on the app's private network. No inference,
