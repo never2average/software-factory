@@ -193,6 +193,7 @@
         ]
       },
       "app_ids": [
+        "redacted",
         "redacted"
       ],
       "deploy_targets": [
