@@ -118,7 +118,7 @@ async function main() {
   const store = rosterOrg ? createDataroomStore({ orgId: rosterOrg }) : null;
   if (!store) {
     console.log(`${glyph.warn} Not added to a workspace's ${FOLDER.people}/ roster: pass --org <workspace id> (or set WORKSPACE_ORG).`);
-  } else if (store.backend?.kind === "vercel-blob") {
+  } else if (store.backend && store.backend.kind !== "local") {
     const slug = personSlug(email);
     const skills = flag("skills").trim() ? flag("skills").split(",").map((s) => s.trim()).filter(Boolean) : [];
     const pod = flag("pod").trim() || null;

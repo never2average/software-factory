@@ -1,7 +1,8 @@
 /**
  * GET /api/dataroom              -> { paths: string[] }  (every logical dm.md
- *                                   file path in the Blob data room; [] when
- *                                   BLOB_READ_WRITE_TOKEN is unset)
+ *                                   file path in the data room; [] when no
+ *                                   file store is configured: by default,
+ *                                   when BLOB_READ_WRITE_TOKEN is unset)
  * GET /api/dataroom?path=<path>  -> { path, records } for .jsonl files,
  *                                   { path, content } otherwise,
  *                                   { path, found: false } when absent.
@@ -9,11 +10,12 @@
  *                                -> the object's BYTES as application/pdf, for
  *                                   the in-app viewer (app/_components/pdf-view.tsx).
  *
- * Read-only view over the private Vercel Blob store behind the DataroomStore
- * (`dataroom/` key prefix). Uses lib/dataroom-blob.ts — a self-contained
- * @vercel/blob twin of the store's Blob backend — because the canonical
- * agent/lib/dataroom-store.ts uses `.ts`-extension imports the Next bundler
- * cannot resolve (same constraint as lib/ops-db.ts).
+ * Read-only view over the private file store behind the DataroomStore
+ * (`dataroom/` key prefix; Vercel Blob by default, or the driver STORAGE_DRIVER
+ * selects: lib/storage). Uses lib/dataroom-blob.ts — a self-contained twin of
+ * the store's object backend, on the same storage driver — because the
+ * canonical agent/lib/dataroom-store.ts pulls the agent's module graph into
+ * the Next bundle (same constraint as lib/ops-db.ts).
  *
  * WHY `as=bytes` IS A MODE OF THIS ROUTE AND NOT A NEW ONE. Every rule that
  * decides who may read a data-room file already lives here and runs before the
@@ -29,7 +31,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import {
-  blobToken,
+  storageConfigured,
   isSafeDataroomPath,
   listDataroomPaths,
   openDataroomObject,
@@ -65,7 +67,7 @@ export async function GET(request: NextRequest) {
   try {
     // --- No path: list every logical file path in the store -----------------
     if (path === null || path === "") {
-      if (!blobToken()) return NextResponse.json({ paths: [] });
+      if (!storageConfigured()) return NextResponse.json({ paths: [] });
       const paths = await listDataroomPaths(ctx.orgId);
       return NextResponse.json({ paths });
     }
@@ -89,7 +91,7 @@ export async function GET(request: NextRequest) {
      * answering. The person gets a sentence naming the limit instead.
      */
     if (wantsBytes) {
-      if (!blobToken()) {
+      if (!storageConfigured()) {
         return refuse("upstream_error", "Data room storage is not configured.", 503);
       }
       const stat = await statDataroomObject(path, ctx.orgId);

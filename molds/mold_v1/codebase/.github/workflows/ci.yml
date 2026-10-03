@@ -121,6 +121,31 @@ jobs:
         if: always()
         run: npm run test:dataroom-folders
 
+      # THE FILE STORE IS BEHIND ONE INTERFACE (lib/storage), and the live app must not notice. Three steps:
+      #
+      #   1. The boundary: `@vercel/blob` is imported by lib/storage/vercel-blob.ts and nowhere else in the
+      #      application, and no application code names the Vercel Blob host (the host allow-lists ask the driver).
+      #   2. The default: with STORAGE_DRIVER unset (and again with vercel-blob), every code path that touches the
+      #      store makes the SAME calls into @vercel/blob (operation, key, options), sends the same requests, reads
+      #      signed URLs with the same fetch options and returns the same values as the code before the driver
+      #      (recorded at 6f10b09 by this same script: scripts/fixtures/storage/default-driver.golden.json).
+      #   3. The other drivers: the filesystem and S3 drivers keep the contract the callers rely on (plain-prefix
+      #      listing, order, pages, atomic writes, one winner for a contested key), a path-backed key cannot leave the
+      #      root, the app's own signed links are refused when tampered, expired or re-pointed, and one workspace
+      #      cannot read, list or overwrite another's files through the agent's store, the web reader or the routes.
+      #      The S3 signer is held to the worked examples in Amazon's documentation.
+      - name: Storage driver boundary (one file imports @vercel/blob; no call site names its host)
+        if: always()
+        run: npm run check:storage-driver
+
+      - name: Default storage driver makes today's exact Vercel Blob calls (recorded before the driver)
+        if: always()
+        run: npm run test:storage-default
+
+      - name: Storage drivers (filesystem, S3, signed links, workspace isolation on each)
+        if: always()
+        run: npm run test:storage-drivers
+
       # A link to a chat names its workspace and the tab adopts it; each tab keeps its own workspace and names it on
       # every request, the /eve proxy included (the agent side is in test:session-guard, isolation job).
       - name: Deep links and tabs carry their workspace
@@ -891,6 +916,18 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:migrate-attribution-db
+
+      # The filesystem storage driver over HTTP (reuses the build above; `next start` with STORAGE_DRIVER=filesystem
+      # and a temp directory): two real members of two workspaces. Bob cannot list, read or overwrite Alice's files
+      # by any spelling of a path, naming her workspace is refused, he gets no link for her artifact, a signed link is
+      # refused when tampered, expired or re-pointed and is served sandboxed, and every object on disk is under its
+      # own workspace's tree.
+      - name: Filesystem storage driver, two workspaces over HTTP, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:storage-isolation-http-db
 
       # THE CHAT QUEUE MOVED TO THE SERVER (closing a tab no longer loses a queued message), and the devices people
       # asked to be notified on. Database facts only: that both tables are owner-only AND workspace-scoped (the

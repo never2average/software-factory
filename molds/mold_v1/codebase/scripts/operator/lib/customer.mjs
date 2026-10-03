@@ -34,13 +34,15 @@ export function slugify(name) {
 }
 
 /**
- * The live blob data room of ONE workspace (dataroom/orgs/<org>/…). There is no shared or default tree: a missing
- * workspace throws (lib/dataroom-keyspace.ts), so version-scoped trees such as {folder:platform}/{ver} are each workspace's
- * own too — pass `workspaceFor()`. Throws if BLOB_READ_WRITE_TOKEN points nowhere real.
+ * The live data room of ONE workspace (dataroom/orgs/<org>/…), on the deployment's file store (lib/storage: Vercel
+ * Blob by default). There is no shared or default tree: a missing workspace throws (lib/dataroom-keyspace.ts), so
+ * version-scoped trees such as {folder:platform}/{ver} are each workspace's own too — pass `workspaceFor()`. Throws if no
+ * store is configured (by default: BLOB_READ_WRITE_TOKEN points nowhere real), because the store would then be the
+ * local scratch folder, not the live data room.
  */
 export function dataroom(orgId) {
   const store = createDataroomStore({ orgId });
-  if (store.backend?.kind !== "vercel-blob") {
+  if (!store.backend || store.backend.kind === "local") {
     throw new Error(
       "Data-room writes need BLOB_READ_WRITE_TOKEN set to the production blob store (got: " +
         (store.backend?.kind ?? "none") +

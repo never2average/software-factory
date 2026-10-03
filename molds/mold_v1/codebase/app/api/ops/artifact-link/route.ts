@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { blobPathnameFromUrl, presignBlobRead } from "@/lib/blob-read";
-import { blobToken } from "@/lib/dataroom-blob";
+import { signStoredObject, storageConfigured } from "@/lib/dataroom-blob";
 import { orgContextForRequest } from "@/lib/org-context";
+import { storageUrlRules } from "@/lib/storage/urls";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +15,13 @@ export const dynamic = "force-dynamic";
  * Why this exists: `publish_artifact` returns a presigned GET that lives for
  * seven days, and that link was the ONLY way the UI could read the object back.
  * Past the seventh day — or for any artifact reopened from an older chat — the
- * blob CDN answers 403, and the preview, the spreadsheet renderer and the
+ * store answers 403, and the preview, the spreadsheet renderer and the
  * download button all break at once. A credential minted at write time cannot
  * authenticate a read that happens later; the read has to authenticate itself.
+ *
+ * (A private object is never fetchable by its plain address, and a signed GET
+ * is a capability that EXPIRES: a link minted once at write time is not an
+ * access mechanism, it is a countdown. That holds on every storage driver.)
  *
  * So the browser now identifies an artifact by its PATHNAME (stable) and asks
  * this route — behind the same verified-identity gate as the rest of the Ops
@@ -47,16 +51,16 @@ export async function GET(request: NextRequest) {
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
 
-  const token = blobToken();
-  if (!token) {
+  if (!storageConfigured()) {
     return NextResponse.json({ error: "Artifact storage is not configured." }, { status: 503 });
   }
 
   const params = request.nextUrl.searchParams;
   const rawUrl = params.get("url");
   // Accept the legacy published link too: we take only its pathname and throw
-  // away its (possibly long-expired) signature.
-  const path = params.get("path") ?? (rawUrl ? blobPathnameFromUrl(rawUrl) : null);
+  // away its (possibly long-expired) signature. Which URLs are the store's, and
+  // where the pathname sits in one, is the storage driver's to say.
+  const path = params.get("path") ?? (rawUrl ? storageUrlRules().keyFromUrl(rawUrl) : null);
   if (!path) {
     return NextResponse.json({ error: "Missing or invalid artifact path." }, { status: 400 });
   }
@@ -77,12 +81,14 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { url, expiresAt } = await presignBlobRead(token, path, LINK_TTL_MS);
+    const signed = await signStoredObject(path, LINK_TTL_MS);
+    if (!signed) return NextResponse.json({ error: "Artifact storage is not configured." }, { status: 503 });
+    const { url, expiresAt } = signed;
     return NextResponse.json({
       path,
       url,
       // Same-origin route the preview iframe must use: the CSP allows
-      // `frame-src 'self'`, never the blob host.
+      // `frame-src 'self'`, never the store's host.
       proxyUrl: `/api/artifact-proxy?url=${encodeURIComponent(url)}`,
       expiresAt: new Date(expiresAt).toISOString(),
     });

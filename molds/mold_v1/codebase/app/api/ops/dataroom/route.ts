@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
 import { z } from "zod";
 import {
-  blobToken,
+  storageConfigured,
   isSafeDataroomPath,
   listDataroomPaths,
   parseJsonlRecords,
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
-  if (!blobToken()) return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
+  if (!storageConfigured()) return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
   const url = new URL(request.url);
   const path = url.searchParams.get("path");
   const prefix = url.searchParams.get("prefix") ?? "";
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
   if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!blobToken()) return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
+  if (!storageConfigured()) return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
   const parsed = writeSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });

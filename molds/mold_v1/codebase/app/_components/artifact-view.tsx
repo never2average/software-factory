@@ -17,6 +17,7 @@ import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
 import { DATAROOM_DOMAIN_IDS, FOLDER, labelOf } from "@/agent/lib/dataroom-folders";
 import { headerLabel } from "@/lib/ui-keys";
+import { isStorageHostForBrowser } from "@/lib/storage/hosts";
 import { opsFetch } from "./ops/lib";
 
 /** SheetJS, fetched the first time a workbook preview opens (once per page; a failed fetch may be retried). */
@@ -243,9 +244,9 @@ export function artifactFromHref(href: string): { url: string; filename: string 
   }
 }
 
-/** The private blob store — same rule as /api/artifact-proxy. */
+/** The private file store, as far as a browser can tell (lib/storage/hosts.ts): the Vercel Blob host by default. */
 function isBlobHost(hostname: string): boolean {
-  return hostname === "vercel-storage.com" || hostname.endsWith(".vercel-storage.com");
+  return isStorageHostForBrowser(hostname);
 }
 
 /** Is this url on a host that is neither this site nor our blob store? */

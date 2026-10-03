@@ -7,9 +7,17 @@
  *   blob.objects                             // Map<pathname, { body: Buffer, uploadedAt: number }>
  *   blob.calls                               // every request: { op, pathname?, prefix? }
  *
- * Only what the code under test uses: list (prefix, cursor, limit, folded), put, copy, delete, signed-token, and a GET of a
- * presigned object URL. Anything else answers 501, loudly.
+ *   blob.wire                                // every request AS SENT: { method, target, headers, body } (see below)
+ *
+ * Only what the code under test uses: list (prefix, cursor, limit, folded), put, copy, head, delete, signed-token, and a GET
+ * of a presigned object URL. Anything else answers 501, loudly.
+ *
+ * `wire` is what scripts/test-storage-default-unchanged.mjs compares against its recording of the code before the
+ * storage driver existed: the method, the path and query, every header the client chose (the option headers
+ * `x-content-type`, `x-add-random-suffix`, `x-allow-overwrite`, `x-vercel-blob-access`, and the authorization), and a
+ * digest of the body. The per-request id and the SDK's own version stamps are left out: they are not the caller's.
  */
+import { createHash } from "node:crypto";
 import { MockAgent, setGlobalDispatcher } from "undici";
 
 const STORE_ID = "fakestore";
@@ -20,6 +28,7 @@ const b64url = (s) => Buffer.from(s).toString("base64").replace(/\+/g, "-").repl
 export function installFakeBlob() {
   const objects = new Map();
   const calls = [];
+  const wire = [];
   let clock = Date.now();
   process.env.BLOB_READ_WRITE_TOKEN = `vercel_blob_rw_${STORE_ID}_fakesecret`;
   process.env.VERCEL_BLOB_API_URL = API;
@@ -61,11 +70,45 @@ export function installFakeBlob() {
     return undefined;
   };
 
+  /** Headers that are the client library's own bookkeeping, different on every request or every SDK release. */
+  const NOT_THE_CALLERS = new Set(["x-api-blob-request-id", "x-api-blob-request-attempt", "user-agent", "x-api-version", "accept", "accept-language", "accept-encoding", "sec-fetch-mode", "connection", "host", "content-length"]);
+  const headersOf = (headers) => {
+    const out = {};
+    const add = (k, v) => {
+      const name = String(k).toLowerCase();
+      if (!NOT_THE_CALLERS.has(name)) out[name] = String(v);
+    };
+    if (!headers) return out;
+    if (typeof headers.forEach === "function" && !Array.isArray(headers)) headers.forEach((v, k) => add(k, v));
+    else if (Array.isArray(headers)) for (let i = 0; i < headers.length; i += 2) add(headers[i], headers[i + 1]);
+    else for (const [k, v] of Object.entries(headers)) add(k, v);
+    return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  };
+  const record = (host, opts) => {
+    const body = opts.body === undefined || opts.body === null ? null : toBuffer(opts.body);
+    wire.push({
+      method: opts.method.toUpperCase(),
+      target: `${host}${opts.path}`,
+      headers: headersOf(opts.headers),
+      body: body === null || body.length === 0 ? null : { bytes: body.length, sha256: createHash("sha256").update(body).digest("hex") },
+    });
+  };
+
   function api(opts) {
     const url = new URL(opts.path, API);
     const method = opts.method.toUpperCase();
+    record("api:", opts);
     // `requestApi` puts everything after the API base in the path: "/?prefix=…", "/delete", "/signed-token".
     const route = url.pathname.replace(/^\/api\/blob/, "").replace(/\/+$/, "") || "/";
+    if (method === "GET" && route === "/" && url.searchParams.has("url")) {
+      // head(urlOrPathname)
+      const ref = url.searchParams.get("url");
+      const pathname = ref.startsWith("https://") ? decodeURIComponent(new URL(ref).pathname.slice(1)) : ref;
+      calls.push({ op: "head", pathname });
+      const o = objects.get(pathname);
+      if (!o) return json(404, { error: { code: "not_found", message: "The requested blob does not exist" } });
+      return json(200, { ...describe(pathname, o), cacheControl: "public, max-age=2592000" });
+    }
     if (method === "GET" && route === "/") {
       const prefix = url.searchParams.get("prefix") ?? "";
       const limit = Number(url.searchParams.get("limit") ?? 1000);
@@ -121,6 +164,7 @@ export function installFakeBlob() {
   function objectGet(opts) {
     const url = new URL(opts.path, `https://${STORE_ID}.private.blob.vercel-storage.com`);
     const pathname = decodeURIComponent(url.pathname.slice(1));
+    record("object:", opts);
     calls.push({ op: "get", pathname });
     const o = objects.get(pathname);
     if (!o) return { statusCode: 404, data: "not found" };
@@ -148,6 +192,7 @@ export function installFakeBlob() {
   return {
     objects,
     calls,
+    wire,
     agent,
     /** Seed an object directly (as if an older deploy had written it). */
     seed(pathname, body, uploadedAt) {
@@ -157,6 +202,7 @@ export function installFakeBlob() {
     reset() {
       objects.clear();
       calls.length = 0;
+      wire.length = 0;
     },
   };
 }

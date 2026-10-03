@@ -145,6 +145,13 @@ export async function proxy(request: NextRequest) {
     const identity = auth.identity;
   }
 
+  // A stored object served from this origin (the filesystem storage driver's signed links,
+  // app/api/storage/object) is not one of this site's documents and must not get this site's policy: it can be HTML
+  // the model wrote. Its route sets its own, stricter header (`sandbox`: a unique origin, so nothing in it can read
+  // this site's storage or call its API as the signed-in user) and that one must be the only policy on the response,
+  // enforcing even when CSP_REPORT_ONLY is on.
+  if (pathname.startsWith("/api/storage/object/")) return NextResponse.next();
+
   // 2. CSP on the response. Enforcing unless CSP_REPORT_ONLY=1.
   const csp = buildCsp(pathname);
   const headerName =

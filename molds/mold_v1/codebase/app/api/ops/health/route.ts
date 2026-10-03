@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { errorMessage } from "@/lib/ops-errors";
-import { del, head, put } from "@vercel/blob";
 import { sql } from "drizzle-orm";
 import { getOpsDb } from "@/lib/ops-db";
 import { normalizeAgentUrl } from "@/lib/agent-url";
+import { storageDriver } from "@/lib/storage/index";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +16,8 @@ export const dynamic = "force-dynamic";
  *   - db:        a round-trip `SELECT 1` through the ops Drizzle client.
  *   - blob:      a probe object is written, read back, and deleted — a true
  *                write/read/delete against the SAME private store the data room
- *                uses. Nothing is left behind.
+ *                uses, through the storage driver the deployment selected
+ *                (lib/storage; Vercel Blob by default). Nothing is left behind.
  *   - inference: the agent's own `/eve/v1/health` is fetched (it reports whether
  *                the model runtime is ready). We do not spend a real turn — that
  *                would need the caller's credentials and cost tokens.
@@ -98,28 +99,27 @@ async function checkDb(): Promise<Check> {
 
 async function checkBlob(): Promise<Check> {
   return timed(async () => {
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
-    if (!token) throw new Error("no BLOB_READ_WRITE_TOKEN — the blob store is not configured");
+    // Throws, naming the setting, when a selected driver is missing one; null is the default driver with no token.
+    const store = storageDriver();
+    if (!store) throw new Error("no BLOB_READ_WRITE_TOKEN — the blob store is not configured");
     // The data-room store is PRIVATE (private blobs are not publicly fetchable),
     // so the round-trip is write → head → delete: head() confirms the object
     // actually landed with the right size, without needing a presigned read.
     const key = `_health/probe-${Date.now()}.txt`;
     const body = `health ${new Date().toISOString()}`;
-    const { url } = await put(key, body, {
-      access: "private",
-      token,
+    const { ref } = await store.put(key, body, {
       addRandomSuffix: false,
       allowOverwrite: true,
     });
     try {
-      const meta = await head(url, { token });
+      const meta = await store.head(ref);
       if (!meta) throw new Error("probe written but head() returned nothing");
       if (meta.size !== Buffer.byteLength(body)) {
         throw new Error(`probe size mismatch: wrote ${Buffer.byteLength(body)}, head says ${meta.size}`);
       }
-      return "write → head → delete ok";
+      return store.kind === "vercel-blob" ? "write → head → delete ok" : `write → head → delete ok (${store.kind})`;
     } finally {
-      await del(url, { token }).catch(() => {});
+      await store.delete(ref).catch(() => {});
     }
   });
 }

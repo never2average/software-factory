@@ -1,15 +1,17 @@
 /**
- * Artifact publishing: take generated content and store it PRIVATELY in Vercel
- * Blob (no public URL), then mint a short-lived signed GET URL so only a holder
- * of that link can open it, and only until it expires. This is how any agent —
- * root or subagent — hands a customer-ready deliverable (status report,
+ * Artifact publishing: take generated content and store it PRIVATELY in the
+ * file store (no public URL), then mint a short-lived signed GET URL so only a
+ * holder of that link can open it, and only until it expires. This is how any
+ * agent — root or subagent — hands a customer-ready deliverable (status report,
  * migration plan, eval summary, dashboard) back as an authenticated link.
  *
- * Requires BLOB_READ_WRITE_TOKEN (a private Vercel Blob store on the API
- * project). The store is private, so the blob is never world-readable.
+ * The store is whichever the deployment selected (lib/storage): by default a
+ * private Vercel Blob store on the API project, which needs
+ * BLOB_READ_WRITE_TOKEN. The store is private, so the object is never
+ * world-readable.
  */
-import { issueSignedToken, presignUrl, put } from "@vercel/blob";
 import { requireWorkspace } from "../../lib/dataroom-keyspace.ts";
+import { storageDriver } from "../../lib/storage/index.ts";
 
 const TYPE_BY_EXT: Record<string, string> = {
   html: "text/html; charset=utf-8",
@@ -56,8 +58,8 @@ export async function publishArtifact({
   content,
   contentType,
 }: PublishArtifactInput): Promise<{ url: string; pathname: string; expiresAt: string }> {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) {
+  const store = storageDriver();
+  if (!store) {
     throw new Error(
       "Artifact publishing is not configured: set BLOB_READ_WRITE_TOKEN (a private Vercel Blob store on the API project) to enable publish_artifact.",
     );
@@ -65,30 +67,18 @@ export async function publishArtifact({
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   const type = contentType ?? TYPE_BY_EXT[ext] ?? "application/octet-stream";
 
-  // Store privately — the blob is not world-readable.
-  const blob = await put(artifactKey(orgId, filename), content, {
-    access: "private",
+  // Store privately — the object is not world-readable. The store adds the unguessable suffix.
+  const stored = await store.put(artifactKey(orgId, filename), content, {
     contentType: type,
-    token,
     addRandomSuffix: true,
   });
 
   // Mint a short-lived signed GET URL scoped to just this object.
-  const validUntil = Date.now() + LINK_TTL_MS;
-  const signed = await issueSignedToken({
-    token,
-    pathname: blob.pathname,
-    operations: ["get"],
-    validUntil,
-  });
-  const { presignedUrl } = await presignUrl(
-    { clientSigningToken: signed.clientSigningToken, delegationToken: signed.delegationToken },
-    { operation: "get", pathname: blob.pathname, access: "private", validUntil: signed.validUntil },
-  );
+  const signed = await store.signedUrl(stored.key, LINK_TTL_MS);
 
   return {
-    url: presignedUrl,
-    pathname: blob.pathname,
-    expiresAt: new Date(signed.validUntil).toISOString(),
+    url: signed.url,
+    pathname: stored.key,
+    expiresAt: new Date(signed.expiresAt).toISOString(),
   };
 }

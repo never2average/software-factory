@@ -1,29 +1,29 @@
 /**
- * Read-only Vercel Blob access to the dm.md data room for the NEXT runtime.
+ * The dm.md data room for the NEXT runtime, on the deployment's file store.
  *
- * The canonical store (`agent/lib/dataroom-store.ts`) uses `.ts`-extension
- * imports that the Next bundler cannot resolve (same constraint as
- * `lib/ops-db.ts`), so the /api/dataroom route uses this self-contained twin
- * built directly on `@vercel/blob`. It mirrors the BlobDataroomBackend
- * conventions exactly:
+ * The canonical store (`agent/lib/dataroom-store.ts`) pulls the agent's module
+ * graph into the Next bundle (same constraint as `lib/ops-db.ts`), so the
+ * /api/dataroom route uses this self-contained twin built on the same storage
+ * driver (lib/storage: Vercel Blob by default, or the filesystem or S3 driver
+ * when STORAGE_DRIVER selects one). It mirrors the BlobDataroomBackend
+ * conventions exactly, on every driver:
  *
  *   - each workspace's objects live under its own `dataroom/orgs/<id>/` key
  *     prefix (lib/dataroom-keyspace.ts); logical paths are the dm.md paths
  *     relative to that prefix, and every function here REQUIRES the workspace
- *   - the store is PRIVATE: reads go through a short-lived presigned GET
- *     (issueSignedToken + presignUrl), never a public URL
+ *   - the store is PRIVATE: reads go through the driver (on Vercel Blob a
+ *     short-lived presigned GET), never a public URL
  *   - append-part objects under `{path}.appends/` collapse onto the logical
  *     path in list() and are stitched (base + parts, in key order) in read()
  *
- * Everything returns null / [] when BLOB_READ_WRITE_TOKEN is unset so the UI
- * degrades to the skeleton tree without secrets.
+ * Everything returns null / [] when no store is configured (by default: when
+ * BLOB_READ_WRITE_TOKEN is unset) so the UI degrades to the skeleton tree
+ * without secrets.
  */
 import "server-only";
 
-import { list as listBlobs, put } from "@vercel/blob";
-
-import { presignBlobRead } from "@/lib/blob-read";
 import { isListedPath, isOwnSnapshotKey, workspaceBlobPrefix } from "@/lib/dataroom-keyspace";
+import { storageConfigured as driverConfigured, storageDriver, type StorageDriver } from "@/lib/storage/index";
 
 import { ROOT_FOLDERS } from "../agent/lib/dataroom-folders.ts";
 import { guardWorkspaceWrites } from "../agent/lib/dataroom-folder-guard.ts";
@@ -46,8 +46,26 @@ const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._ -]*$/;
 // The first segment of a path: one of this deployment's stored folders (the profile's, never spelled here).
 const DOMAINS = new Set(ROOT_FOLDERS);
 
-export function blobToken(): string | null {
-  return process.env.BLOB_READ_WRITE_TOKEN ?? null;
+/**
+ * Is a file store available to this deployment? By default that is "BLOB_READ_WRITE_TOKEN is set". The routes ask
+ * this before they do anything, and answer "storage is not configured" when it is false.
+ */
+export function storageConfigured(): boolean {
+  return driverConfigured();
+}
+
+/** The deployment's file store, or null when none is configured. */
+function store(): StorageDriver | null {
+  return storageDriver();
+}
+
+/**
+ * A fresh, short-lived signed GET for one stored object (the artifact link route). The caller has ALREADY decided the
+ * key belongs to its workspace: this signs what it is given.
+ */
+export async function signStoredObject(key: string, ttlMs: number): Promise<{ url: string; expiresAt: number } | null> {
+  const driver = store();
+  return driver ? driver.signedUrl(key, ttlMs) : null;
 }
 
 /**
@@ -81,41 +99,37 @@ export async function writeDataroomFile(
   orgId: string,
 ): Promise<void> {
   const prefix = storePrefixForOrg(orgId);
-  const token = blobToken();
-  if (!token) throw new Error("BLOB_READ_WRITE_TOKEN is not set");
+  const driver = store();
+  if (!driver) throw new Error("BLOB_READ_WRITE_TOKEN is not set");
   // The same write guard as the agent's store: a data room that still holds a former folder this profile stores
   // nothing under is refused before a second set of folders is started (agent/lib/dataroom-folder-guard.ts). A
   // no-op, with no listing, when the profile pins every former name.
-  await guardWorkspaceWrites(orgId, async (folder) => (await listBlobs({ token, prefix: `${prefix}/${folder}/`, limit: 1 })).blobs.length > 0);
-  await put(`${prefix}/${path}`, body, {
-    access: "private",
-    token,
+  await guardWorkspaceWrites(orgId, async (folder) => (await driver.list({ prefix: `${prefix}/${folder}/`, limit: 1 })).objects.length > 0);
+  await driver.put(`${prefix}/${path}`, body, {
     addRandomSuffix: false,
     allowOverwrite: true,
     ...(contentType ? { contentType } : {}),
   });
 }
 
-async function listObjectPathnames(token: string, rawPrefix: string): Promise<string[]> {
+async function listObjectPathnames(driver: StorageDriver, rawPrefix: string): Promise<string[]> {
   const pathnames: string[] = [];
   let cursor: string | undefined;
   do {
-    const page = await listBlobs({ token, prefix: rawPrefix, cursor, limit: 1000 });
-    for (const blob of page.blobs) pathnames.push(blob.pathname);
+    const page = await driver.list({ prefix: rawPrefix, cursor, limit: 1000 });
+    for (const object of page.objects) pathnames.push(object.key);
     cursor = page.hasMore ? page.cursor : undefined;
   } while (cursor);
   return pathnames;
 }
 
-/** Fetch one private blob's text via a short-lived presigned GET; null on 404. */
-async function fetchObject(token: string, pathname: string): Promise<string | null> {
-  const { url } = await presignBlobRead(token, pathname, READ_LINK_TTL_MS);
-  const response = await fetch(url, { cache: "no-store" });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`blob read failed for "${pathname}": HTTP ${response.status}`);
-  }
-  return await response.text();
+/** What a read of one private object passes to the driver: a short-lived credential, and never Next's fetch cache. */
+const READ = { ttlMs: READ_LINK_TTL_MS, fetchInit: { cache: "no-store" } } as const;
+
+/** Fetch one private object's text via a short-lived read; null when absent. */
+async function fetchObject(driver: StorageDriver, pathname: string): Promise<string | null> {
+  const response = await driver.get(pathname, READ);
+  return response === null ? null : await response.text();
 }
 
 /**
@@ -124,10 +138,10 @@ async function fetchObject(token: string, pathname: string): Promise<string | nu
  */
 export async function listDataroomPaths(orgId: string): Promise<string[]> {
   const prefix = storePrefixForOrg(orgId);
-  const token = blobToken();
-  if (!token) return [];
+  const driver = store();
+  if (!driver) return [];
   const logical = new Set<string>();
-  for (const pathname of await listObjectPathnames(token, `${prefix}/`)) {
+  for (const pathname of await listObjectPathnames(driver, `${prefix}/`)) {
     let rel = pathname.slice(prefix.length + 1);
     const marker = rel.indexOf(APPENDS_MARKER);
     if (marker !== -1) rel = rel.slice(0, marker);
@@ -143,16 +157,16 @@ export async function listDataroomPaths(orgId: string): Promise<string[]> {
  */
 export async function readDataroomFile(path: string, orgId: string): Promise<string | null> {
   const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
-  const token = blobToken();
-  if (!token) return null;
+  const driver = store();
+  if (!driver) return null;
   const [base, partPathnames] = await Promise.all([
-    fetchObject(token, objectPathname),
-    listObjectPathnames(token, `${objectPathname}${APPENDS_MARKER}`).then((parts) => parts.sort()),
+    fetchObject(driver, objectPathname),
+    listObjectPathnames(driver, `${objectPathname}${APPENDS_MARKER}`).then((parts) => parts.sort()),
   ]);
   if (partPathnames.length === 0) return base;
   const pieces: string[] = base === null ? [] : [ensureTrailingNewline(base)];
   for (const partPathname of partPathnames) {
-    const part = await fetchObject(token, partPathname);
+    const part = await fetchObject(driver, partPathname);
     if (part !== null) pieces.push(ensureTrailingNewline(part));
   }
   if (pieces.length === 0) return null;
@@ -177,16 +191,16 @@ export async function statDataroomObject(
   orgId: string,
 ): Promise<{ size: number } | null> {
   const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
-  const token = blobToken();
-  if (!token) return null;
-  const page = await listBlobs({ token, prefix: objectPathname, limit: 1000 });
-  const hit = page.blobs.find((blob) => blob.pathname === objectPathname);
+  const driver = store();
+  if (!driver) return null;
+  const page = await driver.list({ prefix: objectPathname, limit: 1000 });
+  const hit = page.objects.find((object) => object.key === objectPathname);
   return hit ? { size: hit.size } : null;
 }
 
 /**
- * The RAW response for one stored object, over a short-lived presigned GET, so
- * a caller can stream its bytes straight through. `null` when it is not there.
+ * The RAW response for one stored object (on Vercel Blob, over a short-lived
+ * presigned GET), so a caller can stream its bytes straight through. `null` when it is not there.
  *
  * Deliberately NOT `readDataroomFile`: that one calls `response.text()`, which
  * decodes as UTF-8 and mangles every byte of a PDF that is not valid UTF-8 —
@@ -204,15 +218,9 @@ export async function openDataroomObject(
   orgId: string,
 ): Promise<Response | null> {
   const objectPathname = `${storePrefixForOrg(orgId)}/${path}`;
-  const token = blobToken();
-  if (!token) return null;
-  const { url } = await presignBlobRead(token, objectPathname, READ_LINK_TTL_MS);
-  const response = await fetch(url, { cache: "no-store" });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`blob read failed for "${objectPathname}": HTTP ${response.status}`);
-  }
-  return response;
+  const driver = store();
+  if (!driver) return null;
+  return driver.get(objectPathname, READ);
 }
 
 /**

@@ -18,7 +18,8 @@
  *   - nothing of the caller's travels upstream (no cookies, no authorization).
  *
  * The top half is pure (no network) and is what scripts/test-pdf-fetch.mjs
- * exercises. Imports are node: built-ins only, so plain
+ * exercises. Imports are node: built-ins and lib/storage's link rules (relative
+ * `.ts` files that import no package), so plain
  * `node --experimental-strip-types` can load it.
  */
 import { lookup as dnsLookup } from "node:dns/promises";
@@ -26,6 +27,7 @@ import https from "node:https";
 import type { IncomingMessage } from "node:http";
 import { isIP } from "node:net";
 import type { Readable } from "node:stream";
+import { isStorageHost } from "./storage/urls.ts";
 
 export const MAX_PDF_BYTES = 40 * 1024 * 1024;
 export const MAX_URL_LENGTH = 2048;
@@ -76,10 +78,12 @@ export function statusForCode(code: SafeFetchCode): number {
   }
 }
 
-/** Same rule as app/api/artifact-proxy: our own private blob store. */
+/**
+ * Same rule as app/api/artifact-proxy: our own private file store. The storage driver says which hosts those are
+ * (lib/storage/urls.ts; by default the Vercel Blob host).
+ */
 export function isBlobHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  return h === "vercel-storage.com" || h.endsWith(".vercel-storage.com");
+  return isStorageHost(hostname);
 }
 
 // --- address classification -------------------------------------------------

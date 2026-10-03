@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { orgContextForRequest } from "@/lib/org-context";
-import { blobToken, isSafeDataroomPath, writeDataroomFile } from "@/lib/dataroom-blob";
+import { storageConfigured, isSafeDataroomPath, writeDataroomFile } from "@/lib/dataroom-blob";
 import { FOLDER } from "@/agent/lib/dataroom-folders";
 
 export const runtime = "nodejs";
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   if (!org?.orgId) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
-  if (!blobToken()) {
+  if (!storageConfigured()) {
     return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
   }
 

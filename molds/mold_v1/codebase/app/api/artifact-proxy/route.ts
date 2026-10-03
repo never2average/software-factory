@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { storageUrlRules } from "@/lib/storage/urls";
+import type { StorageUrlRules } from "@/lib/storage/types";
 
 /**
- * GET /api/artifact-proxy?url=<presigned blob GET>
+ * GET /api/artifact-proxy?url=<signed GET for one stored object>
  *
  * Streams a private artifact SAME-ORIGIN. Two reasons the browser cannot fetch
- * the blob host itself: the CSP allows `frame-src 'self'` only (an HTML artifact
+ * the store's host itself: the CSP allows `frame-src 'self'` only (an HTML artifact
  * preview is an iframe), and `connect-src 'self'` blocks the cross-origin fetch
  * the spreadsheet/markdown renderers make.
  *
@@ -15,9 +17,19 @@ import { NextRequest, NextResponse } from "next/server";
  * first. An upstream 403 therefore means the signature expired, not that the
  * object is missing — say so, because "Artifact fetch failed" sent everyone
  * hunting for a broken file that was fine all along.
+ *
+ * WHICH URLs it will follow is the storage driver's answer (lib/storage/urls.ts),
+ * not a host name written here: by default an https URL on the Vercel Blob host,
+ * exactly as before. Anything else is refused before any request is made, so
+ * this route cannot be pointed at an arbitrary address.
  */
-function isAllowedArtifactHost(hostname: string): boolean {
-  return hostname === "vercel-storage.com" || hostname.endsWith(".vercel-storage.com");
+function storeLinks(): StorageUrlRules | null {
+  try {
+    return storageUrlRules();
+  } catch {
+    // The selected driver is missing a setting: there is no store to follow a link into.
+    return null;
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -33,11 +45,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid artifact URL" }, { status: 400 });
   }
 
-  if (artifactUrl.protocol !== "https:" || !isAllowedArtifactHost(artifactUrl.hostname)) {
+  const links = storeLinks();
+  if (!links || !links.ownsUrl(artifactUrl)) {
     return NextResponse.json({ error: "Artifact host is not allowed" }, { status: 400 });
   }
 
-  const upstream = await fetch(artifactUrl, { cache: "no-store" });
+  const upstream = await links.open(artifactUrl, { cache: "no-store" });
   if (!upstream.ok) {
     const expired = upstream.status === 401 || upstream.status === 403;
     return NextResponse.json(

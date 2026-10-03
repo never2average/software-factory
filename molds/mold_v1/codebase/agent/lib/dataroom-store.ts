@@ -15,16 +15,21 @@
  * traversal-y path can never land in the store.
  *
  * Backends are pluggable:
- *   - BlobDataroomBackend  — Vercel Blob (private store), selected when
- *     BLOB_READ_WRITE_TOKEN is present (same plumbing as ./artifact.ts).
+ *   - BlobDataroomBackend  — the deployment's file store (lib/storage: Vercel
+ *     Blob by default, selected when BLOB_READ_WRITE_TOKEN is present; or the
+ *     filesystem or S3 driver when STORAGE_DRIVER selects one). Same plumbing
+ *     as ./artifact.ts, and the same keys and conventions on every driver, so
+ *     the web app's reader (lib/dataroom-blob.ts) sees exactly what this wrote.
  *     Append semantics use an append-object convention: each appendJsonl call
  *     writes an immutable, lexicographically ordered part object under
  *     `{path}.appends/`; read() reconstructs base + parts, list() collapses
  *     parts back onto the logical path. No read-modify-write race.
  *   - LocalDataroomBackend — plain filesystem under a gitignored `.dataroom/`
- *     directory (or $DATAROOM_DIR), selected automatically when the Blob
- *     token is absent so everything is testable without network or secrets.
- *     Appends use O_APPEND fs.appendFile, i.e. true appends.
+ *     directory (or $DATAROOM_DIR), selected automatically when NO store is
+ *     configured so everything is testable without network or secrets.
+ *     Appends use O_APPEND fs.appendFile, i.e. true appends. (Not the
+ *     filesystem DRIVER: this one is a developer's scratch tree in the agent's
+ *     own layout, which the web app does not read.)
  *
  * JSONL invariant: every write/append to a `.jsonl` path is normalized to end
  * with a newline, so appended records always start on a fresh line and lines
@@ -33,7 +38,6 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import nodePath from "node:path";
-import { del, issueSignedToken, list as listBlobs, presignUrl, put } from "@vercel/blob";
 import type { ZodType } from "zod";
 import {
   dataroomDomainSchema,
@@ -47,6 +51,7 @@ import { FOLDER } from "./dataroom-folders.ts";
 import { DataroomFoldersNotPinnedError, UNPINNED_FORMER_FOLDERS, findStranded } from "./dataroom-folder-guard.ts";
 import { EXTRA_DATAROOM_PATH_TEMPLATES } from "./subagent-registry.generated.ts";
 import { isListedPath, requireWorkspace, workspaceBlobPrefix, workspaceDir } from "../../lib/dataroom-keyspace.ts";
+import { createVercelBlobDriver, storageDriver, type StorageDriver, type StorageDriverKind } from "../../lib/storage/index.ts";
 
 // ---------------------------------------------------------------------------
 // Path grammar — the dm.md tree as validated templates
@@ -287,7 +292,7 @@ export function isValidDataroomPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 export interface DataroomBackend {
-  readonly kind: "local" | "vercel-blob";
+  readonly kind: "local" | StorageDriverKind;
   /** Full logical content of a file, or null when absent. */
   read(path: string): Promise<string | null>;
   /** Create or replace a file. */
@@ -434,7 +439,7 @@ export class LocalDataroomBackend implements DataroomBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Vercel Blob backend — production, reuses artifact.ts token plumbing
+// Object-store backend — production. Any lib/storage driver; Vercel Blob by default.
 // ---------------------------------------------------------------------------
 
 /** Marker directory holding immutable append parts for one logical file. */
@@ -443,27 +448,32 @@ const APPENDS_MARKER = ".appends/";
 const READ_LINK_TTL_MS = 5 * 60 * 1000;
 
 export interface BlobDataroomBackendOptions {
-  /** Defaults to process.env.BLOB_READ_WRITE_TOKEN. */
+  /** A Vercel Blob token. Defaults to the deployment's selected store (lib/storage), i.e. BLOB_READ_WRITE_TOKEN by default. */
   token?: string;
-  /** Object-key prefix inside the blob store — a workspace's `dataroom/orgs/<id>`. Required. */
+  /** The store to use. Wins over `token`. */
+  driver?: StorageDriver;
+  /** Object-key prefix inside the store — a workspace's `dataroom/orgs/<id>`. Required. */
   storePrefix?: string;
 }
 
 export class BlobDataroomBackend implements DataroomBackend {
-  readonly kind = "vercel-blob" as const;
-  private readonly token: string;
+  readonly kind: StorageDriverKind;
+  private readonly driver: StorageDriver;
   private readonly storePrefix: string;
   /** Keeps same-millisecond appends from one process in order. */
   private appendSequence = 0;
 
   constructor(options: BlobDataroomBackendOptions = {}) {
-    const token = options.token ?? process.env.BLOB_READ_WRITE_TOKEN;
-    if (!token) {
+    // An explicit token is a Vercel Blob token (an empty one is "no store", as it always was); none means the
+    // deployment's selected store.
+    const driver = options.driver ?? (options.token === undefined ? storageDriver() : options.token ? createVercelBlobDriver(options.token) : null);
+    if (!driver) {
       throw new Error(
         "BlobDataroomBackend requires BLOB_READ_WRITE_TOKEN (the same private Vercel Blob store used by publish_artifact).",
       );
     }
-    this.token = token;
+    this.driver = driver;
+    this.kind = driver.kind;
     // No default: the prefix IS the workspace (lib/dataroom-keyspace.ts). A backend built without one used to be
     // the whole store's root, which contains every workspace's tree.
     if (!options.storePrefix) throw new Error("BlobDataroomBackend requires a storePrefix (a workspace's: workspaceBlobPrefix(orgId)).");
@@ -484,67 +494,38 @@ export class BlobDataroomBackend implements DataroomBackend {
    * listing the directory, reading it again — for half an hour, saying "let me
    * bridge the data room file into the bash sandbox" with no bridge to use.
    *
-   * This is the bridge. Presigned, expiring, and GET-only, so handing it to a
+   * This is the bridge. Signed, expiring, and GET-only, so handing it to a
    * sandbox command grants nothing beyond that one object for a few minutes.
    */
   async downloadUrl(path: string): Promise<string> {
-    const pathname = this.objectPathname(path);
-    const validUntil = Date.now() + READ_LINK_TTL_MS;
-    const signed = await issueSignedToken({
-      token: this.token,
-      pathname,
-      operations: ["get"],
-      validUntil,
-    });
-    const { presignedUrl } = await presignUrl(
-      { clientSigningToken: signed.clientSigningToken, delegationToken: signed.delegationToken },
-      { operation: "get", pathname, access: "private", validUntil: signed.validUntil },
-    );
-    return presignedUrl;
+    const { url } = await this.driver.signedUrl(this.objectPathname(path), READ_LINK_TTL_MS);
+    return url;
   }
 
-  /** Fetch one private blob's text via a short-lived presigned GET; null on 404. */
+  /** Fetch one private object's text via a short-lived read; null when absent. */
   private async fetchObject(pathname: string): Promise<string | null> {
-    const validUntil = Date.now() + READ_LINK_TTL_MS;
-    const signed = await issueSignedToken({
-      token: this.token,
-      pathname,
-      operations: ["get"],
-      validUntil,
-    });
-    const { presignedUrl } = await presignUrl(
-      { clientSigningToken: signed.clientSigningToken, delegationToken: signed.delegationToken },
-      { operation: "get", pathname, access: "private", validUntil: signed.validUntil },
-    );
-    const response = await fetch(presignedUrl);
-    if (response.status === 404) return null;
-    if (!response.ok) {
-      throw new Error(`blob read failed for "${pathname}": HTTP ${response.status}`);
-    }
-    return await response.text();
+    const response = await this.driver.get(pathname, { ttlMs: READ_LINK_TTL_MS });
+    return response === null ? null : await response.text();
   }
 
   /**
-   * One private blob's RAW BYTES via the same short-lived presigned GET; null on 404.
+   * One private object's RAW BYTES via the same short-lived read; null when absent.
    *
    * No append-part assembly, unlike `read()`. A binary is always written whole
    * (`appendJsonl` refuses a non-`.jsonl` path), so there are no parts to
    * concatenate — and concatenating them onto a png would corrupt it silently.
    */
   async readBytes(path: string): Promise<Uint8Array | null> {
-    const pathname = this.objectPathname(path);
-    const response = await fetch(await this.downloadUrl(path));
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`blob read failed for "${pathname}": HTTP ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
+    const response = await this.driver.get(this.objectPathname(path), { ttlMs: READ_LINK_TTL_MS });
+    return response === null ? null : new Uint8Array(await response.arrayBuffer());
   }
 
   private async listObjectPathnames(rawPrefix: string): Promise<string[]> {
     const pathnames: string[] = [];
     let cursor: string | undefined;
     do {
-      const page = await listBlobs({ token: this.token, prefix: rawPrefix, cursor, limit: 1000 });
-      for (const blob of page.blobs) pathnames.push(blob.pathname);
+      const page = await this.driver.list({ prefix: rawPrefix, cursor, limit: 1000 });
+      for (const object of page.objects) pathnames.push(object.key);
       cursor = page.hasMore ? page.cursor : undefined;
     } while (cursor);
     return pathnames;
@@ -574,9 +555,7 @@ export class BlobDataroomBackend implements DataroomBackend {
 
   async write(path: string, content: string): Promise<void> {
     const objectPathname = this.objectPathname(path);
-    await put(objectPathname, content, {
-      access: "private",
-      token: this.token,
+    await this.driver.put(objectPathname, content, {
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: contentTypeForPath(path),
@@ -584,7 +563,7 @@ export class BlobDataroomBackend implements DataroomBackend {
     // write() replaces the whole logical file, so retire any append parts —
     // otherwise a later read() would resurrect pre-overwrite lines.
     const staleParts = await this.listPartPathnames(objectPathname);
-    if (staleParts.length > 0) await del(staleParts, { token: this.token });
+    if (staleParts.length > 0) await this.driver.delete(staleParts);
   }
 
   async list(prefix: string): Promise<string[]> {
@@ -601,8 +580,8 @@ export class BlobDataroomBackend implements DataroomBackend {
   }
 
   async hasFolder(name: string): Promise<boolean> {
-    const page = await listBlobs({ token: this.token, prefix: `${this.storePrefix}/${name}/`, limit: 1 });
-    return page.blobs.length > 0;
+    const page = await this.driver.list({ prefix: `${this.storePrefix}/${name}/`, limit: 1 });
+    return page.objects.length > 0;
   }
 
   async appendLines(path: string, lines: readonly string[]): Promise<void> {
@@ -613,9 +592,7 @@ export class BlobDataroomBackend implements DataroomBackend {
     const sequence = String(this.appendSequence++).padStart(6, "0");
     const nonce = randomBytes(4).toString("hex");
     const partPathname = `${this.objectPathname(path)}${APPENDS_MARKER}${stamp}-${sequence}-${nonce}.part`;
-    await put(partPathname, ensureTrailingNewline(lines.join("\n")), {
-      access: "private",
-      token: this.token,
+    await this.driver.put(partPathname, ensureTrailingNewline(lines.join("\n")), {
       addRandomSuffix: false,
       allowOverwrite: false,
       contentType: contentTypeForPath(path),
@@ -789,7 +766,7 @@ export class DataroomStore {
 export interface CreateDataroomStoreOptions {
   /** Fully custom backend; wins over everything else. */
   backend?: DataroomBackend;
-  /** Blob token override (defaults to process.env.BLOB_READ_WRITE_TOKEN). */
+  /** Vercel Blob token override (defaults to the deployment's selected store: lib/storage). */
   blobToken?: string;
   /** Local root override (defaults to $DATAROOM_DIR, then ./.dataroom). The workspace's tree is `orgs/<id>` under it. */
   localRootDir?: string;
@@ -818,22 +795,23 @@ export function createLocalDataroomStore(rootDir?: string): DataroomStore {
   return new DataroomStore(new LocalDataroomBackend(rootDir));
 }
 
-/** Vercel Blob store for one workspace (throws without a token or a workspace). */
+/** Object store for one workspace: the given Vercel Blob token, else the deployment's store (throws without a store or a workspace). */
 export function createBlobDataroomStore(options: BlobDataroomBackendOptions & { orgId: string }): DataroomStore {
   return new DataroomStore(new BlobDataroomBackend({ ...options, storePrefix: workspaceBlobPrefix(options.orgId) }), options.orgId);
 }
 
 /**
- * Build ONE WORKSPACE's store, picking the backend automatically: Vercel Blob when a BLOB_READ_WRITE_TOKEN is
- * available (production — same plumbing as artifact.ts), the local `.dataroom/orgs/<id>/` filesystem otherwise
+ * Build ONE WORKSPACE's store, picking the backend automatically: the deployment's file store when one is configured
+ * (lib/storage — Vercel Blob when a BLOB_READ_WRITE_TOKEN is available, production's default and the same plumbing as
+ * artifact.ts; or the driver STORAGE_DRIVER selects), the local `.dataroom/orgs/<id>/` filesystem otherwise
  * (dev/tests). Throws when no workspace is named (lib/dataroom-keyspace.ts requireWorkspace).
  */
 export function createDataroomStore(options: CreateDataroomStoreOptions = {}): DataroomStore {
   if (options.backend) return new DataroomStore(options.backend);
   const orgId = requireWorkspace(options.orgId);
-  const token = options.blobToken ?? process.env.BLOB_READ_WRITE_TOKEN;
-  if (token) {
-    return new DataroomStore(new BlobDataroomBackend({ token, storePrefix: workspaceBlobPrefix(orgId) }), orgId);
+  const driver = options.blobToken === undefined ? storageDriver() : options.blobToken ? createVercelBlobDriver(options.blobToken) : null;
+  if (driver) {
+    return new DataroomStore(new BlobDataroomBackend({ driver, storePrefix: workspaceBlobPrefix(orgId) }), orgId);
   }
   const base = options.localRootDir ?? defaultLocalDataroomRoot();
   return new DataroomStore(new LocalDataroomBackend(localRootForOrg(base, orgId)), orgId);
