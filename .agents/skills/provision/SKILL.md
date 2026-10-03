@@ -120,9 +120,11 @@ it asks for the customer credentials at a hidden prompt and sends them to the se
 the repo or a command line. `--deploy`, `--set-secret` and `--verify-db` answer with the vm_remote command to use instead.
 
 The deploy qualifies the host first and refuses in plain words; then packages, firewall (the SSH port, 80, 443; fail2ban; no
-Docker rule), Postgres on loopback with TLS, the env file (mode 600), the SOURCE copied and built in place, the same database
-chain as the Vercel path run ON the server, three systemd services (the API as a non-root user in group kvm, with stale-lock
-cleanup and serial prewarm before start), six cron timers, Caddy, and the same `/api/ops/health` gate. It refuses outright
-while the mold lacks the three off-Vercel switches (`SANDBOX_BACKEND`, `STORAGE_DRIVER`, `SERVICE_AUTH`); the check and the dry
-run name them. When asking the operator for the server or the DNS record, use `docs/RUNBOOK.md` §9, one step at a time.
+Docker rule), Postgres on loopback with TLS, a master env file and one env file per service split from it (all mode 600; the
+agent's never holds the sign-in private key), the SOURCE copied and built in place, the same database chain as the Vercel path
+run ON the server, three systemd services (the API as a non-root user in group kvm, with the mold's `npm run sandbox:prewarm`
+before start), six cron timers, Caddy, and the same `/api/ops/health` gate. It refuses outright while the mold lacks the three
+off-Vercel switches (`SANDBOX_BACKEND`, `STORAGE_DRIVER`, `SERVICE_AUTH`) or the `sandbox:prewarm` script; the check and the
+dry run name them. With files on the server's disk (`storage.driver: fs`) the sandbox must reach the app's public address, so
+validate, `--qualify-remote` and the deploy refuse a sandbox deny list that holds it. When asking the operator for the server or the DNS record, use `docs/RUNBOOK.md` §9, one step at a time.
 Details and what is still unproven on a real server: `infra/vm_remote/README.md`.
