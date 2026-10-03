@@ -19,7 +19,7 @@ and directly, for a state directory outside state/ (a fixture) and for the offli
   vm_remote.py --self-test
 
 The same file is copied to the server and run THERE for everything that touches a secret value, so no value
-ever crosses the SSH command line (env-merge, env-mint, env-names, env-run, pg-admin, host-chain below).
+ever crosses the SSH command line (env-merge, env-mint, env-names, env-split, env-run, pg-admin, host-chain below).
 
 WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step is the way it is):
    1 qualify      read-only probe: /dev/kvm, 8 GB / 4 vCPU, free disk, Ubuntu 24.04, x86-64, sudo, no Docker, no
@@ -31,14 +31,17 @@ WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step i
    5 firewall     ufw: the SSH port, 80 and 443 only; fail2ban for ssh; an egress rule that keeps the service user
                   off the cloud metadata address and the private ranges. No Docker rule: there is no Docker.
    6 postgres     the app's own cluster on 127.0.0.1, TLS on; the admin password is minted ON the server
-   7 env          one env file, mode 600, root-owned: settings from state, secrets minted on the server, and the
-                  operator's own values from a hidden prompt (or from named environment values), sent on stdin
+   7 env          the master env file, mode 600, root-owned: settings from state, secrets minted on the server, and the
+                  operator's own values from a hidden prompt (or from named environment values), sent on stdin. Each
+                  service reads only its own file split from it (web.env, api.env, workflow.env, cron.env; root, 600):
+                  the agent's holds the sign-in PUBLIC key only, the workflow service's only the three names it reads
    8 source       rsync the SOURCE (never a build) to <install>/app
    9 build        stop the services, then build IN PLACE, one build at a time: the build embeds absolute paths
   10 database     the SAME chain as the Vercel path (provision.SCHEMA_CHAIN through provision._run_chain): hold,
                   journal, drift dry run that refuses data loss, RLS bootstrap, coverage, release, isolation proof
   11 units        three services (workflow, api, web) and six cron timers. The API runs as `sfapp` in group kvm;
-                  before it starts, stale template locks are cleared and templates are prewarmed one at a time
+                  before it starts, the mold's own `npm run sandbox:prewarm` clears stale template locks, links the
+                  sandbox runtime, refuses a data room the sandbox could not reach, and prewarms one template at a time
   12 caddy        TLS for the domain, everything proxied to the web app on loopback
   13 health       the three health endpoints, /dev/kvm and the API's groups, public listeners, then the same
                   read of /api/ops/health the Vercel path gates on
@@ -67,13 +70,36 @@ EGRESS_DENY = ("169.254.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
 # express; this list is only the fallback when a source has no vercel.json, and the self-test pins it to the mold's.
 CRONS = (("resume-workflows", "*/5 * * * *"), ("run-cron-workflows", "* * * * *"), ("refresh-apps", "* * * * *"),
          ("sync-inbox", "*/10 * * * *"), ("close-abandoned-runs", "*/15 * * * *"), ("deliver-queued", "* * * * *"))
-# The switches the mold must carry before it can run off Vercel. Not yet upstream at the time of writing, so a real
-# deploy refuses while any is missing and a dry run names them.
-MOLD_SWITCHES = (("SANDBOX_BACKEND", "the sandbox setting (microVM backend, vCPUs, memory, network deny list)", "mold_v1-151 (the upstream sandbox change)"),
-                 ("STORAGE_DRIVER", "the file-storage driver that replaces Vercel Blob", "mold_v1-073"),
-                 ("SERVICE_AUTH", "the web app's own service identity that replaces the Vercel token", "mold_v1-074"))
-MINTED = ("CRON_SECRET", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY")
+# The switches the mold must carry before it can run off Vercel (all upstream since fde-agent da581f2). A real deploy
+# refuses while any is missing from the source it ships, and a dry run names them.
+MOLD_SWITCHES = (("SANDBOX_BACKEND", "the sandbox setting (microVM backend, vCPUs, memory, network deny list)", "fde-agent #100 (mold_v1-151)"),
+                 ("STORAGE_DRIVER", "the file-storage driver that replaces Vercel Blob", "fde-agent #103 (mold_v1-073)"),
+                 ("SERVICE_AUTH", "the web app's own service identity that replaces the Vercel token", "fde-agent #99 (mold_v1-074)"))
+# The mold's own off-Vercel tooling the deploy runs (fde-agent #100). A source without it is refused like a missing switch.
+MOLD_SCRIPTS = (("sandbox:prewarm", "the mold's serial sandbox prewarm (stale locks, runtime link, file-link reach check)", "fde-agent #100 (docs/self-hosting/SANDBOX.md)"),)
+# STORAGE_SIGNING_SECRET signs the filesystem driver's file links (lib/storage/settings.ts: 32+ characters; the web app and
+# the agent hold the same value). Minted with the others; it reaches a service's env file only on the filesystem driver.
+INTERNAL = ("CRON_SECRET", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "STORAGE_SIGNING_SECRET")
+MINTED = INTERNAL + ("AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY")
 SERVER_MADE = MINTED + ("POSTGRES_ADMIN_URL", "DATABASE_URL")
+# ---- which service reads which name (fde-agent da581f2; checked against the source, see the self-test) ------------
+# The master env file holds every name; each service gets a file of its own split from it (env_split), so a process
+# never holds what it does not read. Read only by the factory's database chain and the mold's migration scripts, which
+# run as root from the master file: no service gets these.
+ADMIN_ONLY = ("POSTGRES_ADMIN_URL", "DATABASE_SSL")
+# Read by the web app and never by the agent (SERVICE_AUTH=session-key: the web app signs with the private half, the
+# agent verifies with the public half and must not be able to sign; docs/self-hosting/SERVICE_IDENTITY.md).
+WEB_ONLY = ("AUTH_JWT_PRIVATE_KEY", "EVE_API_URL", "NEXT_PUBLIC_EVE_API_URL", "RESEND_API_KEY", "PLATFORM_NOTIFY_FROM",
+            "NEXT_PUBLIC_GOOGLE_CLIENT_ID")
+# The task-workflow service (services/task-workflow) reads exactly these, and the cron calls only the first.
+WORKFLOW_READS = ("DATABASE_URL", "TASK_WORKFLOW_SERVICE_TOKEN", "WORKFLOW_LOCAL_DATA_DIR")
+CRON_READS = ("CRON_SECRET",)
+# Names earlier versions of this plan wrote that the mold never read (STORAGE_DIR, the s3 names without S3_, and the
+# agent's developer fallback DATAROOM_DIR, which is not the filesystem driver). The master file keeps what it was
+# given, so they are kept out of every service's file instead.
+RETIRED = ("STORAGE_DIR", "DATAROOM_DIR", "STORAGE_BUCKET", "STORAGE_REGION", "STORAGE_ENDPOINT", "STORAGE_ACCESS_KEY_REF", "STORAGE_SECRET_KEY_REF")
+# The s3 driver reads its key pair under these names; state names where the operator's values are stored (*_ref).
+S3_KEYS = (("access_key_ref", "STORAGE_S3_ACCESS_KEY_ID"), ("secret_key_ref", "STORAGE_S3_SECRET_ACCESS_KEY"))
 SOURCE_EXCLUDES = ("node_modules", ".next", ".output", ".eve", ".vercel", ".git", ".env", ".env.*", ".dataroom",
                    "test-results", ".eve-build-hidden", "*.log")
 GUARD_VAR = "SF_REMOTE_DEPLOY"
@@ -103,6 +129,7 @@ def settings(app_id, app, infra, ds):
          "port": int(vr.get("ssh_port") or 22), "key_ref": vr.get("ssh_key_ref") or "",
          "install": install, "app_dir": f"{install}/app", "factory_dir": f"{install}/factory",
          "env_dir": f"/etc/software-factory/{app_id}", "env_file": f"/etc/software-factory/{app_id}/env", "data": data,
+         "env_files": {k: f"/etc/software-factory/{app_id}/{k}.env" for k in ("web", "api", "workflow", "cron")},
          "sandbox": dict(vr.get("sandbox") or {}), "storage": dict(vr.get("storage") or {}),
          "pg": {"version": int(vp.get("version") or 17), "tls": vp.get("tls") or "on", "switch": vp.get("migration_switch_env") or "",
                 "db": pg.get("database") or re.sub(r"[^a-z0-9]", "", app_id.lower()), "port": int(pg.get("port") or 5432)},
@@ -222,8 +249,8 @@ def env_mint(path, jwt_pair=_jwt_pair):
     a new CRON_SECRET or sign-in key on every deploy would sign everybody out. The key pair is kept only as a
     pair (one half without the other signs sessions nothing can verify). Returns the names minted."""
     cur = env_read(path); new = {}
-    for k in ("CRON_SECRET", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN"):
-        if not cur.get(k): new[k] = pysecrets.token_hex(32)
+    for k in INTERNAL:
+        if not cur.get(k): new[k] = pysecrets.token_hex(32)       # 64 characters: STORAGE_SIGNING_SECRET needs 32+
     if not (cur.get("AUTH_JWT_PRIVATE_KEY") and cur.get("AUTH_JWT_PUBLIC_KEY")):
         new["AUTH_JWT_PRIVATE_KEY"], new["AUTH_JWT_PUBLIC_KEY"] = jwt_pair()
     if new: env_merge(path, new)
@@ -236,38 +263,136 @@ def stdin_pairs(text):
             k, v = line.split("=", 1); out[k.strip()] = v
     return out
 
+def deny_list(S):
+    """SANDBOX_DENY_SUBNETS: state's list, which validate holds to the five required ranges (the mold adds the same five
+    itself, agent/lib/sandbox-settings.ts). The server's own public address is NOT added: with the filesystem storage
+    driver a sandbox downloads data-room files from the web app's public origin, which is that address
+    (docs/self-hosting/SANDBOX.md). What protects that address is that every service on the host listens on loopback
+    behind Caddy (health_verdict refuses any other public listener), so it offers a sandbox nothing the internet does
+    not already see."""
+    return list(dict.fromkeys(list(S["sandbox"].get("deny_subnets") or []) + list(DENY_REQUIRED)))
+
+def _covered(address, cidrs):
+    """The first CIDR in `cidrs` that holds `address` (an IP literal), else None."""
+    import ipaddress
+    try: ip = ipaddress.ip_address(address.strip("[]"))
+    except ValueError: return None
+    for c in cidrs:
+        try:
+            if ip in ipaddress.ip_network(c, strict=False): return c
+        except ValueError: continue
+    return None
+
+def sandbox_conflict(S, addresses=None):
+    """Why the agent's sandbox could not fetch the data room's files, or None. Only the filesystem driver has the
+    problem: its signed links point at https://<domain>, so every address that name leads to must be outside the
+    sandbox deny list. `addresses` are what the domain resolves to; without them, the public `host` stands in when it
+    is an IP literal. The mold's `npm run sandbox:prewarm` makes the same check on the server before the API starts."""
+    if (S["storage"].get("driver") or "fs") != "fs": return None
+    cands = list(addresses) if addresses else ([S["host"]] if re.fullmatch(r"[0-9.]+|[0-9a-fA-F:]+", S["host"] or "") else [])
+    deny = deny_list(S)
+    for a in cands:
+        c = _covered(a, deny)
+        if c:
+            head = (f"{S['app_id']}: the data room's files are kept on the server's own disk (vm_remote.storage.driver \"fs\"), so the "
+                    f"agent's sandbox downloads them from {S['url']}, which is {a}; but {a} is inside the networks the sandbox may never "
+                    f"reach ({c}), so every file fetch would fail. ")
+            fix = (f"Switch vm_remote.storage to the s3 driver, or put the app on a server with a public address" if c in DENY_REQUIRED else
+                   f"Take {c} out of vm_remote.sandbox.deny_subnets in state/application/{S['app_id']}/infrastructure.json (the server's "
+                   f"services listen on loopback only, behind Caddy, so its public address offers a sandbox nothing the internet does "
+                   f"not see), or switch vm_remote.storage to the s3 driver")
+            return head + fix + " (docs/self-hosting/SANDBOX.md in the mold)."
+    return None
+
+def storage_pairs(S):
+    """The storage driver's settings, under the names lib/storage/settings.ts reads (fde-agent #103, docs/STORAGE.md).
+    Names and non-secret values only: the signing secret is minted on the server, the s3 key pair is the operator's."""
+    sg = S["storage"]
+    if (sg.get("driver") or "fs") == "fs":
+        return {"STORAGE_DRIVER": "filesystem", "STORAGE_FS_ROOT": sg.get("dir") or f"{S['data']}/storage",
+                # The web app's public address: where a signed file link points, and what a sandbox downloads.
+                "STORAGE_PUBLIC_URL": S["url"]}
+    c = {"STORAGE_DRIVER": "s3"}
+    for k, n in (("endpoint", "STORAGE_S3_ENDPOINT"), ("bucket", "STORAGE_S3_BUCKET"), ("region", "STORAGE_S3_REGION"), ("addressing", "STORAGE_S3_ADDRESSING")):
+        if sg.get(k): c[n] = sg[k]
+    # Build time, for the browser: the host signed links are served from (lib/storage/hosts.ts).
+    host = urllib.parse.urlsplit(sg.get("endpoint") or "").hostname or ""
+    if host and sg.get("bucket"):
+        c["NEXT_PUBLIC_STORAGE_HOST"] = f"{sg['bucket']}.{host}" if sg.get("addressing") == "virtual" else host
+    return c
+
 def config_pairs(S):
-    """The NON-secret half of the env file, derived from state on every deploy so the running app cannot disagree
-    with its state. Build-time flags (ENABLE_*) live here and nowhere else, which is what makes them identical at
-    build and at run."""
-    f = S["flags"]; sb = S["sandbox"]; sg = S["storage"]
-    deny = list(sb.get("deny_subnets") or DENY_REQUIRED)
-    if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", S["host"] or "") and f"{S['host']}/32" not in deny: deny.append(f"{S['host']}/32")
+    """The NON-secret half of the master env file, derived from state on every deploy so the running app cannot
+    disagree with its state. Build-time flags (ENABLE_*) live here and nowhere else, which is what makes them identical
+    at build and at run. Every name here is one the mold reads (the self-test checks them against the source)."""
+    f = S["flags"]; sb = S["sandbox"]
     c = {"MODEL_PROVIDER": S["model"].get("provider") or f.get("MODEL_PROVIDER", "cloudflare"),
          "ENABLE_WEB_SEARCH": f.get("ENABLE_WEB_SEARCH", "true"), "ENABLE_BROWSER": f.get("ENABLE_BROWSER", "false"),
          "OPS_MULTI_TENANT": f.get("OPS_MULTI_TENANT", "1"),
          "WEB_ORIGIN": S["url"],
-         # Both names: lib/agent-url.ts reads EVE_API_URL first and the older name second, and without either a
-         # web build silently talks to the upstream project's Vercel deployment. Read at BUILD time.
+         # Both names, one address: lib/agent-url.ts refuses EVE_API_URL that differs from NEXT_PUBLIC_EVE_API_URL, and
+         # off Vercel refuses to build or start with neither (fde-agent #101). Read at BUILD time.
          "EVE_API_URL": f"http://127.0.0.1:{PORTS['api']}", "NEXT_PUBLIC_EVE_API_URL": f"http://127.0.0.1:{PORTS['api']}",
          "TASK_WORKFLOW_SERVICE_URL": f"http://127.0.0.1:{PORTS['workflow']}",
+         # eve's local workflow world (the agent). The task-workflow service gets a directory of its own (service_env_spec).
          "WORKFLOW_LOCAL_DATA_DIR": f"{S['data']}/workflow-data",
+         # The web app presents its own short-lived service token and the agent accepts it (fde-agent #99).
          "SERVICE_AUTH": "session-key",
          "SANDBOX_BACKEND": sb.get("backend", "microsandbox"), "SANDBOX_CPUS": str(sb.get("cpus", 2)),
-         "SANDBOX_MEMORY_MIB": str(sb.get("memory_mib", 1024)), "SANDBOX_DENY_SUBNETS": ",".join(deny),
+         "SANDBOX_MEMORY_MIB": str(sb.get("memory_mib", 1024)), "SANDBOX_DENY_SUBNETS": ",".join(deny_list(S)),
          "EVE_DOCKER_PATH": "/nonexistent/docker",
-         "STORAGE_DRIVER": sg.get("driver", "fs")}
-    if sg.get("driver", "fs") == "fs":
-        c["STORAGE_DIR"] = sg.get("dir") or f"{S['data']}/storage"; c["DATAROOM_DIR"] = f"{c['STORAGE_DIR']}/dataroom"
-    else:
-        for k, n in (("bucket", "STORAGE_BUCKET"), ("region", "STORAGE_REGION"), ("endpoint", "STORAGE_ENDPOINT"),
-                     ("access_key_ref", "STORAGE_ACCESS_KEY_REF"), ("secret_key_ref", "STORAGE_SECRET_KEY_REF")):
-            if sg.get(k): c[n] = sg[k]
+         # The mold's migration scripts (scripts/lib/migration-ssl.mjs): Postgres here answers TLS unless state says not.
+         "DATABASE_SSL": "require" if S["pg"]["tls"] == "on" else "disable",
+         **storage_pairs(S)}
     if S["model"].get("provider") == "cloudflare":
         for role, name in (("orchestrator", "CLOUDFLARE_MODEL_ORCHESTRATOR"), ("specialist", "CLOUDFLARE_MODEL_SPECIALIST")):
             if (S["model"].get("roles") or {}).get(role): c[name] = S["model"]["roles"][role]
     if S["pg"]["tls"] == "migration_switch" and S["pg"]["switch"]: c[S["pg"]["switch"]] = "disable"
     return c
+
+def service_env_spec(S):
+    """Which names each service's env file gets, as data (written to the bundle as env-services.json and applied on the
+    server by env-split; names only, never a value).
+      keep   the names to take from the master file (None: every name but `drop`)
+      drop   names never to take
+      alias  {name the mold reads: name state stores the value under}, copied on the server
+      set    non-secret values that differ for this service"""
+    sg = S["storage"]; fs = (sg.get("driver") or "fs") == "fs"
+    admin = list(ADMIN_ONLY) + ([S["pg"]["switch"]] if S["pg"]["switch"] else []) + list(RETIRED)
+    alias = {} if fs else {mold: sg[k] for k, mold in S3_KEYS if sg.get(k) and sg[k] != mold}
+    # The signing secret signs the filesystem driver's links; on s3 no service needs it.
+    unused = [] if fs else ["STORAGE_SIGNING_SECRET"]
+    # The operator's s3 values under their stored names are passed on under the mold's names instead.
+    stored = sorted(alias.values())
+    return {
+        "web": {"keep": None, "drop": sorted(set(admin + unused + stored)), "alias": alias, "set": {}},
+        "api": {"keep": None, "drop": sorted(set(admin + unused + stored + list(WEB_ONLY))), "alias": alias, "set": {}},
+        "workflow": {"keep": list(WORKFLOW_READS), "drop": [], "alias": {}, "set": {"WORKFLOW_LOCAL_DATA_DIR": f"{S['data']}/task-workflow-data"}},
+        "cron": {"keep": list(CRON_READS), "drop": [], "alias": {}, "set": {}},
+    }
+
+def split_values(master, spec):
+    """{service: {name: value}} from the master file's values, per service_env_spec. Pure."""
+    out = {}
+    for svc, sp in spec.items():
+        keep = sp.get("keep"); drop = set(sp.get("drop") or [])
+        vals = {k: v for k, v in master.items() if (keep is None or k in keep) and k not in drop}
+        for mold, stored in (sp.get("alias") or {}).items():
+            if master.get(stored): vals[mold] = master[stored]
+        vals.update(sp.get("set") or {})
+        out[svc] = vals
+    return out
+
+def env_split(master_path, env_dir, spec):
+    """On the server, as root: write each service's env file from the master file, atomically, mode 600, in the root-only
+    env directory. The files are root's, not the service user's: systemd reads EnvironmentFile as root, and a file the
+    service user could open would let the agent (same user as the web app) read the web app's private key. Rewritten
+    whole every time, so a name the spec no longer gives a service disappears from its file. Returns {service: count}."""
+    vals = split_values(env_read(master_path), spec)
+    if "AUTH_JWT_PRIVATE_KEY" in vals.get("api", {}):
+        raise SystemExit("env-split: refusing to give the agent the sign-in private key; nothing was written")
+    for svc, v in vals.items(): env_write(os.path.join(env_dir, f"{svc}.env"), v)
+    return {svc: len(v) for svc, v in vals.items()}
 
 def operator_names(S):
     """The names only the operator can supply. One client id feeds both Google names."""
@@ -430,15 +555,16 @@ PrivateTmp=yes
 ProtectHome=yes
 """
 def unit_files(S, crons):
-    """name -> text for the three services, the egress rule's unit and one service + timer per cron."""
+    """name -> text for the three services, the egress rule's unit and one service + timer per cron. Each service reads
+    its own env file (service_env_spec), never the master one."""
     u = {}; app = S["app_id"]; pre = S["unit"]
-    common = fill(SERVICE_COMMON, USER=SERVICE_USER, ENV=S["env_file"], DATA=S["data"])
+    common = lambda svc: fill(SERVICE_COMMON, USER=SERVICE_USER, ENV=S["env_files"][svc], DATA=S["data"])
     u[f"{pre}-workflow.service"] = (fill(HEAD, APP=app) + f"""[Unit]
 Description={app}: task-workflow service (loopback only)
 After=network-online.target postgresql.service
 Wants=network-online.target
 
-{common}WorkingDirectory={S['app_dir']}/services/task-workflow
+{common("workflow")}WorkingDirectory={S['app_dir']}/services/task-workflow
 ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p {PORTS['workflow']}
 
 [Install]
@@ -449,14 +575,15 @@ Description={app}: eve agent API (loopback only; non-root, group kvm)
 After=network-online.target postgresql.service {pre}-egress.service {pre}-workflow.service
 Wants=network-online.target {pre}-egress.service
 
-{common}SupplementaryGroups=kvm
+{common("api")}SupplementaryGroups=kvm
 WorkingDirectory={S['app_dir']}
 Environment=HOST=127.0.0.1
 Environment=NITRO_HOST=127.0.0.1
 Environment=PORT={PORTS['api']}
 Environment=NITRO_PORT={PORTS['api']}
-# Before the API serves: clear template locks a killed start left behind (the next start hangs on them), then
-# build the sandbox templates ONE AT A TIME (eve boots all of them at once, which failed on a 4-CPU host).
+# Before the API serves: the mold's own `npm run sandbox:prewarm` clears template locks a killed start left behind (the
+# next start hangs on them), refuses a data room the sandbox could not fetch, and builds the sandbox templates ONE AT
+# A TIME (eve boots all of them at once, which failed on a 4-CPU host).
 ExecStartPre=/bin/bash {S['factory_dir']}/api-prestart.sh
 # The built server directly: `eve start` holds 2.3 GB for the life of the service.
 ExecStart=/usr/bin/node .output/server/index.mjs
@@ -470,7 +597,7 @@ Description={app}: web app (loopback only, behind Caddy)
 After=network-online.target postgresql.service {pre}-api.service {pre}-workflow.service
 Wants=network-online.target
 
-{common}WorkingDirectory={S['app_dir']}
+{common("web")}WorkingDirectory={S['app_dir']}
 ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p {PORTS['web']}
 
 [Install]
@@ -498,7 +625,7 @@ After={pre}-web.service
 Type=oneshot
 User={SERVICE_USER}
 Group={SERVICE_USER}
-EnvironmentFile={S['env_file']}
+EnvironmentFile={S['env_files']['cron']}
 ExecStart=/bin/bash {S['factory_dir']}/cron-call.sh {name}
 TimeoutStartSec=115
 NoNewPrivileges=yes
@@ -527,7 +654,7 @@ case "${1:-}" in
   @ROUTES@) ;;
   *) echo "not one of this app's cron routes: ${1:-}" >&2; exit 2 ;;
 esac
-: "${CRON_SECRET:?CRON_SECRET is not set in the env file}"
+: "${CRON_SECRET:?CRON_SECRET is not set in the cron env file}"
 printf 'header = "Authorization: Bearer %s"\\n' "$CRON_SECRET" | /usr/bin/curl --silent --show-error --fail --max-time 110 --output /dev/null --config - "http://127.0.0.1:@PORT@/api/cron/$1"
 """, HEAD=fill(HEAD, APP=S["app_id"]), ROUTES=routes, PORT=PORTS["web"])
 
@@ -660,7 +787,7 @@ fi
 getent group kvm >/dev/null || groupadd --system kvm
 id @USER@ >/dev/null 2>&1 || useradd --system --user-group --home-dir @DATA@/home --no-create-home --shell /usr/sbin/nologin @USER@
 install -d -m 755 /opt/software-factory @INSTALL@ @FACTORY@
-install -d -m 750 -o @USER@ -g @USER@ @APPDIR@ @DATA@ @DATA@/home @DATA@/workflow-data @DATA@/storage @DATA@/build-stamps
+install -d -m 750 -o @USER@ -g @USER@ @APPDIR@ @DATA@ @DATA@/home @DATA@/workflow-data @DATA@/task-workflow-data @DATA@/storage @DATA@/build-stamps
 install -d -m 700 /etc/software-factory @ENVDIR@
 echo "packages: node $(node -v), $(caddy version | cut -d' ' -f1), postgresql @PGV@, service user @USER@"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), PGV=v, USER=SERVICE_USER, DATA=S["data"],
@@ -688,94 +815,74 @@ python3 @TOOL@ pg-admin --file @ENV@ --db @DB@ --port @PORT@ --sslmode @SSLMODE@
         TLS="on (self-signed; the mold's migration scripts require TLS and do not verify the certificate)" if S["pg"]["tls"] == "on" else "off (the mold's migration switch is set instead)",
         SSL="on" if S["pg"]["tls"] == "on" else "off", TOOL=S["tool"], ENV=S["env_file"], DB=S["pg"]["db"], SSLMODE=S["sslmode"])
 
+def env_split_cmd(S):
+    return f"python3 {S['tool']} env-split --file {S['env_file']} --spec {S['factory_dir']}/env-services.json"
+
 def build_sh(S, crons):
     svc, tim = unit_names(S, crons)
-    run = f"python3 {S['tool']} env-run --file {S['env_file']} --user {SERVICE_USER} --home {S['data']}/home --cwd"
+    run = lambda k: f"python3 {S['tool']} env-run --file {S['env_files'][k]} --user {SERVICE_USER} --home {S['data']}/home --cwd"
     return fill("""#!/bin/bash
 @HEAD@# Build IN PLACE at the final path: the eve build embeds absolute paths and cannot be moved afterwards.
 # One build at a time (each peaks at 2-3 GB on an 8 GB machine). The services are stopped first, because the
-# build rewrites the directories they run from; they come back in units.sh.
+# build rewrites the directories they run from; they come back in units.sh. Each part is built with the env file
+# of the service that runs it, so build and run see the same names (the agent's has no private key).
 set -eu
 @GUARD@for u in @TIMERS@ @SERVICES@; do systemctl stop "$u" 2>/dev/null || true; done
+@SPLIT@
 chown -R @USER@:@USER@ @APPDIR@
-RUN="@RUN@"
+RUN_API="@RUN_API@"
+RUN_WEB="@RUN_WEB@"
+RUN_WF="@RUN_WF@"
 lock_now="$(sha256sum @APPDIR@/package-lock.json | cut -d' ' -f1)"
 if [ ! -d @APPDIR@/node_modules ] || [ "$(cat @DATA@/build-stamps/app.lock 2>/dev/null || true)" != "$lock_now" ]; then
   # devDependencies included: the sandbox runtime (microsandbox) is one of them.
-  $RUN @APPDIR@ -- npm ci --include=dev --no-audit --no-fund
+  $RUN_API @APPDIR@ -- npm ci --include=dev --no-audit --no-fund
   echo "$lock_now" > @DATA@/build-stamps/app.lock
 fi
-$RUN @APPDIR@ -- npm run build:eve
+$RUN_API @APPDIR@ -- npm run build:eve
 test -f @APPDIR@/.output/server/index.mjs
-$RUN @APPDIR@ -- npm run build
+$RUN_WEB @APPDIR@ -- npm run build
 lock_now="$(sha256sum @APPDIR@/services/task-workflow/package-lock.json | cut -d' ' -f1)"
 if [ ! -d @APPDIR@/services/task-workflow/node_modules ] || [ "$(cat @DATA@/build-stamps/workflow.lock 2>/dev/null || true)" != "$lock_now" ]; then
-  $RUN @APPDIR@/services/task-workflow -- npm ci --include=dev --no-audit --no-fund
+  $RUN_WF @APPDIR@/services/task-workflow -- npm ci --include=dev --no-audit --no-fund
   echo "$lock_now" > @DATA@/build-stamps/workflow.lock
 fi
-$RUN @APPDIR@/services/task-workflow -- npm run build
+$RUN_WF @APPDIR@/services/task-workflow -- npm run build
 echo "build: eve API, web app and task-workflow service built at @APPDIR@"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), TIMERS=" ".join(tim), SERVICES=" ".join(reversed(svc)),
-        USER=SERVICE_USER, APPDIR=S["app_dir"], DATA=S["data"], RUN=run)
+        USER=SERVICE_USER, APPDIR=S["app_dir"], DATA=S["data"], SPLIT=env_split_cmd(S), RUN_API=run("api"), RUN_WEB=run("web"), RUN_WF=run("workflow"))
 
 def db_chain_sh(S):
     return fill("""#!/bin/bash
 @HEAD@# The database safety chain, on the server, with the URLs read from the env file here (they never cross SSH).
 # It is provision.py's own chain: hold, journal, drift dry run that refuses data loss, RLS bootstrap, coverage,
-# release, isolation proof; DATABASE_URL is written only after the proof.
+# release, isolation proof; DATABASE_URL is written only after the proof, then passed on to the services' own files.
 set -eu
 @GUARD@python3 @TOOL@ host-chain --app-dir @APPDIR@ --env-file @ENV@ --mode @MODE@ --sslmode @SSLMODE@
+@SPLIT@
 chown -R @USER@:@USER@ @APPDIR@
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), TOOL=S["tool"], APPDIR=S["app_dir"],
-        ENV=S["env_file"], MODE=S["mode"], SSLMODE=S["sslmode"], USER=SERVICE_USER)
+        ENV=S["env_file"], MODE=S["mode"], SSLMODE=S["sslmode"], USER=SERVICE_USER, SPLIT=env_split_cmd(S))
 
 def api_prestart_sh(S):
-    pkg = f"{S['app_dir']}/node_modules/@superradcompany/microsandbox-linux-x64-gnu"
-    msb = f"{S['data']}/home/.microsandbox"
     return fill("""#!/bin/bash
-@HEAD@# Runs as the service user (group kvm) before the API starts. The one deletion below names a literal path.
+@HEAD@# Runs as the service user (group kvm), with the API's own env file, before the API starts. It deletes nothing itself.
 set -eu
-# 1. A start that was killed leaves template locks behind, and the next start waits on them for ever.
-if [ -d @APPDIR@/.eve/sandbox-cache/template-locks ]; then
-  find @APPDIR@/.eve/sandbox-cache/template-locks -mindepth 1 -delete
-fi
-# 2. The sandbox runtime counts as installed only when its two files sit under ~/.microsandbox; they are already
-#    in node_modules, so link them. No download, no system package.
-mkdir -p @MSB@/bin @MSB@/lib
-for f in @PKG@/bin/*; do [ -e "$f" ] && ln -sfn "$f" "@MSB@/bin/$(basename "$f")"; done
-for f in @PKG@/lib/*; do [ -e "$f" ] && ln -sfn "$f" "@MSB@/lib/$(basename "$f")"; done
 [ -c /dev/kvm ] || { echo "no /dev/kvm on this server: the sandbox cannot start" >&2; exit 1; }
 [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "the service user cannot open /dev/kvm (is it in group kvm?)" >&2; exit 1; }
-# 3. Sandbox templates, one at a time.
+# The mold's own prewarm (fde-agent #100, docs/self-hosting/SANDBOX.md), which does what this file used to do, better:
+#   - removes only template locks whose owner process is gone (a held one stops it, naming the process);
+#   - --link-runtime: links the microsandbox runtime npm already installed into ~/.microsandbox (no download);
+#   - resolves STORAGE_PUBLIC_URL and refuses if the sandbox deny list holds any address it leads to, so the API never
+#     starts with a data room its sandboxes cannot fetch;
+#   - builds the templates one at a time, each tried @TRIES@ times; exit 1 if any is missing at the end.
 cd @APPDIR@
-exec /usr/bin/node @FACTORY@/prewarm-serial.mjs
-""", HEAD=fill(HEAD, APP=S["app_id"]), APPDIR=S["app_dir"], MSB=msb, PKG=pkg, FACTORY=S["factory_dir"])
+exec /usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries @RETRIES@
+""", HEAD=fill(HEAD, APP=S["app_id"]), APPDIR=S["app_dir"], TRIES=PREWARM_RETRIES + 1, RETRIES=PREWARM_RETRIES)
 
-PREWARM_MJS = """// GENERATED by .claude/scripts/lib/vm_remote.py. Prewarm the built app's sandbox templates ONE AT A TIME.
-// `eve start` boots every template at once (Promise.all, no concurrency setting); on a 4-CPU host one boot timed
-// out and the whole start failed (reports/vm-spike-mold_v1-072.md). Each template gets three tries, because about
-// one microVM boot in fourteen timed out on nested KVM. Run from the app root, as the service user.
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-const { prewarmBuiltAppSandboxes } = await import(pathToFileURL(join(process.cwd(), "node_modules/eve/dist/src/execution/sandbox/prewarm.js")).href);
-const t0 = Date.now();
-const since = () => `+${((Date.now() - t0) / 1000).toFixed(0)}s`;
-let chain = Promise.resolve();
-const once = async ({ backend, input }) => {
-  let last;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try { return await backend.prewarm(input); }
-    catch (e) { last = e; console.log(`${since()} a template did not come up (try ${attempt} of 3): ${String(e?.message ?? e).slice(0, 160)}`); }
-  }
-  throw last;
-};
-await prewarmBuiltAppSandboxes({
-  appRoot: process.cwd(),
-  log: (m) => { if (!/elapsed\\)|bootstrap run:/.test(m)) console.log(`${since()} ${m.slice(0, 160)}`); },
-  dispatch: (job) => { const next = chain.then(() => once(job)); chain = next.catch(() => {}); return next; },
-});
-console.log(`prewarm finished in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-"""
+# Extra tries per template (the mold allows 0-5). One microVM boot in about fourteen timed out on nested KVM in the
+# spike (reports/vm-spike-mold_v1-072.md), so three tries in all, as the factory's own prewarm used to do.
+PREWARM_RETRIES = 2
 
 def units_sh(S, crons):
     svc, tim = unit_names(S, crons)
@@ -830,7 +937,13 @@ echo "PUBLIC_LISTENERS=$(ss -ltnH 2>/dev/null | awk '{print $4}' | grep -v -E '^
 echo "TIMERS=$(systemctl list-timers --all --no-legend '@UNIT@-cron-*' 2>/dev/null | grep -c . || true)"
 echo "UFW=$(ufw status 2>/dev/null | head -1 | sed 's/^Status: //')"
 echo "ENV_MODE=$(stat -c '%a %U' @ENV@ 2>/dev/null || echo missing)"
-""", HEAD=fill(HEAD, APP=S["app_id"]), PW=PORTS["workflow"], PA=PORTS["api"], PWEB=PORTS["web"], UNIT=S["unit"], ENV=S["env_file"])
+echo "ENV_FILES=$(for s in @SVCS@; do printf '%s=%s ' "$s" "$(stat -c '%a-%U' "@ENVDIR@/$s.env" 2>/dev/null || echo missing)"; done)"
+# Names only: does the RUNNING agent hold the sign-in private key? (yes/no; nothing else is read out)
+if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/environ" ]; then
+  if tr '\\0' '\\n' < "/proc/$pid/environ" | grep -q '^AUTH_JWT_PRIVATE_KEY='; then echo "API_PRIVATE_KEY=yes"; else echo "API_PRIVATE_KEY=no"; fi
+else echo "API_PRIVATE_KEY=unread"; fi
+""", HEAD=fill(HEAD, APP=S["app_id"]), PW=PORTS["workflow"], PA=PORTS["api"], PWEB=PORTS["web"], UNIT=S["unit"], ENV=S["env_file"],
+        ENVDIR=S["env_dir"], SVCS=" ".join(S["env_files"]))
 
 def health_verdict(S, facts, crons):
     """(health block for state, problems). Problems are plain sentences; any one of them fails the deploy."""
@@ -851,6 +964,12 @@ def health_verdict(S, facts, crons):
     except ValueError: nt = 0
     if nt != len(crons): bad.append(f"{nt} of {len(crons)} cron timers are installed")
     if facts.get("ENV_MODE") != "600 root": bad.append(f"the env file is {facts.get('ENV_MODE')!r}, and it must be mode 600 owned by root")
+    files = dict(x.split("=", 1) for x in (facts.get("ENV_FILES") or "").split() if "=" in x)
+    wrong = [f"{k}.env is {files.get(k, 'missing')}" for k in S["env_files"] if files.get(k) != "600-root"]
+    if wrong: bad.append(f"each service's env file must be mode 600 owned by root, but {', '.join(wrong)}")
+    if facts.get("API_PRIVATE_KEY") != "no":
+        bad.append("the agent API process holds the sign-in private key (AUTH_JWT_PRIVATE_KEY), or it could not be read; only the web app may"
+                   if facts.get("API_PRIVATE_KEY") == "yes" else "whether the agent API holds the sign-in private key could not be read")
     return h, bad
 
 # ---------------------------------------------------------------------------------------------------------
@@ -862,7 +981,8 @@ def bundle(S, crons):
          "postgres.sh": (postgres_sh(S), 0o755), "build.sh": (build_sh(S, crons), 0o755), "db-chain.sh": (db_chain_sh(S), 0o755),
          "units.sh": (units_sh(S, crons), 0o755), "caddy.sh": (caddy_sh(S), 0o755), "health.sh": (health_sh(S, crons), 0o755),
          "api-prestart.sh": (api_prestart_sh(S), 0o755), "cron-call.sh": (cron_call_sh(S, crons), 0o755),
-         "prewarm-serial.mjs": (PREWARM_MJS, 0o644), "Caddyfile": (caddyfile(S), 0o644), "egress.nft": (egress_nft(S), 0o644),
+         "env-services.json": (json.dumps(service_env_spec(S), indent=2, sort_keys=True) + "\n", 0o644),
+         "Caddyfile": (caddyfile(S), 0o644), "egress.nft": (egress_nft(S), 0o644),
          "fail2ban-sshd.local": (fail2ban_jail(S), 0o644)}
     for name, text in unit_files(S, crons).items(): b[f"units/{name}"] = (text, 0o644)
     return b
@@ -894,13 +1014,13 @@ def plan(S, source_dir, bundle_dir="<bundle>", shown=True):
       {"id": "packages", "title": "Install Node 24, Caddy, PostgreSQL, ufw, fail2ban, nftables; create the service user", "argv": ssh(guarded(S, f"bash {F}/packages.sh")), "script": "packages.sh", "timeout": 1800},
       {"id": "firewall", "title": f"Firewall: ports {S['port']}, 80, 443 only; fail2ban for ssh; the egress rule for the service user", "argv": ssh(guarded(S, f"bash {F}/firewall.sh")), "script": "firewall.sh", "timeout": 300},
       {"id": "postgres", "title": "PostgreSQL on 127.0.0.1 with TLS; the admin password is minted on the server", "argv": ssh(guarded(S, f"bash {F}/postgres.sh")), "script": "postgres.sh", "timeout": 600},
-      {"id": "env-config", "title": "Env file (mode 600): the settings derived from state", "argv": ssh(guarded(S, f"{tool} env-merge --file {S['env_file']}")), "stdin": "config", "timeout": 60},
-      {"id": "env-mint", "title": "Env file: mint the app's own internal secrets on the server (kept if already there)", "argv": ssh(guarded(S, f"{tool} env-mint --file {S['env_file']}")), "timeout": 120},
+      {"id": "env-config", "title": "Master env file (root, mode 600): the settings derived from state", "argv": ssh(guarded(S, f"{tool} env-merge --file {S['env_file']}")), "stdin": "config", "timeout": 60},
+      {"id": "env-mint", "title": "Master env file: mint the app's own internal secrets on the server (kept if already there)", "argv": ssh(guarded(S, f"{tool} env-mint --file {S['env_file']}")), "timeout": 120},
       {"id": "env-names", "title": "Env file: which NAMES are present (names only; no value is read back)", "argv": ssh(f"{S['sudo']}{tool} env-names --file {S['env_file']}"), "timeout": 60},
       {"id": "env-secrets", "title": "Env file: the values only the operator holds, from a hidden prompt, sent on stdin", "argv": ssh(guarded(S, f"{tool} env-merge --file {S['env_file']}")), "stdin": "secrets", "timeout": 60},
       {"id": "source", "title": "Copy the SOURCE (never a build) to its final path", "argv": rsync_argv(S, source_dir, S["app_dir"], SOURCE_EXCLUDES, shown=shown), "timeout": 1800},
-      {"id": "build", "title": "Stop the services, then build in place: eve API, web app, task-workflow, one at a time", "argv": ssh(guarded(S, f"bash {F}/build.sh")), "script": "build.sh", "timeout": 5400},
-      {"id": "db-chain", "title": "Database: hold, journal, drift dry run refusing data loss, RLS bootstrap, coverage, release, isolation proof", "argv": ssh(guarded(S, f"bash {F}/db-chain.sh")), "script": "db-chain.sh", "timeout": 3600},
+      {"id": "build", "title": "Stop the services, split each service's own env file from the master, then build in place: eve API, web app, task-workflow, one at a time", "argv": ssh(guarded(S, f"bash {F}/build.sh")), "script": "build.sh", "timeout": 5400},
+      {"id": "db-chain", "title": "Database: hold, journal, drift dry run refusing data loss, RLS bootstrap, coverage, release, isolation proof; then the services' env files again", "argv": ssh(guarded(S, f"bash {F}/db-chain.sh")), "script": "db-chain.sh", "timeout": 3600},
       {"id": "units", "title": "Three systemd services (API as a non-root user in group kvm, prewarm before start) and the cron timers", "argv": ssh(guarded(S, f"bash {F}/units.sh")), "script": "units.sh", "timeout": 2700},
       {"id": "caddy", "title": f"Caddy: TLS for {S['domain_shown']}, everything proxied to the web app on loopback", "argv": ssh(guarded(S, f"bash {F}/caddy.sh")), "script": "caddy.sh", "timeout": 300},
       {"id": "health", "title": "Health on the server: three endpoints, /dev/kvm, the API's user and groups, listeners, timers", "argv": ssh(f"{S['sudo']}bash {F}/health.sh"), "script": "health.sh", "timeout": 180},
@@ -908,7 +1028,14 @@ def plan(S, source_dir, bundle_dir="<bundle>", shown=True):
     ]
 
 def mold_gaps(source_dir):
-    """Which of the off-Vercel switches the source being shipped does not contain. Read-only."""
+    """Which of the off-Vercel switches, and of the mold's own scripts the deploy runs, the source being shipped does
+    not contain. Read-only."""
+    try: scripts = (load(os.path.join(source_dir, "package.json")).get("scripts") or {})
+    except (OSError, ValueError): scripts = {}
+    missing_scripts = [(n, what, where) for n, what, where in MOLD_SCRIPTS if n not in scripts]
+    return _switch_gaps(source_dir) + missing_scripts
+
+def _switch_gaps(source_dir):
     want = {n for n, _, _ in MOLD_SWITCHES}; seen = set()
     for top in ("agent", "lib", "app", "scripts", "services"):
         for d, dirs, files in os.walk(os.path.join(source_dir, top)):
@@ -1029,6 +1156,8 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
         say(f"[dns] {steps['dns']['title']}")
         why = dns_problem(S, resolver)
         if why: raise Stop(why)
+        why = sandbox_conflict(S, resolver(S["domain"]))
+        if why: raise Stop(why + " Nothing was installed.")
         if on_started: on_started()      # everything above only read; from here the server is changed
         for sid in ("mkdir", "bundle", "packages", "firewall", "postgres"): run(sid)
         run("env-config", "".join(f"{k}={v}\n" for k, v in sorted(config_pairs(S).items())))
@@ -1125,6 +1254,9 @@ def host_chain(app_dir, env_file, mode, sslmode, measure_only=False, repair=True
     sh = sh or (lambda cmd, env: subprocess.run(cmd, shell=True, cwd=app_dir, env=dict(os.environ, **env),
                                                  stdin=subprocess.DEVNULL, capture_output=True, text=True))
     envloc = os.path.join(app_dir, ".env.local"); envsup = os.path.join(app_dir, ".env.supabase")
+    # The mold's migration scripts (scripts/lib/migration-ssl.mjs): TLS required unless DATABASE_SSL=disable, which they
+    # accept only for a Postgres on this machine. This server's Postgres is on loopback, TLS on unless state says not.
+    ssl = {"DATABASE_SSL": "require" if sslmode == "require" else "disable"}
     saved = open(envloc).read() if os.path.exists(envloc) else None
     got = {}
     try:
@@ -1162,8 +1294,8 @@ def host_chain(app_dir, env_file, mode, sslmode, measure_only=False, repair=True
         def publish():
             env_merge(env_file, {"DATABASE_URL": got["app_url"]}); print("  DATABASE_URL (app_rw) written to the env file, after the proof")
         P._run_chain({"hold": hold, "push": push, "drift": drift,
-                      "migrate": mold("migration journal", "node scripts/migrate-production.mjs", {"DATABASE_URL": adm, "DATABASE_URL_UNPOOLED": adm}),
-                      "bootstrap": bootstrap, "task-workflow": mold("task-workflow", "npm run db:migrate:task-workflows", {}),
+                      "migrate": mold("migration journal", "node scripts/migrate-production.mjs", {"DATABASE_URL": adm, "DATABASE_URL_UNPOOLED": adm, **ssl}),
+                      "bootstrap": bootstrap, "task-workflow": mold("task-workflow", "npm run db:migrate:task-workflows", ssl),
                       "cover": lambda: P._rls_cover(run, adm, mode, hint), "release": release, "prove": prove, "publish": publish})
     finally:
         if os.path.exists(envsup): os.remove(envsup)
@@ -1206,6 +1338,8 @@ def check(app_id, app, infra, ds, adir, say=print):
         f"{len(S['sandbox'].get('deny_subnets') or [])} denied networks · storage: {S['storage'].get('driver')} · postgres {S['pg']['version']} on loopback, TLS {S['pg']['tls']}")
     errs = state_problems(app_id, adir)
     for e in errs: say("  state: " + e)
+    conflict = sandbox_conflict(S)
+    if conflict: say("  " + conflict)
     gaps = mold_gaps(mold_src)
     for n, what, where in gaps:
         say(f"  not ready: the app's code does not yet contain {n} ({what}); that is {where}")
@@ -1222,6 +1356,7 @@ def check(app_id, app, infra, ds, adir, say=print):
     if not os.path.isfile(key_path(S)):
         todo.append(f"make the SSH key named {S['key_ref']} and add its public half at the server provider: python3 .claude/scripts/provision.py {app_id} --remote-key")
     if errs: todo.append("fix the state problem(s) above, then run: python3 .claude/scripts/factory.py validate")
+    if conflict and not errs: todo.append("resolve the storage and sandbox conflict above")
     if gaps: todo.append("wait for the upstream changes named above to land in the mold (a refresh of the snapshot); nothing for you to do")
     say("check only, offline and read-only: nothing was contacted and nothing was created. " +
         ("Still to do:" if todo else f"Ready. See every command first: python3 .claude/scripts/provision.py {app_id} --deploy-remote --dry-run"))
@@ -1287,6 +1422,8 @@ def main_for(app_id, a, app, infra, ds, adir, P):
         if "--deploy-remote" in a and dry:
             errs = state_problems(app_id, adir)
             if errs: raise Stop("the state does not validate, so there is no plan to print:\n  " + "\n  ".join(errs))
+            why = sandbox_conflict(S)
+            if why: raise Stop(why + " Nothing was contacted.")
             B = bundle(S, crons); print_plan(S, plan(S, src), B, crons, gaps)
             if "--out" in a:
                 out = a[a.index("--out") + 1]; write_bundle(S, crons, out); say(f"bundle written to {out} for reading; nothing was sent anywhere")
@@ -1294,6 +1431,8 @@ def main_for(app_id, a, app, infra, ds, adir, P):
         # ---- from here on a real server is contacted -------------------------------------------------
         errs = state_problems(app_id, adir)
         if errs: raise Stop("the state does not validate; nothing was contacted:\n  " + "\n  ".join(errs))
+        why = sandbox_conflict(S)
+        if why: raise Stop(why + " Nothing was contacted.")
         if not S["host"] or ("--qualify-remote" not in a and not S["domain"]):
             raise Stop(f"{app_id}: the server address and the domain are not in state yet, so there is nowhere to deploy. Nothing was "
                        f"contacted. Supply them: python3 .claude/scripts/provision.py {app_id} --set-remote host=<address> domain=<name>")
@@ -1307,6 +1446,9 @@ def main_for(app_id, a, app, infra, ds, adir, P):
             if r.returncode: raise Stop("could not log in to the server: " + redact((r.stderr or "").strip().splitlines()[-1] if (r.stderr or "").strip() else "no answer") +
                                         f". Check the address, and that the key named {S['key_ref']} was added when the server was created.")
             problems = qualify(parse_kv(r.stdout))
+            # The domain may not point anywhere yet; when it does, the addresses it leads to are what a sandbox fetches.
+            why = sandbox_conflict(S, resolve(S["domain"])) if S["domain"] else None
+            if why: problems.append(why)
             if problems: raise Stop("This server cannot run the app:\n  - " + "\n  - ".join(problems))
             say(f"{app_id}: the server is fit (KVM present, memory, CPUs, disk, Ubuntu 24.04, no Docker, no other web server). Nothing was installed or changed.")
             return 0
@@ -1449,6 +1591,9 @@ def cli(a):
         return 1 if refused else 0
     if cmd == "env-mint":
         made = env_mint(f); print("env: minted on this server (values not shown): " + (", ".join(made) if made else "nothing; every internal secret was already present and was kept")); return 0
+    if cmd == "env-split":
+        counts = env_split(f, os.path.dirname(f), load(_opt(a, "--spec")))
+        print("env: each service's own file written (root, mode 600; values not shown): " + ", ".join(f"{k}.env {n} names" for k, n in counts.items())); return 0
     if cmd == "env-run":
         i = a.index("--"); env_run(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--cwd"), a[i + 1:]); return 0
     if cmd == "pg-admin":
