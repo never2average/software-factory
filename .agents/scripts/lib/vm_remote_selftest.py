@@ -81,6 +81,8 @@ def run():
             _state_rules(check)
             _generated_files(check, tmp)
             _env_file(check, tmp)
+            _service_env(check, tmp)
+            _storage_and_sandbox(check, tmp)
             _qualification(check)
             _plan_and_dry_run(check, tmp)
             _deploy_sequence(check, tmp)
@@ -96,7 +98,8 @@ def run():
     if fails:
         print("vm_remote self-test FAILED:\n  " + "\n  ".join(fails)); return 1
     print(f"vm_remote self-test ok: {n[0]} checks (state rules, generated scripts, unit and timer files, Caddyfile, firewall, "
-          f"env file without leaks, host qualification, dry-run plan, deploy sequence, database chain order, records, lanes); "
+          f"env file without leaks, one env file per service with no private key for the agent, storage names, sandbox deny list and "
+          f"the storage conflict it refuses, host qualification, dry-run plan, deploy sequence, database chain order, records, lanes); "
           f"offline, nothing contacted, nothing on this machine changed")
     return 0
 
@@ -203,7 +206,12 @@ def _generated_files(check, tmp):
     check("  ...clears stale locks and prewarms BEFORE it starts", "ExecStartPre=/bin/bash /opt/software-factory/vm_remote_fixture/factory/api-prestart.sh" in api
           and api.index("ExecStartPre=") < api.index("ExecStart=/usr/bin/node"))
     check("  ...starts the built server, not `eve start`, on loopback", "ExecStart=/usr/bin/node .output/server/index.mjs" in api and "HOST=127.0.0.1" in api and "NITRO_HOST=127.0.0.1" in api and "eve start\n" not in api)
-    check("  ...reads the env file and nothing else for secrets", "EnvironmentFile=/etc/software-factory/vm_remote_fixture/env" in api)
+    check("  ...reads its OWN env file, not the master one", "EnvironmentFile=/etc/software-factory/vm_remote_fixture/api.env" in api and "EnvironmentFile=/etc/software-factory/vm_remote_fixture/env\n" not in api)
+    for name, f in (("web", "web.env"), ("workflow", "workflow.env")):
+        check(f"the {name} unit reads {f} and nothing else", f"EnvironmentFile=/etc/software-factory/vm_remote_fixture/{f}" in U[f"{S['unit']}-{name}.service"]
+              and U[f"{S['unit']}-{name}.service"].count("EnvironmentFile=") == 1)
+    check("every cron call reads cron.env, and no unit reads the master env file", all("EnvironmentFile=/etc/software-factory/vm_remote_fixture/cron.env" in v for k, v in U.items() if "-cron-" in k and k.endswith(".service"))
+          and not any("EnvironmentFile=/etc/software-factory/vm_remote_fixture/env\n" in v for v in U.values()))
     for name, port in (("web", 3000), ("workflow", 3002)):
         u = U[f"{S['unit']}-{name}.service"]
         check(f"the {name} unit binds loopback only and runs as the service user", f"-H 127.0.0.1 -p {port}" in u and "User=sfapp" in u and "0.0.0.0" not in u, u)
@@ -236,7 +244,7 @@ def _generated_files(check, tmp):
     check("  ...and absent, the rule is today's", V.ufw_rules(S) == ["ufw allow 22/tcp", "ufw allow 443/tcp", "ufw allow 80/tcp"])
     p4 = {s["id"]: s for s in V.plan(S4, mold)}
     check("  ...SSH then goes to the tunnel address, while DNS and the sandbox deny list keep the public one",
-          "root@10.44.0.2" in p4["packages"]["argv"] and "203.0.113.10/32" in V.config_pairs(S4)["SANDBOX_DENY_SUBNETS"] and V.dns_problem(S4, lambda d: ["203.0.113.10"]) is None
+          "root@10.44.0.2" in p4["packages"]["argv"] and V.sandbox_conflict(S4, ["203.0.113.10"]) is None and V.dns_problem(S4, lambda d: ["203.0.113.10"]) is None
           and V.dns_problem(S4, lambda d: ["10.44.0.2"]) is not None)
     nft = V.egress_nft(S)
     check("the egress rule keeps the service user off metadata and private ranges, and leaves loopback", all(x in nft for x in V.EGRESS_DENY) and "127.0.0.0/8" not in nft and 'meta skuid "sfapp"' in nft, nft)
@@ -253,9 +261,8 @@ def _generated_files(check, tmp):
     for name in sorted(k for k in B if k.endswith(".sh")):
         r = subprocess.run([bash, "-n", os.path.join(out, name)], capture_output=True, text=True) if bash else CP([], 0, "", "")
         check(f"{name} is valid shell (parsed, never run)", r.returncode == 0, r.stderr)
-    if shutil.which("node"):
-        r = subprocess.run(["node", "--check", os.path.join(out, "prewarm-serial.mjs")], capture_output=True, text=True)
-        check("prewarm-serial.mjs parses", r.returncode == 0, r.stderr)
+    spec = json.load(open(os.path.join(out, "env-services.json")))
+    check("the bundle carries each service's env spec as data, names only", spec == V.service_env_spec(S) and set(spec) == {"web", "api", "workflow", "cron"})
     # Two more read-only parsers, used only where this machine has them: systemd's own unit checker, and nft's
     # check mode (-c: parsed and validated against the kernel, never applied). The service user does not exist
     # here, so the rule is checked with `nobody` standing in for it.
@@ -270,14 +277,19 @@ def _generated_files(check, tmp):
         with open(probe, "w") as f: f.write(B["egress.nft"][0].replace(f'"{V.SERVICE_USER}"', '"nobody"'))
         r = subprocess.run([nft, "-c", "-f", probe], capture_output=True, text=True, timeout=30)
         check("the egress rule is valid nftables (`nft -c`: checked, never applied)", r.returncode == 0, r.stderr[-400:])
-    pw = B["prewarm-serial.mjs"][0]
-    check("the prewarm builds one template at a time, three tries each", "chain.then(() => once(job))" in pw and "attempt <= 3" in pw and "prewarmBuiltAppSandboxes" in pw)
+    check("the factory's own prewarm is gone: the mold's `npm run sandbox:prewarm` does that job", "prewarm-serial.mjs" not in B and not hasattr(V, "PREWARM_MJS"))
     pre = B["api-prestart.sh"][0]
-    check("the API pre-start clears template locks by a literal path, links the sandbox runtime and checks /dev/kvm",
-          "find /opt/software-factory/vm_remote_fixture/app/.eve/sandbox-cache/template-locks -mindepth 1 -delete" in pre and ".microsandbox/bin" in pre and "[ -c /dev/kvm ]" in pre and pre.rstrip().endswith("prewarm-serial.mjs"))
-    b = B["build.sh"][0]; order = [b.index(x) for x in ("systemctl stop", "npm ci --include=dev", "npm run build:eve", "-- npm run build\n", "services/task-workflow -- npm run build")]
-    check("the build stops the services, then builds in place at the final path, one build at a time", order == sorted(order) and "/opt/software-factory/vm_remote_fixture/app" in b and " & " not in b and "wait\n" not in b, order)
-    check("  ...as the service user, with the env file loaded by env-run (never sourced by a shell)", "env-run --file /etc/software-factory/vm_remote_fixture/env --user sfapp" in b and ". /etc/software-factory" not in b)
+    check("the API pre-start checks /dev/kvm, then runs the mold's prewarm with the runtime link and three tries per template, deleting nothing itself",
+          pre.index("[ -c /dev/kvm ]") < pre.index("sandbox:prewarm") and pre.rstrip().endswith("exec /usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries 2")
+          and "-delete" not in pre and not re.search(r"(^|[;&|]\s*)rm\s", pre, re.M) and "cd /opt/software-factory/vm_remote_fixture/app" in pre, pre)
+    b = B["build.sh"][0]; order = [b.index(x) for x in ("systemctl stop", "env-split --file", "npm ci --include=dev", "npm run build:eve", "-- npm run build\n", "services/task-workflow -- npm run build")]
+    check("the build stops the services, splits the env files, then builds in place at the final path, one build at a time", order == sorted(order) and "/opt/software-factory/vm_remote_fixture/app" in b and " & " not in b and "wait\n" not in b, order)
+    check("  ...as the service user, each part with its own service's env file loaded by env-run (never sourced by a shell)",
+          all(f"env-run --file /etc/software-factory/vm_remote_fixture/{k}.env --user sfapp" in b for k in ("api", "web", "workflow"))
+          and "env-run --file /etc/software-factory/vm_remote_fixture/env " not in b and ". /etc/software-factory" not in b
+          and "$RUN_API /opt/software-factory/vm_remote_fixture/app -- npm run build:eve" in b and "$RUN_WEB /opt/software-factory/vm_remote_fixture/app -- npm run build\n" in b)
+    dc = B["db-chain.sh"][0]
+    check("the database step passes the new DATABASE_URL on to the services' files right after the chain", dc.index("host-chain") < dc.index("env-split --file /etc/software-factory/vm_remote_fixture/env --spec /opt/software-factory/vm_remote_fixture/factory/env-services.json"))
     pgs = B["postgres.sh"][0]
     check("Postgres listens on loopback with TLS on, and its password is minted on the server", "listen_addresses = '127.0.0.1'" in pgs and "ssl = on" in pgs and "pg-admin --file" in pgs and "PASSWORD" not in pgs)
     S2 = _settings(lambda d: (d["infrastructure"]["vm_remote"]["postgres"].update(tls="migration_switch", migration_switch_env="MIGRATE_SSLMODE"), d["datastores"]["postgres"].update(sslmode="disable")))
@@ -300,12 +312,18 @@ def _generated_files(check, tmp):
                                    ("five timers", {"TIMERS": "5"}, "5 of 6", "ok"),
                                    ("an inactive firewall", {"UFW": "inactive"}, "firewall", "ok"),
                                    ("a world-readable env file", {"ENV_MODE": "644 root"}, "mode 600", "ok"),
+                                   ("a service env file the service user owns", {"ENV_FILES": "web=600-root api=600-sfapp workflow=600-root cron=600-root"}, "api.env is 600-sfapp", "ok"),
+                                   ("a missing service env file", {"ENV_FILES": "web=600-root api=600-root workflow=600-root"}, "cron.env is missing", "ok"),
+                                   ("an agent that holds the sign-in private key", {"API_PRIVATE_KEY": "yes"}, "AUTH_JWT_PRIVATE_KEY", "ok"),
+                                   ("an agent whose environment could not be read", {"API_PRIVATE_KEY": "unread"}, "could not be read", "ok"),
                                    ("a dead API", {"API": "000"}, "api service answered no answer", "ok")):
         hv, bad = sick(**kw)
         check(f"health refuses {label}", any(needle in x for x in bad) and hv["kvm"] == kvm, (hv, bad))
     gaps = V.mold_gaps(mold)
-    check("the mold snapshot is reported for what it lacks, by name (read-only scan)", isinstance(gaps, list) and all(g[0] in ("SANDBOX_BACKEND", "STORAGE_DRIVER", "SERVICE_AUTH") for g in gaps), gaps)
+    check("the mold snapshot is reported for what it lacks, by name (read-only scan)", isinstance(gaps, list) and all(g[0] in ("SANDBOX_BACKEND", "STORAGE_DRIVER", "SERVICE_AUTH", "sandbox:prewarm") for g in gaps), gaps)
     src = os.path.join(tmp, "src-ready"); os.makedirs(os.path.join(src, "agent")); os.makedirs(os.path.join(src, "lib"))
+    check("  ...a source without the mold's `sandbox:prewarm` script lacks it, by name", "sandbox:prewarm" in [g[0] for g in V.mold_gaps(src)])
+    json.dump({"scripts": {"sandbox:prewarm": "node scripts/sandbox-prewarm-serial.mjs"}}, open(os.path.join(src, "package.json"), "w"))
     open(os.path.join(src, "agent/sandbox.ts"), "w").write("process.env.SANDBOX_BACKEND"); open(os.path.join(src, "lib/storage.ts"), "w").write("process.env.STORAGE_DRIVER")
     check("  ...a source with two of the three switches lacks exactly the third", [g[0] for g in V.mold_gaps(src)] == ["SERVICE_AUTH"])
     open(os.path.join(src, "lib/service.ts"), "w").write("process.env.SERVICE_AUTH")
@@ -335,7 +353,8 @@ def _env_file(check, tmp):
     f2 = os.path.join(tmp, "etc", "mint", "env"); calls = []
     def pair(): calls.append(1); return "PRIVKEYBASE64", "PUBKEYBASE64"
     made = V.env_mint(f2, jwt_pair=pair)
-    check("env-mint mints the five internal secrets once, on the machine that keeps them", made == sorted(V.MINTED) and len(V.env_read(f2)["CRON_SECRET"]) == 64 and stat.S_IMODE(os.stat(f2).st_mode) == 0o600, made)
+    check("env-mint mints the six internal secrets once, on the machine that keeps them", made == sorted(V.MINTED) and len(V.env_read(f2)["CRON_SECRET"]) == 64 and stat.S_IMODE(os.stat(f2).st_mode) == 0o600, made)
+    check("  ...the storage signing secret among them, long enough for the mold (32+ characters)", len(V.env_read(f2).get("STORAGE_SIGNING_SECRET", "")) >= 32)
     kept = dict(V.env_read(f2))
     check("  ...and a second run mints nothing and keeps every value", V.env_mint(f2, jwt_pair=pair) == [] and V.env_read(f2) == kept and len(calls) == 1)
     half = dict(kept); half.pop("AUTH_JWT_PUBLIC_KEY"); V.env_write(f2, half)
@@ -350,9 +369,13 @@ def _env_file(check, tmp):
     check("the settings half of the env file holds no secret name", not (set(c) & set(V.SERVER_MADE)) and not (set(c) & set(V.operator_names(S))), sorted(c))
     check("  ...and carries the sandbox settings, the build-time flags and the loopback addresses", c["SANDBOX_BACKEND"] == "microsandbox" and c["SANDBOX_CPUS"] == "2" and c["SANDBOX_MEMORY_MIB"] == "1024"
           and c["ENABLE_WEB_SEARCH"] == "true" and c["ENABLE_BROWSER"] == "false" and c["EVE_API_URL"] == "http://127.0.0.1:3001" and c["TASK_WORKFLOW_SERVICE_URL"] == "http://127.0.0.1:3002"
-          and c["WEB_ORIGIN"] == "https://app.example.com" and c["STORAGE_DRIVER"] == "fs" and c["SERVICE_AUTH"] == "session-key" and c["EVE_DOCKER_PATH"] == "/nonexistent/docker", c)
+          and c["WEB_ORIGIN"] == "https://app.example.com" and c["SERVICE_AUTH"] == "session-key" and c["EVE_DOCKER_PATH"] == "/nonexistent/docker", c)
+    check("  ...the filesystem storage driver under the names the mold reads (STORAGE_DRIVER=filesystem, STORAGE_FS_ROOT, STORAGE_PUBLIC_URL)",
+          c["STORAGE_DRIVER"] == "filesystem" and c["STORAGE_FS_ROOT"] == "/var/lib/software-factory/vm_remote_fixture/storage" and c["STORAGE_PUBLIC_URL"] == "https://app.example.com"
+          and not ({"STORAGE_DIR", "DATAROOM_DIR", "STORAGE_BUCKET", "STORAGE_ENDPOINT", "STORAGE_REGION", "STORAGE_ACCESS_KEY_REF", "STORAGE_SECRET_KEY_REF"} & set(c)), sorted(c))
+    check("  ...and DATABASE_SSL=require for the loopback Postgres with TLS on", c["DATABASE_SSL"] == "require")
     deny = c["SANDBOX_DENY_SUBNETS"].split(",")
-    check("  ...the sandbox deny list has the five ranges plus the server's own address", all(x in deny for x in V.DENY_REQUIRED) and "203.0.113.10/32" in deny, deny)
+    check("  ...the sandbox deny list is the five ranges and NOT the server's own address (filesystem file links point there)", sorted(deny) == sorted(V.DENY_REQUIRED) and "203.0.113.10/32" not in deny, deny)
     check("  ...every pair is storable", all(V.env_check(k, v) is None for k, v in c.items()))
     check("one Google client id feeds both names, so only one is asked for", "NEXT_PUBLIC_GOOGLE_CLIENT_ID" not in V.operator_names(S) and "GOOGLE_CLIENT_ID" in V.operator_names(S))
     said = []
@@ -377,6 +400,145 @@ def _env_file(check, tmp):
     check("  ...and a second run rotates nothing", made is False and len(psql_in) == 3 and V.env_read(f3)["POSTGRES_ADMIN_URL"] == url, printed)
     check("the app_rw URL is moved onto the port that answers, keeping its credentials", V.retarget("postgresql://app_rw:pw@db.example:6543/x?a=1", "postgresql://sfadmin:other@127.0.0.1:5432/x", "require")
           == "postgresql://app_rw:pw@127.0.0.1:5432/x?a=1&sslmode=require")
+
+# ---- one env file per service (fde-agent #99: SERVICE_AUTH=session-key) -------------------------------------------
+PRIV, PUB = "PRIV-" + SECRET, "PUB-KEY-material"
+def _master_values(S):
+    """Every name the master file holds after a deploy, with stand-in values."""
+    m = dict(V.config_pairs(S))
+    for k in V.MINTED: m[k] = f"{k}-{SECRET}"
+    m["AUTH_JWT_PRIVATE_KEY"], m["AUTH_JWT_PUBLIC_KEY"] = PRIV, PUB
+    m["POSTGRES_ADMIN_URL"] = "postgresql://sfadmin:ADMINPW@127.0.0.1:5432/x?sslmode=require"
+    m["DATABASE_URL"] = "postgresql://app_rw:APPRWPW@127.0.0.1:5432/x?sslmode=require"
+    for n in V.operator_names(S) + ["NEXT_PUBLIC_GOOGLE_CLIENT_ID"]: m[n] = f"{n}-{SECRET}"
+    return m
+
+def _service_env(check, tmp):
+    S = _settings(); spec = V.service_env_spec(S); master = _master_values(S)
+    v = V.split_values(master, spec)
+    check("there is one env file per service: web, api, workflow and the cron calls", set(v) == {"web", "api", "workflow", "cron"} and set(S["env_files"]) == set(v))
+    check("the agent's file holds NO sign-in private key", "AUTH_JWT_PRIVATE_KEY" not in v["api"] and PRIV not in json.dumps(v["api"]), sorted(v["api"]))
+    check("  ...but the public key and SERVICE_AUTH=session-key, so it verifies the web app's service token", v["api"].get("AUTH_JWT_PUBLIC_KEY") == PUB and v["api"].get("SERVICE_AUTH") == "session-key")
+    check("  ...and its own settings: sandbox, storage, model, database, the internal secrets it reads", all(k in v["api"] for k in ("SANDBOX_BACKEND", "SANDBOX_DENY_SUBNETS", "STORAGE_DRIVER", "STORAGE_FS_ROOT",
+          "STORAGE_PUBLIC_URL", "STORAGE_SIGNING_SECRET", "DATABASE_URL", "CRON_SECRET", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "WORKFLOW_LOCAL_DATA_DIR", "GOOGLE_CLIENT_ID", "CLOUDFLARE_API_TOKEN")), sorted(v["api"]))
+    check("  ...and none of the web app's own names (agent address, mail, browser client id)", not (set(V.WEB_ONLY) & set(v["api"])), sorted(set(V.WEB_ONLY) & set(v["api"])))
+    check("the web app's file holds the private key, the public key and SERVICE_AUTH=session-key", v["web"].get("AUTH_JWT_PRIVATE_KEY") == PRIV and v["web"].get("AUTH_JWT_PUBLIC_KEY") == PUB
+          and v["web"].get("SERVICE_AUTH") == "session-key" and v["web"].get("NEXT_PUBLIC_EVE_API_URL") == v["web"].get("EVE_API_URL") == "http://127.0.0.1:3001")
+    check("the task-workflow service gets only what it reads, and a workflow data directory of its own", sorted(v["workflow"]) == sorted(V.WORKFLOW_READS)
+          and v["workflow"]["WORKFLOW_LOCAL_DATA_DIR"] == "/var/lib/software-factory/vm_remote_fixture/task-workflow-data" != v["api"]["WORKFLOW_LOCAL_DATA_DIR"], v["workflow"].keys())
+    check("the cron calls get CRON_SECRET and nothing else", sorted(v["cron"]) == ["CRON_SECRET"])
+    check("no service gets the database admin URL or the migration TLS switch", not any(k in vals for vals in v.values() for k in V.ADMIN_ONLY))
+    check("  ...and nothing a service gets is a value it does not have in the master file (or a fixed setting)", all(vals[k] == master.get(k) for svc, vals in v.items() for k in vals if k not in spec[svc]["set"]))
+    d = os.path.join(tmp, "etc", "split"); mf = os.path.join(d, "env"); V.env_write(mf, master)
+    sp = os.path.join(tmp, "env-services.json"); json.dump(spec, open(sp, "w"))
+    r = subprocess.run([sys.executable, os.path.join(HERE, "vm_remote.py"), "env-split", "--file", mf, "--spec", sp], capture_output=True, text=True)
+    check("env-split writes the four files and prints names and counts only", r.returncode == 0 and SECRET not in r.stdout + r.stderr and "ADMINPW" not in r.stdout + r.stderr
+          and all(f"{k}.env" in r.stdout for k in v), r.stdout + r.stderr)
+    for k in v:
+        p = os.path.join(d, f"{k}.env")
+        check(f"  ...{k}.env is mode 600 and holds exactly its names", os.path.isfile(p) and stat.S_IMODE(os.stat(p).st_mode) == 0o600 and V.env_read(p) == v[k], k)
+    check("  ...in the directory only its owner can enter, owned like the master file (root on the server)", stat.S_IMODE(os.stat(d).st_mode) == 0o700
+          and all(os.stat(os.path.join(d, f"{k}.env")).st_uid == os.stat(mf).st_uid for k in v))
+    check("  ...and the agent's file on disk has no private key in it", "AUTH_JWT_PRIVATE_KEY" not in open(os.path.join(d, "api.env")).read() and PRIV not in open(os.path.join(d, "api.env")).read())
+    stale = dict(master, STORAGE_DIR="/var/lib/x/storage", DATAROOM_DIR="/var/lib/x/storage/dataroom")
+    check("names an earlier plan wrote and the mold never read stay out of every service's file", not any(n in vals for vals in V.split_values(stale, spec).values() for n in V.RETIRED))
+    gone = dict(master); gone.pop("EXA_API_KEY", None); V.env_write(mf, gone); V.env_split(mf, d, spec)
+    check("a name taken out of the master file leaves every service's file on the next split", all("EXA_API_KEY" not in V.env_read(os.path.join(d, f"{k}.env")) for k in v))
+    bad = json.loads(json.dumps(spec)); bad["api"]["drop"] = [n for n in bad["api"]["drop"] if n != "AUTH_JWT_PRIVATE_KEY"]
+    before = open(os.path.join(d, "api.env")).read()
+    out, printed = quiet(V.env_split, mf, d, bad)
+    check("a spec that would hand the agent the private key is refused, and nothing is rewritten", isinstance(out, SystemExit) and "private key" in str(out)
+          and open(os.path.join(d, "api.env")).read() == before and PRIV not in printed, out)
+    check("the unit files point each service at exactly the file written for it", all(f"EnvironmentFile={S['env_files'][k]}" in t for k, t in
+          ((k, V.unit_files(S, list(V.CRONS))[f"{S['unit']}-{n}.service"]) for k, n in (("web", "web"), ("api", "api"), ("workflow", "workflow")))))
+
+# ---- storage names (fde-agent #103) and the sandbox deny list (fde-agent #100) --------------------------------------
+def _storage_and_sandbox(check, tmp):
+    s3 = lambda **kw: (lambda d: (d["infrastructure"]["vm_remote"].update(storage=dict({"driver": "s3", "bucket": "acme-files", "endpoint": "https://fra1.digitaloceanspaces.com",
+                       "region": "fra1", "access_key_ref": "SPACES_KEY", "secret_key_ref": "SPACES_SECRET"}, **kw)),
+                       d["infrastructure"]["secrets"].extend(["SPACES_KEY", "SPACES_SECRET"]), d["infrastructure"]["secrets_user"].extend(["SPACES_KEY", "SPACES_SECRET"]),
+                       d["datastores"]["blob"].update(provider="s3")))
+    d = fixture_docs(); s3()(d)
+    e = F._check(d["infrastructure"], load(os.path.join(ROOT, "state/application/app_id/infrastructure.schema.json")), "x") + F._vm_remote("vm_remote_fixture", d)
+    check("an s3 vm_remote app validates (the fixture, switched to Spaces)", e == [], e)
+    S = _settings(s3()); c = V.config_pairs(S)
+    check("the s3 driver's settings go under the names the mold reads", c["STORAGE_DRIVER"] == "s3" and c["STORAGE_S3_ENDPOINT"] == "https://fra1.digitaloceanspaces.com"
+          and c["STORAGE_S3_BUCKET"] == "acme-files" and c["STORAGE_S3_REGION"] == "fra1" and c["NEXT_PUBLIC_STORAGE_HOST"] == "fra1.digitaloceanspaces.com"
+          and not any(k.startswith("STORAGE_FS_") or k in ("STORAGE_PUBLIC_URL", "STORAGE_BUCKET", "STORAGE_ACCESS_KEY_REF") for k in c), sorted(c))
+    check("  ...and the key pair is never a setting: only its NAMES are in state", not any(k in c for k in ("STORAGE_S3_ACCESS_KEY_ID", "STORAGE_S3_SECRET_ACCESS_KEY", "SPACES_KEY", "SPACES_SECRET")))
+    check("  ...virtual addressing puts the bucket in the browser's storage host", V.config_pairs(_settings(s3(addressing="virtual")))["NEXT_PUBLIC_STORAGE_HOST"] == "acme-files.fra1.digitaloceanspaces.com"
+          and V.config_pairs(_settings(s3(addressing="virtual")))["STORAGE_S3_ADDRESSING"] == "virtual")
+    m = _master_values(S); v = V.split_values(m, V.service_env_spec(S))
+    check("on the server the operator's key pair reaches web and agent under STORAGE_S3_ACCESS_KEY_ID / STORAGE_S3_SECRET_ACCESS_KEY",
+          all(v[k].get("STORAGE_S3_ACCESS_KEY_ID") == m["SPACES_KEY"] and v[k].get("STORAGE_S3_SECRET_ACCESS_KEY") == m["SPACES_SECRET"] for k in ("web", "api")))
+    check("  ...and not under the stored names too, nor to the workflow service or the cron calls", not any(n in v[k] for k in v for n in ("SPACES_KEY", "SPACES_SECRET"))
+          and "STORAGE_S3_ACCESS_KEY_ID" not in v["workflow"] and "STORAGE_S3_ACCESS_KEY_ID" not in v["cron"])
+    check("  ...and on s3 no service holds the filesystem driver's signing secret", all("STORAGE_SIGNING_SECRET" not in v[k] for k in v))
+    d = fixture_docs(); s3(endpoint=None)(d); d["infrastructure"]["vm_remote"]["storage"].pop("endpoint")
+    check("validate refuses s3 without an endpoint (the mold refuses to start without STORAGE_S3_ENDPOINT)", any("storage.endpoint" in x for x in F._vm_remote("vm_remote_fixture", d)))
+    # The names the plan writes, against the mold that will run them: every one must be read somewhere in its source.
+    for label, src in (("this checkout's snapshot", MOLD),):
+        if V.mold_gaps(src):
+            check(f"(the name-by-name read check waits for {label} to carry #99-#101; it lacks {[g[0] for g in V.mold_gaps(src)]})", True); continue
+        text = _source_text(src)
+        names = set(V.config_pairs(_settings())) | set(V.config_pairs(S)) | set(V.MINTED) | {mold for _, mold in V.S3_KEYS} | set(V.WORKFLOW_READS)
+        # Two names are read by eve itself, not by the app's own source (docs/self-hosting/SANDBOX.md names the first).
+        by_eve = {"EVE_DOCKER_PATH", "WORKFLOW_LOCAL_DATA_DIR"}
+        unread = sorted(n for n in names - {"DATABASE_SSL"} - by_eve if not re.search(r"\b" + n + r"\b", text))
+        check(f"every name the plan writes is one {label} reads", unread == [], unread)
+        eve = os.path.join(src, "node_modules", "eve", "dist")
+        if os.path.isdir(eve):
+            r = subprocess.run(["grep", "-rlwE", "|".join(sorted(by_eve)), eve], capture_output=True, text=True)
+            hits = "\n".join(open(f, errors="ignore").read() for f in r.stdout.split()[:20])
+            check("  ...and the two eve reads itself are in eve's own code", all(re.search(r"\b" + n + r"\b", hits) for n in by_eve), sorted(by_eve))
+        check("  ...DATABASE_SSL included (the migration scripts)", re.search(r"\bDATABASE_SSL\b", open(os.path.join(src, "scripts/lib/migration-ssl.mjs")).read()) is not None)
+        check("  ...and none the agent never reads is in its file", not any(re.search(r"\b" + n + r"\b", _source_text(src, ("agent",))) for n in ("AUTH_JWT_PRIVATE_KEY",)))
+    # The sandbox deny list and the filesystem driver's file links
+    S = _settings()
+    check("the deny list never gains the server's own address", "203.0.113.10/32" not in V.deny_list(S) and V.sandbox_conflict(S) is None and V.sandbox_conflict(S, ["203.0.113.10"]) is None)
+    own = lambda d: d["infrastructure"]["vm_remote"]["sandbox"]["deny_subnets"].append("203.0.113.10/32")
+    S2 = _settings(own); why = V.sandbox_conflict(S2)
+    check("filesystem storage with the server's own address denied is refused, in a sentence that names both fixes", why and "203.0.113.10/32" in why and "s3" in why
+          and "deny_subnets" in why and "loopback" in why, why)
+    d = fixture_docs(); own(d)
+    check("  ...by validate too", any("inside vm_remote.sandbox.deny_subnets" in x and "203.0.113.10/32" in x for x in F._vm_remote("vm_remote_fixture", d)), F._vm_remote("vm_remote_fixture", d))
+    rc, printed = quiet(V.main_for, "vm_remote_fixture", ["vm_remote_fixture", "--deploy-remote", "--dry-run"], d["application"], d["infrastructure"], d["datastores"], V.FIXTURE, P)
+    check("  ...and the plan is not printed for it", rc == 1 and "[01 qualify]" not in printed, printed[:300])
+    check("  ...but the same deny list with s3 storage is fine (its links point at the bucket)", V.sandbox_conflict(_settings(lambda d: (own(d), s3()(d)))) is None
+          and F._vm_remote("vm_remote_fixture", (lambda d: (own(d), s3()(d), d)[-1])(fixture_docs())) == [])
+    priv = _settings(lambda d: d["infrastructure"]["vm_remote"].update(host="10.20.0.5"))
+    why = V.sandbox_conflict(priv)
+    check("a server whose address is in a required private range cannot use filesystem storage: the fix offered is s3 or a public address",
+          why and "10.0.0.0/8" in why and "s3" in why and "Take 10.0.0.0/8 out" not in why, why)
+    wide = _settings(lambda d: d["infrastructure"]["vm_remote"]["sandbox"]["deny_subnets"].append("198.51.100.0/24"))
+    check("an address the DOMAIN resolves to is checked too (the static check only sees the host)", V.sandbox_conflict(wide) is None and "198.51.100.7" in (V.sandbox_conflict(wide, ["198.51.100.7"]) or ""))
+    # --qualify-remote: the domain is resolved and a conflict is a refusal, after the read-only probe. Nothing real is
+    # contacted: the runner, the resolver, the key and the tool lookup are stand-ins for this one call.
+    d = fixture_docs(); d["infrastructure"]["vm_remote"]["sandbox"]["deny_subnets"].append("198.51.100.0/24")
+    adir = os.path.join(tmp, "qual", "vm_remote_fixture"); shutil.copytree(V.FIXTURE, adir); json.dump(d["infrastructure"], open(os.path.join(adir, "infrastructure.json"), "w"), indent=2)
+    key = os.path.join(tmp, "qual", "key"); open(key, "w").close()
+    saved = (V.real_runner, V.resolve, V.key_path, V.shutil.which)
+    try:
+        V.real_runner = lambda st, stdin=None: CP(st["argv"], 0, fx("qualify-ok.txt"), "")
+        V.key_path = lambda S: key; V.shutil.which = lambda t: "/usr/bin/" + t
+        V.resolve = lambda name: ["198.51.100.7"]
+        rc, printed = quiet(V.main_for, "vm_remote_fixture", ["vm_remote_fixture", "--qualify-remote"], d["application"], d["infrastructure"], d["datastores"], adir, P)
+        check("--qualify-remote refuses a server whose domain leads into the sandbox deny list while files are on its disk", rc == 1 and "cannot run the app" in printed and "198.51.100.0/24" in printed, printed[-400:])
+        V.resolve = lambda name: ["203.0.113.10"]
+        rc, printed = quiet(V.main_for, "vm_remote_fixture", ["vm_remote_fixture", "--qualify-remote"], d["application"], d["infrastructure"], d["datastores"], adir, P)
+        check("  ...and accepts it when the domain leads to the public address", rc == 0 and "the server is fit" in printed, printed[-400:])
+    finally:
+        V.real_runner, V.resolve, V.key_path, V.shutil.which = saved
+
+def _source_text(src, tops=("agent", "lib", "app", "services/task-workflow/lib", "services/task-workflow/app", "scripts")):
+    out = []
+    for top in tops:
+        for dp, dirs, files in os.walk(os.path.join(src, top)):
+            dirs[:] = [x for x in dirs if x not in ("node_modules", ".next", ".output", ".eve", "fixtures")]
+            out += [open(os.path.join(dp, f), errors="ignore").read() for f in files if f.endswith((".ts", ".tsx", ".mjs", ".js")) and ".test." not in f]
+    for f in ("next.config.ts", "proxy.ts"):
+        if os.path.isfile(os.path.join(src, f)): out.append(open(os.path.join(src, f)).read())
+    return "\n".join(out)
 
 # ---- 076: host qualification -------------------------------------------------------------------------------------
 def _qualification(check):
