@@ -99,6 +99,13 @@ def st_brand(app, a, i):
     return (DONE, f"{b['product_name']}, {b.get('brand_color', 'default colour')}") if b.get("product_name") else (NA, "the mold's own look (set one with branding.py <app> set --name … --color … --logo …)")
 
 def st_keys(app, a, i):
+    if i.get("target") == "vm_remote":
+        # Its own server (mold_v1-075): the check is offline, and what is left is the server, the domain and the key
+        # name. The values themselves are asked for at a hidden prompt during the deploy and stored on the server.
+        r = quiet(os.path.join(S, "provision.py"), app, "--check"); out = clean(r.stdout + r.stderr)
+        todo = [l.strip()[2:] for l in out.splitlines() if l.startswith("  - ")]
+        if r.returncode == 0: return DONE, "server, domain and key name are in place; your own values are asked for during the deploy"
+        return OPERATOR, ("; ".join(todo) or (out.strip().splitlines() or ["the check could not run"])[-1])[:420]
     if i.get("target") != "vercel": return NA, "a vm application's keys live in its own environment file"
     r = quiet(os.path.join(S, "provision.py"), app, "--check"); out = clean(r.stdout + r.stderr)
     if r.returncode == 0: return DONE, (re.search(r"secrets present: \S+", out) or [""])[0] or "all present"
@@ -108,6 +115,14 @@ def st_keys(app, a, i):
 
 def st_deploy(app, a, i):
     v = i.get("vercel") or {}; url = v.get("production_url")
+    if i.get("target") == "vm_remote":
+        url = (i.get("vm_remote") or {}).get("production_url")
+        if a.get("status") == "reverted" or not url or not i.get("deployed_at"):
+            # It asks for values at a hidden prompt, so it is the operator's to run, at their own terminal.
+            return OPERATOR, f"deploy to its own server, at your terminal: python3 .claude/scripts/provision.py {app} --deploy-remote (see every step first with --dry-run)"
+        now = mold_commit(a["mold_id"]); was = a.get("mold_commit")
+        if was and now and was != now: return OPERATOR, f"the mold moved ({was[:7]} -> {now[:7]}); redeploy at your terminal: python3 .claude/scripts/provision.py {app} --deploy-remote"
+        return DONE, f"{url} (deployed {i['deployed_at'][:16]})"
     if i.get("target") != "vercel": return NA, "vm target: see the VM tasks"
     if not url or not i.get("deployed_at"): return TODO, "first deploy"
     now = mold_commit(a["mold_id"]); was = a.get("mold_commit")
@@ -147,6 +162,9 @@ def st_package(app, a, i):
 
 def st_address(app, a, i):
     v = i.get("vercel") or {}; d = v.get("custom_domain")
+    if i.get("target") == "vm_remote":
+        vr = i.get("vm_remote") or {}
+        return (DONE, vr["production_url"]) if vr.get("production_url") else (NA, f"its own domain, {vr.get('domain') or 'not named yet'}, once deployed")
     if not d: return NA, f"it lives at {v.get('production_url') or 'its Vercel address'} (name one with domain.py {app} attach <domain>)"
     if v.get("production_url") == f"https://{d}": return DONE, f"https://{d}"
     ok = quiet(os.path.join(S, "domain.py"), app, "verify").returncode == 0

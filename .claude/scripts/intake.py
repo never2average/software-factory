@@ -32,7 +32,16 @@ def parse_brief(text):
     # The possessive lives INSIDE the lookahead: as an optional group before it, "vercel's ai gateway"
     # backtracked out of the 's and matched a bare "vercel" that the lookahead could no longer see.
     vercel = bool(re.search(r"\bvercel\b(?!(?:['\u2019]s)?[\s-]+(?:ai[\s-]+)?gateway\b)", t))
-    if vm and vercel:
+    # A server of the customer's own that SERVES the app (mold_v1-075), as opposed to `vm`, which only verifies a
+    # database on this box. Named explicitly, so the older vm words keep meaning what they meant.
+    remote = bool(re.search(r"\bvm_remote\b|\b(?:remote|own|dedicated|customer(?:['\u2019]s)?) (?:server|machine)\b", t))
+    if remote and not vercel:
+        h["deploy_target"] = "vm_remote"; vm = False
+        m = re.search(r"\bserver(?: address)?:\s*([0-9a-z][0-9a-z.-]*[0-9a-z])", t)
+        if m: h["remote_host"] = m.group(1)
+    elif remote: h["deploy_target_conflict"] = True
+    if h.get("deploy_target") == "vm_remote" or h.get("deploy_target_conflict"): pass
+    elif vm and vercel:
         # A brief that names BOTH is a question, not an answer. The last rule to run used to win, so
         # intake wrote target=vercel for a brief that asked for the vm. deploy_target stays pending.
         h["deploy_target_conflict"] = True
@@ -122,7 +131,7 @@ def unforwarded(target, provider):
     an unmeasured default. The list is READ from provision.py, not copied here, so this refusal lifts by
     itself the day provision.py forwards the name. target=vm starts no process at all (provision.py:
     "target vm serves nothing"), so there is nothing to forward and nothing to refuse."""
-    if target != "vm":
+    if target not in ("vm", "vm_remote"):      # vm_remote: every declared name goes into the one env file all three services read
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import provision                     # stdlib-only module, no side effects at import
         return [n for n in INFERENCE_SECRETS.get(provider, []) if n not in provision.API_ENV]
@@ -171,26 +180,26 @@ def match(phrases, table):
 
 QUESTIONS = [
  # id, state path, prompt, options or None, resolver(defaults, hints, ctx) -> value or None
- ("deploy_target", "infrastructure.target", "Where should this application run?", ["vercel","vm"],
+ ("deploy_target", "infrastructure.target", "Where should this application run?", ["vercel","vm","vm_remote"],
    lambda d,h,c: None if h.get("deploy_target_conflict") else h.get("deploy_target") or d.get("deploy_target")),
  # the hint was ignored here — alone among the sixteen questions — so a brief could never land on a
  # provider and intake silently stamped the factory default. self_hosted is LOCAL-ONLY (no host port),
  # so it forces target=vm; provision.py refuses to pair it with a Vercel deployment.
  ("postgres_provider", "datastores.postgres.provider", "Which Postgres provider?", ["neon","supabase","rds","self_hosted"],
-   lambda d,h,c: h.get("postgres_provider") or d.get("postgres_provider")),
+   lambda d,h,c: "self_hosted" if answered(c, h, d, "deploy_target")=="vm_remote" else h.get("postgres_provider") or d.get("postgres_provider")),
  ("postgres_ref", "datastores.postgres.url_ref", "Name of the secret holding the Postgres URL (e.g. DATABASE_URL). Name only, never the value.", None,
    lambda d,h,c: "DATABASE_URL"),
  ("postgres_scope", "datastores.postgres.scope", "Fresh database for this app, or shared with the live source deployment's data?", ["fresh","shared_with_live"],
    lambda d,h,c: h.get("postgres_scope") or d.get("postgres_scope", "fresh")),
- ("blob_provider", "datastores.blob.provider", "Which blob store for the data room?", ["vercel_blob","s3","gcs","azure_blob"],
-   lambda d,h,c: d.get("blob_provider")),
+ ("blob_provider", "datastores.blob.provider", "Which blob store for the data room?", ["vercel_blob","s3","gcs","azure_blob","fs"],
+   lambda d,h,c: "fs" if answered(c, h, d, "deploy_target")=="vm_remote" else d.get("blob_provider")),
  ("inference_provider", "infrastructure.inference.provider", "Which inference provider serves the agent?", ["cloudflare_workers_ai","vercel_ai_gateway"],
    lambda d,h,c: h.get("inference_provider") or d.get("inference_provider")),
  # the first name the provider reads: CLOUDFLARE_ACCOUNT_ID on Workers AI, AI_GATEWAY_API_KEY on the gateway
  ("inference_account", "infrastructure.inference.account_ref", "Name of the secret holding the inference account id (e.g. CLOUDFLARE_ACCOUNT_ID).", None,
    lambda d,h,c: (INFERENCE_SECRETS.get(answered(c, h, d, "inference_provider")) or [None])[0]),
- ("secret_store", "infrastructure.secret_store", "Where do secret values live?", ["vercel_env","vm_env_file"],
-   lambda d,h,c: "vm_env_file" if answered(c, h, d, "deploy_target")=="vm" else d.get("secret_store")),
+ ("secret_store", "infrastructure.secret_store", "Where do secret values live?", ["vercel_env","vm_env_file","vm_remote_env_file"],
+   lambda d,h,c: {"vm": "vm_env_file", "vm_remote": "vm_remote_env_file"}.get(answered(c, h, d, "deploy_target")) or d.get("secret_store")),
  ("web_search", "application.capabilities.web_search", "Enable web search (Exa) in the agent?", ["true","false"],
    lambda d,h,c: h.get("web_search", True)),
  ("browser", "application.capabilities.browser", "Enable the browser subagent?", ["true","false"],
@@ -256,7 +265,7 @@ def pick_product(mold_id, hints, existing=None):
 # app has no self-hosted network). Lists are values, not merged.
 OWNED_BY_OMISSION = {
   "application": {"customer_id", "packs", "clone_of", "surface.branding", "surface.primary_context.entity_vocabulary.note"},
-  "infrastructure": {"vercel", "vm"},
+  "infrastructure": {"vercel", "vm", "vm_remote"},
   "datastores": {"postgres.network", "postgres.host", "postgres.port", "postgres.database", "postgres.exposure",
                  "postgres.admin_url_ref", "postgres.pooling", "postgres.rls_verified"},
   "datainfra": set(),
@@ -290,7 +299,7 @@ def keep_measured(app, infra, ds, existing):
     for name, new, old in (("application", app, ex_app), ("infrastructure", infra, ex_inf), ("datastores", ds, ex_ds)):
         carry_forward(new, old, OWNED_BY_OMISSION[name])
     # a target switch drops the other target's block, but the SAME target keeps its whole block's history
-    for t in ("vercel", "vm"):
+    for t in ("vercel", "vm", "vm_remote"):
         if t in infra and isinstance(ex_inf.get(t), dict): carry_forward(infra[t], ex_inf[t], set())
     return app, infra, ds
 
@@ -418,7 +427,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         infra["vercel"]={"team":d.get("vercel_team","your-vercel-team"),"project":ans["vercel_project"],
           "functions":{"api":"vercel.api.json","eve":"vercel.eve.json"}}
         if ans.get("custom_domain"): infra["vercel"]["custom_domain"]=ans["custom_domain"]
-    else:
+    elif ans["deploy_target"]=="vm":
         infra["vm"]=dict(d.get("vm",{})); infra["vm"]["compose"]=f"infra/vm/apps/{app_id}/docker-compose.yml"
     ex_inf = existing.get("infrastructure", {})
     for k in ("datastores", "deployed_at", "configured_at"):
@@ -466,6 +475,10 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         ex_di = existing.get("datainfra", {})
         for k in ("platforms", "deployments", "pipelines", "agents", "dataroom"):
             if ex_di.get(k): di[k] = ex_di[k]
+    if ans["deploy_target"]=="vm_remote":
+        # One function owns the vm_remote shape (lib/vm_remote.py), so intake, the fixture and the validator agree.
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); import vm_remote
+        vm_remote.shape_state(app_id, infra, ds, di, host=hints.get("remote_host"), domain=hints.get("custom_domain"))
     if existing:
         app, infra, ds = keep_measured(app, infra, ds, existing)
         carry_forward(di, existing.get("datainfra", {}), OWNED_BY_OMISSION["datainfra"])

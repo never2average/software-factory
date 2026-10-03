@@ -274,9 +274,10 @@
           "type": "string",
           "enum": [
             "managed_provider",
-            "private_docker_network"
+            "private_docker_network",
+            "remote_loopback"
           ],
-          "description": "How the database is reachable. There is no public-port option, by design."
+          "description": "How the database is reachable. There is no public-port option, by design. remote_loopback (target vm_remote): the app's own cluster on the deployed server, listening on 127.0.0.1 only, behind a firewall that opens 22/80/443 and nothing else."
         },
         "network": {
           "type": "string"
@@ -304,8 +305,10 @@
             "vercel_blob",
             "s3",
             "gcs",
-            "azure_blob"
-          ]
+            "azure_blob",
+            "fs"
+          ],
+          "description": "fs (target vm_remote only): files on the deployed server's disk under infrastructure.vm_remote.storage.dir."
         },
         "root_prefix": {
           "type": "string"
