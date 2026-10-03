@@ -1,0 +1,4 @@
+Welcome to Ubuntu
+OS_ID=ubuntu
+MEM_KB=
+bash: nproc: command not found

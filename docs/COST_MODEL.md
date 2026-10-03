@@ -119,3 +119,27 @@ how long threads run before compaction — move the bill far more than output do
 Vercel (function invocations, Blob storage and egress, the free-tier Neon database), Resend (sign-in codes and
 invites), Exa (web search, if on), Browserbase (the browser subagent, if on). None of these is inference and
 none is priced here.
+
+## 7. The server, for an app on `target: vm_remote`
+
+An app deployed to a server of its own (`docs/RUNBOOK.md` §9) pays for that server instead of for Vercel, Neon and
+Blob. Inference is unchanged: sections 1-5 apply as they are.
+
+| Line | Value | Kind |
+|---|---|---|
+| **the server: 8 GB / 4 vCPU with KVM, Ubuntu 24.04** | **$48.00 per month** ($0.07143 per hour): DigitalOcean Basic Droplet, 8 GiB / 4 vCPUs / 160 GiB SSD / 5,000 GiB transfer. Source: https://www.digitalocean.com/pricing/droplets, fetched 2026-10-02 | fetched |
+| why that size | the host check refuses anything under 8 GB / 4 vCPU / 20 GB free or without `/dev/kvm` (`.claude/scripts/lib/vm_remote.py` `HOST_MIN`). The eve build peaks at 2.9 GB, the prewarm at 2.5 GB, the three services rest at about 0.7 GB plus Postgres, and each agent sandbox is capped at 2 vCPU / 1024 MiB (`reports/vm-spike-mold_v1-072.md`, Memory and CPU) | measured (spike, stub model) |
+| KVM on that plan | the factory's own VM is this plan and exposes `/dev/kvm` (nested). Whether a NEW droplet of the same plan does is checked per server by `provision.py <app> --qualify-remote` before anything is installed; many small VPS plans elsewhere do not | measured on one host; checked per server |
+| concurrent sandboxes the server can hold, `N_sbx` | PLACEHOLDER. Upper bound from memory alone: (8 GB - 0.7 GB services - Postgres) / 1 GiB is about 6; from CPU, 4 vCPU / 2 is 2 busy at once. Not soak-tested: more than one sandbox at a time was never run | placeholder |
+| disk growth | stopped session sandboxes stay on disk: 0.76 GB with nine templates, 2.3 GB after five sessions; no prune job exists yet | measured (spike) |
+| database, file storage, TLS certificate | $0: Postgres and the files are on the server's own disk, the certificate is Let's Encrypt through Caddy | by construction |
+| backups | PLACEHOLDER: DigitalOcean's backup add-on is priced as a percentage of the Droplet on the same page; nothing in this factory takes a backup of a vm_remote server yet | placeholder |
+| the domain | whatever the operator already pays their registrar; one A record, no extra service | not priced |
+
+```
+cost_month(vm_remote) = server_month + cost_month(inference, sections 1-5)
+                      = $48.00 + turns_day * cost_turn * D
+```
+
+Re-fetch the price before quoting it, and price the plan the server was actually created on (`infrastructure.vm_remote.provider`).
+
