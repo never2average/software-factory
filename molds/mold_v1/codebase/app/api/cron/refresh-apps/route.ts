@@ -5,6 +5,7 @@ import { apps } from "@/agent/lib/db/schema";
 import { cronMatches } from "@/agent/lib/cron-match";
 import { refreshApp } from "@/lib/app-refresh";
 import { acrossOrgsRls, getOpsDb, withOrgRls } from "@/lib/ops-db";
+import { serviceBearerFor } from "@/lib/service-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,8 +15,10 @@ export const maxDuration = 300;
  * Regenerates every APP whose refresh cadence is due this minute.
  *
  * AUTH mirrors run-cron-workflows: the front-end's own Vercel OIDC service
- * token (the agent trusts this project's subject); CRON_SECRET guards the
- * endpoint. Each app is CLAIMED atomically (refreshing_at) so two ticks — or a
+ * token (the agent trusts this project's subject) — or, off Vercel with
+ * SERVICE_AUTH=session-key, the service token it signs itself
+ * (lib/service-identity.ts); CRON_SECRET guards the endpoint. Each app is
+ * CLAIMED atomically (refreshing_at) so two ticks — or a
  * tick overlapping a long refresh — never regenerate the same document twice.
  */
 // One app per tick: a dashboard refresh can run up to ~250s, so two in a single
@@ -23,10 +26,6 @@ export const maxDuration = 300;
 const PER_TICK = 1;
 // A claim older than this is treated as abandoned (the function died mid-run).
 const CLAIM_STALE_MS = 10 * 60 * 1000;
-
-function serviceBearer(request: NextRequest): string | null {
-  return request.headers.get("x-vercel-oidc-token") ?? process.env.VERCEL_OIDC_TOKEN ?? null;
-}
 
 export async function GET(request: NextRequest) {
   // FAIL CLOSED. This was `if (secret && …)`, which skips the check entirely
@@ -46,7 +45,7 @@ export async function GET(request: NextRequest) {
   }
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
-  const bearer = serviceBearer(request);
+  const bearer = serviceBearerFor(request);
 
   const now = new Date();
   const staleBefore = new Date(now.getTime() - CLAIM_STALE_MS);

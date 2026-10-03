@@ -3,6 +3,7 @@ import { workflowAvailability } from "./workflow-availability.ts";
 import { appVersions, apps, workflows } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "./ops-db";
 import { makeDelegate } from "./workflow-delegate";
+import type { ServiceBearer } from "./service-identity";
 import {
   finishWorkflowRun,
   loadWorkflowJournal,
@@ -101,7 +102,7 @@ async function storeContent(
 export async function refreshApp(
   db: OpsDb,
   app: AppRow,
-  bearer: string,
+  bearer: ServiceBearer,
   /** Who asked — an operator's email, or "cron" for the scheduled refresh. */
   actor = "cron",
 ): Promise<{ ok: boolean; error?: string }> {

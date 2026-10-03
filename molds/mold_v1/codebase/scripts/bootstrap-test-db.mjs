@@ -26,6 +26,17 @@
  *
  * Usage:  DATABASE_URL=postgres://…  node scripts/bootstrap-test-db.mjs
  *         (expects an ADMIN url; prints the app_rw url to stdout's last line)
+ *
+ * `--production` — THE SAME MODEL ON A NEW PLAIN POSTGRES THAT WILL SERVE PEOPLE (docs/self-hosting/DATABASE_AND_AGENT_URL.md;
+ * `npm run db:bootstrap`). A managed Supabase database is bootstrapped by .bootstrap-supabase.mjs; this is for a
+ * Postgres that is not one, where that script's Supabase specifics do not apply. It differs from the test run in
+ * exactly what a test must not have and a deployment must:
+ *
+ *   * APP_RW_PASSWORD is REQUIRED. There is no default: the test password is in this file and in ci.yml.
+ *   * org_isolation FAILS CLOSED, as it does on the live deployments (.migrate-rls-fail-closed.mjs): a query that
+ *     names no workspace sees no rows. The test run keeps the permissive form because the isolation test needs it.
+ *   * tables created later are granted to app_rw too (default privileges), as .bootstrap-supabase.mjs does.
+ *   * the last line is the app_rw url WITHOUT its password, so the password never reaches a log.
  */
 import postgres from "postgres";
 
@@ -35,6 +46,11 @@ if (!adminUrl) {
   process.exit(1);
 }
 
+const PRODUCTION = process.argv.includes("--production");
+if (PRODUCTION && !process.env.APP_RW_PASSWORD) {
+  console.error("✗ --production needs APP_RW_PASSWORD: the password the app will connect with as app_rw. Choose a long random one.");
+  process.exit(1);
+}
 const APP_PASSWORD = process.env.APP_RW_PASSWORD || "app_rw_test_password";
 const local = /localhost|127\.0\.0\.1/.test(adminUrl);
 const sql = postgres(adminUrl, { ssl: local ? false : "require", prepare: false });
@@ -55,10 +71,17 @@ await sql.unsafe(`GRANT CONNECT ON DATABASE ${dbName} TO app_rw`);
 await sql`GRANT USAGE ON SCHEMA public TO app_rw`;
 await sql`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rw`;
 await sql`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_rw`;
-console.log("✓ role app_rw (NOBYPASSRLS) + grants");
+if (PRODUCTION) {
+  await sql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_rw`);
+  await sql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_rw`);
+}
+console.log(`✓ role app_rw (NOBYPASSRLS) + grants${PRODUCTION ? " (incl. default privileges for future tables)" : ""}`);
 
 /* 2. RLS on every table that carries a tenant. --------------------------- */
-const PREDICATE = `(
+const PREDICATE = PRODUCTION
+  ? // Fail closed, the live deployments' predicate (.migrate-rls-fail-closed.mjs): no workspace named, no rows.
+    `(org_id = current_setting('app.org_id', true))`
+  : `(
   current_setting('app.org_id', true) IS NULL
   OR current_setting('app.org_id', true) = ''
   OR org_id = current_setting('app.org_id', true)
@@ -95,7 +118,7 @@ for (const table of scoped) {
   await sql.unsafe(`CREATE POLICY ${policy} ON ${table} USING ${predicate} WITH CHECK ${predicate}`);
   n++;
 }
-console.log(`✓ RLS on ${n} scoped tables (${scoped.length - n} exempt)`);
+console.log(`✓ RLS on ${n} scoped tables (${scoped.length - n} exempt)${PRODUCTION ? ", org_isolation FAIL CLOSED" : ""}`);
 
 /* 2b. Owner-only rows: the RESTRICTIVE policies, exactly as .bootstrap-supabase.mjs applies them on a deploy. */
 {
@@ -117,5 +140,10 @@ appUrl.password = APP_PASSWORD;
 await sql.end();
 
 console.log("✓ ready");
+if (PRODUCTION) {
+  // Never the password: it is the caller's (APP_RW_PASSWORD), and this output is usually a deploy log.
+  appUrl.password = "";
+  console.log("The app connects as app_rw with the password you set (DATABASE_URL). Without the password:");
+}
 // Last line is the app_rw connection string, for `$(… | tail -1)`.
 console.log(appUrl.toString());

@@ -4,6 +4,7 @@ import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { requestWorkflowRunCancellation } from "@/lib/workflow-journal";
 import { SERVICE_SCOPE_HEADER } from "@/agent/lib/service-scope";
+import { bearerToken, serviceBearerFor } from "@/lib/service-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,8 +52,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
    * more (lib/chat-gate.ts). So the fan-out goes out as the front-end's own service identity, scoped to this run's
    * workspace — the agent admits it only on sessions in that workspace — and falls back to the caller's token only
    * where there is no service token (local development). Either way, the durable request above is what stops the run.
+   *
+   * Off Vercel (SERVICE_AUTH=session-key) the service identity is the token the web app signs itself
+   * (lib/service-identity.ts). It is the WEB APP's identity, made from its own key and nothing of the caller's.
    */
-  const serviceToken = request.headers.get("x-vercel-oidc-token") ?? process.env.VERCEL_OIDC_TOKEN ?? null;
+  const service = serviceBearerFor(request);
+  const serviceToken = service ? await bearerToken(service).catch(() => null) : null;
   const bearer = serviceToken ? `Bearer ${serviceToken}` : request.headers.get("authorization");
   const agentUrl = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
   const signalledSessions: Array<{ sessionId: string; status: string }> = [];

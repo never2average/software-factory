@@ -12,12 +12,16 @@
  * the workspace from the record (PR #58), a scheduled "promote the ticket" or "match this sender" found nothing.
  *
  * So the service NAMES the workspace it acts for: the one on the schedule rule it claimed, the workflow run, or the
- * app. It rides on the session's auth as one attribute, {@link SERVICE_SCOPE_ATTR}. It is honoured on exactly two
+ * app. It rides on the session's auth as one attribute, {@link SERVICE_SCOPE_ATTR}. It is honoured on exactly these
  * principals, and on nothing else:
  *
  *   · eve's schedule app principal — built inside the agent's own schedule handler, never presented over HTTP;
  *   · the FRONT-END's production Vercel OIDC token: subject exactly {@link FRONTEND_SUBJECT} and `environment`
- *     claim `production`.
+ *     claim `production`;
+ *   · ONLY WHEN `SERVICE_AUTH=session-key` IS SET ON THIS AGENT (a deployment that is not on Vercel, where there is no
+ *     OIDC token): the front-end's own short-lived service token, signed with the session key pair and admitted by
+ *     agent/lib/web-service-auth.ts. It is the SAME service as the one above by another proof, and gets the same
+ *     rules, no more. Unset, that token is not a service principal here, whatever door let it in.
  *
  * NOT "any Vercel OIDC token". eve's `vercelOidc` also admits every token of the AGENT's OWN project, in any
  * environment — a preview build of any branch, or a developer's `vercel env pull` (development, carries user_id) —
@@ -30,6 +34,9 @@
  * orgForSession, so neither a person nor a preview/dev token can name a workspace by it. The model never sees it.
  */
 
+import { WEB_SERVICE_TOKEN_KIND, WEB_SERVICE_TOKEN_SUBJECT } from "../../lib/session-token-kinds.ts";
+import { sessionKeyServiceAuth } from "../../lib/service-auth-mode.ts";
+
 /** The auth attribute that carries a service session's workspace. */
 export const SERVICE_SCOPE_ATTR = "workspace_scope";
 /** The request header the front-end sets on a service call to name the workspace (lib/workflow-delegate.ts). */
@@ -38,7 +45,7 @@ export const SERVICE_SCOPE_HEADER = "x-workspace-scope";
 /**
  * The front-end project's PRODUCTION Vercel OIDC subject — the one service allowed to name a workspace, and the one
  * agent/channels/eve.ts admits from outside the agent's own project (`vercelSubject({ teamSlug, projectName:
- * "fde-agent", environment: "production" })`, spelled out so this module imports nothing).
+ * "fde-agent", environment: "production" })`, spelled out so this module imports nothing of eve's).
  */
 export const FRONTEND_SUBJECT = "owner:f20170061g-3183s-projects:project:fde-agent:environment:production";
 
@@ -80,9 +87,33 @@ function isFrontEndProduction(auth: AuthLike): boolean {
   );
 }
 
+/**
+ * The front-end's own service token, as eve's `jwtEcdsa` hands it over from agent/lib/web-service-auth.ts: our issuer,
+ * the fixed service subject (not an email), the service `kind`, and no person, session or workspace on it. Only when
+ * the setting is on in this process. A person's sign-in comes through the same authenticator with the same issuer and
+ * principal type, and fails the subject and the kind (it carries its `email` and `email-session`); nobody but the web
+ * app's private key can sign either claim.
+ */
+function isFrontEndSessionKey(auth: AuthLike): boolean {
+  return (
+    sessionKeyServiceAuth() &&
+    auth.authenticator === "jwt-ecdsa" &&
+    auth.issuer === "delivered" &&
+    auth.principalType === "service" &&
+    auth.subject === WEB_SERVICE_TOKEN_SUBJECT &&
+    attrOf(auth, "kind") === WEB_SERVICE_TOKEN_KIND &&
+    attrOf(auth, "email") === undefined &&
+    attrOf(auth, "sid") === undefined &&
+    attrOf(auth, "org") === undefined
+  );
+}
+
 /** Is this principal a service that may name the workspace it acts for? */
 export function isServicePrincipal(auth: AuthLike | null | undefined): boolean {
-  return Boolean(auth) && (isScheduleApp(auth as AuthLike) || isFrontEndProduction(auth as AuthLike));
+  return (
+    Boolean(auth) &&
+    (isScheduleApp(auth as AuthLike) || isFrontEndProduction(auth as AuthLike) || isFrontEndSessionKey(auth as AuthLike))
+  );
 }
 
 /** The workspace a service principal names, or undefined (anyone else, or none named). */

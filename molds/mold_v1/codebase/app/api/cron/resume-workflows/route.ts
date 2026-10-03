@@ -5,6 +5,8 @@ import { and, eq } from "drizzle-orm";
 import { workflows } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { makeDelegate } from "@/lib/workflow-delegate";
+import { serviceBearerFor } from "@/lib/service-identity";
+import { sessionKeyServiceAuth } from "@/lib/service-auth-mode";
 import {
   finishWorkflowRun,
   claimStalledRuns,
@@ -49,10 +51,12 @@ const PER_TICK = 2; // re-drive at most this many per tick (each has its own 300
  * process.env.VERCEL_OIDC_TOKEN is only populated in local dev via `vercel env
  * pull`). Null when OIDC federation is off, degrading this endpoint to
  * report-only.
+ *
+ * Off Vercel there is no such token. With SERVICE_AUTH=session-key the web app
+ * signs its own short-lived service token instead (lib/service-identity.ts),
+ * fresh for every call a re-driven step makes.
  */
-function resumeBearer(request: NextRequest): string | null {
-  return request.headers.get("x-vercel-oidc-token") ?? process.env.VERCEL_OIDC_TOKEN ?? null;
-}
+const resumeBearer = serviceBearerFor;
 
 export async function GET(request: NextRequest) {
   // FAIL CLOSED. This was `if (secret && …)`, which skips the check entirely
@@ -83,7 +87,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       stalled: stalled.length,
       resumed: 0,
-      note: "No VERCEL_OIDC_TOKEN (OIDC federation off) — enable it to auto-resume; users can resume manually meanwhile.",
+      note: sessionKeyServiceAuth()
+        ? "SERVICE_AUTH=session-key is set but the web app cannot sign its service token (AUTH_JWT_PRIVATE_KEY is not configured) — configure it to auto-resume; users can resume manually meanwhile."
+        : "No VERCEL_OIDC_TOKEN (OIDC federation off) — enable it to auto-resume; users can resume manually meanwhile.",
       runIds: stalled.map((s) => s.runId),
     });
   }

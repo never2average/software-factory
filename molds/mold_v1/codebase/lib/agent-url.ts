@@ -33,8 +33,63 @@
  * works, and neither has to be Sensitive for a build to succeed.
  */
 
-/** The production agent, used when the environment says nothing usable. */
+/** The production agent ON VERCEL, used there when the environment says nothing usable. */
 export const DEFAULT_AGENT_URL = "https://fde-agent-api.vercel.app";
+
+/**
+ * OFF VERCEL THE DEFAULT IS A TRAP
+ * --------------------------------
+ * The fallback above is the Vercel deployment's own agent. A web app built somewhere else without the agent's
+ * address did not fail: it built, started, and proxied every chat to that Vercel deployment. Nothing said so.
+ *
+ * So off Vercel a PRODUCTION build or server (`next build`, `next start`) must be told where its agent is, and
+ * refuses to build or start otherwise, with {@link AgentUrlNotConfiguredError}'s message. Three cases keep the
+ * fallback, each of them what happens today:
+ *
+ *   - on Vercel (`VERCEL` is set, at build and at run time): unchanged;
+ *   - development and plain-node tests (`NODE_ENV` is not "production"): unchanged;
+ *   - an automated test build that talks to no agent: `CI` is set (every CI system sets it), or
+ *     `EVE_API_URL_OPTIONAL=1` says so for a build made by hand.
+ */
+const truthy = (value: string | undefined): boolean => {
+  const v = (value ?? "").trim().toLowerCase();
+  return v !== "" && v !== "0" && v !== "false" && v !== "no" && v !== "off";
+};
+
+/** Must this process be TOLD its agent's address (no falling back to the Vercel deployment)? */
+export function agentUrlRequired(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.VERCEL) return false;
+  if (env.NODE_ENV !== "production") return false;
+  if (truthy(env.CI) || truthy(env.EVE_API_URL_OPTIONAL)) return false;
+  return true;
+}
+
+export class AgentUrlNotConfiguredError extends Error {
+  constructor(detail: string) {
+    super(
+      `${detail}\n` +
+        "  This web app is not running on Vercel, so it will not fall back to the agent that runs on Vercel\n" +
+        "  (DEFAULT_AGENT_URL in lib/agent-url.ts): chat would silently go there.\n" +
+        "  Set this to the address of YOUR agent API (for example http://127.0.0.1:18210), in the environment\n" +
+        "  of the build AND of the running server:\n" +
+        "      NEXT_PUBLIC_EVE_API_URL=<agent address>\n" +
+        "  If you also set EVE_API_URL, give it the same address.\n" +
+        "  (A test build that talks to no agent can set EVE_API_URL_OPTIONAL=1 instead.)",
+    );
+    this.name = "AgentUrlNotConfiguredError";
+  }
+}
+
+/**
+ * What stands in for a missing address: the Vercel deployment's agent where that is still right, an error where it
+ * is not ({@link agentUrlRequired}).
+ */
+function fallbackAgentUrl(env: NodeJS.ProcessEnv): string {
+  if (agentUrlRequired(env)) {
+    throw new AgentUrlNotConfiguredError("The agent's address is not configured (NEXT_PUBLIC_EVE_API_URL and EVE_API_URL are unset or unusable).");
+  }
+  return DEFAULT_AGENT_URL;
+}
 
 /**
  * A value only counts if it could actually be an origin.
@@ -64,13 +119,39 @@ export function normalizeAgentUrl(raw: string | undefined | null): string | null
  * Never returns "" — a caller that concatenates onto an empty base builds a
  * request against its own origin and gets a confusing 404 from itself rather
  * than a clear "the agent is not configured".
+ *
+ * Off Vercel, in a production build or server, there is no default: it throws
+ * (see {@link agentUrlRequired}). next.config.ts calls this when the build
+ * starts and again when the server starts, so that is where it stops.
+ *
+ * There it also refuses `EVE_API_URL` without a matching
+ * `NEXT_PUBLIC_EVE_API_URL`. `EVE_API_URL` is read here, for the rewrite; six
+ * server modules read `NEXT_PUBLIC_EVE_API_URL` themselves (the workflow
+ * delegate, the thread relay, the queue…) and treat a missing one as "no
+ * agent". The first without the second is a deployment where chat is proxied
+ * and workflows, cancels and queued messages are not; two different values are
+ * two different agents. `NEXT_PUBLIC_EVE_API_URL` alone is complete.
  */
 export function agentBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-  return (
-    normalizeAgentUrl(env.EVE_API_URL) ??
-    normalizeAgentUrl(env.NEXT_PUBLIC_EVE_API_URL) ??
-    DEFAULT_AGENT_URL
-  );
+  const preferred = normalizeAgentUrl(env.EVE_API_URL);
+  const legacy = normalizeAgentUrl(env.NEXT_PUBLIC_EVE_API_URL);
+  if (agentUrlRequired(env) && preferred !== null && preferred !== legacy) {
+    throw new AgentUrlNotConfiguredError(
+      legacy !== null
+        ? `EVE_API_URL (${preferred}) and NEXT_PUBLIC_EVE_API_URL (${legacy}) name different agents.`
+        : "EVE_API_URL is set but NEXT_PUBLIC_EVE_API_URL is not (or is unusable), and most of the server reads the second.",
+    );
+  }
+  return preferred ?? legacy ?? fallbackAgentUrl(env);
+}
+
+/**
+ * The fallback for a module that reads `NEXT_PUBLIC_EVE_API_URL` itself and used to write the Vercel deployment's
+ * address after `??` (the session proxy, app/eve/v1/session/[...segments]/route.ts). On Vercel it is that address,
+ * as it always was. Anywhere else it is {@link agentBaseUrl}: the configured agent, or the error.
+ */
+export function agentUrlFallback(env: NodeJS.ProcessEnv = process.env): string {
+  return env.VERCEL ? DEFAULT_AGENT_URL : agentBaseUrl(env);
 }
 
 /**

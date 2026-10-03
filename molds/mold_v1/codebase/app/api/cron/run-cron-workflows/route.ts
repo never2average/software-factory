@@ -11,6 +11,7 @@ import {
 } from "@/agent/lib/db/schema";
 import { acrossOrgsRls, getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { makeDelegate } from "@/lib/workflow-delegate";
+import { serviceBearerFor } from "@/lib/service-identity";
 import {
   finishWorkflowRun,
   loadWorkflowJournal,
@@ -36,14 +37,12 @@ export const maxDuration = 300;
  * chat. The Slack post is untouched; this runs the workflow IN ADDITION.
  *
  * AUTH mirrors resume-workflows: the front-end's own Vercel OIDC service token
- * (the agent trusts this project's subject); CRON_SECRET guards the endpoint.
+ * (the agent trusts this project's subject) — or, off Vercel with
+ * SERVICE_AUTH=session-key, the service token it signs itself
+ * (lib/service-identity.ts); CRON_SECRET guards the endpoint.
  */
 const RECENT_MS = 15 * 60 * 1000;
 const PER_TICK = 2;
-
-function serviceBearer(request: NextRequest): string | null {
-  return request.headers.get("x-vercel-oidc-token") ?? process.env.VERCEL_OIDC_TOKEN ?? null;
-}
 
 export async function GET(request: NextRequest) {
   // FAIL CLOSED. This was `if (secret && …)`, which skips the check entirely
@@ -63,7 +62,7 @@ export async function GET(request: NextRequest) {
   }
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
-  const bearer = serviceBearer(request);
+  const bearer = serviceBearerFor(request);
 
   // Recent cron / schedule fires not yet linked to a workflow run.
   /**

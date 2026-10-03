@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { migrationSsl } from "./lib/migration-ssl.mjs";
 
 function readEnv(path) {
   try {
@@ -45,8 +46,9 @@ const migrations = journal.entries.map((entry) => {
   };
 });
 
+// TLS is required unless DATABASE_SSL=disable names a Postgres on this machine (scripts/lib/migration-ssl.mjs).
 const client = postgres(databaseUrl, {
-  ssl: "require",
+  ssl: migrationSsl(databaseUrl),
   prepare: false,
   max: 1,
   onnotice: () => {},

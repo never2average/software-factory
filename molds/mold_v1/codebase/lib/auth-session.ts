@@ -24,6 +24,10 @@ import { importPKCS8, importSPKI, jwtVerify, SignJWT } from "jose";
 // Relative with its extension, like its neighbours that the agent and plain-node tests also load.
 import {
   EMAIL_SESSION_KIND,
+  WEB_SERVICE_TOKEN_AUDIENCE,
+  WEB_SERVICE_TOKEN_KIND,
+  WEB_SERVICE_TOKEN_SUBJECT,
+  WEB_SERVICE_TOKEN_TTL_SECONDS,
   WORKSPACE_STEP_GRANT_AUDIENCE,
   WORKSPACE_STEP_GRANT_KIND,
   WORKSPACE_STEP_GRANT_TTL_SECONDS,
@@ -164,6 +168,35 @@ export async function mintQueueDeliveryToken(
     .setJti(scope.act === "post" ? `${scope.claim}:${scope.seq}` : crypto.randomUUID())
     .setIssuedAt()
     .setExpirationTime(`${QUEUE_DELIVERY_TTL_SECONDS}s`)
+    .sign(key);
+}
+
+/**
+ * THE WEB APP'S OWN SERVICE TOKEN — what it presents to the agent as itself, off Vercel (`SERVICE_AUTH=session-key`;
+ * lib/session-token-kinds.ts). It is NOT a sign-in, and cannot be used as one:
+ *
+ *   - its own audience and `kind`, so `verifySessionToken` (every web-app route) refuses it, and only the agent's
+ *     service door accepts it (agent/lib/web-service-auth.ts);
+ *   - a fixed subject that is not an email, and no `email`, `org` or `sid`: it names no person, no workspace and no
+ *     session, so nothing downstream can read one out of it;
+ *   - two minutes long, with a `jti`. Callers mint a fresh one per request (lib/service-identity.ts).
+ *
+ * It takes NO ARGUMENT on purpose. Nothing a caller holds — a person's token least of all — goes into it, so it
+ * cannot be derived from one; the only input is the private key, which only the web app's server has. Returns null
+ * when this deployment cannot sign (no private key): the caller then has no service identity, as before.
+ */
+export async function mintWebServiceToken(): Promise<string | null> {
+  const pem = readKeyMaterial(process.env.AUTH_JWT_PRIVATE_KEY);
+  if (!pem) return null;
+  const key = await importPKCS8(pem, ALG);
+  return new SignJWT({ kind: WEB_SERVICE_TOKEN_KIND })
+    .setProtectedHeader({ alg: ALG })
+    .setSubject(WEB_SERVICE_TOKEN_SUBJECT)
+    .setIssuer(SESSION_ISSUER)
+    .setAudience(WEB_SERVICE_TOKEN_AUDIENCE)
+    .setJti(crypto.randomUUID())
+    .setIssuedAt()
+    .setExpirationTime(`${WEB_SERVICE_TOKEN_TTL_SECONDS}s`)
     .sign(key);
 }
 

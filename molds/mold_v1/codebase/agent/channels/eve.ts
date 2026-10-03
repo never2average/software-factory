@@ -7,6 +7,8 @@ import { guardedLocalDev } from "../lib/local-dev.ts";
 import { sessionPublicKeyPem } from "../lib/session-public-key.ts";
 import { EMAIL_SESSION_KIND } from "../../lib/session-token-kinds.ts";
 import { queueDeliveryAuth } from "../lib/queue-delivery-auth.ts";
+import { webServiceAuth } from "../lib/web-service-auth.ts";
+import { sessionKeyServiceAuth } from "../../lib/service-auth-mode.ts";
 
 // Google sign-in (free). The web chat attaches the signed-in user's Google ID
 // token as a bearer; this verifier accepts it only when it was minted for our
@@ -128,6 +130,11 @@ const auth = [
   // Vercel-internal + runtime callers (subagents, etc.) plus the front-end
   // project acting as a service (autonomous workflow resume).
   vercelOidc({ subjects: [FRONTEND_SUBJECT] }),
+  // OFF VERCEL ONLY, and only when SERVICE_AUTH=session-key is set here: the front-end's own two-minute service token,
+  // signed with the session key pair (this project holds the public half only), for the same machine-to-machine
+  // calls. Absent from the list when the setting is unset, which is every Vercel deployment: the line above is then
+  // the only service door, exactly as before. What the principal may do is service-scope.ts's rule, the same one.
+  ...(sessionPublicKey && sessionKeyServiceAuth() ? [webServiceAuth(sessionPublicKey)] : []),
   // Loopback only, for `eve dev` — and never in a production or preview build, whatever the Host header says
   // (agent/lib/local-dev.ts).
   guardedLocalDev(),

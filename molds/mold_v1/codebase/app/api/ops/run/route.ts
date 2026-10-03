@@ -21,6 +21,7 @@ import { alignWorkflowArgs, coerceWorkflowArgs, validateWorkflowArgs } from "@/l
 import { workflowAvailability } from "@/lib/workflow-availability";
 import { stripTypes } from "@/lib/workflow-ts";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
+import { noServiceBearerReason, serviceBearerFor } from "@/lib/service-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,13 +34,11 @@ export const maxDuration = 300;
  *
  * AUTH mirrors the crons: guarded by `CRON_SECRET`, and the run reaches the
  * agent with THIS project's own Vercel OIDC service token (the agent trusts the
- * front-end's subject — see agent/channels/eve.ts). The runtime + delegation
- * machinery live here, on the front-end, so the agent never has to bundle the
- * sandbox or self-delegate.
+ * front-end's subject — see agent/channels/eve.ts) or, off Vercel with
+ * SERVICE_AUTH=session-key, the service token it signs itself
+ * (lib/service-identity.ts). The runtime + delegation machinery live here, on
+ * the front-end, so the agent never has to bundle the sandbox or self-delegate.
  */
-function serviceBearer(request: NextRequest): string | null {
-  return request.headers.get("x-vercel-oidc-token") ?? process.env.VERCEL_OIDC_TOKEN ?? null;
-}
 
 const bodySchema = z.strictObject({
   kind: z.enum(["workflow", "app"]),
@@ -75,10 +74,10 @@ export async function POST(request: NextRequest) {
   }
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
-  const bearer = serviceBearer(request);
+  const bearer = serviceBearerFor(request);
   if (!bearer) {
     return NextResponse.json(
-      { error: "No service token available to reach the agent (VERCEL_OIDC_TOKEN unset)." },
+      { error: `No service token available to reach the agent (${noServiceBearerReason()}).` },
       { status: 503 },
     );
   }

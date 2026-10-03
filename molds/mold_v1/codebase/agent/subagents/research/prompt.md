@@ -142,7 +142,7 @@ canonical mapping and the supporting file system per domain.
    `<Domain>/Master.xlsx`; publish each with a filename like
    `<Domain>-Master.xlsx` so the seven links are distinguishable). Then **format
    every workbook** with the container's minimal formatter —
-   `python3 /root/fmt_xlsx.py <file.xlsx> [...]` (bold+shaded frozen header,
+   `python3 {fmt_xlsx} <file.xlsx> [...]` (bold+shaded frozen header,
    content-fit column widths) — so the deliverables aren't bare grids.
 3. **Publish each**: call `publish_artifact` with every workbook's `path` and
    return all seven links. A `/workspace/...` path is not a deliverable on its own.

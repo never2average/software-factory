@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { gateForSession } from "@/lib/chat-session-access";
 import { rightFor } from "@/lib/chat-gate";
+import { agentUrlFallback } from "@/lib/agent-url";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { ORG_HEADER, isWorkspaceRefusal, resolveOrgForIdentity, workspaceRefusedResponse } from "@/lib/org-context";
 
@@ -55,7 +56,9 @@ export const maxDuration = 800;
  * RLS scope (lib/session-gate.ts).
  */
 
-const AGENT = process.env.NEXT_PUBLIC_EVE_API_URL ?? "https://fde-agent-api.vercel.app";
+// On Vercel the fallback is the Vercel deployment's agent, as it always was. Off Vercel it is the configured agent,
+// and a production build with none refuses to build rather than proxy chat there (lib/agent-url.ts).
+const AGENT = process.env.NEXT_PUBLIC_EVE_API_URL ?? agentUrlFallback();
 
 /** Headers worth forwarding upstream. Hop-by-hop and host headers are dropped. */
 function forwardHeaders(request: NextRequest): Headers {

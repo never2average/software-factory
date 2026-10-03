@@ -189,6 +189,16 @@ jobs:
         if: always()
         run: npm run test:sandbox-libs
 
+      # WHERE THE SANDBOX RUNS is a setting now (SANDBOX_BACKEND), for a deployment that is not on Vercel. With it
+      # unset both sandbox definitions must be what they were: no backend named (eve picks Vercel Sandbox on Vercel),
+      # the same bootstrap commands, the formatter at /root/fmt_xlsx.py and the research prompt naming it. With
+      # microsandbox: 2 vCPUs, 1024 MiB, and a network policy eve's own translation turns into deny rules for cloud
+      # metadata, the private ranges and loopback. Loads the real modules per setting; creates no sandbox (no KVM
+      # here). Then the serial prewarm script's self-test (stale locks, one template at a time).
+      - name: Sandbox backend setting (default unchanged, microsandbox policy, serial prewarm)
+        if: always()
+        run: npm run test:sandbox-backend
+
       # VISION IS A TOOL NOW, NOT A PROPERTY OF THE ORCHESTRATOR. The orchestrator was
       # Kimi K2.6 only because it reads images; it began returning MODEL_CALL_FAILED
       # ("Empty model response") on real uploads, so the fleet moved to a text-only
@@ -252,6 +262,16 @@ jobs:
       - name: Service tokens that may name a workspace (real vercelOidc, locally signed)
         if: always()
         run: npm run test:service-scope-oidc
+
+      # THE SAME SERVICE, OFF VERCEL. There is no Vercel OIDC token off Vercel, so the crons, the run trigger and the
+      # run-cancel fan-out did nothing there. With SERVICE_AUTH=session-key the web app signs a two-minute token with
+      # the session key pair and the agent admits it under the SAME service rules. This signs every wrong token
+      # (expired, wrong audience, wrong kind, wrong key, a person's sign-in replayed or rewritten) and drives them
+      # through the real channel and the real door; then again with the setting UNSET, where the door must not exist
+      # and the web app must present exactly what it presents today.
+      - name: Web app service identity off Vercel (session-key token, real channel, setting on and unset)
+        if: always()
+        run: npm run test:service-identity
 
       # The other BEHAVIOURAL chat test — it executes the real module rather than
       # grepping source, which is how every other chat regression got past CI.
@@ -653,6 +673,16 @@ jobs:
         if: always()
         run: npm run test:email-signin
 
+      # TWO DEFAULTS THAT WERE ONLY RIGHT ON VERCEL. With no agent address the web app fell back to the Vercel
+      # agent, so a web app built anywhere else proxied chat there in silence; and the migration scripts required
+      # TLS, which a Postgres on the app's own machine does not have. Off Vercel a production build or server now
+      # refuses without the address (a real `next build` and `next start` must stop with the message), and
+      # DATABASE_SSL=disable is accepted for a local database only. Holds, over every combination of the two
+      # variables, that on Vercel, in development and in a CI build the address resolves exactly as it did.
+      - name: Off-Vercel defaults (agent address required off Vercel, TLS setting for migrations)
+        if: always()
+        run: npm run test:off-vercel-defaults
+
   # The most important test in the repo: it proves one tenant cannot read or
   # write another's rows. It needs a real Postgres, which is why it sat outside
   # CI and ran only when someone remembered.
@@ -702,6 +732,15 @@ jobs:
       - name: The migration journal builds the schema the app reads
         if: always()
         run: ADMIN_URL="$ADMIN_URL" npm run test:migrations-db
+
+      # …so a NEW database on a plain Postgres is built the way docs/self-hosting/DATABASE_AND_AGENT_URL.md says:
+      # schema.ts pushed onto an empty database, the journal recorded on top, the app's role and fail-closed policies,
+      # the task-workflow tables. Runs those five commands as written against a scratch database here (this Postgres
+      # has no TLS, like one on the app's own machine: DATABASE_SSL=disable; without it both migration scripts must
+      # still refuse) and checks the result as app_rw.
+      - name: A new database on plain Postgres without TLS (the documented path, run as written)
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:new-database-db
 
       # THE COMPANY KEY IS (org_id, customer_id) (mold_v1-118): drizzle/0024 on a database built as the live one was
       # (pushed from the schema before this change, scripts/fixtures/schema-419b38d.ts, then bootstrapped) and seeded
@@ -772,6 +811,17 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:session-guard
+
+      # THE FIVE ROUTES THAT CALL THE AGENT AS THE WEB APP (resume-workflows, run-cron-workflows, refresh-apps, ops/run,
+      # the run-cancel fan-out), on a deployment with no Vercel variable and SERVICE_AUTH=session-key: each real
+      # handler does its work through the real channel, and every call the agent saw carried the web app's own
+      # two-minute service token naming the workspace, never a person's. Fails on the code before the setting existed.
+      - name: Web app service identity off Vercel (five routes and the channel), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:service-identity-db
 
       # THE CROSS-WORKSPACE READ, against the production policy: for every by-id reader and writer the model can
       # reach, workspace B asking for workspace A's id gets nothing and A's record is unchanged, the owner still

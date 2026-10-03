@@ -1,4 +1,16 @@
 import { defineSandbox } from "eve/sandbox";
+import { microsandbox } from "eve/sandbox/microsandbox";
+import { microsandboxSettings } from "#lib/sandbox-settings.js";
+
+/**
+ * WHERE THIS SANDBOX RUNS (agent/lib/sandbox-settings.ts). With `SANDBOX_BACKEND` unset or "vercel" this is null and
+ * no `backend` is added below, so eve chooses as it always has: Vercel Sandbox on Vercel. With
+ * `SANDBOX_BACKEND=microsandbox` (a deployment that is not on Vercel) it is a KVM microVM with `SANDBOX_CPUS`
+ * (default 2), `SANDBOX_MEMORY_MIB` (default 1024) and a network policy that allows the internet and denies cloud
+ * metadata, the private ranges, loopback and the Docker bridge. On a Vercel build the import above is a stub (eve's
+ * hosted bundles prune the local backends) and is never called.
+ */
+const selfHosted = microsandboxSettings();
 
 /**
  * Pre-install document libraries into the sandbox template so agents can ALWAYS
@@ -62,6 +74,7 @@ fi
 `;
 
 export default defineSandbox({
+  ...(selfHosted ? { backend: microsandbox(selfHosted) } : {}),
   async bootstrap({ use }) {
     const sandbox = await use();
     const result = await sandbox.run({ command: INSTALL_DOC_LIBS });

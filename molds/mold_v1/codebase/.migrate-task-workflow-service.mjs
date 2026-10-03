@@ -7,6 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { migrationSsl } from "./scripts/lib/migration-ssl.mjs";
 
 function readEnv(file) {
   try {
@@ -26,10 +27,13 @@ function readEnv(file) {
 
 const local = readEnv(".env.local");
 const provider = readEnv(".env.supabase");
-const adminUrl = provider.SUPABASE_POSTGRES_URL_NON_POOLING || local.DATABASE_URL_UNPOOLED;
+// The two env files first, as always. Then the environment, for a server that has neither file: the same admin
+// variable scripts/migrate-production.mjs reads (never DATABASE_URL, which is the app's restricted role).
+const adminUrl = provider.SUPABASE_POSTGRES_URL_NON_POOLING || local.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL_UNPOOLED;
 if (!adminUrl) throw new Error("An admin database URL is required for the task-workflow migration");
 
-const sql = postgres(adminUrl, { ssl: "require", prepare: false, max: 1 });
+// TLS is required unless DATABASE_SSL=disable names a Postgres on this machine (scripts/lib/migration-ssl.mjs).
+const sql = postgres(adminUrl, { ssl: migrationSsl(adminUrl), prepare: false, max: 1 });
 const [{ current_user: role }] = await sql`select current_user`;
 console.log(`task-workflow migration connected as ${role}`);
 
@@ -211,7 +215,7 @@ console.log(`verified versions=${versions}, instances=${instances}, transition_e
 // DATABASE_URL_APP_RW may be a retired provider URL left in a developer file.
 const appUrl = local.DATABASE_URL;
 if (appUrl) {
-  const app = postgres(appUrl, { ssl: "require", prepare: false, max: 1 });
+  const app = postgres(appUrl, { ssl: migrationSsl(appUrl), prepare: false, max: 1 });
   await app.begin(async (tx) => {
     await tx`select set_config('app.org_id', 'org-onfinance', true)`;
     await tx`select 1 from project_workflow_versions limit 1`;

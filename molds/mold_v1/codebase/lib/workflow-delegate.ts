@@ -20,6 +20,7 @@ import "server-only";
 import { SERVICE_SCOPE_HEADER } from "../agent/lib/service-scope.ts";
 import { SESSION_VISIBILITY_GRANT_HEADER } from "./session-token-kinds.ts";
 import { mintWorkspaceStepGrant } from "./auth-session.ts";
+import { bearerToken, isServiceSource, type ServiceBearer } from "./service-identity.ts";
 import { fill, speak, withCurrentToolNames } from "../agent/lib/agent-vocabulary.ts";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
@@ -152,18 +153,29 @@ function requestSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
  * The headers of every call a step makes on the agent. The workspace goes on ALL of them, not only the create: the
  * agent admits the service token to a session only while it names that session's workspace (lib/chat-gate.ts), so a
  * stream read or a cancel without it is refused. Ignored on a person's token.
+ *
+ * The token is asked for on EVERY call ({@link bearerToken}): a plain token is itself, a minted service identity
+ * (`SERVICE_AUTH=session-key`) is signed fresh, because it lives two minutes and a step can run for longer.
  */
-function agentHeaders(bearer: string, orgId: string | null | undefined, extra: Record<string, string> = {}): Record<string, string> {
-  return { ...extra, authorization: `Bearer ${bearer}`, ...(orgId ? { [SERVICE_SCOPE_HEADER]: orgId } : {}) };
+async function agentHeaders(
+  bearer: ServiceBearer,
+  orgId: string | null | undefined,
+  extra: Record<string, string> = {},
+): Promise<Record<string, string>> {
+  return { ...extra, authorization: `Bearer ${await bearerToken(bearer)}`, ...(orgId ? { [SERVICE_SCOPE_HEADER]: orgId } : {}) };
 }
 
-async function cancelEveSession(sessionId: string, bearer: string, orgId: string | null | undefined): Promise<void> {
-  await fetch(`${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/cancel`, {
-    method: "POST",
-    headers: agentHeaders(bearer, orgId, { "content-type": "application/json" }),
-    body: "{}",
-    signal: AbortSignal.timeout(10_000),
-  }).catch(() => undefined);
+async function cancelEveSession(sessionId: string, bearer: ServiceBearer, orgId: string | null | undefined): Promise<void> {
+  try {
+    await fetch(`${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/cancel`, {
+      method: "POST",
+      headers: await agentHeaders(bearer, orgId, { "content-type": "application/json" }),
+      body: "{}",
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    /* best effort, as before: the durable cancellation request is what stops the run */
+  }
 }
 
 /** The email a bearer names (unverified: the agent verifies the bearer itself), or null — a service token names none. */
@@ -199,8 +211,9 @@ export class StepGrantUnavailable extends Error {}
  * on it, and a colleague's run timeline would show nothing. That used to happen silently whenever the web app could
  * not sign (no AUTH_JWT_PRIVATE_KEY); now the step is refused instead, loudly, before anything is started.
  */
-async function workspaceStepGrant(bearer: string): Promise<string | null> {
-  const email = bearerEmail(bearer);
+async function workspaceStepGrant(bearer: ServiceBearer): Promise<string | null> {
+  // A minted service identity names no person, like the Vercel service token.
+  const email = isServiceSource(bearer) ? null : bearerEmail(bearer);
   if (!email) return null; // the service token: a session a service starts is the workspace's already
   const grant = await mintWorkspaceStepGrant(email).catch(() => null);
   if (!grant) {
@@ -212,7 +225,8 @@ async function workspaceStepGrant(bearer: string): Promise<string | null> {
 }
 
 export function makeDelegate(
-  bearer: string,
+  /** A person's token, the Vercel service token, or the web app's minted service identity (lib/service-identity.ts). */
+  bearer: ServiceBearer,
   timeoutMs: number = STEP_TIMEOUT_MS,
   signal?: AbortSignal,
   /** Identity of the run these steps belong to; prepended to every prompt. */
@@ -245,7 +259,7 @@ export function makeDelegate(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${bearer}`,
+        authorization: `Bearer ${await bearerToken(bearer)}`,
         ...(orgId ? { [SERVICE_SCOPE_HEADER]: orgId } : {}),
         // A step belongs to its run, and a run is the workspace's: the run timeline opens every step's session for
         // whoever in the workspace is looking at it (to READ — lib/chat-gate.ts). The agent honours that only with a
@@ -297,7 +311,7 @@ export function makeDelegate(
         const stream = await fetch(
           `${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=${streamIndex}`,
           {
-            headers: agentHeaders(bearer, orgId),
+            headers: await agentHeaders(bearer, orgId),
             signal: requestSignal(effectiveTimeout, signal),
           },
         );
@@ -360,9 +374,9 @@ export function makeDelegate(
  * turn doesn't echo it. Bounded so a still-running child mounts at its current
  * state rather than hanging forever.
  */
-async function readSessionAnswer(sessionId: string, bearer: string, orgId: string | null | undefined): Promise<string> {
+async function readSessionAnswer(sessionId: string, bearer: ServiceBearer, orgId: string | null | undefined): Promise<string> {
   const res = await fetch(`${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=0`, {
-    headers: agentHeaders(bearer, orgId),
+    headers: await agentHeaders(bearer, orgId),
     signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
   });
   if (!res.ok || !res.body) return "";
