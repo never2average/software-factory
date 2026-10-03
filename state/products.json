@@ -193,7 +193,8 @@
         ]
       },
       "app_ids": [
-        "onfinance_hfc"
+        "onfinance_hfc",
+        "onfinance_hfc_vm"
       ],
       "deploy_targets": [
         "vercel"

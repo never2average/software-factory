@@ -87,7 +87,8 @@
     "claudecode_web_internal",
     "claudecode_web_replica",
     "sf_gateway_probe",
-    "onfinance_hfc"
+    "onfinance_hfc",
+    "onfinance_hfc_vm"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",
