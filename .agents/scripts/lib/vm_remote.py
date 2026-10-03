@@ -22,7 +22,8 @@ The same file is copied to the server and run THERE for everything that touches 
 ever crosses the SSH command line (env-merge, env-mint, env-names, env-run, pg-admin, host-chain below).
 
 WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step is the way it is):
-   1 qualify      read-only probe: /dev/kvm, 8 GB / 4 vCPU, free disk, Ubuntu 24.04, x86-64, sudo, no Docker.
+   1 qualify      read-only probe: /dev/kvm, 8 GB / 4 vCPU, free disk, Ubuntu 24.04, x86-64, sudo, no Docker, no
+                  other web server (Caddy is the one reverse proxy; nginx or Apache would hold ports 80 and 443).
                   Anything short is refused in plain words before a single package is installed.
    2 dns          the domain must already point at the server, or Caddy cannot get a certificate.
    3 bundle       the generated scripts, unit files, Caddyfile and the factory's database tooling -> <install>/factory
@@ -45,7 +46,7 @@ WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step i
 Every step is safe to run again. A redeploy takes the app offline from step 9 until step 11 finishes (the build is
 not relocatable, so there is nowhere else to build it); say so before running one in working hours.
 """
-import datetime, getpass, json, os, re, secrets as pysecrets, shlex, shutil, socket, subprocess, sys, tempfile, urllib.parse
+import datetime, getpass, json, os, re, secrets as pysecrets, shlex, shutil, socket, subprocess, sys, tempfile, time, urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -108,7 +109,11 @@ def settings(app_id, app, infra, ds):
          "mode": pg.get("rls", "fail_closed"), "flags": dict(infra.get("runtime_env") or {}), "model": dict(app.get("model") or {}),
          "secrets_user": list(infra.get("secrets_user") or []),
          "email": ((ws.get("operator_self") or ws.get("fde_self") or {}).get("email") or "").strip()}
-    S["host_shown"] = S["host"] or NO_HOST; S["domain_shown"] = S["domain"] or NO_DOMAIN
+    # `host` is the PUBLIC address (DNS, the sandbox deny list). SSH goes to ssh_host when one is named, e.g. the
+    # server's address on a private administration tunnel (mold_v1-156); and the firewall lets only ssh_allow_from
+    # reach the SSH port when that is named. Absent, both are today's behaviour: SSH to `host`, port open to all.
+    S["ssh_host"] = vr.get("ssh_host") or ""; S["ssh_allow_from"] = vr.get("ssh_allow_from") or ""
+    S["host_shown"] = S["ssh_host"] or S["host"] or NO_HOST; S["domain_shown"] = S["domain"] or NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"
     S["sudo"] = "" if S["user"] == "root" else "sudo "
     S["tool"] = f"{S['factory_dir']}/.claude/scripts/lib/vm_remote.py"
@@ -315,6 +320,12 @@ echo "DISK_FREE_KB=$(df -Pk /opt 2>/dev/null | awk 'NR==2 {print $4}')"
 if [ "$(id -u)" = "0" ] || sudo -n true 2>/dev/null; then echo "SUDO=ok"; else echo "SUDO=no"; fi
 if command -v docker >/dev/null 2>&1; then echo "DOCKER=present"; else echo "DOCKER=absent"; fi
 if [ -d /run/systemd/system ]; then echo "SYSTEMD=yes"; else echo "SYSTEMD=no"; fi
+# Caddy is the app's one web server; another one already installed would hold ports 80 and 443.
+p=none
+for b in nginx apache2 httpd haproxy traefik lighttpd; do
+  if command -v "$b" >/dev/null 2>&1 || [ -x "/usr/sbin/$b" ]; then p="$b"; break; fi
+done
+echo "PROXY=$p"
 """
 def parse_kv(text):
     out = {}
@@ -329,7 +340,7 @@ def qualify(facts):
     def num(k):
         try: return int(facts.get(k, ""))
         except ValueError: return None
-    need = ("OS_ID", "OS_VERSION", "ARCH", "KVM", "MEM_KB", "VCPU", "DISK_FREE_KB", "SUDO", "DOCKER", "SYSTEMD")
+    need = ("OS_ID", "OS_VERSION", "ARCH", "KVM", "MEM_KB", "VCPU", "DISK_FREE_KB", "SUDO", "DOCKER", "SYSTEMD", "PROXY")
     unread = [k for k in need if not facts.get(k)]
     if unread:
         return [f"The server answered, but the check could not read {', '.join(unread)}, so nothing is known about it. "
@@ -359,6 +370,10 @@ def qualify(facts):
     if facts["DOCKER"] != "absent":
         bad.append("Docker is installed on this server. Docker rewrites firewall rules and opens ports behind the firewall's back, and "
                    "the app would pick it over the safer sandbox. Use a fresh server with nothing else on it.")
+    if facts["PROXY"] != "none":
+        bad.append(f"Another web server ({facts['PROXY']}) is installed on this server. The app's one web server is Caddy, which "
+                   f"answers on the two web ports and gets the security certificate; two cannot share those ports. Use a fresh "
+                   f"server with nothing else on it.")
     if facts["SYSTEMD"] != "yes":
         bad.append("This server does not run systemd, which is what keeps the app's three services and six timers alive. Use a "
                    "standard Ubuntu 24.04 server image.")
@@ -551,11 +566,19 @@ table inet sf_egress {{
 }}
 """)
 
+def ufw_rules(S):
+    """The firewall's allow rules, in the words `ufw show added` prints them, sorted. The SSH rule takes its allowed
+    source from state (vm_remote.ssh_allow_from): absent, the port is open to any address; named, only that address
+    or network may reach it, which is how a private administration tunnel closes public SSH without another script."""
+    web = [f"ufw allow {p}/tcp" for p in (80, 443)]
+    ssh = (f"ufw allow from {S['ssh_allow_from']} to any port {S['port']} proto tcp" if S.get("ssh_allow_from") else f"ufw allow {S['port']}/tcp")
+    return sorted(set(web + [ssh]))
+
 def firewall_sh(S):
-    rules = sorted(f"ufw allow {p}/tcp" for p in {S["port"], 80, 443})
+    rules = ufw_rules(S)
     return fill("""#!/bin/bash
 @HEAD@# mold_v1-077. Run on the TARGET SERVER, as root, by provision.py --deploy-remote. Never on the factory VM.
-#   - ufw: SSH (port @SSH@), 80 and 443 in; everything else in is refused. Nothing else is opened, ever.
+#   - ufw: SSH (port @SSH@, from @SSHFROM@), 80 and 443 in; everything else in is refused. Nothing else is opened, ever.
 #   - fail2ban watches ssh.
 #   - the app's three services listen on 127.0.0.1 only (their unit files say so; health.sh checks it), so the
 #     only things answering the internet are sshd and Caddy.
@@ -591,9 +614,9 @@ systemctl daemon-reload
 systemctl enable @UNIT@-egress.service >/dev/null
 systemctl restart @UNIT@-egress.service
 echo "firewall: fail2ban on for ssh; egress rule for @USER@ loaded"
-""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), SSH=S["port"],
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), SSH=S["port"], SSHFROM=S["ssh_allow_from"] or "any address",
         RULES=" ".join(shlex.quote(r) for r in rules), ALLOWS="\n".join("  " + r for r in rules),
-        PORTS=", ".join(str(p) for p in sorted({S["port"], 80, 443})), FACTORY=S["factory_dir"], ENVDIR=S["env_dir"],
+        PORTS=", ".join(str(p) for p in sorted({S["port"], 80, 443})) + (f" (SSH from {S['ssh_allow_from']} only)" if S["ssh_allow_from"] else ""), FACTORY=S["factory_dir"], ENVDIR=S["env_dir"],
         UNIT=S["unit"], USER=SERVICE_USER)
 
 def fail2ban_jail(S):
@@ -785,7 +808,16 @@ echo "caddy: serving @DOMAIN@"
 def health_sh(S, crons):
     return fill("""#!/bin/bash
 @HEAD@# READ-ONLY. What is true on the server right now, one KEY=VALUE per line.
-code() { curl --silent --output /dev/null --max-time 25 --write-out '%{http_code}' "$1" 2>/dev/null || true; }
+# A service that was started a second ago may not be listening yet: ask for up to a minute before saying "no answer".
+code() {
+  c=000
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    c="$(curl --silent --output /dev/null --max-time 25 --write-out '%{http_code}' "$1" 2>/dev/null || true)"
+    [ -n "$c" ] && [ "$c" != "000" ] && break
+    sleep 5
+  done
+  echo "${c:-000}"
+}
 echo "WORKFLOW=$(code http://127.0.0.1:@PW@/api/health)"
 echo "API=$(code http://127.0.0.1:@PA@/eve/v1/health)"
 echo "WEB=$(code http://127.0.0.1:@PWEB@/api/ops/health)"
@@ -891,7 +923,7 @@ def mold_gaps(source_dir):
 
 def print_plan(S, steps, B, crons, gaps, out=print):
     out(f"DRY RUN for {S['app_id']}: nothing below was run and nothing was contacted.")
-    out(f"  server {S['host_shown']} as {S['user']} on port {S['port']}, key name {S['key_ref']} ({key_shown(S)}); "
+    out(f"  server {S['host'] or NO_HOST}" + (f" (SSH through {S['ssh_host']})" if S["ssh_host"] else "") + f" as {S['user']} on port {S['port']}, key name {S['key_ref']} ({key_shown(S)}); "
         f"domain {S['domain_shown']}; install path {S['install']}")
     if not S["host"] or not S["domain"]:
         out(f"  the server address and/or the domain are not in state yet, so a placeholder stands in. Supply them with: "
@@ -904,7 +936,7 @@ def print_plan(S, steps, B, crons, gaps, out=print):
     for i, st in enumerate(steps, 1):
         out(f"[{i:02d} {st['id']}] {st['title']}")
         if st.get("local") == "dns":
-            out(f"    (local) resolve {S['domain_shown']} and compare it with {S['host_shown']}")
+            out(f"    (local) resolve {S['domain_shown']} and compare it with {S['host'] or NO_HOST}")
         elif st.get("local") == "health-public":
             out(f"    (local) curl --silent --max-time 20 {S['url']}/api/ops/health")
             out(f"    (local) curl --silent --max-time 20 {S['url']}/eve/v1/health")
@@ -969,7 +1001,7 @@ def dns_problem(S, resolver=resolve):
                 f"{S['host']} where the domain is managed, wait a few minutes, and run this again. Nothing was installed.")
     return None
 
-def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=resolve, read_health=None, say=print, bundle_dir=None, on_started=None):
+def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=resolve, read_health=None, say=print, bundle_dir=None, on_started=None, wait=time.sleep):
     """Run the plan. Returns {"health", "evidence", "running", "facts"}; raises Stop with one instruction otherwise.
     `runner`, `secrets_for`, `resolver` and `read_health` are injected so the whole sequence runs offline in the
     self-test against recorded answers."""
@@ -993,7 +1025,7 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
         problems = qualify(facts)
         if problems: raise Stop("This server cannot run the app:\n  - " + "\n  - ".join(problems))
         say(f"    fit: {facts['OS_ID']} {facts['OS_VERSION']}, {facts['VCPU']} CPUs, {round(int(facts['MEM_KB']) / 1048576, 1)} GB, "
-            f"{round(int(facts['DISK_FREE_KB']) / 1048576)} GB free, /dev/kvm present, no Docker")
+            f"{round(int(facts['DISK_FREE_KB']) / 1048576)} GB free, /dev/kvm present, no Docker, no other web server")
         say(f"[dns] {steps['dns']['title']}")
         why = dns_problem(S, resolver)
         if why: raise Stop(why)
@@ -1023,7 +1055,13 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
         health, bad = health_verdict(S, hf, crons)
         say(f"[health-public] {steps['health-public']['title']}")
         rh = read_health or _read_health
-        public = rh(f"{S['url']}/api/ops/health"); api_code = rh(f"{S['url']}/eve/v1/health")[0]
+        # On a first deploy Caddy is still fetching the certificate: give the outside read ninety seconds before
+        # calling it unanswered. A body that answers, whatever it says, ends the wait.
+        for attempt in range(10):
+            public = rh(f"{S['url']}/api/ops/health")
+            if public[0] or attempt == 9: break
+            wait(10)
+        api_code = rh(f"{S['url']}/eve/v1/health")[0]
         if api_code != "200": bad.append(f"the agent API did not answer through {S['url']}/eve/v1/health (got {api_code or 'no answer'})")
         return {"health": health, "problems": bad, "evidence": ev, "facts": facts, "public": public}
     finally:
@@ -1192,7 +1230,7 @@ def check(app_id, app, infra, ds, adir, say=print):
 
 def set_remote(app_id, adir, pairs, say=print):
     """Write the operator's server address / domain into state. Not secrets; validated by the schema."""
-    allowed = {"host": str, "domain": str, "ssh_user": str, "ssh_port": int, "ssh_key_ref": str, "provider": str}
+    allowed = {"host": str, "domain": str, "ssh_user": str, "ssh_port": int, "ssh_key_ref": str, "provider": str, "ssh_host": str, "ssh_allow_from": str}
     ip = os.path.join(adir, "infrastructure.json"); infra = load(ip); vr = dict(infra.get("vm_remote") or {})
     old = json.dumps(infra, indent=2) + "\n"
     for p in pairs:
@@ -1270,7 +1308,7 @@ def main_for(app_id, a, app, infra, ds, adir, P):
                                         f". Check the address, and that the key named {S['key_ref']} was added when the server was created.")
             problems = qualify(parse_kv(r.stdout))
             if problems: raise Stop("This server cannot run the app:\n  - " + "\n  - ".join(problems))
-            say(f"{app_id}: the server is fit (KVM present, memory, CPUs, disk, Ubuntu 24.04, no Docker). Nothing was installed or changed.")
+            say(f"{app_id}: the server is fit (KVM present, memory, CPUs, disk, Ubuntu 24.04, no Docker, no other web server). Nothing was installed or changed.")
             return 0
         if "--verify-rls" in a:
             return verify_rls(app_id, S, app, infra, ds, adir, P, repair="--no-repair" not in a)
@@ -1302,6 +1340,10 @@ def run_deploy(app_id, S, app, infra, ds, adir, P, src, crons, deploy_fn=deploy)
         g = P.GUIDE.get(n)
         return f"{n}: that does not look like {g['shape'][1]}" if g and not re.fullmatch(g["shape"][0], v) else None
     prepare_source(app_id, app)
+    # The copy to the server deletes what the source no longer has, so the source must really be the app.
+    if not (os.path.isfile(os.path.join(src, "package.json")) and os.path.isdir(os.path.join(src, "agent")) and os.path.isfile(os.path.join(src, "services/task-workflow/package.json"))):
+        print(f"{app_id}: {os.path.relpath(src, ROOT)} is not the application's source (no package.json, agent/ or services/task-workflow), so there is "
+              f"nothing to copy. Nothing was contacted and {app_id}'s status is unchanged."); return 1
     started = []
     def on_started():
         started.append(True); app["status"] = "stamping"; P.save(os.path.join(adir, "application.json"), app)

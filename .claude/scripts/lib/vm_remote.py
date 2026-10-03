@@ -22,7 +22,8 @@ The same file is copied to the server and run THERE for everything that touches 
 ever crosses the SSH command line (env-merge, env-mint, env-names, env-run, pg-admin, host-chain below).
 
 WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step is the way it is):
-   1 qualify      read-only probe: /dev/kvm, 8 GB / 4 vCPU, free disk, Ubuntu 24.04, x86-64, sudo, no Docker.
+   1 qualify      read-only probe: /dev/kvm, 8 GB / 4 vCPU, free disk, Ubuntu 24.04, x86-64, sudo, no Docker, no
+                  other web server (Caddy is the one reverse proxy; nginx or Apache would hold ports 80 and 443).
                   Anything short is refused in plain words before a single package is installed.
    2 dns          the domain must already point at the server, or Caddy cannot get a certificate.
    3 bundle       the generated scripts, unit files, Caddyfile and the factory's database tooling -> <install>/factory
@@ -319,6 +320,12 @@ echo "DISK_FREE_KB=$(df -Pk /opt 2>/dev/null | awk 'NR==2 {print $4}')"
 if [ "$(id -u)" = "0" ] || sudo -n true 2>/dev/null; then echo "SUDO=ok"; else echo "SUDO=no"; fi
 if command -v docker >/dev/null 2>&1; then echo "DOCKER=present"; else echo "DOCKER=absent"; fi
 if [ -d /run/systemd/system ]; then echo "SYSTEMD=yes"; else echo "SYSTEMD=no"; fi
+# Caddy is the app's one web server; another one already installed would hold ports 80 and 443.
+p=none
+for b in nginx apache2 httpd haproxy traefik lighttpd; do
+  if command -v "$b" >/dev/null 2>&1 || [ -x "/usr/sbin/$b" ]; then p="$b"; break; fi
+done
+echo "PROXY=$p"
 """
 def parse_kv(text):
     out = {}
@@ -333,7 +340,7 @@ def qualify(facts):
     def num(k):
         try: return int(facts.get(k, ""))
         except ValueError: return None
-    need = ("OS_ID", "OS_VERSION", "ARCH", "KVM", "MEM_KB", "VCPU", "DISK_FREE_KB", "SUDO", "DOCKER", "SYSTEMD")
+    need = ("OS_ID", "OS_VERSION", "ARCH", "KVM", "MEM_KB", "VCPU", "DISK_FREE_KB", "SUDO", "DOCKER", "SYSTEMD", "PROXY")
     unread = [k for k in need if not facts.get(k)]
     if unread:
         return [f"The server answered, but the check could not read {', '.join(unread)}, so nothing is known about it. "
@@ -363,6 +370,10 @@ def qualify(facts):
     if facts["DOCKER"] != "absent":
         bad.append("Docker is installed on this server. Docker rewrites firewall rules and opens ports behind the firewall's back, and "
                    "the app would pick it over the safer sandbox. Use a fresh server with nothing else on it.")
+    if facts["PROXY"] != "none":
+        bad.append(f"Another web server ({facts['PROXY']}) is installed on this server. The app's one web server is Caddy, which "
+                   f"answers on the two web ports and gets the security certificate; two cannot share those ports. Use a fresh "
+                   f"server with nothing else on it.")
     if facts["SYSTEMD"] != "yes":
         bad.append("This server does not run systemd, which is what keeps the app's three services and six timers alive. Use a "
                    "standard Ubuntu 24.04 server image.")
@@ -1014,7 +1025,7 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
         problems = qualify(facts)
         if problems: raise Stop("This server cannot run the app:\n  - " + "\n  - ".join(problems))
         say(f"    fit: {facts['OS_ID']} {facts['OS_VERSION']}, {facts['VCPU']} CPUs, {round(int(facts['MEM_KB']) / 1048576, 1)} GB, "
-            f"{round(int(facts['DISK_FREE_KB']) / 1048576)} GB free, /dev/kvm present, no Docker")
+            f"{round(int(facts['DISK_FREE_KB']) / 1048576)} GB free, /dev/kvm present, no Docker, no other web server")
         say(f"[dns] {steps['dns']['title']}")
         why = dns_problem(S, resolver)
         if why: raise Stop(why)
@@ -1297,7 +1308,7 @@ def main_for(app_id, a, app, infra, ds, adir, P):
                                         f". Check the address, and that the key named {S['key_ref']} was added when the server was created.")
             problems = qualify(parse_kv(r.stdout))
             if problems: raise Stop("This server cannot run the app:\n  - " + "\n  - ".join(problems))
-            say(f"{app_id}: the server is fit (KVM present, memory, CPUs, disk, Ubuntu 24.04, no Docker). Nothing was installed or changed.")
+            say(f"{app_id}: the server is fit (KVM present, memory, CPUs, disk, Ubuntu 24.04, no Docker, no other web server). Nothing was installed or changed.")
             return 0
         if "--verify-rls" in a:
             return verify_rls(app_id, S, app, infra, ds, adir, P, repair="--no-repair" not in a)
