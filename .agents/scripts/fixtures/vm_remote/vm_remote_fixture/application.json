@@ -1,0 +1,126 @@
+{
+  "$schema": "../../../../../state/application/app_id/application.schema.json",
+  "app_id": "vm_remote_fixture",
+  "mold_id": "mold_v1",
+  "status": "planned",
+  "brief": ".claude/scripts/fixtures/vm_remote/README.md",
+  "product_id": "delivered",
+  "model": {
+    "provider": "cloudflare",
+    "model": "@cf/zai-org/glm-5.2",
+    "context_window": 262144
+  },
+  "capabilities": {
+    "web_search": true,
+    "browser": false,
+    "multi_tenant": true
+  },
+  "service_surface": [
+    "dm.md",
+    "web_search",
+    "primary_context",
+    "multiplayer_context",
+    "custom_workflow_builder"
+  ],
+  "workspace": {
+    "org": {
+      "org_id": "example",
+      "name": "Example"
+    },
+    "operator_self": {
+      "email": "operator@example.com",
+      "name": "Operator"
+    },
+    "members": [
+      {
+        "email": "operator@example.com",
+        "role": "owner"
+      }
+    ],
+    "platform_admins": [
+      "operator@example.com"
+    ],
+    "roster": [
+      {
+        "email": "operator@example.com"
+      }
+    ],
+    "customers": []
+  },
+  "surface": {
+    "dm.md": {
+      "enabled": true,
+      "top_level": [
+        "Customers",
+        "Platform",
+        "Deployments",
+        "Solutions",
+        "Implementation",
+        "Tickets",
+        "People",
+        "Uploads"
+      ],
+      "system_of_record": "postgres"
+    },
+    "browser": {
+      "enabled": false,
+      "local": false,
+      "default_on_for_agent": false
+    },
+    "web_search": {
+      "enabled": true,
+      "default_on_for_agent": true
+    },
+    "primary_context": {
+      "corpus": [
+        {
+          "kind": "customer_agreements",
+          "dataroom_path": "Customers/{customer_id}/agreements/",
+          "sync": "manual_entry",
+          "required": true
+        }
+      ],
+      "instructions": {
+        "default_mode": "build",
+        "model": "@cf/zai-org/glm-5.2",
+        "subagents": []
+      }
+    },
+    "multiplayer_context": {
+      "processes": [
+        {
+          "name": "sprint_planning",
+          "enabled": true,
+          "implemented_by": [
+            {
+              "kind": "cycles",
+              "ref": "/api/ops/cycles"
+            }
+          ]
+        }
+      ]
+    },
+    "custom_workflow_builder": {
+      "library": {
+        "install": "all"
+      }
+    }
+  },
+  "testing": {
+    "load": {
+      "status": "pending"
+    },
+    "context": {
+      "status": "pending"
+    },
+    "functional": {
+      "status": "pending"
+    },
+    "accessibility": {
+      "status": "pending"
+    },
+    "responsiveness": {
+      "status": "pending"
+    }
+  }
+}

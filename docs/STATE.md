@@ -80,6 +80,32 @@ three health endpoints (`workflow`, `api`, `web`), each the HTTP status as a str
 written by `--deploy` and carried across a re-intake by `intake.py`, never by hand. A status code there is not proof
 of isolation: that verdict is `datastores.postgres.rls_verified`.
 
+## infrastructure.vm_remote
+Closed (`additionalProperties: false`) and present only when `target` is `vm_remote` (mold_v1-075): a server reached over SSH
+that **serves** the application, unlike `vm`. `factory.py validate` refuses the other targets' objects beside it, and adds the
+rules the schema cannot say (each prints the file and the value to write).
+
+| Field | Meaning |
+|---|---|
+| `provider` | who rents the server (`digitalocean`, `aws`, `gcp`, `azure`, `oci`, `hetzner`, `bare_metal`); wording and cost line only |
+| `host` | the server's public address. One of the two values the operator supplies (`provision.py <app> --set-remote host=... domain=...`); absent until then. Not a secret |
+| `ssh_host`, `ssh_allow_from` | both optional, for a private administration tunnel (mold_v1-156, not built yet). `ssh_host` is the address SSH connects to when it is not the public `host`; `ssh_allow_from` is the only address or network the firewall lets reach the SSH port (validate requires `ssh_host` with it). Absent: SSH to `host`, port open to any address |
+| `ssh_user`, `ssh_port` | the login the deploy connects as (root, or a user with passwordless sudo) and the SSH port; the firewall allows exactly that port, 80 and 443 |
+| `ssh_key_ref` | the **name** of the SSH key: the file name under `~/.ssh/` on the factory VM and the name its public half carries at the provider. A path, a public key or key material is a schema error |
+| `domain` | the name people open; needs a DNS A record at `host`. The other value the operator supplies |
+| `production_url` | `https://<domain>`, written by `--deploy-remote` after the health checks; refused by validate when it is anything else or when `deployed_at` is absent. This is the URL `lanes.py` grades |
+| `install_path` | fixed: `/opt/software-factory/<app_id>`. The build embeds absolute paths, so the app is built where it runs |
+| `kvm` | `required`, the only value: the sandbox is a KVM microVM, and a host without `/dev/kvm` is refused before anything is installed |
+| `sandbox` | `backend` (`microsandbox`), `cpus` (at least 2), `memory_mib` (at least 1024), `deny_subnets` (must include 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8; the deploy adds the server's own address). Written to the env file as `SANDBOX_BACKEND`, `SANDBOX_CPUS`, `SANDBOX_MEMORY_MIB`, `SANDBOX_DENY_SUBNETS` |
+| `storage` | `driver` `fs` (then `dir` is `/var/lib/software-factory/<app_id>/storage`) or `s3` (then `bucket`, optional `region` / `endpoint`, and `access_key_ref` / `secret_key_ref`, both NAMES listed in `secrets_user`). `datastores.blob.provider` must say the same |
+| `postgres` | `version` (16 or 17) and `tls`: `on` (the server's Postgres answers TLS, which the mold's migration scripts require) or `migration_switch` with `migration_switch_env` naming the upstream switch. `datastores.postgres` must be `self_hosted`, `exposure: remote_loopback`, `host: 127.0.0.1`, with the matching `sslmode` |
+| `health` | the deploy's verdict, never typed: `workflow` / `api` / `web` as under `vercel.health`, `kvm` (`ok`, `device_missing`, `api_not_in_kvm_group`, `unmeasured`), `qualified_at` |
+
+With it go `secret_store: vm_remote_env_file` (one env file on the server, `/etc/software-factory/<app_id>/env`, mode 600, root's) and
+`sandbox.provider: microsandbox`. A vm_remote app may hold a deployed status, and then owes the same `rls_verified` evidence as a vercel
+app; two live vm_remote apps may not share a `host` or a `domain`. A fixture that exercises all of this lives outside `state/`, at
+`.claude/scripts/fixtures/vm_remote/vm_remote_fixture/` (`factory.py validate --app-dir <that dir>`).
+
 ## application.testing and application.status
 `testing` holds the last result per lane — `{status, run_at, report}` for each of `functional`, `context`,
 `load`, `accessibility`, `responsiveness`, and `additionalProperties: false`, so a sixth lane has nowhere
@@ -97,6 +123,10 @@ What a lane needs from state, declared per check in the lane's `lane.json` rathe
 grade the deployed app; the two browser lanes read it through `<lane>/lane-url.py`, which for a `target: vm`
 fixture accepts a loopback `MOLD_V1_LANE_URL` instead — `docs/RUNBOOK.md` §7), `datastores.postgres.rls` (the `rls` row is skipped when it is `off`), and
 `application.clone_of.ref` (the context lane's `clone.regression` row only applies to a replica).
+For a `target: vm_remote` app the same checks grade `infrastructure.vm_remote.production_url` instead (mold_v1-078): `lanes.py`
+answers the `infrastructure.vercel.production_url` precondition and the lanes' `lane-url.py` calls from
+`.claude/scripts/lib/lane_url.py`, and appends the checks in `.claude/scripts/lane-overlays/vm_remote/<lane>.json` (today the
+functional lane's `tool.python`, a real python tool call in the sandbox). A vercel or vm app's lanes are unchanged.
 
 ## capabilities and runtime env
 `application.capabilities` is the source; `infrastructure.runtime_env` is what provision.py writes to the target (`OPS_MULTI_TENANT`, `ENABLE_*`, `MODEL_PROVIDER`). Never edit `runtime_env` by hand.
@@ -105,4 +135,4 @@ fixture accepts a loopback `MOLD_V1_LANE_URL` instead — `docs/RUNBOOK.md` §7)
 Set when the app replicates an existing deployment. `datastores.postgres.snapshot.cleared_sealed_rows` records the `connector_secrets` / `browser_credentials` rows the restore dropped: they were sealed under the source app's `OPS_SECRETS_KEY`, which is minted per app and never copied (`docs/HOW_IT_WORKS.md`, Secrets). A non-clone app restores nothing and starts with no connectors; enter them in the app. `datastores.postgres.snapshot` and `datastores.blob.snapshot` say where the data came from; `clone_of.regression` records the diff run against the source. Read-back tools in the mold (`operator:doctor`, `validate-solution`, `context-graph`) print prose, so the regression harness queries Postgres and blob directly.
 
 ## Brief hints that fill these blocks
-`workspace: <name>`, `operator: <email>`, `members: a@x, b@x`, `primary context: customer agreements, product offerings, rollout case studies`, `multiplayer: sprint planning, onboarding, escalation handling`, `accounts are called patients`, `clone of live`, `fresh database` / `shared database`, `single workspace`, `workflows: all|none`, plus `neon` / `supabase` / `self-host the postgres`, and the older `vercel|vm`, `no web search`, `no browser`, `customer: <id>`, `domain: <host>`, `mold_v2`. Everything the brief does not say takes the mold default or a confirmed factory default; nothing is guessed.
+`workspace: <name>`, `operator: <email>`, `members: a@x, b@x`, `primary context: customer agreements, product offerings, rollout case studies`, `multiplayer: sprint planning, onboarding, escalation handling`, `accounts are called patients`, `clone of live`, `fresh database` / `shared database`, `single workspace`, `workflows: all|none`, plus `neon` / `supabase` / `self-host the postgres`, the older `vercel|vm`, `on the customer's own server` / `vm_remote` (with optional `server: <address>`), `no web search`, `no browser`, `customer: <id>`, `domain: <host>`, `mold_v2`. Everything the brief does not say takes the mold default or a confirmed factory default; nothing is guessed.

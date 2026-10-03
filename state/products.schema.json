@@ -87,7 +87,8 @@
               "type": "string",
               "enum": [
                 "vercel",
-                "vm"
+                "vm",
+                "vm_remote"
               ]
             }
           },

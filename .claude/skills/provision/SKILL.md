@@ -12,6 +12,9 @@ python3 .claude/scripts/provision.py <app_id> --verify-db         # the database
 python3 .claude/scripts/provision.py <app_id> --verify-rls [--no-repair]   # re-prove isolation on what runs now; writes rls_verified
 ```
 
+For an application on `target: vm_remote` (a server of the customer's own, over SSH) the commands are different; see "A server
+of its own" at the end.
+
 Launch the `provisioner` subagent for the check; a human runs `--set-secret` and `--deploy` (the agent runtime
 may not handle secret values). Missing secrets are the user's to set; report names, never collect values.
 
@@ -98,3 +101,28 @@ the Vercel project and prints the one DNS record its owner must create; nothing 
 once the domain serves the app: it moves `production_url` and `WEB_ORIGIN` (emailed links, the MCP origin check) and
 lists what follows — a redeploy, the Google sign-in origin, and a new version of the app's agent package, which has
 the address baked in. A deploy keeps a switched domain as the front door. The `*.vercel.app` address keeps working.
+
+## A server of its own (`target: vm_remote`)
+
+```
+python3 .claude/scripts/provision.py <app_id>                              # check: OFFLINE, connects to nothing
+python3 .claude/scripts/provision.py <app_id> --set-remote host=<address> domain=<name>   # the operator's two values (not secrets)
+python3 .claude/scripts/provision.py <app_id> --remote-key                 # make the key pair named by ssh_key_ref; prints the PUBLIC half only
+python3 .claude/scripts/provision.py <app_id> --qualify-remote             # logs in, read-only: /dev/kvm, 8 GB / 4 vCPU, disk, Ubuntu 24.04, no Docker
+python3 .claude/scripts/provision.py <app_id> --deploy-remote --dry-run    # every local command, remote command and generated file; runs none
+python3 .claude/scripts/provision.py <app_id> --deploy-remote              # a human, at a terminal: it asks for values at a hidden prompt
+python3 .claude/scripts/provision.py <app_id> --verify-rls [--no-repair]   # measured on the server, where the database URLs live
+python3 .claude/scripts/provision.py --self-test-remote                    # offline tests of all of the above
+```
+
+The agent may run the check, `--set-remote`, `--remote-key`, `--qualify-remote` and the dry run. The deploy is the operator's:
+it asks for the customer credentials at a hidden prompt and sends them to the server on stdin, so no value reaches the chat,
+the repo or a command line. `--deploy`, `--set-secret` and `--verify-db` answer with the vm_remote command to use instead.
+
+The deploy qualifies the host first and refuses in plain words; then packages, firewall (the SSH port, 80, 443; fail2ban; no
+Docker rule), Postgres on loopback with TLS, the env file (mode 600), the SOURCE copied and built in place, the same database
+chain as the Vercel path run ON the server, three systemd services (the API as a non-root user in group kvm, with stale-lock
+cleanup and serial prewarm before start), six cron timers, Caddy, and the same `/api/ops/health` gate. It refuses outright
+while the mold lacks the three off-Vercel switches (`SANDBOX_BACKEND`, `STORAGE_DRIVER`, `SERVICE_AUTH`); the check and the dry
+run name them. When asking the operator for the server or the DNS record, use `docs/RUNBOOK.md` §9, one step at a time.
+Details and what is still unproven on a real server: `infra/vm_remote/README.md`.
