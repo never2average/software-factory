@@ -231,6 +231,16 @@ def _target_objects(app_id, docs):
 # The networks agent-run code must never reach from a vm_remote sandbox (reports/vm-spike-mold_v1-072.md: under eve's
 # default policy the sandbox reached the cloud metadata address and the host's private bridges).
 VM_REMOTE_DENY = ("169.254.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")
+def _ip_in(address, cidrs):
+    """The first of `cidrs` holding `address` (an IP literal), else None. A host name is never inside anything here."""
+    import ipaddress
+    try: ip = ipaddress.ip_address(address)
+    except ValueError: return None
+    for c in cidrs:
+        try:
+            if ip in ipaddress.ip_network(c, strict=False): return c
+        except ValueError: continue
+    return None
 KEY_MATERIAL = re.compile(r"-----BEGIN|^ssh-(rsa|ed25519|dss)\s|^ecdsa-sha2-|AAAA[0-9A-Za-z+/]{24,}|://[^/\s:@]+:[^/\s@]+@")
 def _vm_remote(app_id, docs):
     """What the schema cannot say about a `target: vm_remote` app (mold_v1-075).
@@ -253,7 +263,7 @@ def _vm_remote(app_id, docs):
         out.append(f"{f}: vm_remote.install_path is {vr.get('install_path')!r} but it is fixed at {want!r} (the build embeds "
                    f"absolute paths, so the app is built where it runs) — set it to that in {fix}")
     if infra.get("secret_store") != "vm_remote_env_file":
-        out.append(f"{f}: secret_store is {infra.get('secret_store')!r} but a vm_remote app keeps its values in one env file on its "
+        out.append(f"{f}: secret_store is {infra.get('secret_store')!r} but a vm_remote app keeps its values in env files on its "
                    f"own server — set \"secret_store\": \"vm_remote_env_file\" in {fix}")
     if (infra.get("sandbox") or {}).get("provider") != "microsandbox":
         out.append(f"{f}: sandbox.provider is {(infra.get('sandbox') or {}).get('provider')!r} but off Vercel the only sandbox that "
@@ -286,8 +296,17 @@ def _vm_remote(app_id, docs):
         if sg.get("dir") != sd:
             out.append(f"{f}: vm_remote.storage.dir is {sg.get('dir')!r} but files live at {sd!r}, outside the build directory so a "
                        f"redeploy keeps them — set it to that in {fix}")
+        # The filesystem driver's file links point at the web app's public address, which the agent's sandbox downloads
+        # from (the mold's docs/self-hosting/SANDBOX.md); that address must not be one the sandbox is denied.
+        hit = _ip_in(vr.get("host") or "", (sb.get("deny_subnets") or []) + list(VM_REMOTE_DENY))
+        if hit:
+            out.append(f"{f}: vm_remote.host {vr.get('host')} is inside vm_remote.sandbox.deny_subnets ({hit}), but with storage.driver "
+                       f"'fs' the agent's sandbox downloads data-room files from that address, so every fetch would fail — "
+                       + (f"remove {hit} from deny_subnets (the server's services are loopback-only behind Caddy, so its "
+                          f"public address needs no block)" if hit not in VM_REMOTE_DENY else
+                          f"give the app a server with a public address, or set storage.driver to 's3'") + f" in {fix}")
     elif sg.get("driver") == "s3":
-        for k in ("bucket", "access_key_ref", "secret_key_ref"):
+        for k in ("bucket", "endpoint", "access_key_ref", "secret_key_ref"):
             if not sg.get(k): out.append(f"{f}: vm_remote.storage.driver is 's3' but storage.{k} is missing — add it in {fix}"
                                          + (" (the NAME of the env value, never the value)" if k.endswith("_ref") else ""))
         for k in ("access_key_ref", "secret_key_ref"):
