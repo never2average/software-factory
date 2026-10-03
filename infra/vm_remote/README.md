@@ -50,7 +50,8 @@ time with three tries each. Then `node .output/server/index.mjs`, not `eve start
   (`app/eve/v1/session/[...segments]/route.ts`) in front of them, which a direct route would skip.
 - **No Docker on the server.** A server that has it is refused at qualification and again by the firewall script, so there is no
   conntrack rule for Docker-published ports.
-- **Caddy is the one reverse proxy and TLS terminator; there is no nginx.** One site, one upstream (the web app on loopback),
+- **Caddy is the one reverse proxy and TLS terminator; there is no nginx.** A server that already has nginx, Apache, HAProxy,
+  Traefik or lighttpd installed is refused at qualification (they would hold ports 80 and 443). One site, one upstream (the web app on loopback),
   automatic certificates and renewal, streaming with `flush_interval -1`. Nothing in this design needs a second proxy. What would
   change that: a certificate the customer must supply themselves, or a network that blocks ports 80 and 443 from Let's Encrypt
   (Caddy can do both, with a `tls <cert> <key>` line or a DNS challenge plugin, so even then the answer is a Caddyfile change).

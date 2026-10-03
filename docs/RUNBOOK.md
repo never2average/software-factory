@@ -296,7 +296,8 @@ python3 .claude/scripts/provision.py <app_id> --deploy-remote --dry-run    # pri
 ```
 
 The first connects to nothing. The second changes nothing on the server; if the server is too small, is not Ubuntu
-24.04, or cannot run the agent's sandbox (no "nested virtualization"), it says which and what to pick instead, and
+24.04, cannot run the agent's sandbox (no "nested virtualization"), or already has other software on it such as Docker or
+another web server, it says which and what to pick instead, and
 you have lost only a few minutes of a server you can delete. The third is the whole deploy on paper.
 
 ### F. Deploy (about 30 minutes the first time, you, at the terminal)
