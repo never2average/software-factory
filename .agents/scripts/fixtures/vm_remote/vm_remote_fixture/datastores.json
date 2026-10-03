@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../../../state/application/app_id/datastores.schema.json",
+  "postgres": {
+    "provider": "self_hosted",
+    "orm": "drizzle",
+    "migrations_dir": "drizzle/",
+    "rls": "fail_closed",
+    "tenancy": "multi_org",
+    "url_ref": "DATABASE_URL",
+    "scope": "fresh",
+    "sslmode": "require",
+    "host": "127.0.0.1",
+    "port": 5432,
+    "database": "vmremotefixture",
+    "admin_url_ref": "POSTGRES_ADMIN_URL",
+    "exposure": "remote_loopback"
+  },
+  "blob": {
+    "provider": "fs",
+    "root_prefix": "orgs/example"
+  },
+  "cache": {
+    "provider": "none"
+  },
+  "memory": {
+    "backend": "postgres"
+  }
+}

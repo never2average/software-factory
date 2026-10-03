@@ -13,7 +13,7 @@ gates. An **application** is one stamped, deployable instance of a product. `sta
 | `stage` | `defined` → `stamped` → `lanes_passing` → `deployed` → `released`. Written only by `factory.py close` when every task carrying that `advances_stage` is done; never by hand |
 | `gates` | the plain-English conditions for each stage, the checklist the `productize` skill turns into tasks |
 | `app_ids` | the applications stamped from it (intake appends; a retired or reverted app stays listed with its status in its own state) |
-| `deploy_targets` | `vercel` (the one committed deploy target) and/or `vm` (local verification only) |
+| `deploy_targets` | `vercel` (the one target proven in production), `vm` (local verification only) and/or `vm_remote` (a server of the customer's own over SSH: built and tested offline, not yet proven on a real server; `docs/RUNBOOK.md` §9) |
 | `vercel_project` | project name for the product's first app; later apps get `<project>-<suffix>` |
 | `brand` | the visual identity. Set it from three inputs and let the rest derive: `python3 .claude/scripts/branding.py --product <id> set --name "Acme Ops" --color #1F6F5C --logo brands/acme/logo.png` (optional `--tagline`). The stored block also carries the derived fields (`description`, `neutral_chroma`, `radius`, `icon_bg`/`icon_fg`, the inlined `icon_svg`, optional `tokens` pins) for a designer who wants an exact value |
 

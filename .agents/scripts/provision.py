@@ -2,6 +2,10 @@
 """Provision: validated application state -> running deployment.
 
   provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]
+  provision.py --self-test   offline checks of the deadlines, deploy watch and VM-headroom logic
+  provision.py --self-test-remote   offline checks of the vm_remote target (same as lib/vm_remote.py --self-test)
+  provision.py <app_id> [--set-remote host=.. domain=..] [--remote-key] [--qualify-remote]
+                        [--deploy-remote [--dry-run [--out DIR]]]      target=vm_remote only; see below
 
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
   projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare
@@ -30,6 +34,16 @@
   result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only
   measure). No build, no deploy, no password rotation. Run it after any restore or migration.
 
+NOTHING WAITS FOREVER, AND A BUSY VM IS WAITED OUT (mold_v1-106, -109). Every vercel call has a deadline
+and runs in its own process group, killed whole on timeout or on an interrupt. Each `vercel deploy` is
+watched on the API: a deployment stuck in QUEUED/INITIALIZING (PROVISION_DEPLOY_STALL_S, 600) or past
+PROVISION_DEPLOY_TIMEOUT_S (2400) is CANCELLED on Vercel and the run fails saying how long it waited.
+--deploy first waits (PROVISION_HEADROOM_WAIT_S, 900) for load <= PROVISION_MAX_LOAD (CPU count) and
+MemAvailable >= PROVISION_MIN_FREE_MB (3072), naming the busiest processes, and refuses before touching
+anything if the box stays busy. The eve build runs under `nice` with a V8 heap ceiling and, if the kernel
+kills it for memory (exit 137), waits and retries once. SIGTERM/SIGHUP unwind into the revert record, which
+says which services this run actually replaced and which still serve their previous deployment.
+
 TENANT ISOLATION IS A GATE, NOT A LABEL. datastores.postgres.rls says what the application asked
 for: "fail_closed" and "on" are enforced — the deploy stops and the app is recorded `reverted`
 rather than `stamped` if a workspace can read another workspace's rows — while "off" is measured
@@ -42,20 +56,226 @@ the mold cannot get off Vercel without a fork, which HARD RULE 1 forbids). A vm 
 --verify-db, and --deploy says so immediately; it requires postgres.provider self_hosted, because the
 only artifact this lane builds is that local database and the artifact must match the state.
 
+TARGET vm_remote (mold_v1-075..077) is a server reached over SSH that DOES serve the application: three
+systemd units behind Caddy, its own Postgres on loopback, a rootless KVM microVM sandbox. Everything for it
+lives in lib/vm_remote.py, which main() hands over to before any Vercel or local-database code runs:
+--check is offline (it connects to nothing); --deploy-remote --dry-run prints every local and remote
+command and every generated file without connecting; --deploy-remote qualifies the host first and refuses
+in plain words, then runs the SAME database chain as below ON the server (SCHEMA_CHAIN through _run_chain,
+with the URLs read from the server's own env file) and the same /api/ops/health gate. Values only the
+operator holds are typed at a hidden prompt and reach the server on stdin, never a command line.
+
 DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier is exhausted;
 Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.
 `self_hosted` means a Postgres on a PRIVATE docker network with no host port — never a public one.
 """
-import json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse, time
+import base64, json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse, time, signal
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
 def sh(cmd, cwd=None, check=True):
-    r = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    r = vrun(cmd, shell=True, cwd=cwd)
     if check and r.returncode: sys.exit(f"$ {cmd}\n{r.stdout}{r.stderr}")
     return r.stdout
+
+# ---- every external call has a deadline (mold_v1-106) ------------------------------------------------
+# A `vercel deploy` whose deployment sat at UNKNOWN on Vercel made the CLI wait 2h14m (2026-09-23), with
+# application.json parked at `stamping` until the process was force-killed. subprocess.run(timeout=) alone
+# does not fix that: it kills the SHELL, and `communicate()` then waits on pipes the node grandchild still
+# holds open. So every call runs in its own process group, and a timeout (or an interrupt of provision.py
+# itself) kills the whole group. Limits are seconds and overridable by environment for a slow day.
+VERCEL_CALL_TIMEOUT_S = int(os.environ.get("PROVISION_VERCEL_CALL_TIMEOUT_S") or 300)   # api / env / project calls
+DEPLOY_TIMEOUT_S = int(os.environ.get("PROVISION_DEPLOY_TIMEOUT_S") or 2400)           # one `vercel deploy`, end to end
+DEPLOY_STALL_S = int(os.environ.get("PROVISION_DEPLOY_STALL_S") or 600)                # QUEUED/INITIALIZING/UNKNOWN unchanged this long = stuck
+DEPLOY_POLL_S = float(os.environ.get("PROVISION_DEPLOY_POLL_S") or 20)
+BUILD_TIMEOUT_S = int(os.environ.get("PROVISION_BUILD_TIMEOUT_S") or 2400)             # the local eve build
+SHIPPED = []   # (deployable, url) replaced in production by THIS run, in order: what an interrupted deploy really changed
+
+def _fmt_s(s):
+    m, s = divmod(int(s), 60)
+    return f"{m}m{s:02d}s" if m else f"{s}s"
+
+def _kill_tree(p):
+    try: os.killpg(p.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError): pass
+
+def _label(cmd):
+    s = cmd if isinstance(cmd, str) else " ".join(map(str, cmd))
+    return re.sub(r"://[^@\s/]+@", "://***@", s)[:160]
+
+def vrun(cmd, shell=None, cwd=None, env=None, input=None, capture_output=True, text=True, timeout=None, what=None):
+    """subprocess.run with a deadline that holds: own process group, the whole group killed on timeout or
+    on any interrupt of this process. A timeout is a clear SystemExit naming the call and the elapsed time."""
+    shell = isinstance(cmd, str) if shell is None else shell
+    timeout = VERCEL_CALL_TIMEOUT_S if timeout is None else timeout
+    t0 = time.monotonic()
+    pipe = subprocess.PIPE if capture_output else None
+    p = subprocess.Popen(cmd, shell=shell, cwd=cwd, env=env, text=text, start_new_session=True,
+                         stdin=subprocess.PIPE if input is not None else None, stdout=pipe, stderr=pipe)
+    try:
+        out, err = p.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(p)
+        try: p.communicate(timeout=10)
+        except Exception: pass
+        sys.exit(f"{what or _label(cmd)} did not finish: timed out after {_fmt_s(time.monotonic() - t0)} "
+                 f"(limit {_fmt_s(timeout)}) and was killed. Nothing after it ran.")
+    except BaseException:
+        _kill_tree(p); raise
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+def _deployment_state(host, cwd):
+    """(readyState, id) of one deployment, read from the API; (None, None) when the read itself fails."""
+    try:
+        r = vrun(f"vercel api /v13/deployments/{host} --raw", cwd=cwd, timeout=60)
+        d = json.loads(r.stdout or "{}")
+        return (d.get("readyState") or d.get("status")), d.get("id")
+    except (SystemExit, ValueError):
+        return None, None
+
+def _cancel_deployment(ref, cwd):
+    """Cancel a deployment that will not finish, so it cannot go live later behind a `reverted` record."""
+    dep_id = ref if str(ref).startswith("dpl_") else _deployment_state(ref, cwd)[1]
+    if not dep_id: return f"Could not look up {ref} to cancel it; cancel it by hand in the Vercel dashboard (Deployments -> ... -> Cancel)."
+    try: r = vrun(f"vercel api /v12/deployments/{dep_id}/cancel -X PATCH --raw", cwd=cwd, timeout=60)
+    except SystemExit as e: return f"Cancelling {dep_id} did not answer ({e}); cancel it by hand in the Vercel dashboard."
+    if r.returncode or '"error"' in (r.stdout or ""):
+        return f"Cancelling {dep_id} was refused: {(r.stdout + r.stderr).strip()[-200:]}"
+    return f"Cancelled {dep_id} on Vercel, so it cannot go live later."
+
+WAITING_STATES = (None, "UNKNOWN", "QUEUED", "INITIALIZING")
+class _DeployStopped(SystemExit):
+    """The watcher's own verdict (already killed and cancelled), as distinct from a SIGTERM's SystemExit."""
+def vercel_deploy(cmd, cwd, label, env=None, timeout=None, stall=None, poll=None, quiet=False):
+    """One `vercel deploy`, watched: the deployment it creates is polled on the API, a deployment that sits
+    in a waiting state for `stall` seconds or runs past `timeout` is cancelled and the CLI killed, and an
+    ERROR/CANCELED one ends the wait at once. Returns the CLI's output (stdout+stderr) on success."""
+    timeout = timeout or DEPLOY_TIMEOUT_S; stall = stall or DEPLOY_STALL_S; poll = poll or DEPLOY_POLL_S
+    t0 = time.monotonic()
+    log = tempfile.TemporaryFile(mode="w+")
+    p = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, text=True, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    host = dep_id = state = None; since = last_note = t0
+    def output():
+        log.seek(0); return log.read()
+    def stop(why, cancel=True):
+        _kill_tree(p)
+        note = _cancel_deployment(dep_id or host, cwd) if cancel and (dep_id or host) else ""
+        return _DeployStopped(f"{label} failed after {_fmt_s(time.monotonic() - t0)}: {why}. {note}\n" + output().strip()[-1500:])
+    try:
+        while True:
+            try:
+                p.wait(timeout=poll); break
+            except subprocess.TimeoutExpired: pass
+            now = time.monotonic()
+            if not host:
+                m = re.search(r"https://([a-z0-9.-]+\.vercel\.app)", output())   # the CLI prints the new deployment's URL first
+                if m: host = m.group(1)
+            if host:
+                st, did = _deployment_state(host, cwd)
+                dep_id = did or dep_id
+                if st and st != state: state, since = st, now
+                if state in ("ERROR", "CANCELED"): raise stop(f"Vercel reports the deployment {host} as {state}", cancel=False)
+            # Stuck = the API itself reports a waiting state that has not moved, or the CLI never named a
+            # deployment at all (given twice as long: an upload of the prebuilt eve output is slow). A host
+            # whose state cannot be READ is not evidence of anything and is bounded by `timeout` alone.
+            if host and state in WAITING_STATES and state is not None and now - since > stall:
+                raise stop(f"the deployment {host} sat at {state} for {_fmt_s(now - since)} without moving (limit {_fmt_s(stall)})")
+            if not host and now - t0 > 2 * stall:
+                raise stop(f"the CLI named no deployment (not created yet) in {_fmt_s(now - t0)} (limit {_fmt_s(2 * stall)})")
+            if now - t0 > timeout:
+                raise stop(f"no result within {_fmt_s(timeout)} (deployment {host or 'not created'}, last state {state or 'UNKNOWN'})")
+            if not quiet and now - last_note >= 60:
+                print(f"  {label}: {_fmt_s(now - t0)} elapsed, deployment {state or 'not reported yet'}", flush=True); last_note = now
+    except _DeployStopped:
+        raise
+    except BaseException:
+        # Ctrl-C / SIGTERM (a SystemExit from _on_signal) of provision.py mid-deploy: do not leave a --prod deployment running that could
+        # go live after the app is recorded reverted.
+        _kill_tree(p)
+        if dep_id or host: print("  " + _cancel_deployment(dep_id or host, cwd), flush=True)
+        raise
+    out = output()
+    if p.returncode: raise SystemExit(f"{label} failed after {_fmt_s(time.monotonic() - t0)}:\n" + out.strip()[-1500:])
+    return out
+
+# ---- a busy VM is waited out, not crashed into (mold_v1-109) ------------------------------------------
+# `npm run build:eve` (vercel build of the eve API, the one build that runs HERE) was SIGKILLed by the
+# kernel (exit 137) at load 5.8 with 2GB free, three agents building on the same 4-vCPU box. So: before a
+# deploy starts, and again before that build, wait (bounded, with progress naming what is using the box)
+# for the load and available memory to come under thresholds; run the build under `nice` with a V8 heap
+# ceiling; and treat exit 137 as the machine's fault, not the app's: wait again and retry once.
+HEADROOM_LOAD = float(os.environ.get("PROVISION_MAX_LOAD") or (os.cpu_count() or 4))
+HEADROOM_MEM_MB = int(os.environ.get("PROVISION_MIN_FREE_MB") or 3072)
+HEADROOM_WAIT_S = int(os.environ.get("PROVISION_HEADROOM_WAIT_S") or 900)
+
+def _machine():
+    """(1-minute load, MemAvailable in MB)."""
+    load1 = os.getloadavg()[0]
+    avail = 0
+    try:
+        for l in open("/proc/meminfo"):
+            if l.startswith("MemAvailable:"): avail = int(l.split()[1]) // 1024; break
+    except OSError: pass
+    return load1, avail
+
+def _busiest(n=3):
+    """The top memory users, for the progress line. Command lines are shortened and scrubbed: another
+    process's argv can carry a connection string, and this line is printed."""
+    try:
+        out = subprocess.run(["ps", "-eo", "rss=,args=", "--sort=-rss"], capture_output=True, text=True, timeout=10).stdout
+    except Exception: return "unknown"
+    rows = []
+    for l in out.splitlines()[:n]:
+        rss, _, args = l.strip().partition(" ")
+        args = re.sub(r"://[^@\s/]+@", "://***@", args)
+        args = re.sub(r"[A-Za-z0-9_\-+/=]{32,}", "…", args)[:70]
+        rows.append(f"{args} ({int(rss) // 1024}MB)")
+    return "; ".join(rows) or "unknown"
+
+def wait_for_headroom(label, deadline_s=None, probe=_machine, sleep=time.sleep, every=30):
+    """Block until load <= HEADROOM_LOAD and available memory >= HEADROOM_MEM_MB, or the deadline passes.
+    Returns (ok, 'load X, Y MB available'). Prints a line every `every` seconds while it waits."""
+    deadline_s = HEADROOM_WAIT_S if deadline_s is None else deadline_s
+    waited = 0
+    while True:
+        load1, avail = probe()
+        now = f"load {load1:.1f} (limit {HEADROOM_LOAD:g}), {avail}MB available (need {HEADROOM_MEM_MB}MB)"
+        if load1 <= HEADROOM_LOAD and avail >= HEADROOM_MEM_MB: return True, now
+        if waited >= deadline_s: return False, now
+        if waited % max(every, 1) == 0:
+            print(f"  waiting for the VM before {label}: {now}; {_fmt_s(waited)} of {_fmt_s(deadline_s)}. "
+                  f"Busiest: {_busiest()}", flush=True)
+        step = min(every, max(deadline_s - waited, 1)); sleep(step); waited += step
+
+def _node_options(avail_mb, current=""):
+    """A V8 old-space ceiling sized to what is free: half of it, clamped to 2-4GB, unless one is already set."""
+    if "max-old-space-size" in (current or ""): return current
+    mb = max(2048, min(4096, avail_mb // 2))
+    return f"{current} --max-old-space-size={mb}".strip()
+
+def _oom_killed(r):
+    text = (r.stdout or "") + (r.stderr or "")
+    return r.returncode in (137, -9) or (r.returncode != 0 and bool(re.search(r"\bKilled\b|exit(?:ed with| code)? 137|SIGKILL", text)))
+
+def heavy_build(cmd, cwd, label, env=None, wait=wait_for_headroom, runner=None, timeout=None):
+    """Run a build that can exhaust this VM: after waiting for headroom, under `nice`, with a heap ceiling,
+    retried once after another wait if the kernel killed it for memory. Returns the CompletedProcess."""
+    runner = runner or (lambda c, e: vrun(c, shell=True, cwd=cwd, env=e, timeout=timeout or BUILD_TIMEOUT_S, what=label))
+    for attempt in (1, 2):
+        ok, now = wait(label)
+        if not ok: print(f"  WARNING: building anyway, the VM is still busy after the wait ({now})", flush=True)
+        e = dict(env if env is not None else os.environ)
+        e["NODE_OPTIONS"] = _node_options(_machine()[1], e.get("NODE_OPTIONS", ""))
+        r = runner(f"nice -n 10 {cmd}", e)
+        if not r.returncode or not _oom_killed(r): return r
+        load1, avail = _machine()
+        msg = (f"{label} was killed by the kernel for lack of memory (exit {r.returncode}) at load {load1:.1f} with "
+               f"{avail}MB available: other work on this VM, not a defect of the application")
+        if attempt == 1: print(f"  {msg}; waiting for headroom and retrying once", flush=True)
+        else: r.stderr = (r.stderr or "") + f"\n{msg}, twice. Run the deploy again when the VM is quieter."
+    return r
 
 def vercel_env_names(cwd, project):
     out = sh(f"NO_COLOR=1 FORCE_COLOR=0 vercel env ls production --project {project} 2>/dev/null", cwd=cwd, check=False)
@@ -71,11 +291,11 @@ GENERATED = {  # app-internal secrets the factory may mint itself (never externa
 REDACTED = "[SENSITIVE]"   # what `vercel env pull` writes for a write-only variable
 def _env_api(project, path, method, body, cwd):
     """Vercel API call with the body on stdin, so secret values never reach argv or a file."""
-    return subprocess.run(["vercel", "api", path, "-X", method, "--input", "-", "--raw"], cwd=cwd,
+    return vrun(["vercel", "api", path, "-X", method, "--input", "-", "--raw"], cwd=cwd,
                           input=json.dumps(body), capture_output=True, text=True)
 
 def _env_entries(project, cwd):
-    r = subprocess.run(f"vercel api /v9/projects/{project}/env --raw", shell=True, cwd=cwd, capture_output=True, text=True)
+    r = vrun(f"vercel api /v9/projects/{project}/env --raw", shell=True, cwd=cwd, capture_output=True, text=True)
     try: return json.loads(r.stdout).get("envs", [])
     except Exception: return []
 
@@ -90,7 +310,7 @@ def _set_env(name, value, cwd, project=None):
     if value is None or value == "" or value == REDACTED:
         sys.exit(f"refusing to write {name} on {project}: value is empty or redacted")
     project = project or load(os.path.join(cwd, ".vercel/project.json"))["projectId"]
-    subprocess.run(f"vercel env rm {name} production --project {project} --yes", shell=True, cwd=cwd, capture_output=True, text=True)   # API DELETE refuses without a confirmation flag
+    vrun(f"vercel env rm {name} production --project {project} --yes", shell=True, cwd=cwd, capture_output=True, text=True)   # API DELETE refuses without a confirmation flag
     r = _env_api(project, f"/v10/projects/{project}/env", "POST", {"key": name, "value": value, "type": "encrypted", "target": ["production"]}, cwd)
     if '"error"' in r.stdout or r.returncode: sys.exit(f"could not set {name} on {project}: {(r.stdout + r.stderr).strip()[-200:]}")
     got = [e for e in _env_entries(project, cwd) if e.get("key") == name and "production" in (e.get("target") or [])]
@@ -148,7 +368,7 @@ def ensure_projects(proj, mold_dir):
     that exist today were created by other means, which is why nobody had hit this."""
     for p in (proj, f"{proj}-api", f"{proj}-workflow"):
         if _project_meta(p, mold_dir).get("id"): continue
-        r = subprocess.run(f"vercel project add {p}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        r = vrun(f"vercel project add {p}", shell=True, cwd=mold_dir, capture_output=True, text=True)
         if not _project_meta(p, mold_dir).get("id"):
             sys.exit(f"could not create the Vercel project {p}: " + (r.stdout + r.stderr).strip()[-200:])
         print(f"  created Vercel project {p}")
@@ -159,7 +379,7 @@ def ensure_projects(proj, mold_dir):
 
 def _neon_spares(mold_dir):
     """Every Neon resource on this team that is available and attached to no project."""
-    r = subprocess.run("vercel integration list --all --json", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun("vercel integration list --all --json", shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: res = json.loads(r.stdout[r.stdout.index("{"):]).get("resources", [])
     except Exception: res = []
     return [x["name"] for x in res if x.get("product") == "Neon" and x.get("status") == "available" and not x.get("projects")]
@@ -177,7 +397,7 @@ def _scratch_project(mold_dir):
     """A throwaway Vercel project with no deployment, no domain and no traffic, whose only job is to
     hold a candidate database's connection string long enough to LOOK at it. Returns its name or None."""
     name = f"sf-neon-inspect-{os.urandom(4).hex()}"
-    r = subprocess.run(f"vercel project add {name}", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun(f"vercel project add {name}", shell=True, cwd=mold_dir, capture_output=True, text=True)
     if _project_meta(name, mold_dir).get("id"): return name
     print("  could not create a temporary inspection project: " + _cli_err(r.stdout + r.stderr)[:160]); return None
 
@@ -187,7 +407,7 @@ def _project_gone(project, mold_dir):
     """True ONLY when Vercel says the project does not exist. A lookup that fails for any other reason
     (no network, an expired token -> `Not authorized (403)`, a rate limit) returns False, so the caller
     treats "unknown" as "still there" and says so, rather than reading a blind spot as a deletion."""
-    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
     if r.returncode == 0:
         try:
             if json.loads(r.stdout).get("id"): return False
@@ -209,7 +429,7 @@ def _rm_scratch_project(name, mold_dir):
     if the name lookup and the delete disagree. Returns True only on a confirmed 404 afterwards: a
     lookup that merely FAILED is not a deletion, and the operator gets the dashboard note instead."""
     for ref in (name, _project_meta(name, mold_dir).get("id") or name):
-        subprocess.run(f"vercel api /v9/projects/{ref} -X DELETE --raw --dangerously-skip-permissions",
+        vrun(f"vercel api /v9/projects/{ref} -X DELETE --raw --dangerously-skip-permissions",
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
         if _project_gone(name, mold_dir): return True
     print(f"  NOTE: the temporary inspection project {name} could not be confirmed deleted. Check the Vercel "
@@ -226,7 +446,7 @@ def _sweep_scratch_projects(mold_dir):
     sweep that took every match would delete a concurrent run's project mid-probe — with a Neon
     resource still connected to it, and that run then buying a fresh database it did not need. A
     project whose age cannot be read is left alone for the same reason: unknown is not stale."""
-    r = subprocess.run('vercel api "/v9/projects?search=sf-neon-inspect-&limit=100" --raw',
+    r = vrun('vercel api "/v9/projects?search=sf-neon-inspect-&limit=100" --raw',
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: projects = json.loads(r.stdout).get("projects", [])
     except Exception: projects = []
@@ -252,14 +472,14 @@ def _neon_probe(name, mold_dir):
     scratch = _scratch_project(mold_dir)
     if not scratch: return None, "no temporary project to inspect it in"
     try:
-        c = subprocess.run(f"vercel integration-resource connect {name} {scratch} -e development --yes",
+        c = vrun(f"vercel integration-resource connect {name} {scratch} -e development --yes",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         if c.returncode: return None, _cli_err(c.stdout + c.stderr)[:160]
         try:
             st = _db_stat(mold_dir, scratch, environment="development")
             return st, ("" if st else "connecting it injected no database URL")
         finally:
-            subprocess.run(f"vercel integration-resource disconnect {name} {scratch} --yes",
+            vrun(f"vercel integration-resource disconnect {name} {scratch} --yes",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
     finally:
         _rm_scratch_project(scratch, mold_dir)
@@ -295,7 +515,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
         second resource with the same name."""
         for key in ("DATABASE_URL", "DATABASE_URL_UNPOOLED"):
             for env_ in ("production", "preview", "development"):
-                subprocess.run(f"vercel env rm {key} {env_} --project {proj} --yes", shell=True, cwd=mold_dir,
+                vrun(f"vercel env rm {key} {env_} --project {proj} --yes", shell=True, cwd=mold_dir,
                                capture_output=True, text=True)
         print(f"  cleared the stale DATABASE_URL on {proj} (a leftover of a database this app no longer uses)")
 
@@ -303,7 +523,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
         """Connect a database already PROVEN empty to the app's project, and confirm what landed.
         Anything unexpected disconnects again: the failure path leaves nothing attached."""
         clear_stale_db_env()
-        c = subprocess.run(f"vercel integration-resource connect {name} {proj} -e production -e preview -e development --yes",
+        c = vrun(f"vercel integration-resource connect {name} {proj} -e production -e preview -e development --yes",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         if c.returncode:
             err = _cli_err(c.stdout + c.stderr)
@@ -320,7 +540,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
             infra.setdefault("datastores", {})["neon_resource"] = name; return True
         print(f"  {name} is not usable on {proj} after connecting "
               f"({(st or {}).get('tables', 'no database URL was injected')}); disconnecting it again")
-        subprocess.run(f"vercel integration-resource disconnect {name} {proj} --yes",
+        vrun(f"vercel integration-resource disconnect {name} {proj} --yes",
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
         return False
 
@@ -349,7 +569,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
     d = _link_dir(scratch, mold_dir)
     try:
         if not d: sys.exit(f"the temporary project {scratch} could not be linked; nothing was provisioned.")
-        r = subprocess.run(f"vercel integration add neon -n {res_name} --no-claim --no-env-pull -e development --cwd {d}",
+        r = vrun(f"vercel integration add neon -n {res_name} --no-claim --no-env-pull -e development --cwd {d}",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         out = r.stdout + r.stderr; link_ = next((l.strip() for l in open(urls) if l.strip()), None)
         if "Additional setup required" in out or link_:
@@ -359,10 +579,10 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
             msg = [l for l in out.splitlines() if l.strip() and not l.lstrip().startswith("at ")]
             sys.exit("neon provisioning failed: " + " | ".join(msg[-3:]))
         print("  " + next((l for l in out.splitlines() if "provisioned" in l), "provisioned").strip()[:160])
-        subprocess.run(f"vercel integration-resource connect {res_name} {scratch} -e development --yes",
+        vrun(f"vercel integration-resource connect {res_name} {scratch} -e development --yes",
                        shell=True, cwd=mold_dir, capture_output=True, text=True)   # explicit: `add` connects via its cwd
         st = _db_stat(mold_dir, scratch, environment="development")
-        subprocess.run(f"vercel integration-resource disconnect {res_name} {scratch} --yes",
+        vrun(f"vercel integration-resource disconnect {res_name} {scratch} --yes",
                        shell=True, cwd=mold_dir, capture_output=True, text=True)
     finally:
         if d: shutil.rmtree(d, ignore_errors=True)
@@ -383,7 +603,7 @@ def adopt_or_create_neon(app_id, mold_dir, infra, proj):
 
 def _blob_store(name, mold_dir):
     """The team's Blob store of this name, with the projects it is connected to, or None."""
-    r = subprocess.run("vercel api /v1/storage/stores --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun("vercel api /v1/storage/stores --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: st = json.loads(r.stdout).get("stores", [])
     except Exception: st = []
     return next((x for x in st if x.get("type") == "blob" and x.get("name") == name), None)
@@ -391,7 +611,7 @@ def _blob_store(name, mold_dir):
 def _connect_store(store_id, project_id, mold_dir):
     """Attach an existing store to a project, which is what injects its token into that project's env.
     Same endpoint the CLI's own create path uses (connectResourceToProject in the Vercel CLI)."""
-    return subprocess.run(["vercel", "api", f"/v1/storage/stores/{store_id}/connections", "-X", "POST", "--input", "-", "--raw"],
+    return vrun(["vercel", "api", f"/v1/storage/stores/{store_id}/connections", "-X", "POST", "--input", "-", "--raw"],
                           cwd=mold_dir, capture_output=True, text=True,
                           input=json.dumps({"envVarEnvironments": ["production", "preview", "development"],
                                             "projectId": project_id, "type": "integration"}))
@@ -420,7 +640,7 @@ def ensure_blob_store(app_id, mold_dir, infra, proj):
     if not meta.get("id"): sys.exit(f"the Vercel project {proj} does not exist yet; rerun --check")
     d = _link_dir(proj, mold_dir)
     try:
-        r = subprocess.run(f"vercel blob create-store {name} --access private -e production -e preview -e development --yes --cwd {d}",
+        r = vrun(f"vercel blob create-store {name} --access private -e production -e preview -e development --yes --cwd {d}",
                            shell=True, cwd=mold_dir, capture_output=True, text=True)
         out = r.stdout + r.stderr
     finally:
@@ -458,6 +678,43 @@ def mint_jwt_pair():
     priv, pub = subprocess.check_output(["node", "-e", js], text=True).split()
     return priv, pub
 
+def mint_vapid_pair():
+    """The app's Web Push (VAPID) key pair, as (public, private): base64url of the 65-byte uncompressed P-256
+    point and of the 32-byte private scalar, the shapes agent/lib/web-push.ts reads. Minted ONCE per app and
+    kept: a new pair orphans every device already subscribed. Never printed; the values go straight to the store."""
+    js = ("const{createECDH}=require('crypto');const e=createECDH('prime256v1');e.generateKeys();"
+          "console.log(e.getPublicKey().toString('base64url'));console.log(e.getPrivateKey().toString('base64url'))")
+    pub, priv = subprocess.check_output(["node", "-e", js], text=True).split()
+    return pub, priv
+
+def owner_email(app_id):
+    """The first workspace owner's email in the app's state: the contact push services may use (VAPID_SUBJECT)."""
+    try: app = json.load(open(os.path.join(ROOT, "state/application", app_id, "application.json")))
+    except Exception: return None
+    stack = [app]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            if x.get("role") == "owner" and "@" in str(x.get("email", "")): return x["email"]
+            stack.extend(x.values())
+        elif isinstance(x, list): stack.extend(x)
+    return None
+
+def stable_url(project, url):
+    """The project's public production address for a deployment URL.
+
+    `vercel deploy --prod` names the one-off deployment (https://<project>-<hash>-<team>.vercel.app), which
+    Vercel Deployment Protection keeps behind a login. Everything the factory records or wires between the
+    apps (NEXT_PUBLIC_EVE_API_URL, TASK_WORKFLOW_SERVICE_URL, WEB_ORIGIN, production_url, the health probes)
+    must use the public alias https://<project>.vercel.app instead: on 2026-09-29 the one-off addresses were
+    recorded and the web app's calls to the agent and workflow service got the login page (HTML), so its
+    health read 503 and chats could not reach the agent."""
+    # Vercel shortens the project name inside a deployment URL (onfinance-hfc-api -> onfinance-hfc-h0kj2jowi-…),
+    # so match any *.vercel.app address that is not the alias itself; a custom domain is left alone.
+    if isinstance(url, str) and re.match(r"^https://[a-z0-9-]+\.vercel\.app/?$", url.strip()) and url.strip().rstrip("/") != f"https://{project}.vercel.app":
+        return f"https://{project}.vercel.app"
+    return url
+
 def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
     pg, blob = ds.get("postgres", {}), ds.get("blob", {})
@@ -470,7 +727,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     if pg.get("scope") == "fresh" and prov == "supabase" and DB_SENTINEL["supabase"] not in present:
         print(f"provisioning fresh Supabase project '{app_id}' via Vercel Marketplace ...")
         urls = os.path.expanduser("~/.factory-open-urls"); open(urls, "w").close()   # the xdg-open shim (infra/vm/provision.sh) records links a CLI tried to open
-        r = subprocess.run(f"vercel integration add supabase -n {app_id} --prefix SUPABASE_ --no-claim --no-env-pull -e production -e preview -e development", shell=True, cwd=mold_dir, capture_output=True, text=True)
+        r = vrun(f"vercel integration add supabase -n {app_id} --prefix SUPABASE_ --no-claim --no-env-pull -e production -e preview -e development", shell=True, cwd=mold_dir, capture_output=True, text=True)
         out = r.stdout + r.stderr; link_ = next((l.strip() for l in open(urls) if l.strip()), None)
         if "Additional setup required" in out or link_:
             sys.exit("ONE-TIME STEP: open this link in a browser, accept the Supabase plan for this project, then run the same command again:\n  " + (link_ or f"https://vercel.com/{infra['vercel']['team']}/~/integrations/checkout/supabase?productSlug=supabase&defaultResourceName={app_id}&source=cli&projectSlug={infra['vercel']['project']}"))
@@ -495,6 +752,13 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
         priv, pub = mint_jwt_pair()
         _set_env("AUTH_JWT_PRIVATE_KEY", priv, mold_dir, project=proj); _set_env("AUTH_JWT_PUBLIC_KEY", pub, mold_dir, project=proj)
         print("generated AUTH_JWT key pair" + ("" if "AUTH_JWT_PRIVATE_KEY" not in present else " (the previous pair was write-only, so it could never reach the api project; every session signed with it is now invalid)"))
+    # Web Push keys, only for a mold that sends push (fde-agent #63): minted once, never rotated here.
+    if os.path.exists(os.path.join(mold_dir, "agent/lib/web-push.ts")) and not {"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"} <= present:
+        pub, priv = mint_vapid_pair()
+        _set_env("VAPID_PUBLIC_KEY", pub, mold_dir, project=proj); _set_env("VAPID_PRIVATE_KEY", priv, mold_dir, project=proj)
+        print("generated VAPID key pair (desktop notifications)")
+    if os.path.exists(os.path.join(mold_dir, "agent/lib/web-push.ts")) and "VAPID_SUBJECT" not in present and owner_email(app_id):
+        _set_env("VAPID_SUBJECT", "mailto:" + owner_email(app_id), mold_dir, project=proj); print("set VAPID_SUBJECT to the workspace owner's contact")
     present = vercel_env_names(mold_dir, proj)
     if "POSTGRES_ADMIN_URL" not in present and "SUPABASE_POSTGRES_URL" in present:
         # NOT DATABASE_URL. This line used to copy SUPABASE_POSTGRES_URL — the pooled URL whose user is
@@ -507,7 +771,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
         # passes — so a project that has never been bootstrapped has no DATABASE_URL at all. That fails
         # closed (the app cannot reach the database) instead of failing open (it reaches it as root).
         tmp = os.path.join(mold_dir, ".env.provision")
-        subprocess.run(f"vercel env pull --yes --environment=production --project {proj} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
+        vrun(f"vercel env pull --yes --environment=production --project {proj} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
         val = next((l.split("=",1)[1].strip().strip('"') for l in open(tmp) if l.startswith("SUPABASE_POSTGRES_URL=")), "")
         os.remove(tmp)
         if val: _add_env("POSTGRES_ADMIN_URL", val, mold_dir, proj); print("derived POSTGRES_ADMIN_URL (admin only; DATABASE_URL is written by the RLS gate)")
@@ -526,10 +790,12 @@ DEPLOY_TIME = ["TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "NEXT
 API_ENV = ["AUTH_JWT_PUBLIC_KEY", "BLOB_READ_WRITE_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "AI_GATEWAY_API_KEY",
            "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT", "CRON_SECRET", "DATABASE_URL", "OPS_MULTI_TENANT",
            "MODEL_PROVIDER", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "TASK_WORKFLOW_SERVICE_URL", "EXA_API_KEY", "BROWSERBASE_API_KEY",
-           "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID", "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST"]
+           "ENABLE_WEB_SEARCH", "ENABLE_BROWSER", "GOOGLE_CLIENT_ID", "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST",
+           "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"]
 # Absent means "feature off" or "the mold's default", never a broken deploy.
 OPTIONAL_ENV = ("EXA_API_KEY", "BROWSERBASE_API_KEY", "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST", "GATEWAY_REASONING_EFFORT",
-                "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST")
+                "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST",
+                "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT")
 WORKFLOW_ENV = ["DATABASE_URL"]   # TASK_WORKFLOW_SERVICE_TOKEN is minted onto both projects directly, never copied
 
 def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
@@ -586,7 +852,9 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
                "reused; --check reads names, not values, so it cannot tell) — a rotation stops every build made against the older one"
                if "DATABASE_URL" in present
                else "ROTATES the app_rw password: every build made against an older one stops connecting")
-        create.append(f"the database: schema push, migration journal, RLS + app_rw bootstrap ({rot}), task-workflow "
+        create.append(f"the database, with every org-scoped table held closed to app_rw throughout: schema (a full push only on an empty database), migration journal, "
+                      f"then on a live database the schema drift the journal did not cover (a read-only dry run; anything that would delete data or drop an index stops the deploy instead), "
+                      f"RLS + app_rw bootstrap ({rot}), task-workflow "
                       f"migration, the RLS coverage pass, then the isolation proof; ONLY after the proof passes, env "
                       f"DATABASE_URL (app_rw) on {proj}, {api}, {wf}")
     if mode == "deploy":
@@ -627,7 +895,7 @@ def pull_env(mold_dir, project, environment="production", required=True):
     inspection reads a throwaway project that may legitimately hold nothing, and an exit there would
     skip the cleanup that removes it."""
     tmp = os.path.join(mold_dir, f".env.provision.{project}")
-    subprocess.run(f"vercel env pull --yes --environment={environment} --project {project} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
+    vrun(f"vercel env pull --yes --environment={environment} --project {project} {tmp}", shell=True, cwd=mold_dir, capture_output=True)
     vals, unreadable = {}, []
     for l in (open(tmp) if os.path.exists(tmp) else []):
         if "=" in l and not l.startswith("#"):
@@ -645,14 +913,14 @@ def set_framework(project, framework, mold_dir):
     """The eve API and the task-workflow service need different presets (eve / nextjs); auto-detection
     picks Next.js for both and then rejects the eve build output. Verified through the API, whose value
     is the slug (`nextjs`), not the console's display name (`Next.js`)."""
-    subprocess.run(f"vercel api /v9/projects/{project} -X PATCH -F framework={framework} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
-    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    vrun(f"vercel api /v9/projects/{project} -X PATCH -F framework={framework} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: got = json.loads(r.stdout).get("framework")
     except Exception: got = None
     if got != framework: sys.exit(f"could not set framework={framework} on {project} (reads {got!r})")
 
 def _project_meta(project, mold_dir):
-    r = subprocess.run(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
+    r = vrun(f"vercel api /v9/projects/{project} --raw", shell=True, cwd=mold_dir, capture_output=True, text=True)
     try: return json.loads(r.stdout)
     except Exception: return {}
 
@@ -680,7 +948,7 @@ def disconnect_git(project, mold_dir):
         os.makedirs(os.path.join(d, ".vercel"))
         json.dump({"projectId": meta.get("id"), "orgId": meta.get("accountId"), "projectName": project},
                   open(os.path.join(d, ".vercel/project.json"), "w"))
-        subprocess.run(f"vercel git disconnect --cwd {d}", shell=True, cwd=mold_dir,
+        vrun(f"vercel git disconnect --cwd {d}", shell=True, cwd=mold_dir,
                        input="y\n", capture_output=True, text=True)   # the CLI confirms interactively
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -962,26 +1230,230 @@ def bootstrap_database(mold_dir, admin, projects, provider="supabase", runtime_u
         else:
             open(envloc, "w").write(saved)      # the mold snapshot's own .env.local is restored
 
-def push_schema(mold_dir, url):
-    """`drizzle-kit push` FIRST, then the journal. The mold's own bootstrap says so ("ORDER MATTERS")
-    and provision.py had it backwards: it ran migrate-production.mjs first and kept `push` only as a
-    failure fallback inside bootstrap_database. On a truly empty database that fallback is a dead end —
-    the journal is two tables behind schema.ts, so the bootstrap reports `Schema INCOMPLETE — 2 of 56
-    tables missing: login_codes, inbox_items`, and the fallback push then dies with `Interactive
-    prompts require a TTY terminal`. Provider-independent: it strands a fresh Neon branch exactly as
-    it strands a fresh Supabase project."""
-    r = subprocess.run("npx drizzle-kit push --force", shell=True, cwd=mold_dir,
-                       env=dict(os.environ, DATABASE_URL=url), capture_output=True, text=True)
+# THE DEPLOY WINDOW (mold_v1-143). Every name below is a step of the one chain bring_up_schema and
+# verify_db both run, in this order, and the order is what --self-test replays against a model of the
+# database. The chain used to be push, migrate, bootstrap, task-workflow, cover: measured on a
+# postgres:16 set up like the isolation lane, `drizzle-kit push --force` on a LIVE database emitted
+# nothing but `DISABLE ROW LEVEL SECURITY` on all 58 org-scoped tables and `DROP POLICY` on all 60
+# policies (schema.ts models no policy), and the serving app_rw, scoped to workspace A, read workspace
+# B's rows from 58/58 tables until rls-cover ran. With push gone the bootstrap still rewrites its 13
+# tables (and the task-workflow migration its 3) to "permissive when app.org_id is unset", which let an
+# unscoped app_rw query read every workspace's rows from 16 tables until rls-cover. So:
+#   hold     lib/deploy-window.mjs puts a RESTRICTIVE `factory_deploy_guard` on every org-scoped table
+#            first, with the predicate rls-cover converges to (both import it from lib/rls-policy.mjs);
+#            nothing in the chain drops that name. It also withholds app_rw's default grant on NEW
+#            tables, and it runs again after the journal and after the drift apply (it is idempotent), so
+#            a table either of them creates — possibly backfilled from existing rows — is never readable
+#            by the serving app before it is guarded; the bootstrap grants it later, under the guard.
+#   push     `push --force` ONLY on a database with no public table (nothing there to expose).
+#   migrate  the journal, as before. On a live database it now runs BEFORE any schema.ts drift: that is
+#            the mold's own Makefile path (`migrate-production`, no push), which its migrations are
+#            written for — e.g. a primary-key change a migration performs its own way, where drizzle's
+#            naive plan for the same change could fail.
+#   drift    on a live database, a read-only `push --strict --verbose` dry run says what push would still
+#            do. What drops a policy, disables RLS, or drops the ONE index the mold makes outside
+#            schema.ts is set aside; anything that deletes data (truncate, DROP TABLE/COLUMN/SCHEMA/
+#            MATERIALIZED VIEW, or drizzle's own "Found data-loss statements") or drops any other index
+#            STOPS the deploy — that belongs in a migration; the rest (usually nothing) is applied in one
+#            transaction.
+#   release  only after rls-cover exited 0, i.e. once the permissive policies are strict again.
+SCHEMA_CHAIN = ("hold", "push", "migrate", "hold", "drift", "hold", "bootstrap", "task-workflow", "cover", "release",
+                "prove", "publish")
+
+# What drizzle-kit push would do to things schema.ts does not model. Kept OUT of every apply: they are
+# not schema drift, they are the database's security — and the one index the mold creates outside
+# schema.ts (.migrate-task-workflow-service.mjs), which that migration would only recreate a second later
+# (a unique index dropped in between is a uniqueness window of its own). Any OTHER index drop is refused.
+OUT_OF_BAND_INDEXES = ("workflow_definitions_one_default_idx",)
+SET_ASIDE = re.compile(r"^\s*(DROP\s+POLICY\b|ALTER\s+POLICY\b|"
+                       r"DROP\s+INDEX\s+(IF\s+EXISTS\s+)?\"?(" + "|".join(OUT_OF_BAND_INDEXES) + r")\"?\s*;|"
+                       r"ALTER\s+TABLE\b.*\b(DISABLE|NO\s+FORCE)\s+ROW\s+LEVEL\s+SECURITY)", re.I | re.S)
+# What must never be applied from a plan on a live database: it deletes rows, or drops an index nobody
+# declared gone. drizzle adds `truncate table "x" cascade;` on its own for a type change or a NOT NULL
+# column without a default on a table with rows — measured, and applied it would empty the table.
+DATA_LOSS = re.compile(r"^\s*truncate\b|\bDROP\s+(TABLE|COLUMN|SCHEMA|MATERIALIZED\s+VIEW)\b", re.I)
+DROPS_INDEX = re.compile(r"^\s*DROP\s+INDEX\b", re.I)
+DRY_RUN_HEAD = "You are about to execute current statements:"
+# A statement drizzle prints starts at column 0 with one of these; everything else (tab-indented columns,
+# `);`, a DO block's body) continues the one before. Its PK drop is printed WITHOUT a trailing `;`.
+SQL_START = re.compile(r"^(CREATE|ALTER|DROP|TRUNCATE|COMMENT|DO|GRANT|REVOKE|INSERT|UPDATE|DELETE|SELECT|WITH|SET|REFRESH)\b", re.I)
+PLAN_END = re.compile(r"^\s*(Warning\b|Error:|THIS ACTION\b|Do you still want\b|\[.\]|·)")
+
+class DryRunError(Exception):
+    """The schema check could not produce a plan it is safe to act on. The message is for the operator."""
+
+def _read_only(url):
+    """The admin URL with every transaction read-only, so the dry run CANNOT write whatever drizzle-kit
+    decides to do. Merged into an existing `options` (Neon's endpoint id travels there on some URLs)."""
+    a = urllib.parse.urlsplit(url); qs = urllib.parse.parse_qsl(a.query, keep_blank_values=True)
+    opt = " ".join(v for k, v in qs if k == "options")
+    qs = [(k, v) for k, v in qs if k != "options"] + [("options", (opt + " -c default_transaction_read_only=on").strip())]
+    return urllib.parse.urlunsplit((a.scheme, a.netloc, a.path, urllib.parse.urlencode(qs, quote_via=urllib.parse.quote), a.fragment))
+
+def _split_statements(block):
+    """drizzle's printed plan -> one string per statement, every line accounted for.
+
+    Printed statements are joined by newlines; some span lines (CREATE TABLE, a DO block), some end in a
+    blank line, and the primary-key drop has no `;` at all — reading `;` as the boundary glued that one
+    to the next statement and discarded it when it came last. So a statement starts where a line opens
+    with an SQL verb at column 0 outside a $$ body. A non-blank line that belongs to no statement, or a
+    $$ body left open, raises: a plan this cannot read whole is not a plan to act on."""
+    out, cur, dollars = [], [], 0
+    for line in block.splitlines():
+        if not line.strip() and dollars % 2 == 0: continue
+        if SQL_START.match(line) and dollars % 2 == 0:
+            if cur: out.append("\n".join(cur))
+            cur = [line]
+        elif cur: cur.append(line)
+        else: raise DryRunError(f"the schema check printed a line that is not part of any statement: {line.strip()[:120]!r}")
+        dollars += line.count("$$")
+    if dollars % 2: raise DryRunError("the schema check printed a $$ block that never closes")
+    if cur: out.append("\n".join(cur))
+    return [x.strip() if x.strip().endswith(";") else x.strip() + ";" for x in out]
+
+def _push_plan(raw, rc=0):
+    """(statements, data_loss_notes) from a `drizzle-kit push --strict --verbose` dry run.
+
+    With stdout not a TTY the approval prompt rejects BEFORE anything executes (and the connection is
+    read-only besides). ([], []) for "No changes detected". Raises DryRunError, with a sentence for the
+    operator, for everything else: no plan because it could not connect (drizzle exits 1 and prints
+    nothing), a question it asked BEFORE planning (a rename, or a unique constraint on a table with rows),
+    or output that claims it applied something."""
+    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw).replace("\r", "\n")
+    if "Changes applied" in text: raise DryRunError("the schema dry run reports it APPLIED changes; stopping before anything else touches this database")
+    if DRY_RUN_HEAD not in text:
+        if "No changes detected" in text: return [], []
+        if "Interactive prompts require a TTY" in text:
+            uq = re.search(r"add (\S+) unique constraint to the table, which contains (\d+) items", text)
+            if uq: raise DryRunError(f"schema.ts adds the unique constraint {uq.group(1)} to a table that already holds "
+                                     f"{uq.group(2)} row(s), and drizzle-kit would ask whether to TRUNCATE it. Add it in a "
+                                     f"migration under drizzle/ (removing duplicates first); nothing was changed")
+            raise DryRunError("drizzle-kit stopped to ask a question before it could plan the schema — almost always "
+                              "whether a table or column is new or was RENAMED. A rename has to be written as a migration "
+                              "under drizzle/; nothing was changed")
+        if rc: raise DryRunError(f"could not connect to the database for the schema check (drizzle-kit exited {rc} "
+                                 "without a plan); nothing was changed")
+        raise DryRunError("the schema check ended without a plan or a reason; nothing was changed")
+    head, tail = text.split(DRY_RUN_HEAD, 1)
+    lines = tail.splitlines(); cut = next((i for i, l in enumerate(lines) if PLAN_END.match(l)), len(lines))
+    notes = []
+    if "Found data-loss statements" in tail:
+        after = tail.split("Found data-loss statements", 1)[1].splitlines()
+        notes = [l.strip().lstrip("·").strip() for l in after if l.strip().startswith("·")]
+        notes = notes or ["drizzle-kit reported data-loss statements"]
+    return _split_statements("\n".join(lines[:cut])), notes
+
+def _split_push(stmts):
+    """(apply, set_aside): schema drift to apply, and what push would do to unmodelled security."""
+    return [x for x in stmts if not SET_ASIDE.match(x)], [x for x in stmts if SET_ASIDE.match(x)]
+
+_PK_DROP = re.compile(r'^\s*ALTER\s+TABLE\s+"([^"]+)"\s+DROP\s+CONSTRAINT\s+"([^"]+)"', re.I)
+_PK_ADD = re.compile(r'^\s*ALTER\s+TABLE\s+"([^"]+)"\s+ADD\s+CONSTRAINT\s+"([^"]+)"\s+PRIMARY\s+KEY\s*\(([^)]*)\)', re.I)
+
+def _unchanged_pks(todo, pks):
+    """Split out drizzle-kit's re-emitted primary keys: a DROP CONSTRAINT "n" followed by ADD CONSTRAINT "n"
+    PRIMARY KEY(...) on the same table, where the live key "n" already has exactly those columns in that order.
+    push --force used to apply these pairs silently on every deploy; once a key has dependants (fde-agent
+    #84's two-column foreign keys to customers) the DROP is refused (2BP01) and the deploy stops. A pair
+    whose columns differ from the live key is a real change and stays in the plan. Returns (todo, unchanged)."""
+    keep, same, i = [], [], 0
+    while i < len(todo):
+        d, a = _PK_DROP.match(todo[i]), (_PK_ADD.match(todo[i + 1]) if i + 1 < len(todo) else None)
+        if d and a and d.group(1) == a.group(1) and d.group(2) == a.group(2):
+            cols = [c.strip().strip('"') for c in a.group(3).split(",") if c.strip()]
+            live = (pks or {}).get(d.group(2))
+            if live and live.get("table") == d.group(1) and list(live.get("cols") or []) == cols:
+                same += [todo[i], todo[i + 1]]; i += 2; continue
+        keep.append(todo[i]); i += 1
+    return keep, same
+
+def _refused(todo, notes):
+    """The plan's statements that must not be applied on a live database, as one plain sentence, or ""."""
+    loss = [x for x in todo if DATA_LOSS.search(x)]
+    idx = [x for x in todo if DROPS_INDEX.match(x)]
+    one = lambda x: re.sub(r"\s+", " ", x)[:140]
+    why = []
+    if loss or notes:
+        why.append("schema.ts asks for changes that would DELETE data on the live database"
+                   + (f": {'; '.join(one(x) for x in loss[:6])}" if loss else "")
+                   + (f" (drizzle-kit: {'; '.join(notes[:4])})" if notes else "")
+                   + ". Make that change in a migration under drizzle/ — it runs in the journal step, before this check")
+    if idx:
+        why.append(f"drizzle-kit would drop {', '.join(one(x) for x in idx[:4])}, which schema.ts no longer declares; an "
+                   "index is not dropped automatically on a live database — drop it in a migration, or declare it in schema.ts")
+    return ". ".join(why)
+
+def _window(run, action, admin, mode, hint, **extra):
+    """One lib/deploy-window.mjs call; its JSON line, or the deploy stops with the reason."""
+    r = run("deploy-window.mjs", dict({"ACTION": action, "ADMIN_URL": admin, "RLS_MODE": mode}, **extra))
+    line = (r.stdout.strip().splitlines() or [""])[-1]
+    if r.returncode == 1: sys.exit(f"deploy window {action} failed: " + _node_err(r))   # the script says what, if anything, committed
+    if r.returncode or not line.startswith("{"): sys.exit(_unprovable(r, hint, f"the deploy window ({action})"))
+    return json.loads(line)
+
+def push_schema(sh, run, url, mode, hint):
+    """`drizzle-kit push --force` FIRST, then the journal — on an EMPTY database only (no public table).
+
+    The mold says so ("ORDER MATTERS") and the journal alone is two tables behind schema.ts
+    (login_codes, inbox_items), which is why provision.py stopped running migrate first there. Nothing
+    to expose: no workspace has a row and no app role has connected. A database WITH tables is a live
+    one, and `push --force` there IS the exposure window (it disables RLS and drops every policy), so it
+    is never run: apply_drift covers that database after the journal. Returns True if it pushed."""
+    if _window(run, "probe", url, mode, hint)["public_tables"]:
+        print("  schema: this database already has tables, so no push --force; the journal first, then any drift")
+        return False
+    r = sh("npx drizzle-kit push --force", {"DATABASE_URL": url})
     raw = r.stdout + r.stderr
     msg = [l for l in raw.strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
-    print("  schema push: " + (msg[-1][:160] if msg else "ok"))
+    print("  schema push (empty database): " + (msg[-1][:160] if msg else "ok"))
     # drizzle-kit exits 0 after this one, so returncode alone reads a dead push as a success and the
-    # bootstrap then reports `Schema INCOMPLETE`. It only happens on a database that already holds a
-    # different version of the schema, which `scope: fresh` is supposed to have ruled out.
+    # bootstrap then reports `Schema INCOMPLETE`.
     if "Interactive prompts require a TTY" in raw:
         sys.exit("drizzle-kit push needs an interactive rename decision, which means this database is NOT empty. "
                  "A `scope: fresh` app must get an empty database; point datastores.postgres at a new one and rerun.")
     if r.returncode: sys.exit("drizzle-kit push failed:\n" + "\n".join(msg[-12:]))
+    return True
+
+def apply_drift(sh, run, url, mode, hint):
+    """What schema.ts still has that the journal did not make, applied WITHOUT opening anything.
+
+    First the read-only connection itself is proven (deploy-window `probe` through the same URL, which
+    must report read-only), so "could not connect" and "the provider refuses the read-only option" are
+    each said plainly rather than read as drift. Then a `push --strict --verbose` dry run prints the plan
+    and stops at its own prompt; _split_push sets aside what push would do to the database's security;
+    _refused stops the deploy on anything that deletes data or drops an undeclared index; the rest is
+    applied by lib/deploy-window.mjs `apply` in one transaction that also ENABLEs and FORCEs RLS on any
+    org-scoped table it creates. On a current database the rest is nothing. Returns (applied, set_aside)."""
+    ro = _read_only(url)
+    p = run("deploy-window.mjs", {"ACTION": "probe", "ADMIN_URL": ro, "RLS_MODE": mode})
+    line = (p.stdout.strip().splitlines() or [""])[-1]
+    if p.returncode or not line.startswith("{"):
+        plain = run("deploy-window.mjs", {"ACTION": "probe", "ADMIN_URL": url, "RLS_MODE": mode})
+        if plain.returncode == 0:
+            sys.exit("the database refused the read-only connection option the schema check needs "
+                     "(options=-c default_transaction_read_only=on), so schema drift cannot be planned safely here; "
+                     f"nothing was changed. It said: {_node_err(p)}")
+        sys.exit(f"could not connect to the database for the schema check; nothing was changed. It said: {_node_err(p)}")
+    probe = json.loads(line)
+    if not probe.get("read_only"):
+        sys.exit("the database accepted the read-only connection option but did not apply it (a pooler that drops "
+                 "startup options?), so the schema check could write; nothing was changed. Use the direct admin URL.")
+    r = sh("npx drizzle-kit push --strict --verbose", {"DATABASE_URL": ro})
+    try: plan, notes = _push_plan(r.stdout + r.stderr, r.returncode)
+    except DryRunError as e: sys.exit(str(e) + ".")
+    todo, aside = _split_push(plan)
+    todo, same = _unchanged_pks(todo, probe.get("pks"))
+    if same: print(f"  schema drift: {len(same) // 2} primary key(s) drizzle re-emits unchanged (same name, same columns as live) set aside")
+    refused = _refused(todo, notes)
+    if refused: sys.exit(refused + ". The deploy stopped before applying any of it; nothing was changed by this step.")
+    drops = sum(1 for x in aside if re.match(r"\s*DROP\s+POLICY", x, re.I))
+    offs = sum(1 for x in aside if re.search(r"DISABLE\s+ROW", x, re.I))
+    print(f"  schema drift: {len(todo)} statement(s) to apply; set aside what push --force would have done to "
+          f"security ({drops} policies dropped, RLS disabled on {offs} tables)")
+    if todo:
+        out = _window(run, "apply", url, mode, hint, SCHEMA_SQL=base64.b64encode(json.dumps(todo).encode()).decode())
+        print(f"  schema drift applied in one transaction: {out.get('applied')} statement(s)")
+    return len(todo), len(aside)
 
 def run_migrations(mold_dir, vals):
     url = admin_url(vals)
@@ -996,15 +1468,23 @@ def run_migrations(mold_dir, vals):
     print("  migrations:\n    " + "\n    ".join(msg[-6:] or ["ok"]))   # a Node crash must never read as its version banner
     if r.returncode: sys.exit("migration failed:\n" + "\n".join(msg[-12:]))
 
+def _run_chain(steps):
+    """Run SCHEMA_CHAIN, in order, from a dict of step name -> callable. One order for both backends,
+    and the one --self-test replays: a step missing here is a chain that is not the tested one."""
+    missing = [k for k in SCHEMA_CHAIN if k not in steps]
+    if missing: raise KeyError(f"schema chain steps not provided: {missing}")
+    for k in SCHEMA_CHAIN: steps[k]()
+
 def bring_up_schema(app_id, mold_dir, ds, proj, projects):
     """Empty database -> a schema, a migration journal, RLS, app_rw, and a DATABASE_URL proven to be
     all four. Separated from deploy_vercel so it can be run — and audited — on its own with
     `--verify-db`, without building or deploying anything.
 
-    Order is push, migrate, bootstrap, task-workflow, COVER, PROVE, publish. The first four are what
-    the mold itself says ("ORDER MATTERS: push the schema first, then this") and the reverse of what
-    provision.py used to do; the last three are the factory's, and they are why `rls: fail_closed` is
-    now a measurement. Returns (env values, evidence)."""
+    Order is SCHEMA_CHAIN: hold, push (empty database only), migrate, drift (live database only),
+    bootstrap, task-workflow, COVER, release, PROVE, publish. push-then-migrate-then-bootstrap is what the mold itself says ("ORDER MATTERS: push the
+    schema first, then this"); hold and release bracket everything that can loosen a policy on a LIVE
+    database (mold_v1-143, see SCHEMA_CHAIN); cover, prove and publish are why `rls: fail_closed` is a
+    measurement. Returns (env values, evidence)."""
     vals = pull_env(mold_dir, proj)
     url = admin_url(vals)
     # Neon injects the POOLED endpoint as DATABASE_URL and the direct one as DATABASE_URL_UNPOOLED.
@@ -1014,34 +1494,54 @@ def bring_up_schema(app_id, mold_dir, ds, proj, projects):
     # through set_config(..., true), which is transaction-LOCAL, and both clients run prepare:false —
     # verify-apprw.mjs asserts that round trip on the exact URL about to be deployed.
     runtime = vals.get("DATABASE_URL") or url
-    print("pushing the schema, then the migration journal"); push_schema(mold_dir, url); run_migrations(mold_dir, vals)
-    print("bootstrapping row-level security and the app_rw role")
-    app_url = bootstrap_database(mold_dir, url, projects,
-                                 provider=ds.get("postgres", {}).get("provider", "supabase"), runtime_url=runtime)
-    # .migrate-task-workflow-service.mjs reads its admin URL from .env.supabase, never from the environment.
-    # Write it transiently (gitignored inside the mold) and remove it whatever happens.
-    envsup = os.path.join(mold_dir, ".env.supabase")
-    try:
-        with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={url}\n")
-        os.chmod(envsup, 0o600)
-        r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, capture_output=True, text=True)   # admin url: it grants to app_rw
-    finally:
-        if os.path.exists(envsup): os.remove(envsup)
-    msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
-    print("  task-workflow migrations: " + (msg[-1][:160] if msg else "ok"))
-    if r.returncode: sys.exit("task-workflow migration failed:\n" + "\n".join(msg[-12:]))
-    # AFTER the migration, not before: db:migrate:task-workflows creates three more org-scoped tables,
-    # and the mold policies them from its own fixed list. Cover, then prove, then — and only then —
-    # publish the credential.
     mode = rls_mode(ds); run = _lib_runner(mold_dir)
     hint = f"python3 .claude/scripts/provision.py {app_id} --check"
-    _rls_cover(run, url, mode, hint)
-    ev = _verify_app_rw(run, app_url, mode, ds.get("postgres", {}).get("provider", "supabase"),
-                        "provision.py bring_up_schema", hint)
-    for pr_ in projects: _set_env("DATABASE_URL", app_url, mold_dir, project=pr_)
-    print(f"  DATABASE_URL now points at app_rw on {len(projects)} project(s)")
-    vals["DATABASE_URL"] = app_url        # sync_env must never push the PRE-bootstrap admin URL onward
-    return vals, ev
+    sh = lambda cmd, env: subprocess.run(cmd, shell=True, cwd=mold_dir, env=dict(os.environ, **env),
+                                         stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    got = {}
+
+    def hold():
+        if mode == "off": return
+        g = _window(run, "hold", url, mode, hint)
+        print("  deploy window: " + (f"guard on {g['tables']} org-scoped table(s) until coverage passes" if g.get("held")
+                                     else f"nothing to hold ({g.get('reason')})"))
+    def push():
+        print("the schema, then the migration journal"); got["pushed"] = push_schema(sh, run, url, mode, hint)
+    def drift():
+        if not got["pushed"]: apply_drift(sh, run, url, mode, hint)
+    def bootstrap():
+        print("bootstrapping row-level security and the app_rw role")
+        got["app_url"] = bootstrap_database(mold_dir, url, projects,
+                                            provider=ds.get("postgres", {}).get("provider", "supabase"), runtime_url=runtime)
+    def task_workflow():
+        # .migrate-task-workflow-service.mjs reads its admin URL from .env.supabase, never from the environment.
+        # Write it transiently (gitignored inside the mold) and remove it whatever happens.
+        envsup = os.path.join(mold_dir, ".env.supabase")
+        try:
+            with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={url}\n")
+            os.chmod(envsup, 0o600)
+            r = subprocess.run("npm run db:migrate:task-workflows", shell=True, cwd=mold_dir, capture_output=True, text=True)   # admin url: it grants to app_rw
+        finally:
+            if os.path.exists(envsup): os.remove(envsup)
+        msg = [l for l in (r.stdout + r.stderr).strip().splitlines() if l.strip() and not l.lstrip().startswith("at ")]
+        print("  task-workflow migrations: " + (msg[-1][:160] if msg else "ok"))
+        if r.returncode: sys.exit("task-workflow migration failed:\n" + "\n".join(msg[-12:]))
+    def release():
+        if mode == "off": return
+        print(f"  deploy window: guard released from {_window(run, 'release', url, mode, hint)['released']} table(s)")
+    def prove():
+        got["ev"] = _verify_app_rw(run, got["app_url"], mode, ds.get("postgres", {}).get("provider", "supabase"),
+                                   "provision.py bring_up_schema", hint)
+    def publish():
+        for pr_ in projects: _set_env("DATABASE_URL", got["app_url"], mold_dir, project=pr_)
+        print(f"  DATABASE_URL now points at app_rw on {len(projects)} project(s)")
+    # cover runs AFTER the task-workflow migration, not before: it creates three more org-scoped tables,
+    # and the mold policies them from its own fixed list. Cover, release, prove — and only then publish.
+    _run_chain({"hold": hold, "push": push, "migrate": lambda: run_migrations(mold_dir, vals), "drift": drift, "bootstrap": bootstrap,
+                "task-workflow": task_workflow, "cover": lambda: _rls_cover(run, url, mode, hint), "release": release,
+                "prove": prove, "publish": publish})
+    vals["DATABASE_URL"] = got["app_url"]        # sync_env must never push the PRE-bootstrap admin URL onward
+    return vals, got["ev"]
 
 def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     """Mirror of the mold's Makefile `deploy` target: migrate, workflow service (services/task-workflow, Next.js),
@@ -1068,10 +1568,17 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         if want != cur:
             for p_ in (proj, f"{proj}-api", f"{proj}-workflow"): _set_env("PLATFORM_NOTIFY_FROM", want, mold_dir, project=p_)
             print(f"  PLATFORM_NOTIFY_FROM display name set from this app's branding: {want.split(' <')[0]}")
-    def run(cmd, env=None, label=""):
-        r = subprocess.run(cmd, shell=True, cwd=mold_dir, env=env, capture_output=True, text=True)
-        urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", r.stdout + r.stderr)
-        if r.returncode: sys.exit(f"{label or cmd} failed:\n" + (r.stdout + r.stderr).strip()[-1500:])
+    SHIPPED.clear()
+    def run(cmd, env=None, label="", kind="deploy"):
+        # deploy: watched on the API, cancelled if stuck, bounded end to end (vercel_deploy).
+        # build: the local eve build, waited for, niced, heap-capped and retried once on an OOM kill (heavy_build).
+        if kind == "deploy":
+            out = vercel_deploy(cmd, mold_dir, label or cmd, env=env)
+        else:
+            r = heavy_build(cmd, mold_dir, label or cmd, env=env)
+            out = (r.stdout or "") + (r.stderr or "")
+            if r.returncode: sys.exit(f"{label or cmd} failed:\n" + out.strip()[-1500:])
+        urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", out)
         return urls[-1] if urls else ""
     if not shared:
         # Minted on EVERY deploy and written to both ends at once. It used to be minted only when the main
@@ -1087,7 +1594,8 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         record_rls(adir, ds, ev)
         # workflow service: its own Next.js app under services/task-workflow
         print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
-        wf_url = run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy")
+        wf_url = stable_url(f"{proj}-workflow", run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy"))
+        SHIPPED.append(("workflow", wf_url))
         disconnect_git(f"{proj}-workflow", mold_dir)
         infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=proj)
@@ -1100,8 +1608,9 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=f"{proj}-api")
         subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
-        run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build")
-        api_url = run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy")
+        run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build", kind="build")
+        api_url = stable_url(f"{proj}-api", run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy"))
+        SHIPPED.append(("api", api_url))
         disconnect_git(f"{proj}-api", mold_dir)
         infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
         _set_env("NEXT_PUBLIC_EVE_API_URL", api_url, mold_dir, project=proj)
@@ -1123,8 +1632,14 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     print("deploying web app")
     # the eve prebuilt output and the build-time env `vercel build` wrote are the api's, not the web app's
     subprocess.run("rm -rf .vercel/output .vercel/static-build .vercel/.env.production.local", shell=True, cwd=mold_dir)
-    url = run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy")
+    url = stable_url(proj, run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy"))
+    SHIPPED.append(("web", url))
     disconnect_git(proj, mold_dir)
+    # An app with its own domain (domain.py attach/switch) keeps it as its front door: `vercel deploy` always
+    # answers with the project's *.vercel.app address, and recording that would send WEB_ORIGIN, emailed links
+    # and the app's agent package back to the old address on every deploy.
+    dom = infra["vercel"].get("custom_domain")
+    if dom and (infra["vercel"].get("production_url") or "") == f"https://{dom}": url = f"https://{dom}"
     infra["vercel"]["production_url"] = url; print(f"  {url}")
     if url != web_origin:
         for p_ in (proj, f"{proj}-api"): _set_env("WEB_ORIGIN", url, mold_dir, project=p_)
@@ -1299,26 +1814,44 @@ def verify_db(app_id, mold_dir, ds, adir, infra):
         _seed_env_local(envloc)
         with open(envsup, "w") as f: f.write(f"SUPABASE_POSTGRES_URL_NON_POOLING={adm}\n")
         os.chmod(envsup, 0o600)
-        for label, cmd, env in [("schema push", "npx drizzle-kit push --force", {"DATABASE_URL": adm}),
-                                ("migration journal", "node scripts/migrate-production.mjs", {"DATABASE_URL": adm, "DATABASE_URL_UNPOOLED": adm}),
-                                ("rls + app_rw", "node .bootstrap-supabase.mjs", {}),
-                                ("task-workflow", "npm run db:migrate:task-workflows", {})]:
-            r = localpg.run(app_id, cmd, mold_dir, env)
-            msg = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and not l.lstrip().startswith("at ") and not l.startswith("npm notice")]
-            print(f"  {label}: " + (msg[-1][:150] if msg else "ok"))
-            if r.returncode: sys.exit(f"{label} failed:\n" + "\n".join(msg[-12:]))
-        m = re.search(r'^DATABASE_URL="?([^"\n]+)"?', open(envloc).read(), re.M)
-        if not m: sys.exit("bootstrap did not write an app_rw DATABASE_URL into .env.local")
-        # Same two scripts as the managed lane, in the same order, after the same four steps.
+        # The same chain, in the same order (SCHEMA_CHAIN), as the managed lane: a VM database the lanes
+        # run against while a previous build still serves is just as live as a Neon one.
         mode = rls_mode(ds); run = _vm_runner(app_id, mold_dir)
         hint = f"python3 .claude/scripts/provision.py {app_id} --verify-db"
-        _rls_cover(run, adm, mode, hint)
-        ev = _verify_app_rw(run, m.group(1), mode, "self_hosted", "provision.py --verify-db", hint)
+        sh = lambda cmd, env: localpg.run(app_id, cmd, mold_dir, env)
+        got = {}
+        def mold(label, cmd, env):
+            def step():
+                r = sh(cmd, env)
+                msg = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and not l.lstrip().startswith("at ") and not l.startswith("npm notice")]
+                print(f"  {label}: " + (msg[-1][:150] if msg else "ok"))
+                if r.returncode: sys.exit(f"{label} failed:\n" + "\n".join(msg[-12:]))
+            return step
+        def bootstrap():
+            mold("rls + app_rw", "node .bootstrap-supabase.mjs", {})()
+            m = re.search(r'^DATABASE_URL="?([^"\n]+)"?', open(envloc).read(), re.M)
+            if not m: sys.exit("bootstrap did not write an app_rw DATABASE_URL into .env.local")
+            got["app_url"] = m.group(1)
+        def hold():
+            if mode != "off": print("  deploy window: " + json.dumps(_window(run, "hold", adm, mode, hint))[:160])
+        def release():
+            if mode != "off": _window(run, "release", adm, mode, hint)
+        def prove():
+            got["ev"] = _verify_app_rw(run, got["app_url"], mode, "self_hosted", "provision.py --verify-db", hint)
+        def push(): got["pushed"] = push_schema(sh, run, adm, mode, hint)
+        def drift():
+            if not got["pushed"]: apply_drift(sh, run, adm, mode, hint)
+        _run_chain({"hold": hold, "push": push, "drift": drift,
+                    "migrate": mold("migration journal", "node scripts/migrate-production.mjs", {"DATABASE_URL": adm, "DATABASE_URL_UNPOOLED": adm}),
+                    "bootstrap": bootstrap, "task-workflow": mold("task-workflow", "npm run db:migrate:task-workflows", {}),
+                    "cover": lambda: _rls_cover(run, adm, mode, hint), "release": release, "prove": prove,
+                    "publish": lambda: None})      # published below, into infra/vm/apps/<id>/.env
+        ev = got["ev"]
         # The same reading the vercel lane takes: a vm app serves nothing, so this records `unmeasured`
         # with the reason — the honest verdict, and the one the schema and validate expect to find here.
         ev["running_app"], ev["running_app_detail"] = _health_rls(infra)
         record_rls(adir, ds, ev)
-        _vm_env(app_id, {"POSTGRES_ADMIN_URL": adm, "DATABASE_URL": m.group(1)})
+        _vm_env(app_id, {"POSTGRES_ADMIN_URL": adm, "DATABASE_URL": got["app_url"]})
         envf = os.path.join(ROOT, "infra/vm/apps", app_id, ".env")
         have = {l.split("=", 1)[0] for l in open(envf) if "=" in l and l.split("=", 1)[1].strip()}
         halves = {"AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY"} & have
@@ -1724,11 +2257,12 @@ def verify_rls(app_id, app, infra, ds, adir, mold_dir, repair=True):
                  f"  Run: python3 .claude/scripts/provision.py {app_id} --deploy")
     print(f"  the running app reports: enforced ({ev['running_app_detail']})")
 
-def _revert(adir, app, reason):
+def _revert(adir, app, reason, note=""):
     """A deploy that could not prove isolation is not a deploy. Record it as reverted, with the reason,
-    instead of leaving the app in `stamping` or — as before — writing `stamped` regardless."""
+    instead of leaving the app in `stamping` or — as before — writing `stamped` regardless. `note` (what
+    this run actually replaced in production) is kept whole, after the truncated reason."""
     app["status"] = "reverted"
-    app["revert"] = {"reason": reason[:400], "lane": "functional", "at": NOW}
+    app["revert"] = {"reason": (reason[:400] + (" " + note if note else "")).strip(), "lane": "functional", "at": NOW}
     save(os.path.join(adir, "application.json"), app)
     print(f"  status set to reverted: {reason[:200]}")
 
@@ -1763,7 +2297,316 @@ def _refuse_live_or_shared_project(app_id, infra):
                  f"would land in that app's environment. Give this app its own project in state/application/{app_id}/"
                  f"infrastructure.json (vercel.project) and rerun. Nothing was written.")
 
+FAKE_VERCEL = r'''#!/bin/sh
+# a stand-in for the vercel CLI, driven by FAKE_MODE; writes what it was asked to cancel to $FAKE_DIR/cancelled
+case "$1 $2" in
+  "deploy "*|"deploy")
+    case "$FAKE_MODE" in
+      nourl) sleep 30 ;;
+      ready) echo "Production: https://fake-abc123.vercel.app [1s]"; sleep 1; echo "Aliased: https://fake.vercel.app"; exit 0 ;;
+      *) echo "Production: https://fake-abc123.vercel.app [1s]"; sleep 30 ;;
+    esac ;;
+  "api /v13/deployments/"*)
+    case "$FAKE_MODE" in
+      error) echo '{"id":"dpl_fake","readyState":"ERROR"}' ;;
+      building) echo '{"id":"dpl_fake","readyState":"BUILDING"}' ;;
+      unreadable) echo 'Error: not authorized' >&2; exit 1 ;;
+      ready) echo '{"id":"dpl_fake","readyState":"BUILDING"}' ;;
+      *) echo '{"id":"dpl_fake","readyState":"QUEUED"}' ;;
+    esac ;;
+  "api /v12/deployments/"*) echo "$2" >> "$FAKE_DIR/cancelled"; echo '{}' ;;
+  *) echo "unexpected: $*" >&2; exit 2 ;;
+esac
+'''
+
+# A model of the database the schema chain runs against, for --self-test: enough of Postgres's RLS
+# semantics (permissive policies OR, restrictive ones AND, RLS off means no policy applies, no grant means
+# no read at all) to replay SCHEMA_CHAIN step by step, statement by statement, and ask after EVERY one
+# whether the serving app role could read another workspace's row. The tables stand for the ways the
+# chain treats one: the bootstrap's own list (customers), coverage only (chat_threads), the task-workflow
+# migration's (task_workflow_instances), the control plane (orgs, readable before a workspace is known),
+# and one the JOURNAL creates mid-chain and backfills from existing rows (journal_new).
+WINDOW_TABLES = {"customers": "bootstrap", "chat_threads": "cover", "task_workflow_instances": "task-workflow", "orgs": "control"}
+
+def _window_model(chain, split=None, mode="fail_closed", old_hold=False):
+    """Replay `chain` against a covered LIVE database; return the exposures seen, [] if none.
+
+    `push` is a no-op here (it only runs on an empty database); `drift` treats drizzle-kit's plan with
+    `split` (_split_push in the chain as it is); `push --force` is the chain as it was. `old_hold` is the
+    first cut of hold, which guarded tables but left app_rw's default grant on new ones in place."""
+    admits = {"strict": lambda g, o: g == o, "open": lambda g, o: g in (None, "") or g == o}
+    kind = dict(WINDOW_TABLES)
+    cover = lambda t: "open" if kind[t] == "control" or mode == "on" else "strict"
+    db = {t: {"rls": True, "perm": {"org_isolation": cover(t)}, "restr": {}, "grant": True} for t in kind}
+    state = {"default_grant": True}
+    seen = []
+    def look(step):
+        for t, st in db.items():
+            for who, g in (("scoped to A", "A"), ("unscoped", None)):
+                if who == "unscoped" and (kind[t] == "control" or mode == "on"): continue   # open by design
+                if not st["grant"]: ok = False
+                elif not st["rls"]: ok = True
+                else: ok = any(admits[p](g, "B") for p in st["perm"].values()) and all(admits[p](g, "B") for p in st["restr"].values())
+                if ok: seen.append(f"{step}: app_rw {who} reads workspace B on {t}")
+    def ddl(stmt):
+        m = re.match(r'ALTER TABLE "(\w+)" DISABLE ROW LEVEL SECURITY', stmt)
+        if m: db[m.group(1)]["rls"] = False
+        m = re.match(r'DROP POLICY "(\w+)" ON "(\w+)"', stmt)
+        if m: db[m.group(2)]["perm"].pop(m.group(1), None); db[m.group(2)]["restr"].pop(m.group(1), None)
+    def plan():
+        # What drizzle-kit push --strict --verbose prints for this database: schema.ts models no policy
+        # and no RLS, so every one of them is "drift"; plus the mold's out-of-band index. Fed through the
+        # REAL parser, so a change in how the dry run is read is a change this test sees.
+        body = "\n".join([f'ALTER TABLE "{t}" DISABLE ROW LEVEL SECURITY;' for t, st in db.items() if st["rls"]] +
+                         [f'DROP POLICY "{p}" ON "{t}" CASCADE;' for t, st in db.items() for p in {**st["perm"], **st["restr"]}] +
+                         ['DROP INDEX "workflow_definitions_one_default_idx";'])
+        return _push_plan(f"Using 'postgres' driver\n\n Warning  {DRY_RUN_HEAD}\n\n{body}\n\nError: Interactive prompts require a TTY terminal")[0]
+    def step(name):
+        if name == "hold":
+            if not old_hold: state["default_grant"] = False
+            for t in db: db[t]["rls"] = True; db[t]["restr"]["factory_deploy_guard"] = cover(t)
+            look(name)
+        elif name == "push --force":          # the chain as it was: every statement, one at a time
+            for x in plan(): ddl(x); look(f"push --force: {x[:40]}")
+        elif name == "migrate":               # a journal entry that creates an org-scoped table and backfills it
+            if "journal_new" not in db:
+                kind["journal_new"] = "journal"
+                db["journal_new"] = {"rls": False, "perm": {}, "restr": {}, "grant": state["default_grant"]}
+            look(name)
+        elif name == "drift":
+            todo, _ = split(plan())
+            for x in todo: ddl(x)              # one transaction: nobody sees in between
+            look(name)
+        elif name in ("bootstrap", "task-workflow"):
+            if name == "bootstrap":            # GRANT ... ON ALL TABLES, and the default grant, to app_rw
+                state["default_grant"] = True
+                for t in db: db[t]["grant"] = True
+                look("bootstrap: grants")
+            for t in db:
+                if kind[t] == name:
+                    db[t]["rls"] = True; db[t]["perm"].pop("org_isolation", None); look(f"{name}: drop org_isolation on {t}")
+                    db[t]["perm"]["org_isolation"] = "open"; look(f"{name}: create permissive org_isolation on {t}")
+        elif name == "cover":
+            for t in db: db[t]["rls"] = True; db[t]["perm"]["org_isolation"] = cover(t); look(f"cover: {t}")
+        elif name == "release":
+            state["default_grant"] = True
+            for t in db: db[t]["restr"].pop("factory_deploy_guard", None)
+            look(name)
+        else: look(name)
+    for name in chain: step(name)
+    return seen
+
+def self_test():
+    """Offline checks of the deadline, deploy-watch and headroom logic. No network, no state, no Vercel."""
+    fails, n = [], [0]
+    def check(name, cond, detail=""):
+        n[0] += 1
+        if not cond: fails.append(f"{name}{': ' + str(detail) if detail else ''}")
+    # 1. a call past its deadline is killed with its whole process group and says how long it ran
+    t0 = time.monotonic()
+    try: vrun("sh -c 'sleep 30 & sleep 30'", timeout=1); check("vrun timeout", False, "no exit")
+    except SystemExit as e: check("vrun timeout names the elapsed time", "timed out after" in str(e) and "limit 1s" in str(e), e)
+    check("vrun timeout does not wait on a grandchild's pipe", time.monotonic() - t0 < 6, f"{time.monotonic() - t0:.1f}s")
+    r = vrun("echo hi; exit 3")
+    check("vrun passes output and exit code through", r.stdout.strip() == "hi" and r.returncode == 3, r)
+    check("vrun scrubs credentials from the label", "***@" in _label("psql postgres://u:pw@h/db") and "pw" not in _label("psql postgres://u:pw@h/db"))
+    # 2. `vercel deploy` watched against a fake CLI
+    d = tempfile.mkdtemp(prefix="provision-selftest-")
+    try:
+        fake = os.path.join(d, "vercel"); open(fake, "w").write(FAKE_VERCEL); os.chmod(fake, 0o755)
+        def deploy(mode, **kw):
+            env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}", FAKE_MODE=mode, FAKE_DIR=d)
+            try: os.remove(os.path.join(d, "cancelled"))
+            except FileNotFoundError: pass
+            old = os.environ.copy(); os.environ.update(env)   # the watcher's own `vercel api` polls find the fake too
+            try: return vercel_deploy("vercel deploy --prod --yes", d, f"{mode} deploy", env=env, quiet=True, **kw), None
+            except SystemExit as e: return None, str(e)
+            finally: os.environ.clear(); os.environ.update(old)
+        cancelled = lambda: open(os.path.join(d, "cancelled")).read() if os.path.exists(os.path.join(d, "cancelled")) else ""
+        t0 = time.monotonic(); out, err = deploy("stuck", stall=1.5, poll=0.3, timeout=20)
+        check("a deployment stuck in QUEUED is given up on", err and "sat at QUEUED" in err, err)
+        check("  ...within the stall limit, not the CLI's forever", time.monotonic() - t0 < 10, f"{time.monotonic() - t0:.1f}s")
+        check("  ...and cancelled on Vercel", "dpl_fake" in cancelled() and "Cancelled dpl_fake" in (err or ""), cancelled())
+        out, err = deploy("ready", stall=5, poll=0.3, timeout=20)
+        check("a deployment that finishes returns its output", out and "fake.vercel.app" in out and not err, err)
+        check("  ...and is not cancelled", not cancelled())
+        out, err = deploy("error", stall=5, poll=0.3, timeout=20)
+        check("an ERROR deployment ends the wait at once", err and "as ERROR" in err, err)
+        check("  ...without a cancel", not cancelled())
+        out, err = deploy("nourl", stall=0.5, poll=0.3, timeout=20)
+        check("a deploy that never creates a deployment is given up on", err and "(not created yet)" in err, err)
+        out, err = deploy("unreadable", stall=0.5, poll=0.3, timeout=2)
+        check("a state the API cannot report is bounded by the timeout, not called stuck", err and "no result within 2s" in err and "last state UNKNOWN" in err, err)
+        prev = signal.signal(signal.SIGALRM, _on_signal); signal.setitimer(signal.ITIMER_REAL, 1.0)
+        t0 = time.monotonic(); out, err = deploy("stuck", stall=60, poll=0.3, timeout=60)
+        signal.signal(signal.SIGALRM, prev)
+        check("a signal mid-deploy stops the watch at once", err and "SIGALRM" in err and time.monotonic() - t0 < 5, err)
+        check("  ...and cancels the deployment it started", "dpl_fake" in cancelled(), cancelled())
+        out, err = deploy("building", stall=1, poll=0.3, timeout=2)
+        check("BUILDING is bounded by the overall timeout, not the stall", err and "no result within 2s" in err and "BUILDING" in err, err)
+        check("  ...and cancelled", "dpl_fake" in cancelled())
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # 3. headroom: waits with progress, gives up at the deadline, never sleeps for real here
+    seq = iter([(9.0, 500), (6.0, 4000), (1.0, 5000)]); slept = []
+    ok, now = wait_for_headroom("x", deadline_s=600, probe=lambda: next(seq), sleep=slept.append, every=30)
+    check("headroom waits until load and memory are both under the limits", ok and len(slept) == 2 and "load 1.0" in now, (ok, slept, now))
+    slept = []
+    ok, now = wait_for_headroom("x", deadline_s=90, probe=lambda: (12.0, 100), sleep=slept.append, every=30)
+    check("headroom gives up at its deadline", not ok and sum(slept) == 90, (ok, slept))
+    check("heap ceiling is half of what is free, clamped to 2-4GB",
+          (_node_options(6000), _node_options(1000), _node_options(20000)) ==
+          ("--max-old-space-size=3000", "--max-old-space-size=2048", "--max-old-space-size=4096"))
+    check("an existing heap ceiling is kept", _node_options(6000, "--max-old-space-size=1234") == "--max-old-space-size=1234")
+    # 4. the heavy build: nice, NODE_OPTIONS, one retry on an OOM kill only
+    CP = subprocess.CompletedProcess
+    for codes, want_calls, want_rc in (([137, 0], 2, 0), ([137, 137], 2, 137), ([1, 0], 1, 1), ([0], 1, 0)):
+        calls, it = [], iter(codes)
+        def runner(c, e): calls.append((c, e.get("NODE_OPTIONS", ""))); return CP(c, next(it), "", "")
+        r = heavy_build("vercel build", "/", "eve api build", env={}, wait=lambda l: (True, "quiet"), runner=runner)
+        check(f"heavy build exits {codes}: {want_calls} call(s), rc {want_rc}", len(calls) == want_calls and r.returncode == want_rc, (calls, r.returncode))
+        check(f"  ...under nice with a heap ceiling", all(c.startswith("nice -n 10 vercel build") and "max-old-space-size" in o for c, o in calls), calls)
+    check("an OOM reported only in the output counts", _oom_killed(CP("x", 1, 'Error: Command "npm run build:eve" exited with 137', "")))
+    check("an ordinary failure does not", not _oom_killed(CP("x", 1, "Type error: foo", "")))
+    # 5. the record a stopped deploy leaves
+    SHIPPED.clear()
+    check("nothing shipped says the old deployment still serves", "still serving" in shipped_note())
+    SHIPPED.append(("workflow", "https://w.vercel.app"))
+    check("a partial deploy names what it replaced and what it did not", "Replaced in production before it stopped: workflow" in shipped_note() and "api, web" in shipped_note(), shipped_note())
+    d = tempfile.mkdtemp(prefix="provision-selftest-")
+    try:
+        app = {"status": "stamping"}
+        _revert(d, app, "x" * 1000, shipped_note())
+        got = load(os.path.join(d, "application.json"))
+        check("revert keeps the whole note after a long reason", got["status"] == "reverted" and got["revert"]["reason"].endswith(shipped_note()), got)
+    finally:
+        shutil.rmtree(d, ignore_errors=True); SHIPPED.clear()
+    # 6. SIGTERM becomes a SystemExit the revert handler catches
+    prev = signal.signal(signal.SIGTERM, _on_signal)
+    try:
+        os.kill(os.getpid(), signal.SIGTERM); time.sleep(1); check("SIGTERM unwinds", False, "no exception")
+    except SystemExit as e: check("SIGTERM unwinds as SystemExit naming the signal", "SIGTERM" in str(e), e)
+    finally: signal.signal(signal.SIGTERM, prev)
+    # 7. the deploy window (mold_v1-143): no step of SCHEMA_CHAIN lets app_rw read another workspace
+    for mode in ("fail_closed", "on"):
+        seen = _window_model(SCHEMA_CHAIN, split=_split_push, mode=mode)
+        check(f"[{mode}] no step of the schema chain opens a workspace to another", not seen, seen[:4])
+    before = _window_model(("push --force", "migrate", "bootstrap", "task-workflow", "cover", "prove", "publish"))
+    check("the model catches the chain as it was (push --force, then bootstrap, before cover)",
+          any(x.startswith("push") for x in before) and any(x.startswith("bootstrap") for x in before), before[:4])
+    check("  ...and hold alone does not hide push --force (it disables RLS under the guard)",
+          any(x.startswith("push") for x in _window_model(("hold", "push --force") + SCHEMA_CHAIN[2:], split=_split_push)))
+    check("  ...and neither does a drift step that applies the whole plan",
+          _window_model(SCHEMA_CHAIN, split=lambda st: (st, [])) != [])
+    # item 5: a table the journal creates mid-chain (and backfills) is never readable before it is guarded
+    first_cut = ("hold", "push", "migrate", "drift", "bootstrap", "task-workflow", "cover", "release", "prove", "publish")
+    fc = _window_model(first_cut, split=_split_push, old_hold=True)
+    check("the model catches a journal-created table under the first cut (one hold, default grant kept)",
+          any("journal_new" in x for x in fc), fc[:3])
+    check("  ...and re-holding alone is not enough while app_rw keeps its default grant on new tables",
+          any("journal_new" in x for x in _window_model(SCHEMA_CHAIN, split=_split_push, old_hold=True)))
+    pos = lambda k, after=-1: next((i for i, x in enumerate(SCHEMA_CHAIN) if x == k and i > after), -1)
+    ok_order = (0 <= pos("hold") < pos("push") < pos("migrate") < pos("hold", pos("migrate")) < pos("drift")
+                < pos("hold", pos("drift")) < pos("bootstrap") < pos("cover") < pos("release") < pos("prove") < pos("publish"))
+    check("SCHEMA_CHAIN holds first, again after the journal and after drift, and releases only after cover", ok_order, SCHEMA_CHAIN)
+    # item 6: the guard and rls-cover read their predicates from ONE module
+    lib = os.path.join(ROOT, ".claude/scripts/lib")
+    src = {f: open(os.path.join(lib, f)).read() for f in ("rls-policy.mjs", "rls-cover.mjs", "deploy-window.mjs", "verify-apprw.mjs")}
+    check("rls-policy.mjs defines CONTROL_PLANE, STRICT, OPEN and orgPredicate",
+          all(re.search(rf"export const {k}\b", src["rls-policy.mjs"]) for k in ("CONTROL_PLANE", "STRICT", "OPEN", "orgPredicate")))
+    for f in ("rls-cover.mjs", "deploy-window.mjs"):
+        check(f"{f} imports orgPredicate from rls-policy.mjs and defines no predicate of its own",
+              re.search(r"import \{[^}]*\borgPredicate\b[^}]*\} from \"\./rls-policy\.mjs\"", src[f]) is not None
+              and not re.search(r"const (STRICT|OPEN|CONTROL_PLANE)\s*=\s*(new Set|`|\[)", src[f]), f)
+    check("verify-apprw.mjs takes its control plane from rls-policy.mjs",
+          "CONTROL_PLANE as CONTROL_SET" in src["verify-apprw.mjs"] and '["orgs", "org_members", "org_invites"]' not in src["verify-apprw.mjs"])
+    # item 2: the printed plan is read whole — measured drizzle-kit 0.31 output, PK drop without `;`
+    DL = ("No config path provided, using default 'drizzle.config.ts'\nUsing 'postgres' driver for database querying\n\n"
+          "\x1b[48;5;244m\x1b[38;5;16m Warning \x1b[39m\x1b[49m You are about to execute current statements:\n\n"
+          'CREATE TABLE "t4" (\n\t"id" text PRIMARY KEY NOT NULL,\n\t"org_id" text NOT NULL\n);\n\n'
+          'ALTER TABLE "t1" ALTER COLUMN "n" SET DATA TYPE integer;\nALTER TABLE "t2" DROP CONSTRAINT "t2_a_pk"\n'
+          'ALTER TABLE "t2" ALTER COLUMN "a" DROP NOT NULL;\nALTER TABLE "t2" ADD CONSTRAINT "t2_a_b_pk" PRIMARY KEY("a","b");\n'
+          'truncate table "t1" cascade;\nALTER TABLE "t1" ADD COLUMN "m" text NOT NULL;\n\n'
+          " Warning  Found data-loss statements:\n· You're about to change t2 primary key. This statements may fail and you table may left without primary key\n"
+          "· You're about to add not-null m column without default value, which contains 1 items\n\n"
+          "THIS ACTION WILL CAUSE DATA LOSS AND CANNOT BE REVERTED\n\nDo you still want to push changes?\n"
+          "Error: Interactive prompts require a TTY terminal (process.stdin.isTTY or process.stdout.isTTY is false).\n")
+    st, notes = _push_plan(DL)
+    check("every printed statement is its own statement, the PK drop without `;` included",
+          len(st) == 7 and 'ALTER TABLE "t2" DROP CONSTRAINT "t2_a_pk";' in st and st[0].endswith(");"), st)
+    st2, _ = _push_plan(f" Warning  {DRY_RUN_HEAD}\n\nALTER TABLE \"a\" ADD COLUMN \"z\" text;\nALTER TABLE \"t2\" DROP CONSTRAINT \"t2_a_pk\"\n\nError: Interactive prompts require a TTY")
+    check("  ...and a last statement without `;` is kept, not discarded", st2[-1:] == ['ALTER TABLE "t2" DROP CONSTRAINT "t2_a_pk";'], st2)
+    st3, _ = _push_plan(f" Warning  {DRY_RUN_HEAD}\n\nDO $$ BEGIN\n ALTER TABLE \"a\" ADD CONSTRAINT \"f\" FOREIGN KEY (\"x\") REFERENCES \"b\"(\"x\");\n"
+                        "EXCEPTION\n WHEN duplicate_object THEN null;\nEND $$;\nALTER TABLE \"a\" ADD COLUMN \"z\" text;\n\nError: x")
+    check("  ...and a DO block stays one statement", len(st3) == 2 and st3[0].startswith("DO $$") and st3[0].endswith("END $$;"), st3)
+    for bad in ("  stray text", "DO $$ BEGIN\n SELECT 1;"):
+        try: _push_plan(f" Warning  {DRY_RUN_HEAD}\n{bad}\nError: x"); check(f"  ...and unreadable output raises ({bad[:12]!r})", False)
+        except DryRunError: check(f"  ...and unreadable output raises ({bad[:12]!r})", True)
+    # item 1 (and 3, 4): drift refuses data loss and undeclared index drops, and says why a check could not run
+    CP = subprocess.CompletedProcess
+    def drift(out, rc=0, probe_ro=(0, '{"action":"probe","read_only":true}'), probe_plain=(0, "{}")):
+        calls = []
+        def run(script, env):
+            calls.append(env["ACTION"])
+            if env["ACTION"] == "probe":
+                code, line = probe_ro if "read_only" in env["ADMIN_URL"] else probe_plain
+                return CP(script, code, line, "" if code == 0 else "deploy window probe could not be measured — cannot reach the database")
+            return CP(script, 0, '{"action":"apply","applied":1}', "")
+        try: apply_drift(lambda c, e: CP(c, rc, out, ""), run, "postgresql://u:p@h/db", "fail_closed", "hint"); return None, calls
+        except SystemExit as e: return str(e), calls
+    err, calls = drift(DL)
+    check("a plan that would truncate or drop data stops the deploy and applies nothing",
+          err and "DELETE data" in err and "truncate" in err and "apply" not in calls, (err, calls))
+    err, calls = drift(f" Warning  {DRY_RUN_HEAD}\n\nALTER TABLE \"t\" DROP COLUMN \"c\";\n\nError: x")
+    check("  ...DROP COLUMN too, even without drizzle's own data-loss notice", err and "DROP COLUMN" in err and "apply" not in calls, err)
+    err, calls = drift(f" Warning  {DRY_RUN_HEAD}\n\nDROP INDEX \"x_idx\";\nDROP INDEX \"workflow_definitions_one_default_idx\";\n\nError: x")
+    check("an undeclared index drop is named and refused; the mold's own out-of-band index is only set aside",
+          err and '"x_idx"' in err and "workflow_definitions" not in err and "apply" not in calls, err)
+    err, calls = drift(f" Warning  {DRY_RUN_HEAD}\n\nDROP INDEX \"workflow_definitions_one_default_idx\";\nALTER TABLE \"a\" ADD COLUMN \"z\" text;\n\nError: x")
+    check("  ...and plain drift beside it is applied", err is None and calls[-1] == "apply", (err, calls))
+    err, _ = drift("", rc=1)
+    check("a dry run that exits 1 with no output is 'could not connect', never drift", err and "could not connect to the database for the schema check" in err, err)
+    err, _ = drift("", probe_ro=(3, ""), probe_plain=(3, ""))
+    check("  ...said before drizzle-kit even runs, when the database cannot be reached", err and "could not connect" in err, err)
+    err, _ = drift("", probe_ro=(3, ""), probe_plain=(0, "{}"))
+    check("a provider that refuses the read-only option gets its own sentence", err and "refused the read-only connection option" in err, err)
+    err, _ = drift("", probe_ro=(0, '{"read_only":false}'))
+    check("  ...and one that silently ignores it is refused", err and "did not apply it" in err, err)
+    err, _ = drift("· You're about to add t1_org_id_unique unique constraint to the table, which contains 1 items. Do you want to truncate t1 table?\n\nError: Interactive prompts require a TTY terminal")
+    check("a new unique constraint on a table with rows is named, not read as drift", err and "t1_org_id_unique" in err and "migration" in err, err)
+    err, _ = drift("Error: Interactive prompts require a TTY terminal\nError: Interactive prompts require a TTY terminal")
+    check("a rename question says rename", err and "RENAMED" in err, err)
+    check("an up-to-date database plans nothing", _push_plan("[i] No changes detected") == ([], []))
+    try: _push_plan("[✓] Changes applied"); check("a dry run that applied something stops the deploy", False)
+    except DryRunError: check("a dry run that applied something stops the deploy", True)
+    ro = _read_only("postgresql://u:p@h/db?sslmode=require&options=endpoint%3Dep-x")
+    check("the dry run's URL is read-only and keeps an existing options value",
+          "default_transaction_read_only%3Don" in ro and "endpoint%3Dep-x" in ro and "sslmode=require" in ro, ro)
+    if fails:
+        sys.exit("self-test FAILED:\n  " + "\n  ".join(fails))
+    print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals, deploy window)")
+
+def shipped_note():
+    """What a stopped deploy really changed in production (mold_v1-106/109). A deploy that died in the eve
+    build replaced nothing the web app serves, and the record should say so rather than read as an outage."""
+    done = [n for n, _ in SHIPPED]
+    rest = [n for n in ("workflow", "api", "web") if n not in done]
+    if not done:
+        return "Nothing was replaced in production: the previous deployment of every service is still serving."
+    return (f"Replaced in production before it stopped: {', '.join(done)}. "
+            + (f"Still serving their previous deployment: {', '.join(rest)}." if rest else ""))
+
+def _on_signal(signum, _frame):
+    # SIGTERM (a `kill`, a timeout wrapper, systemd) and SIGHUP (a closed terminal) used to end the process
+    # without unwinding, so the handler below never ran and the app stayed `stamping` (mold_v1-106). As a
+    # SystemExit they land in that handler like any other stop. SIGKILL cannot be caught by anything.
+    raise SystemExit(f"the deploy was stopped by {signal.Signals(signum).name} before it finished")
+
 def main(a):
+    if a and a[0] == "--self-test": return self_test()
+    if a and a[0] == "--self-test-remote":
+        sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
+        return sys.exit(vm_remote.cli(["--self-test"]))
     if not a or a[0].startswith("-"): sys.exit(__doc__)   # `--help`, or a flag where the app id goes
     app_id = a[0]; deploy = "--deploy" in a
     adir = os.path.join(ST, "application", app_id)
@@ -1778,6 +2621,11 @@ def main(a):
     global ADMIN_KEYS
     ADMIN_KEYS = (ds.get("postgres", {}).get("admin_url_ref") or PROVIDER_ADMIN.get(prov, "POSTGRES_ADMIN_URL"),)
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
+    if target == "vm_remote":
+        # A server over SSH that serves the app (mold_v1-075/076). Nothing below this line applies to it: no
+        # Vercel project, no local docker database, and --check must not reach for either. One module owns it.
+        sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
+        sys.exit(vm_remote.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__]))
     if target == "vm" and not deploy and app.get("status") not in VM_STATUSES:
         # The same refusal factory.py validate makes (_vm_status), at the writer: a vm app never serves
         # traffic, and this lane never writes a status that says it does, so one that says so was set
@@ -1888,6 +2736,15 @@ def main(a):
                 ask_nicely_for(app_id, missing_user)
                 sys.exit(f"refusing {verb}: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
                          f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} {verb}")
+            if deploy:
+                # A deploy on a saturated VM is an OOM waiting to happen (mold_v1-109). Wait for room first,
+                # bounded; if it never comes, stop HERE, before anything is created or the status moves.
+                ok, now = wait_for_headroom("the deploy")
+                if not ok:
+                    sys.exit(f"refusing --deploy: the VM stayed busy for {_fmt_s(HEADROOM_WAIT_S)} ({now}). Busiest: "
+                             f"{_busiest()}. NOTHING was created and {app_id}'s status is unchanged; the running "
+                             f"app is untouched. Rerun when that work has finished: python3 .claude/scripts/provision.py {app_id} --deploy")
+                print(f"  VM headroom ok: {now}")
             ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
             present = provision_datastores(app_id, ds, mold_dir, present, infra, proj)
             save(os.path.join(adir, "infrastructure.json"), infra)
@@ -1947,6 +2804,7 @@ def main(a):
               + f" python3 .claude/scripts/provision.py {app_id} --deploy")
         sys.exit(1 if missing_user else 0)
     if missing_user or missing_derived: sys.exit("refusing to deploy with missing secrets")
+    for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, _on_signal)
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
     try:
         running = deploy_vercel(app_id, app, infra, ds, mold_dir, adir)
@@ -1961,11 +2819,13 @@ def main(a):
         # half-deployed app that no gate ever looks at again. An unknown failure is the LEAST safe
         # moment to skip the revert. The exception is re-raised untouched, so the traceback (and the
         # exit code) still reach the operator.
+        for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, signal.SIG_IGN)   # the record below must land
         save(os.path.join(adir, "infrastructure.json"), infra)
-        if isinstance(e, SystemExit): _revert(adir, app, str(e) if e.code else "deploy stopped")
-        elif isinstance(e, KeyboardInterrupt): _revert(adir, app, "the deploy was interrupted before it finished")
+        note = shipped_note()
+        if isinstance(e, SystemExit): _revert(adir, app, str(e) if e.code else "deploy stopped", note)
+        elif isinstance(e, KeyboardInterrupt): _revert(adir, app, "the deploy was interrupted before it finished", note)
         else: _revert(adir, app, f"the deploy stopped on an unexpected {type(e).__name__}: {str(e)[:200]}. "
-                                 f"Nothing about this app is proven; re-run: python3 .claude/scripts/provision.py {app_id} --deploy")
+                                 f"Nothing about this app is proven; re-run: python3 .claude/scripts/provision.py {app_id} --deploy", note)
         raise
     # An INSTANT, not a day (infrastructure.schema.json: deployed_at), and the SAME instant as the
     # rls_verified.at this run wrote: NOW is taken once per process, so the proof, the running_app reading
@@ -1996,6 +2856,9 @@ def main(a):
     # A deploy that reached three healthy endpoints supersedes the revert a failed one recorded; leaving
     # that block beside status "stamped" is the self-contradictory state a critic caught once already.
     app.pop("revert", None)
+    # What is now in front of traffic: mint.py compares this with the mold's snapshot to know a redeploy is due.
+    shipped = next(((m.get("source") or {}).get("commit") for m in load(os.path.join(ROOT, "state", "factory.json")).get("molds", []) if m.get("mold_id") == app.get("mold_id")), None)
+    if shipped: app["mold_commit"] = shipped
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
 if __name__ == "__main__": main(sys.argv[1:])

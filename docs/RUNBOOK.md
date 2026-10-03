@@ -210,11 +210,136 @@ ever runs the app on the vm target, and it is a measurement on your own machine,
 | set up only the database on Vercel, deploy later | `python3 .claude/scripts/provision.py <app_id> --verify-db` on a vercel app — this one **creates** (projects, database, Blob store) and bootstraps the database without waiting for your credentials; it prints `about to create:` first |
 | change the gateway model or reasoning effort | set `GATEWAY_MODEL_ORCHESTRATOR` / `GATEWAY_MODEL_SPECIALIST` / `GATEWAY_REASONING_EFFORT` on `<project>` in the Vercel dashboard, then `--deploy` again |
 | know what a workspace will cost in inference | `docs/COST_MODEL.md` |
+| run the app on a server of your own instead of Vercel | §9 below |
+
+## 9. A server of your own instead of Vercel (`target: vm_remote`)
+
+**Where this stands today:** everything below is built and tested without a server. It has not yet been run against
+a real one, and the deploy itself refuses until three upstream changes are in the app's code (the check names them).
+You can do steps A to E now; they cost one server and change nothing for anyone.
+
+Say in the brief `on the customer's own server` (step 1), and intake writes an application whose target is
+`vm_remote`. From then on five things are needed from you, one at a time. Each says how long it takes.
+
+### A. Get the key that lets the factory into the server (2 minutes, you or the agent)
+
+The factory logs in to the server with a key, never a password. This makes the key and shows you the half that is
+safe to share:
+
+```
+python3 .claude/scripts/provision.py <app_id> --remote-key
+```
+
+It prints one long line starting `ssh-ed25519` and a name such as `sf_<app_id>`. Keep that window open: you paste the
+line in step B. The other half of the key stays on the factory's machine and is never shown.
+
+### B. Create the server (about 5 minutes, you)
+
+You need a server with 8 GB of memory, 4 CPUs and Ubuntu 24.04. At DigitalOcean:
+
+1. Open https://cloud.digitalocean.com/droplets/new
+2. Under **Choose Region**, pick the one closest to the people who will use the app.
+3. Under **Choose an image**, click **Ubuntu**, then choose **24.04 (LTS) x64**.
+4. Under **Choose Size**, click **Basic**, then **Regular**, then the box that says **8 GB / 4 CPUs** (about $48 a month).
+5. Under **Choose Authentication Method**, click **SSH Key**, then **New SSH Key**.
+6. In the big box, paste the line from step A.
+7. In the **Name** box, paste the key name from step A:
+
+   ```
+   sf_<app_id>
+   ```
+
+8. Click **Add SSH Key**, and make sure its checkbox is ticked.
+9. Leave everything else as it is. Do not tick any extra software (in particular, nothing with Docker).
+10. Click **Create Droplet**.
+11. Wait about a minute. The page then shows the new server with a number like `203.0.113.7` next to it. That is its
+    address; copy it.
+
+The key you pasted only lets this factory in. Nobody else can use it, and you can remove it from the server at any time.
+
+### C. Point the domain at the server (about 5 minutes, you; then up to an hour of waiting)
+
+People will open the app at a name such as `research.yourcompany.com`. That name has to lead to the server. Where your
+company's domain is managed (GoDaddy, Namecheap, Cloudflare, Google Domains, ...):
+
+1. Open that site and sign in.
+2. Find your domain and open its **DNS** settings (sometimes called **DNS records** or **Manage DNS**).
+3. Click **Add record** (or **Add**).
+4. For **Type**, choose **A**.
+5. For **Name** (or **Host**), type only the first part of the name. For `research.yourcompany.com` that is:
+
+   ```
+   research
+   ```
+
+6. For **Value** (or **Points to**, or **IPv4 address**), paste the server address from step B.
+7. If you see a cloud icon or a switch that says **Proxied** (Cloudflare), turn it off so it says **DNS only**.
+8. Click **Save**.
+
+The change usually takes a few minutes and can take up to an hour. You do not have to watch it: the next steps tell
+you in one sentence if the name does not lead to the server yet.
+
+### D. Tell the factory the two values (1 minute, you or the agent)
+
+The address and the name are not secrets. You can paste them into the chat and the agent runs this, or run it yourself:
+
+```
+python3 .claude/scripts/provision.py <app_id> --set-remote host=203.0.113.7 domain=research.yourcompany.com
+```
+
+### E. Check, then look before you leap (2 minutes, agent)
+
+```
+python3 .claude/scripts/provision.py <app_id>                              # offline: what is still missing, in plain words
+python3 .claude/scripts/provision.py <app_id> --qualify-remote             # logs in and only looks: is the server big enough, does it have KVM?
+python3 .claude/scripts/provision.py <app_id> --deploy-remote --dry-run    # prints every command it would run; runs none
+```
+
+The first connects to nothing. The second changes nothing on the server; if the server is too small, is not Ubuntu
+24.04, or cannot run the agent's sandbox (no "nested virtualization"), it says which and what to pick instead, and
+you have lost only a few minutes of a server you can delete. The third is the whole deploy on paper.
+
+### F. Deploy (about 30 minutes the first time, you, at the terminal)
+
+```
+python3 .claude/scripts/provision.py <app_id> --deploy-remote
+```
+
+It checks the server once more, then installs what the app needs, closes every door except the three it must keep open
+(the login port and the two web ports), sets up the database, and then asks you for the same handful of values as §4,
+one at a time: the Cloudflare pair, the Resend pair, the Google client id. Each prompt first says what the value is
+and where to click to get it. The screen stays blank while you paste; that is on purpose. The values go straight to
+the server, into one file only the server's administrator account can read. They are never shown, never saved on the
+factory's machine and never sent to chat. On a later deploy it asks for nothing it already has.
+
+Then it copies the app's source, builds it on the server, prepares the database with the same safety steps as §5
+(including the proof that one workspace cannot read another's rows), starts the three services and the six scheduled
+jobs, and gets the security certificate for your domain. The last line is `deployed: https://research.yourcompany.com`.
+
+If it stops, the last lines say in one sentence what to do. Fix that and run the same command again; every step is
+safe to repeat. A redeploy takes the app offline for about ten minutes while it rebuilds, so run one outside
+working hours.
+
+For the Google sign-in button, add `https://research.yourcompany.com` under **Authorized JavaScript origins** and
+**Authorized redirect URIs** in Google Cloud Console, exactly as §4 describes for a Vercel address.
+
+### G. Afterwards
+
+| Want to | Run |
+|---|---|
+| re-prove that workspaces cannot see each other | `python3 .claude/scripts/provision.py <app_id> --verify-rls` |
+| run the five lanes against the server | `python3 .claude/scripts/lanes.py <app_id>` (they grade `https://<your domain>`; the functional lane adds `tool.python`, which asks the agent to really run Python in its sandbox) |
+| know what the server costs | `docs/COST_MODEL.md` §7 |
+
+Not built yet for a server of your own, and said so rather than half-done: writing the brief's members into the
+database (§6's `clone.py configure` reads a Vercel project), backups, and clearing out old sandboxes from the disk.
+Each is a named task (`python3 .claude/scripts/factory.py tasks mold_v1`).
 
 ## What this runbook does not cover
 
 - A custom domain (`domain: <host>` is recorded in state; attaching it is a Vercel dashboard step).
 - A clone of the live deployment: `.claude/skills/clone/SKILL.md`.
-- `target: vm` as a place to run the app for anyone. It is a local verification target only (the reasons are in
+- `target: vm` as a place to run the app for anyone (a server of your own that does serve the app is `target: vm_remote`,
+  §9). `vm` is a local verification target only (the reasons are in
   `infra/vm/README.md`); the one exception is §7's `MOLD_V1_LANE_URL`, which lets the browser lanes measure a mold
   you started yourself on this machine, at a loopback address, and nowhere else.
