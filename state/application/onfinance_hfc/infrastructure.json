@@ -92,5 +92,14 @@
     "registry": "https://registry.npmjs.org/",
     "token_ref": "NPM_TOKEN"
   },
-  "handoff_url": "https://claude.ai/artifact/T4W4eFRPELrCFFrpktBBD1"
+  "handoff_url": "https://claude.ai/artifact/T4W4eFRPELrCFFrpktBBD1",
+  "repository": {
+    "provider": "github",
+    "host": "github.com",
+    "owner": "OnFinance",
+    "name": "onfinance-hfc",
+    "url": "https://github.com/OnFinance/onfinance-hfc",
+    "last_commit": "a2d40e569a0fd36bbad63b20bce47d48dcbaf37c",
+    "auto_push": false
+  }
 }

@@ -192,24 +192,24 @@
   "testing": {
     "load": {
       "status": "pending",
-      "run_at": "2026-10-04T15:57:07+00:00"
+      "run_at": "2026-10-04T16:29:32+00:00"
     },
     "context": {
       "status": "pending",
-      "run_at": "2026-10-04T15:57:07+00:00"
+      "run_at": "2026-10-04T16:29:32+00:00"
     },
     "functional": {
       "status": "fail",
-      "run_at": "2026-10-04T15:57:07+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc_vm-2026-10-04T155707Z.md"
+      "run_at": "2026-10-04T16:29:32+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc_vm-2026-10-04T162932Z.md"
     },
     "accessibility": {
       "status": "pending",
-      "run_at": "2026-10-04T15:57:07+00:00"
+      "run_at": "2026-10-04T16:29:32+00:00"
     },
     "responsiveness": {
       "status": "pending",
-      "run_at": "2026-10-04T15:57:07+00:00"
+      "run_at": "2026-10-04T16:29:32+00:00"
     }
   },
   "customer_id": "internal",
@@ -218,7 +218,7 @@
   ],
   "revert": {
     "lane": "functional",
-    "at": "2026-10-04T15:57:07+00:00",
-    "reason": "functional lane failed on 1 check(s): test:cards; report molds/mold_v1/testing/functional/reports/onfinance_hfc_vm-2026-10-04T155707Z.md; task mold_v1-178. The run stopped here: context, load, accessibility, responsiveness did not run, so testing.{context, load, accessibility, responsiveness} was reset to `pending` rather than left showing an earlier run's verdict. Unmeasured lanes right now (`pending`): context, load, accessibility, responsiveness. onfinance_hfc_vm is not gate-green until `python3 .claude/scripts/lanes.py onfinance_hfc_vm` runs all five in order and none fails."
+    "at": "2026-10-04T16:29:32+00:00",
+    "reason": "functional lane failed on 1 check(s): test:cards; report molds/mold_v1/testing/functional/reports/onfinance_hfc_vm-2026-10-04T162932Z.md; task mold_v1-178. The run stopped here: context, load, accessibility, responsiveness did not run, so testing.{context, load, accessibility, responsiveness} was reset to `pending` rather than left showing an earlier run's verdict. Unmeasured lanes right now (`pending`): context, load, accessibility, responsiveness. onfinance_hfc_vm is not gate-green until `python3 .claude/scripts/lanes.py onfinance_hfc_vm` runs all five in order and none fails."
   }
 }
