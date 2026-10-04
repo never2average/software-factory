@@ -14,7 +14,7 @@
     ],
     "system_of_record": "postgres",
     "backend": "local",
-    "blob_prefix": "orgs/onfinance",
+    "blob_prefix": "orgs/onfinance-ai",
     "platform_version_ids": [
       "v1"
     ],

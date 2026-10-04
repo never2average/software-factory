@@ -59,7 +59,7 @@
   },
   "blob": {
     "provider": "fs",
-    "root_prefix": "orgs/onfinance"
+    "root_prefix": "orgs/onfinance-ai"
   },
   "cache": {
     "provider": "none"
