@@ -15,7 +15,7 @@
         "vm",
         "vm_remote"
       ],
-      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app \u2014 which this factory never deploys \u2014 with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here. `vm_remote` (mold_v1-075) is a server this factory deploys to over SSH and that DOES serve the application; it owns the `vm_remote` object and neither of the other two. The same one-object-per-target rule applies, and factory.py validate adds the vm_remote rules the schema cannot express (install_path names this app, production_url is https://<domain> and present only once a deploy recorded it, the datastores and the sandbox agree with the target)."
+      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app — which this factory never deploys — with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here. `vm_remote` (mold_v1-075) is a server this factory deploys to over SSH and that DOES serve the application; it owns the `vm_remote` object and neither of the other two. The same one-object-per-target rule applies, and factory.py validate adds the vm_remote rules the schema cannot express (install_path names this app, production_url is https://<domain> and present only once a deploy recorded it, the datastores and the sandbox agree with the target)."
     },
     "vercel": {
       "type": "object",
@@ -74,7 +74,7 @@
           "additionalProperties": false
         }
       },
-      "description": "Only what provision.py and intake.py write, and nothing else (additionalProperties is false, like `vm`): every key here is either read as THIS app's URL by lanes.py / the lanes' target-up gates (production_url, workflow_url, api_url) or consumed by provision.py (team, project, functions, custom_domain, crons, health). An open object let a misspelt or stranger's key validate silently (mold_v1-057); a new key must be added here WITH a description, not by reopening the object. A target=vm app must not carry this object at all \u2014 validate refuses it, see `target`.",
+      "description": "Only what provision.py and intake.py write, and nothing else (additionalProperties is false, like `vm`): every key here is either read as THIS app's URL by lanes.py / the lanes' target-up gates (production_url, workflow_url, api_url) or consumed by provision.py (team, project, functions, custom_domain, crons, health). An open object let a misspelt or stranger's key validate silently (mold_v1-057); a new key must be added here WITH a description, not by reopening the object. A target=vm app must not carry this object at all — validate refuses it, see `target`.",
       "additionalProperties": false
     },
     "vm": {
@@ -113,7 +113,7 @@
           "type": "string"
         }
       },
-      "description": "Only what the lane provisions, and nothing else (additionalProperties is false): the vm lane never starts a web process (infra/vm/README.md; provision.py VM_NO_PROCESS), so a URL under ANY key here would name a server this factory did not deploy. production_url was removed and is also refused by name in factory.py validate (mold_v1-053); an open object let any other spelling validate silently, so the object is now closed. A target=vercel app must not carry this object at all \u2014 validate refuses it, see `target`.",
+      "description": "Only what the lane provisions, and nothing else (additionalProperties is false): the vm lane never starts a web process (infra/vm/README.md; provision.py VM_NO_PROCESS), so a URL under ANY key here would name a server this factory did not deploy. production_url was removed and is also refused by name in factory.py validate (mold_v1-053); an open object let any other spelling validate silently, so the object is now closed. A target=vercel app must not carry this object at all — validate refuses it, see `target`.",
       "additionalProperties": false
     },
     "vm_remote": {
@@ -152,7 +152,7 @@
         "ssh_host": {
           "type": "string",
           "pattern": "^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$",
-          "description": "Optional: the address the deploy's SSH connects to when it is not the public `host`, for example the server's address on a private administration tunnel (mold_v1-156). `host` stays the public address the domain's DNS record points at and the sandbox deny list names; absent, SSH connects to `host`."
+          "description": "Optional: the address the deploy's SSH connects to when it is not the public `host`. With the private administration tunnel on (vm_remote.tunnel.enabled, mold_v1-156) it is the server's tunnel address, written by provision.py --tunnel-remote and never by hand; validate requires the two to agree. `host` stays the public address the domain's DNS record points at; absent, SSH connects to `host`. The lanes and the public health read use the domain, never this."
         },
         "ssh_user": {
           "type": "string",
@@ -235,6 +235,18 @@
                 "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$"
               },
               "description": "Networks agent-run code may never reach: cloud metadata, the private ranges and loopback. validate requires 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and 127.0.0.0/8. The server's own public address is NOT added: with storage.driver fs a sandbox downloads data-room files from the web app's public address, and the server's services listen on loopback only behind Caddy, so that address offers a sandbox nothing the internet does not (the mold's docs/self-hosting/SANDBOX.md). validate refuses a list that holds `host` while storage.driver is fs, and --qualify-remote and the deploy refuse one that holds any address the domain resolves to."
+            },
+            "retention_days": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365,
+              "description": "Optional (default 7): how many days a STOPPED chat session's sandbox and its state snapshot are kept on the server's disk after they were last touched (mold_v1-153). A nightly timer removes older ones with msb's own commands; never a running sandbox, never a template. What is lost: the files inside that chat's sandbox workspace. The chat itself, its artifacts and the data room are in Postgres and the storage directory and are not touched; the next message in that chat starts a clean sandbox."
+            },
+            "disk_alarm_percent": {
+              "type": "integer",
+              "minimum": 50,
+              "maximum": 94,
+              "description": "Optional (default 80): the server's health step WARNS when the disk is this full. It FAILS at 95, where the next build or sandbox does not fit."
             }
           }
         },
@@ -323,7 +335,7 @@
         "health": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The deploy's own verdict, written by --deploy-remote and never by hand. workflow/api/web are HTTP statuses as strings (\"200\") or \"no answer\", as under `vercel.health`; kvm is what the server said about /dev/kvm and the API process's groups.",
+          "description": "The deploy's own verdict, written by --deploy-remote and never by hand. workflow/api/web are HTTP statuses as strings (\"200\") or \"no answer\", as under `vercel.health`; kvm is what the server said about /dev/kvm and the API process's groups. push, tunnel, disk_percent and sandbox_store_mb are the same read's verdict on desktop notifications (names only), the private tunnel, and the disk (mold_v1-153).",
           "properties": {
             "workflow": {
               "type": "string"
@@ -344,6 +356,96 @@
               ]
             },
             "qualified_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "push": {
+              "type": "string",
+              "enum": [
+                "on",
+                "off"
+              ],
+              "description": "Desktop notifications, by NAME only: on when the running web app holds VAPID_PUBLIC_KEY and the running agent holds all three VAPID names."
+            },
+            "tunnel": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "public_ssh_open",
+                "down"
+              ],
+              "description": "Only while vm_remote.tunnel.enabled: ok when the firewall has no public SSH rule, the tunnel interface is up and enabled at boot, and SSH is admitted on it."
+            },
+            "disk_percent": {
+              "type": "integer",
+              "description": "How full the server's disk was, in percent."
+            },
+            "sandbox_store_mb": {
+              "type": "integer",
+              "description": "What the service user's ~/.microsandbox held (templates, session sandboxes, snapshots), in MB."
+            }
+          }
+        },
+        "tunnel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "interface",
+            "network",
+            "factory_address",
+            "server_address",
+            "listen_port"
+          ],
+          "description": "The private administration tunnel (mold_v1-156): WireGuard between the factory machine and the server, SSH admitted on the tunnel interface only, public port 22 closed. Written by provision.py --tunnel-remote / --tunnel-factory (.claude/scripts/lib/vm_tunnel.py), which also sets ssh_host. NAMES, ADDRESSES AND PUBLIC KEYS ONLY: each machine's private key is made on that machine in /etc/wireguard/<interface>.key and never leaves it. Absent: no tunnel, SSH on the public address.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "true only after a run of --tunnel-remote logged in over the tunnel, closed public SSH and confirmed over the tunnel. While true, ssh_host must be server_address and the deploy's firewall step keeps SSH on the tunnel interface only. --tunnel-remote --off sets it false."
+            },
+            "interface": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{1,14}$",
+              "description": "The WireGuard interface name on both machines: /etc/wireguard/<interface>.conf, /etc/wireguard/<interface>.key and the unit wg-quick@<interface>. Default: sfwg + six characters derived from the app id, so two apps on one factory machine differ."
+            },
+            "network": {
+              "type": "string",
+              "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/(30|31)$",
+              "description": "The tunnel's own private /30 or /31. validate requires a private range that holds both addresses and not the server's public address, and refuses a network another app's tunnel overlaps. Default: a /30 inside 192.168.0.0/16 derived from the app id (a range the sandbox is denied)."
+            },
+            "factory_address": {
+              "type": "string",
+              "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$",
+              "description": "The factory machine's address inside `network`."
+            },
+            "server_address": {
+              "type": "string",
+              "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$",
+              "description": "The server's address inside `network`; ssh_host while the tunnel is on."
+            },
+            "listen_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "The UDP port WireGuard listens on at the server (51820). The firewall admits it from factory_public_address only."
+            },
+            "server_public_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9+/]{43}=$",
+              "description": "The server's WireGuard PUBLIC key, as `wg pubkey` printed it on the server. A public value, safe in state."
+            },
+            "factory_public_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9+/]{43}=$",
+              "description": "The factory machine's WireGuard PUBLIC key. A public value, safe in state."
+            },
+            "factory_public_address": {
+              "type": "string",
+              "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$",
+              "description": "The public IPv4 address the server sees the factory machine come from (read from the SSH login, not typed): the only source the firewall lets reach listen_port. If the factory machine's public address changes, the tunnel stops; the break-glass path in docs/RUNBOOK.md §9 re-opens public SSH."
+            },
+            "enabled_at": {
               "type": "string",
               "format": "date-time",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
@@ -509,7 +611,7 @@
       "type": "string",
       "format": "date-time",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
-      "description": "The INSTANT the build now serving traffic was deployed, as an RFC 3339 date-time WITH offset \u2014 what provision.py's NOW yields: datetime.datetime.now(datetime.timezone.utc).isoformat(timespec=\"seconds\"), e.g. 2026-09-09T14:03:27+00:00. Written by provision.py --deploy at the moment the deploy finishes, never by hand. This used to be a bare date, so factory.py could only order rls_verified.at against it in whole days and a redeploy hours after the measurement still read fresh; validate now compares the two instants exactly and rejects any rls_verified.at earlier than this. The pattern is enforced (format alone is documentation to this factory's validator): a bare date, a naive time without offset, or any other spelling is a schema error. To migrate an old bare date by hand, use midnight UTC of that day (YYYY-MM-DDT00:00:00+00:00) and say so in `note`: it is the earliest instant the deploy could have happened, so it is the honest conversion, but it also means a proof measured later that same day cannot be told apart from one taken before the deploy \u2014 the next --deploy writes the exact instant and ends that ambiguity."
+      "description": "The INSTANT the build now serving traffic was deployed, as an RFC 3339 date-time WITH offset — what provision.py's NOW yields: datetime.datetime.now(datetime.timezone.utc).isoformat(timespec=\"seconds\"), e.g. 2026-09-09T14:03:27+00:00. Written by provision.py --deploy at the moment the deploy finishes, never by hand. This used to be a bare date, so factory.py could only order rls_verified.at against it in whole days and a redeploy hours after the measurement still read fresh; validate now compares the two instants exactly and rejects any rls_verified.at earlier than this. The pattern is enforced (format alone is documentation to this factory's validator): a bare date, a naive time without offset, or any other spelling is a schema error. To migrate an old bare date by hand, use midnight UTC of that day (YYYY-MM-DDT00:00:00+00:00) and say so in `note`: it is the earliest instant the deploy could have happened, so it is the honest conversion, but it also means a proof measured later that same day cannot be told apart from one taken before the deploy — the next --deploy writes the exact instant and ends that ambiguity."
     },
     "configured_at": {
       "type": "string",

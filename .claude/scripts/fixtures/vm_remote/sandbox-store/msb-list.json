@@ -1,0 +1,14 @@
+[
+  {"name": "eve-sbx-ses-0a11old000000000000000000000000aa", "status": "Stopped", "created_at": "2026-09-20T08:00:00Z"},
+  {"name": "eve-sbx-ses-0b22new000000000000000000000000bb", "status": "Stopped", "created_at": "2026-10-03T08:00:00Z"},
+  {"name": "eve-sbx-ses-0c33run000000000000000000000000cc", "status": "Running", "created_at": "2026-09-01T08:00:00Z"},
+  {"name": "eve-sbx-ses-0d44live00000000000000000000000dd", "status": "Stopped", "created_at": "2026-09-01T08:00:00Z"},
+  {"name": "eve-sbx-ses-0e55crash0000000000000000000000ee", "status": "Crashed", "created_at": "2026-09-10T08:00:00Z"},
+  {"name": "eve-sbx-ses-0f66nodir0000000000000000000000ff", "status": "Stopped", "updated_at": "2026-09-01T08:00:00Z"},
+  {"name": "eve-sbx-ses-0g77noage0000000000000000000000gg", "status": "Stopped"},
+  {"name": "eve-sbx-ses-0h88odd00000000000000000000000hh", "status": "Paused", "created_at": "2026-09-01T08:00:00Z"},
+  {"name": "eve-sbx-tpl-tmp-1a11old0000000000000000000000aa", "status": "Stopped"},
+  {"name": "eve-sbx-tpl-tmp-1b22fresh00000000000000000000bb", "status": "Stopped"},
+  {"name": "eve-sbx-tpl-9z99template000000000000000000zz", "status": "Stopped", "created_at": "2026-08-01T08:00:00Z"},
+  {"name": "somebody-elses-sandbox", "status": "Stopped", "created_at": "2026-08-01T08:00:00Z"}
+]
