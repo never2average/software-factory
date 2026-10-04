@@ -85,6 +85,15 @@
       "tls": "on"
     },
     "host": "157.245.241.138",
-    "domain": "hfc.useimmaculate.com"
-  }
+    "domain": "hfc.useimmaculate.com",
+    "health": {
+      "workflow": "200",
+      "api": "200",
+      "web": "200",
+      "kvm": "ok",
+      "qualified_at": "2026-10-04T10:39:12+00:00"
+    },
+    "production_url": "https://hfc.useimmaculate.com"
+  },
+  "deployed_at": "2026-10-04T10:39:12+00:00"
 }
