@@ -127,4 +127,10 @@ before start), six cron timers, Caddy, and the same `/api/ops/health` gate. It r
 off-Vercel switches (`SANDBOX_BACKEND`, `STORAGE_DRIVER`, `SERVICE_AUTH`) or the `sandbox:prewarm` script; the check and the
 dry run name them. With files on the server's disk (`storage.driver: fs`) the sandbox must reach the app's public address, so
 validate, `--qualify-remote` and the deploy refuse a sandbox deny list that holds it. When asking the operator for the server or the DNS record, use `docs/RUNBOOK.md` §9, one step at a time.
+`--prune-sandboxes` lists what the server's nightly sandbox prune would remove and the space (read-only; `--apply` removes it now).
+`--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
+closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this
+machine and is the user's to approve. If the tunnel is ever down, give the user `docs/RUNBOOK.md` §9, "If the factory cannot reach the
+server", one step at a time.
+
 Details and what is still unproven on a real server: `infra/vm_remote/README.md`.

@@ -331,9 +331,109 @@ For the Google sign-in button, add `https://research.yourcompany.com` under **Au
 | re-prove that workspaces cannot see each other | `python3 .claude/scripts/provision.py <app_id> --verify-rls` |
 | run the five lanes against the server | `python3 .claude/scripts/lanes.py <app_id>` (they grade `https://<your domain>`; the functional lane adds `tool.python`, which asks the agent to really run Python in its sandbox) |
 | know what the server costs | `docs/COST_MODEL.md` §7 |
+| see what old sandboxes are taking up | `python3 .claude/scripts/provision.py <app_id> --prune-sandboxes` (only lists; see "The disk" below) |
+| close the login port to the internet | step H below |
+
+**Desktop notifications.** The deploy makes the pair of keys that browser notifications need on the server itself,
+once, and keeps them; nobody types or sees them. The contact address the notification services are given is the
+operator's email from the brief.
+
+**The disk.** Every chat in which the agent ran code leaves about half a gigabyte on the server (that chat's private
+workspace). Each night the server removes the workspaces of chats nobody has touched for 7 days. What that costs a
+person: if they go back to a chat older than that, the files the agent had made inside its workspace are gone and it
+starts with a clean one. The conversation itself, the documents it produced and everything in the data room are kept;
+they live in the database and the file store, not in the workspace. To keep workspaces longer, put a number of days
+in `vm_remote.sandbox.retention_days` in `state/application/<app_id>/infrastructure.json` and deploy again. A deploy
+warns when the disk is 80% full and refuses to call itself healthy at 95%.
+
+```
+python3 .claude/scripts/provision.py <app_id> --prune-sandboxes            # lists what tonight's run would remove, and how much space; removes nothing
+python3 .claude/scripts/provision.py <app_id> --prune-sandboxes --apply    # removes it now
+```
+
+### H. Close the login port to the internet (optional; about 5 minutes, you or the agent)
+
+**Where this stands today:** built and tested without a server; the first run against a real one has not happened yet.
+
+After step F the server answers on three ports: the two web ports and the login port the factory uses. This step puts
+the login port inside a private tunnel between the factory's machine and the server, so the internet can no longer
+even knock on it. The app itself is not touched and nobody is signed out.
+
+```
+python3 .claude/scripts/provision.py <app_id> --tunnel-remote --dry-run          # prints everything it would do, on both machines; does nothing
+python3 .claude/scripts/provision.py <app_id> --tunnel-remote --factory-apply    # does it
+```
+
+The first prints, among the rest, the short list of what is installed on the factory's own machine (one small
+package, one key file, one settings file, one service). Nothing is installed there without `--factory-apply`.
+
+It cannot lock you out while it runs, and here is why: before it changes anything, the server sets itself a ten-minute alarm that
+re-opens the login port on its own. The port is closed only after the factory has logged in through the tunnel, and
+the alarm is switched off only after it has logged in through the tunnel a second time. If any step fails, the last
+lines say whether the login port is still open (it is, unless they say otherwise) and what to run.
+
+Afterwards, the one thing that can go wrong is the tunnel itself stopping one day; the way back in is the next
+section, and it is worth reading once before you run this step.
+
+The last line is `the tunnel is on`. From then on every command in this runbook works exactly as before; it simply
+travels through the tunnel. To go back:
+
+```
+python3 .claude/scripts/provision.py <app_id> --tunnel-remote --off --factory-apply
+```
+
+### If the factory cannot reach the server (the tunnel is down)
+
+This can only happen after step H, and only if the tunnel stops working: for example the factory's machine was
+rebuilt or got a new address. The app keeps serving people the whole time; only the factory's own login is affected.
+You re-open the login port from DigitalOcean's website. It takes about 10 minutes and needs your DigitalOcean
+sign-in and the inbox of the email address on that account.
+
+One thing to know first. DigitalOcean offers two consoles. The usual one, **Launch Droplet Console**, itself comes
+in through the login port, so while that port is closed it will not connect. The one that always works is the
+**Recovery Console**, which is like sitting at the server's own screen and keyboard; it asks for a password.
+
+**First, get a password for the server (about 5 minutes; the app is offline for about 2 of them).** Skip this part if
+you already set a root password on this server and know it.
+
+1. Open https://cloud.digitalocean.com/droplets
+2. Click the name of the server (the one whose address is `host` in `state/application/<app_id>/infrastructure.json`).
+3. In the menu on the left, click **Access**.
+4. Under **Reset root password**, click **Reset Root Password**, and confirm.
+5. Wait for the email from DigitalOcean with a temporary password (a minute or two). The server restarts while
+   this happens, and the app comes back by itself.
+
+**Then, open the door (about 3 minutes).**
+
+1. On the same **Access** page, click **Launch Recovery Console**. A black window opens.
+2. Click inside it and press Enter once. It shows `login:`.
+3. Type `root` and press Enter.
+4. Type the temporary password from the email and press Enter. Nothing shows while you type; that is normal.
+5. It asks you to choose a new password: type the temporary one again, then a new one of your own, twice. Keep
+   the new one somewhere safe; never paste it into the chat.
+6. When you see a line ending in `#`, type this line exactly and press Enter (typing is more reliable than pasting
+   in this window):
+
+   ```
+   ufw allow 22/tcp
+   ```
+
+7. It answers `Rule added`. Close the window.
+
+That is all: the login port is open again, the way it was before step H. It is still protected by the key from
+step A; the password you just set works only at this console, never over the internet. Nothing was deleted. Tell
+the agent it is done; it then runs this, which tidies up and records that the tunnel is off:
+
+```
+python3 .claude/scripts/provision.py <app_id> --tunnel-remote --off
+```
+
+and, once whatever broke the tunnel is fixed, step H again.
+
+If any screen looks different from what is described here, say what it shows and we go from there.
 
 Not built yet for a server of your own, and said so rather than half-done: writing the brief's members into the
-database (§6's `clone.py configure` reads a Vercel project), backups, and clearing out old sandboxes from the disk.
+database (§6's `clone.py configure` reads a Vercel project) and backups of the database and the file store.
 Each is a named task (`python3 .claude/scripts/factory.py tasks mold_v1`).
 
 ## What this runbook does not cover
