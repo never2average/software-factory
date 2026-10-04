@@ -6,6 +6,9 @@
              view of the file store; the egress rule that keeps the app's users off the server's own SSH port
   workspace  the brief's workspace written ON the server (mold_v1-152): what is sent, as whom it runs, what is
              recorded, what is refused; the seed itself run against a stand-in for the app's database modules
+  surface    the application's surface written ON the server after it (mold_v1-163): what is sent and listed, as whom
+             lib/surface.mjs runs and with which tables, what is recorded and what is refused; surface.mjs apply
+             itself run with node against a stand-in for the app's `postgres` module
 
 NOTHING HERE TOUCHES A SERVER OR CHANGES THIS MACHINE. The generated users.sh, seal.sh and storage-view.sh are the real
 scripts, run against stand-in `systemctl`, `useradd`, `install`, `chown`, `mount` ... commands in a temp directory,
@@ -409,6 +412,11 @@ def workspace(check, tmp):
                             roster=[{"email": "operator@example.com", "name": "Operator"}, {"email": "ana@example.com", "name": "Ana", "team": "Credit", "manager_email": "operator@example.com", "escalations": [{"email": "operator@example.com", "reason": "limits"}]}],
                             platform_admins=["operator@example.com"])
     app["workspace"]["org"].update(google_hosted_domain="example.com", display_name="Example Co")
+    SURFACE = {"primary_context": {"corpus": [], "instructions": {"workspace": "Answer from the files. Cite the page.", "persona_name": "Ava", "tone": "plain", "default_mode": "build", "model": "@cf/zai-org/glm-5.2",
+                                                             "subagents": [{"agent_key": "research", "paused": False}, {"agent_key": "filings", "paused": True, "instructions": "Quote the clause."}]}},
+               "web_search": {"enabled": True, "default_on_for_agent": True}, "browser": {"enabled": False, "default_on_for_agent": False},
+               "custom_workflow_builder": {"library": {"install": "all"}, "definitions": [{"id": "wd-credit", "name": "Credit review", "entity": "todo", "is_default": True, "stages": [{"id": "open"}, {"id": "done"}]}],
+                                           "scripts": [{"name": "weekly-digest", "description": "Digest", "trigger": "manual", "steps": [{"say": "hi"}]}, {"name": "from-a-file", "file": "workflows/x.json"}]}}
     seed = V.state_seed(app)
     check("workspace: state's own workspace becomes a seed: the org row's id, name, shown name and hosted domain", (seed["org_id"], seed["name"], seed["google_hosted_domain"], seed["display_name"]) == ("example", "Example", "example.com", "Example Co"), seed)
     check("workspace:   ...the owner, and every member with its role (emails lower-cased, names from the roster)", seed["owner"] == "operator@example.com"
@@ -417,7 +425,7 @@ def workspace(check, tmp):
     check("workspace:   ...and nothing that is not a name, an email, a role or the logo", set(seed) <= {"org_id", "name", "google_hosted_domain", "owner", "members", "platform_admins", "roster", "display_name", "logo_url"})
     out, _ = B.quiet(V.state_seed, {"app_id": "x", "workspace": {"org": {"org_id": "x", "name": "X"}, "members": []}})
     check("workspace: a state that names no owner is refused in a sentence", isinstance(out, V.Stop) and "owner" in str(out))
-    d, docs = _deployed(tmp, "ws-plan", lambda x: x["application"].update(workspace=app["workspace"]))
+    d, docs = _deployed(tmp, "ws-plan", lambda x: x["application"].update(workspace=app["workspace"], surface=SURFACE))
     sdir = os.path.join(d, "seed", "orgs"); os.makedirs(os.path.join(sdir, "second")); os.makedirs(os.path.join(sdir, "example"))
     json.dump({"org_id": "second", "name": "Second Desk", "google_hosted_domain": "second.example", "owner": "operator@example.com", "note": "x", "members": [{"email": "cy@second.example", "role": "member", "name": "Cy"}]}, open(os.path.join(sdir, "second.json"), "w"))
     json.dump({"customers": [{"id": "acme", "name": "Acme"}, {"id": "globex", "name": "Globex"}]}, open(os.path.join(sdir, "second", "customers.json"), "w"))
@@ -444,29 +452,60 @@ def workspace(check, tmp):
     check("workspace: one SSH command: the factory's seed, as the web app's user, with the web service's own env file, in the built app",
           argv[0] == "ssh" and f"workspace-seed --file {S['env_files']['web']} --user {WEB} --home {V.SERVICE_HOMES['web']} --app-dir {S['app_dir']} --script {S['factory_dir']}/.claude/scripts/lib/workspace_seed.mjs" in remote
           and remote.startswith(f"env {V.GUARD_VAR}=vm_remote_fixture python3 {S['tool']} "), remote)
+    check("surface: the same command names the factory's surface.mjs beside the seed, both in the factory's directory on the server", remote.endswith(f"--surface-script {S['factory_dir']}/.claude/scripts/lib/surface.mjs") and remote.count("workspace-seed ") == 1, remote)
     check("workspace:   ...never the master env file, the admin URL, or any value on the command line", f"--file {S['env_file']} " not in remote and "POSTGRES_ADMIN_URL" not in remote and "postgres" not in remote and "@example.com" not in remote and "DATABASE_URL" not in remote)
     copies = [rel for _, rel in V.bundle_copies()]
     check("workspace:   ...the seed is one of the scripts every bundle carries to the server", ".claude/scripts/lib/workspace_seed.mjs" in copies)
+    check("surface:   ...and so is surface.mjs", ".claude/scripts/lib/surface.mjs" in copies)
+
+    # ---- what is sent for the surface (mold_v1-163)
+    sd = V.surface_doc(docs["application"]); st_ = sd["state"]
+    check("surface: what is sent is the workspace's id and the four tables the seed does not write", sd["org_id"] == "example" and sd["only"] == ["agent_profiles", "agent_configs", "workflow_definitions", "workflows"] == list(V.SURFACE_TABLES), sd["only"])
+    check("surface:   ...the default profile's fields, the subagent configs, the definitions and the scripts, as state has them", st_["surface"]["primary_context"]["instructions"] == SURFACE["primary_context"]["instructions"]
+          and st_["surface"]["web_search"] == SURFACE["web_search"] and st_["surface"]["browser"] == SURFACE["browser"]
+          and st_["surface"]["custom_workflow_builder"] == {"definitions": SURFACE["custom_workflow_builder"]["definitions"], "scripts": SURFACE["custom_workflow_builder"]["scripts"]}, st_)
+    check("surface:   ...the operator as the author of the rows, and nothing else of the workspace (no members, no roster, no admins)", st_["workspace"] == {"org": {"org_id": "example", "name": "Example"}, "fde_self": {"email": "operator@example.com"}}, st_["workspace"])
+    check("surface:   ...a state with no surface asks for none", V.surface_doc({"app_id": "x", "workspace": app["workspace"]}) is None and V.surface_digest({"app_id": "x", "workspace": app["workspace"]}) is None)
+    src_mjs = open(os.path.join(HERE, "surface.mjs")).read(); listed = re.search(r"const APPLY_TABLES = \[([^\]]*)\]", src_mjs)
+    apply_tables = re.findall(r'"(\w+)"', listed.group(1)) if listed else []
+    check("surface: every table surface.mjs apply writes is written on a server by exactly one of the two steps", listed and set(re.findall(r'await up\("(\w+)"', src_mjs)) == set(apply_tables)
+          and set(apply_tables) == set(V.SURFACE_TABLES) | {"orgs", "org_members", "platform_admins", "people_roster"}, apply_tables)
+    seed_mjs = open(os.path.join(HERE, "workspace_seed.mjs")).read()
+    check("surface:   ...the other four are the workspace seed's", all(x in seed_mjs for x in ("db.insert(orgs)", "db.insert(orgMembers)", "schema.platformAdmins", "insert into people_roster")))
+    scoped = re.search(r"const SCOPED = new Set\(\[([^\]]*)\]", src_mjs)
+    check("surface:   ...and each of the server's four is written inside the workspace's own scope (row-level security in force), so none needs the admin connection",
+          scoped and set(V.SURFACE_TABLES) <= set(re.findall(r'"(\w+)"', scoped.group(1))), scoped and scoped.group(1))
 
     # ---- the factory side, against a stand-in for the remote runner
     class Remote:
         """Answers the two commands the way the server does. `orgs` is what its database already holds."""
-        def __init__(self, orgs=(), leak=False, no_user=False): self.orgs = set(orgs); self.calls = []; self.stdin = None; self.leak = leak; self.no_user = no_user
+        def __init__(self, orgs=(), leak=False, no_user=False, surface="ok"): self.orgs = set(orgs); self.calls = []; self.stdin = None; self.leak = leak; self.no_user = no_user; self.surface = surface; self.workflows = set()
         def __call__(self, step, stdin=None):
             self.calls.append(step["id"])
             if step["id"] == "bundle": return B.CP(step["argv"], 0, "", "")
             self.stdin = stdin; self.argv = step["argv"]; lines = []
             if self.no_user: return B.CP(step["argv"], 1, f"workspace: this server has no user {WEB} yet: it was deployed before each service got a user of its own. Nothing was written. Deploy once, then run this again.\n", "")
+            wrote = set()
             for item in json.loads(stdin)["seeds"]:
                 sd = item["seed"]
                 if sd.get("guard") and sd["org_id"] not in self.orgs and self.orgs:
                     lines.append("WORKSPACE " + json.dumps({"org": sd["org_id"], "other_workspaces": sorted(self.orgs), "error": "other_workspaces"})); continue
+                wrote.add(sd["org_id"])
                 was = sd["org_id"] in self.orgs; self.orgs.add(sd["org_id"])
                 lines.append("WORKSPACE " + json.dumps({"org": sd["org_id"], "orgs": "updated" if was else "created", "org_members": 1 + len([m for m in sd["members"] if m["email"] != sd["owner"]]),
                                                         "platform_admins": len(sd.get("platform_admins") or []), "recipes": 0 if was else 9, "workflows_created": 0 if was else 13, "workflows_present": 13 if was else 0,
                                                         "people_roster": len(sd.get("roster") or sd["members"]), "customers": len(item["customers"]), "customers_in_workspace": len(item["customers"])}))
+            sf = json.loads(stdin).get("surface")
+            if sf and self.surface != "silent":
+                cw = sf["state"]["surface"]["custom_workflow_builder"]; new = [w["name"] for w in cw["scripts"] if not w.get("file") and w["name"] not in self.workflows]
+                if sf["org_id"] not in wrote: out = {"org": sf["org_id"], "skipped": "its workspace was not written in this run, so nothing of the surface was written either"}
+                elif self.surface == "rls": out = {"org": sf["org_id"], "agent_profiles": 1, "agent_configs": "ERR new row violates row-level security policy for table \"agent_configs\"", "workflow_definitions": 1, "workflows": 0}
+                else:
+                    self.workflows |= set(new)
+                    out = {"org": sf["org_id"], "agent_profiles": 1, "agent_configs": len(sf["state"]["surface"]["primary_context"]["instructions"].get("subagents") or []), "workflow_definitions": len(cw["definitions"]), "workflows": len(new)}
+                lines.append("SURFACE " + json.dumps(out))
             if self.leak: lines.append(f"warning: connected to {DB_URL}")
-            return B.CP(step["argv"], 1 if any('"error"' in l for l in lines) else 0, "\n".join(lines) + "\n", "")
+            return B.CP(step["argv"], 1 if any('"error"' in l or '"skipped"' in l or "ERR " in l for l in lines) else 0, "\n".join(lines) + "\n", "")
     real_key = V.key_path
     V.key_path = lambda S_: os.path.join(tmp, "a-key-that-exists"); open(os.path.join(tmp, "a-key-that-exists"), "w").close()
     try:
@@ -475,6 +514,15 @@ def workspace(check, tmp):
         text = "\n".join(said)
         check("workspace: --dry-run prints the two commands and what would be sent, and contacts nothing", rc == 0 and rem.calls == [] and "nothing was contacted" in said[0] and "workspace-seed --file" in text and "rsync" in said[1]
               and "the application's own workspace, example" in text and "3 members, 1 platform admin" in text and "hosted domain example.com" in text and "2 companies" in text and not os.path.exists(os.path.join(sdir, ".applied.json")), text)
+        check("surface: --dry-run lists what the surface step would write, table by table, and still contacts nothing", rem.calls == [] and "then the application's surface for example" in text and "limited to 4 tables" in text
+              and "agent_profiles: the workspace's default agent profile, created or updated: persona 'Ava', a tone, instructions of 37 characters, default mode build, model @cf/zai-org/glm-5.2, web search by default on, browser by default off" in text
+              and "agent_configs: 2 subagent configs, created or updated: research, filings (1 paused, 1 with instructions of their own)" in text
+              and "workflow_definitions: 1 workflow definition, created or updated: wd-credit" in text
+              and "workflows: 1 workflow script, each added only if no workflow of that name exists: weekly-digest; 1 file-backed script(s) are not written by this step (from-a-file)" in text
+              and "not touched again: the org row, members, platform admins, roster" in text, text)
+        check("surface:   ...the instructions themselves are counted, never printed", "Answer from the files" not in text and "Quote the clause" not in text, text)
+        one = []; V.workspace_remote("vm_remote_fixture", S, docs["application"], docs["infrastructure"], d, P, ["--workspace-remote", os.path.join(sdir, "second.json"), "--dry-run"], crons, runner=rem, say=one.append)
+        check("surface:   ...a run for one named seed file says it writes no surface", "is not written by a run for one named seed file" in "\n".join(one) and "agent_profiles" not in "\n".join(one), one)
         und = B.fixture_docs()
         out, _ = B.quiet(V.workspace_remote, "vm_remote_fixture", V.settings("vm_remote_fixture", und["application"], und["infrastructure"], und["datastores"]), und["application"], und["infrastructure"], V.FIXTURE, P, ["--workspace-remote"], crons, runner=rem)
         check("workspace: an app that was never deployed has no database to write to: said, and nothing contacted", isinstance(out, V.Stop) and "not deployed yet" in str(out) and rem.calls == [])
@@ -486,18 +534,34 @@ def workspace(check, tmp):
         check("workspace:   ...it says what was written, in counts", "written: the application's own workspace, example" in text and "workspace created, 3 member(s), 1 platform admin(s), 9 recipe(s) added" in text and "written: the workspace second" in text and "2 companies in the workspace" in text, text)
         check("workspace:   ...a connection string in anything the server printed is not repeated here", "Zk3-app-rw-PASSWORD-77" not in text and "***:***@" in text, text)
         rec = B.load(os.path.join(sdir, ".applied.json")); infra_now = B.load(os.path.join(d, "infrastructure.json"))
-        check("workspace:   ...and records what it applied, as written, where mint.py reads it", rec == {V.STATE_SEED: V.state_seed_digest(docs["application"], d), "second.json": V.seed_digest(os.path.join(sdir, "second.json"))}
+        check("surface: the surface travels on the same stdin, after the workspaces, and nothing of it is on the command line", sent.get("surface") == V.surface_doc(docs["application"]) and all("Ava" not in a and "agent_profiles" not in a for a in rem.argv), sent.get("surface"))
+        check("surface:   ...it says what was written, in counts", "written: the application's surface: the default agent profile, 2 subagent config(s), 1 workflow definition(s), 1 workflow script(s) added" in text and "and the application's surface with them" in text and "SURFACE {" not in text and "WORKSPACE {" not in text, text)
+        check("workspace:   ...and records what it applied, as written, where mint.py reads it", rec == {V.STATE_SEED: V.state_seed_digest(docs["application"], d), "second.json": V.seed_digest(os.path.join(sdir, "second.json")), V.SURFACE_KEY: V.surface_digest(docs["application"])}
               and infra_now.get("configured_at") == P.NOW and B.F._check(infra_now, B.load(os.path.join(B.ROOT, "state/application/app_id/infrastructure.schema.json")), "x") == [], rec)
         said = []; rc = V.workspace_remote("vm_remote_fixture", S, docs["application"], docs["infrastructure"], d, P, ["--workspace-remote"], crons, runner=rem, say=said.append)
         check("workspace: a second run updates and adds nothing (idempotent)", rc == 0 and "workspace updated" in "\n".join(said) and "0 recipe(s) added" in "\n".join(said) and "13 already there" in "\n".join(said), said)
+        check("surface: a second run adds no workflow script a second time", "0 workflow script(s) added" in "\n".join(said), said)
+        only_said = []; rem_one = Remote(orgs=["example"])
+        rc = V.workspace_remote("vm_remote_fixture", S, docs["application"], docs["infrastructure"], d, P, ["--workspace-remote", os.path.join(sdir, "second.json")], crons, runner=rem_one, say=only_said.append)
+        check("surface: a run for one named seed file sends no surface", rc == 0 and "surface" not in json.loads(rem_one.stdin) and "surface" not in "\n".join(only_said), only_said)
+        # the surface refused by the database, and a server that says nothing about it
+        d4, docs4 = _deployed(tmp, "ws-surface-rls", lambda x: x["application"].update(workspace=app["workspace"], surface=SURFACE))
+        said = []; rc = V.workspace_remote("vm_remote_fixture", S, docs4["application"], docs4["infrastructure"], d4, P, ["--workspace-remote"], crons, runner=Remote(surface="rls"), say=said.append)
+        rec4 = B.load(os.path.join(d4, "seed", "orgs", ".applied.json"))
+        check("surface: a table the database refused is named with its reason, the run fails, and the surface is NOT recorded as applied (the workspace is)",
+              rc == 1 and "NOT finished: the application's surface: agent_configs: new row violates row-level security policy" in "\n".join(said) and V.SURFACE_KEY not in rec4 and V.STATE_SEED in rec4, said)
+        d5, docs5 = _deployed(tmp, "ws-surface-silent", lambda x: x["application"].update(workspace=app["workspace"], surface=SURFACE))
+        said = []; rc = V.workspace_remote("vm_remote_fixture", S, docs5["application"], docs5["infrastructure"], d5, P, ["--workspace-remote"], crons, runner=Remote(surface="silent"), say=said.append)
+        check("surface: a server that says nothing about the surface is a failure, never read as written", rc == 1 and "the server said nothing about it" in "\n".join(said) and V.SURFACE_KEY not in B.load(os.path.join(d5, "seed", "orgs", ".applied.json")), said)
         # the real server's case: its workspace was made by hand under another id
-        d2, docs2 = _deployed(tmp, "ws-guard", lambda x: x["application"].update(workspace=app["workspace"]))
+        d2, docs2 = _deployed(tmp, "ws-guard", lambda x: x["application"].update(workspace=app["workspace"], surface=SURFACE))
         said = []; rem = Remote(orgs=["example-ai"])
         rc = V.workspace_remote("vm_remote_fixture", S, docs2["application"], docs2["infrastructure"], d2, P, ["--workspace-remote"], crons, runner=rem, say=said.append)
         text = "\n".join(said)
         check("workspace: a server whose workspace was made under ANOTHER id is not given a second, empty one: refused, with both ids and the two ways out",
               rc == 1 and rem.orgs == {"example-ai"} and "already has workspace(s) example-ai and none with the id example" in text and "--new-workspace" in text and "org.org_id" in text, text)
         check("workspace:   ...and nothing is recorded as applied", not os.path.exists(os.path.join(d2, "seed", "orgs", ".applied.json")) and "configured_at" not in B.load(os.path.join(d2, "infrastructure.json")))
+        check("surface: a workspace that was refused gets no surface either, and the operator is told", "NOT finished: the application's surface: its workspace was not written in this run" in text, text)
         said = []; rc = V.workspace_remote("vm_remote_fixture", S, docs2["application"], docs2["infrastructure"], d2, P, ["--workspace-remote", "--new-workspace"], crons, runner=rem, say=said.append)
         check("workspace:   ...unless the operator says a new workspace is wanted", rc == 0 and rem.orgs == {"example-ai", "example"} and "guard" not in json.loads(rem.stdin)["seeds"][0]["seed"])
         said = []; rem = Remote(no_user=True); d3, docs3 = _deployed(tmp, "ws-old")
@@ -532,7 +596,51 @@ def workspace(check, tmp):
     src = open(V.__file__).read(); body = src[src.index("def workspace_seed("):src.index("def env_run(")]
     check("workspace (server): the child gets the web service's env file and nothing else of the server's (no master file, no admin URL)", "env_read(env_file)" in body and "POSTGRES_ADMIN_URL" not in body and "os.environ" not in body
           and "user=pw.pw_uid, group=pw.pw_gid" in body)
+    check("surface (server): the surface step is in the same function, under the same user and env file, and names no admin URL either", "_surface_apply(" in body and "POSTGRES_ADMIN_URL" not in src[src.index("def _surface_apply("):src.index("def env_run(")])
+
+    # ---- the surface, server side (mold_v1-163): as whom, with what, and what it prints
+    V.env_write(envf, {"DATABASE_URL": DB_URL, "AUTH_JWT_PRIVATE_KEY": "PRIVATE-KEY-" + "k" * 30, "WEB_ORIGIN": "https://app.example.com"})
+    factory = os.path.join(tmp, "ws-server", "factory"); os.makedirs(factory); os.chmod(factory, 0o700)       # root's alone on a real server
+    for f in ("workspace_seed.mjs", "surface.mjs"): shutil.copyfile(os.path.join(HERE, f), os.path.join(factory, f))
+    sdoc = V.surface_doc(docs["application"]); calls = []
+    def fake_both(argv, stdin_text=None, more_env=None, answer=None):
+        if argv[-1] != "apply":
+            sd_ = B.load(argv[4]); calls.append(("seed", sd_["org_id"]))
+            if sd_["org_id"] == "boom": return B.CP(argv, 1, "", "Error: nope")
+            return B.CP(argv, 0, json.dumps({"org": sd_["org_id"], "orgs": "updated", "org_members": 1}) + "\n", "")
+        st = os.stat(argv[1])
+        calls.append(("surface", {"argv": list(argv), "stdin": json.loads(stdin_text), "env": dict(more_env), "mode": stat.S_IMODE(st.st_mode), "dir": os.path.dirname(argv[1]),
+                                  "text": open(argv[1]).read(), "seed_beside": os.path.exists(os.path.join(os.path.dirname(argv[1]), "workspace_seed.mjs"))}))
+        return answer or B.CP(argv, 0, json.dumps({"agent_profiles": 1, "agent_configs": 2, "workflow_definitions": 1, "workflows": 1, "orgs": 1}, indent=2) + "\n", "")
+    own = {"seed": {"org_id": "example", "name": "Example", "owner": "operator@example.com", "members": []}, "customers": []}
+    said = []
+    rc = V.workspace_seed(envf, me, tmp, "/srv/app", os.path.join(factory, "workspace_seed.mjs"), {"seeds": [own], "surface": sdoc}, run=fake_both, say=said.append, surface_script=os.path.join(factory, "surface.mjs"))
+    sc = [c[1] for c in calls if c[0] == "surface"]
+    check("surface (server): after the workspace's own seed, ONE run of surface.mjs apply with node", rc == 0 and [c[0] for c in calls] == ["seed", "surface"] and sc[0]["argv"][0] == "node" and sc[0]["argv"][2:] == ["apply"] and len(sc[0]["argv"]) == 3, calls)
+    check("surface (server):   ...from a private copy the web app's user can read, not from the factory's root-only directory (the first real server's lesson)",
+          sc[0]["dir"] != factory and os.path.basename(sc[0]["argv"][1]) == "surface.mjs" and sc[0]["mode"] == 0o600 and sc[0]["seed_beside"] and sc[0]["text"] == open(os.path.join(HERE, "surface.mjs")).read(), sc[0]["argv"])
+    check("surface (server):   ...told where the app's own modules are, which workspace, and which tables: the four, nothing more", sc[0]["env"] == {"MOLD_DIR": "/srv/app", "ORG_ID": "example", "SURFACE_ONLY": "agent_profiles,agent_configs,workflow_definitions,workflows"}, sc[0]["env"])
+    check("surface (server):   ...no database URL is added by the factory: the only one the child holds is the web service's own (the app role)", not any("URL" in k for k in sc[0]["env"]))
+    check("surface (server):   ...the state arrives on stdin, not in a file and not on the command line", sc[0]["stdin"] == sdoc["state"])
+    check("surface (server):   ...it prints one SURFACE line of counts, for the asked tables only", said[-1] == 'SURFACE {"org": "example", "agent_profiles": 1, "agent_configs": 2, "workflow_definitions": 1, "workflows": 1}', said)
+    check("surface (server):   ...and the private copies are gone afterwards", not os.path.exists(sc[0]["argv"][1]) and not os.path.exists(sc[0]["dir"]))
+    calls.clear(); said = []
+    rc = V.workspace_seed(envf, me, tmp, "/srv/app", os.path.join(factory, "workspace_seed.mjs"), {"seeds": [dict(own, seed=dict(own["seed"], org_id="boom"))], "surface": dict(sdoc, org_id="boom")}, run=fake_both, say=said.append, surface_script=os.path.join(factory, "surface.mjs"))
+    check("surface (server): when the workspace's own seed did not finish, surface.mjs is never started, and the line says so", rc == 1 and [c[0] for c in calls] == ["seed"] and said[-1].startswith('SURFACE {"org": "boom", "skipped": "its workspace was not written'), said)
+    calls.clear(); said = []
+    leak = lambda argv, i=None, e=None: fake_both(argv, i, e, answer=B.CP(argv, 1, "", f"surface.mjs apply: connect ECONNREFUSED {DB_URL}\n") if argv[-1] == "apply" else None)
+    rc = V.workspace_seed(envf, me, tmp, "/srv/app", os.path.join(factory, "workspace_seed.mjs"), {"seeds": [own], "surface": sdoc}, run=leak, say=said.append, surface_script=os.path.join(factory, "surface.mjs"))
+    check("surface (server): a surface step that fails says why, fails the run, and repeats no value of the env file", rc == 1 and '"error": "the surface step did not finish' in said[-1] and "ECONNREFUSED" in said[-1]
+          and "Zk3-app-rw-PASSWORD-77" not in "\n".join(said) and "PRIVATE-KEY" not in "\n".join(said), said)
+    said = []
+    err = lambda argv, i=None, e=None: fake_both(argv, i, e, answer=B.CP(argv, 0, json.dumps({"agent_profiles": 1, "agent_configs": "ERR new row violates row-level security policy", "workflow_definitions": 0, "workflows": 0}), "") if argv[-1] == "apply" else None)
+    rc = V.workspace_seed(envf, me, tmp, "/srv/app", os.path.join(factory, "workspace_seed.mjs"), {"seeds": [own], "surface": sdoc}, run=err, say=said.append, surface_script=os.path.join(factory, "surface.mjs"))
+    check("surface (server): a table the database refused fails the run and is shown with its reason", rc == 1 and '"agent_configs": "ERR new row violates row-level security policy"' in said[-1], said)
+    calls.clear(); said = []
+    rc = V.workspace_seed(envf, me, tmp, "/srv/app", os.path.join(factory, "workspace_seed.mjs"), {"seeds": [own]}, run=fake_both, say=said.append, surface_script=os.path.join(factory, "surface.mjs"))
+    check("surface (server): a document with no surface (workspace.py's seeds, a named seed file) runs no surface step and prints no SURFACE line", rc == 0 and [c[0] for c in calls] == ["seed"] and not any(l.startswith("SURFACE") for l in said), said)
     _real_seed(check, tmp)
+    _real_surface(check, tmp, sdoc)
 
 FAKE_APP = {
 "agent/lib/db/index.ts": '''import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -643,3 +751,146 @@ def _real_seed(check, tmp):
     check("seed (run with node): with no DATABASE_URL it writes nothing and exits non-zero", rc == 1 and len(db["orgs"]) == 3)
     rc, out, db = run(dict(seed), [{"name": "No Id"}])
     check("seed (run with node): a company the app refuses is reported by id and fails the run, without hiding the rest", rc == 1 and out.get("customers_failed") and out["orgs"] == "updated")
+
+
+# A stand-in for the app's `postgres` module (postgres.js), for surface.mjs: the tagged-template client, sql(identifiers),
+# sql.json, sql.begin and sql.end, backed by a JSON file. It models the three things the surface step leans on:
+#   the catalog   which columns are each table's primary key (pg_index), and each table's unique keys
+#   upserts       `insert ... on conflict (cols) do update set c = excluded.c`: by that key; a second unique key that is
+#                 violated raises, as Postgres does (the default profile's (org_id, email) index)
+#   row security  a row of an org-scoped table can be written or read only inside a transaction whose
+#                 set_config('app.org_id') names that row's workspace; otherwise the insert is refused with Postgres's words
+# Every statement and the options each client was opened with are recorded, so the test can say what was NOT run.
+FAKE_POSTGRES = r"""
+const { readFileSync, writeFileSync, existsSync } = require("node:fs");
+const FILE = process.env.FAKE_DB;
+const PK = { orgs: ["org_id"], org_members: ["org_id", "email"], platform_admins: ["email"], people_roster: ["email"], agent_profiles: ["id"],
+             agent_configs: ["org_id", "agent_key"], workflow_definitions: ["id"], workflows: ["id"] };
+const UNIQUE = { agent_profiles: [["org_id", "email"]] };
+const RLS = new Set(["people_roster", "agent_profiles", "agent_configs", "workflow_definitions", "workflows"]);
+const db = existsSync(FILE) ? JSON.parse(readFileSync(FILE, "utf8")) : { tables: {}, statements: [], clients: [], seq: 0 };
+for (const t of Object.keys(PK)) db.tables[t] = db.tables[t] ?? [];
+const save = () => writeFileSync(FILE, JSON.stringify(db));
+class Ident { constructor(v) { this.v = v; } }
+class Json { constructor(v) { this.v = v; } }
+const splitTop = (s) => { const out = []; let depth = 0, cur = ""; for (const ch of s) { if (ch === "(") depth++; if (ch === ")") depth--; if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; } else cur += ch; } if (cur.trim()) out.push(cur.trim()); return out; };
+const lit = (x) => x === "?" ? undefined : /^'.*'$/.test(x) ? x.slice(1, -1) : x === "null" ? null : x === "now()" ? "NOW" : /^\d+$/.test(x) ? Number(x) : x;
+function run(scope, strings, values) {
+  let text = "", params = [];
+  strings.forEach((str, i) => { text += str; if (i < values.length) { const v = values[i];
+    if (v instanceof Ident) text += Array.isArray(v.v) ? v.v.join(", ") : v.v; else { text += "?"; params.push(v instanceof Json ? v.v : v); } } });
+  text = text.replace(/\s+/g, " ").trim(); db.statements.push({ text, scope: scope.org ?? null });
+  if (/^select a\.attname from pg_index/.test(text)) { const t = String(params[0]); if (!PK[t]) throw new Error('relation "' + t + '" does not exist'); return PK[t].map((attname) => ({ attname })); }
+  if (/^select set_config\('app\.org_id'/.test(text)) { if (!scope.tx) throw new Error("set_config(..., true) outside a transaction"); scope.org = params[0]; return [{}]; }
+  let m = text.match(/^select 1 as x from (\w+) where org_id = \? and name = \? limit 1$/);
+  if (m) { const visible = db.tables[m[1]].filter((r) => !RLS.has(m[1]) || r.org_id === scope.org); return visible.filter((r) => r.org_id === params[0] && r.name === params[1]).slice(0, 1).map(() => ({ x: 1 })); }
+  m = text.match(/^insert into (\w+) \(([^)]*)\) values \((.*?)\)(?: on conflict(?: \(([^)]*)\))? do (nothing|update set (.*)))?$/);
+  if (m) {
+    const [, t, colsRaw, valsRaw, target, action, setRaw] = m; const cols = splitTop(colsRaw), vals = splitTop(valsRaw); let pi = 0;
+    if (cols.length !== vals.length) throw new Error("INSERT has more expressions than target columns");
+    const row = {}; cols.forEach((c, i) => { const l = lit(vals[i]); row[c] = l === undefined ? params[pi++] : l; });
+    for (const k of Object.keys(row)) if (row[k] === undefined) row[k] = null;
+    if (RLS.has(t) && row.org_id !== scope.org) throw new Error('new row violates row-level security policy for table "' + t + '"');
+    if (t === "workflows" && !row.id) row.id = "wf-" + (++db.seq);
+    const same = (key) => (r) => key.every((c) => r[c] === row[c]);
+    const keys = [PK[t], ...(UNIQUE[t] ?? [])]; const tkey = target ? target.split(",").map((x) => x.trim()) : null;
+    if (tkey && !keys.some((k) => k.join() === tkey.join())) throw new Error("there is no unique or exclusion constraint matching the ON CONFLICT specification");
+    const hit = tkey ? db.tables[t].find(same(tkey)) : (action === "nothing" ? db.tables[t].find((r) => keys.some((k) => same(k)(r))) : null);
+    if (hit) { if (action !== "nothing") for (const a of splitTop(setRaw)) { const c = a.split("=")[0].trim(); hit[c] = row[c]; } return []; }
+    for (const k of keys) if (db.tables[t].some(same(k))) throw new Error('duplicate key value violates unique constraint "' + t + "_" + k.join("_") + '"');
+    db.tables[t].push(row); return [];
+  }
+  throw new Error("the stand-in does not know this statement: " + text.slice(0, 120));
+}
+function client(scope) {
+  const sql = (first, ...rest) => {
+    if (first && first.raw) { const p = (async () => run(scope, first, rest))(); return p; }
+    return new Ident(first);
+  };
+  sql.json = (v) => new Json(v);
+  sql.begin = async (fn) => { const snap = JSON.stringify(db.tables); const tx = client({ tx: true });
+    try { return await fn(tx); } catch (e) { db.tables = JSON.parse(snap); throw e; } };
+  sql.end = async () => save();
+  return sql;
+}
+module.exports = (url, options) => { db.clients.push({ url, options }); return client({}); };
+"""
+
+def _real_surface(check, tmp, sdoc):
+    """The factory's own surface.mjs `apply`, run with node the way the server runs it (MOLD_DIR, ORG_ID, SURFACE_ONLY, the
+    state on stdin), against FAKE_POSTGRES above. What is checked is surface.mjs's own logic: which tables it writes and
+    which it leaves alone, that each write is inside the workspace's scope, that a second run changes nothing, that nothing
+    is ever removed, and how it opens the connection. The SQL against a real Postgres only a server proves."""
+    node = shutil.which("node")
+    if not node: return
+    appd = os.path.join(tmp, "fake-built-app"); mod = os.path.join(appd, "node_modules", "postgres"); os.makedirs(mod)
+    open(os.path.join(appd, "package.json"), "w").write('{"name": "stand-in"}\n')
+    open(os.path.join(mod, "package.json"), "w").write('{"name": "postgres", "main": "index.js"}\n')
+    open(os.path.join(mod, "index.js"), "w").write(FAKE_POSTGRES)
+    private = os.path.join(tmp, "sf-workspace-private"); os.makedirs(private)             # where the server puts its copy: NOT beside the app
+    script = os.path.join(private, "surface.mjs"); shutil.copyfile(os.path.join(HERE, "surface.mjs"), script)
+    def run(state, dbf, only=",".join(V.SURFACE_TABLES), url=DB_URL, org="example"):
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": tmp, "FAKE_DB": dbf, "MOLD_DIR": appd, "ORG_ID": org, "DATABASE_URL": url}
+        if only is not None: env["SURFACE_ONLY"] = only
+        r = subprocess.run([node, script, "apply"], cwd=appd, env=env, input=json.dumps(state), capture_output=True, text=True, timeout=120)
+        try: out = json.loads(r.stdout)
+        except ValueError: out = {"unparsed": r.stdout + r.stderr}
+        return r.returncode, out, (B.load(dbf) if os.path.exists(dbf) else None), r.stderr
+    RAN.append("surface.mjs apply run with node against a stand-in for the app's postgres module")
+    state = sdoc["state"]; dbf = os.path.join(tmp, "fake-pg.json")
+    # what the workspace seed and the people using the app left there before this step ever ran
+    before = {"tables": {"orgs": [{"org_id": "example", "name": "Example", "branding": {"displayName": "Example Co"}}], "org_members": [{"org_id": "example", "email": "operator@example.com", "role": "owner"}],
+                         "platform_admins": [{"email": "operator@example.com"}], "people_roster": [{"org_id": "example", "email": "ana@example.com", "name": "Ana"}],
+                         "agent_profiles": [{"id": "Xq9-made-in-the-app", "org_id": "example", "email": "", "persona_name": "Old", "tone": None, "instructions": "old", "default_mode": None, "web_search_default": None, "browser_default": None, "model": None, "updated_by": "ana@example.com"},
+                                            {"id": "m1", "org_id": "example", "email": "ana@example.com", "persona_name": "Ana's own", "instructions": "mine"}],
+                         "agent_configs": [{"org_id": "example", "agent_key": "legacy", "paused": True, "instructions": "kept"}, {"org_id": "other", "agent_key": "research", "paused": True, "instructions": "another workspace's"}],
+                         "workflow_definitions": [{"id": "wd-old", "org_id": "example", "name": "Old flow", "entity": "todo", "stages": [], "current_version": 4, "is_default": False}],
+                         "workflows": [{"id": "wf-lib", "org_id": "example", "name": "qbr-prep", "steps": []}]}, "statements": [], "clients": [], "seq": 0}
+    json.dump(before, open(dbf, "w"))
+    rc, out, db, err = run(state, dbf)
+    T = db["tables"] if db else {}
+    check("surface.mjs (run with node): limited to the four tables, it reports those four and no other", rc == 0 and out == {"agent_profiles": 1, "agent_configs": 2, "workflow_definitions": 1, "workflows": 1}, (rc, out, err))
+    prof = [p for p in T.get("agent_profiles", []) if p["email"] == ""]
+    check("surface.mjs (run with node):   ...the default agent profile: the row a person had already saved in the app is UPDATED from state, not duplicated and not refused",
+          len(prof) == 1 and prof[0]["id"] == "Xq9-made-in-the-app" and (prof[0]["persona_name"], prof[0]["tone"], prof[0]["instructions"], prof[0]["default_mode"], prof[0]["model"], prof[0]["web_search_default"], prof[0]["browser_default"])
+          == ("Ava", "plain", "Answer from the files. Cite the page.", "build", "@cf/zai-org/glm-5.2", True, False), prof)
+    check("surface.mjs (run with node):   ...a member's own profile is left exactly as it was", [p for p in T["agent_profiles"] if p["email"] == "ana@example.com"] == before["tables"]["agent_profiles"][1:], T["agent_profiles"])
+    cfg = {(c["org_id"], c["agent_key"]): c for c in T["agent_configs"]}
+    check("surface.mjs (run with node):   ...the per-subagent configs, paused or not, with their instructions", (cfg[("example", "research")]["paused"], cfg[("example", "research")]["instructions"]) == (False, None)
+          and (cfg[("example", "filings")]["paused"], cfg[("example", "filings")]["instructions"]) == (True, "Quote the clause."), cfg)
+    wd = {d["id"]: d for d in T["workflow_definitions"]}
+    check("surface.mjs (run with node):   ...the workflow definitions with their stages", wd["wd-credit"]["org_id"] == "example" and wd["wd-credit"]["stages"] == [{"id": "open"}, {"id": "done"}] and wd["wd-credit"]["is_default"] is True, wd)
+    wf = {w["name"]: w for w in T["workflows"]}
+    check("surface.mjs (run with node):   ...the workflow scripts that are not file-backed", wf["weekly-digest"]["steps"] == [{"say": "hi"}] and wf["weekly-digest"]["created_by"] == "operator@example.com" and "from-a-file" not in wf, wf)
+    check("surface.mjs (run with node):   ...NOTHING is removed: a config, a definition and a workflow that state does not name are still there, and so is another workspace's row",
+          cfg[("example", "legacy")] == before["tables"]["agent_configs"][0] and cfg[("other", "research")] == before["tables"]["agent_configs"][1] and wd["wd-old"] == before["tables"]["workflow_definitions"][0] and wf["qbr-prep"] == before["tables"]["workflows"][0])
+    check("surface.mjs (run with node):   ...the tables the workspace seed owns are not touched at all", all(T[t] == before["tables"][t] for t in ("orgs", "org_members", "platform_admins", "people_roster")))
+    stm = db["statements"]; writes = [x for x in stm if x["text"].startswith("insert into")]
+    check("surface.mjs (run with node):   ...no statement names them, not even a read of their keys", not any(re.search(r"\b(orgs|org_members|platform_admins|people_roster)\b", x["text"]) for x in stm) and len(writes) == 5, [x["text"][:70] for x in stm])
+    check("surface.mjs (run with node):   ...every write is inside a transaction that names this workspace (row-level security in force for each row)", writes and all(x["scope"] == "example" for x in writes), [(x["text"][:40], x["scope"]) for x in writes])
+    check("surface.mjs (run with node):   ...and there is no delete, update, truncate, drop or alter anywhere", not any(re.match(r"(delete|update|truncate|drop|alter|grant|create)\b", x["text"], re.I) for x in stm), [x["text"][:50] for x in stm])
+    check("surface.mjs (run with node):   ...the connection is the URL's own: on the server's loopback database the URL says sslmode=require and no `ssl` option overrides it",
+          len(db["clients"]) == 1 and db["clients"][0]["url"] == DB_URL and "ssl" not in db["clients"][0]["options"], db["clients"])
+    check("surface.mjs (run with node):   ...and nothing it printed carries the connection string", "Zk3-app-rw-PASSWORD-77" not in json.dumps(out) + err)
+    snap = json.dumps(T, sort_keys=True)
+    rc, out, db, err = run(state, dbf)
+    check("surface.mjs (run with node): a second run changes nothing and adds no workflow twice (idempotent)", rc == 0 and out == {"agent_profiles": 1, "agent_configs": 2, "workflow_definitions": 1, "workflows": 0} and json.dumps(db["tables"], sort_keys=True) == snap, out)
+    rc, out, db, err = run(state, dbf, org="other-workspace")
+    check("surface.mjs (run with node): the workspace written is the one in the state it was handed; ORG_ID alone moves nothing", rc == 0 and json.dumps(db["tables"], sort_keys=True) == snap)
+    rc, out, db, err = run(state, dbf, only="agent_profiles,customers")
+    check("surface.mjs (run with node): a table apply does not write is refused by name, before anything is opened", rc == 1 and "SURFACE_ONLY names customers" in err and json.dumps(db["tables"], sort_keys=True) == snap, (rc, err))
+    # the same file on the Vercel path: no SURFACE_ONLY, the whole of apply, as clone.py configure runs it
+    full = {"workspace": {"org": {"org_id": "example", "name": "Example", "display_name": "Example Co"}, "fde_self": {"email": "operator@example.com"}, "operator_self": {"email": "operator@example.com"},
+                          "members": [{"email": "operator@example.com", "role": "owner"}], "platform_admins": ["operator@example.com"], "roster": [{"email": "ana@example.com", "name": "Ana", "team": "Credit"}]},
+            "surface": state["surface"]}
+    dbf2 = os.path.join(tmp, "fake-pg-vercel.json")
+    rc, out, db, err = run(full, dbf2, only=None, url="postgresql://app_rw:pw@db.example.com:5432/app")
+    check("surface.mjs (run with node): without SURFACE_ONLY (clone.py configure, the Vercel path) it writes all eight tables, as before",
+          rc == 0 and out == {"orgs": 1, "org_members": 1, "platform_admins": 1, "people_roster": 1, "agent_profiles": 1, "agent_configs": 2, "workflow_definitions": 1, "workflows": 1}
+          and db["tables"]["agent_profiles"][0]["id"] == "example:default" and db["tables"]["orgs"][0]["branding"] == {"displayName": "Example Co"}, (rc, out, err))
+    check("surface.mjs (run with node):   ...over TLS, as before, for a database that is not on loopback", db["clients"][0]["options"].get("ssl") == "require", db["clients"])
+    rc, out, db, err = run(full, dbf2, only=None, url="postgresql://app_rw:pw@db.example.com:5432/app")
+    check("surface.mjs (run with node):   ...and a second run there still updates the one default profile it made", rc == 0 and out["agent_profiles"] == 1 and len(db["tables"]["agent_profiles"]) == 1, out)
+    dbf3 = os.path.join(tmp, "fake-pg-local.json")
+    rc, out, db, err = run(full, dbf3, only=None, url="postgresql://postgres:pw@127.0.0.1:5432/throwaway")
+    check("surface.mjs (run with node): a loopback URL that names no sslmode stays plaintext, as it always was (the throwaway local database)", rc == 0 and db["clients"][0]["options"].get("ssl") is False, db and db["clients"])
