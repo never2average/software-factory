@@ -25,9 +25,11 @@ so `run` can be repeated at any time and picks up where things stand:
   brand      a name, a colour and a logo are set (or the mold's default look is accepted)
   keys       every credential the deploy needs is present BY NAME          <- the operator, once per operator
   deploy     the three services answer, on the current mold snapshot
-  workspaces every seed under state/application/<app_id>/seed/orgs/ is applied as it is now written
+  workspaces every seed under state/application/<app_id>/seed/orgs/ is applied as it is now written; for an app on a
+             server of its own, the brief's own workspace too, written on that server (provision.py --workspace-remote)
   tests      the five lanes ran after the last deploy, none failed, signed-in checks measured  <- a code from the operator
-  package    the application's own agent package is published at the app's address          <- the operator's npm sign-in
+  package    the application's own agent package is published at the app's address (vercel.production_url, or
+             vm_remote.production_url for a server of its own)                                <- the operator's npm sign-in
   address    the application's own domain serves it (only if one is named)                  <- one DNS record
 
 This file only ORDERS the work. Each station is the script that already owns it (intake.py, packs.py, branding.py,
@@ -39,6 +41,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 S = os.path.join(ROOT, ".claude", "scripts")
 PRIVATE = os.path.join(os.path.expanduser("~"), ".cache", "software-factory")   # outside the repo, mode 700
 DONE, TODO, OPERATOR, FAILED, NA = "done", "next", "needs you", "failed", "not needed"
+
+sys.path.insert(0, os.path.join(S, "lib"))
+import lane_url   # target_url(infra): where the application lives, per deploy target (vercel, or a server of its own)
 
 def load(p): return json.load(open(p))
 def adir(app): return os.path.join(ROOT, "state", "application", app)
@@ -132,8 +137,16 @@ def st_deploy(app, a, i):
 
 def st_workspaces(app, a, i):
     ss = seeds(app)
-    if not ss: return NA, "no extra workspace is described under seed/orgs/"
     done = load(applied_path(app)) if os.path.exists(applied_path(app)) else {}
+    if i.get("target") == "vm_remote":
+        # A server of its own (mold_v1-152): the brief's own workspace is written by this station too (the Vercel path
+        # has clone.py configure for it), ON the server: provision.py <app> --workspace-remote.
+        import vm_remote
+        try: own = vm_remote.state_seed_digest(a, adir(app))
+        except vm_remote.Stop as e: return FAILED, str(e)[:220]
+        stale = (["the application's own workspace"] if done.get(vm_remote.STATE_SEED) != own else []) + [os.path.basename(s)[:-5] for s in ss if done.get(os.path.basename(s)) != seed_digest(s)]
+        return (TODO, f"write to the server's database: {', '.join(stale)}") if stale else (DONE, f"{len(ss) + 1} workspace(s) as written")
+    if not ss: return NA, "no extra workspace is described under seed/orgs/"
     stale = [os.path.basename(s)[:-5] for s in ss if done.get(os.path.basename(s)) != seed_digest(s)]
     return (TODO, f"apply: {', '.join(stale)}") if stale else (DONE, f"{len(ss)} workspace(s) as written")
 
@@ -152,7 +165,7 @@ def st_tests(app, a, i):
 def st_package(app, a, i):
     cli = i.get("agent_cli")
     if not cli: return NA, "no agent package is named (infrastructure.json agent_cli)"
-    pub = cli.get("published") or {}; url = (i.get("vercel") or {}).get("production_url")
+    pub = cli.get("published") or {}; url = lane_url.target_url(i)
     if not url: return "later", f"{cli['package']}, once the app has an address to bake in"
     if pub.get("version") and pub.get("mold_commit") == a.get("mold_commit") and pub.get("origin", url) == url: return DONE, f"{cli['package']}@{pub['version']}"
     who = subprocess.run(["npm", "whoami"], capture_output=True, text=True)
@@ -205,6 +218,9 @@ def do(app, name):
         if os.path.exists(ans): args += ["--answers", ans]
         return py(*args).returncode in (0,)
     if name == "deploy": return py(os.path.join(S, "provision.py"), app, "--deploy").returncode == 0
+    if name == "workspaces" and i.get("target") == "vm_remote":
+        # One command writes the application's own workspace and every seed, on the server, and records what it applied.
+        return py(os.path.join(S, "provision.py"), app, "--workspace-remote").returncode == 0
     if name == "workspaces":
         done = load(applied_path(app)) if os.path.exists(applied_path(app)) else {}
         for s in seeds(app):
@@ -262,7 +278,7 @@ def reuse_keys(app, other):
     return 0
 
 def origin(app):
-    u = ((docs(app)[1] or {}).get("vercel") or {}).get("production_url")
+    u = lane_url.target_url(docs(app)[1] or {})
     if not u: sys.exit(f"{app} is not deployed yet")
     return u
 
@@ -311,7 +327,31 @@ def self_test():
     assert clean("\x1b[32mok\x1b[0m") == "ok"
     assert [n for n, _ in STATIONS] == ["brief", "state", "packs", "brand", "keys", "deploy", "workspaces", "tests", "package", "address"]
     assert re.findall(r"--set-secret (\S+)", "  python3 x.py app --set-secret EXA_API_KEY\n  … --set-secret RESEND_API_KEY") == ["EXA_API_KEY", "RESEND_API_KEY"]
-    print("mint: 3 checks passed"); return 0
+    # where an application lives, per target: what the package, report and handoff stations and the sign-in code read
+    vr = {"target": "vm_remote", "deployed_at": "2026-10-04T00:00:00+00:00", "vm_remote": {"domain": "app.example.com", "production_url": "https://app.example.com"},
+          "agent_cli": {"package": "@x/y", "published": {"version": "0.1.0", "mold_commit": "c", "origin": "https://app.example.com"}}}
+    assert lane_url.target_url(vr) == "https://app.example.com" and lane_url.target_url({"target": "vercel", "vercel": {"production_url": "https://x.vercel.app"}}) == "https://x.vercel.app"
+    assert st_package("x", {"mold_commit": "c"}, vr) == (DONE, "@x/y@0.1.0"), st_package("x", {"mold_commit": "c"}, vr)
+    undeployed = dict(vr, vm_remote={"domain": "app.example.com"}); undeployed.pop("deployed_at")
+    assert st_package("x", {"mold_commit": "c"}, undeployed)[0] == "later"
+    assert st_package("x", {"mold_commit": "c"}, {"target": "vercel", "vercel": {"production_url": "https://x.vercel.app"}, "agent_cli": dict(vr["agent_cli"], published={"version": "0.1.0", "mold_commit": "c"})}) == (DONE, "@x/y@0.1.0")
+    import vm_remote
+    ws = {"app_id": "x", "workspace": {"org": {"org_id": "acme", "name": "Acme"}, "operator_self": {"email": "o@acme.test"}, "members": [{"email": "o@acme.test", "role": "owner"}]}}
+    import tempfile, shutil
+    real_adir = globals()["adir"]; tmp = tempfile.mkdtemp(prefix="mint-selftest-")
+    try:
+        globals()["adir"] = lambda app: os.path.join(tmp, app)
+        os.makedirs(os.path.join(tmp, "x", "seed", "orgs"))
+        st, why = st_workspaces("x", ws, {"target": "vm_remote"})
+        assert st == TODO and "the application's own workspace" in why, (st, why)
+        json.dump({vm_remote.STATE_SEED: vm_remote.state_seed_digest(ws, os.path.join(tmp, "x"))}, open(os.path.join(tmp, "x", "seed", "orgs", ".applied.json"), "w"))
+        assert st_workspaces("x", ws, {"target": "vm_remote"}) == (DONE, "1 workspace(s) as written")
+        ws["workspace"]["members"].append({"email": "new@acme.test", "role": "member"})
+        assert st_workspaces("x", ws, {"target": "vm_remote"})[0] == TODO          # state changed: the server no longer matches it
+        assert st_workspaces("x", ws, {"target": "vercel"}) == (NA, "no extra workspace is described under seed/orgs/")
+    finally:
+        globals()["adir"] = real_adir; shutil.rmtree(tmp, ignore_errors=True)
+    print("mint: 11 checks passed"); return 0
 
 def main(a):
     if "--self-test" in a: return self_test()

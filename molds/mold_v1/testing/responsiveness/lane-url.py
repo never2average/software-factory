@@ -9,7 +9,14 @@
 Exit 0 with the URL on stdout, or exit 1 with the reason on stderr — which the runner records as an unmet
 precondition and a `skipped` lane, never `pass` and never `fail`.
 
-TWO KINDS OF TARGET, IN THIS ORDER:
+THREE KINDS OF TARGET, IN THIS ORDER:
+  0. A server of the application's own (`target: vm_remote`, mold_v1-078 / -154):
+     `infrastructure.vm_remote.production_url`, and only when it is exactly https://<vm_remote.domain> and
+     `infrastructure.deployed_at` is recorded. provision.py --deploy-remote writes both after the deployed app
+     answered its health checks, so an address somebody typed is never graded as this application (factory.py
+     validate refuses that state too; this reader does not trust the validator alone). Nothing else is read
+     for such an app: no vercel block, no MOLD_V1_LANE_URL. Until it is deployed there is no URL, and the
+     sentence names its one deploy command, --deploy-remote.
   1. A deployment: `infrastructure.vercel.production_url`, when it is set. That is the URL the lane has
      always graded, and it wins whenever it exists — an operator cannot point this lane elsewhere for an
      app that has a production URL.
@@ -53,6 +60,12 @@ FIXTURE_LACKS = ("task-workflow",)                          # the services the v
 def die(msg): print(msg, file=sys.stderr); sys.exit(1)
 def load(p): return json.load(open(p))
 
+def remote_url(infra):
+    """A vm_remote application's deployed address, or "" while no deploy has recorded one (see kind 0 above)."""
+    vr = infra.get("vm_remote") or {}
+    url = (vr.get("production_url") or "").strip().rstrip("/")
+    return url if url and vr.get("domain") and url == f"https://{vr['domain']}" and infra.get("deployed_at") else ""
+
 def main(a):
     if not a or a[0].startswith("-"): sys.exit(__doc__)
     app_id, harness = a[0], "--harness" in a[1:]
@@ -60,10 +73,17 @@ def main(a):
     try: app, infra = load(os.path.join(adir, "application.json")), load(os.path.join(adir, "infrastructure.json"))
     except Exception:
         die(f"{app_id}: state/application/{app_id}/ has no readable application.json and infrastructure.json, so there is no application to measure.")
+    tgt, store, st = infra.get("target"), infra.get("secret_store"), app.get("status")
+    if tgt == "vm_remote":
+        url = remote_url(infra)
+        if not url:
+            die(f"{app_id}: this application runs on a server of its own and no deploy has recorded its address yet "
+                f"(infrastructure.vm_remote.production_url) — this lane grades rendered pages, so deploy it first: "
+                f"python3 .claude/scripts/provision.py {app_id} --deploy-remote")
+        print(f"--url {url}" if harness else url); return 0
     purl = ((infra.get("vercel") or {}).get("production_url") or "").strip().rstrip("/")
     if purl:
         print(f"--url {purl}" if harness else purl); return 0
-    tgt, store, st = infra.get("target"), infra.get("secret_store"), app.get("status")
     deploy = f"python3 .claude/scripts/provision.py {app_id} --deploy"
     if tgt != "vm" or store != "vm_env_file":
         die(f"{app_id}: no infrastructure.vercel.production_url yet — this lane grades rendered pages, so deploy the app first: {deploy}")

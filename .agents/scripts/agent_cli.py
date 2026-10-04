@@ -39,6 +39,13 @@ def docs(app_id):
     return app, infra, infra_p, cli
 
 def origin_of(infra):
+    """The address baked into the package: where the application lives, per deploy target. A server of its own
+    (vm_remote) answers at vm_remote.production_url, once a deploy recorded it."""
+    if infra.get("target") == "vm_remote":
+        vr = infra.get("vm_remote") or {}; o = (vr.get("production_url") or "").strip()
+        if not (o and vr.get("domain") and o.rstrip("/") == f"https://{vr['domain']}" and infra.get("deployed_at")):
+            sys.exit("the application has no public address yet (infrastructure.vm_remote.production_url); deploy it first: provision.py <app_id> --deploy-remote")
+        return o.rstrip("/")
     o = (infra.get("vercel") or {}).get("production_url") or (infra.get("vm") or {}).get("public_url")
     if not o: sys.exit("the application has no public address yet (infrastructure.vercel.production_url); deploy it first")
     return o.rstrip("/")
@@ -147,7 +154,12 @@ def self_test():
     assert ".env" in disallowed([".env"]) and "agent/subagents/x/schemas/kpi-spec.md" in disallowed(["agent/subagents/x/schemas/kpi-spec.md"])
     rc = npmrc_lines("https://registry.npmjs.org/", "NPM_TOKEN")
     assert "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n" in rc and "npm_" not in rc
-    print("agent_cli: 8 checks passed"); return 0
+    vr = {"target": "vm_remote", "deployed_at": "2026-10-04T00:00:00+00:00", "vm_remote": {"domain": "app.example.com", "production_url": "https://app.example.com/"}}
+    assert origin_of(vr) == "https://app.example.com" and origin_of({"target": "vercel", "vercel": {"production_url": "https://x.vercel.app/"}}) == "https://x.vercel.app"
+    for bad in (dict(vr, deployed_at=None), dict(vr, vm_remote={"domain": "app.example.com"}), dict(vr, vm_remote={"domain": "app.example.com", "production_url": "https://elsewhere.example.com"})):
+        try: origin_of(bad); raise AssertionError("an address no deploy recorded must not be baked into a package")
+        except SystemExit: pass
+    print("agent_cli: 13 checks passed"); return 0
 
 def main(a):
     if "--self-test" in a: return self_test()
