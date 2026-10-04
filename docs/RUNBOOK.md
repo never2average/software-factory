@@ -336,8 +336,10 @@ For the Google sign-in button, add `https://research.yourcompany.com` under **Au
 | close the login port to the internet | step H below |
 
 **The workspace.** A freshly deployed app has no workspace and nobody in it. This one command creates the workspace the brief
-describes, with its owner, its members and their roles, and the built-in library of recipes and workflows; if you keep extra
-workspaces under `state/application/<app_id>/seed/orgs/`, it writes those too:
+describes, with its owner, its members and their roles, and the built-in library of recipes and workflows; then it sets up the
+assistant the way the brief describes it (its name and tone, its standing instructions, its model, each specialist's settings,
+and any workflows the brief defines). If you keep extra workspaces under `state/application/<app_id>/seed/orgs/`, it writes
+those too:
 
 ```
 python3 .claude/scripts/provision.py <app_id> --workspace-remote
@@ -347,6 +349,8 @@ It does its writing on the server itself, so the database's address and password
 again: it adds what is missing and never removes anything. If the server already has a workspace under a different name than the
 brief's, it stops and tells you the two names instead of making a second, empty workspace; say which name is right and the agent
 fixes the brief's record. `python3 .claude/scripts/mint.py <app_id> run` does this step for you after a deploy.
+One thing to know: the assistant's settings come from the brief. If someone changed the assistant's name or instructions inside
+the app, running this again puts back what the brief says. Add `--dry-run` to the command to read what it would write first.
 
 **Who runs what on the server.** The app is three programs (the web app, the agent, and the workflow service). Each runs under
 its own account, so that even if the agent were tricked into misbehaving it could not read the web app's keys. You do not need to
