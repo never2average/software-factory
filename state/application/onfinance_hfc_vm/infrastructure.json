@@ -93,10 +93,12 @@
       "kvm": "ok",
       "push": "on",
       "disk_percent": 14,
-      "sandbox_store_mb": 15515,
-      "qualified_at": "2026-10-04T12:08:52+00:00"
+      "sandbox_store_mb": 15514,
+      "qualified_at": "2026-10-04T12:15:51+00:00"
     },
-    "production_url": "https://hfc.useimmaculate.com"
+    "production_url": "https://hfc.useimmaculate.com",
+    "ssh_host": "157.245.241.138",
+    "ssh_allow_from": "69.55.59.169"
   },
-  "deployed_at": "2026-10-04T12:08:52+00:00"
+  "deployed_at": "2026-10-04T12:15:51+00:00"
 }
