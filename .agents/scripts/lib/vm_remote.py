@@ -12,6 +12,10 @@ Called by provision.py for an application whose infrastructure.target is "vm_rem
                                                  file, in order, WITHOUT connecting; --out also writes the bundle
   provision.py <app_id> --deploy-remote          the deploy
   provision.py <app_id> --verify-rls [--no-repair]   re-prove tenant isolation on the server's database and running app
+  provision.py <app_id> --tunnel-remote [--dry-run] [--factory-apply] [--off]
+                                                 the private administration tunnel (mold_v1-156, lib/vm_tunnel.py):
+                                                 WireGuard between this machine and the server, SSH on the tunnel only
+  provision.py <app_id> --tunnel-factory [--apply]   what the tunnel installs and changes on THIS machine; --apply does it
 
 and directly, for a state directory outside state/ (a fixture) and for the offline tests:
 
@@ -87,6 +91,18 @@ MOLD_SCRIPTS = (("sandbox:prewarm", "the mold's serial sandbox prewarm (stale lo
 INTERNAL = ("CRON_SECRET", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "STORAGE_SIGNING_SECRET")
 MINTED = INTERNAL + ("AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY")
 SERVER_MADE = MINTED + ("POSTGRES_ADMIN_URL", "DATABASE_URL")
+# Desktop notifications (Web Push). The pair is minted on the server like the others when the mold carries
+# agent/lib/web-push.ts; the subject is the operator's email from state. Which process reads which (snapshot 4ad0c2c):
+#   VAPID_PUBLIC_KEY   the web app serves it to the browser and answers the subscribe route (app/api/ops/push/route.ts);
+#                      the agent reads it too (agent/lib/web-push.ts vapidFromEnv wants all three)
+#   VAPID_PRIVATE_KEY  the agent only: it signs and sends the push (agent/lib/push-notify.ts)
+#   VAPID_SUBJECT      the agent only
+PUSH_PAIR = ("VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY")
+PUSH = PUSH_PAIR + ("VAPID_SUBJECT",)
+PUSH_SOURCE = "agent/lib/web-push.ts"
+# Read by the agent and never by the web app, so the web app's file does not get them.
+AGENT_ONLY = ("VAPID_PRIVATE_KEY", "VAPID_SUBJECT")
+EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 # ---- which service reads which name (fde-agent da581f2; checked against the source, see the self-test) ------------
 # The master env file holds every name; each service gets a file of its own split from it (env_split), so a process
 # never holds what it does not read. Read only by the factory's database chain and the mold's migration scripts, which
@@ -108,6 +124,22 @@ S3_KEYS = (("access_key_ref", "STORAGE_S3_ACCESS_KEY_ID"), ("secret_key_ref", "S
 SOURCE_EXCLUDES = ("node_modules", ".next", ".output", ".eve", ".vercel", ".git", ".env", ".env.*", ".dataroom",
                    "test-results", ".eve-build-hidden", "*.log")
 GUARD_VAR = "SF_REMOTE_DEPLOY"
+# ---- sandbox disk (mold_v1-153; measured on the first real server, 2026-10-04: about 490 MB left behind per session) ----
+# eve 0.25.1 names what it keeps in the service user's ~/.microsandbox (execution/sandbox/bindings/microsandbox-*.js):
+#   eve-sbx-ses-<hash>      a chat session's sandbox (sandboxes/); stopped between turns
+#   eve-sbx-state-<hash>    that session's state snapshot (snapshots/), taken when a turn ends
+#   eve-sbx-tpl-<hash>      a TEMPLATE snapshot every new session starts from: never removed here
+#   eve-sbx-tpl-tmp-<hash>  the VM a template is built in; removed by eve when the build ends, left behind when it is killed
+# eve reattaches a session to its stopped sandbox, else restores it from its state snapshot, else (both gone) starts a
+# clean one from the template. Neither eve nor msb 0.5.10 has a retention or prune for these, so the timer below asks
+# msb itself to remove the old ones (`msb remove`, `msb snapshot remove`), never a running one, never a template.
+SBX_SESSION, SBX_STATE, SBX_TEMPLATE, SBX_TEMPLATE_TMP = "eve-sbx-ses-", "eve-sbx-state-", "eve-sbx-tpl-", "eve-sbx-tpl-tmp-"
+SBX_STOPPED = ("stopped", "crashed", "terminated", "completed", "exited")     # anything else counts as in use
+RETENTION_DAYS = 7
+TEMPLATE_TMP_HOURS = 1
+DISK_ALARM_PCT = 80          # health WARNS from here (state: vm_remote.sandbox.disk_alarm_percent)
+DISK_FAIL_PCT = 95           # and FAILS from here: the next build or sandbox would not fit
+PRUNE_AT = "*-*-* 03:17:00"
 
 class Stop(Exception):
     """The deploy cannot go on. The message is one plain instruction for the operator."""
@@ -145,6 +177,16 @@ def settings(app_id, app, infra, ds):
     # server's address on a private administration tunnel (mold_v1-156); and the firewall lets only ssh_allow_from
     # reach the SSH port when that is named. Absent, both are today's behaviour: SSH to `host`, port open to all.
     S["ssh_host"] = vr.get("ssh_host") or ""; S["ssh_allow_from"] = vr.get("ssh_allow_from") or ""
+    # The private administration tunnel (mold_v1-156, lib/vm_tunnel.py). Names, addresses and PUBLIC keys only. While
+    # it is on, ssh_host is the server's tunnel address and the firewall admits SSH on the tunnel interface alone.
+    S["tunnel"] = dict(vr["tunnel"]) if isinstance(vr.get("tunnel"), dict) else {}
+    S["tunnel_on"] = bool(S["tunnel"].get("enabled"))
+    # Sandbox disk (mold_v1-153): how long a stopped session sandbox is kept, and when the disk is called too full.
+    S["retention_days"] = int(S["sandbox"].get("retention_days") or RETENTION_DAYS)
+    S["disk_alarm"] = int(S["sandbox"].get("disk_alarm_percent") or DISK_ALARM_PCT)
+    # Desktop notifications: on when the mold can send them and state names somebody the push services may contact.
+    S["mold_src"] = os.path.join(ROOT, "molds", str(app.get("mold_id") or ""), "codebase")
+    S["push"] = bool(EMAIL.match(S["email"])) and os.path.isfile(os.path.join(S["mold_src"], PUSH_SOURCE))
     S["host_shown"] = S["ssh_host"] or S["host"] or NO_HOST; S["domain_shown"] = S["domain"] or NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"
     S["sudo"] = "" if S["user"] == "root" else "sudo "
@@ -186,8 +228,12 @@ KEY_MARK = "SF-KEY-PATH"     # stands in for the key path while a command is quo
 def shown_cmd(S, argv): return shlex.join(argv).replace(KEY_MARK, key_shown(S))
 
 def ssh_opts(S, shown=False):
-    return ["-p", str(S["port"]), "-i", KEY_MARK if shown else key_path(S), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
-            "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20"]
+    o = ["-p", str(S["port"]), "-i", KEY_MARK if shown else key_path(S), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+         "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20"]
+    # SSH to another address of the same server (the tunnel's) must meet the host key already recorded for the public
+    # address, not be trusted afresh: whatever answers there has to be this app's server.
+    if S.get("ssh_host") and S.get("host") and S["ssh_host"] != S["host"]: o += ["-o", f"HostKeyAlias={S['host']}"]
+    return o
 def ssh_argv(S, remote, shown=False):
     return ["ssh", *ssh_opts(S, shown), f"{S['user']}@{S['host_shown']}", "--", remote]
 def rsync_argv(S, src, dst, excludes=(), shown=False):
@@ -249,15 +295,33 @@ def _jwt_pair():
           "console.log(Buffer.from(b.export({type:'pkcs8',format:'pem'})).toString('base64'));console.log(Buffer.from(a.export({type:'spki',format:'pem'})).toString('base64'))")
     priv, pub = subprocess.check_output(["node", "-e", js], text=True).split()
     return priv, pub
-def env_mint(path, jwt_pair=_jwt_pair):
+def _vapid_pair():
+    """(public, private) for Web Push: base64url of the 65-byte uncompressed P-256 point and of the 32-byte scalar,
+    the shapes agent/lib/web-push.ts reads (the same minting as provision.mint_vapid_pair on the Vercel path)."""
+    js = ("const{createECDH}=require('crypto');const e=createECDH('prime256v1');e.generateKeys();"
+          "console.log(e.getPublicKey().toString('base64url'));console.log(e.getPrivateKey().toString('base64url'))")
+    pub, priv = subprocess.check_output(["node", "-e", js], text=True).split()
+    return pub, priv
+def push_subject(S):
+    """VAPID_SUBJECT for this app, or "" when it gets no desktop notifications: mailto:<the operator's email in state>."""
+    return f"mailto:{S['email']}" if S.get("push") else ""
+def env_mint(path, jwt_pair=_jwt_pair, push_subject="", vapid_pair=_vapid_pair):
     """Mint the app's own internal secrets ON THE MACHINE THAT KEEPS THEM, once. A name already present is kept:
     a new CRON_SECRET or sign-in key on every deploy would sign everybody out. The key pair is kept only as a
-    pair (one half without the other signs sessions nothing can verify). Returns the names minted."""
+    pair (one half without the other signs sessions nothing can verify). Returns the names minted.
+    With `push_subject` (mailto:<operator>), the Web Push pair is minted the same way and kept the same way: a new
+    pair would orphan every browser already subscribed. The subject is not a secret and follows state."""
     cur = env_read(path); new = {}
     for k in INTERNAL:
         if not cur.get(k): new[k] = pysecrets.token_hex(32)       # 64 characters: STORAGE_SIGNING_SECRET needs 32+
     if not (cur.get("AUTH_JWT_PRIVATE_KEY") and cur.get("AUTH_JWT_PUBLIC_KEY")):
         new["AUTH_JWT_PRIVATE_KEY"], new["AUTH_JWT_PUBLIC_KEY"] = jwt_pair()
+    if push_subject:
+        if not re.fullmatch(r"mailto:[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", push_subject):
+            raise SystemExit("env-mint: --push-subject must be mailto:<an email address>; nothing was minted")
+        if not (cur.get("VAPID_PUBLIC_KEY") and cur.get("VAPID_PRIVATE_KEY")):
+            new["VAPID_PUBLIC_KEY"], new["VAPID_PRIVATE_KEY"] = vapid_pair()
+        if cur.get("VAPID_SUBJECT") != push_subject: new["VAPID_SUBJECT"] = push_subject
     if new: env_merge(path, new)
     else: os.chmod(path, 0o600) if os.path.isfile(path) else env_write(path, cur)
     return sorted(new)
@@ -370,7 +434,7 @@ def service_env_spec(S):
     # The operator's s3 values under their stored names are passed on under the mold's names instead.
     stored = sorted(alias.values())
     return {
-        "web": {"keep": None, "drop": sorted(set(admin + unused + stored)), "alias": alias, "set": {}},
+        "web": {"keep": None, "drop": sorted(set(admin + unused + stored + list(AGENT_ONLY))), "alias": alias, "set": {}},
         "api": {"keep": None, "drop": sorted(set(admin + unused + stored + list(WEB_ONLY))), "alias": alias, "set": {}},
         "workflow": {"keep": list(WORKFLOW_READS), "drop": [], "alias": {}, "set": {"WORKFLOW_LOCAL_DATA_DIR": f"{S['data']}/task-workflow-data"}},
         "cron": {"keep": list(CRON_READS), "drop": [], "alias": {}, "set": {}},
@@ -396,6 +460,9 @@ def env_split(master_path, env_dir, spec):
     vals = split_values(env_read(master_path), spec)
     if "AUTH_JWT_PRIVATE_KEY" in vals.get("api", {}):
         raise SystemExit("env-split: refusing to give the agent the sign-in private key; nothing was written")
+    for svc in ("web", "workflow", "cron"):
+        if "VAPID_PRIVATE_KEY" in vals.get(svc, {}):
+            raise SystemExit(f"env-split: refusing to give the {svc} service the notification private key (only the agent sends); nothing was written")
     for svc, v in vals.items(): env_write(os.path.join(env_dir, f"{svc}.env"), v)
     return {svc: len(v) for svc, v in vals.items()}
 
@@ -621,6 +688,32 @@ ExecStart=/usr/sbin/nft -f {S['env_dir']}/egress.nft
 [Install]
 WantedBy=multi-user.target
 """)
+    u[f"{pre}-sandbox-prune.service"] = (fill(HEAD, APP=app) + f"""[Unit]
+Description={app}: remove stopped session sandboxes and their snapshots idle longer than {S['retention_days']} days (mold_v1-153)
+
+[Service]
+Type=oneshot
+User={SERVICE_USER}
+Group={SERVICE_USER}
+Environment=HOME={SERVICE_HOME}
+ExecStart=/usr/bin/python3 {S['tool']} sandbox-prune --home {SERVICE_HOME} --retention-days {S['retention_days']}
+Nice=10
+TimeoutStartSec=1800
+NoNewPrivileges=yes
+PrivateTmp=yes
+""")
+    u[f"{pre}-sandbox-prune.timer"] = (fill(HEAD, APP=app) + f"""[Unit]
+Description={app}: every night, prune old session sandboxes
+
+[Timer]
+OnCalendar={PRUNE_AT}
+RandomizedDelaySec=600
+Persistent=true
+Unit={pre}-sandbox-prune.service
+
+[Install]
+WantedBy=timers.target
+""")
     for name, expr in crons:
         u[f"{pre}-cron-{name}.service"] = (fill(HEAD, APP=app) + f"""[Unit]
 Description={app}: cron {name} (was Vercel Cron `{expr}`)
@@ -701,16 +794,29 @@ table inet sf_egress {{
 def ufw_rules(S):
     """The firewall's allow rules, in the words `ufw show added` prints them, sorted. The SSH rule takes its allowed
     source from state (vm_remote.ssh_allow_from): absent, the port is open to any address; named, only that address
-    or network may reach it, which is how a private administration tunnel closes public SSH without another script."""
+    or network may reach it. With the private administration tunnel on (vm_remote.tunnel.enabled), there is no public
+    SSH rule at all."""
     web = [f"ufw allow {p}/tcp" for p in (80, 443)]
+    if S.get("tunnel_on"):
+        # mold_v1-156: SSH is admitted on the tunnel interface only, and the tunnel's own UDP port from the factory's
+        # public address only. `provision.py --tunnel-remote` is what first makes this true, behind its lockout guard;
+        # from then on every deploy keeps exactly these rules.
+        return sorted(set(web + tunnel_rules(S)))
     ssh = (f"ufw allow from {S['ssh_allow_from']} to any port {S['port']} proto tcp" if S.get("ssh_allow_from") else f"ufw allow {S['port']}/tcp")
     return sorted(set(web + [ssh]))
+
+def public_ssh_rule(S): return f"ufw allow {S['port']}/tcp"
+def tunnel_rules(S, T=None):
+    """The two rules the tunnel adds, in `ufw show added` words: SSH on the tunnel interface, WireGuard from the factory."""
+    T = T or S["tunnel"]
+    return [f"ufw allow in on {T['interface']} to any port {S['port']} proto tcp",
+            f"ufw allow from {T['factory_public_address']} to any port {T['listen_port']} proto udp"]
 
 def firewall_sh(S):
     rules = ufw_rules(S)
     return fill("""#!/bin/bash
 @HEAD@# mold_v1-077. Run on the TARGET SERVER, as root, by provision.py --deploy-remote. Never on the factory VM.
-#   - ufw: SSH (port @SSH@, from @SSHFROM@), 80 and 443 in; everything else in is refused. Nothing else is opened, ever.
+#   - ufw: @SSHLINE@, 80 and 443 in; everything else in is refused. Nothing else is opened, ever.
 #   - fail2ban watches ssh.
 #   - the app's three services listen on 127.0.0.1 only (their unit files say so; health.sh checks it), so the
 #     only things answering the internet are sshd and Caddy.
@@ -722,7 +828,7 @@ set -eu
 if command -v docker >/dev/null 2>&1; then
   echo "refusing: Docker is installed on this server and would open ports behind this firewall. Use a server without it." >&2; exit 4
 fi
-want="$(printf '%s\\n' @RULES@)"
+@TUNNELGUARD@want="$(printf '%s\\n' @RULES@)"
 have="$(ufw show added 2>/dev/null | grep '^ufw ' | sort || true)"
 if [ "$have" != "$want" ] || ! ufw status | grep -q '^Status: active'; then
   ufw --force reset >/dev/null
@@ -746,9 +852,18 @@ systemctl daemon-reload
 systemctl enable @UNIT@-egress.service >/dev/null
 systemctl restart @UNIT@-egress.service
 echo "firewall: fail2ban on for ssh; egress rule for @USER@ loaded"
-""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), SSH=S["port"], SSHFROM=S["ssh_allow_from"] or "any address",
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]),
+        SSHLINE=(f"SSH (port {S['port']}) on the private tunnel interface {S['tunnel']['interface']} only, WireGuard ({S['tunnel']['listen_port']}/udp) from the factory only"
+                 if S["tunnel_on"] else f"SSH (port {S['port']}, from {S['ssh_allow_from'] or 'any address'})"),
+        # With the tunnel on, these rules have no public SSH door. They are applied only while the tunnel interface
+        # exists on the server; otherwise the script stops and leaves the firewall exactly as it found it.
+        TUNNELGUARD=(f"""if ! ip link show {S['tunnel']['interface']} >/dev/null 2>&1; then
+  echo "refusing: state says SSH is on the private tunnel only, but this server has no {S['tunnel']['interface']} interface. The firewall was left as it is. Run: python3 .claude/scripts/provision.py {S['app_id']} --tunnel-remote" >&2; exit 4
+fi
+""" if S["tunnel_on"] else ""),
         RULES=" ".join(shlex.quote(r) for r in rules), ALLOWS="\n".join("  " + r for r in rules),
-        PORTS=", ".join(str(p) for p in sorted({S["port"], 80, 443})) + (f" (SSH from {S['ssh_allow_from']} only)" if S["ssh_allow_from"] else ""), FACTORY=S["factory_dir"], ENVDIR=S["env_dir"],
+        PORTS=((f"80, 443; SSH ({S['port']}) on {S['tunnel']['interface']} only; WireGuard {S['tunnel']['listen_port']}/udp from {S['tunnel']['factory_public_address']} only") if S["tunnel_on"] else
+               ", ".join(str(p) for p in sorted({S["port"], 80, 443})) + (f" (SSH from {S['ssh_allow_from']} only)" if S["ssh_allow_from"] else "")), FACTORY=S["factory_dir"], ENVDIR=S["env_dir"],
         UNIT=S["unit"], USER=SERVICE_USER)
 
 def fail2ban_jail(S):
@@ -907,9 +1022,11 @@ for u in @SERVICES@; do
   systemctl restart "$u" || { echo "service $u did not start. Its last lines:" >&2; journalctl -u "$u" -n 30 --no-pager >&2; exit 1; }
 done
 systemctl enable --now @TIMERS@ >/dev/null
-echo "units: @NS@ services running, @NT@ cron timers on"
+# The nightly sandbox prune (mold_v1-153). Enabled, not run now: it runs at its hour, or by hand with --prune-sandboxes.
+systemctl enable --now @PRUNE@ >/dev/null
+echo "units: @NS@ services running, @NT@ cron timers on, the nightly sandbox prune on"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), FACTORY=S["factory_dir"],
-        SERVICES=" ".join(svc), TIMERS=" ".join(tim), NS=len(svc), NT=len(tim))
+        SERVICES=" ".join(svc), TIMERS=" ".join(tim), NS=len(svc), NT=len(tim), PRUNE=f"{S['unit']}-sandbox-prune.timer")
 
 def caddy_sh(S):
     return fill("""#!/bin/bash
@@ -952,8 +1069,36 @@ echo "ENV_FILES=$(for s in @SVCS@; do printf '%s=%s ' "$s" "$(stat -c '%a-%U' "@
 if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/environ" ]; then
   if tr '\\0' '\\n' < "/proc/$pid/environ" | grep -q '^AUTH_JWT_PRIVATE_KEY='; then echo "API_PRIVATE_KEY=yes"; else echo "API_PRIVATE_KEY=no"; fi
 else echo "API_PRIVATE_KEY=unread"; fi
-""", HEAD=fill(HEAD, APP=S["app_id"]), PW=PORTS["workflow"], PA=PORTS["api"], PWEB=PORTS["web"], UNIT=S["unit"], ENV=S["env_file"],
-        ENVDIR=S["env_dir"], SVCS=" ".join(S["env_files"]))
+# Desktop notifications, names only: which process holds which of the three Web Push names. The web app serves the
+# public key; only the agent sends, so only the agent may hold the private key.
+has() { tr '\\0' '\\n' < "/proc/$1/environ" 2>/dev/null | grep -q "^$2="; }
+wpid="$(systemctl show -p MainPID --value @UNIT@-web.service 2>/dev/null || echo 0)"
+if [ -n "$wpid" ] && [ "$wpid" != "0" ] && [ -r "/proc/$wpid/environ" ]; then
+  if has "$wpid" VAPID_PUBLIC_KEY; then echo "WEB_PUSH_PUBLIC=yes"; else echo "WEB_PUSH_PUBLIC=no"; fi
+  if has "$wpid" VAPID_PRIVATE_KEY; then echo "WEB_PUSH_PRIVATE=yes"; else echo "WEB_PUSH_PRIVATE=no"; fi
+else echo "WEB_PUSH_PUBLIC=unread"; echo "WEB_PUSH_PRIVATE=unread"; fi
+if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/environ" ]; then
+  n=0; for k in VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY VAPID_SUBJECT; do if has "$pid" "$k"; then n=$((n+1)); fi; done
+  case "$n" in 3) echo "API_PUSH=yes" ;; 0) echo "API_PUSH=no" ;; *) echo "API_PUSH=partial" ;; esac
+else echo "API_PUSH=unread"; fi
+# The disk, and what the agent's sandboxes hold of it (mold_v1-153).
+echo "DISK_USED_PCT=$(df -P @HOME@ 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}')"
+echo "SANDBOX_STORE_KB=$(du -sk @HOME@/.microsandbox 2>/dev/null | cut -f1)"
+echo "PRUNE_TIMER=$(systemctl is-enabled @UNIT@-sandbox-prune.timer 2>/dev/null || true)"
+# The SSH door (mold_v1-156): is there a rule that lets any address reach the SSH port?
+echo "SSH_PUBLIC_RULE=$(if ufw show added 2>/dev/null | grep -qxF '@PUBRULE@'; then echo open; else echo closed; fi)"
+@TUNNEL@""", HEAD=fill(HEAD, APP=S["app_id"]), PW=PORTS["workflow"], PA=PORTS["api"], PWEB=PORTS["web"], UNIT=S["unit"], ENV=S["env_file"],
+        ENVDIR=S["env_dir"], SVCS=" ".join(S["env_files"]), HOME=SERVICE_HOME, PUBRULE=public_ssh_rule(S), TUNNEL=_health_tunnel(S))
+
+def _health_tunnel(S):
+    """health.sh lines for the tunnel, only while state says it is on: is the interface up, does it come back at boot,
+    and is SSH admitted on it."""
+    if not S["tunnel_on"]: return ""
+    T = S["tunnel"]; rule = tunnel_rules(S)[0]
+    return (f"""echo "WG=$(if ip link show {T['interface']} >/dev/null 2>&1 && wg show {T['interface']} >/dev/null 2>&1; then echo up; else echo down; fi)"
+echo "WG_BOOT=$(systemctl is-enabled wg-quick@{T['interface']} 2>/dev/null || true)"
+echo "SSH_TUNNEL_RULE=$(if ufw show added 2>/dev/null | grep -qxF '{rule}'; then echo yes; else echo no; fi)"
+""")
 
 def health_verdict(S, facts, crons):
     """(health block for state, problems). Problems are plain sentences; any one of them fails the deploy."""
@@ -980,7 +1125,67 @@ def health_verdict(S, facts, crons):
     if facts.get("API_PRIVATE_KEY") != "no":
         bad.append("the agent API process holds the sign-in private key (AUTH_JWT_PRIVATE_KEY), or it could not be read; only the web app may"
                    if facts.get("API_PRIVATE_KEY") == "yes" else "whether the agent API holds the sign-in private key could not be read")
+    # Desktop notifications (names only).
+    if facts.get("WEB_PUSH_PRIVATE") == "yes":
+        bad.append("the web app process holds the notification private key (VAPID_PRIVATE_KEY); only the agent, which sends, may")
+    if S.get("push"):
+        on = facts.get("WEB_PUSH_PUBLIC") == "yes" and facts.get("API_PUSH") == "yes"
+        h["push"] = "on" if on else "off"
+        if not on:
+            held = {"yes": "all three", "no": "none", "partial": "only some"}.get(facts.get("API_PUSH"), "an unread number")
+            bad.append(f"desktop notifications are off: the web app {'holds' if facts.get('WEB_PUSH_PUBLIC') == 'yes' else 'does not hold'} VAPID_PUBLIC_KEY "
+                       f"and the agent holds {held} of VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT")
+    # The disk (mold_v1-153). Over the alarm line is a WARNING (health_warnings): the app is serving and calling the
+    # deploy failed would not free a byte. Over DISK_FAIL_PCT is a failure: the next build or sandbox will not fit.
+    try: pct = int(facts.get("DISK_USED_PCT") or "")
+    except ValueError: pct = None
+    try: store = int(facts.get("SANDBOX_STORE_KB") or "")
+    except ValueError: store = None
+    if pct is not None: h["disk_percent"] = pct
+    if store is not None: h["sandbox_store_mb"] = store // 1024
+    if pct is not None and pct >= DISK_FAIL_PCT:
+        bad.append(f"the server's disk is {pct}% full (the agent's sandboxes hold {_gb(store)}); at {DISK_FAIL_PCT}% the next build or sandbox does not fit. "
+                   f"See what can go: python3 .claude/scripts/provision.py {S['app_id']} --prune-sandboxes")
+    if "PRUNE_TIMER" in facts and facts.get("PRUNE_TIMER") != "enabled":
+        bad.append("the nightly sandbox prune timer is not on, so every chat's sandbox stays on the disk for ever")
+    # The private tunnel (mold_v1-156): with it on, no rule may let any address reach the SSH port.
+    if S.get("tunnel_on"):
+        T = S["tunnel"]; why = []
+        if facts.get("SSH_PUBLIC_RULE") != "closed": why.append(f"the firewall still lets any address reach SSH on port {S['port']}")
+        if facts.get("WG") != "up": why.append(f"the tunnel interface {T['interface']} is not up on the server")
+        if facts.get("WG_BOOT") != "enabled": why.append(f"the tunnel does not come back at boot (wg-quick@{T['interface']} is not enabled)")
+        if facts.get("SSH_TUNNEL_RULE") != "yes": why.append(f"the firewall has no rule admitting SSH on {T['interface']}")
+        h["tunnel"] = "ok" if not why else ("public_ssh_open" if facts.get("SSH_PUBLIC_RULE") != "closed" else "down")
+        bad += why
     return h, bad
+
+def _gb(kb): return "an unmeasured amount" if kb is None else f"{kb / 1048576:.1f} GB"
+def health_warnings(S, facts):
+    """Sentences worth the operator's eye that do not fail a deploy."""
+    out = []
+    try: pct = int(facts.get("DISK_USED_PCT") or "")
+    except ValueError: return out
+    try: store = int(facts.get("SANDBOX_STORE_KB") or "")
+    except ValueError: store = None
+    if S["disk_alarm"] <= pct < DISK_FAIL_PCT:
+        out.append(f"WARNING, not a failure: the server's disk is {pct}% full (the alarm line is {S['disk_alarm']}%; the agent's sandboxes hold {_gb(store)}). "
+                   f"The app is serving, so the deploy stands; it would fail at {DISK_FAIL_PCT}%. See what the nightly prune would remove: "
+                   f"python3 .claude/scripts/provision.py {S['app_id']} --prune-sandboxes")
+    return out
+
+def port_open(address, port, timeout=6):
+    """Does a TCP connection to address:port open from here? A refused or silently dropped one is False."""
+    try:
+        with socket.create_connection((address, int(port)), timeout=timeout): return True
+    except OSError: return False
+def ssh_door_problems(S, probe=port_open):
+    """The outside half of the tunnel's health, measured from this machine (which the firewall treats like any other
+    address on the public side): the SSH port must NOT answer on the public address and MUST answer on the tunnel."""
+    if not S.get("tunnel_on"): return []
+    T = S["tunnel"]; bad = []
+    if probe(S["host"], S["port"]): bad.append(f"port {S['port']} still answers on the server's public address {S['host']} although the tunnel is on")
+    if not probe(T["server_address"], S["port"]): bad.append(f"port {S['port']} does not answer on the tunnel address {T['server_address']}")
+    return bad
 
 # ---------------------------------------------------------------------------------------------------------
 # the bundle and the plan
@@ -1022,10 +1227,10 @@ def plan(S, source_dir, bundle_dir="<bundle>", shown=True):
       {"id": "mkdir", "title": "Make the install directory", "argv": ssh(guarded(S, f"install -d -m 755 {S['install']} {F}")), "timeout": 60},
       {"id": "bundle", "title": "Copy the generated scripts, unit files, Caddyfile and the database tooling", "argv": rsync_argv(S, bundle_dir, F, shown=shown), "timeout": 300},
       {"id": "packages", "title": "Install Node 24, Caddy, PostgreSQL, ufw, fail2ban, nftables; create the service user", "argv": ssh(guarded(S, f"bash {F}/packages.sh")), "script": "packages.sh", "timeout": 1800},
-      {"id": "firewall", "title": f"Firewall: ports {S['port']}, 80, 443 only; fail2ban for ssh; the egress rule for the service user", "argv": ssh(guarded(S, f"bash {F}/firewall.sh")), "script": "firewall.sh", "timeout": 300},
+      {"id": "firewall", "title": (f"Firewall: 80 and 443 only, SSH on the private tunnel only; fail2ban for ssh; the egress rule for the service user" if S["tunnel_on"] else f"Firewall: ports {S['port']}, 80, 443 only; fail2ban for ssh; the egress rule for the service user"), "argv": ssh(guarded(S, f"bash {F}/firewall.sh")), "script": "firewall.sh", "timeout": 300},
       {"id": "postgres", "title": "PostgreSQL on 127.0.0.1 with TLS; the admin password is minted on the server", "argv": ssh(guarded(S, f"bash {F}/postgres.sh")), "script": "postgres.sh", "timeout": 600},
       {"id": "env-config", "title": "Master env file (root, mode 600): the settings derived from state", "argv": ssh(guarded(S, f"{tool} env-merge --file {S['env_file']}")), "stdin": "config", "timeout": 60},
-      {"id": "env-mint", "title": "Master env file: mint the app's own internal secrets on the server (kept if already there)", "argv": ssh(guarded(S, f"{tool} env-mint --file {S['env_file']}")), "timeout": 120},
+      {"id": "env-mint", "title": "Master env file: mint the app's own internal secrets on the server (kept if already there)", "argv": ssh(guarded(S, f"{tool} env-mint --file {S['env_file']}" + (f" --push-subject {shlex.quote(push_subject(S))}" if S["push"] else ""))), "timeout": 120},
       {"id": "env-names", "title": "Env file: which NAMES are present (names only; no value is read back)", "argv": ssh(f"{S['sudo']}{tool} env-names --file {S['env_file']}"), "timeout": 60},
       {"id": "env-secrets", "title": "Env file: the values only the operator holds, from a hidden prompt, sent on stdin", "argv": ssh(guarded(S, f"{tool} env-merge --file {S['env_file']}")), "stdin": "secrets", "timeout": 60},
       {"id": "source", "title": "Copy the SOURCE (never a build) to its final path", "argv": rsync_argv(S, source_dir, S["app_dir"], SOURCE_EXCLUDES, shown=shown), "timeout": 1800},
@@ -1069,6 +1274,7 @@ def print_plan(S, steps, B, crons, gaps, out=print):
         out(f"  NOT READY: the app's code does not yet contain {n} ({what}); that is {where}. A real deploy refuses until it does.")
     out(f"  the operator will be asked (hidden) for whichever of these the server does not hold yet: {', '.join(operator_names(S)) or 'nothing'}")
     out(f"  minted on the server, never here: {', '.join(SERVER_MADE)}")
+    if S["push"]: out(f"  minted on the server for desktop notifications, kept if already there: {', '.join(PUSH_PAIR)} (VAPID_SUBJECT is the operator's email from state)")
     out("")
     for i, st in enumerate(steps, 1):
         out(f"[{i:02d} {st['id']}] {st['title']}")
@@ -1077,6 +1283,9 @@ def print_plan(S, steps, B, crons, gaps, out=print):
         elif st.get("local") == "health-public":
             out(f"    (local) curl --silent --max-time 20 {S['url']}/api/ops/health")
             out(f"    (local) curl --silent --max-time 20 {S['url']}/eve/v1/health")
+            if S["tunnel_on"]:
+                out(f"    (local) open a TCP connection to {S['host']}:{S['port']} (must NOT open: public SSH is closed)")
+                out(f"    (local) open a TCP connection to {S['tunnel']['server_address']}:{S['port']} (must open: SSH on the tunnel)")
         else:
             out("    $ " + shown_cmd(S, st["argv"]))
         if st.get("stdin") == "config":
@@ -1138,7 +1347,7 @@ def dns_problem(S, resolver=resolve):
                 f"{S['host']} where the domain is managed, wait a few minutes, and run this again. Nothing was installed.")
     return None
 
-def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=resolve, read_health=None, say=print, bundle_dir=None, on_started=None, wait=time.sleep):
+def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=resolve, read_health=None, say=print, bundle_dir=None, on_started=None, wait=time.sleep, probe=port_open):
     """Run the plan. Returns {"health", "evidence", "running", "facts"}; raises Stop with one instruction otherwise.
     `runner`, `secrets_for`, `resolver` and `read_health` are injected so the whole sequence runs offline in the
     self-test against recorded answers."""
@@ -1202,7 +1411,8 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
             wait(10)
         api_code = rh(f"{S['url']}/eve/v1/health")[0]
         if api_code != "200": bad.append(f"the agent API did not answer through {S['url']}/eve/v1/health (got {api_code or 'no answer'})")
-        return {"health": health, "problems": bad, "evidence": ev, "facts": facts, "public": public}
+        bad += ssh_door_problems(S, probe)
+        return {"health": health, "problems": bad, "warnings": health_warnings(S, hf), "evidence": ev, "facts": facts, "public": public}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
 
@@ -1321,6 +1531,135 @@ def host_chain(app_dir, env_file, mode, sslmode, measure_only=False, repair=True
         else: open(envloc, "w").write(saved)
     print("EVIDENCE " + json.dumps(got["ev"])); return got["ev"]
 
+def _json_rows(text):
+    """The rows of `msb ... --format json`: a list, or an object holding one. None when it is not that (so the caller
+    removes nothing rather than guess)."""
+    try: doc = json.loads(text or "")
+    except ValueError: return None
+    if isinstance(doc, dict):
+        lists = [v for v in doc.values() if isinstance(v, list)]
+        doc = lists[0] if len(lists) == 1 else None
+    if not isinstance(doc, list) or not all(isinstance(x, dict) for x in doc): return None
+    return doc
+def _row_time(row):
+    """When msb says the thing was last touched (updated, else created), as a POSIX time; None when it does not say."""
+    for k in ("updated_at", "updatedAt", "last_used_at", "lastUsedAt", "stopped_at", "stoppedAt", "created_at", "createdAt"):
+        v = row.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool): return float(v) / (1000 if v > 1e11 else 1)
+        if isinstance(v, str) and v.strip():
+            try:
+                d = datetime.datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+                return (d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)).timestamp()
+            except ValueError: continue
+    return None
+def _tree(path):
+    """(bytes really held on disk, newest modification time) of a directory; (0, None) when it is not there. Disk
+    blocks, not file lengths: a sandbox's upper.ext4 is sparse."""
+    if not os.path.isdir(path): return 0, None
+    size = 0; newest = os.lstat(path).st_mtime
+    for d, dirs, files in os.walk(path):
+        for f in files + dirs:
+            try: st = os.lstat(os.path.join(d, f))
+            except OSError: continue
+            size += st.st_blocks * 512; newest = max(newest, st.st_mtime)
+    return size, newest
+def _proc_cmdlines():
+    out = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit(): continue
+        try: out.append(open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode("utf-8", "replace").strip())
+        except OSError: continue
+    return [c for c in out if c]
+
+def sandbox_prune(home, retention_days=RETENTION_DAYS, dry_run=False, now=None, msb=None, procs=_proc_cmdlines, say=print, tmp_hours=TEMPLATE_TMP_HOURS):
+    """Remove what old chat sessions left in the service user's ~/.microsandbox (mold_v1-153). Runs ON THE SERVER, as the
+    service user, from a nightly timer; `dry_run` lists what it would remove and the bytes, and removes nothing.
+
+    Removed, by msb's own commands:
+      - a SESSION sandbox (eve-sbx-ses-*) that msb says is stopped, that no running process names, and that nothing has
+        touched for `retention_days`;
+      - a session STATE snapshot (eve-sbx-state-*) that old (msb itself refuses one a sandbox was started from);
+      - a template BUILD leftover (eve-sbx-tpl-tmp-*) older than an hour, when no prewarm is running and it is not running.
+    Never: a running sandbox, a template (eve-sbx-tpl-<hash>), anything whose name is not one of eve's, anything whose
+    age or status cannot be read. If msb cannot list, nothing is removed. Returns the exit code."""
+    store = os.path.join(home, ".microsandbox"); now = time.time() if now is None else now
+    binary = os.path.join(store, "bin", "msb")
+    msb = msb or (lambda args: subprocess.run([binary, *args], capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL))
+    head = "DRY RUN (nothing is removed): " if dry_run else ""
+    if retention_days < 1: say("sandbox-prune: --retention-days must be 1 or more; nothing was removed"); return 2
+    try: r = msb(["list", "--format", "json"])
+    except (OSError, subprocess.SubprocessError) as e: say(f"sandbox-prune: could not run msb ({type(e).__name__}); nothing was removed"); return 1
+    boxes = _json_rows(r.stdout) if r.returncode == 0 else None
+    if boxes is None:
+        say("sandbox-prune: `msb list --format json` did not answer with a list, so nothing is known and nothing was removed: " + redact((r.stderr or r.stdout or "").strip()[-200:])); return 1
+    try: r = msb(["snapshot", "list", "--format", "json"])
+    except (OSError, subprocess.SubprocessError): r = None
+    snaps = _json_rows(r.stdout) if r is not None and r.returncode == 0 else None
+    cmds = procs()
+    prewarm = any(("sandbox-prewarm" in c or "sandbox:prewarm" in c) for c in cmds)
+    keep_s = retention_days * 86400; tmp_s = tmp_hours * 3600
+    plan_, kept = [], {"running": 0, "recent": 0, "template": 0, "unknown": 0}
+    def is_template(name): return name.startswith(SBX_TEMPLATE) and not name.startswith(SBX_TEMPLATE_TMP)
+    known = set()
+    for row in boxes:
+        name = str(row.get("name") or ""); status = str(row.get("status") or row.get("state") or "").strip().lower()
+        known.add(name)
+        path = os.path.join(store, "sandboxes", name); size, mtime = _tree(path)
+        last = mtime if mtime is not None else _row_time(row)
+        tmp = name.startswith(SBX_TEMPLATE_TMP)
+        if is_template(name): kept["template"] += 1; continue
+        if not (tmp or name.startswith(SBX_SESSION)): kept["unknown"] += 1; continue
+        if status not in SBX_STOPPED or any(name in c for c in cmds): kept["running"] += 1; continue
+        if last is None: kept["unknown"] += 1; continue
+        if tmp:
+            if prewarm: kept["running"] += 1; continue
+            if now - last < tmp_s: kept["recent"] += 1; continue
+            plan_.append(("template build leftover", name, ["remove", name], size, now - last, status))
+        else:
+            if now - last < keep_s: kept["recent"] += 1; continue
+            plan_.append(("session sandbox", name, ["remove", name], size, now - last, status))
+    # A template build that was killed can leave its directory behind with no row in msb's index: msb cannot remove
+    # what it does not know, so that one directory class (and no other) is deleted directly.
+    sdir = os.path.join(store, "sandboxes")
+    for name in sorted(os.listdir(sdir)) if os.path.isdir(sdir) else []:
+        if name in known or not name.startswith(SBX_TEMPLATE_TMP): continue
+        path = os.path.join(sdir, name)
+        if os.path.islink(path) or not os.path.isdir(path): continue
+        size, mtime = _tree(path)
+        if prewarm or any(name in c for c in cmds): kept["running"] += 1; continue
+        if now - mtime < tmp_s: kept["recent"] += 1; continue
+        plan_.append(("template build leftover (a directory msb has no record of)", name, None, size, now - mtime, "unlisted"))
+    if snaps is None: say("sandbox-prune: `msb snapshot list --format json` did not answer with a list; no snapshot was considered")
+    for row in snaps or []:
+        name = str(row.get("name") or "")
+        if is_template(name): kept["template"] += 1; continue
+        if not name.startswith(SBX_STATE): kept["unknown"] += 1; continue
+        size, mtime = _tree(os.path.join(store, "snapshots", name)); last = mtime if mtime is not None else _row_time(row)
+        if last is None: kept["unknown"] += 1; continue
+        if now - last < keep_s: kept["recent"] += 1; continue
+        plan_.append(("session snapshot", name, ["snapshot", "remove", name], size, now - last, "snapshot"))
+    freed = 0; failed = 0
+    for what, name, args, size, age, status in plan_:
+        idle = f"{age / 86400:.1f} days" if age >= 86400 else f"{age / 3600:.1f} hours"
+        line = f"{what} {name} ({status}, untouched for {idle}, {size / 1048576:.0f} MB)"
+        if dry_run: say(f"  would remove {line}"); freed += size; continue
+        if args is None:
+            path = os.path.realpath(os.path.join(sdir, name))
+            # Only ever a directory directly inside <store>/sandboxes whose name is a template build's.
+            if os.path.dirname(path) != os.path.realpath(sdir) or not os.path.basename(path).startswith(SBX_TEMPLATE_TMP):
+                say(f"  LEFT {line}: its path is not where it should be"); failed += 1; continue
+            shutil.rmtree(path, ignore_errors=True); ok = not os.path.exists(path); err = "the directory could not be deleted"
+        else:
+            try: rr = msb(args); ok = rr.returncode == 0; err = redact((rr.stderr or rr.stdout or "").strip().splitlines()[-1] if (rr.stderr or rr.stdout or "").strip() else "no message")
+            except (OSError, subprocess.SubprocessError) as e: ok = False; err = type(e).__name__
+        if ok: say(f"  removed {line}"); freed += size
+        else: say(f"  LEFT {line}: msb said: {err[:200]}"); failed += 1
+    total, _ = _tree(store)
+    say(f"{head}{len(plan_) - failed} of {len(plan_)} {'would be ' if dry_run else ''}removed, {freed / 1048576:.0f} MB {'to free' if dry_run else 'freed'}; kept: {kept['running']} in use"
+        f"{' (a prewarm is running, so no template build was touched)' if prewarm else ''}, {kept['recent']} newer than {retention_days} days, "
+        f"{kept['template']} templates, {kept['unknown']} not eve's or unreadable. The sandbox store now holds {total / 1048576:.0f} MB.")
+    return 1 if failed else 0
+
 def env_run(env_file, user, home, cwd, cmd):
     """Run one command as the service user with the env file loaded. The file is root's and mode 600, so root
     reads it here and the values pass to the child in its environment, never through a shell or a command line."""
@@ -1367,6 +1706,16 @@ def check(app_id, app, infra, ds, adir, say=print):
     say(f"  then write state: vm_remote.production_url, vm_remote.health, deployed_at, postgres.rls_verified, status stamped (or reverted, with the reason)")
     say(f"values only you hold, asked for at a hidden prompt during the deploy if the server lacks them: {', '.join(operator_names(S)) or 'none'}")
     say(f"minted on the server (not yours to set): {', '.join(SERVER_MADE)}")
+    if S["push"]:
+        say(f"desktop notifications: {', '.join(PUSH_PAIR)} are minted on the server too (kept if already there); VAPID_SUBJECT is the operator's email in state. "
+            f"The web app gets the public key only; the agent, which sends, gets all three")
+    say(f"sandbox disk: a nightly timer removes stopped session sandboxes untouched for {S['retention_days']} days (vm_remote.sandbox.retention_days); health warns at "
+        f"{S['disk_alarm']}% disk and fails at {DISK_FAIL_PCT}%. See what it would remove: python3 .claude/scripts/provision.py {app_id} --prune-sandboxes")
+    if S["tunnel_on"]:
+        say(f"administration tunnel: ON. SSH goes to {S['tunnel']['server_address']} over WireGuard ({S['tunnel']['interface']}); the public address answers on 80 and 443 only. "
+            f"If the tunnel is ever down: docs/RUNBOOK.md §9, \"If the factory cannot reach the server\"")
+    else:
+        say(f"administration tunnel: off, SSH is reached on the public address. See what turning it on would do: python3 .claude/scripts/provision.py {app_id} --tunnel-remote --dry-run")
     todo = []
     if not S["host"] or not S["domain"]:
         todo.append(f"supply the server and the domain (docs/RUNBOOK.md §9): python3 .claude/scripts/provision.py {app_id} --set-remote host=<address> domain=<name>")
@@ -1432,6 +1781,10 @@ def main_for(app_id, a, app, infra, ds, adir, P):
                 say(f"{app_id}: {flag} is for the other targets; this app runs on its own server. Use: "
                     f"python3 .claude/scripts/provision.py {app_id} {instead}"); return 1
         dry = "--dry-run" in a
+        if "--tunnel-remote" in a or "--tunnel-factory" in a:
+            sys.path.insert(0, HERE); import vm_tunnel
+            return vm_tunnel.main_for(app_id, a, S, adir)
+        if "--prune-sandboxes" in a: return prune_remote(S, apply="--apply" in a, dry="--dry-run" in a)
         if not any(f in a for f in ("--deploy-remote", "--qualify-remote", "--verify-rls")):
             return check(app_id, app, infra, ds, adir)
         src = source_for(app_id, app); mold_src = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
@@ -1479,6 +1832,28 @@ def main_for(app_id, a, app, infra, ds, adir, P):
         return run_deploy(app_id, S, app, infra, ds, adir, P, src, crons)
     except Stop as e:
         say(str(e)); return 1
+
+def prune_argv(S, apply=False, shown=False):
+    """The one command behind --prune-sandboxes: the pruner, on the server, as the service user. Without `apply` it is
+    the dry run, which only reads."""
+    cmd = (f"{S['sudo']}runuser -u {SERVICE_USER} -- env HOME={SERVICE_HOME} python3 {S['tool']} sandbox-prune --home {SERVICE_HOME} "
+           f"--retention-days {S['retention_days']}" + ("" if apply else " --dry-run"))
+    return ssh_argv(S, cmd, shown)
+def prune_remote(S, apply=False, dry=False, runner=real_runner, say=print):
+    """`provision.py <app> --prune-sandboxes`: list what the nightly prune would remove on the server, and the bytes.
+    `--apply` removes it now. `--dry-run` prints the command and connects to nothing."""
+    if dry:
+        say(f"DRY RUN for {S['app_id']}: nothing below was run and nothing was contacted.")
+        say("    $ " + shown_cmd(S, prune_argv(S, apply, shown=True))); return 0
+    if not S["host"]: raise Stop(f"{S['app_id']}: the server address is not in state yet, so there is nothing to look at. Nothing was contacted.")
+    if not os.path.isfile(key_path(S)): raise Stop(f"{S['app_id']}: there is no SSH key named {S['key_ref']} on this VM ({key_shown(S)}). Nothing was contacted.")
+    r = runner({"id": "prune-sandboxes", "argv": prune_argv(S, apply), "timeout": 1800})
+    for l in redact(r.stdout or "").splitlines():
+        if l.strip(): say(l[:300])
+    if r.returncode:
+        say(f"{S['app_id']}: the prune did not finish cleanly: " + redact(((r.stderr or "").strip().splitlines() or ["see the lines above"])[-1])[:300]); return 1
+    if not apply: say(f"Nothing was removed. To remove these now: python3 .claude/scripts/provision.py {S['app_id']} --prune-sandboxes --apply")
+    return 0
 
 def prepare_source(app_id, app):
     """The same build copy the Vercel path ships: the brand, then the application's packs. The mold is never edited."""
@@ -1531,6 +1906,7 @@ def run_deploy(app_id, S, app, infra, ds, adir, P, src, crons, deploy_fn=deploy)
         ev["running_app"], ev["running_app_detail"] = running
         P.record_rls(adir, ds, ev)
     problems = list(res["problems"])
+    for w in res.get("warnings") or []: print(f"{app_id}: {w}")
     if S["mode"] != "off" and running[0] != "enforced":
         problems.append(f"the app at {S['url']} does not say row-level security is enforced ({running[0]}: {running[1][:160]})")
     if problems:
@@ -1606,8 +1982,10 @@ def cli(a):
         for why in refused: print("env: " + why, file=sys.stderr)
         print(f"env: {len(added)} name(s) added, {len(changed)} changed" + (f": {', '.join(added + changed)}" if added or changed else "") + " (values not shown)")
         return 1 if refused else 0
+    if cmd == "sandbox-prune":
+        return sandbox_prune(_opt(a, "--home") or os.path.expanduser("~"), int(_opt(a, "--retention-days", str(RETENTION_DAYS))), dry_run="--dry-run" in a)
     if cmd == "env-mint":
-        made = env_mint(f); print("env: minted on this server (values not shown): " + (", ".join(made) if made else "nothing; every internal secret was already present and was kept")); return 0
+        made = env_mint(f, push_subject=_opt(a, "--push-subject", "") or ""); print("env: minted on this server (values not shown): " + (", ".join(made) if made else "nothing; every internal secret was already present and was kept")); return 0
     if cmd == "env-split":
         counts = env_split(f, os.path.dirname(f), load(_opt(a, "--spec")))
         print("env: each service's own file written (root, mode 600; values not shown): " + ", ".join(f"{k}.env {n} names" for k, n in counts.items())); return 0

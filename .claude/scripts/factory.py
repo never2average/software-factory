@@ -289,6 +289,13 @@ def _vm_remote(app_id, docs):
             out.append(f"{f}: vm_remote.ssh_allow_from limits who may reach SSH, but there is no ssh_host saying which address the deploy "
                        f"itself logs in to, so the firewall could close the door the deploy uses — add ssh_host (the server's address on "
                        f"that private network) in {fix}, or delete ssh_allow_from")
+    # Sandbox disk (mold_v1-153): the two optional numbers the nightly prune and the health step read.
+    for key, lo, hi, why in (("retention_days", 1, 365, "days a stopped session's sandbox is kept; 0 would remove a chat's files the night it was used"),
+                             ("disk_alarm_percent", 50, 94, "the percentage at which health warns; it fails at 95 whatever this says")):
+        v = sb.get(key)
+        if isinstance(v, int) and not isinstance(v, bool) and not lo <= v <= hi:
+            out.append(f"{f}: vm_remote.sandbox.{key} is {v} but must be between {lo} and {hi} ({why}) — fix it in {fix}, or delete the line for the default")
+    out += _vm_tunnel(app_id, vr, f, fix)
     sg = vr.get("storage") if isinstance(vr.get("storage"), dict) else {}
     blob = (ds.get("blob") or {}).get("provider")
     if sg.get("driver") == "fs":
@@ -354,10 +361,63 @@ def _vm_remote(app_id, docs):
         elif isinstance(o, str): yield path, o
     for path, v in walk(vr, "vm_remote"):
         if path == "vm_remote.production_url": continue
+        # The tunnel's two PUBLIC keys are public by design and have their own shape rule (_vm_tunnel).
+        if path in ("vm_remote.tunnel.server_public_key", "vm_remote.tunnel.factory_public_key"): continue
         if KEY_MATERIAL.search(v):
             out.append(f"{f}: {path} looks like a key, a password or a URL with a password in it; this file holds NAMES only "
                        f"(the value lives on the server) — replace it with the name in {fix} and treat the value as exposed")
     return out
+def _vm_tunnel(app_id, vr, f, fix):
+    """The private administration tunnel's cross-field rules (mold_v1-156). The one that matters most: state may say
+    the tunnel is on only in the shape `provision.py --tunnel-remote` leaves it, because every later deploy takes its
+    firewall rules and its SSH address from here, and a half-true state would close the door the deploy uses."""
+    import ipaddress
+    t = vr.get("tunnel")
+    if t is None: return []
+    if not isinstance(t, dict): return []          # the schema already said so
+    out = []; on = t.get("enabled") is True
+    how = f"python3 .claude/scripts/provision.py {app_id} --tunnel-remote"
+    net = fa = sa = None
+    try: net = ipaddress.ip_network(str(t.get("network")), strict=True)
+    except ValueError: out.append(f"{f}: vm_remote.tunnel.network {t.get('network')!r} is not a network address (for example 192.168.156.0/30) — fix it in {fix}")
+    for k in ("factory_address", "server_address"):
+        try: v = ipaddress.ip_address(str(t.get(k)))
+        except ValueError: out.append(f"{f}: vm_remote.tunnel.{k} {t.get(k)!r} is not an IPv4 address — fix it in {fix}"); continue
+        if k == "factory_address": fa = v
+        else: sa = v
+    if net is not None:
+        if net.prefixlen not in (30, 31) or not net.is_private:
+            out.append(f"{f}: vm_remote.tunnel.network {net} must be a PRIVATE /30 or /31 that holds only the two machines — choose one inside 192.168.0.0/16 in {fix}")
+        usable = set(net.hosts()) if net.prefixlen == 30 else set(net)
+        for k, v in (("factory_address", fa), ("server_address", sa)):
+            if v is not None and v not in usable:
+                out.append(f"{f}: vm_remote.tunnel.{k} {v} is not a usable address of {net} — fix it in {fix}")
+        if _ip_in(vr.get("host") or "", [str(net)]):
+            out.append(f"{f}: vm_remote.tunnel.network {net} holds the server's public address {vr.get('host')}; the tunnel needs a private network of its own — change it in {fix}")
+    if fa is not None and fa == sa:
+        out.append(f"{f}: vm_remote.tunnel.factory_address and server_address are both {fa}; each machine needs its own — fix it in {fix}")
+    port = t.get("listen_port")
+    if isinstance(port, int) and not isinstance(port, bool) and not 1 <= port <= 65535:
+        out.append(f"{f}: vm_remote.tunnel.listen_port is {port}, which is not a port number (1-65535); 51820 is WireGuard's usual one — fix it in {fix}")
+    if on:
+        lack = [k for k in ("server_public_key", "factory_public_key", "factory_public_address") if not t.get(k)]
+        if lack:
+            out.append(f"{f}: vm_remote.tunnel.enabled is true but {', '.join(lack)} {'is' if len(lack) == 1 else 'are'} missing, which only a completed run writes — "
+                       f"set enabled to false in {fix} and run: {how}")
+        if vr.get("ssh_host") != t.get("server_address"):
+            out.append(f"{f}: vm_remote.tunnel.enabled is true, so SSH is closed on the public address, but ssh_host is {vr.get('ssh_host')!r} and not the server's tunnel "
+                       f"address {t.get('server_address')!r}: every deploy would knock on a closed door — set ssh_host to {t.get('server_address')!r} in {fix}, or if the tunnel "
+                       f"is not really on, set enabled to false and run: {how}")
+        if vr.get("ssh_allow_from") is not None:
+            out.append(f"{f}: vm_remote.tunnel.enabled is true and ssh_allow_from is set; they are two ways of limiting SSH and the firewall follows the tunnel — delete "
+                       f"the ssh_allow_from line from {fix}")
+        if not vr.get("host"):
+            out.append(f"{f}: vm_remote.tunnel.enabled is true but there is no vm_remote.host, the public address the tunnel itself connects to — set enabled to false in {fix}")
+    elif vr.get("ssh_host") is not None and vr.get("ssh_host") == t.get("server_address"):
+        out.append(f"{f}: vm_remote.ssh_host is the tunnel address {vr.get('ssh_host')} but vm_remote.tunnel.enabled is not true, so the deploy would log in over a tunnel "
+                   f"state says is off — delete the ssh_host line from {fix}, or turn the tunnel on: {how}")
+    return out
+
 def _vm_remote_hosts(apps):
     """One server is one Caddyfile, one env file layout and one cluster-global app_rw role (docs/STATE.md), so two
     live vm_remote apps on one host would overwrite each other. `apps` is {app_id: docs}."""
@@ -374,6 +434,23 @@ def _vm_remote_hosts(apps):
                            f"application (one Caddy site, one app_rw role) — give this app its own server and domain in "
                            f"state/application/{app_id}/infrastructure.json")
             else: seen[(k, v)] = app_id
+        # Every tunnel ends on the one factory machine: two apps cannot share an interface name or overlap a network there.
+        t = vr.get("tunnel") if isinstance(vr.get("tunnel"), dict) else {}
+        if t.get("interface"):
+            k = ("tunnel interface", t["interface"])
+            if k in seen: out.append(f"{app_id}/infrastructure.json: vm_remote.tunnel.interface {t['interface']!r} is also {seen[k]}'s; both end on the factory machine, "
+                                     f"where an interface name is used once — change it in state/application/{app_id}/infrastructure.json")
+            else: seen[k] = app_id
+        try:
+            import ipaddress
+            net = ipaddress.ip_network(str(t.get("network")), strict=False) if t.get("network") else None
+        except ValueError: net = None
+        if net is not None:
+            for (kind, other), owner in list(seen.items()):
+                if kind == "tunnel network" and other.overlaps(net):
+                    out.append(f"{app_id}/infrastructure.json: vm_remote.tunnel.network {net} overlaps {owner}'s {other}; both end on the factory machine — "
+                               f"choose another private /30 in state/application/{app_id}/infrastructure.json")
+            seen[("tunnel network", net)] = app_id
     return out
 def _rls_claim(app_id, docs):
     """`"rls": "fail_closed"` used to be a string literal that nothing in the factory ever read: intake

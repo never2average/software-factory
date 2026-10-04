@@ -14,6 +14,11 @@ Everything the server receives is rendered from the application's state by `.cla
     python3 .claude/scripts/provision.py <app_id> --deploy-remote --dry-run [--out DIR]
     python3 .claude/scripts/provision.py <app_id> --deploy-remote              # the operator's, at a terminal
     python3 .claude/scripts/provision.py <app_id> --verify-rls
+    python3 .claude/scripts/provision.py <app_id> --prune-sandboxes [--apply]             # what the nightly prune would remove; --apply removes it now
+    python3 .claude/scripts/provision.py <app_id> --tunnel-remote --dry-run               # the private tunnel: every local and remote command, nothing run
+    python3 .claude/scripts/provision.py <app_id> --tunnel-remote [--factory-apply]       # turn it on, behind the lockout guard
+    python3 .claude/scripts/provision.py <app_id> --tunnel-remote --off [--factory-apply] # back to SSH on the public address
+    python3 .claude/scripts/provision.py <app_id> --tunnel-factory [--apply]              # what the tunnel changes on the factory machine
     python3 .claude/scripts/lib/vm_remote.py --self-test                       # offline; also provision.py --self-test-remote
 
 The operator's click-by-click steps are `docs/RUNBOOK.md` §9. The state fields are `docs/STATE.md`, "infrastructure.vm_remote".
@@ -30,6 +35,9 @@ The operator's click-by-click steps are `docs/RUNBOOK.md` §9. The state fields 
 | `/etc/systemd/system/sf-<app>-{workflow,api,web}.service` | the three services, all on 127.0.0.1 | |
 | `/etc/systemd/system/sf-<app>-cron-<route>.{service,timer}` | six timers, one per `vercel.json` cron, each a loopback `curl` with `CRON_SECRET` on stdin | |
 | `/etc/systemd/system/sf-<app>-egress.service` | loads the nftables rule that keeps `sfapp` off the metadata address and private ranges | |
+| `/etc/systemd/system/sf-<app>-sandbox-prune.{service,timer}` | nightly (03:17): removes stopped session sandboxes and their state snapshots untouched for `sandbox.retention_days` (7), as `sfapp`, with `msb`'s own commands | |
+| `/opt/software-factory/<app_id>/tunnel/` | only with the tunnel: `tunnel.sh` and the server's WireGuard conf (public keys only) | root, 700 |
+| `/etc/wireguard/<interface>.{conf,key}` | only with the tunnel: the conf above, and the server's own key, made there and never read out | root, 600 |
 | `/etc/caddy/Caddyfile` | TLS for the domain; everything to the web app on loopback; `/api/cron/*` answered 404 from outside | |
 | `/etc/postgresql/<v>/main/conf.d/software-factory.conf` | `listen_addresses = '127.0.0.1'`, `ssl = on` | |
 
@@ -58,9 +66,42 @@ into the sandbox deny list, and prewarms the templates one at a time with three 
   automatic certificates and renewal, streaming with `flush_interval -1`. Nothing in this design needs a second proxy. What would
   change that: a certificate the customer must supply themselves, or a network that blocks ports 80 and 443 from Let's Encrypt
   (Caddy can do both, with a `tls <cert> <key>` line or a DNS challenge plugin, so even then the answer is a Caddyfile change).
-- **Room for a private administration tunnel (mold_v1-156, not built).** `vm_remote.ssh_host` is the address SSH connects to when it
-  is not the public `host`, and `vm_remote.ssh_allow_from` is the only source the firewall lets reach the SSH port; `ufw_rules()`
-  takes it as a parameter. Absent, the rule is `ufw allow <ssh_port>/tcp`. Closing public SSH is then two state fields, not a rewrite.
+- **Desktop notifications: the pair is minted on the server, and only the sender holds the private half.** When the mold carries
+  `agent/lib/web-push.ts` and state names an operator email, `env-mint` mints `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` once (kept
+  afterwards: a new pair orphans every subscribed browser) and writes `VAPID_SUBJECT=mailto:<operator>`. In snapshot `4ad0c2c` the web
+  app reads only the public key (`app/api/ops/push/route.ts`: it serves it and answers the subscribe route) and the agent reads all
+  three (`agent/lib/web-push.ts`: it signs and sends). So `web.env` gets the public key, `api.env` all three, `workflow.env` and
+  `cron.env` none; `env-split` refuses a spec that would give the private key to anything but the agent, and `health.sh` reads the
+  NAMES in both running processes and fails the deploy if the web app holds the private key or either side lacks what it reads.
+- **The private administration tunnel (mold_v1-156, `.claude/scripts/lib/vm_tunnel.py`).** WireGuard between the factory machine and
+  the server on a private /30 of their own. Each machine makes its own key in `/etc/wireguard/<interface>.key` and it never leaves:
+  the generated confs hold no private key (`PostUp = wg set %i private-key ...` loads it), and state holds names, addresses and the two
+  PUBLIC keys (`vm_remote.tunnel`). On the server ufw then admits SSH `in on <interface>` only and the WireGuard UDP port from the
+  factory's public address only (read from the SSH login, not typed). sshd is not reconfigured, so one `ufw allow 22/tcp` typed at
+  the provider's out-of-band console re-opens SSH (docs/RUNBOOK.md §9). At DigitalOcean that is the Recovery Console, which needs a
+  root password (Reset Root Password restarts the droplet); the Droplet Console is itself an SSH login on port 22 from addresses
+  DigitalOcean does not publish, so it does NOT work while public SSH is closed. fail2ban is not touched. While `tunnel.enabled`, `ssh_host` is the server's tunnel
+  address (validate requires the two to agree), every SSH and rsync goes there and must meet the host key already known for the public
+  address (`HostKeyAlias`), `ufw_rules()` has no public SSH rule so a deploy keeps it closed, and `firewall.sh` refuses to apply those
+  rules to a server without the interface. The lanes and the outside health read keep using the domain.
+- **The tunnel's lockout guard, in order** (`vm_tunnel.turn_on`; the self-test runs the real `tunnel.sh` against stand-in commands):
+  the server arms a ten-minute `systemd-run` timer whose whole job is `ufw allow 22/tcp`; it brings WireGuard up and ADDS the two
+  rules; the factory brings its side up; the factory logs in over the tunnel, and if that fails the run stops with public SSH exactly
+  as it was; the close is sent over the tunnel, and `tunnel.sh close` itself refuses unless sshd's own `SSH_CONNECTION` says the
+  command came from the factory's tunnel address to the server's and the timer is running; a fresh login over the tunnel then cancels
+  the timer; state is switched last. A confirmation that does not arrive leaves the timer armed, so public SSH comes back by itself.
+  Not covered: a reboot of the server inside those ten minutes loses the timer (a transient unit), though WireGuard comes back at boot.
+- **Sandbox disk (mold_v1-153).** Measured on the first server: about 490 MB left per session (a `eve-sbx-ses-*` sandbox in
+  `~sfapp/.microsandbox/sandboxes`, a `eve-sbx-state-*` snapshot in `snapshots`), and nothing reclaims it; neither eve 0.25.1 nor msb
+  0.5.10 has a retention or a prune for sandboxes. eve resumes a chat from its stopped sandbox, else from its state snapshot, else
+  (both gone) starts a clean sandbox from the template (`execution/sandbox/bindings/microsandbox-lifecycle.js`), so removing an old
+  pair costs that chat the files in its sandbox workspace and nothing else: the conversation, its artifacts and the data room are in
+  Postgres and the storage directory. A nightly timer runs `vm_remote.py sandbox-prune` as `sfapp`: `msb list --format json`, then
+  `msb remove` for session sandboxes that are stopped, named by no running process and untouched for `sandbox.retention_days`, and
+  `msb snapshot remove` (never `--force`) for state snapshots that old. Never a running one, never a template (`eve-sbx-tpl-<hash>`),
+  nothing whose status or age it cannot read, and nothing at all if msb cannot list. `eve-sbx-tpl-tmp-*` leftovers of a killed prewarm
+  go after an hour when no prewarm is running; one of those that msb has no record of is the only directory it deletes itself.
+  `health.sh` reports the disk and the store: a warning from `sandbox.disk_alarm_percent` (80), a failure at 95.
 - **A real deploy refuses until the mold carries three switches and one script**: `SANDBOX_BACKEND` (fde-agent #100), `STORAGE_DRIVER`
   (#103), `SERVICE_AUTH` (#99), and the `sandbox:prewarm` npm script (#100). All four are in snapshot `da581f2`. Every name
   `config_pairs` writes is one that snapshot reads; the self-test checks it name by name against the snapshot in the checkout.
@@ -75,6 +116,14 @@ into the sandbox deny list, and prewarms the templates one at a time with three 
   with a deny list that holds the address (`s3` storage is the other way out).
 
 ## What only a real server can prove
+
+**The three additions of 2026-10-04 (notification keys, the tunnel, the sandbox prune) have not been run on a server.** Offline, the
+tunnel's server script was executed against stand-in `ufw` / `systemctl` / `systemd-run` / `wg` commands and the prune against a
+fixture tree and a stand-in `msb`. Still to see on the real one: that `ufw show added` prints the two tunnel rules in the words
+`tunnel_rules()` expects (if not, the deploy's firewall step resets to the same rules every time, which is harmless, and the health
+step's tunnel-rule read fails and says so); that `wg-quick` accepts a conf whose key arrives by `PostUp`; that the `systemd-run`
+timer fires; the field names of `msb list --format json` (the prune needs `name` and `status`, takes ages from the directories, and
+removes nothing it cannot read); and that `msb remove` frees the space the soak test measured.
 
 Listed in full in the pull request that added this target, and as task mold_v1-150. In short: every generated script has been parsed
 and none has been run; the unit files, the Caddyfile and the nftables rule have never been loaded; no microVM has been started by

@@ -6,6 +6,8 @@
   provision.py --self-test-remote   offline checks of the vm_remote target (same as lib/vm_remote.py --self-test)
   provision.py <app_id> [--set-remote host=.. domain=..] [--remote-key] [--qualify-remote]
                         [--deploy-remote [--dry-run [--out DIR]]]      target=vm_remote only; see below
+                        [--prune-sandboxes [--apply]] [--tunnel-remote [--dry-run] [--factory-apply] [--off]] [--tunnel-factory [--apply]]
+                                                                       target=vm_remote only; lib/vm_remote.py and lib/vm_tunnel.py
 
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
   projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare

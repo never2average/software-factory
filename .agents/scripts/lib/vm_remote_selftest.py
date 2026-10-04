@@ -91,6 +91,8 @@ def run():
             _operator_commands(check, tmp)
             _lanes(check)
             _brief_to_plan(check, tmp)
+            import vm_tunnel_selftest as more
+            more.push(check, tmp); more.prune(check, tmp); more.tunnel(check, tmp)
             check("the whole self-test opened no socket and started no ssh/rsync/curl", not net.tripped, net.tripped)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -99,7 +101,8 @@ def run():
         print("vm_remote self-test FAILED:\n  " + "\n  ".join(fails)); return 1
     print(f"vm_remote self-test ok: {n[0]} checks (state rules, generated scripts, unit and timer files, Caddyfile, firewall, "
           f"env file without leaks, one env file per service with no private key for the agent, storage names, sandbox deny list and "
-          f"the storage conflict it refuses, host qualification, dry-run plan, deploy sequence, database chain order, records, lanes); "
+          f"the storage conflict it refuses, host qualification, dry-run plan, deploy sequence, database chain order, records, lanes, desktop-notification keys per service, "
+          f"sandbox pruning on a fixture tree with a stand-in msb, the private tunnel and its lockout guard run against stand-in commands); "
           f"offline, nothing contacted, nothing on this machine changed")
     return 0
 
@@ -198,7 +201,7 @@ def _generated_files(check, tmp):
     check("  ...with a sentence naming the route", isinstance(out, V.Stop) and "/api/cron/nightly" in str(out), out)
     check("a source without vercel.json falls back to the six", V.read_crons(os.path.join(tmp, "nowhere")) == list(V.CRONS))
     U = V.unit_files(S, crons); svc, tim = V.unit_names(S, crons)
-    app_units = [k for k in U if k.endswith(".service") and "-cron-" not in k and "-egress" not in k]
+    app_units = [k for k in U if k.endswith(".service") and "-cron-" not in k and "-egress" not in k and "-sandbox-prune" not in k]
     check("exactly three application services", sorted(app_units) == sorted(svc) and len(svc) == 3, app_units)
     check("exactly six timers, each with its service", len(tim) == 6 and all(t in U and t.replace(".timer", ".service") in U for t in tim), tim)
     api = U[f"{S['unit']}-api.service"]
@@ -303,7 +306,7 @@ def _generated_files(check, tmp):
     check("  ...and they are in the written bundle, byte for byte", open(os.path.join(out, ".claude/scripts/provision.py"), "rb").read() == open(os.path.join(SCRIPTS, "provision.py"), "rb").read())
     check("generation is deterministic: a second bundle is identical (a re-run changes nothing by itself)", V.bundle(_settings(), V.read_crons(mold)) == B)
     hv, bad = V.health_verdict(S, V.parse_kv(fx("health-ok.txt")), crons)
-    check("a healthy server's answer is accepted", bad == [] and hv == {"workflow": "200", "api": "200", "web": "200", "kvm": "ok"}, (hv, bad))
+    check("a healthy server's answer is accepted", bad == [] and hv == {"workflow": "200", "api": "200", "web": "200", "kvm": "ok", "push": "on", "disk_percent": 21, "sandbox_store_mb": 15462}, (hv, bad))
     def sick(**kw): return V.health_verdict(S, dict(V.parse_kv(fx("health-ok.txt")), **kw), crons)
     for label, kw, needle, kvm in (("Postgres open to the internet", {"PUBLIC_LISTENERS": "22 80 443 5432"}, "5432", "ok"),
                                    ("the API as root", {"API_USER": "root"}, "non-root", "ok"),
@@ -585,7 +588,7 @@ def _plan_and_dry_run(check, tmp):
     check("a non-root login runs every changing step through sudo", p2["packages"]["argv"][-1].startswith("sudo env SF_REMOTE_DEPLOY=") and "sudo rsync" in p2["source"]["argv"], p2["packages"]["argv"][-1])
     lines = []; V.print_plan(S, steps, B, crons, V.mold_gaps(mold), out=lines.append); text = "\n".join(lines)
     check("the dry run prints every step, its local command and its remote script", all(f"[{i:02d} {sid}]" in text for i, sid in enumerate(STEP_IDS, 1)) and all(f"remote script factory/{s['script']}:" in text for s in steps if s.get("script")))
-    check("  ...every generated file, unit and timer included", all(f"--- factory/{k}" in text for k in B if k not in {s.get("script") for s in steps}) and text.count("OnCalendar=") == 6)
+    check("  ...every generated file, unit and timer included", all(f"--- factory/{k}" in text for k in B if k not in {s.get("script") for s in steps}) and text.count("OnCalendar=") == 7)      # the six cron timers and the nightly sandbox prune
     check("  ...says twice that nothing was run, and never shows a key path or a secret value", text.startswith("DRY RUN") and lines[-1].endswith("nothing was run and nothing was contacted.") and os.path.expanduser("~/.ssh") not in text and "~/.ssh/sf_vm_remote_fixture" in text)
     check("  ...lists the operator's names and says they are typed hidden", "CLOUDFLARE_API_TOKEN" in text and "hidden" in text and "minted on the server, never here" in text)
     d = fixture_docs()
