@@ -57,6 +57,11 @@ ROOT = os.path.dirname(os.path.dirname(SCRIPTS))
 FIXTURE = os.path.join(SCRIPTS, "fixtures", "vm_remote", "vm_remote_fixture")
 
 SERVICE_USER = "sfapp"
+# The service user's HOME, deliberately SHORT. microsandbox keeps each VM's agent socket under ~/.microsandbox, and
+# a Unix socket path must be under 108 bytes: with HOME at <data>/home (47 bytes for a 16-character app id) every
+# template failed with "agent relay socket path is too long: shortest derived path is 109 bytes" on the first real
+# server (2026-10-04). One app per server (factory.py validate refuses a shared host), so one fixed path is enough.
+SERVICE_HOME = "/var/lib/sfapp"
 PORTS = {"web": 3000, "api": 3001, "workflow": 3002}
 HOST_MIN = {"mem_mb": 7500, "vcpu": 4, "disk_free_gb": 20}      # an "8 GB" machine reports about 7.9 GB
 OS_OK = (("ubuntu", "24.04"),)
@@ -547,7 +552,7 @@ User=@USER@
 Group=@USER@
 EnvironmentFile=@ENV@
 Environment=NODE_ENV=production
-Environment=HOME=@DATA@/home
+Environment=HOME=/var/lib/sfapp
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
@@ -785,9 +790,9 @@ if [ ! -d /usr/lib/postgresql/@PGV@ ]; then
   apt-get install -y -q postgresql-@PGV@
 fi
 getent group kvm >/dev/null || groupadd --system kvm
-id @USER@ >/dev/null 2>&1 || useradd --system --user-group --home-dir @DATA@/home --no-create-home --shell /usr/sbin/nologin @USER@
+id @USER@ >/dev/null 2>&1 || useradd --system --user-group --home-dir /var/lib/sfapp --no-create-home --shell /usr/sbin/nologin @USER@
 install -d -m 755 /opt/software-factory @INSTALL@ @FACTORY@
-install -d -m 750 -o @USER@ -g @USER@ @APPDIR@ @DATA@ @DATA@/home @DATA@/workflow-data @DATA@/task-workflow-data @DATA@/storage @DATA@/build-stamps
+install -d -m 750 -o @USER@ -g @USER@ @APPDIR@ @DATA@ /var/lib/sfapp @DATA@/workflow-data @DATA@/task-workflow-data @DATA@/storage @DATA@/build-stamps
 install -d -m 700 /etc/software-factory @ENVDIR@
 echo "packages: node $(node -v), $(caddy version | cut -d' ' -f1), postgresql @PGV@, service user @USER@"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), PGV=v, USER=SERVICE_USER, DATA=S["data"],
@@ -825,7 +830,7 @@ def env_split_cmd(S):
 
 def build_sh(S, crons):
     svc, tim = unit_names(S, crons)
-    run = lambda k: f"python3 {S['tool']} env-run --file {S['env_files'][k]} --user {SERVICE_USER} --home {S['data']}/home --cwd"
+    run = lambda k: f"python3 {S['tool']} env-run --file {S['env_files'][k]} --user {SERVICE_USER} --home {SERVICE_HOME} --cwd"
     return fill("""#!/bin/bash
 @HEAD@# Build IN PLACE at the final path: the eve build embeds absolute paths and cannot be moved afterwards.
 # One build at a time (each peaks at 2-3 GB on an 8 GB machine). The services are stopped first, because the
