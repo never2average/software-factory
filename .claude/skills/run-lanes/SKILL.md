@@ -42,11 +42,13 @@ where it appears, the check's `expect.skip_on` records the check `skipped` (its 
 lane is `skipped`, never `pass`, with one product surface unopened. `skip_on` is judged after `exit`/`stdout`/
 `stdout_not`, so a measured failure is never hidden by it.
 
-For a `target: vm_remote` application (a server of its own) the same checks grade `infrastructure.vm_remote.production_url`:
-`lanes.py` answers that `state` precondition and the `lane-url.py` calls from `.claude/scripts/lib/lane_url.py` (the URL only
-counts once a deploy recorded it), and appends the target's own checks from `.claude/scripts/lane-overlays/vm_remote/<lane>.json`:
-today `tool.python` in the functional lane, which asks the deployed agent to run one python3 command and passes only when a tool
-result on the stream carries the computed line. A check that needs the app's `DATABASE_URL` on this VM is `skipped` there (the
+For a `target: vm_remote` application (a server of its own) the same checks grade `infrastructure.vm_remote.production_url`.
+The lane decides that, in its own folder: `<lane>/lane-url.py` and `functional/tenant-isolation.py` read that address (it only
+counts once a deploy recorded it), so the `rls.health` row measures the app on its server; `lanes.py` rewrites nothing. A check
+that exists for one target only says so with `targets` in its `lane.json`: today `tool.python` in the functional lane
+(`targets: ["vm_remote"]`), which asks the deployed agent to run one python3 command and passes only when a tool result on the
+stream carries the computed line. For any other target that check is not listed, not run and not counted. An instruction in a
+`lane.json` names the deploy command with `{deploy}` (`--deploy`, or `--deploy-remote` for vm_remote). A check that needs the app's `DATABASE_URL` on this VM is `skipped` there (the
 value never leaves the server); the functional `rls` row measures isolation on the server instead.
 
 Anything richer than an exit code belongs in a harness script in the lane folder that prints a

@@ -25,6 +25,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 S = os.path.join(ROOT, ".claude", "scripts")
 GAP = 300   # seconds of silence after which the session is counted as idle, not working
 
+sys.path.insert(0, os.path.join(S, "lib"))
+import lane_url   # target_url(infra): the application's address, per deploy target
+
 def load(p): return json.load(open(p))
 def ts(s): return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
 def hm(sec): sec = int(sec); return f"{sec // 3600}h {sec % 3600 // 60:02d}m"
@@ -125,7 +128,7 @@ def build(app_id, live=True):
     app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
     sessions = [s for s in (read_session(p, app_id) for p in sorted(glob.glob(os.path.join(transcripts_dir(), "*.jsonl")))) if s]
     cal = calendar(app_id, app); now = dt.datetime.now(dt.timezone.utc).isoformat()
-    return dict(app_id=app_id, generated_at=now, status=app.get("status"), url=(infra.get("vercel") or {}).get("production_url"), packs=app.get("packs") or [],
+    return dict(app_id=app_id, generated_at=now, status=app.get("status"), url=lane_url.target_url(infra), target=infra.get("target"), packs=app.get("packs") or [],
                 sessions=sessions, calendar=cal, lanes=lanes(app_id, app["mold_id"]),
                 upstream=upstream(app["mold_id"], cal["first_commit"], now) if live else None,
                 running_app=running_app(app_id, infra) if live and infra.get("target") == "vercel" else None)
@@ -156,8 +159,8 @@ def markdown(r):
     ra = r["running_app"]
     if ra is not None: L.append(f"| Inference the live app has spent | ${sum(x['cost'] for x in ra):,.2f} | measured: the app's own run table, {sum(x['runs'] for x in ra)} run(s) across {len(ra)} workspace(s). Runs that recorded no cost count as $0. |")
     else: L.append("| Inference the live app has spent | not measured | the app's run table could not be read from here |")
-    L += ["| Hosting (Vercel: three projects, builds, functions) | not measured | vercel.com → the team → Usage. No per-project invoice is readable from this machine. |",
-          "| Database and file store (Neon, Vercel Blob) | not measured | the Vercel team's Storage tab; both start on free allowances |",
+    L += hosting_rows(r.get("target"))
+    L += [
           "| Model provider account (Cloudflare Workers AI) | not measured | dash.cloudflare.com → AI → Workers AI → usage; the row above is the app's own count of the same spend |",
           "| Email (Resend), web search (Exa) | not measured | each provider's usage page; both keys are shared with the operator's other apps |",
           "", "## Reading it", "",
@@ -169,13 +172,23 @@ def markdown(r):
         L += [f"| {e['station']} | {e['start'][:16]}Z | {hm(e['seconds'])} | {'ok' if e['ok'] else 'did not finish'} |" for e in r["calendar"]["stations"]]
     return "\n".join(L) + "\n"
 
+def hosting_rows(target):
+    """The two hosting lines, by deploy target. A server of the application's own has one bill, the server's."""
+    if target == "vm_remote":
+        return ["| Hosting (the application's own server: the three services, the builds, the sandboxes) | not measured | the server provider's invoice; one fixed monthly price (docs/COST_MODEL.md §7) |",
+                "| Database and file store (PostgreSQL and the files, on the same server) | not measured | included in the server's price; nothing is billed separately |"]
+    return ["| Hosting (Vercel: three projects, builds, functions) | not measured | vercel.com → the team → Usage. No per-project invoice is readable from this machine. |",
+            "| Database and file store (Neon, Vercel Blob) | not measured | the Vercel team's Storage tab; both start on free allowances |"]
+
 def self_test():
     t = [ts("2026-01-01T00:00:00Z") + dt.timedelta(seconds=s) for s in (0, 60, 120, 5000, 5100)]
     assert active_seconds(t) == 220, active_seconds(t)
     assert weighted({"input_tokens": 10, "cache_read_input_tokens": 100, "output_tokens": 2, "cache_creation": {"ephemeral_1h_input_tokens": 5, "ephemeral_5m_input_tokens": 0}}) == 40
     assert hm(3725) == "1h 02m" and hm(59) == "0h 00m"
     assert ts("2026-09-18T12:04:27.593Z").year == 2026
-    print("mint_report: 5 checks passed"); return 0
+    assert "Vercel" in hosting_rows("vercel")[0] and hosting_rows(None) == hosting_rows("vercel") and "own server" in hosting_rows("vm_remote")[0] and "Vercel" not in "".join(hosting_rows("vm_remote"))
+    assert lane_url.target_url({"target": "vm_remote", "deployed_at": "2026-10-04T00:00:00+00:00", "vm_remote": {"domain": "a.example.com", "production_url": "https://a.example.com"}}) == "https://a.example.com"
+    print("mint_report: 7 checks passed"); return 0
 
 def main(a):
     if "--self-test" in a: return self_test()

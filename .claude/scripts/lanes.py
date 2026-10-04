@@ -56,13 +56,13 @@ the next free `-2`, `-3`), and is left read-only. `testing.<lane>.report` and, a
 cite that path, so re-running the same lane for the same app on the same day cannot swap out the evidence
 behind a revert record that is still standing; it writes its own file beside it.
 
-WHICH URL IS GRADED depends on the deploy target (mold_v1-078), and is decided in one place, lib/lane_url.py:
-vercel.production_url for a vercel application, exactly as before; vm_remote.production_url for a vm_remote one
-(only once a deploy recorded it). The mold's lane.json files name `infrastructure.vercel.production_url` and call
-`<lane>/lane-url.py`; for a vm_remote application this runner answers both from lib/lane_url.py, so every check
-grades that application's own address without a second copy of the check. Checks that exist for one target only
-live in .claude/scripts/lane-overlays/<target>/<lane>.json and are appended to the mold's lane for an application
-of that target (today: the functional lane's `tool.python` for vm_remote, a real python tool call in the sandbox).
+WHICH URL IS GRADED depends on the deploy target, and the LANE says so, not this runner (mold_v1-154): the mold's
+`<lane>/lane-url.py` and `functional/tenant-isolation.py` read vercel.production_url for a vercel application and
+vm_remote.production_url for a vm_remote one (only once a deploy recorded it). The runner rewrites nothing in a
+lane's commands. It offers two things a lane.json may use: the placeholder {deploy}, the flag of the one deploy
+command the application's target has (`--deploy`, or `--deploy-remote` for vm_remote), and a check's `targets`
+list, which makes a check exist for those targets only (today: the functional lane's `tool.python` for vm_remote,
+a real python tool call in the sandbox). For any other target such a check is not run, not listed and not counted.
 """
 import datetime, json, os, re, subprocess, sys
 
@@ -71,8 +71,7 @@ ST = os.path.join(ROOT, "state")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import factory   # _check for lane.json; `add` is SHELLED OUT, never re-implemented (it allocates task ids)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
-import lane_url  # the deployed URL per target, shared with the checks that ask for it on the command line
-OVERLAYS = os.path.join(ROOT, ".claude/scripts/lane-overlays")
+import lane_url  # {url}: the deployed URL per target (the lanes' own lane-url.py decides what a CHECK grades)
 TODAY = datetime.date.today().isoformat()
 LANES = ["functional", "context", "load", "accessibility", "responsiveness"]   # the contract's order
 DEFAULT_ORDER = {n: (i + 1) * 10 for i, n in enumerate(LANES)}
@@ -148,24 +147,14 @@ def reserve_report(rdir, app_id, stamp):
 def subst(s, ctx):
     for k, v in ctx.items():
         if not k.startswith("_"): s = s.replace("{" + k + "}", str(v))
-    for rx, new in ctx.get("_rewrite") or (): s = rx.sub(new, s)
     return s
 
-def target_rewrites(app_id, infra, testing):
-    """For a vm_remote application only: what the mold's lane.json says in vercel's words, said in this target's.
-    The mold's `<lane>/lane-url.py` reads vercel.production_url and nothing else, so its calls go to the runner's
-    lib/lane_url.py; and an instruction that ends `--deploy` names the one deploy this target has. Empty for every
-    other target: a vercel or vm application's commands are run exactly as the lane declares them."""
-    if (infra or {}).get("target") != "vm_remote": return []
-    mine = os.path.join(ROOT, ".claude/scripts/lib/lane_url.py")
-    out = [(re.compile(re.escape(os.path.join(testing, lane, "lane-url.py"))), mine) for lane in ("accessibility", "responsiveness")]
-    out.append((re.compile(r"(provision\.py " + re.escape(app_id) + r" --deploy)(?![-\w])"), r"\1-remote"))
-    return out
+def deploy_flag(infra):
+    """{deploy}: the flag of the one deploy command this application's target has. A lane.json writes its
+    instruction once (`provision.py {app_id} {deploy}`) and it names a command the operator can really type."""
+    return "--deploy-remote" if (infra or {}).get("target") == "vm_remote" else "--deploy"
 
 def state_get(docs, path):
-    if path == "infrastructure.vercel.production_url" and (docs.get("infrastructure") or {}).get("target") == "vm_remote":
-        # "is it deployed?", asked in vercel's words by the mold's lane.json; a vm_remote app answers with its own URL.
-        return lane_url.target_url(docs["infrastructure"]) or None
     doc, _, rest = path.partition(".")
     cur = docs.get(doc)
     for k in [x for x in rest.split(".") if x]:
@@ -285,29 +274,15 @@ def read_spec(lane, mold_id):
     if len(set(names)) != len(names): die(f"{os.path.relpath(f, ROOT)}: duplicate check names. Nothing ran.")
     return spec
 
-def with_overlay(spec, lane, mold_id, docs):
-    """The lane's spec plus the checks this application's TARGET adds (lane-overlays/<target>/<lane>.json).
-
-    A mold's lane.json describes the product; a check that only makes sense on one deploy target (a python tool
-    call in a self-hosted sandbox) is the target's, and is declared beside the runner in the same shape and
-    validated against the same lane.schema.json. No overlay, or a lane with no harness: the spec unchanged."""
+def for_target(spec, docs):
+    """The lane's spec as it stands for THIS application's deploy target: a check that names `targets` exists only
+    for an application of one of them. For any other target it is dropped before anything is listed, run or
+    counted, so it can neither fail the lane nor leave it `skipped`. A check without `targets` is every target's.
+    No harness, or nothing to drop: the spec itself, unchanged."""
+    if not spec: return spec
     target = (docs.get("infrastructure") or {}).get("target")
-    f = os.path.join(OVERLAYS, str(target), f"{lane}.json")
-    if not spec or not os.path.isfile(f): return spec
-    rel = os.path.relpath(f, ROOT)
-    try: ov = load(f)
-    except Exception as x: die(f"{rel} is not valid JSON: {x}. Nothing ran.")
-    sp = next((p for p in (os.path.join(ROOT, "molds", mold_id, "testing", "lane.schema.json"),
-                           os.path.join(ROOT, "molds/mold_v1/testing/lane.schema.json")) if os.path.exists(p)), None)
-    if sp:
-        sch = load(sp); errs = factory._check({"lane": lane, "checks": ov.get("checks", [])}, _deref(sch, sch), rel)
-        if errs: die("\n".join(errs) + f"\n{rel} does not match lane.schema.json. Nothing ran.")
-    if ov.get("lane") != lane or ov.get("target") != target:
-        die(f"{rel} declares lane {ov.get('lane')!r} for target {ov.get('target')!r} but sits at {target}/{lane}.json. Nothing ran.")
-    names = {c["name"] for c in spec.get("checks", [])}
-    dup = [c["name"] for c in ov.get("checks", []) if c["name"] in names]
-    if dup: die(f"{rel}: {', '.join(dup)} is already a check of the mold's {lane} lane; one report row would hide the other. Nothing ran.")
-    return dict(spec, checks=list(spec.get("checks", [])) + list(ov.get("checks", [])))
+    keep = [c for c in spec.get("checks", []) if "targets" not in c or target in c["targets"]]
+    return spec if len(keep) == len(spec.get("checks", [])) else dict(spec, checks=keep)
 
 def context(app_id, lane, mold_id, docs, report):
     infra = docs.get("infrastructure") or {}
@@ -337,7 +312,7 @@ def context(app_id, lane, mold_id, docs, report):
     return {"app_id": app_id, "root": ROOT, "mold": mold, "codebase": codebase, "default_codebase": default_codebase,
             "product_name": re.escape(product_name),
             "testing": os.path.join(mold, "testing"), "lane": lane, "date": TODAY, "url": url, "report": report,
-            "_rewrite": target_rewrites(app_id, infra, os.path.join(mold, "testing"))}
+            "deploy": deploy_flag(infra)}
 
 def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet_lane, not_run,
                 run_at, stamp, cmdline, dry=False):
@@ -456,7 +431,7 @@ def main(a):
         if r.returncode: die(f"{app_id} has packs and its lane copies could not be built: {(r.stdout + r.stderr).strip()[-400:]} Nothing ran.")
     commit = docs["application"].get("mold_commit") or next((m.get("source", {}).get("commit", "?") for m in
              load(os.path.join(ST, "factory.json"))["molds"] if m["mold_id"] == mold_id), "?")
-    specs = {l: with_overlay(read_spec(l, mold_id), l, mold_id, docs) for l in LANES}
+    specs = {l: for_target(read_spec(l, mold_id), docs) for l in LANES}
     tdir = os.path.join(ROOT, "molds", mold_id, "testing")
     extra = sorted(d for d in (os.listdir(tdir) if os.path.isdir(tdir) else [])
                    if d not in LANES and os.path.exists(os.path.join(tdir, d, "lane.json")))

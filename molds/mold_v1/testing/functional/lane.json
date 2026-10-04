@@ -190,9 +190,8 @@
           "else": "This app did not ask for tenant isolation (datastores.postgres.rls is \"off\"), so there is nothing to prove. Set it in state/application/{app_id}/datastores.json if it should be isolated."
         },
         {
-          "state": "infrastructure.vercel.production_url",
-          "must": "nonempty",
-          "else": "Deploy it first, then re-run: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "cmd": "python3 {testing}/functional/tenant-isolation.py {app_id} --deployed",
+          "else": "Deploy it first, then re-run: python3 .claude/scripts/provision.py {app_id} {deploy}"
         }
       ]
     },
@@ -214,7 +213,7 @@
       "requires": [
         {
           "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
-          "else": "This check reads the deployed sign-in page and this application has no URL yet: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "This check reads the deployed sign-in page and this application has no URL yet: python3 .claude/scripts/provision.py {app_id} {deploy}"
         }
       ]
     },
@@ -236,11 +235,41 @@
       "requires": [
         {
           "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
-          "else": "This check talks to the deployed agent and this application has no URL yet: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "This check talks to the deployed agent and this application has no URL yet: python3 .claude/scripts/provision.py {app_id} {deploy}"
         },
         {
           "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 300",
           "else": "No usable session: a chat turn runs as a signed-in person. Sign in to the app yourself and re-run the lane with that browser's `workspace-google-token` in MOLD_V1_SESSION_TOKEN, or (simpler) ask the factory to request a one-time emailed code, paste it into the chat, and it exchanges the code for a session for one run. Until then this check is `skipped` and so is the LANE: never `pass`."
+        }
+      ]
+    },
+    {
+      "name": "tool.python",
+      "targets": [
+        "vm_remote"
+      ],
+      "cwd": "root",
+      "timeout_s": 330,
+      "emits": "markdown_table",
+      "run": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/functional/tool-python.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" --timeout 240",
+      "why": "mold_v1-078: off Vercel the agent's sandbox is a KVM microVM the API starts itself as a non-root user. If /dev/kvm, the kvm group, the prewarmed templates or the microVM itself is broken, chat still answers and every tool call fails. This asks the deployed agent to run one python3 command and passes only when a tool result on the stream carries the computed line, which the prompt does not contain. A check of the vm_remote target only (`targets`): on Vercel the sandbox is Vercel's own, so for any other target this row does not exist, and is neither run nor counted.",
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "tool\\.python: pass"
+        ],
+        "stdout_not": [
+          "tool\\.python: fail"
+        ]
+      },
+      "requires": [
+        {
+          "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
+          "else": "This check talks to the deployed agent and this application has no address yet: python3 .claude/scripts/provision.py {app_id} {deploy}"
+        },
+        {
+          "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 300",
+          "else": "No usable session: a tool call runs as a signed-in person. Sign in to the app yourself and re-run the lane with that browser's `workspace-google-token` in MOLD_V1_SESSION_TOKEN, or ask the factory to request a one-time emailed code, paste it into the chat, and it exchanges the code for a session for one run. Until then this check is `skipped` and so is the LANE: never `pass`."
         }
       ]
     }

@@ -368,6 +368,22 @@
               ],
               "description": "Desktop notifications, by NAME only: on when the running web app holds VAPID_PUBLIC_KEY and the running agent holds all three VAPID names."
             },
+            "users": {
+              "type": "string",
+              "enum": [
+                "separate",
+                "not_separate"
+              ],
+              "description": "One system user per service (mold_v1-158): separate when the web app, the agent API and the task-workflow service each run as their own user, only the agent API's process is in group kvm, and the agent's user was refused, when it tried, the web app's env file, the running web app's environment under /proc, and write access to code another service runs."
+            },
+            "egress_ssh": {
+              "type": "string",
+              "enum": [
+                "blocked",
+                "open"
+              ],
+              "description": "Whether the app's users (so the agent's sandboxes) are kept off this server's own SSH port on its own addresses: blocked when the egress rule is loaded and a connection tried as the agent's user did not open."
+            },
             "tunnel": {
               "type": "string",
               "enum": [

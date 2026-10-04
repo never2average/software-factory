@@ -12,6 +12,10 @@ Called by provision.py for an application whose infrastructure.target is "vm_rem
                                                  file, in order, WITHOUT connecting; --out also writes the bundle
   provision.py <app_id> --deploy-remote          the deploy
   provision.py <app_id> --verify-rls [--no-repair]   re-prove tenant isolation on the server's database and running app
+  provision.py <app_id> --workspace-remote [seed.json] [--new-workspace] [--dry-run]
+                                                 write the brief's workspace, its people and its companies into the server's
+                                                 database (mold_v1-152): run ON the server, as the web app's user, through
+                                                 the app role under row-level security; safe to repeat
   provision.py <app_id> --tunnel-remote [--dry-run] [--factory-apply] [--off]
                                                  the private administration tunnel (mold_v1-156, lib/vm_tunnel.py):
                                                  WireGuard between this machine and the server, SSH on the tunnel only
@@ -31,24 +35,31 @@ WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step i
                   Anything short is refused in plain words before a single package is installed.
    2 dns          the domain must already point at the server, or Caddy cannot get a certificate.
    3 bundle       the generated scripts, unit files, Caddyfile and the factory's database tooling -> <install>/factory
-   4 packages     Node 24, Caddy, PostgreSQL, ufw, fail2ban, nftables; the service user `sfapp` (no login, no sudo)
-   5 firewall     ufw: the SSH port, 80 and 443 only; fail2ban for ssh; an egress rule that keeps the service user
-                  off the cloud metadata address and the private ranges. No Docker rule: there is no Docker.
+   4 packages     Node 24, Caddy, PostgreSQL, ufw, fail2ban, nftables; the accounts: one user per service (sfweb, sfapp
+                  for the agent API, sfwork) and sfbuild for the code, none with a login or sudo (mold_v1-158)
+   5 firewall     ufw: the SSH port, 80 and 443 only; fail2ban for ssh; an egress rule that keeps the app's users off
+                  the cloud metadata address, the private ranges, and this server's own SSH port on every address it
+                  holds (443 there stays open: a sandbox fetches data-room files from it). No Docker rule: no Docker.
    6 postgres     the app's own cluster on 127.0.0.1, TLS on; the admin password is minted ON the server
    7 env          the master env file, mode 600, root-owned: settings from state, secrets minted on the server, and the
                   operator's own values from a hidden prompt (or from named environment values), sent on stdin. Each
                   service reads only its own file split from it (web.env, api.env, workflow.env, cron.env; root, 600):
                   the agent's holds the sign-in PUBLIC key only, the workflow service's only the three names it reads
    8 source       rsync the SOURCE (never a build) to <install>/app
-   9 build        stop the services, then build IN PLACE, one build at a time: the build embeds absolute paths
+   9 build        stop the services; users.sh hands each service's directories to its own user (on a server that ran
+                  everything as one user this is the move: nothing is moved or deleted, the sandbox store and the file
+                  store keep their owner); then build IN PLACE as sfbuild, one build at a time (the build embeds
+                  absolute paths); seal.sh then sets who may read and who may write the code
   10 database     the SAME chain as the Vercel path (provision.SCHEMA_CHAIN through provision._run_chain): hold,
                   journal, drift dry run that refuses data loss, RLS bootstrap, coverage, release, isolation proof
-  11 units        three services (workflow, api, web) and six cron timers. The API runs as `sfapp` in group kvm;
+  11 units        three services (workflow, api, web), each as its own user, and six cron timers. The web app's view of
+                  the file store is mounted first (storage-view.sh). The API runs as `sfapp`, the only one in group kvm;
                   before it starts, the mold's own `npm run sandbox:prewarm` clears stale template locks, links the
                   sandbox runtime, refuses a data room the sandbox could not reach, and prewarms one template at a time
   12 caddy        TLS for the domain, everything proxied to the web app on loopback
-  13 health       the three health endpoints, /dev/kvm and the API's groups, public listeners, then the same
-                  read of /api/ops/health the Vercel path gates on
+  13 health       the three health endpoints, /dev/kvm and the API's groups, public listeners, each process's user,
+                  what the agent's user is refused when it tries (the web app's env file and process, another
+                  service's code, this server's own SSH port), then the same read of /api/ops/health the Vercel path gates on
 
 Every step is safe to run again. A redeploy takes the app offline from step 9 until step 11 finishes (the build is
 not relocatable, so there is nowhere else to build it); say so before running one in working hours.
@@ -60,12 +71,29 @@ SCRIPTS = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(SCRIPTS))
 FIXTURE = os.path.join(SCRIPTS, "fixtures", "vm_remote", "vm_remote_fixture")
 
-SERVICE_USER = "sfapp"
-# The service user's HOME, deliberately SHORT. microsandbox keeps each VM's agent socket under ~/.microsandbox, and
+# ---- one system user per service (mold_v1-158) --------------------------------------------------------------------
+# Until 2026-10-04 the three services ran as the one user `sfapp`, so a process that took over the agent could read
+# the web app's environment (the sign-in private key, the mail key) from /proc/<pid>/environ. Now each service has a
+# user of its own, and nothing a service can write is something another service runs:
+#   sfweb    the web app (and the cron calls, which only ever call the web app with a secret it already holds)
+#   sfapp    the agent API. THE NAME, THE UID AND THE HOME ARE THE OLD SINGLE USER'S, ON PURPOSE: the sandbox store
+#            (~/.microsandbox, 15 GB on the first server) and the file store already belong to it, so the move to
+#            separate users neither moves nor re-owns either of them. The only user whose process is in group kvm.
+#   sfwork   the task-workflow service
+#   sfbuild  owns the application's code and runs every build. No service runs as it, so no service can change the
+#            code another service (or it itself) runs; the services read the code through group `sfcode`.
+SERVICE_USERS = {"web": "sfweb", "api": "sfapp", "workflow": "sfwork"}
+SERVICE_USER = SERVICE_USERS["api"]          # the agent API's user: the sandbox store's owner, the prune's user
+# The API user's HOME, deliberately SHORT. microsandbox keeps each VM's agent socket under ~/.microsandbox, and
 # a Unix socket path must be under 108 bytes: with HOME at <data>/home (47 bytes for a 16-character app id) every
 # template failed with "agent relay socket path is too long: shortest derived path is 109 bytes" on the first real
 # server (2026-10-04). One app per server (factory.py validate refuses a shared host), so one fixed path is enough.
 SERVICE_HOME = "/var/lib/sfapp"
+SERVICE_HOMES = {"web": "/var/lib/sfweb", "api": SERVICE_HOME, "workflow": "/var/lib/sfwork"}
+BUILD_USER, BUILD_HOME = "sfbuild", "/var/lib/sfbuild"
+CODE_GROUP = "sfcode"                        # may READ the built application: the three service users, nobody else
+CRON_USER = SERVICE_USERS["web"]
+EGRESS_USERS = (SERVICE_USERS["web"], SERVICE_USERS["api"], SERVICE_USERS["workflow"], BUILD_USER)
 PORTS = {"web": 3000, "api": 3001, "workflow": 3002}
 HOST_MIN = {"mem_mb": 7500, "vcpu": 4, "disk_free_gb": 20}      # an "8 GB" machine reports about 7.9 GB
 OS_OK = (("ubuntu", "24.04"),)
@@ -192,6 +220,10 @@ def settings(app_id, app, infra, ds):
     S["sudo"] = "" if S["user"] == "root" else "sudo "
     S["tool"] = f"{S['factory_dir']}/.claude/scripts/lib/vm_remote.py"
     S["sslmode"] = "require" if S["pg"]["tls"] == "on" else "disable"
+    # The file store on the server's disk (filesystem driver only) and the web app's own view of it (storage_view_sh).
+    S["fs"] = (S["storage"].get("driver") or "fs") == "fs"
+    S["storage_dir"] = S["storage"].get("dir") or f"{data}/storage"
+    S["storage_view"] = f"{data}/storage-web"
     return S
 
 def shape_state(app_id, infra, ds, di, host=None, domain=None):
@@ -378,7 +410,7 @@ def storage_pairs(S):
     Names and non-secret values only: the signing secret is minted on the server, the s3 key pair is the operator's."""
     sg = S["storage"]
     if (sg.get("driver") or "fs") == "fs":
-        return {"STORAGE_DRIVER": "filesystem", "STORAGE_FS_ROOT": sg.get("dir") or f"{S['data']}/storage",
+        return {"STORAGE_DRIVER": "filesystem", "STORAGE_FS_ROOT": S.get("storage_dir") or sg.get("dir") or f"{S['data']}/storage",
                 # The web app's public address: where a signed file link points, and what a sandbox downloads.
                 "STORAGE_PUBLIC_URL": S["url"]}
     c = {"STORAGE_DRIVER": "s3"}
@@ -433,8 +465,11 @@ def service_env_spec(S):
     unused = [] if fs else ["STORAGE_SIGNING_SECRET"]
     # The operator's s3 values under their stored names are passed on under the mold's names instead.
     stored = sorted(alias.values())
+    # The web app reaches the file store through its own view of it (storage_view_sh): the same files, seen as its
+    # own user. The agent, whose user owns the directory, reads it where it is.
+    web_set = {"STORAGE_FS_ROOT": S["storage_view"]} if fs else {}
     return {
-        "web": {"keep": None, "drop": sorted(set(admin + unused + stored + list(AGENT_ONLY))), "alias": alias, "set": {}},
+        "web": {"keep": None, "drop": sorted(set(admin + unused + stored + list(AGENT_ONLY))), "alias": alias, "set": web_set},
         "api": {"keep": None, "drop": sorted(set(admin + unused + stored + list(WEB_ONLY))), "alias": alias, "set": {}},
         "workflow": {"keep": list(WORKFLOW_READS), "drop": [], "alias": {}, "set": {"WORKFLOW_LOCAL_DATA_DIR": f"{S['data']}/task-workflow-data"}},
         "cron": {"keep": list(CRON_READS), "drop": [], "alias": {}, "set": {}},
@@ -454,8 +489,8 @@ def split_values(master, spec):
 
 def env_split(master_path, env_dir, spec):
     """On the server, as root: write each service's env file from the master file, atomically, mode 600, in the root-only
-    env directory. The files are root's, not the service user's: systemd reads EnvironmentFile as root, and a file the
-    service user could open would let the agent (same user as the web app) read the web app's private key. Rewritten
+    env directory. The files are root's, not a service user's: systemd reads EnvironmentFile as root, and no service
+    needs to open its own file, let alone another's (health.sh tries, as the agent's user, and must be refused). Rewritten
     whole every time, so a name the spec no longer gives a service disappears from its file. Returns {service: count}."""
     vals = split_values(env_read(master_path), spec)
     if "AUTH_JWT_PRIVATE_KEY" in vals.get("api", {}):
@@ -619,7 +654,7 @@ User=@USER@
 Group=@USER@
 EnvironmentFile=@ENV@
 Environment=NODE_ENV=production
-Environment=HOME=/var/lib/sfapp
+Environment=HOME=@HOME@
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
@@ -630,7 +665,10 @@ def unit_files(S, crons):
     """name -> text for the three services, the egress rule's unit and one service + timer per cron. Each service reads
     its own env file (service_env_spec), never the master one."""
     u = {}; app = S["app_id"]; pre = S["unit"]
-    common = lambda svc: fill(SERVICE_COMMON, USER=SERVICE_USER, ENV=S["env_files"][svc], DATA=S["data"])
+    common = lambda svc: fill(SERVICE_COMMON, USER=SERVICE_USERS[svc], HOME=SERVICE_HOMES[svc], ENV=S["env_files"][svc])
+    view = f"{pre}-storage.service" if S["fs"] else ""
+    # The web app starts only once its view of the file store is in place (and stops with it).
+    web_after = f" {view}" if view else ""; web_requires = f"Requires={view}\n" if view else ""
     u[f"{pre}-workflow.service"] = (fill(HEAD, APP=app) + f"""[Unit]
 Description={app}: task-workflow service (loopback only)
 After=network-online.target postgresql.service
@@ -666,9 +704,9 @@ WantedBy=multi-user.target
 """)
     u[f"{pre}-web.service"] = (fill(HEAD, APP=app) + f"""[Unit]
 Description={app}: web app (loopback only, behind Caddy)
-After=network-online.target postgresql.service {pre}-api.service {pre}-workflow.service
+After=network-online.target postgresql.service {pre}-api.service {pre}-workflow.service{web_after}
 Wants=network-online.target
-
+{web_requires}
 {common("web")}WorkingDirectory={S['app_dir']}
 ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p {PORTS['web']}
 
@@ -676,7 +714,7 @@ ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p {P
 WantedBy=multi-user.target
 """)
     u[f"{pre}-egress.service"] = (fill(HEAD, APP=app) + f"""[Unit]
-Description={app}: keep the service user off the cloud metadata address and private networks
+Description={app}: keep the service users off the cloud metadata address and private networks, and off this server's own SSH port
 After=nftables.service
 Before={pre}-api.service
 
@@ -714,6 +752,21 @@ Unit={pre}-sandbox-prune.service
 [Install]
 WantedBy=timers.target
 """)
+    if view:
+        u[view] = (fill(HEAD, APP=app) + f"""[Unit]
+Description={app}: the web app's own view of the file store (the same files, seen as the web app's user; mold_v1-158)
+After=local-fs.target
+Before={pre}-web.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash {S['factory_dir']}/storage-view.sh up
+ExecStop=/bin/bash {S['factory_dir']}/storage-view.sh down
+
+[Install]
+WantedBy=multi-user.target
+""")
     for name, expr in crons:
         u[f"{pre}-cron-{name}.service"] = (fill(HEAD, APP=app) + f"""[Unit]
 Description={app}: cron {name} (was Vercel Cron `{expr}`)
@@ -721,8 +774,8 @@ After={pre}-web.service
 
 [Service]
 Type=oneshot
-User={SERVICE_USER}
-Group={SERVICE_USER}
+User={CRON_USER}
+Group={CRON_USER}
 EnvironmentFile={S['env_files']['cron']}
 ExecStart=/bin/bash {S['factory_dir']}/cron-call.sh {name}
 TimeoutStartSec=115
@@ -777,19 +830,30 @@ def caddyfile(S):
 """)
 
 def egress_nft(S):
-    nets = ", ".join(EGRESS_DENY)
-    return (fill(HEAD, APP=S["app_id"]) + f"""# A second layer under the sandbox's own network policy (SANDBOX_DENY_SUBNETS): whatever runs as the service user,
-# the agent's sandbox included, cannot open a connection to the cloud metadata address or a private network.
+    nets = ", ".join(EGRESS_DENY); users = ", ".join(f'"{u}"' for u in EGRESS_USERS)
+    return (fill(HEAD, APP=S["app_id"]) + f"""# A second layer under the sandbox's own network policy (SANDBOX_DENY_SUBNETS): whatever runs as one of the app's
+# users, the agent's sandbox included, cannot open a connection to the cloud metadata address or a private network.
 # Loopback is not listed: the services reach Postgres and each other there.
+#
+# And none of them can reach THIS SERVER'S OWN SSH port, on any of its own addresses (mold_v1-158). A sandbox may
+# reach the server's public address, because with files on the server's disk it downloads data-room files from the
+# web app there, on 443; but a connection the server makes to itself arrives over the loopback interface, which the
+# firewall (ufw) always admits, so without this line a sandbox could knock on sshd however the SSH rule is narrowed.
+# `fib daddr type local` is every address this server holds (public, private, the tunnel's, 127.0.0.1), so no
+# address is written here. Port 443 on the same addresses is untouched.
 table inet sf_egress
 delete table inet sf_egress
 table inet sf_egress {{
 	chain output {{
 		type filter hook output priority 0; policy accept;
-		meta skuid "{SERVICE_USER}" ip daddr {{ {nets} }} reject with icmpx type admin-prohibited
+		meta skuid {{ {users} }} ip daddr {{ {nets} }} reject with icmpx type admin-prohibited
+		meta skuid {{ {users} }} fib daddr type local tcp dport {S['port']} drop
 	}}
 }}
 """)
+def egress_ssh_rule(S):
+    """The words `nft list table inet sf_egress` prints for the SSH line, after the users (health.sh looks for them)."""
+    return f"fib daddr type local tcp dport {S['port']} drop"
 
 def ufw_rules(S):
     """The firewall's allow rules, in the words `ufw show added` prints them, sorted. The SSH rule takes its allowed
@@ -821,7 +885,7 @@ def firewall_sh(S):
 #   - the app's three services listen on 127.0.0.1 only (their unit files say so; health.sh checks it), so the
 #     only things answering the internet are sshd and Caddy.
 #   - the sandbox deny list: SANDBOX_DENY_SUBNETS in the env file is the first layer; the nftables rule installed
-#     here is the second, for everything the service user runs.
+#     here is the second, for everything the app's users run. The same rule keeps them off this server's own SSH port.
 #   - no Docker conntrack rule: that rule exists for Docker-published ports and there is no Docker on this server.
 set -eu
 @GUARD@export LC_ALL=C
@@ -851,7 +915,7 @@ install -m 644 @FACTORY@/units/@UNIT@-egress.service /etc/systemd/system/@UNIT@-
 systemctl daemon-reload
 systemctl enable @UNIT@-egress.service >/dev/null
 systemctl restart @UNIT@-egress.service
-echo "firewall: fail2ban on for ssh; egress rule for @USER@ loaded"
+echo "firewall: fail2ban on for ssh; egress rule for @USER@ loaded (private networks and this server's own SSH port)"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]),
         SSHLINE=(f"SSH (port {S['port']}) on the private tunnel interface {S['tunnel']['interface']} only, WireGuard ({S['tunnel']['listen_port']}/udp) from the factory only"
                  if S["tunnel_on"] else f"SSH (port {S['port']}, from {S['ssh_allow_from'] or 'any address'})"),
@@ -864,7 +928,7 @@ fi
         RULES=" ".join(shlex.quote(r) for r in rules), ALLOWS="\n".join("  " + r for r in rules),
         PORTS=((f"80, 443; SSH ({S['port']}) on {S['tunnel']['interface']} only; WireGuard {S['tunnel']['listen_port']}/udp from {S['tunnel']['factory_public_address']} only") if S["tunnel_on"] else
                ", ".join(str(p) for p in sorted({S["port"], 80, 443})) + (f" (SSH from {S['ssh_allow_from']} only)" if S["ssh_allow_from"] else "")), FACTORY=S["factory_dir"], ENVDIR=S["env_dir"],
-        UNIT=S["unit"], USER=SERVICE_USER)
+        UNIT=S["unit"], USER=", ".join(EGRESS_USERS))
 
 def fail2ban_jail(S):
     return (fill(HEAD, APP=S["app_id"]) + f"""[sshd]
@@ -904,14 +968,161 @@ if [ ! -d /usr/lib/postgresql/@PGV@ ]; then
   fi
   apt-get install -y -q postgresql-@PGV@
 fi
-getent group kvm >/dev/null || groupadd --system kvm
-id @USER@ >/dev/null 2>&1 || useradd --system --user-group --home-dir /var/lib/sfapp --no-create-home --shell /usr/sbin/nologin @USER@
-install -d -m 755 /opt/software-factory @INSTALL@ @FACTORY@
-install -d -m 750 -o @USER@ -g @USER@ @APPDIR@ @DATA@ /var/lib/sfapp @DATA@/workflow-data @DATA@/task-workflow-data @DATA@/storage @DATA@/build-stamps
+# The accounts (mold_v1-158): one user per service, one for the code, none with a login or sudo. ONLY the accounts
+# are made here. Nothing that already exists on the disk is re-owned by this script: on a server that still runs
+# everything as the one old user the services are still serving at this point, and their directories are handed
+# over only after they have been stopped (users.sh, run by build.sh).
+@ACCOUNTS@install -d -m 755 /opt/software-factory @INSTALL@ @FACTORY@
 install -d -m 700 /etc/software-factory @ENVDIR@
 echo "packages: node $(node -v), $(caddy version | cut -d' ' -f1), postgresql @PGV@, service user @USER@"
-""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), PGV=v, USER=SERVICE_USER, DATA=S["data"],
-        INSTALL=S["install"], FACTORY=S["factory_dir"], APPDIR=S["app_dir"], ENVDIR=S["env_dir"])
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), PGV=v, USER=", ".join(SERVICE_USERS[k] for k in ("web", "api", "workflow")),
+        INSTALL=S["install"], FACTORY=S["factory_dir"], ENVDIR=S["env_dir"], ACCOUNTS=accounts_sh())
+
+def accounts_sh():
+    """Shell lines that make the accounts if they are absent, and nothing else. Safe while the services run: a new
+    user or group, or one more group for an existing user, changes nothing for a process that is already running."""
+    L = ["getent group kvm >/dev/null || groupadd --system kvm",
+         f"getent group {CODE_GROUP} >/dev/null || groupadd --system {CODE_GROUP}"]
+    for user, home in ([(SERVICE_USERS[k], SERVICE_HOMES[k]) for k in ("web", "api", "workflow")] + [(BUILD_USER, BUILD_HOME)]):
+        L.append(f"id -u {user} >/dev/null 2>&1 || useradd --system --user-group --home-dir {home} --no-create-home --shell /usr/sbin/nologin {user}")
+    for k in ("web", "api", "workflow"):
+        u = SERVICE_USERS[k]
+        L.append(f"id -nG {u} | tr ' ' '\\n' | grep -qx {CODE_GROUP} || usermod -a -G {CODE_GROUP} {u}")
+    return "\n".join(L) + "\n"
+
+def users_sh(S, crons, root=""):
+    """users.sh: who owns what outside the code, and the ONE-TIME move of a server that ran everything as one user.
+    Run by build.sh right after it stopped the services, on every deploy; every line is a no-op once it is true.
+    `root` prefixes every path it touches: the self-test runs this very script against a temp directory."""
+    svc, tim = unit_names(S, crons); P = lambda x: root + x
+    web, api, work = (SERVICE_USERS[k] for k in ("web", "api", "workflow"))
+    store = f"{SERVICE_HOME}/.microsandbox"
+    fs = fill("""# The file store: both the web app and the agent read and write it, and the app's storage driver makes every folder
+# mode 700 and every file mode 600 (lib/storage/filesystem.ts), so no group permission could ever let two users share
+# it. It stays the agent's, exactly as it is; the web app gets its own view of the same files (storage-view.sh).
+if [ -e @STORAGE@ ]; then
+  owner="$(stat -c %U @STORAGE@)"
+  [ "$owner" = "@API@" ] || { echo "refusing: the file store @STORAGE@ belongs to $owner, not to @API@. Nothing in it was touched. Find out who changed it before deploying again." >&2; exit 6; }
+else
+  install -d -m 700 -o @API@ -g @API@ @STORAGE@
+fi
+# The view's mount point, made once. It is never re-made or re-owned: while the view is mounted this path IS the store.
+[ -d @VIEW@ ] || install -d -m 755 @VIEW@
+""", STORAGE=P(S["storage_dir"]), VIEW=P(S["storage_view"]), API=api) if S["fs"] else ""
+    return fill("""#!/bin/bash
+@HEAD@# mold_v1-158. One system user per service, so the agent cannot read the web app's secrets:
+#   @WEB@ the web app · @API@ the agent API (the only one in group kvm, the only owner of the sandbox store) ·
+#   @WORK@ the task-workflow service · @BUILD@ the code's owner (runs builds, runs no service).
+# This script hands each of them its directories OUTSIDE the code (seal.sh does the code, after the build).
+#
+# ON A SERVER THAT STILL RUNS EVERYTHING AS @API@ this is the move, and its order is the point:
+#   1. the services are already stopped (build.sh did it; this script refuses if one is still running, because a
+#      running service would lose its own data directory in the middle of a write);
+#   2. the accounts exist (packages.sh made them; made again here if absent);
+#   3. directories are handed over. WHAT DOES NOT MOVE: the sandbox store stays at @STORE@ and stays
+#      @API@'s (the agent API keeps the old user's name, uid and short HOME: a Unix socket path must stay under 108
+#      bytes), the file store stays where it is and stays @API@'s, and the database is not touched at all.
+#      WHAT CHANGES HANDS: the task-workflow service's own data directory (@API@ -> @WORK@), and the data directory
+#      itself (root's, so nobody but the three services' group can even enter it);
+#   4. the services are started again by units.sh, each as its own user.
+# Nothing is deleted and nothing is moved, so there is nothing to lose and nothing to undo. Safe to run again.
+set -eu
+@GUARD@for u in @SERVICES@; do
+  if systemctl is-active --quiet "$u"; then
+    echo "refusing: $u is still running. Directories are handed to the new users only while the services are stopped; nothing was changed." >&2; exit 5
+  fi
+done
+@ACCOUNTS@# Homes: each user's own, closed to everyone else. @APIHOME@ is where it always was.
+install -d -m 700 -o @WEB@ -g @WEB@ @WEBHOME@
+install -d -m 700 -o @WORK@ -g @WORK@ @WORKHOME@
+install -d -m 700 -o @BUILD@ -g @BUILD@ @BUILDHOME@
+install -d -m 700 -o @API@ -g @API@ @APIHOME@
+# The sandbox store is not moved and not re-owned. It must already be the agent's, or something is wrong.
+if [ -e @STORE@ ]; then
+  owner="$(stat -c %U @STORE@)"
+  [ "$owner" = "@API@" ] || { echo "refusing: the sandbox store @STORE@ belongs to $owner, not to @API@. Nothing in it was touched." >&2; exit 6; }
+fi
+# The data directory: root's, and only the three services' group may enter it.
+install -d -m 750 -o root -g @GROUP@ @DATA@
+install -d -m 755 -o root -g root @DATA@/build-stamps
+# eve's local workflow world: the agent alone reads and writes it (WORKFLOW_LOCAL_DATA_DIR in api.env).
+install -d -m 700 -o @API@ -g @API@ @DATA@/workflow-data
+# The task-workflow service's own directory: that service alone. On a server that ran as one user its files are
+# still @API@'s, so the whole directory is handed over (a no-op once it is @WORK@'s).
+install -d -m 700 -o @WORK@ -g @WORK@ @DATA@/task-workflow-data
+chown -hR @WORK@:@WORK@ @DATA@/task-workflow-data
+@FS@echo "users: @WEB@ (web), @API@ (agent API; sandbox store and file store untouched), @WORK@ (task-workflow), @BUILD@ (code); data directories handed over"
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), SERVICES=" ".join(reversed(svc)), ACCOUNTS=accounts_sh(),
+        WEB=web, API=api, WORK=work, BUILD=BUILD_USER, GROUP=CODE_GROUP, STORE=P(store), DATA=P(S["data"]), FS=fs,
+        WEBHOME=P(SERVICE_HOMES["web"]), WORKHOME=P(SERVICE_HOMES["workflow"]), BUILDHOME=P(BUILD_HOME), APIHOME=P(SERVICE_HOME))
+
+def seal_sh(S, root=""):
+    """seal.sh: who may read and who may write the application's code, set after every build and after the database
+    step (which runs the mold's migration scripts as root inside it). `root` as in users_sh."""
+    A = root + S["app_dir"]; web, api, work = (SERVICE_USERS[k] for k in ("web", "api", "workflow"))
+    return fill("""#!/bin/bash
+@HEAD@# mold_v1-158. The code after a build, from the snapshot's own code (what each process reads and writes):
+#   everything          owner @BUILD@, group @GROUP@, no access for anyone else. The three services READ it through
+#                       the group (node_modules, package.json, lib/, public/, scripts/); none of them can write it,
+#                       so none can change what another one runs.
+#   .next/              the web app's build. `next start` reads it and writes its cache under it: @WEB@ only.
+#   .output/ .eve/      the agent's build and eve's own work directory (.eve/sandbox-cache holds the template locks
+#                       and caches the prewarm and the running API write): @API@ only.
+#   .eve-build-hidden/  the lock `npm run sandbox:prewarm` takes before the API starts (scripts/eve-build.mjs): made
+#                       here for @API@, because the prewarm cannot create it in a directory it may not write.
+#   agent/              the prewarm puts a generated sandbox wrapper in every agent node's sandbox slot while it runs
+#                       and moves the authored file aside (scripts/lib/sandbox-overlay.mjs): @API@ writes, the group reads.
+#   services/task-workflow/.next/   the task-workflow service's build and cache: @WORK@ only.
+set -eu
+@GUARD@chown -hR @BUILD@:@GROUP@ @APP@
+chmod -R u=rwX,g=rX,o= @APP@
+if [ -d @APP@/.next ]; then chown -hR @WEB@:@WEB@ @APP@/.next; fi
+for d in .output .eve; do
+  if [ -d "@APP@/$d" ]; then chown -hR @API@:@API@ "@APP@/$d"; fi
+done
+install -d -m 750 -o @API@ -g @API@ @APP@/.eve-build-hidden
+chown -hR @API@:@API@ @APP@/.eve-build-hidden
+if [ -d @APP@/agent ]; then chown -hR @API@:@GROUP@ @APP@/agent; fi
+if [ -d @APP@/services/task-workflow/.next ]; then chown -hR @WORK@:@WORK@ @APP@/services/task-workflow/.next; fi
+echo "seal: the code is @BUILD@'s and read-only to the services; .next is @WEB@'s, .output .eve agent/ are @API@'s, services/task-workflow/.next is @WORK@'s"
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), APP=A, BUILD=BUILD_USER, GROUP=CODE_GROUP, WEB=web, API=api, WORK=work)
+
+def storage_view_sh(S, root=""):
+    """storage-view.sh: the web app's own view of the file store. Run by its unit at boot and by units.sh."""
+    return fill("""#!/bin/bash
+@HEAD@# mold_v1-158. The file store is one directory that TWO processes read and write: the web app (uploads, the signed
+# file links it serves) and the agent (the data room). The app's storage driver creates every folder mode 700 and every
+# file mode 600 (lib/storage/filesystem.ts), so whatever one user writes no other user can open, whatever group the
+# directory has. Rather than run both as one user again, the web app gets a VIEW of the same directory in which the
+# agent's files appear as its own: an id-mapped bind mount (a kernel feature; nothing is installed). On disk there is
+# one owner, @API@, and nothing is ever copied; through the view @WEB@ is that owner. Nobody else can enter either.
+#   up     mount the view if it is not there (or is there with the wrong owner)
+#   down   unmount it
+set -eu
+real=@REAL@; view=@VIEW@
+case "${1:-}" in
+  up)
+    [ -d "$real" ] || { echo "the file store $real does not exist yet; the deploy creates it (users.sh)" >&2; exit 1; }
+    [ -d "$view" ] || { echo "the mount point $view does not exist yet; the deploy creates it (users.sh)" >&2; exit 1; }
+    owner="$(stat -c %U "$real")"
+    [ "$owner" = "@API@" ] || { echo "refusing: the file store $real belongs to $owner, not to @API@" >&2; exit 1; }
+    if mountpoint -q "$view"; then
+      if [ "$(stat -c %U "$view")" = "@WEB@" ]; then echo "storage view: already in place"; exit 0; fi
+      umount "$view"
+    fi
+    mount --bind -o "X-mount.idmap=u:$(id -u @API@):$(id -u @WEB@):1 g:$(id -g @API@):$(id -g @WEB@):1" "$real" "$view"
+    if [ "$(stat -c %U "$view")" != "@WEB@" ]; then
+      umount "$view"
+      echo "the view was mounted but does not show @WEB@ as the owner of the file store, so it was taken down again. This server's kernel or mount command does not support id-mapped mounts." >&2; exit 1
+    fi
+    echo "storage view: $real is seen by @WEB@ at $view"
+    ;;
+  down)
+    if mountpoint -q "$view"; then umount "$view"; fi
+    ;;
+  *) echo "usage: storage-view.sh up|down" >&2; exit 2 ;;
+esac
+""", HEAD=fill(HEAD, APP=S["app_id"]), REAL=root + S["storage_dir"], VIEW=root + S["storage_view"], API=SERVICE_USERS["api"], WEB=SERVICE_USERS["web"])
 
 def postgres_sh(S):
     v = S["pg"]["version"]
@@ -945,16 +1156,20 @@ def env_split_cmd(S):
 
 def build_sh(S, crons):
     svc, tim = unit_names(S, crons)
-    run = lambda k: f"python3 {S['tool']} env-run --file {S['env_files'][k]} --user {SERVICE_USER} --home {SERVICE_HOME} --cwd"
+    run = lambda k: f"python3 {S['tool']} env-run --file {S['env_files'][k]} --user {BUILD_USER} --home {BUILD_HOME} --cwd"
     return fill("""#!/bin/bash
 @HEAD@# Build IN PLACE at the final path: the eve build embeds absolute paths and cannot be moved afterwards.
 # One build at a time (each peaks at 2-3 GB on an 8 GB machine). The services are stopped first, because the
 # build rewrites the directories they run from; they come back in units.sh. Each part is built with the env file
 # of the service that runs it, so build and run see the same names (the agent's has no private key).
+# Every part is built by @USER@, the code's owner, which runs no service (mold_v1-158): the values a build holds in
+# its environment are never under a service's user. While the services are stopped, users.sh hands each service's
+# directories to its own user; after the build, seal.sh sets who may read and who may write the code.
 set -eu
 @GUARD@for u in @TIMERS@ @SERVICES@; do systemctl stop "$u" 2>/dev/null || true; done
+bash @FACTORY@/users.sh
 @SPLIT@
-chown -R @USER@:@USER@ @APPDIR@
+chown -hR @USER@:@GROUP@ @APPDIR@
 RUN_API="@RUN_API@"
 RUN_WEB="@RUN_WEB@"
 RUN_WF="@RUN_WF@"
@@ -973,9 +1188,11 @@ if [ ! -d @APPDIR@/services/task-workflow/node_modules ] || [ "$(cat @DATA@/buil
   echo "$lock_now" > @DATA@/build-stamps/workflow.lock
 fi
 $RUN_WF @APPDIR@/services/task-workflow -- npm run build
+bash @FACTORY@/seal.sh
 echo "build: eve API, web app and task-workflow service built at @APPDIR@"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), TIMERS=" ".join(tim), SERVICES=" ".join(reversed(svc)),
-        USER=SERVICE_USER, APPDIR=S["app_dir"], DATA=S["data"], SPLIT=env_split_cmd(S), RUN_API=run("api"), RUN_WEB=run("web"), RUN_WF=run("workflow"))
+        USER=BUILD_USER, GROUP=CODE_GROUP, FACTORY=S["factory_dir"], APPDIR=S["app_dir"], DATA=S["data"], SPLIT=env_split_cmd(S),
+        RUN_API=run("api"), RUN_WEB=run("web"), RUN_WF=run("workflow"))
 
 def db_chain_sh(S):
     return fill("""#!/bin/bash
@@ -985,13 +1202,14 @@ def db_chain_sh(S):
 set -eu
 @GUARD@python3 @TOOL@ host-chain --app-dir @APPDIR@ --env-file @ENV@ --mode @MODE@ --sslmode @SSLMODE@
 @SPLIT@
-chown -R @USER@:@USER@ @APPDIR@
+# The chain ran the mold's migration scripts as root inside the code: put the code's owners and modes back.
+bash @FACTORY@/seal.sh
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), TOOL=S["tool"], APPDIR=S["app_dir"],
-        ENV=S["env_file"], MODE=S["mode"], SSLMODE=S["sslmode"], USER=SERVICE_USER, SPLIT=env_split_cmd(S))
+        ENV=S["env_file"], MODE=S["mode"], SSLMODE=S["sslmode"], FACTORY=S["factory_dir"], SPLIT=env_split_cmd(S))
 
 def api_prestart_sh(S):
     return fill("""#!/bin/bash
-@HEAD@# Runs as the service user (group kvm), with the API's own env file, before the API starts. It deletes nothing itself.
+@HEAD@# Runs as the agent API's user (group kvm), with the API's own env file, before the API starts. It deletes nothing itself.
 set -eu
 [ -c /dev/kvm ] || { echo "no /dev/kvm on this server: the sandbox cannot start" >&2; exit 1; }
 [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "the service user cannot open /dev/kvm (is it in group kvm?)" >&2; exit 1; }
@@ -1017,7 +1235,7 @@ def units_sh(S, crons):
 set -eu
 @GUARD@for f in @FACTORY@/units/*; do install -m 644 "$f" "/etc/systemd/system/$(basename "$f")"; done
 systemctl daemon-reload
-systemctl enable @SERVICES@ >/dev/null
+@VIEW@systemctl enable @SERVICES@ >/dev/null
 for u in @SERVICES@; do
   systemctl restart "$u" || { echo "service $u did not start. Its last lines:" >&2; journalctl -u "$u" -n 30 --no-pager >&2; exit 1; }
 done
@@ -1026,7 +1244,11 @@ systemctl enable --now @TIMERS@ >/dev/null
 systemctl enable --now @PRUNE@ >/dev/null
 echo "units: @NS@ services running, @NT@ cron timers on, the nightly sandbox prune on"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), FACTORY=S["factory_dir"],
-        SERVICES=" ".join(svc), TIMERS=" ".join(tim), NS=len(svc), NT=len(tim), PRUNE=f"{S['unit']}-sandbox-prune.timer")
+        SERVICES=" ".join(svc), TIMERS=" ".join(tim), NS=len(svc), NT=len(tim), PRUNE=f"{S['unit']}-sandbox-prune.timer",
+        # The web app's view of the file store first: the web service will not start without it.
+        VIEW=(f"""systemctl enable {S['unit']}-storage.service >/dev/null
+systemctl restart {S['unit']}-storage.service || {{ echo "the web app's view of the file store could not be mounted. Its last lines:" >&2; journalctl -u {S['unit']}-storage.service -n 20 --no-pager >&2; exit 1; }}
+""" if S["fs"] else ""))
 
 def caddy_sh(S):
     return fill("""#!/bin/bash
@@ -1087,8 +1309,47 @@ echo "SANDBOX_STORE_KB=$(du -sk @HOME@/.microsandbox 2>/dev/null | cut -f1)"
 echo "PRUNE_TIMER=$(systemctl is-enabled @UNIT@-sandbox-prune.timer 2>/dev/null || true)"
 # The SSH door (mold_v1-156): is there a rule that lets any address reach the SSH port?
 echo "SSH_PUBLIC_RULE=$(if ufw show added 2>/dev/null | grep -qxF '@PUBRULE@'; then echo open; else echo closed; fi)"
-@TUNNEL@""", HEAD=fill(HEAD, APP=S["app_id"]), PW=PORTS["workflow"], PA=PORTS["api"], PWEB=PORTS["web"], UNIT=S["unit"], ENV=S["env_file"],
-        ENVDIR=S["env_dir"], SVCS=" ".join(S["env_files"]), HOME=SERVICE_HOME, PUBRULE=public_ssh_rule(S), TUNNEL=_health_tunnel(S))
+# ---- one user per service (mold_v1-158): who each process is, and what the agent's user can reach ----------------
+user_of() { if [ -n "$1" ] && [ "$1" != "0" ]; then ps -o user= -p "$1" | tr -d ' '; else echo none; fi; }
+in_kvm() { if [ -n "$1" ] && [ "$1" != "0" ] && [ -n "$kgid" ] && grep -E "^Groups:.*(^|[[:space:]])$kgid([[:space:]]|$)" "/proc/$1/status" >/dev/null 2>&1; then echo yes; else echo no; fi; }
+fpid="$(systemctl show -p MainPID --value @UNIT@-workflow.service 2>/dev/null || echo 0)"
+echo "WEB_USER=$(user_of "$wpid")"
+echo "WORKFLOW_USER=$(user_of "$fpid")"
+echo "WEB_IN_KVM=$(in_kvm "$wpid")"
+echo "WORKFLOW_IN_KVM=$(in_kvm "$fpid")"
+echo "KVM_MEMBERS=$(getent group kvm | cut -d: -f4)"
+# TRIED, as the agent's own user, not inferred from a mode: may it open the web app's env file, or the running web
+# app's environment? (One byte is asked for and thrown away; nothing is read out.)
+as_api() { runuser -u @API@ -- "$@" >/dev/null 2>&1; }
+if as_api head -c 1 @ENVDIR@/web.env; then echo "AGENT_READS_WEB_ENV=yes"; else echo "AGENT_READS_WEB_ENV=no"; fi
+if [ -n "$wpid" ] && [ "$wpid" != "0" ]; then
+  if as_api head -c 1 "/proc/$wpid/environ"; then echo "AGENT_READS_WEB_PROC=yes"; else echo "AGENT_READS_WEB_PROC=no"; fi
+else echo "AGENT_READS_WEB_PROC=unread"; fi
+# ...and may it change code that another service runs?
+if as_api test -w @APPDIR@ || as_api test -w @APPDIR@/node_modules || as_api test -w @APPDIR@/.next; then echo "AGENT_WRITES_CODE=yes"; else echo "AGENT_WRITES_CODE=no"; fi
+echo "SANDBOX_STORE_OWNER=$(stat -c '%U' @HOME@/.microsandbox 2>/dev/null || echo missing)"
+echo "API_HOME=$(stat -c '%a %U' @HOME@ 2>/dev/null || echo missing)"
+# The egress rule: is the line for this server's own SSH port loaded, and does it hold? TRIED as the agent's user
+# against this server's own address: the SSH port must not open, and 443 (where a sandbox fetches data-room files) must.
+echo "EGRESS_SSH_RULE=$(if nft list table inet sf_egress 2>/dev/null | grep -qF '@SSHRULE@'; then echo yes; else echo no; fi)"
+own="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p' | head -1)"
+tcp() { runuser -u @API@ -- timeout 4 bash -c "exec 3<>/dev/tcp/$1/$2" >/dev/null 2>&1; }
+if [ -n "$own" ]; then
+  if tcp "$own" @SSHPORT@; then echo "EGRESS_SSH=open"; else echo "EGRESS_SSH=blocked"; fi
+  if tcp "$own" 443; then echo "EGRESS_WEB=open"; else echo "EGRESS_WEB=blocked"; fi
+else echo "EGRESS_SSH=unread"; echo "EGRESS_WEB=unread"; fi
+@STORAGE@@TUNNEL@""", HEAD=fill(HEAD, APP=S["app_id"]), PW=PORTS["workflow"], PA=PORTS["api"], PWEB=PORTS["web"], UNIT=S["unit"], ENV=S["env_file"],
+        ENVDIR=S["env_dir"], SVCS=" ".join(S["env_files"]), HOME=SERVICE_HOME, PUBRULE=public_ssh_rule(S), TUNNEL=_health_tunnel(S),
+        API=SERVICE_USERS["api"], APPDIR=S["app_dir"], SSHRULE=egress_ssh_rule(S), SSHPORT=S["port"], STORAGE=_health_storage(S))
+
+def _health_storage(S):
+    """health.sh lines for the file store on the server's disk: the web app's view is mounted and shows the web app's
+    user as the owner, and each of the two processes that use the store can write it where it reaches it."""
+    if not S["fs"]: return ""
+    return (f"""echo "STORAGE_VIEW=$(if mountpoint -q {S['storage_view']}; then stat -c '%U' {S['storage_view']}; else echo unmounted; fi)"
+if runuser -u {SERVICE_USERS['web']} -- test -w {S['storage_view']} >/dev/null 2>&1; then echo "WEB_STORAGE=writable"; else echo "WEB_STORAGE=closed"; fi
+if as_api test -w {S['storage_dir']}; then echo "API_STORAGE=writable"; else echo "API_STORAGE=closed"; fi
+""")
 
 def _health_tunnel(S):
     """health.sh lines for the tunnel, only while state says it is on: is the interface up, does it come back at boot,
@@ -1148,6 +1409,38 @@ def health_verdict(S, facts, crons):
                    f"See what can go: python3 .claude/scripts/provision.py {S['app_id']} --prune-sandboxes")
     if "PRUNE_TIMER" in facts and facts.get("PRUNE_TIMER") != "enabled":
         bad.append("the nightly sandbox prune timer is not on, so every chat's sandbox stays on the disk for ever")
+    # One user per service (mold_v1-158). Every line below was TRIED on the server by health.sh, not read off a mode.
+    sep = []
+    for k, K in (("web", "WEB_USER"), ("api", "API_USER"), ("workflow", "WORKFLOW_USER")):
+        got = facts.get(K)
+        if got != SERVICE_USERS[k] and not (k == "api" and got in ("root", None, "")):      # the API-as-root sentence is above
+            sep.append(f"the {k} service runs as {got or 'a user that could not be read'}, and it must run as its own user {SERVICE_USERS[k]}")
+    for k, K in (("web app", "WEB_IN_KVM"), ("task-workflow service", "WORKFLOW_IN_KVM")):
+        if facts.get(K) != "no": sep.append(f"the {k}'s process is in group kvm (or that could not be read); only the agent API may be")
+    extra_kvm = [m for m in (facts.get("KVM_MEMBERS") or "").split(",") if m and m != SERVICE_USERS["api"]]
+    if extra_kvm: sep.append(f"group kvm has member(s) {', '.join(extra_kvm)}; only the agent API's process may be in it")
+    if facts.get("AGENT_READS_WEB_ENV") != "no": sep.append("the agent's user can open the web app's env file (or that could not be tried)")
+    if facts.get("AGENT_READS_WEB_PROC") != "no":
+        sep.append("the agent's user can read the running web app's environment under /proc" if facts.get("AGENT_READS_WEB_PROC") == "yes"
+                   else "whether the agent's user can read the running web app's environment could not be tried (the web app is not running)")
+    if facts.get("AGENT_WRITES_CODE") != "no": sep.append("the agent's user can write code that another service runs (or that could not be tried)")
+    if facts.get("SANDBOX_STORE_OWNER") not in (SERVICE_USERS["api"], "missing"):
+        sep.append(f"the sandbox store belongs to {facts.get('SANDBOX_STORE_OWNER') or 'an owner that could not be read'}, not to the agent API's user {SERVICE_USERS['api']}")
+    if facts.get("API_HOME") != f"700 {SERVICE_USERS['api']}":
+        sep.append(f"the agent API's home (which holds the sandbox store) is {facts.get('API_HOME')!r}, and it must be mode 700 owned by {SERVICE_USERS['api']}")
+    h["users"] = "separate" if not sep else "not_separate"
+    bad += sep
+    # The server's own SSH port, from the agent's user (the sandbox's user).
+    if facts.get("EGRESS_SSH_RULE") != "yes": bad.append(f"the egress rule that keeps the app's users off this server's own SSH port (port {S['port']}) is not loaded")
+    if facts.get("EGRESS_SSH") == "open": bad.append(f"the agent's user could open this server's own SSH port (port {S['port']}) on its public address, so a sandbox could too")
+    h["egress_ssh"] = "blocked" if facts.get("EGRESS_SSH_RULE") == "yes" and facts.get("EGRESS_SSH") != "open" else "open"
+    if S.get("fs"):
+        if facts.get("EGRESS_WEB") == "blocked":
+            bad.append("the agent's user could not open port 443 on this server's own address, where a sandbox downloads data-room files from the web app")
+        if facts.get("STORAGE_VIEW") != SERVICE_USERS["web"]:
+            bad.append(f"the web app's view of the file store is {facts.get('STORAGE_VIEW') or 'unread'} (it must be mounted and show {SERVICE_USERS['web']} as the owner), so the web app cannot read or write files")
+        for who, K in (("web app", "WEB_STORAGE"), ("agent", "API_STORAGE")):
+            if facts.get(K) != "writable": bad.append(f"the {who} cannot write the file store where it reaches it")
     # The private tunnel (mold_v1-156): with it on, no rule may let any address reach the SSH port.
     if S.get("tunnel_on"):
         T = S["tunnel"]; why = []
@@ -1196,9 +1489,11 @@ def bundle(S, crons):
          "postgres.sh": (postgres_sh(S), 0o755), "build.sh": (build_sh(S, crons), 0o755), "db-chain.sh": (db_chain_sh(S), 0o755),
          "units.sh": (units_sh(S, crons), 0o755), "caddy.sh": (caddy_sh(S), 0o755), "health.sh": (health_sh(S, crons), 0o755),
          "api-prestart.sh": (api_prestart_sh(S), 0o755), "cron-call.sh": (cron_call_sh(S, crons), 0o755),
+         "users.sh": (users_sh(S, crons), 0o755), "seal.sh": (seal_sh(S), 0o755),
          "env-services.json": (json.dumps(service_env_spec(S), indent=2, sort_keys=True) + "\n", 0o644),
          "Caddyfile": (caddyfile(S), 0o644), "egress.nft": (egress_nft(S), 0o644),
          "fail2ban-sshd.local": (fail2ban_jail(S), 0o644)}
+    if S["fs"]: b["storage-view.sh"] = (storage_view_sh(S), 0o755)
     for name, text in unit_files(S, crons).items(): b[f"units/{name}"] = (text, 0o644)
     return b
 def bundle_copies():
@@ -1660,6 +1955,60 @@ def sandbox_prune(home, retention_days=RETENTION_DAYS, dry_run=False, now=None, 
         f"{kept['template']} templates, {kept['unknown']} not eve's or unreadable. The sandbox store now holds {total / 1048576:.0f} MB.")
     return 1 if failed else 0
 
+def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=print):
+    """ON THE SERVER, as root (mold_v1-152): write workspaces into the app's database the way the app itself would.
+
+    `doc` is {"seeds": [{"seed": {...}, "customers": [...]}]}: names, emails and roles from state, no secret. For each
+    seed the factory's own workspace_seed.mjs runs inside the built app, AS THE WEB APP'S USER, with the web service's own
+    env file as its environment: so the connection is the app role's (DATABASE_URL, app_rw), row-level security is in
+    force for every row, and nothing here ever holds the admin URL. The values of that file go to the child in its
+    environment and nowhere else; whatever the child prints is searched for every one of them before a line is shown.
+    Prints one `WORKSPACE {json}` line per seed (counts and ids, never a value). Returns the exit code."""
+    import pwd
+    try: pw = pwd.getpwnam(user)
+    except KeyError:
+        say(f"workspace: this server has no user {user} yet: it was deployed before each service got a user of its own. Nothing was written. Deploy once, then run this again."); return 1
+    vals = env_read(env_file)
+    if not vals.get("DATABASE_URL"):
+        say("workspace: the web app's env file has no DATABASE_URL yet (the deploy writes it after the isolation proof), so there is no database to write to. Nothing was written."); return 1
+    secrets_ = sorted((v for v in vals.values() if len(v) >= 12), key=len, reverse=True)
+    def clean(text):
+        text = redact(text or "")
+        for v in secrets_: text = text.replace(v, "[redacted]")
+        return text
+    env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": home, "LANG": "C.UTF-8", "NODE_ENV": "production", **vals}
+    def as_user(argv):
+        kw = dict(user=pw.pw_uid, group=pw.pw_gid, extra_groups=os.getgrouplist(user, pw.pw_gid)) if os.getuid() == 0 else {}
+        return subprocess.run(argv, cwd=app_dir, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900, **kw)
+    run = run or as_user
+    seeds = doc.get("seeds") or []
+    if not seeds: say("workspace: nothing to write"); return 0
+    rc = 0
+    tmp = tempfile.mkdtemp(prefix="sf-workspace-")
+    try:
+        if os.getuid() == 0: os.chown(tmp, pw.pw_uid, pw.pw_gid)
+        for i, item in enumerate(seeds):
+            sp = os.path.join(tmp, f"seed-{i}.json"); cp = os.path.join(tmp, f"customers-{i}.json")
+            for path, body in ((sp, item["seed"]), (cp, {"customers": item.get("customers") or []})):
+                with open(path, "w") as f: json.dump(body, f)
+                os.chmod(path, 0o600)
+                if os.getuid() == 0: os.chown(path, pw.pw_uid, pw.pw_gid)
+            argv = ["node", "--experimental-strip-types", "--disable-warning=ExperimentalWarning", script, sp] + ([cp] if item.get("customers") else [])
+            try: r = run(argv)
+            except (OSError, subprocess.SubprocessError) as e:
+                say("WORKSPACE " + json.dumps({"org": item["seed"].get("org_id"), "error": f"the seed could not be run ({type(e).__name__})"})); rc = 1; continue
+            line = ((r.stdout or "").strip().splitlines() or [""])[-1]
+            try: out = json.loads(line)
+            except ValueError: out = None
+            if not isinstance(out, dict):
+                tail = " / ".join(l for l in clean((r.stdout or "") + "\n" + (r.stderr or "")).splitlines() if l.strip())[-400:]
+                out = {"org": item["seed"].get("org_id"), "error": "the seed did not finish: " + tail}
+            say("WORKSPACE " + clean(json.dumps(out)))
+            if r.returncode or out.get("error") or out.get("customers_failed"): rc = 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return rc
+
 def env_run(env_file, user, home, cwd, cmd):
     """Run one command as the service user with the env file loaded. The file is root's and mode 600, so root
     reads it here and the values pass to the child in its environment, never through a shell or a command line."""
@@ -1711,6 +2060,11 @@ def check(app_id, app, infra, ds, adir, say=print):
             f"The web app gets the public key only; the agent, which sends, gets all three")
     say(f"sandbox disk: a nightly timer removes stopped session sandboxes untouched for {S['retention_days']} days (vm_remote.sandbox.retention_days); health warns at "
         f"{S['disk_alarm']}% disk and fails at {DISK_FAIL_PCT}%. See what it would remove: python3 .claude/scripts/provision.py {app_id} --prune-sandboxes")
+    say(f"one user per service: the web app runs as {SERVICE_USERS['web']}, the agent API as {SERVICE_USERS['api']} (the only one in group kvm, the only owner of the sandbox store), "
+        f"the task-workflow service as {SERVICE_USERS['workflow']}; the code belongs to {BUILD_USER}, which runs no service. The agent's user cannot open the web app's env file or its process, "
+        f"and cannot reach this server's own SSH port; the deploy's health step tries each and fails if one works")
+    say(f"workspace: after a deploy, write the brief's workspace and its people into the server's database with: python3 .claude/scripts/provision.py {app_id} --workspace-remote "
+        f"(add --dry-run to see it first; safe to repeat)")
     if S["tunnel_on"]:
         say(f"administration tunnel: ON. SSH goes to {S['tunnel']['server_address']} over WireGuard ({S['tunnel']['interface']}); the public address answers on 80 and 443 only. "
             f"If the tunnel is ever down: docs/RUNBOOK.md §9, \"If the factory cannot reach the server\"")
@@ -1785,6 +2139,8 @@ def main_for(app_id, a, app, infra, ds, adir, P):
             sys.path.insert(0, HERE); import vm_tunnel
             return vm_tunnel.main_for(app_id, a, S, adir)
         if "--prune-sandboxes" in a: return prune_remote(S, apply="--apply" in a, dry="--dry-run" in a)
+        if "--workspace-remote" in a:
+            return workspace_remote(app_id, S, app, infra, adir, P, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
         if not any(f in a for f in ("--deploy-remote", "--qualify-remote", "--verify-rls")):
             return check(app_id, app, infra, ds, adir)
         src = source_for(app_id, app); mold_src = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
@@ -1853,6 +2209,159 @@ def prune_remote(S, apply=False, dry=False, runner=real_runner, say=print):
     if r.returncode:
         say(f"{S['app_id']}: the prune did not finish cleanly: " + redact(((r.stderr or "").strip().splitlines() or ["see the lines above"])[-1])[:300]); return 1
     if not apply: say(f"Nothing was removed. To remove these now: python3 .claude/scripts/provision.py {S['app_id']} --prune-sandboxes --apply")
+    return 0
+
+# ---------------------------------------------------------------------------------------------------------
+# the brief's workspace, on the server (mold_v1-152)
+# ---------------------------------------------------------------------------------------------------------
+STATE_SEED = "application.json#workspace"       # the key the state's own workspace is recorded under in seed/orgs/.applied.json
+
+def state_seed(app):
+    """The application's own workspace (application.workspace) as a workspace seed: the org row (id, name, shown name,
+    logo, hosted domain), the owner, the members with their roles, the platform administrators and the people roster.
+    Raises Stop with one sentence when state does not say who owns it."""
+    ws = app.get("workspace") or {}; org = ws.get("org") or {}
+    me = ((ws.get("operator_self") or ws.get("fde_self") or {}).get("email") or "").strip().lower()
+    members = [m for m in ws.get("members") or [] if isinstance(m, dict) and m.get("email")]
+    owner = next((m["email"].strip().lower() for m in members if m.get("role") == "owner"), "") or me
+    if not org.get("org_id") or not org.get("name") or not owner:
+        raise Stop(f"{app.get('app_id')}: application.workspace does not name a workspace (org.org_id, org.name) and its owner (a member with role owner, or operator_self), so there is nothing to write.")
+    named = {str(r.get("email", "")).lower(): r for r in ws.get("roster") or [] if isinstance(r, dict)}
+    out_members = []
+    for m in members:
+        e = m["email"].strip().lower(); row = {"email": e, "role": m.get("role") or "member"}
+        if (named.get(e) or {}).get("name"): row["name"] = named[e]["name"]
+        out_members.append(row)
+    seed = {"org_id": org["org_id"], "name": org["name"], "google_hosted_domain": org.get("google_hosted_domain"), "owner": owner, "members": out_members,
+            "platform_admins": [str(e).strip().lower() for e in ws.get("platform_admins") or []],
+            "roster": [dict(r, email=str(r["email"]).strip().lower()) for r in ws.get("roster") or [] if isinstance(r, dict) and r.get("email")]}
+    for k in ("display_name", "logo_url"):
+        if org.get(k): seed[k] = org[k]
+    return seed
+
+def seed_files(adir):
+    d = os.path.join(adir, "seed", "orgs")
+    return sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".json") and not f.startswith(".")) if os.path.isdir(d) else []
+def seed_digest(path):
+    """mint.py's own digest of a seed file (the file, then its customers.json), so the two agree on "applied as written"."""
+    import hashlib
+    h = hashlib.sha256(open(path, "rb").read()); c = path[:-5] + "/customers.json"
+    if os.path.exists(c): h.update(open(c, "rb").read())
+    return h.hexdigest()
+def state_seed_digest(app, adir=None):
+    import hashlib
+    h = hashlib.sha256(json.dumps(state_seed(app), sort_keys=True).encode())
+    c = os.path.join(adir, "seed", "orgs", state_seed(app)["org_id"], "customers.json") if adir else ""
+    if c and os.path.exists(c): h.update(open(c, "rb").read())
+    return h.hexdigest()
+
+def workspace_plan(app_id, app, adir, only=None, new_workspace=False):
+    """[(key, label, {"seed", "customers"})] in the order they are written: the state's own workspace first, then every
+    seed under state/application/<app>/seed/orgs/ (workspace.py's input: one more workspace each), each with the
+    companies in <org_id>/customers.json beside it when there is one. `only` (a seed file) writes just that one.
+    Refuses, in one sentence, a seed workspace.py would refuse."""
+    def customers(org_id):
+        c = os.path.join(adir, "seed", "orgs", org_id, "customers.json")
+        if not os.path.exists(c): return []
+        try: return list(load(c).get("customers") or [])
+        except (ValueError, AttributeError): raise Stop(f"{os.path.relpath(c, ROOT)} is not the companies file it should be ({{\"customers\": [...]}}). Nothing was contacted.")
+    def from_file(path):
+        rel = os.path.relpath(path, ROOT) if path.startswith(ROOT) else path
+        try: sd = load(path)
+        except (OSError, ValueError): raise Stop(f"{rel} could not be read as a workspace seed. Nothing was contacted.")
+        sd.setdefault("members", [])
+        for k in ("org_id", "name", "owner"):
+            if not sd.get(k): raise Stop(f"{rel}: '{k}' is missing. Nothing was contacted.")
+        if any("password" in m for m in sd["members"]): raise Stop(f"{rel} carries a password field; this app has no passwords. Remove it. Nothing was contacted.")
+        beside = path[:-5] + "/customers.json"
+        cust = list(load(beside).get("customers") or []) if os.path.exists(beside) else []
+        return {"seed": {k: v for k, v in sd.items() if k != "note"}, "customers": cust}
+    if only:
+        item = from_file(os.path.abspath(only)); return [(os.path.basename(only), f"the workspace {item['seed']['org_id']} ({os.path.basename(only)})", item)]
+    own = state_seed(app)
+    if not new_workspace: own["guard"] = "no_other_workspace"
+    plan_ = [(STATE_SEED, f"the application's own workspace, {own['org_id']} (\"{own['name']}\")", {"seed": own, "customers": customers(own["org_id"])})]
+    for path in seed_files(adir):
+        item = from_file(path); sd = item["seed"]
+        if sd["org_id"] == own["org_id"] and sd["name"] != own["name"]:
+            raise Stop(f"{os.path.relpath(path, ROOT)} names the workspace {sd['org_id']} \"{sd['name']}\", and application.json names the same workspace \"{own['name']}\". "
+                       f"One of the two is out of date; make them agree. Nothing was contacted.")
+        plan_.append((os.path.basename(path), f"the workspace {sd['org_id']} (seed/orgs/{os.path.basename(path)})", item))
+    return plan_
+
+def workspace_argv(S, shown=False):
+    """The one remote command behind --workspace-remote: the factory's seed, inside the built app, as the web app's
+    user with the web service's env file. The workspaces arrive on its stdin; nothing secret is on the command line."""
+    web = SERVICE_USERS["web"]
+    cmd = guarded(S, f"python3 {S['tool']} workspace-seed --file {S['env_files']['web']} --user {web} --home {SERVICE_HOMES['web']} "
+                     f"--app-dir {S['app_dir']} --script {S['factory_dir']}/.claude/scripts/lib/workspace_seed.mjs")
+    return ssh_argv(S, cmd, shown)
+
+def _n(n, one, many): return f"{n} {one if n == 1 else many}"
+
+def workspace_remote(app_id, S, app, infra, adir, P, a, crons, runner=real_runner, say=print):
+    """`provision.py <app> --workspace-remote [seed.json] [--new-workspace] [--dry-run]`: write the brief's workspace
+    (and every extra one under seed/orgs/) into the database of an app on its own server. The Vercel path does this
+    with clone.py configure and workspace.py, which read a Vercel project's env; here the write happens ON the server.
+    Safe to run again: every row is created if absent and updated if present, and nothing is ever removed."""
+    only = next((x for x in a[a.index("--workspace-remote") + 1:] if not x.startswith("-")), None)
+    plan_ = workspace_plan(app_id, app, adir, only=only, new_workspace="--new-workspace" in a)
+    doc = {"seeds": [item for _, _, item in plan_]}
+    if "--dry-run" in a:
+        say(f"DRY RUN for {app_id}: nothing below was run and nothing was contacted.")
+        say("    $ " + shown_cmd(S, rsync_argv(S, "<bundle>", S["factory_dir"], shown=True)) + "      (the factory's own scripts, so the server runs this version of the seed)")
+        say("    $ " + shown_cmd(S, workspace_argv(S, shown=True)))
+        say("    stdin (the workspaces, from state; names, emails and roles, no secret):")
+        for _, label, item in plan_:
+            sd = item["seed"]
+            say(f"      | {label}: owner {sd['owner']}, {_n(len(sd.get('members') or []), 'member', 'members')}, {_n(len(sd.get('platform_admins') or []), 'platform admin', 'platform admins')}, "
+                f"{len(sd.get('roster') or sd.get('members') or [])} on the roster, {_n(len(item.get('customers') or []), 'company', 'companies')}; hosted domain {sd.get('google_hosted_domain') or 'none'}"
+                + ("; refused if the server already has other workspaces and not this one" if sd.get("guard") else ""))
+        return 0
+    if not S["host"]: raise Stop(f"{app_id}: the server address is not in state yet, so there is no database to write to. Nothing was contacted.")
+    if not infra.get("deployed_at") or not (infra.get("vm_remote") or {}).get("production_url"):
+        raise Stop(f"{app_id}: the app is not deployed yet, so its database does not exist. Nothing was contacted. Deploy it first: python3 .claude/scripts/provision.py {app_id} --deploy-remote")
+    if not os.path.isfile(key_path(S)): raise Stop(f"{app_id}: there is no SSH key named {S['key_ref']} on this VM ({key_shown(S)}). Nothing was contacted.")
+    # The server runs the factory's own copy of the seed: send this version of it first (the deploy's own bundle step;
+    # nothing it carries runs by itself, so this changes nothing for the running app).
+    bdir = tempfile.mkdtemp(prefix="sf-vm-remote-")
+    try:
+        write_bundle(S, crons, bdir)
+        r = runner({"id": "bundle", "argv": rsync_argv(S, bdir, S["factory_dir"]), "timeout": 300})
+    finally: shutil.rmtree(bdir, ignore_errors=True)
+    if r.returncode:
+        raise Stop(f"{app_id}: could not reach the server to send the factory's scripts: " + redact(((r.stderr or "").strip().splitlines() or ["no answer"])[-1])[:300] + ". Nothing was written.")
+    r = runner({"id": "workspace", "argv": workspace_argv(S), "timeout": 1800}, json.dumps(doc))
+    outs = [json.loads(l[len("WORKSPACE "):]) for l in (r.stdout or "").splitlines() if l.startswith("WORKSPACE {")]
+    for l in redact(r.stdout or "").splitlines():
+        if l.strip() and not l.startswith("WORKSPACE {"): say(l[:300])
+    done = {}; failed = False
+    for (key, label, item), out in zip(plan_, outs):
+        if out.get("error") == "other_workspaces":
+            failed = True; have = ", ".join(out.get("other_workspaces") or [])
+            say(f"{app_id}: NOT written: {label}. The server's database already has workspace(s) {have} and none with the id {item['seed']['org_id']}, so writing it would give the app a second, empty workspace beside the one people use. "
+                f"Either make state name the one that is there (org.org_id and org.name in state/application/{app_id}/application.json), or, if a new workspace is really wanted, run this again with --new-workspace. Nothing was written for it.")
+            continue
+        if out.get("error") or out.get("customers_failed"):
+            failed = True; say(f"{app_id}: NOT finished: {label}: {str(out.get('error') or '; '.join(out.get('customers_failed') or []))[:300]}"); continue
+        say(f"{app_id}: written: {label}: workspace {out.get('orgs')}, {out.get('org_members')} member(s), {out.get('platform_admins', 0)} platform admin(s), {out.get('recipes')} recipe(s) added, "
+            f"workflow library {out.get('workflows_created')} installed / {out.get('workflows_present')} already there, {out.get('people_roster')} on the roster, {out.get('customers_in_workspace')} companies in the workspace")
+        done[key] = state_seed_digest(app, adir) if key == STATE_SEED else seed_digest(os.path.join(adir, "seed", "orgs", key)) if os.path.exists(os.path.join(adir, "seed", "orgs", key)) else None
+    if r.returncode and len(outs) < len(plan_):
+        failed = True
+        say(f"{app_id}: the workspace step did not finish on the server: " + redact(((r.stderr or "").strip().splitlines() or ["no reason was printed"])[-1])[:300])
+    done = {k: v for k, v in done.items() if v}
+    if done:
+        # What was applied, as written: the same record mint.py keeps for the Vercel path, so `mint.py <app>` knows.
+        ap = os.path.join(adir, "seed", "orgs", ".applied.json"); os.makedirs(os.path.dirname(ap), exist_ok=True)
+        rec = load(ap) if os.path.exists(ap) else {}
+        rec.update(done)
+        with open(ap, "w") as f: json.dump(rec, f, indent=2)
+        if STATE_SEED in done:
+            infra["configured_at"] = P.NOW; P.save(os.path.join(adir, "infrastructure.json"), infra)
+    if failed:
+        say(f"  Every write is safe to repeat: python3 .claude/scripts/provision.py {app_id} --workspace-remote"); return 1
+    say(f"{app_id}: {len(done)} workspace(s) are in the server's database as state describes them. Nothing was removed, and no connection string left the server.")
     return 0
 
 def prepare_source(app_id, app):
@@ -1991,6 +2500,10 @@ def cli(a):
         print("env: each service's own file written (root, mode 600; values not shown): " + ", ".join(f"{k}.env {n} names" for k, n in counts.items())); return 0
     if cmd == "env-run":
         i = a.index("--"); env_run(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--cwd"), a[i + 1:]); return 0
+    if cmd == "workspace-seed":
+        try: doc = json.loads(sys.stdin.read())
+        except ValueError: print("workspace: what arrived on stdin is not the list of workspaces; nothing was written"); return 2
+        return workspace_seed(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--script"), doc)
     if cmd == "pg-admin":
         pg_admin(f, _opt(a, "--db"), int(_opt(a, "--port", "5432")), _opt(a, "--sslmode", "require")); return 0
     if cmd == "host-chain":
