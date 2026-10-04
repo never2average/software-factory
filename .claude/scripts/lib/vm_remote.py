@@ -1987,6 +1987,13 @@ def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=pri
     tmp = tempfile.mkdtemp(prefix="sf-workspace-")
     try:
         if os.getuid() == 0: os.chown(tmp, pw.pw_uid, pw.pw_gid)
+        # The factory's directory on the server is root's alone (mode 700), so the web app's user cannot read the
+        # script there: "Cannot find module" on the first real server (2026-10-04). It imports the app's modules
+        # from the working directory, not from its own location, so a private copy runs the same.
+        if os.path.isfile(script):
+            own = os.path.join(tmp, os.path.basename(script)); shutil.copyfile(script, own); os.chmod(own, 0o600)
+            if os.getuid() == 0: os.chown(own, pw.pw_uid, pw.pw_gid)
+            script = own
         for i, item in enumerate(seeds):
             sp = os.path.join(tmp, f"seed-{i}.json"); cp = os.path.join(tmp, f"customers-{i}.json")
             for path, body in ((sp, item["seed"]), (cp, {"customers": item.get("customers") or []})):
