@@ -14,6 +14,7 @@ Everything the server receives is rendered from the application's state by `.cla
     python3 .claude/scripts/provision.py <app_id> --deploy-remote --dry-run [--out DIR]
     python3 .claude/scripts/provision.py <app_id> --deploy-remote              # the operator's, at a terminal
     python3 .claude/scripts/provision.py <app_id> --verify-rls
+    python3 .claude/scripts/provision.py <app_id> --workspace-remote [seed.json] [--dry-run]   # the brief's workspace and people, written on the server
     python3 .claude/scripts/provision.py <app_id> --prune-sandboxes [--apply]             # what the nightly prune would remove; --apply removes it now
     python3 .claude/scripts/provision.py <app_id> --tunnel-remote --dry-run               # the private tunnel: every local and remote command, nothing run
     python3 .claude/scripts/provision.py <app_id> --tunnel-remote [--factory-apply]       # turn it on, behind the lockout guard
@@ -27,21 +28,23 @@ The operator's click-by-click steps are `docs/RUNBOOK.md` §9. The state fields 
 
 | Path | What | Owner, mode |
 |---|---|---|
-| `/opt/software-factory/<app_id>/app` | the source, then the build made in place (it embeds absolute paths) | `sfapp` |
+| `/opt/software-factory/<app_id>/app` | the source, then the build made in place (it embeds absolute paths) | `sfbuild:sfcode`, nothing for others; see "One user per service" for the five directories a service owns |
 | `/opt/software-factory/<app_id>/factory` | the generated scripts, unit files, Caddyfile, and a copy of `provision.py` + `lib/` for the database chain | root |
 | `/etc/software-factory/<app_id>/env` | the master env file: settings from state, secrets minted on the server, the operator's values. No service reads it | root, 600 |
 | `/etc/software-factory/<app_id>/{web,api,workflow,cron}.env` | each service's own file, split from the master by `env-split` (`factory/env-services.json` says which names): the web app gets the sign-in private key; the agent gets the public key, `SERVICE_AUTH=session-key` and its own settings, never the private key; the task-workflow service gets `DATABASE_URL`, `TASK_WORKFLOW_SERVICE_TOKEN` and its own `WORKFLOW_LOCAL_DATA_DIR`; the cron calls get `CRON_SECRET` | root, 600 |
 | `/var/lib/software-factory/<app_id>/` | `home/` (the sandbox runtime links), `workflow-data/` (the agent's), `task-workflow-data/`, `storage/` (`STORAGE_FS_ROOT`), `build-stamps/`: everything a redeploy must keep | `sfapp` |
 | `/etc/systemd/system/sf-<app>-{workflow,api,web}.service` | the three services, all on 127.0.0.1 | |
 | `/etc/systemd/system/sf-<app>-cron-<route>.{service,timer}` | six timers, one per `vercel.json` cron, each a loopback `curl` with `CRON_SECRET` on stdin | |
-| `/etc/systemd/system/sf-<app>-egress.service` | loads the nftables rule that keeps `sfapp` off the metadata address and private ranges | |
+| `/etc/systemd/system/sf-<app>-egress.service` | loads the nftables rule that keeps the app's four users off the metadata address, the private ranges, and this server's own SSH port | |
+| `/etc/systemd/system/sf-<app>-storage.service` | filesystem storage only: mounts the web app's view of the file store at `<data>/storage-web` (`storage-view.sh`) | |
 | `/etc/systemd/system/sf-<app>-sandbox-prune.{service,timer}` | nightly (03:17): removes stopped session sandboxes and their state snapshots untouched for `sandbox.retention_days` (7), as `sfapp`, with `msb`'s own commands | |
 | `/opt/software-factory/<app_id>/tunnel/` | only with the tunnel: `tunnel.sh` and the server's WireGuard conf (public keys only) | root, 700 |
 | `/etc/wireguard/<interface>.{conf,key}` | only with the tunnel: the conf above, and the server's own key, made there and never read out | root, 600 |
 | `/etc/caddy/Caddyfile` | TLS for the domain; everything to the web app on loopback; `/api/cron/*` answered 404 from outside | |
 | `/etc/postgresql/<v>/main/conf.d/software-factory.conf` | `listen_addresses = '127.0.0.1'`, `ssl = on` | |
 
-The API runs as `sfapp` (no login shell, no sudo) with `SupplementaryGroups=kvm`. Before it starts, `api-prestart.sh` checks
+The API runs as `sfapp` (no login shell, no sudo) with `SupplementaryGroups=kvm`; the web app as `sfweb`, the task-workflow
+service as `sfwork` (below). Before the API starts, `api-prestart.sh` checks
 `/dev/kvm` and runs the mold's own `npm run sandbox:prewarm -- --link-runtime --retries 2` (fde-agent #100): it clears template locks
 whose owner is gone, links the microsandbox runtime from `node_modules`, refuses to finish if the data room's file-link origin resolves
 into the sandbox deny list, and prewarms the templates one at a time with three tries each. Then `node .output/server/index.mjs`, not
@@ -107,15 +110,83 @@ into the sandbox deny list, and prewarms the templates one at a time with three 
   `config_pairs` writes is one that snapshot reads; the self-test checks it name by name against the snapshot in the checkout.
 - **Each service holds only what it reads.** The agent verifies the web app's service token with the public key and cannot mint one
   (docs/self-hosting/SERVICE_IDENTITY.md in the mold). `health.sh` reads the running agent's environment for the private key's NAME
-  and fails the deploy if it is there. The files are root's, not `sfapp`'s: systemd reads them as root, and a file `sfapp` could open
-  would let the agent read the web app's. All three services still run as the one user `sfapp`, so a process that takes over the agent
-  could read the web process's environment under `/proc`; a user per service is the next step if that matters.
+  and fails the deploy if it is there. The files are root's, not a service user's: systemd reads them as root, and no service needs
+  to open its own, let alone another's.
+- **One user per service (mold_v1-158).** Until 2026-10-04 all three services ran as `sfapp`, so a process that took over the agent
+  could read the web app's environment (the sign-in private key, the mail key) from `/proc/<pid>/environ`. Now:
+
+  | user | runs | home | notes |
+  |---|---|---|---|
+  | `sfweb` | the web app (`next start`), and the six cron calls | `/var/lib/sfweb` | the cron calls only call the web app, with `CRON_SECRET`, which it already holds |
+  | `sfapp` | the agent API, its prewarm, the nightly sandbox prune | `/var/lib/sfapp` | the old single user's name, uid and short HOME, kept on purpose: the sandbox store (`~/.microsandbox`, about 15 GB on the first server) and the file store already belong to it, so neither is moved or re-owned. The only process in group kvm (from its unit; nobody is a member in `/etc/group`) |
+  | `sfwork` | the task-workflow service | `/var/lib/sfwork` | |
+  | `sfbuild` | every build | `/var/lib/sfbuild` | owns the code; runs no service, so no service can change the code another one (or it) runs |
+
+  Who reads and writes what, read from snapshot `4ad0c2c`:
+
+  | path | owner:group, mode | reads | writes | why (the snapshot's code) |
+  |---|---|---|---|---|
+  | `app/` and everything not listed below (`node_modules`, `package.json`, `lib/`, `public/`, `scripts/`, `services/task-workflow/` and its `node_modules`) | `sfbuild:sfcode`, `u=rwX,g=rX,o=` | all three services, through group `sfcode` | the build only | `next start` and the built agent load code and assets from here; none writes it |
+  | `app/.next/` | `sfweb:sfweb` | web | web | `next start` serves the build and writes its cache under it |
+  | `app/.output/`, `app/.eve/` | `sfapp:sfapp` | agent | agent | `.output/server/index.mjs` is what the API runs; eve keeps its work under `.eve/` (`.eve/sandbox-cache/template-locks` is where `scripts/sandbox-prewarm-serial.mjs` clears stale locks) |
+  | `app/.eve-build-hidden/` | `sfapp:sfapp`, made by `seal.sh` | agent | agent | the prewarm takes `scripts/eve-build.mjs`'s lock there before the API starts; it cannot create the directory in a root it may not write, so it is made for it |
+  | `app/agent/` | `sfapp:sfcode` | all three | agent | the prewarm puts a generated wrapper in every agent node's sandbox slot and moves the authored `sandbox.ts` aside while it runs (`scripts/lib/sandbox-overlay.mjs`) |
+  | `app/services/task-workflow/.next/` | `sfwork:sfwork` | task-workflow | task-workflow | that service's own build and cache |
+  | `<data>/` | `root:sfcode`, 750 | the three services may enter | nobody | |
+  | `<data>/workflow-data/` | `sfapp`, 700 | agent | agent | eve's local workflow world (`WORKFLOW_LOCAL_DATA_DIR` in `api.env`; in the app's own `node_modules` only `eve` reads that name) |
+  | `<data>/task-workflow-data/` | `sfwork`, 700 | task-workflow | task-workflow | the `workflow` package's local world in that service |
+  | `<data>/storage/` | `sfapp`, as the app made it | agent, directly; web, through its view | both | see the next point |
+  | `/var/lib/sfapp/.microsandbox/` | `sfapp`, home is 700 | agent, prune | agent, prune | msb's store; the short path keeps its Unix sockets under 108 bytes |
+
+  `seal.sh` sets the code's owners after every build and after the database step (which runs the mold's migrations as root inside it);
+  `users.sh` sets the rest, right after `build.sh` stopped the services. The health step TRIES, as `sfapp`, to open `web.env`, to read
+  `/proc/<web pid>/environ` and to write the shared code, and fails the deploy if any works.
+- **The file store has one owner on disk and a view for the web app.** Both the web app and the agent read and write
+  `STORAGE_FS_ROOT`, and the mold's filesystem driver makes every folder 700 and every file 600 (`lib/storage/filesystem.ts`:
+  `mkdir(..., { mode: 0o700 })`, `open(..., 0o600)`). With two users that means whatever one writes the other cannot open, and no
+  group, setgid bit, umask or default ACL changes it (an explicit mode masks them all). So the directory stays `sfapp`'s, exactly as
+  it is, and the web app reaches it through `<data>/storage-web`: an id-mapped bind mount of the same directory in which `sfapp`'s
+  files appear as `sfweb`'s (`storage-view.sh`; `mount --bind -o X-mount.idmap=u:<sfapp>:<sfweb>:1 g:...`; util-linux 2.39 and
+  kernel 5.12 or later, both in Ubuntu 24.04; nothing is installed and nothing is copied). `web.env` gets
+  `STORAGE_FS_ROOT=<data>/storage-web`, `api.env` the real path. The web unit `Requires=` the mount. If the mold's driver ever takes
+  a group-shared mode (an upstream change), the view can go.
+- **Moving a server that ran everything as `sfapp`** is the next deploy and nothing else. Its order: `packages.sh` makes the new
+  accounts and re-owns nothing (the old services are still serving); `firewall.sh` loads the egress rule, which now names them;
+  `build.sh` stops the services, then `users.sh` (it refuses if one is still running) hands over what changes hands, the
+  task-workflow service's data directory and the data directory itself, then the build runs as `sfbuild` and `seal.sh` sets the
+  code's owners; `units.sh` installs the new unit files, mounts the view and starts each service as its own user. Nothing is moved
+  and nothing is deleted: the sandbox store and the file store keep their path and their owner, and the database is not touched
+  (its roles are Postgres roles, not system users). Every step is a no-op the second time.
+- **The app's users cannot reach the server's own SSH port (mold_v1-158).** A connection the server makes to itself arrives on the
+  loopback interface, which ufw always admits, so narrowing the SSH rule (to one address, or to the tunnel) never stopped a sandbox
+  from knocking on sshd at the server's public address. `egress.nft` now drops, for the four users, TCP to `fib daddr type local`
+  (every address the server holds: public, private, the tunnel's, 127.0.0.1) on the SSH port. Port 443 on the same addresses stays
+  open: that is where `dataroom_fetch_to_sandbox` downloads from. The health step looks for the loaded rule and tries both ports
+  as `sfapp`.
+- **The brief's workspace is written on the server (mold_v1-152).** `--workspace-remote` sends the factory's bundle, then runs
+  `vm_remote.py workspace-seed` there: `lib/workspace_seed.mjs` inside the built app, as `sfweb`, with `web.env` as its environment,
+  so every row goes through the app role under row-level security and the admin URL is never involved. It writes the application's
+  own workspace from `application.workspace` (the org row with its hosted domain, the owner, members with roles, platform
+  administrators, the recipes and workflow library through the mold's `provisionWorkspace`, the people roster) and then every seed
+  under `seed/orgs/`, each with the companies in `<org_id>/customers.json`. The workspaces travel on stdin (names, emails, roles);
+  what comes back is one line of counts per workspace, searched for every value of `web.env` before it is shown. It refuses to create
+  the application's own workspace on a database that already has other workspaces and not that one (`--new-workspace` overrides).
+  What it applied is recorded in `seed/orgs/.applied.json`, which is what `mint.py`'s workspaces station reads.
 - **The sandbox may reach the server's public address, and nothing listens there but Caddy and SSH.** With filesystem storage a
   sandbox downloads data-room files from `https://<domain>`, so that address is not in `SANDBOX_DENY_SUBNETS`; every service binds
   127.0.0.1 and `health.sh` fails the deploy on any other public listener. validate, `--qualify-remote` and the deploy refuse `fs` storage
   with a deny list that holds the address (`s3` storage is the other way out).
 
 ## What only a real server can prove
+
+**One user per service, the egress line for the SSH port and `--workspace-remote` (mold_v1-158, -152) have not been run on a
+server.** Offline: `users.sh`, `seal.sh` and `storage-view.sh` were executed against stand-in commands; the id-mapped view was
+mounted for real in a private mount namespace on the factory machine (same Ubuntu 24.04, kernel 6.8, ext4) and used by two stand-in
+uids the way the storage driver uses it; the egress rule was loaded in a private network namespace and tried; the seed was run with
+node against a stand-in for the app's database modules. Still to see on the real one: that nothing the three services do at run time
+writes a path `seal.sh` left read-only (the journal names the path if one does; the fix is one more `chown` line in `seal.sh`), that
+eve's sandboxes go out through the host's OUTPUT hook as `sfapp` (the premise of the egress rule since the first deploy), and the
+seed's SQL against the real schema.
 
 **The three additions of 2026-10-04 (notification keys, the tunnel, the sandbox prune) have not been run on a server.** Offline, the
 tunnel's server script was executed against stand-in `ufw` / `systemctl` / `systemd-run` / `wg` commands and the prune against a
