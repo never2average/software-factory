@@ -715,6 +715,21 @@
       "type": "string",
       "format": "uri",
       "description": "The application's published handoff page (an Artifact built by mint.py <app_id> handoff). A later session republishes to THIS url rather than creating a second page."
+    },
+    "repository": {
+      "type": "object",
+      "description": "OPTIONAL, and absent unless the operator asked for one: the application's own PRIVATE repository on GitHub or GitLab, written only by .claude/scripts/repo.py (publish / push / auto-push / unlink). It records where the repository is and what was last pushed, never a credential: the one shared sign-in per provider lives in the gh or glab command, or in the environment under the name GITLAB_TOKEN. Nothing in mint.py, provision.py or lanes.py creates one.",
+      "additionalProperties": false,
+      "required": ["provider", "host", "owner", "name", "url"],
+      "properties": {
+        "provider": { "enum": ["github", "gitlab"] },
+        "host": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$", "description": "github.com, gitlab.com, or a company's own GitLab server. The name alone, no https:// and no path." },
+        "owner": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$", "description": "The account, organisation or group the repository sits under (a GitLab subgroup is group/subgroup)." },
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", "description": "The repository's name; by default the app id with dashes. One repository per application." },
+        "url": { "type": "string", "pattern": "^https://[^@\\s]+$", "description": "https://<host>/<owner>/<name>, with no user name or password in it." },
+        "last_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The commit repo.py last pushed (or found already in place)." },
+        "auto_push": { "type": "boolean", "description": "Default false. Only when true may a finished deploy and a recorded lane run push one commit by themselves (repo.py <app_id> auto-push on|off)." }
+      }
     }
   }
 }
