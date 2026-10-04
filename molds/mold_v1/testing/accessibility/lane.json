@@ -29,11 +29,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
-          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/accessibility/target-up.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         }
       ],
       "why": "A serious or critical WCAG 2.1 A/AA violation is a customer who cannot use the page at all: an unnamed button is invisible to a screen reader, and failing contrast is unreadable in daylight or with low vision."
@@ -53,11 +53,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
-          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/accessibility/target-up.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         }
       ],
       "why": "Tab is the only way in for anyone who cannot use a mouse: a control no Tab reaches, or one that takes focus with no visible ring, locks that person out of the workspace."
@@ -88,11 +88,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
-          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane grades rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane accessibility (molds/mold_v1/testing/accessibility/README.md, \"Measuring a vm fixture\"). `python3 {testing}/accessibility/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/accessibility/target-up.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         },
         {
           "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/accessibility/session-live.py \"$(python3 {testing}/accessibility/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",

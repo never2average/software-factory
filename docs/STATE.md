@@ -96,13 +96,13 @@ rules the schema cannot say (each prints the file and the value to write).
 | `ssh_user`, `ssh_port` | the login the deploy connects as (root, or a user with passwordless sudo) and the SSH port; the firewall allows exactly that port, 80 and 443 |
 | `ssh_key_ref` | the **name** of the SSH key: the file name under `~/.ssh/` on the factory VM and the name its public half carries at the provider. A path, a public key or key material is a schema error |
 | `domain` | the name people open; needs a DNS A record at `host`. The other value the operator supplies |
-| `production_url` | `https://<domain>`, written by `--deploy-remote` after the health checks; refused by validate when it is anything else or when `deployed_at` is absent. This is the URL `lanes.py` grades |
+| `production_url` | `https://<domain>`, written by `--deploy-remote` after the health checks; refused by validate when it is anything else or when `deployed_at` is absent. This is the URL `lanes.py` grades, and the address mint's package, report and handoff stations read |
 | `install_path` | fixed: `/opt/software-factory/<app_id>`. The build embeds absolute paths, so the app is built where it runs |
 | `kvm` | `required`, the only value: the sandbox is a KVM microVM, and a host without `/dev/kvm` is refused before anything is installed |
 | `sandbox` | `backend` (`microsandbox`), `cpus` (at least 2), `memory_mib` (at least 1024), `deny_subnets` (must include 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8; the server's own public address is NOT added, because filesystem-storage file links point there: the server's services listen on loopback only behind Caddy instead, as the mold's `docs/self-hosting/SANDBOX.md` recommends; validate, `--qualify-remote` and the deploy refuse `fs` storage with a list that holds `host` or an address the domain resolves to). Written to the env file as `SANDBOX_BACKEND`, `SANDBOX_CPUS`, `SANDBOX_MEMORY_MIB`, `SANDBOX_DENY_SUBNETS` |
 | `storage` | `driver` `fs` (then `dir` is `/var/lib/software-factory/<app_id>/storage`; written as `STORAGE_DRIVER=filesystem`, `STORAGE_FS_ROOT`, `STORAGE_PUBLIC_URL=https://<domain>`, and `STORAGE_SIGNING_SECRET` minted on the server) or `s3` (then `bucket`, `endpoint`, optional `region` / `addressing`, and `access_key_ref` / `secret_key_ref`, both NAMES listed in `secrets_user`; written as `STORAGE_S3_*` and `NEXT_PUBLIC_STORAGE_HOST`, the key pair copied on the server from those names to `STORAGE_S3_ACCESS_KEY_ID` / `STORAGE_S3_SECRET_ACCESS_KEY`). The names are the mold's (`docs/STORAGE.md`). `datastores.blob.provider` must say the same |
 | `postgres` | `version` (16 or 17) and `tls`: `on` (the server's Postgres answers TLS, which the mold's migration scripts require) or `migration_switch` with `migration_switch_env` naming the upstream switch. `datastores.postgres` must be `self_hosted`, `exposure: remote_loopback`, `host: 127.0.0.1`, with the matching `sslmode` |
-| `health` | the deploy's verdict, never typed: `workflow` / `api` / `web` as under `vercel.health`, `kvm` (`ok`, `device_missing`, `api_not_in_kvm_group`, `unmeasured`), `qualified_at` |
+| `health` | the deploy's verdict, never typed: `workflow` / `api` / `web` as under `vercel.health`, `kvm` (`ok`, `device_missing`, `api_not_in_kvm_group`, `unmeasured`), `qualified_at`; `users` (`separate` when each service runs as its own user and the agent's user was refused the web app's env file, its process and other services' code), `egress_ssh` (`blocked` when the app's users cannot reach the server's own SSH port) |
 
 With it go `secret_store: vm_remote_env_file` (a master env file on the server, `/etc/software-factory/<app_id>/env`, mode 600, root's, and one file per service split from it: `web.env`, `api.env` (no `AUTH_JWT_PRIVATE_KEY`; `SERVICE_AUTH=session-key` and the public key), `workflow.env` (only the names that service reads) and `cron.env` (`CRON_SECRET`), each mode 600, root's) and
 `sandbox.provider: microsandbox`. A vm_remote app may hold a deployed status, and then owes the same `rls_verified` evidence as a vercel
@@ -126,10 +126,12 @@ What a lane needs from state, declared per check in the lane's `lane.json` rathe
 grade the deployed app; the two browser lanes read it through `<lane>/lane-url.py`, which for a `target: vm`
 fixture accepts a loopback `MOLD_V1_LANE_URL` instead — `docs/RUNBOOK.md` §7), `datastores.postgres.rls` (the `rls` row is skipped when it is `off`), and
 `application.clone_of.ref` (the context lane's `clone.regression` row only applies to a replica).
-For a `target: vm_remote` app the same checks grade `infrastructure.vm_remote.production_url` instead (mold_v1-078): `lanes.py`
-answers the `infrastructure.vercel.production_url` precondition and the lanes' `lane-url.py` calls from
-`.claude/scripts/lib/lane_url.py`, and appends the checks in `.claude/scripts/lane-overlays/vm_remote/<lane>.json` (today the
-functional lane's `tool.python`, a real python tool call in the sandbox). A vercel or vm app's lanes are unchanged.
+For a `target: vm_remote` app the same checks grade `infrastructure.vm_remote.production_url` instead, and the lane says so, not
+the runner (mold_v1-154): each lane's own `lane-url.py` and `functional/tenant-isolation.py` read that address (only once a deploy
+recorded it), so the `rls.health` row measures the app on its server. `lanes.py` rewrites nothing; it offers a lane two things:
+the `{deploy}` placeholder (`--deploy`, or `--deploy-remote` for vm_remote) and a check's `targets` list, which makes a check exist
+for those targets only (today the functional lane's `tool.python`, a real python tool call in the sandbox, `targets: ["vm_remote"]`).
+A vercel or vm app's lanes are unchanged.
 
 ## capabilities and runtime env
 `application.capabilities` is the source; `infrastructure.runtime_env` is what provision.py writes to the target (`OPS_MULTI_TENANT`, `ENABLE_*`, `MODEL_PROVIDER`). Never edit `runtime_env` by hand.

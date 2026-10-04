@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One real agent turn that must RUN PYTHON in the sandbox, on the deployed app, as a signed-in person.
 
-  MOLD_V1_SESSION_TOKEN=... python3 .claude/scripts/lane-overlays/vm_remote/tool-python.py <base_url> [--timeout 240]
+  MOLD_V1_SESSION_TOKEN=... python3 molds/mold_v1/testing/functional/tool-python.py <base_url> [--timeout 240]
 
 Why a vm_remote application needs this and a Vercel one does not: on Vercel the sandbox is Vercel's own; on a
 server it is a KVM microVM the API starts itself as a non-root user (reports/vm-spike-mold_v1-072.md). A wrong

@@ -30,6 +30,19 @@ Two rules the runner enforces rather than trusts:
 * `known_defect: <task_id>` is an annotation. It links the task in the report and stops a duplicate
   being filed; it never turns a red check green.
 
+Which deployment a check grades is the lane's own business, not the runner's (mold_v1-154). `<lane>/lane-url.py` and
+`functional/tenant-isolation.py` read the application's deployed address for its target: `vercel.production_url`,
+or for an application on a server of its own (`target: vm_remote`) `vm_remote.production_url`, once a deploy recorded
+it. Two things in `lane.json` follow the target, both declared in `lane.schema.json`:
+
+* `{deploy}` in a command or an instruction is the flag of the one deploy command the application has: `--deploy`,
+  or `--deploy-remote` for vm_remote. Write `python3 .claude/scripts/provision.py {app_id} {deploy}`, never the flag.
+* `"targets": ["vm_remote"]` on a check makes it exist for those targets only. For any other target it is not
+  listed, not run and not counted, so it cannot leave the lane `skipped`. `functional`'s `tool.python` is the one
+  today: a real python tool call in a sandbox the app's own server starts, which a Vercel app does not have. A check
+  that merely cannot run YET is a `requires`, which is recorded `skipped`; `targets` is for a check that would
+  measure nothing there.
+
 The runner can only see as far as the check, so a harness that prints rows owes the same rules one
 level down. Three that were learned the hard way, and that a new lane must honour:
 
