@@ -806,14 +806,19 @@ port = @PORT@
 ssl = @SSL@
 password_encryption = 'scram-sha-256'
 CONF
-systemctl enable postgresql >/dev/null
+@HBA@systemctl enable postgresql >/dev/null
 systemctl restart postgresql
 for i in 1 2 3 4 5 6 7 8 9 10; do pg_isready -q -h 127.0.0.1 -p @PORT@ && break; sleep 2; done
 pg_isready -q -h 127.0.0.1 -p @PORT@
 python3 @TOOL@ pg-admin --file @ENV@ --db @DB@ --port @PORT@ --sslmode @SSLMODE@
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), PGV=v, PORT=S["pg"]["port"],
         TLS="on (self-signed; the mold's migration scripts require TLS and do not verify the certificate)" if S["pg"]["tls"] == "on" else "off (the mold's migration switch is set instead)",
-        SSL="on" if S["pg"]["tls"] == "on" else "off", TOOL=S["tool"], ENV=S["env_file"], DB=S["pg"]["db"], SSLMODE=S["sslmode"])
+        SSL="on" if S["pg"]["tls"] == "on" else "off",
+        # With TLS on, a TCP connection WITHOUT TLS must be refused, not merely not required: the isolation proof
+        # (provision._verify_app_rw) refuses a database that accepts plaintext, and it did on the first real
+        # server (2026-10-04, "plaintext":"ACCEPTED"). Debian's default pg_hba says `host`, which takes both.
+        HBA=("sed -i -E 's/^host([[:space:]])/hostssl\\1/' /etc/postgresql/" + str(v) + "/main/pg_hba.conf\n") if S["pg"]["tls"] == "on" else "",
+        TOOL=S["tool"], ENV=S["env_file"], DB=S["pg"]["db"], SSLMODE=S["sslmode"])
 
 def env_split_cmd(S):
     return f"python3 {S['tool']} env-split --file {S['env_file']} --spec {S['factory_dir']}/env-services.json"
@@ -1283,6 +1288,13 @@ def host_chain(app_dir, env_file, mode, sslmode, measure_only=False, repair=True
                 sys.exit("database bootstrap failed:\n" + redact("\n".join(tail[-12:])))
             if not m: sys.exit("the bootstrap did not write an app_rw DATABASE_URL")
             got["app_url"] = retarget(m.group(1), adm, sslmode); print("  rls + app_rw: bootstrapped")
+            # The mold's bootstrap wrote that URL into .env.local on port 6543 (Supabase's pooler), and the
+            # task-workflow migration that runs next re-reads it from there to verify as app_rw: on a self-hosted
+            # Postgres nothing listens on 6543 and the migration died AFTER doing its work (first real server,
+            # 2026-10-04: "connect ECONNREFUSED 127.0.0.1:6543"). Point the file at the URL the proof will use.
+            body = open(envloc).read()
+            open(envloc, "w").write(re.sub(r'^DATABASE_URL=.*$', lambda _m: 'DATABASE_URL="' + got["app_url"] + '"', body, count=1, flags=re.M))
+            os.chmod(envloc, 0o600)
         def hold():
             if mode != "off": print("  deploy window: " + json.dumps(P._window(run, "hold", adm, mode, hint))[:160])
         def release():
