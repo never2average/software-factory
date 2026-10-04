@@ -87,7 +87,7 @@ def conflicts(files, codebase):
 PACK_PROFILE = re.compile(r"^profiles/")
 GENERATED_PROFILE = ("lib/deployment-profile.generated.ts", "agent/lib/deployment-profile.generated.ts")
 
-def apply(app_id, lane=False, default_profile=False):
+def apply(app_id, lane=False, default_profile=False, build=None):
     """lane=True builds build/<app_id>.lane/ instead: the mold plus the packs and NO brand, always from scratch.
     The test lanes run the mold's source checks there. Those checks grade source hygiene (one of them refuses any
     customer's name in code every customer sees), and the brand overlay writes the product name into that code on
@@ -106,7 +106,9 @@ def apply(app_id, lane=False, default_profile=False):
     profile here must come out byte-identical to the mold's, or the copy is not the default and the build stops."""
     app = app_docs(app_id); packs = app.get("packs") or []
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
-    build = os.path.join(ROOT, "build", app_id + ((".lane-default" if default_profile else ".lane") if lane else ""))
+    # build=<dir>: an existing copy of the mold somewhere else (repo.py assembles an app's repository in a scratch
+    # directory, never under build/); the packs go into it exactly as they go into a deploy's copy.
+    build = build or os.path.join(ROOT, "build", app_id + ((".lane-default" if default_profile else ".lane") if lane else ""))
     if lane and os.path.isdir(build): shutil.rmtree(build)
     if not packs: print(f"{app_id}: no packs; nothing to apply"); return 0
     errs = [e for p in packs for e in check_pack(p)]
