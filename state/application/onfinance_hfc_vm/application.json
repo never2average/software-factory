@@ -3,7 +3,7 @@
   "app_id": "onfinance_hfc_vm",
   "mold_id": "mold_v1",
   "mold_commit": "1f43117a5eb687b52fdf3b7a1d0352d3761f03b3",
-  "status": "stamped",
+  "status": "reverted",
   "brief": "briefs/onfinance_hfc_vm.md",
   "product_id": "onfinance_hfc_research",
   "model": {
@@ -191,33 +191,34 @@
   },
   "testing": {
     "load": {
-      "status": "pass",
-      "run_at": "2026-10-04T14:08:41+00:00",
-      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc_vm-2026-10-04T140841Z.md"
+      "status": "pending",
+      "run_at": "2026-10-04T15:57:07+00:00"
     },
     "context": {
-      "status": "skipped",
-      "run_at": "2026-10-04T14:07:11+00:00",
-      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc_vm-2026-10-04T140711Z.md"
+      "status": "pending",
+      "run_at": "2026-10-04T15:57:07+00:00"
     },
     "functional": {
-      "status": "pass",
-      "run_at": "2026-10-04T14:04:09+00:00",
-      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc_vm-2026-10-04T140409Z.md"
+      "status": "fail",
+      "run_at": "2026-10-04T15:57:07+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc_vm-2026-10-04T155707Z.md"
     },
     "accessibility": {
-      "status": "pass",
-      "run_at": "2026-10-04T14:10:48+00:00",
-      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc_vm-2026-10-04T141048Z.md"
+      "status": "pending",
+      "run_at": "2026-10-04T15:57:07+00:00"
     },
     "responsiveness": {
-      "status": "pass",
-      "run_at": "2026-10-04T14:11:33+00:00",
-      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc_vm-2026-10-04T141133Z.md"
+      "status": "pending",
+      "run_at": "2026-10-04T15:57:07+00:00"
     }
   },
   "customer_id": "internal",
   "packs": [
     "hfc-research"
-  ]
+  ],
+  "revert": {
+    "lane": "functional",
+    "at": "2026-10-04T15:57:07+00:00",
+    "reason": "functional lane failed on 1 check(s): test:cards; report molds/mold_v1/testing/functional/reports/onfinance_hfc_vm-2026-10-04T155707Z.md; task mold_v1-178. The run stopped here: context, load, accessibility, responsiveness did not run, so testing.{context, load, accessibility, responsiveness} was reset to `pending` rather than left showing an earlier run's verdict. Unmeasured lanes right now (`pending`): context, load, accessibility, responsiveness. onfinance_hfc_vm is not gate-green until `python3 .claude/scripts/lanes.py onfinance_hfc_vm` runs all five in order and none fails."
+  }
 }
