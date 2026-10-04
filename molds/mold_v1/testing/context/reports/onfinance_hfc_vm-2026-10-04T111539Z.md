@@ -1,0 +1,32 @@
+# Context lane — onfinance_hfc_vm (2026-10-04T111539Z)
+
+Mold: mold_v1 (commit 4ad0c2c05e11449e442c1ad5419cee56a1cfc451).
+Run at 2026-10-04T11:15:39+00:00. Lane status: **skipped** (4 of 6 checks passed, 2 skipped).
+Command: `python3 .claude/scripts/lanes.py onfinance_hfc_vm`
+This file: `molds/mold_v1/testing/context/reports/onfinance_hfc_vm-2026-10-04T111539Z.md` — written once, then left read-only. The runner creates a report O_EXCL and never reopens one, so a later run of this lane writes its own file beside this one rather than editing it. If the bytes here ever change, something other than lanes.py changed them.
+
+Primary context assembly, memory persistence, the quality/hardening bundle, cross-org isolation of multiplayer context, and — for a clone — the regression verdict against the deployment it replicates.
+
+## Checks
+
+| check | status | reason | output tail |
+|---|---|---|---|
+| `test:prompt-context` | pass | exit 0 | rning scripts/test-prompt-context.mjs test-prompt-context: all prompt, budget, audience, filtering, fallback, and telemetry contracts passed |
+| `test:memory` | pass | exit 0 | l-strip-types --disable-warning=ExperimentalWarning scripts/test-memory.mjs test-memory: all assertions passed (fallback path, no Postgres). |
+| `test:qm-hardening` | pass | exit 0 | e whole number of tokens — using 16384 [model] MODEL_MAX_OUTPUT_TOKENS_VISION="8_192" is not a positive whole number of tokens — using 16384 |
+| `vocabulary` | pass | exit 0 | ary: pack mode (/root/software-factory/packs/hfc-research) — the default-profile snapshot is not compared vocabulary pack hfc-research: pass |
+| `test:org-isolation` | skipped | this app's DATABASE_URL lives in the env file on its own server and never leaves it, and its database listens on that server's loopback only, so a check that must connect as the application cannot run from the factory VM |  |
+| `clone.regression` | skipped | Only a clone has a live deployment to diff against; this app was not stamped with clone_of. |  |
+
+## Skipped, and what would make them run
+
+- `test:org-isolation` — this app's DATABASE_URL lives in the env file on its own server and never leaves it, and its database listens on that server's loopback only, so a check that must connect as the application cannot run from the factory VM. The same isolation is measured ON the server by the functional lane's `rls` row (provision.py onfinance_hfc_vm --verify-rls).
+- `clone.regression` — Only a clone has a live deployment to diff against; this app was not stamped with clone_of.
+
+A skipped check is why this lane cannot report `pass`: nothing measured it.
+
+## Not covered by this lane
+
+- Model quality: these checks prove what reaches the model, not what the model then says.
+- Live cross-org traffic — test:org-isolation measures a database, the functional lane's rls rows measure the deployed one.
+- The mold's own tests here (cwd `default_profile`) run on the DEFAULT deployment profile, since they pin its words and fields; this app's own profile is graded by the `vocabulary` row (what its model reads), not by them.

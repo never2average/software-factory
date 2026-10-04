@@ -191,19 +191,29 @@
   },
   "testing": {
     "load": {
-      "status": "pending"
+      "status": "pass",
+      "run_at": "2026-10-04T11:17:13+00:00",
+      "report": "molds/mold_v1/testing/load/reports/onfinance_hfc_vm-2026-10-04T111713Z.md"
     },
     "context": {
-      "status": "pending"
+      "status": "skipped",
+      "run_at": "2026-10-04T11:15:39+00:00",
+      "report": "molds/mold_v1/testing/context/reports/onfinance_hfc_vm-2026-10-04T111539Z.md"
     },
     "functional": {
-      "status": "pending"
+      "status": "pass",
+      "run_at": "2026-10-04T11:12:14+00:00",
+      "report": "molds/mold_v1/testing/functional/reports/onfinance_hfc_vm-2026-10-04T111214Z.md"
     },
     "accessibility": {
-      "status": "pending"
+      "status": "pass",
+      "run_at": "2026-10-04T11:19:11+00:00",
+      "report": "molds/mold_v1/testing/accessibility/reports/onfinance_hfc_vm-2026-10-04T111911Z.md"
     },
     "responsiveness": {
-      "status": "pending"
+      "status": "pass",
+      "run_at": "2026-10-04T11:19:48+00:00",
+      "report": "molds/mold_v1/testing/responsiveness/reports/onfinance_hfc_vm-2026-10-04T111948Z.md"
     }
   },
   "customer_id": "internal",
