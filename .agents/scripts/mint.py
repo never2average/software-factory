@@ -210,9 +210,21 @@ def show(app, rows=None):
     print(f"{app}")
     for n, st, why in rows: print(f"  {mark[st]} {n:11} {st:10} {why}")
     nxt = next(((n, st, why) for n, st, why in rows if st in (TODO, OPERATOR, FAILED)), None)
+    # Not a station: it never blocks, never runs by itself, and is only ever made when the operator asks (repo.py).
+    print("  " + repository_line(app))
     print("\n" + (f"finished: nothing is left to do." if not nxt else
                   f"next: {nxt[0]} — {'this one needs the operator. ' if nxt[1] == OPERATOR else ''}{nxt[2]}" + ("" if nxt[1] != TODO else f"\n      python3 .claude/scripts/mint.py {app} run")))
     return rows
+
+def repository_line(app):
+    try:
+        sys.path.insert(0, S); import repo
+        return repo.status_line(docs(app)[1], app)
+    except Exception as e: return f"repository: could not be read ({e})"
+
+def repo_auto(app, reason):
+    """After a recorded lane run: one commit to the app's repository, ONLY if one is recorded and its auto_push is true."""
+    if ((docs(app)[1] or {}).get("repository") or {}).get("auto_push") is True: py(os.path.join(S, "repo.py"), app, "auto", "--reason", reason)
 
 # ---- doing a station ------------------------------------------------------------------------------------------
 
@@ -239,6 +251,7 @@ def do(app, name):
         s = session(app)
         if s: env[re.sub(r"[^A-Za-z0-9]", "_", a["mold_id"]).upper() + "_SESSION_TOKEN"] = s["token"]
         py(os.path.join(S, "lanes.py"), app, env=env)
+        repo_auto(app, "a lane run")
         return (docs(app)[0].get("status") != "reverted")
     if name == "package": return py(os.path.join(S, "agent_cli.py"), app, "publish").returncode == 0
     if name == "address": return py(os.path.join(S, "domain.py"), app, "switch").returncode == 0
@@ -367,7 +380,19 @@ def self_test():
         assert st_workspaces("x", ws, {"target": "vm_remote"})[0] == TODO          # the surface changed in state: written again
     finally:
         globals()["adir"] = real_adir; shutil.rmtree(tmp, ignore_errors=True)
-    print("mint: 14 checks passed"); return 0
+    # the repository is one printed line, never a station, and nothing is pushed unless state says auto_push is true
+    import repo
+    assert repo.status_line({}, "x") == "repository: none (ask for one: repo.py x publish --provider github|gitlab --dry-run)"
+    assert "auto-push off" in repo.status_line({"repository": {"url": "https://github.com/a/b", "last_commit": "c" * 40}}, "x")
+    real_docs, real_py, ran = globals()["docs"], globals()["py"], []
+    try:
+        globals()["py"] = lambda *a, **k: ran.append(a)
+        for rec, n in ((None, 0), ({"auto_push": False}, 0), ({"url": "u"}, 0), ({"auto_push": True}, 1)):
+            globals()["docs"] = lambda app, rec=rec: ({}, {"repository": rec} if rec is not None else {})
+            ran.clear(); repo_auto("x", "a lane run"); assert len(ran) == n, (rec, ran)
+    finally:
+        globals()["docs"], globals()["py"] = real_docs, real_py
+    print("mint: 20 checks passed"); return 0
 
 def main(a):
     if "--self-test" in a: return self_test()

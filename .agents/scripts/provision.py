@@ -2605,6 +2605,14 @@ def _on_signal(signum, _frame):
     # SystemExit they land in that handler like any other stop. SIGKILL cannot be caught by anything.
     raise SystemExit(f"the deploy was stopped by {signal.Signals(signum).name} before it finished")
 
+def repo_auto(app_id, adir, reason):
+    """After a deploy that finished: one commit to the app's own repository, ONLY if the operator asked for a repository
+    AND turned auto_push on (infrastructure.json repository.auto_push; default false). Otherwise nothing runs at all.
+    A push that fails says so and never fails the deploy."""
+    rec = load(os.path.join(adir, "infrastructure.json")).get("repository")
+    if isinstance(rec, dict) and rec.get("auto_push") is True:
+        subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/repo.py"), app_id, "auto", "--reason", reason])
+
 def main(a):
     if a and a[0] == "--self-test": return self_test()
     if a and a[0] == "--self-test-remote":
@@ -2628,7 +2636,9 @@ def main(a):
         # A server over SSH that serves the app (mold_v1-075/076). Nothing below this line applies to it: no
         # Vercel project, no local docker database, and --check must not reach for either. One module owns it.
         sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
-        sys.exit(vm_remote.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__]))
+        rc = vm_remote.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__])
+        if rc == 0 and "--deploy-remote" in a and "--dry-run" not in a: repo_auto(app_id, adir, "a deploy")
+        sys.exit(rc)
     if target == "vm" and not deploy and app.get("status") not in VM_STATUSES:
         # The same refusal factory.py validate makes (_vm_status), at the writer: a vm app never serves
         # traffic, and this lane never writes a status that says it does, so one that says so was set
@@ -2864,4 +2874,5 @@ def main(a):
     if shipped: app["mold_commit"] = shipped
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
+    repo_auto(app_id, adir, "a deploy")
 if __name__ == "__main__": main(sys.argv[1:])

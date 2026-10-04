@@ -212,6 +212,39 @@ its eight rows it did not measure.
 
 **Product stage.** Tasks carry `advances_stage`. When every task for a stage is done, `factory.py close` moves the product forward: defined, stamped, lanes_passing, deployed, released.
 
+## An application's own repository (only when asked)
+
+A minted application can have its code kept in a repository of its own on GitHub or GitLab. It is never made by
+itself: `mint.py`, `provision.py` and `lanes.py` create nothing of the kind, and `mint.py <app_id>` only prints one
+line, `repository: none (ask for one: repo.py <app_id> publish …)`. The operator asks; the `repo` skill and
+`.claude/scripts/repo.py` do it. There are no buttons and no screen for it.
+
+- **One repository per application, always private.** `repo.py <app_id> publish --provider github|gitlab` creates it
+  (default name: the app id with dashes) and pushes. Run again, it pushes to the same repository. There is no flag
+  that makes one public, and a repository that has since been made public is refused, not pushed to.
+- **One sign-in per provider, shared by every app.** GitHub: the `gh` command's sign-in on this machine. GitLab: the
+  `glab` command if installed, otherwise a token read from the environment under the name `GITLAB_TOKEN`, with
+  `--host` for a company's own server. Neither is ever written to the repository or to state.
+- **What goes in.** The app's code exactly as a deploy builds it (the mold snapshot with the brand and the packs
+  applied, by the same `branding.py` and `packs.py` code), put together in a scratch folder outside this checkout,
+  never under `build/`. No `node_modules`, no build output, no `.env` files, no logs, and not the mold's own
+  `.github/` folder, whose checks belong to the upstream repository. Beside the code: `factory/` (the brief, the four
+  state files, the packs with their versions) and `FACTORY.md`, which says in plain words which mold and which exact
+  upstream commit it was built from and that the repository is a generated record. One commit per publish or push,
+  authored as the factory, and only when something changed.
+- **The secret check.** Before every commit, every file is read for provider tokens, private key blocks, connection
+  strings carrying a password, `.env` files, the private halves of the SSH keys the app names, and the value of
+  every secret the factory can resolve for the app (the Vercel production values, this machine's environment, the
+  provider sign-in itself), compared by hash so no value is kept or printed. One finding refuses the push and names
+  the file and the line. It cannot be switched off.
+- **What state keeps.** `infrastructure.json` gains an optional `repository` object: provider, host, owner, name,
+  url, the last pushed commit, and `auto_push`. `factory.py validate` checks its shape, that the address matches,
+  that it holds nothing shaped like a credential, and that no two apps record the same repository.
+- **Pushing by itself is a second opt-in.** With `repository.auto_push` true (`repo.py <app_id> auto-push on`; it is
+  false unless the operator says so) a deploy that finished and a lane run recorded through `mint.py` each push one
+  commit. A push that fails says so and never fails the deploy.
+- **`unlink`** forgets the repository in state and never deletes it.
+
 ## Secrets
 
 Values never enter the repo, the state files, or the chat. State holds names; the store holds values (Vercel env for

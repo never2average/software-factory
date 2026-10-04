@@ -6,6 +6,8 @@ Work is tasked: run `python3 .claude/scripts/factory.py next <mold_id>` to get t
 
 To make an application, or to find out where one stands: the `mint` skill (`python3 .claude/scripts/mint.py <app_id>`; `new`, `run`, `list`). It orders every step below and stops only where the operator is needed.
 
+An application's own GitHub or GitLab repository is made ONLY when the operator asks for one: the `repo` skill (`python3 .claude/scripts/repo.py <app_id> status | publish --provider github|gitlab [--dry-run] | push | unlink`). Always private, dry run first, never as a step of minting, deploying or testing.
+
 Under it, to stamp from a description: `intake` subagent (asks the user only unresolved questions, writes state) then `provisioner` subagent (checks secrets by name, deploys). Secret values never enter the repo or the chat.
 
 Rules:
