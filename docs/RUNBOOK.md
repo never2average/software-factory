@@ -211,6 +211,7 @@ ever runs the app on the vm target, and it is a measurement on your own machine,
 | change the gateway model or reasoning effort | set `GATEWAY_MODEL_ORCHESTRATOR` / `GATEWAY_MODEL_SPECIALIST` / `GATEWAY_REASONING_EFFORT` on `<project>` in the Vercel dashboard, then `--deploy` again |
 | know what a workspace will cost in inference | `docs/COST_MODEL.md` |
 | run the app on a server of your own instead of Vercel | §9 below |
+| keep an application's code in a private GitHub or GitLab repository of its own | §10 below; nothing makes one unless you ask |
 
 ## 9. A server of your own instead of Vercel (`target: vm_remote`)
 
@@ -456,6 +457,83 @@ If any screen looks different from what is described here, say what it shows and
 
 Not built yet for a server of your own, and said so rather than half-done: backups of the database and the file store.
 It is a named task (`python3 .claude/scripts/factory.py tasks mold_v1`).
+
+## 10. A repository of its own for an application (only if you ask)
+
+An application's code can be kept in a private repository on GitHub or GitLab, one per application. Nothing makes
+one by itself. You ask the agent ("put onfinance_hfc in a GitHub repository"), and it does three things in order.
+
+1. **It looks first, and creates nothing.**
+
+   ```
+   python3 .claude/scripts/repo.py <app_id> publish --provider github --dry-run
+   ```
+
+   This prints the name, where it will live, that it is private, how many files and how big, and the result of the
+   secret check. The agent tells you these and waits for your yes.
+
+2. **It creates the repository and pushes.** The same command without `--dry-run`. The repository is always private.
+
+3. **It gives you the link.** The repository is a record, not a place to work: the next push replaces what is in
+   it. A change to the base product goes upstream as a pull request; a change that is this app's own goes in its pack.
+
+Afterwards:
+
+| Want to | Run |
+|---|---|
+| see whether an app has a repository, and what a push would send | `python3 .claude/scripts/repo.py <app_id> status` |
+| push the app as it is now (one commit, only if something changed) | `python3 .claude/scripts/repo.py <app_id> push` |
+| have every finished deploy and recorded test run push by itself | `python3 .claude/scripts/repo.py <app_id> auto-push on` (and `off` to stop) |
+| stop the factory using that repository (it is not deleted) | `python3 .claude/scripts/repo.py <app_id> unlink` |
+| use an organisation, a group or another name | add `--owner <name>` or `--name <name>` to `publish` |
+
+What goes in: the app's code as it is deployed, a `factory/` folder with the brief and the state files (they list
+the workspace's members by email and the names of the secrets, never a secret's value), and a `FACTORY.md` page.
+What stays out: installed packages, build output, `.env` files and logs. If the secret check finds a token, a key
+or a password anywhere, it refuses the whole push and names the file and the line; there is no way to skip it.
+
+### GitHub (nothing to do)
+
+The factory uses the GitHub sign-in this machine already has. If it is ever signed out, the command prints the
+steps (one command at your terminal, then a code you type into a GitHub page).
+
+### GitLab (about three minutes, once, for every app)
+
+The factory needs one access token from you. It is the same token for every app, it is read from this machine's
+environment under the name `GITLAB_TOKEN`, and it is never written to the repository, the state files or the chat.
+
+1. Open https://gitlab.com/-/user_settings/personal_access_tokens (on a company's own GitLab server, the same
+   address with that server's name in place of `gitlab.com`).
+2. Click **Add new token**.
+3. In **Token name** type:
+
+   ```
+   software-factory
+   ```
+
+4. In **Expiration date** pick a date. Three months from now is a good choice.
+5. Under **Select scopes** tick only **api**. Leave every other box empty.
+6. Click **Create token** (older servers call the button **Create personal access token**).
+7. GitLab shows the token once. Copy it.
+8. In the terminal on this machine, not in the chat, run this line, paste the token when it asks, and press Enter.
+   Nothing appears while you paste; that is the hidden prompt working.
+
+   ```
+   read -rsp "Paste the token: " T && printf 'export GITLAB_TOKEN=%s\n' "$T" >> ~/.profile && chmod 600 ~/.profile && unset T && echo " saved"
+   ```
+
+9. Close the Claude Code session and start a new one, so it picks the token up. Then ask for the repository again.
+
+Why **api**: it is the smallest permission GitLab offers that can create a project. The narrower ones
+(`write_repository`) can push to a project that exists and cannot create one. To keep the token's reach small
+anyway, create it from an account that belongs only to the group the repositories should live in, and tell the
+agent that group's name (`--owner <group>`); the token then reaches nothing outside that group. On a GitLab plan
+that offers them, a group access token (the group's **Settings**, then **Access tokens**, role **Maintainer** or
+higher, scope **api**) does the same without a separate account. When the token expires, repeat the steps; delete
+the old `GITLAB_TOKEN` line from `~/.profile` first.
+
+For a company's own server, tell the agent its name; it adds `--host gitlab.example.com`. If the `glab` command is
+installed and signed in on this machine, the factory uses that sign-in and no token is needed.
 
 ## What this runbook does not cover
 

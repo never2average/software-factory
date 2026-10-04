@@ -628,6 +628,41 @@ def _operator_identity(app_id, docs):
     if not have: return [f"{app_id}/application.json.workspace: missing operator_self"]
     if len(have) == 2: return [f"{app_id}/application.json.workspace: carries both operator_self and its legacy name fde_self; keep operator_self only"]
     return []
+def _repository(app_id, docs):
+    """What the schema cannot say about infrastructure.repository (mold_v1-177). It is optional and absent unless the
+    operator asked for a repository; when present it is a note of WHERE, never a credential, and it must be the one
+    address repo.py pushes to."""
+    rec = (docs.get("infrastructure") or {}).get("repository")
+    if not isinstance(rec, dict): return []           # absent is the normal case; a wrong type is a schema error
+    f = f"{app_id}/infrastructure.json"; fix = f"state/application/{app_id}/infrastructure.json"; out = []
+    undo = f"python3 .claude/scripts/repo.py {app_id} unlink"
+    want = f"https://{rec.get('host')}/{rec.get('owner')}/{rec.get('name')}"
+    if rec.get("url") != want:
+        out.append(f"{f}: repository.url is {str(rec.get('url'))[:80]!r} but host, owner and name say {want!r}; repo.py pushes to the "
+                   f"address built from those three, so the two must agree — correct the url in {fix}, or forget the link: {undo}")
+    if rec.get("provider") == "github" and rec.get("host") != "github.com":
+        out.append(f"{f}: repository.provider is 'github' but host is {rec.get('host')!r}; the one shared GitHub sign-in is for "
+                   f"github.com — set host to \"github.com\" in {fix}, or use provider \"gitlab\" for a company's own server")
+    for k, v in rec.items():
+        if isinstance(v, str) and KEY_MATERIAL.search(v):
+            out.append(f"{f}: repository.{k} looks like a key, a token or an address with a password in it; this object records where "
+                       f"the repository is and nothing else — remove it from {fix} and treat the value as exposed")
+    if rec.get("auto_push") is True and not rec.get("last_commit"):
+        out.append(f"{f}: repository.auto_push is true but nothing was ever pushed (no last_commit), so a deploy would be the first "
+                   f"thing to write to it — set auto_push to false in {fix}, then: python3 .claude/scripts/repo.py {app_id} push")
+    return out
+def _repositories(apps):
+    """One repository per application: two apps recording the same one would overwrite each other's code on every push."""
+    seen = {}; out = []
+    for app_id in sorted(apps):
+        rec = (apps[app_id].get("infrastructure") or {}).get("repository")
+        if not isinstance(rec, dict): continue
+        k = tuple(str(rec.get(x, "")).lower() for x in ("host", "owner", "name"))
+        if k in seen:
+            out.append(f"{app_id}/infrastructure.json: repository {'/'.join(k)} is also {seen[k]}'s; each application has its own — "
+                       f"forget this one (python3 .claude/scripts/repo.py {app_id} unlink) and publish under another name")
+        else: seen[k] = app_id
+    return out
 def _agent_keys(app_id, docs):
     """Which subagents exist differs per application (its mold plus its packs), so the schema only checks the
     key's shape. A key is real only if the app's mold, or one of its packs, has agent/subagents/<key>/agent.ts;
@@ -658,7 +693,7 @@ def _app_errors(app, adir):
             docs[name] = load(f); errs += _check(docs[name], load(os.path.join(sdir, f"{name}.schema.json")), f"{app}/{name}.json")
         else: errs.append(f"{app}: missing {name}.json")
     errs += (_vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _vm_remote(app, docs) + _rls_claim(app, docs)
-             + _agent_keys(app, docs) + _operator_identity(app, docs))
+             + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs))
     return errs, docs
 def cmd_validate(a):
     if "--app-dir" in a:
@@ -690,6 +725,7 @@ def cmd_validate(a):
         e, apps[app] = _app_errors(app, os.path.join(appdir, app))
         errs += e
     errs += _vm_remote_hosts(apps)
+    errs += _repositories(apps)
     errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
