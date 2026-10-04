@@ -133,6 +133,10 @@ works fails the deploy.
 `--workspace-remote` writes the brief's workspace, its people and its companies (and every seed under `seed/orgs/`) into the
 server's database, on the server, through the app role; `--dry-run` prints it first. If the server already has a workspace under
 another id it refuses rather than make a second one: tell the user which two ids disagree and ask which is right.
+After the application's own workspace the same command writes the application's surface from `application.surface`: the default
+agent profile, the per-subagent configs, workflow definitions and workflow scripts (what `clone.py configure` writes on Vercel).
+State is the source: a default profile or a subagent's instructions edited in the app are replaced by what state says, so read the
+`--dry-run` list first when people already use the workspace.
 `--prune-sandboxes` lists what the server's nightly sandbox prune would remove and the space (read-only; `--apply` removes it now).
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this

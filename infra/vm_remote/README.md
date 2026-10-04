@@ -172,12 +172,34 @@ into the sandbox deny list, and prewarms the templates one at a time with three 
   what comes back is one line of counts per workspace, searched for every value of `web.env` before it is shown. It refuses to create
   the application's own workspace on a database that already has other workspaces and not that one (`--new-workspace` overrides).
   What it applied is recorded in `seed/orgs/.applied.json`, which is what `mint.py`'s workspaces station reads.
+- **The application's surface is written on the server too (mold_v1-163).** On Vercel, `clone.py configure` runs
+  `lib/surface.mjs apply`, which writes eight tables from state: `orgs`, `org_members`, `platform_admins`, `people_roster`,
+  `agent_profiles`, `agent_configs`, `workflow_definitions`, `workflows`. On a server the first four are the workspace seed's
+  (above, which also writes what `apply` never did: recipes, the workflow library, companies). The same `workspace-seed` command
+  then runs the same `surface.mjs apply` for the other four, limited to them by `SURFACE_ONLY`: the workspace's default agent
+  profile (persona, tone, instructions, default mode, model, web search and browser defaults), one config per subagent (paused,
+  instructions), the workflow definitions, and the workflow scripts that are not file-backed. It runs as `sfweb` with `web.env`,
+  from a private copy (the factory's directory is root's alone, mode 700), with `MOLD_DIR` pointing at the built app so it uses
+  the app's own `postgres` module; the state arrives on stdin. All four tables are org-scoped and each write is inside a
+  transaction that names the workspace, so every row passes row-level security as the app role; **no table needs the admin
+  connection**. Rows are created or updated, a workflow script is added only when no workflow of that name exists, and nothing
+  is removed. It runs only when the application's own workspace was written in the same run, and never for a single named seed
+  file. `--workspace-remote --dry-run` lists it table by table. State is the source: a default profile or a subagent's
+  instructions that somebody edited in the app are replaced by what `application.surface` says. The other tables in
+  `surface.mjs`'s `SURFACE` list are read for `extract` and `regress` only and no path writes them from `application.surface`
+  (`memories`; and `customers`, `internal_staff`, `customer_stakeholders`, `platform`, `solutions`, `deployments`, which the
+  seed's companies step covers through the app's own `writeCustomerToPostgres`; `recipes`, which `provisionWorkspace` covers).
 - **The sandbox may reach the server's public address, and nothing listens there but Caddy and SSH.** With filesystem storage a
   sandbox downloads data-room files from `https://<domain>`, so that address is not in `SANDBOX_DENY_SUBNETS`; every service binds
   127.0.0.1 and `health.sh` fails the deploy on any other public listener. validate, `--qualify-remote` and the deploy refuse `fs` storage
   with a deny list that holds the address (`s3` storage is the other way out).
 
 ## What only a real server can prove
+
+**The surface step of `--workspace-remote` (mold_v1-163) has not been run on a server.** Offline, `surface.mjs apply` was run
+with node against a stand-in for the `postgres` module that models primary and unique keys and row-level security by workspace.
+A server is what proves the SQL itself against Postgres as `app_rw`, that `sfweb` can load `postgres` from the sealed app, and
+the TLS connection to the loopback cluster (the URL's own `sslmode=require`).
 
 **One user per service, the egress line for the SSH port and `--workspace-remote` (mold_v1-158, -152) have not been run on a
 server.** Offline: `users.sh`, `seal.sh` and `storage-view.sh` were executed against stand-in commands; the id-mapped view was
