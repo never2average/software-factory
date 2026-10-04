@@ -74,6 +74,14 @@ Install only what the scripts import: for example `pdfplumber` and `pypdf` for P
 scanned PDF is detected and reported, not read (that is an Absence skill, see
 eve-subagent-skills).
 
+**Name no `backend`.** Where the sandbox runs is the deployment's setting, not the subagent's
+(`docs/self-hosting/SANDBOX.md`): on Vercel eve picks Vercel Sandbox; off Vercel the build
+gives every subagent's sandbox the deployment's backend, CPUs, memory and network deny list
+without this file doing anything. Two consequences for the file: it must not assume it runs
+as root (off Vercel the sandbox user is `vercel-sandbox`, so write helpers to `"$HOME/..."`
+or `/workspace`, never `/root`), and it must not rely on reaching a private address or the
+cloud metadata service.
+
 Do not set `networkPolicy: "deny-all"` on a subagent that uses
 `dataroom_fetch_to_sandbox`: that tool hands the model a `curl` command against a
 short-lived URL, and the download runs inside the sandbox.

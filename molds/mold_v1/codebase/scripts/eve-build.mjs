@@ -19,6 +19,13 @@
  * `--restore`. Nothing is moved outside a build: the tree, a git checkout and `git status` are unchanged by the
  * profile. With the default profile nothing is hidden (the lock is still taken, so two builds serialise).
  *
+ * THE SANDBOX BACKEND, under the same lock. With `SANDBOX_BACKEND=microsandbox` (a deployment that is not on Vercel)
+ * every agent node's sandbox slot holds a generated wrapper for the duration of the command, so the root, every
+ * specialist and every pack specialist get SANDBOX_CPUS, SANDBOX_MEMORY_MIB and the network deny list
+ * (scripts/lib/sandbox-overlay.mjs has the why). The wrappers are removed with the lock, by the same pid-aware rule.
+ * `npm run sandbox:prewarm` takes this lock and puts them back while it runs: eve bundles the definitions again there.
+ * With the setting unset (every Vercel build) no file is written or moved and eve reads the sources as they are.
+ *
  *   node scripts/eve-build.mjs [build|dev|...eve args]     (npm run build:eve / dev:eve)
  *   node scripts/eve-build.mjs --plan                      print {"hide":[...]} and exit (tests)
  *   node scripts/eve-build.mjs --restore                   restore a DEAD run's hidden directories and exit
@@ -27,6 +34,7 @@ import { spawn } from "node:child_process";
 import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { excludedSpecialists } from "./lib/profile-specialists.mjs";
+import { applySandboxOverlay, removeSandboxOverlay, sandboxBackendOf, writeBuildStamp } from "./lib/sandbox-overlay.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const SUB = join(ROOT, "agent/subagents");
@@ -55,6 +63,8 @@ function readLock() {
 /** Put back what a run hid. Only called by the owner, or for a lock whose owner is dead. */
 function restoreFrom(lock) {
   const restored = [];
+  // The sandbox wrappers first: they are found by their marker, so a killed build's are removed too.
+  removeSandboxOverlay(ROOT);
   for (const key of lock?.hidden ?? []) {
     if (!existsSync(join(HIDDEN, key))) continue;
     if (existsSync(join(SUB, key))) throw new Error(`eve-build: both agent/subagents/${key} and .eve-build-hidden/subagents/${key} exist; keep the one you meant and delete the other`);
@@ -131,6 +141,32 @@ async function acquire(hide, command) {
   }
 }
 
+/**
+ * Run `fn` holding this directory's lock, for another script that must change agent/ for a while the way a build
+ * does (scripts/sandbox-prewarm-serial.mjs puts the sandbox wrappers back while eve bundles the definitions).
+ * Waits for a running build like a second build would; releases by the same pid-aware rule, on a signal too.
+ */
+export async function withAgentTreeLock(command, fn) {
+  await acquire([], command);
+  let done = false;
+  const release = () => {
+    if (done) return;
+    done = true;
+    restoreFrom(readLock());
+  };
+  const onSignal = (sig) => {
+    release();
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  };
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, onSignal);
+  try {
+    return await fn();
+  } finally {
+    for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.off(sig, onSignal);
+    release();
+  }
+}
+
 const plan = () => excludedSpecialists(ROOT).filter((k) => existsSync(join(SUB, k, "agent.ts")));
 
 if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
@@ -156,6 +192,7 @@ if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
     renameSync(tmp, LOCK); // atomic replace: a reader sees the old lock or the new one, never half of one
   }
   let done = false;
+  let wrapped = null;
   const release = () => {
     if (done) return;
     done = true;
@@ -167,6 +204,11 @@ if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
       for (const key of hide) renameSync(join(SUB, key), join(HIDDEN, key));
       console.error(`eve-build: specialists.exclude — ${hide.join(", ")} hidden from eve for this run`);
     }
+    // After the hiding: a hidden specialist is not built and needs no wrapper.
+    if (sandboxBackendOf() === "microsandbox") {
+      wrapped = applySandboxOverlay(ROOT);
+      console.error(`eve-build: SANDBOX_BACKEND=microsandbox: the sandbox of every agent node takes the SANDBOX_* settings for this build (${wrapped.length}: ${wrapped.map((w) => w.node).join(", ")})`);
+    }
   } catch (e) {
     release();
     throw e;
@@ -175,6 +217,10 @@ if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
   const child = spawn(existsSync(eveBin) ? eveBin : "eve", args.length ? args : ["build"], { cwd: ROOT, stdio: "inherit" });
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { child.kill(sig); });
   child.on("exit", (code, signal) => {
+    // A build made with the wrappers says so in its output: sandbox:prewarm refuses an output that does not.
+    if (wrapped && code === 0 && (args[0] ?? "build") === "build") {
+      try { writeBuildStamp(ROOT, wrapped); } catch (e) { console.error(`eve-build: could not write the sandbox stamp: ${e.message}`); code = 1; }
+    }
     release();
     process.exit(code ?? (signal ? 1 : 0));
   });

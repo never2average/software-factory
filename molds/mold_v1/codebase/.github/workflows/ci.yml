@@ -195,6 +195,11 @@ jobs:
       # microsandbox: 2 vCPUs, 1024 MiB, and a network policy eve's own translation turns into deny rules for cloud
       # metadata, the private ranges and loopback. Loads the real modules per setting; creates no sandbox (no KVM
       # here). Then the serial prewarm script's self-test (stale locks, one template at a time).
+      # Then what makes the setting reach EVERY sandbox (scripts/lib/sandbox-overlay.mjs): with it unset the eve
+      # build is handed the committed files byte for byte; with microsandbox every node's sandbox slot holds a
+      # wrapper, and the tree is put back after a build, a failed build and a killed one. The prewarm refuses a
+      # node that would start on eve's defaults, and gives up on a template that hangs. (The same through the real
+      # `eve build` is the sandbox-coverage job below.)
       - name: Sandbox backend setting (default unchanged, microsandbox policy, serial prewarm)
         if: always()
         run: npm run test:sandbox-backend
@@ -682,6 +687,31 @@ jobs:
       - name: Off-Vercel defaults (agent address required off Vercel, TLS setting for migrations)
         if: always()
         run: npm run test:off-vercel-defaults
+
+  # EVERY sandbox takes the SANDBOX_* settings off Vercel, through the REAL `eve build`. On the first self-hosted
+  # server only the two definitions that named the settings had them: the other specialists, and all four of a
+  # pack's, built on eve's default microsandbox (1 vCPU, allow-all egress) and the second template hung for 1h50m.
+  # A copy of the checkout is stamped like a deployment (the pack-like fixture profile, a fixture specialist with
+  # NO sandbox file and a pack-shaped one that names no backend), built twice, and its graph read back with
+  # `sandbox:prewarm --plan`: with microsandbox every node carries the configured CPUs, memory and deny list; with
+  # the setting unset every node is eve's own choice, as on Vercel, and a server pointed at that build is refused.
+  # No sandbox is created (no KVM here). Its own job: two eve builds do not fit in verify's budget.
+  sandbox-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Every sandbox takes the SANDBOX_* settings (real eve build; unset is eve's own choice)
+        run: npm run test:sandbox-coverage
 
   # The most important test in the repo: it proves one tenant cannot read or
   # write another's rows. It needs a real Postgres, which is why it sat outside

@@ -94,7 +94,10 @@ export default defineSandbox({
     // Ship the minimal formatter into the container so every workbook can be
     // styled with one call after it's built.
     const formatter = await sandbox.run({
-      command: `cat > /root/fmt_xlsx.py <<'FMTEOF'\n${FMT_XLSX}FMTEOF`,
+      // Vercel Sandbox runs this as root. A self-hosted microsandbox runs it as `vercel-sandbox`, which cannot
+      // write under /root: there it goes through sudo, and /root is made readable so the same
+      // `python3 /root/fmt_xlsx.py` the prompts name works on both (first real server, 2026-10-04).
+      command: `if [ "$(id -u)" != 0 ]; then sudo -n mkdir -p /root && sudo -n chmod 755 /root; fi && { if [ "$(id -u)" = 0 ]; then cat > /root/fmt_xlsx.py; else sudo -n tee /root/fmt_xlsx.py >/dev/null; fi; } <<'FMTEOF'\n${FMT_XLSX}FMTEOF`,
     });
     if (formatter.exitCode !== 0) {
       throw new Error(
