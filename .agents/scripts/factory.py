@@ -619,25 +619,6 @@ def _lane_specs():
                                 f"the other's result. {LANE_FIX}")
     return errs
 
-def _lane_overlays():
-    """.claude/scripts/lane-overlays/<target>/<lane>.json: checks lanes.py appends to a lane for one deploy target
-    (mold_v1-078). Same check shape as a lane.json, so the same schema; a typo here would otherwise sit unnoticed
-    until an application of that target ran its lanes."""
-    errs = []; od = os.path.join(ROOT, ".claude/scripts/lane-overlays")
-    sp = os.path.join(ROOT, "molds", "mold_v1", "testing", "lane.schema.json")
-    for target in sorted(os.listdir(od) if os.path.isdir(od) else []):
-        for name in sorted(os.listdir(os.path.join(od, target))):
-            if not name.endswith(".json"): continue
-            f = os.path.join(od, target, name); rel = os.path.relpath(f, ROOT); lane = name[:-5]
-            try: ov = load(f)
-            except Exception as x: errs.append(f"{rel}: not valid JSON ({x}). {LANE_FIX}"); continue
-            if target not in TARGET_OBJECT: errs.append(f"{rel}: {target!r} is not a deploy target ({', '.join(TARGET_OBJECT)}), so no application would ever run these checks. {LANE_FIX}")
-            if ov.get("lane") != lane or ov.get("target") != target:
-                errs.append(f"{rel}: declares lane {ov.get('lane')!r} for target {ov.get('target')!r} but sits at {target}/{name}. {LANE_FIX}")
-            if os.path.exists(sp):
-                sch = load(sp); errs += _check({"lane": lane, "checks": ov.get("checks", [])}, sch, rel, sch)
-    return errs
-
 def _operator_identity(app_id, docs):
     """workspace.operator_self names who the app was stamped for. Its pre-rename spelling, fde_self, is still
     accepted for one release, so the schema requires neither and this requires exactly one of the two."""
@@ -709,7 +690,7 @@ def cmd_validate(a):
         e, apps[app] = _app_errors(app, os.path.join(appdir, app))
         errs += e
     errs += _vm_remote_hosts(apps)
-    errs += _lane_specs() + _lane_overlays()
+    errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
 if __name__ == "__main__":

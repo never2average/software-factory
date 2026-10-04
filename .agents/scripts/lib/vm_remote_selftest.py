@@ -6,7 +6,9 @@
 NOTHING HERE TOUCHES A SERVER OR CHANGES THIS MACHINE. Every remote answer is a recorded fixture, every "run"
 goes to a fake runner, and for the whole test the process refuses to open a socket or start ssh, rsync or curl:
 a test that reached for the network fails instead of connecting. Generated scripts are syntax-checked
-(`bash -n`), never executed. Files are written only under a temp directory that is removed afterwards.
+(`bash -n`); the few that are executed (the tunnel's, users.sh, seal.sh, storage-view.sh) run against stand-in
+commands with every path moved under a temp directory. Files are written only under temp directories that are
+removed afterwards. vm_users_selftest.py says what its two private-namespace checks do and why they change nothing.
 """
 import contextlib, hashlib, importlib.util, io, json, os, re, shutil, socket, stat, subprocess, sys, tempfile
 
@@ -93,6 +95,8 @@ def run():
             _brief_to_plan(check, tmp)
             import vm_tunnel_selftest as more
             more.push(check, tmp); more.prune(check, tmp); more.tunnel(check, tmp)
+            import vm_users_selftest as later
+            later.users(check, tmp); later.workspace(check, tmp)
             check("the whole self-test opened no socket and started no ssh/rsync/curl", not net.tripped, net.tripped)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -102,8 +106,12 @@ def run():
     print(f"vm_remote self-test ok: {n[0]} checks (state rules, generated scripts, unit and timer files, Caddyfile, firewall, "
           f"env file without leaks, one env file per service with no private key for the agent, storage names, sandbox deny list and "
           f"the storage conflict it refuses, host qualification, dry-run plan, deploy sequence, database chain order, records, lanes, desktop-notification keys per service, "
-          f"sandbox pruning on a fixture tree with a stand-in msb, the private tunnel and its lockout guard run against stand-in commands); "
+          f"sandbox pruning on a fixture tree with a stand-in msb, the private tunnel and its lockout guard run against stand-in commands, "
+          f"one user per service with the move of a single-user server run against stand-in commands, the egress rule for the server's own SSH port, "
+          f"the brief's workspace written on the server through a stand-in for the remote runner); "
           f"offline, nothing contacted, nothing on this machine changed")
+    import vm_users_selftest as later
+    print("  also run here: " + ("; ".join(later.RAN) if later.RAN else "none of the optional checks (they need root, unshare, nft and node)"))
     return 0
 
 # ---- 075: the schema and the rules factory.py validate applies ------------------------------------------------
@@ -179,8 +187,8 @@ def _state_rules(check):
     check("shape_state turns an intake-built state into a valid vm_remote one", e == [], e)
     check("  ...with no Vercel-only secret name left, and no server address invented", "BLOB_READ_WRITE_TOKEN" not in i["secrets"] + i["secrets_derived"]
           and "host" not in i["vm_remote"] and "domain" not in i["vm_remote"], i["vm_remote"])
-    ov = F._lane_overlays()
-    check("the vm_remote lane overlay validates against lane.schema.json", ov == [], ov)
+    check("the mold's lane.json files validate, the vm_remote-only check's `targets` included (there is no overlay left to validate)", F._lane_specs() == [] and not hasattr(F, "_lane_overlays")
+          and not os.path.exists(os.path.join(SCRIPTS, "lane-overlays")), F._lane_specs())
 
 # ---- 076 / 077: every generated file ---------------------------------------------------------------------------
 def _settings(mut=None):
@@ -201,7 +209,7 @@ def _generated_files(check, tmp):
     check("  ...with a sentence naming the route", isinstance(out, V.Stop) and "/api/cron/nightly" in str(out), out)
     check("a source without vercel.json falls back to the six", V.read_crons(os.path.join(tmp, "nowhere")) == list(V.CRONS))
     U = V.unit_files(S, crons); svc, tim = V.unit_names(S, crons)
-    app_units = [k for k in U if k.endswith(".service") and "-cron-" not in k and "-egress" not in k and "-sandbox-prune" not in k]
+    app_units = [k for k in U if k.endswith(".service") and "-cron-" not in k and "-egress" not in k and "-sandbox-prune" not in k and "-storage" not in k]
     check("exactly three application services", sorted(app_units) == sorted(svc) and len(svc) == 3, app_units)
     check("exactly six timers, each with its service", len(tim) == 6 and all(t in U and t.replace(".timer", ".service") in U for t in tim), tim)
     api = U[f"{S['unit']}-api.service"]
@@ -217,8 +225,11 @@ def _generated_files(check, tmp):
           and not any("EnvironmentFile=/etc/software-factory/vm_remote_fixture/env\n" in v for v in U.values()))
     for name, port in (("web", 3000), ("workflow", 3002)):
         u = U[f"{S['unit']}-{name}.service"]
-        check(f"the {name} unit binds loopback only and runs as the service user", f"-H 127.0.0.1 -p {port}" in u and "User=sfapp" in u and "0.0.0.0" not in u, u)
-    check("no unit runs as root except the firewall's one-shot egress rule", all("User=sfapp" in v for k, v in U.items() if k.endswith(".service") and "-egress" not in k))
+        check(f"the {name} unit binds loopback only and runs as its own user", f"-H 127.0.0.1 -p {port}" in u and f"User={V.SERVICE_USERS[name]}\n" in u and "User=sfapp" not in u and "0.0.0.0" not in u, u)
+    as_root = ("-egress", "-storage")       # two one-shots: the firewall's egress rule, and the web app's view of the file store
+    check("no unit runs as root except those two one-shots, and every other one names one of the app's users",
+          all(re.search(r"^User=(sfweb|sfapp|sfwork)$", v, re.M) and "User=root" not in v for k, v in U.items() if k.endswith(".service") and not any(x in k for x in as_root))
+          and all("User=" not in U[k] for k in U if k.endswith(".service") and any(x in k for x in as_root)))
     for route, expr in crons:
         t = U[f"{S['unit']}-cron-{route}.timer"]; s = U[f"{S['unit']}-cron-{route}.service"]
         check(f"timer {route} fires on {expr}", f"OnCalendar={V.cron_to_oncalendar(expr)}" in t and f"cron-call.sh {route}" in s and "CRON_SECRET" not in s, t)
@@ -250,9 +261,10 @@ def _generated_files(check, tmp):
           "root@10.44.0.2" in p4["packages"]["argv"] and V.sandbox_conflict(S4, ["203.0.113.10"]) is None and V.dns_problem(S4, lambda d: ["203.0.113.10"]) is None
           and V.dns_problem(S4, lambda d: ["10.44.0.2"]) is not None)
     nft = V.egress_nft(S)
-    check("the egress rule keeps the service user off metadata and private ranges, and leaves loopback", all(x in nft for x in V.EGRESS_DENY) and "127.0.0.0/8" not in nft and 'meta skuid "sfapp"' in nft, nft)
+    check("the egress rule keeps every one of the app's users off metadata and private ranges, and leaves loopback", all(x in nft for x in V.EGRESS_DENY) and "127.0.0.0/8" not in nft
+          and 'meta skuid { "sfweb", "sfapp", "sfwork", "sfbuild" } ip daddr' in nft, nft)
     B = V.bundle(S, crons)
-    changing = ("packages.sh", "firewall.sh", "postgres.sh", "build.sh", "db-chain.sh", "units.sh", "caddy.sh")
+    changing = ("packages.sh", "firewall.sh", "postgres.sh", "build.sh", "db-chain.sh", "units.sh", "caddy.sh", "users.sh", "seal.sh")
     for name in changing:
         body = [l for l in B[name][0].splitlines() if l.strip() and not l.startswith("#")]
         check(f"{name} refuses to run anywhere but the app's own server, before it does anything", body[0] == "set -eu" and body[1].startswith('[ "${SF_REMOTE_DEPLOY:-}" = "vm_remote_fixture" ] || {') and "exit 3" in body[1], body[:2])
@@ -277,7 +289,9 @@ def _generated_files(check, tmp):
     nft = shutil.which("nft") or ("/usr/sbin/nft" if os.path.exists("/usr/sbin/nft") else None)
     if nft and os.geteuid() == 0:
         probe = os.path.join(tmp, "egress-check.nft")
-        with open(probe, "w") as f: f.write(B["egress.nft"][0].replace(f'"{V.SERVICE_USER}"', '"nobody"'))
+        text = B["egress.nft"][0]
+        for i, u in enumerate(V.EGRESS_USERS): text = text.replace(f'"{u}"', str(60001 + i))     # stand-in uids: the users exist only on the server
+        with open(probe, "w") as f: f.write(text)
         r = subprocess.run([nft, "-c", "-f", probe], capture_output=True, text=True, timeout=30)
         check("the egress rule is valid nftables (`nft -c`: checked, never applied)", r.returncode == 0, r.stderr[-400:])
     check("the factory's own prewarm is gone: the mold's `npm run sandbox:prewarm` does that job", "prewarm-serial.mjs" not in B and not hasattr(V, "PREWARM_MJS"))
@@ -288,7 +302,7 @@ def _generated_files(check, tmp):
     b = B["build.sh"][0]; order = [b.index(x) for x in ("systemctl stop", "env-split --file", "npm ci --include=dev", "npm run build:eve", "-- npm run build\n", "services/task-workflow -- npm run build")]
     check("the build stops the services, splits the env files, then builds in place at the final path, one build at a time", order == sorted(order) and "/opt/software-factory/vm_remote_fixture/app" in b and " & " not in b and "wait\n" not in b, order)
     check("  ...as the service user, each part with its own service's env file loaded by env-run (never sourced by a shell)",
-          all(f"env-run --file /etc/software-factory/vm_remote_fixture/{k}.env --user sfapp" in b for k in ("api", "web", "workflow"))
+          all(f"env-run --file /etc/software-factory/vm_remote_fixture/{k}.env --user sfbuild --home /var/lib/sfbuild" in b for k in ("api", "web", "workflow")) and "--user sfapp" not in b
           and "env-run --file /etc/software-factory/vm_remote_fixture/env " not in b and ". /etc/software-factory" not in b
           and "$RUN_API /opt/software-factory/vm_remote_fixture/app -- npm run build:eve" in b and "$RUN_WEB /opt/software-factory/vm_remote_fixture/app -- npm run build\n" in b)
     dc = B["db-chain.sh"][0]
@@ -306,7 +320,8 @@ def _generated_files(check, tmp):
     check("  ...and they are in the written bundle, byte for byte", open(os.path.join(out, ".claude/scripts/provision.py"), "rb").read() == open(os.path.join(SCRIPTS, "provision.py"), "rb").read())
     check("generation is deterministic: a second bundle is identical (a re-run changes nothing by itself)", V.bundle(_settings(), V.read_crons(mold)) == B)
     hv, bad = V.health_verdict(S, V.parse_kv(fx("health-ok.txt")), crons)
-    check("a healthy server's answer is accepted", bad == [] and hv == {"workflow": "200", "api": "200", "web": "200", "kvm": "ok", "push": "on", "disk_percent": 21, "sandbox_store_mb": 15462}, (hv, bad))
+    check("a healthy server's answer is accepted", bad == [] and hv == {"workflow": "200", "api": "200", "web": "200", "kvm": "ok", "push": "on", "disk_percent": 21, "sandbox_store_mb": 15462,
+                                                                           "users": "separate", "egress_ssh": "blocked"}, (hv, bad))
     def sick(**kw): return V.health_verdict(S, dict(V.parse_kv(fx("health-ok.txt")), **kw), crons)
     for label, kw, needle, kvm in (("Postgres open to the internet", {"PUBLIC_LISTENERS": "22 80 443 5432"}, "5432", "ok"),
                                    ("the API as root", {"API_USER": "root"}, "non-root", "ok"),
@@ -803,34 +818,52 @@ def _lanes(check):
     check("a vercel app is graded where it always was", lane_url.target_url({"target": "vercel", "vercel": {"production_url": "https://x.vercel.app/"}}) == "https://x.vercel.app")
     check("a vm app has none", lane_url.target_url({"target": "vm", "vm": {}}) == "")
     ddocs = dict(docs, infrastructure=dep)
-    check("the mold's `infrastructure.vercel.production_url` precondition is answered by the vm_remote URL", L.state_get(ddocs, "infrastructure.vercel.production_url") == "https://app.example.com"
-          and L.state_get(docs, "infrastructure.vercel.production_url") is None)
     vdocs = {"infrastructure": {"target": "vercel", "vercel": {"production_url": "https://x.vercel.app"}}}
-    check("  ...and for a vercel app that path still reads the vercel object", L.state_get(vdocs, "infrastructure.vercel.production_url") == "https://x.vercel.app")
+    # mold_v1-154: the runner translates nothing. What a check grades is decided in the lane's own folder.
+    check("the runner has no rewrite, no overlay and no special reading of the vercel path left", not hasattr(L, "target_rewrites") and not hasattr(L, "with_overlay") and not hasattr(L, "OVERLAYS")
+          and L.state_get(ddocs, "infrastructure.vercel.production_url") is None and L.state_get(vdocs, "infrastructure.vercel.production_url") == "https://x.vercel.app")
     ctx = L.context("vm_remote_fixture", "functional", "mold_v1", ddocs, "r")
-    check("the lane context's {url} is the vm_remote URL", ctx["url"] == "https://app.example.com")
+    check("the lane context's {url} is the vm_remote URL, and it carries no rewrite", ctx["url"] == "https://app.example.com" and "_rewrite" not in ctx)
     testing = os.path.join(ROOT, "molds/mold_v1/testing")
-    spec = L.read_spec("functional", "mold_v1"); turn = next(c for c in spec["checks"] if c["name"] == "chat.turn")
+    raw = L.read_spec("functional", "mold_v1"); spec = L.for_target(raw, ddocs); turn = next(c for c in spec["checks"] if c["name"] == "chat.turn")
     cmd = L.subst(turn["run"], ctx)
-    check("the mold's lane-url.py calls are answered by the runner's resolver for a vm_remote app", "lib/lane_url.py vm_remote_fixture" in cmd and "lane-url.py" not in cmd, cmd)
+    check("a vm_remote app's checks call the lane's OWN lane-url.py, exactly as the lane declares them", f"{testing}/accessibility/lane-url.py vm_remote_fixture" in cmd and "lib/lane_url.py" not in cmd, cmd)
     for lane in ("accessibility", "responsiveness"):
         sp = L.read_spec(lane, "mold_v1"); c = L.subst(sp["checks"][0]["run"], dict(ctx, lane=lane))
-        check(f"  ...in the {lane} lane too, harness arguments included", "lib/lane_url.py vm_remote_fixture --harness" in c and "lane-url.py" not in c, c)
+        check(f"  ...in the {lane} lane too, harness arguments included", f"{testing}/{lane}/lane-url.py vm_remote_fixture --harness" in c and "lib/lane_url.py" not in c, c)
     rls = next(c for c in spec["checks"] if c["name"] == "rls")
     msg = L.subst(rls["requires"][1]["else"], ctx)
-    check("an instruction that ended --deploy names --deploy-remote, once", msg.endswith("provision.py vm_remote_fixture --deploy-remote") and "remote-remote" not in L.subst(msg, ctx), msg)
-    vctx = L.context("vm_remote_fixture", "functional", "mold_v1", dict(docs, infrastructure={"target": "vercel", "vercel": {"production_url": "https://x.vercel.app"}}), "r")
-    check("a vercel app's commands are run exactly as the lane declares them", "accessibility/lane-url.py" in L.subst(turn["run"], vctx) and vctx["_rewrite"] == [] and vctx["url"] == "https://x.vercel.app")
-    over = L.with_overlay(spec, "functional", "mold_v1", ddocs)
-    check("the functional lane gains the python tool-call check for a vm_remote app", [c["name"] for c in over["checks"]] == [c["name"] for c in spec["checks"]] + ["tool.python"])
-    check("  ...and for no other target", L.with_overlay(spec, "functional", "mold_v1", vdocs) is spec and L.with_overlay(spec, "functional", "mold_v1", {"infrastructure": {"target": "vm"}}) is spec)
-    check("  ...and no other lane", all(L.with_overlay(L.read_spec(l, "mold_v1"), l, "mold_v1", ddocs) == L.read_spec(l, "mold_v1") for l in ("context", "load", "accessibility", "responsiveness")))
-    tp = next(c for c in over["checks"] if c["name"] == "tool.python")
+    check("{deploy} names the one deploy command a vm_remote app has", L.deploy_flag(dep) == "--deploy-remote" and msg.endswith("provision.py vm_remote_fixture --deploy-remote") and "{deploy}" not in msg, msg)
+    check("  ...the rls row asks the lane's own script whether the app is deployed, not a vercel-only state path",
+          rls["requires"][1].get("cmd") == "python3 {testing}/functional/tenant-isolation.py {app_id} --deployed" and "state" not in rls["requires"][1])
+    vctx = L.context("vm_remote_fixture", "functional", "mold_v1", dict(docs, infrastructure=vdocs["infrastructure"]), "r")
+    check("a vercel app's commands and instructions read as they always did", "accessibility/lane-url.py" in L.subst(turn["run"], vctx) and vctx["url"] == "https://x.vercel.app"
+          and L.deploy_flag(vdocs["infrastructure"]) == "--deploy" and L.subst(rls["requires"][1]["else"], vctx).endswith("provision.py vm_remote_fixture --deploy")
+          and L.deploy_flag({"target": "vm"}) == "--deploy")
+    left = [f"{l}: {x[:80]}" for l in L.LANES for c in (L.read_spec(l, "mold_v1") or {}).get("checks", []) for x in
+            [c["run"]] + [p.get(k, "") for p in c.get("requires", []) for k in ("cmd", "else")] if re.search(r"provision\.py \{app_id\} --deploy(?![-\w])", x)]
+    check("no lane.json command or instruction still hard-codes `--deploy` for the application", left == [], left)
+    names = [c["name"] for c in raw["checks"]]
+    check("tool.python is declared in the mold's functional lane, for the vm_remote target only", names[-1] == "tool.python" and raw["checks"][-1].get("targets") == ["vm_remote"]
+          and [c["name"] for c in raw["checks"] if "targets" in c] == ["tool.python"])
+    check("the functional lane has the python tool-call check for a vm_remote app", [c["name"] for c in spec["checks"]] == names)
+    for label, d in (("vercel", vdocs), ("vm", {"infrastructure": {"target": "vm"}})):
+        got = L.for_target(raw, d)
+        check(f"  ...and a {label} app's functional lane does not have it at all (not skipped: absent)", [c["name"] for c in got["checks"]] == names[:-1] and len(got["checks"]) == len(raw["checks"]) - 1)
+    check("  ...no other lane changes with the target", all(L.for_target(L.read_spec(l, "mold_v1"), d) is not None and L.for_target(L.read_spec(l, "mold_v1"), d) == L.read_spec(l, "mold_v1")
+                                                           for l in ("context", "load", "accessibility", "responsiveness") for d in (ddocs, vdocs)))
+    check("  ...a lane with no harness stays no harness", L.for_target(None, ddocs) is None)
+    sch = load(os.path.join(testing, "lane.schema.json"))
+    bad = json.loads(json.dumps(raw)); bad["checks"][-1]["targets"] = ["vm-remote"]
+    check("a `targets` value that is not a deploy target is refused by the lane schema", any("targets" in e for e in F._check(bad, L._deref(sch, sch), "x")) and F._check(raw, L._deref(sch, sch), "x") == [])
+    tp = next(c for c in spec["checks"] if c["name"] == "tool.python")
     c = L.subst(tp["run"], ctx)
-    check("  ...it runs as a signed-in person against the vm_remote URL", "session.py vm_remote_fixture --" in c and "tool-python.py" in c and "lane_url.py vm_remote_fixture" in c and len(tp["requires"]) == 2, c)
+    check("  ...it runs as a signed-in person against the vm_remote URL, from the lane's own folder", "session.py vm_remote_fixture --" in c and f"{testing}/functional/tool-python.py" in c
+          and f"{testing}/accessibility/lane-url.py vm_remote_fixture" in c and len(tp["requires"]) == 2 and "{deploy}" not in L.subst(tp["requires"][0]["else"], ctx), c)
+    _lane_scripts(check, docs, dep, typed, other)
     res = L.run_check({"name": "x", "run": "true", "app_env": ["DATABASE_URL"]}, ddocs, ctx)
     check("a check that must connect as the application is skipped for a vm_remote app, with the reason", res["status"] == "skipped" and "never leaves it" in res["reason"], res)
-    spec_tp = importlib.util.spec_from_file_location("tool_python", os.path.join(SCRIPTS, "lane-overlays/vm_remote/tool-python.py"))
+    spec_tp = importlib.util.spec_from_file_location("tool_python", os.path.join(ROOT, "molds/mold_v1/testing/functional/tool-python.py"))
     T = importlib.util.module_from_spec(spec_tp); spec_tp.loader.exec_module(T)
     check("the tool-call prompt holds the expression and never its answer", str(T.A * T.B) not in T.PROMPT and f"{T.A}*{T.B}" in T.PROMPT and T.WANT == f"SF-TOOL {T.A * T.B}")
     ok_events = [{"type": "session.started"}, {"type": "actions.requested"},
@@ -849,6 +882,81 @@ def _lanes(check):
     ok, why, _ = T.judge([{"type": "subagent.event", "data": {"event": ok_events[2]}}, {"type": "session.waiting"}])
     check("a tool result inside a subagent event counts", ok, why)
     check("a stream that never ends, and a failed turn, both fail", not T.judge(ok_events[:3])[0] and not T.judge([{"type": "turn.failed", "data": {"error": "x"}}])[0])
+
+def _load_script(path, name):
+    sp = importlib.util.spec_from_file_location(name, path); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m); return m
+
+def _lane_scripts(check, docs, dep, typed, other):
+    """The lane's own scripts (mold_v1-154): lane-url.py in both browser lanes and functional/tenant-isolation.py read the
+    deployed address per target, by the same rule as lib/lane_url.py. Each is loaded and run against a temp state root."""
+    testing = os.path.join(ROOT, "molds/mold_v1/testing")
+    vercel = {"target": "vercel", "secret_store": "vercel_env", "vercel": {"production_url": "https://x.vercel.app/"}}
+    undeployed_vercel = {"target": "vercel", "secret_store": "vercel_env", "vercel": {"project": "p"}}
+    vm = {"target": "vm", "secret_store": "vm_env_file", "vm": {}}
+    stale = json.loads(json.dumps(dep)); stale["vercel"] = {"production_url": "https://left-over.vercel.app"}      # a vm_remote app never reads a vercel block
+    cases = {"vmr_undeployed": docs["infrastructure"], "vmr_deployed": dep, "vmr_typed": typed, "vmr_other": other, "vmr_stale_vercel": stale,
+             "vercel_deployed": vercel, "vercel_undeployed": undeployed_vercel, "vm_fixture": vm}
+    root = tempfile.mkdtemp(prefix="lane-scripts-")
+    try:
+        for name, infra in cases.items():
+            d = os.path.join(root, "state/application", name); os.makedirs(d)
+            json.dump(infra, open(os.path.join(d, "infrastructure.json"), "w"))
+            json.dump(dict(docs["application"], app_id=name, status="planned"), open(os.path.join(d, "application.json"), "w"))
+            json.dump(docs["datastores"], open(os.path.join(d, "datastores.json"), "w"))
+        def run_main(mod, argv):
+            buf, err = io.StringIO(), io.StringIO(); code = 0
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                try: code = mod.main(argv) or 0
+                except SystemExit as e: code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
+            return code, buf.getvalue().strip(), err.getvalue().strip()
+        saved_env = os.environ.pop("MOLD_V1_LANE_URL", None)
+        T = _load_script(os.path.join(testing, "functional/tenant-isolation.py"), "tenant_isolation"); T.ROOT = root
+        for lane in ("accessibility", "responsiveness"):
+            M = _load_script(os.path.join(testing, lane, "lane-url.py"), f"lane_url_{lane}"); M.ROOT = root
+            for name, infra in cases.items():
+                want = lane_url.target_url(infra)
+                code, out, err = run_main(M, [name])
+                check(f"{lane}/lane-url.py and the factory's reader agree on {name}", (code == 0 and out == want) if want else (code == 1 and out == ""), (code, out, err, want))
+                if want:
+                    code, out, _ = run_main(M, [name, "--harness"])
+                    check(f"  ...and --harness hands the browser harness that address, nothing else", code == 0 and out == f"--url {want}", out)
+            code, out, err = run_main(M, ["vmr_undeployed"])
+            check(f"{lane}/lane-url.py tells an undeployed vm_remote app its own deploy command", code == 1 and err.endswith("provision.py vmr_undeployed --deploy-remote") and "vercel" not in err, err)
+            code, out, err = run_main(M, ["vercel_undeployed"])
+            check(f"  ...and an undeployed vercel app the one it always did", code == 1 and err.endswith("provision.py vercel_undeployed --deploy"), err)
+            os.environ["MOLD_V1_LANE_URL"] = "http://127.0.0.1:3999"
+            try:
+                check(f"  ...MOLD_V1_LANE_URL still serves a vm fixture and is never honoured for a vm_remote app", run_main(M, ["vm_fixture"])[:2] == (0, "http://127.0.0.1:3999")
+                      and run_main(M, ["vmr_undeployed"])[0] == 1 and run_main(M, ["vmr_deployed"])[1] == "https://app.example.com")
+            finally: os.environ.pop("MOLD_V1_LANE_URL", None)
+        for name, infra in cases.items():
+            want = lane_url.target_url(infra) if infra.get("target") != "vm" else ""
+            check(f"tenant-isolation.py reads the same deployed address for {name}", T.deployed_url(infra) == want and run_main(T, [name, "--deployed"])[0] == (0 if want else 1), (T.deployed_url(infra), want))
+        # the rls.health row for a vm_remote app is MEASURED through its own address (it used to print "skipped: no production_url")
+        asked = []
+        class Resp:
+            def __init__(self, body): self.body = body
+            def read(self): return self.body.encode()
+        real_row, real_run = T.health_row, T.subprocess.run
+        def stage(body):
+            def opener(url, timeout=None): asked.append(url); return Resp(body)
+            T.health_row = lambda url: real_row(url, opener)
+        T.subprocess.run = lambda *a, **k: CP(a, 0, "onfinance: tenant isolation PROVEN on the server's stored DATABASE_URL: 58/58\n", "")
+        try:
+            stage(json.dumps(HEALTH_DOC)); code, out, _ = run_main(T, ["vmr_deployed"])
+            check("the rls.health row of a deployed vm_remote app is measured at its own address", code == 0 and asked == ["https://app.example.com/api/ops/health"]
+                  and re.search(r"\| rls\.health\s*\| pass \|.*RLS enforced", out) and "skipped" not in out, out)
+            stage(json.dumps({"db": {"ok": True, "detail": "role postgres — WARNING: BYPASSRLS, row-level security is NOT enforced"}})); code, out, _ = run_main(T, ["vmr_deployed"])
+            check("  ...and fails when the running app says row-level security is not enforced", code == 1 and re.search(r"\| rls\.health\s*\| fail \|", out), out)
+            asked.clear(); stage(json.dumps(HEALTH_DOC)); code, out, _ = run_main(T, ["vmr_undeployed"])
+            check("  ...an undeployed one is still `skipped`, never read anywhere", "| skipped | no production_url" in out and asked == [], out)
+            code, out, _ = run_main(T, ["vercel_deployed"])
+            check("  ...and a vercel app's row reads the address it always read", asked == ["https://x.vercel.app/api/ops/health"] and code == 0, (asked, out))
+        finally:
+            T.health_row, T.subprocess.run = real_row, real_run
+            if saved_env is not None: os.environ["MOLD_V1_LANE_URL"] = saved_env
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 # ---- brief -> state -> check -> dry run, in a temp copy of the factory ----------------------------------------
 def _brief_to_plan(check, tmp):

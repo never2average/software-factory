@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""mint_handoff.py <app_id>          (also: mint.py <app_id> handoff)
+"""mint_handoff.py <app_id>          (also: mint.py <app_id> handoff)   |   --self-test
 
 One page that lets someone who was not here carry an application forward: a go-to-market agent, a teammate, a new
 session. Built from state, never from memory, so it can be regenerated at any time:
@@ -23,6 +23,15 @@ import mint, mint_report
 def load(p): return json.load(open(p))
 E = html.escape
 FORBIDDEN = [re.compile(p) for p in (r"[A-Za-z0-9._%+-]+@(?!company\.com|example\.com)[A-Za-z0-9.-]+\.[a-z]{2,}(?![\w/-])", r"\b(sk|re|npm|ghp|gho)_[A-Za-z0-9]{16,}", r"GOCSPX-", r"postgres(ql)?://", r"eyJ[A-Za-z0-9_-]{20,}\.")]
+
+def app_url(infra):
+    """Where the application lives, per deploy target: vercel.production_url, or for a server of its own
+    vm_remote.production_url once a deploy recorded it (lib/lane_url.py is the one reading)."""
+    return mint.lane_url.target_url(infra) or None
+def own_domain(infra):
+    """The application's own domain: a Vercel app's attached custom domain; a server of its own is always at its domain."""
+    if infra.get("target") == "vm_remote": return (infra.get("vm_remote") or {}).get("domain") if app_url(infra) else None
+    return (infra.get("vercel") or {}).get("custom_domain")
 
 def facts(app_id):
     adir = os.path.join(ROOT, "state", "application", app_id); app = load(os.path.join(adir, "application.json")); infra = load(os.path.join(adir, "infrastructure.json"))
@@ -66,13 +75,13 @@ def facts(app_id):
         if t.get("status") == "done" and t.get("evidence"):
             done.append(dict(id=t["task_id"], at=t.get("updated") or "", title=t["title"], evidence=t["evidence"][-1]))
     done = sorted(done, key=lambda t: t["at"])[-6:][::-1]
-    url = (infra.get("vercel") or {}).get("production_url"); cli = infra.get("agent_cli") or {}
+    url = app_url(infra); cli = infra.get("agent_cli") or {}
     testing = {k: v.get("status") for k, v in (app.get("testing") or {}).items()}
     return dict(app_id=app_id, generated_at=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"), product=dict(name=brand.get("product_name") or prod.get("name") or app_id, tagline=brand.get("tagline") or prod.get("tagline") or "", color=brand.get("brand_color")),
                 status=app.get("status"), url=url, mold=dict(id=app["mold_id"], commit=(app.get("mold_commit") or "")[:7]), capabilities=dict(web_search=(infra.get("runtime_env") or {}).get("ENABLE_WEB_SEARCH"), browser=(infra.get("runtime_env") or {}).get("ENABLE_BROWSER")),
                 models=(app.get("model") or {}).get("roles"), stations=stations, packs=packs, workspaces=spaces, testing=testing, took=took,
                 access=dict(people=f"{url} — sign in with a six-digit code emailed to you, or Continue with Google where the workspace uses it. Access is by workspace membership: the owner invites people from Workspace → People." if url else None,
-                            agents_hosted=f"{url}/api/mcp" if url else None, agents_package=cli.get("package"), package_published=bool((cli.get("published") or {}).get("version")), custom_domain=(infra.get("vercel") or {}).get("custom_domain")),
+                            agents_hosted=f"{url}/api/mcp" if url else None, agents_package=cli.get("package"), package_published=bool((cli.get("published") or {}).get("version")), custom_domain=own_domain(infra), own_server=infra.get("target") == "vm_remote"),
                 open_tasks=tasks, recent=done, repo=dict(state=f"state/application/{app_id}/", packs=[f"packs/{p}/" for p in app.get("packs") or []], brief=f"briefs/{app_id}.md", report=f"reports/mint/{app_id}.md"))
 
 MARK = {"done": ("ok", "Done"), "not needed": ("na", "Not needed"), "next": ("go", "Next"), "needs you": ("ask", "Needs the operator"), "failed": ("bad", "Failed"), "later": ("wait", "Later")}
@@ -143,7 +152,7 @@ details{{background:var(--panel);border:1px solid var(--line);padding:10px 14px}
 <div class="card"><h4>A person</h4><p>{E(a["people"] or "After the first deploy.")}</p></div>
 <div class="card"><h4>An agent, hosted</h4><p>Any MCP-capable assistant connects to <code>{E(a["agents_hosted"] or "—")}</code> with the person's own access token as a Bearer header. The token comes from the same emailed code and lasts 7 days; it proves an email address, and access still follows workspace membership.</p></div>
 <div class="card"><h4>An agent, by package</h4><p><code>{E(a["agents_package"] or "—")}</code> — {"published" if a["package_published"] else "built and checked, <b>not published yet</b> (waits on the operator's npm sign-in)"}. <code>npx {E(a["agents_package"] or "")} login --email you@company.com</code>, then <code>… mcp</code>.</p></div>
-<div class="card"><h4>Address</h4><p>{("Own domain: <code>" + E(a["custom_domain"]) + "</code>") if a["custom_domain"] else "Lives at its Vercel address. No own domain is named yet; choose one before the package is first published, because the address is baked into it."}</p></div></div></section>
+<div class="card"><h4>Address</h4><p>{("Own domain: <code>" + E(a["custom_domain"]) + "</code>") if a["custom_domain"] else ("Runs on a server of its own; its domain does not serve it yet (it does after the first deploy)." if a.get("own_server") else "Lives at its Vercel address. No own domain is named yet; choose one before the package is first published, because the address is baked into it.")}</p></div></div></section>
 
 <section><h2>What was measured</h2><ul class="tests">{tests}</ul>
 <div class="figs"><div class="fig"><b>{cal or "—"}</b><span>first message to first live deploy</span></div><div class="fig"><b>{t["deploys"]}</b><span>deploys</span></div><div class="fig"><b>{t["model_hours"]}h + {t["tool_hours"]}h</b><span>agent model time + tool time</span></div><div class="fig"><b>{t["operator_messages"]}</b><span>operator messages</span></div><div class="fig"><b>{t["upstream_prs"] if t["upstream_prs"] is not None else "—"}</b><span>pull requests merged upstream</span></div><div class="fig"><b>{t["lane_reports"]}</b><span>test-lane reports</span></div></div>
@@ -167,7 +176,17 @@ details{{background:var(--panel);border:1px solid var(--line);padding:10px 14px}
 <script type="application/json" id="handoff-data">{data}</script>
 """
 
+def self_test():
+    vr = {"target": "vm_remote", "deployed_at": "2026-10-04T00:00:00+00:00", "vm_remote": {"domain": "app.example.com", "production_url": "https://app.example.com"}}
+    assert app_url(vr) == "https://app.example.com" and own_domain(vr) == "app.example.com"
+    typed = dict(vr); typed.pop("deployed_at")                      # an address no deploy recorded is not where the app lives
+    assert app_url(typed) is None and own_domain(typed) is None
+    v = {"target": "vercel", "vercel": {"production_url": "https://x.vercel.app", "custom_domain": "research.example.com"}}
+    assert app_url(v) == "https://x.vercel.app" and own_domain(v) == "research.example.com" and own_domain({"target": "vercel", "vercel": {}}) is None
+    print("mint_handoff: 6 checks passed"); return 0
+
 def main(a):
+    if "--self-test" in a: return self_test()
     if not a: sys.exit(__doc__)
     f = facts(a[0]); out = page(f)
     hits = sorted({m.group(0)[:40] for rx in FORBIDDEN for m in rx.finditer(out)})
