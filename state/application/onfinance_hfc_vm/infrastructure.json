@@ -84,6 +84,7 @@
       "version": 17,
       "tls": "on"
     },
-    "host": "157.245.241.138"
+    "host": "157.245.241.138",
+    "domain": "hfc.useimmaculate.com"
   }
 }
