@@ -14,8 +14,10 @@ Called by provision.py for an application whose infrastructure.target is "vm_rem
   provision.py <app_id> --verify-rls [--no-repair]   re-prove tenant isolation on the server's database and running app
   provision.py <app_id> --workspace-remote [seed.json] [--new-workspace] [--dry-run]
                                                  write the brief's workspace, its people and its companies into the server's
-                                                 database (mold_v1-152): run ON the server, as the web app's user, through
-                                                 the app role under row-level security; safe to repeat
+                                                 database (mold_v1-152), then the application's surface (mold_v1-163: the
+                                                 default agent profile, per-subagent configs, workflow definitions and
+                                                 scripts): run ON the server, as the web app's user, through the app role
+                                                 under row-level security; safe to repeat
   provision.py <app_id> --tunnel-remote [--dry-run] [--factory-apply] [--off]
                                                  the private administration tunnel (mold_v1-156, lib/vm_tunnel.py):
                                                  WireGuard between this machine and the server, SSH on the tunnel only
@@ -1955,7 +1957,7 @@ def sandbox_prune(home, retention_days=RETENTION_DAYS, dry_run=False, now=None, 
         f"{kept['template']} templates, {kept['unknown']} not eve's or unreadable. The sandbox store now holds {total / 1048576:.0f} MB.")
     return 1 if failed else 0
 
-def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=print):
+def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=print, surface_script=None):
     """ON THE SERVER, as root (mold_v1-152): write workspaces into the app's database the way the app itself would.
 
     `doc` is {"seeds": [{"seed": {...}, "customers": [...]}]}: names, emails and roles from state, no secret. For each
@@ -1963,7 +1965,14 @@ def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=pri
     env file as its environment: so the connection is the app role's (DATABASE_URL, app_rw), row-level security is in
     force for every row, and nothing here ever holds the admin URL. The values of that file go to the child in its
     environment and nowhere else; whatever the child prints is searched for every one of them before a line is shown.
-    Prints one `WORKSPACE {json}` line per seed (counts and ids, never a value). Returns the exit code."""
+    Prints one `WORKSPACE {json}` line per seed (counts and ids, never a value). Returns the exit code.
+
+    `doc["surface"]` (mold_v1-163), when present, is {"org_id", "only": [table], "state": {"workspace", "surface"}}: what
+    clone.py configure hands lib/surface.mjs on the Vercel path. After the seeds, and only when that workspace's own seed
+    was written in this run, `surface_script` (the factory's surface.mjs) runs `apply` the same way: as the same user, with
+    the same env file, so through the app role under row-level security; the state arrives on its stdin. It is told to
+    write only the tables in `only`, because the seed above has already written the rest through the app's own modules.
+    Prints one `SURFACE {json}` line: a count per table, or why a table was not written."""
     import pwd
     try: pw = pwd.getpwnam(user)
     except KeyError:
@@ -1977,23 +1986,27 @@ def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=pri
         for v in secrets_: text = text.replace(v, "[redacted]")
         return text
     env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": home, "LANG": "C.UTF-8", "NODE_ENV": "production", **vals}
-    def as_user(argv):
+    def as_user(argv, stdin_text=None, more_env=None):
         kw = dict(user=pw.pw_uid, group=pw.pw_gid, extra_groups=os.getgrouplist(user, pw.pw_gid)) if os.getuid() == 0 else {}
-        return subprocess.run(argv, cwd=app_dir, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900, **kw)
+        kw.update({"input": stdin_text} if stdin_text is not None else {"stdin": subprocess.DEVNULL})
+        return subprocess.run(argv, cwd=app_dir, env={**env, **(more_env or {})}, capture_output=True, text=True, timeout=900, **kw)
     run = run or as_user
-    seeds = doc.get("seeds") or []
+    seeds = doc.get("seeds") or []; surf = doc.get("surface") if isinstance(doc.get("surface"), dict) else None
     if not seeds: say("workspace: nothing to write"); return 0
-    rc = 0
+    rc = 0; written = set()
     tmp = tempfile.mkdtemp(prefix="sf-workspace-")
     try:
         if os.getuid() == 0: os.chown(tmp, pw.pw_uid, pw.pw_gid)
         # The factory's directory on the server is root's alone (mode 700), so the web app's user cannot read the
         # script there: "Cannot find module" on the first real server (2026-10-04). It imports the app's modules
-        # from the working directory, not from its own location, so a private copy runs the same.
-        if os.path.isfile(script):
-            own = os.path.join(tmp, os.path.basename(script)); shutil.copyfile(script, own); os.chmod(own, 0o600)
+        # from the working directory, not from its own location, so a private copy runs the same. The same holds for
+        # surface.mjs, which finds the app's `postgres` module through MOLD_DIR, not through where it sits.
+        def private(path):
+            if not (path and os.path.isfile(path)): return path
+            own = os.path.join(tmp, os.path.basename(path)); shutil.copyfile(path, own); os.chmod(own, 0o600)
             if os.getuid() == 0: os.chown(own, pw.pw_uid, pw.pw_gid)
-            script = own
+            return own
+        script = private(script); surface_script = private(surface_script)
         for i, item in enumerate(seeds):
             sp = os.path.join(tmp, f"seed-{i}.json"); cp = os.path.join(tmp, f"customers-{i}.json")
             for path, body in ((sp, item["seed"]), (cp, {"customers": item.get("customers") or []})):
@@ -2012,9 +2025,32 @@ def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=pri
                 out = {"org": item["seed"].get("org_id"), "error": "the seed did not finish: " + tail}
             say("WORKSPACE " + clean(json.dumps(out)))
             if r.returncode or out.get("error") or out.get("customers_failed"): rc = 1
+            elif not out.get("error"): written.add(item["seed"].get("org_id"))
+        if surf:
+            out = _surface_apply(surf, surface_script, app_dir, run, written, clean)
+            say("SURFACE " + clean(json.dumps(out)))
+            if out.get("error") or out.get("skipped") or any(isinstance(v, str) and v.startswith("ERR") for v in out.values()): rc = 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return rc
+
+def _surface_apply(surf, script, app_dir, run, written, clean):
+    """One run of surface.mjs apply for workspace_seed (above): {"org", table: count | "ERR ..."} or {"org", "skipped" | "error"}."""
+    org = surf.get("org_id"); only = [t for t in surf.get("only") or [] if isinstance(t, str)]
+    if org not in written:
+        return {"org": org, "skipped": "its workspace was not written in this run, so nothing of the surface was written either"}
+    if not script or not only: return {"org": org, "error": "the server was not told which script or which tables; nothing was written"}
+    # MOLD_DIR is where surface.mjs finds the app's own `postgres` module: the built app. DATABASE_URL is already in
+    # the environment (the web service's own, the app role). Nothing here names the admin URL.
+    more = {"MOLD_DIR": app_dir, "ORG_ID": str(org), "SURFACE_ONLY": ",".join(only)}
+    try: r = run(["node", script, "apply"], json.dumps(surf.get("state") or {}), more)
+    except (OSError, subprocess.SubprocessError) as e: return {"org": org, "error": f"the surface step could not be run ({type(e).__name__})"}
+    try: out = json.loads(r.stdout or "")
+    except ValueError: out = None
+    if r.returncode or not isinstance(out, dict):
+        tail = " / ".join(l for l in clean((r.stdout or "") + "\n" + (r.stderr or "")).splitlines() if l.strip())[-400:]
+        return {"org": org, "error": "the surface step did not finish: " + tail}
+    return {"org": org, **{t: (v if isinstance(v, int) else str(v)[:300]) for t, v in out.items() if t in only}}
 
 def env_run(env_file, user, home, cwd, cmd):
     """Run one command as the service user with the env file loaded. The file is root's and mode 600, so root
@@ -2070,7 +2106,7 @@ def check(app_id, app, infra, ds, adir, say=print):
     say(f"one user per service: the web app runs as {SERVICE_USERS['web']}, the agent API as {SERVICE_USERS['api']} (the only one in group kvm, the only owner of the sandbox store), "
         f"the task-workflow service as {SERVICE_USERS['workflow']}; the code belongs to {BUILD_USER}, which runs no service. The agent's user cannot open the web app's env file or its process, "
         f"and cannot reach this server's own SSH port; the deploy's health step tries each and fails if one works")
-    say(f"workspace: after a deploy, write the brief's workspace and its people into the server's database with: python3 .claude/scripts/provision.py {app_id} --workspace-remote "
+    say(f"workspace: after a deploy, write the brief's workspace, its people and the application's surface into the server's database with: python3 .claude/scripts/provision.py {app_id} --workspace-remote "
         f"(add --dry-run to see it first; safe to repeat)")
     if S["tunnel_on"]:
         say(f"administration tunnel: ON. SSH goes to {S['tunnel']['server_address']} over WireGuard ({S['tunnel']['interface']}); the public address answers on 80 and 443 only. "
@@ -2262,6 +2298,58 @@ def state_seed_digest(app, adir=None):
     if c and os.path.exists(c): h.update(open(c, "rb").read())
     return h.hexdigest()
 
+# ---------------------------------------------------------------------------------------------------------
+# the application's surface, on the server (mold_v1-163)
+# ---------------------------------------------------------------------------------------------------------
+SURFACE_KEY = "application.json#surface"        # the key the applied surface is recorded under in seed/orgs/.applied.json
+# What `clone.py configure` writes on the Vercel path is lib/surface.mjs `apply`: orgs, org_members, platform_admins,
+# people_roster, agent_profiles, agent_configs, workflow_definitions, workflows. On a server the first four are the
+# workspace seed's (workspace_seed.mjs, through the app's own modules, which also adds what apply never did: the
+# recipes, the workflow library and the companies). These four are what is left, and all four are org-scoped, so each
+# is written inside a transaction that names the workspace, as the app role, under row-level security. None needs the
+# admin connection.
+SURFACE_TABLES = ("agent_profiles", "agent_configs", "workflow_definitions", "workflows")
+
+def surface_doc(app):
+    """What the server needs to write the application's surface (application.surface), or None when state has none:
+    {"org_id", "only": SURFACE_TABLES, "state": {"workspace", "surface"}} with `state` cut down to the keys surface.mjs
+    apply reads for those tables. Instructions, names and ids from state; no secret."""
+    sf = app.get("surface"); ws = app.get("workspace") or {}
+    if not isinstance(sf, dict) or not (ws.get("org") or {}).get("org_id"): return None
+    seed = state_seed(app)
+    me = ((ws.get("operator_self") or ws.get("fde_self") or {}).get("email") or "").strip().lower() or seed["owner"]
+    cwb = sf.get("custom_workflow_builder") or {}
+    state = {"workspace": {"org": {"org_id": seed["org_id"], "name": seed["name"]}, "fde_self": {"email": me}},   # surface.mjs reads fde_self (clone.py hands it both names)
+             "surface": {"primary_context": {"instructions": (sf.get("primary_context") or {}).get("instructions") or {}},
+                         "web_search": sf.get("web_search") or {}, "browser": sf.get("browser") or {},
+                         "custom_workflow_builder": {"definitions": cwb.get("definitions") or [], "scripts": cwb.get("scripts") or []}}}
+    return {"org_id": seed["org_id"], "only": list(SURFACE_TABLES), "state": state}
+
+def surface_digest(app):
+    """The surface as it would be sent, hashed: mint.py compares it with what was last applied. None without a surface."""
+    import hashlib
+    d = surface_doc(app)
+    return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest() if d else None
+
+def surface_lines(d):
+    """What the surface step would write, one line per table, for --dry-run. Reads the same document that is sent."""
+    s = d["state"]["surface"]; p = s["primary_context"]["instructions"]; subs = p.get("subagents") or []
+    defs = s["custom_workflow_builder"]["definitions"]; scripts = s["custom_workflow_builder"]["scripts"]
+    onoff = lambda v: "not set" if v is None else ("on" if v else "off")
+    prof = [f'persona {p["persona_name"]!r}' if p.get("persona_name") else "no persona name", "a tone" if p.get("tone") else "no tone",
+            f'instructions of {len(p["workspace"])} characters' if p.get("workspace") else "no instructions", f'default mode {p.get("default_mode") or "not set"}',
+            f'model {p.get("model") or "the platform default"}', f'web search by default {onoff(s["web_search"].get("default_on_for_agent"))}',
+            f'browser by default {onoff(s["browser"].get("default_on_for_agent"))}']
+    mine = [w for w in scripts if not w.get("file")]; filed = [w for w in scripts if w.get("file")]
+    names = lambda xs, k: (": " + ", ".join(str(x.get(k)) for x in xs)) if xs else ""
+    return [f"agent_profiles: the workspace's default agent profile, created or updated: " + ", ".join(prof),
+            f"agent_configs: {_n(len(subs), 'subagent config', 'subagent configs')}, created or updated{names(subs, 'agent_key')}"
+            + (f" ({sum(1 for c in subs if c.get('paused'))} paused, {sum(1 for c in subs if c.get('instructions'))} with instructions of their own)" if subs else ""),
+            f"workflow_definitions: {_n(len(defs), 'workflow definition', 'workflow definitions')}, created or updated{names(defs, 'id')}",
+            f"workflows: {_n(len(mine), 'workflow script', 'workflow scripts')}, each added only if no workflow of that name exists{names(mine, 'name')}"
+            + (f"; {len(filed)} file-backed script(s) are not written by this step ({', '.join(str(w.get('name')) for w in filed)})" if filed else ""),
+            "already written by the workspace step above, and not touched again: the org row, members, platform admins, roster, recipes, the workflow library, companies"]
+
 def workspace_plan(app_id, app, adir, only=None, new_workspace=False):
     """[(key, label, {"seed", "customers"})] in the order they are written: the state's own workspace first, then every
     seed under state/application/<app>/seed/orgs/ (workspace.py's input: one more workspace each), each with the
@@ -2301,7 +2389,8 @@ def workspace_argv(S, shown=False):
     user with the web service's env file. The workspaces arrive on its stdin; nothing secret is on the command line."""
     web = SERVICE_USERS["web"]
     cmd = guarded(S, f"python3 {S['tool']} workspace-seed --file {S['env_files']['web']} --user {web} --home {SERVICE_HOMES['web']} "
-                     f"--app-dir {S['app_dir']} --script {S['factory_dir']}/.claude/scripts/lib/workspace_seed.mjs")
+                     f"--app-dir {S['app_dir']} --script {S['factory_dir']}/.claude/scripts/lib/workspace_seed.mjs "
+                     f"--surface-script {S['factory_dir']}/.claude/scripts/lib/surface.mjs")
     return ssh_argv(S, cmd, shown)
 
 def _n(n, one, many): return f"{n} {one if n == 1 else many}"
@@ -2310,10 +2399,15 @@ def workspace_remote(app_id, S, app, infra, adir, P, a, crons, runner=real_runne
     """`provision.py <app> --workspace-remote [seed.json] [--new-workspace] [--dry-run]`: write the brief's workspace
     (and every extra one under seed/orgs/) into the database of an app on its own server. The Vercel path does this
     with clone.py configure and workspace.py, which read a Vercel project's env; here the write happens ON the server.
-    Safe to run again: every row is created if absent and updated if present, and nothing is ever removed."""
+    Safe to run again: every row is created if absent and updated if present, and nothing is ever removed.
+    After the application's own workspace it writes the application's surface (mold_v1-163, surface_doc above): what
+    clone.py configure writes on the Vercel path and the workspace seed does not. A run for one named seed file writes
+    that workspace only, and no surface."""
     only = next((x for x in a[a.index("--workspace-remote") + 1:] if not x.startswith("-")), None)
     plan_ = workspace_plan(app_id, app, adir, only=only, new_workspace="--new-workspace" in a)
     doc = {"seeds": [item for _, _, item in plan_]}
+    surf = surface_doc(app) if any(k == STATE_SEED for k, _, _ in plan_) else None
+    if surf: doc["surface"] = surf
     if "--dry-run" in a:
         say(f"DRY RUN for {app_id}: nothing below was run and nothing was contacted.")
         say("    $ " + shown_cmd(S, rsync_argv(S, "<bundle>", S["factory_dir"], shown=True)) + "      (the factory's own scripts, so the server runs this version of the seed)")
@@ -2324,6 +2418,10 @@ def workspace_remote(app_id, S, app, infra, adir, P, a, crons, runner=real_runne
             say(f"      | {label}: owner {sd['owner']}, {_n(len(sd.get('members') or []), 'member', 'members')}, {_n(len(sd.get('platform_admins') or []), 'platform admin', 'platform admins')}, "
                 f"{len(sd.get('roster') or sd.get('members') or [])} on the roster, {_n(len(item.get('customers') or []), 'company', 'companies')}; hosted domain {sd.get('google_hosted_domain') or 'none'}"
                 + ("; refused if the server already has other workspaces and not this one" if sd.get("guard") else ""))
+        if surf:
+            say(f"    then the application's surface for {surf['org_id']} (application.surface), in the same command: lib/surface.mjs apply, as the same user, limited to {len(surf['only'])} tables:")
+            for l in surface_lines(surf): say(f"      | {l}")
+        elif only: say("    the application's surface is not written by a run for one named seed file")
         return 0
     if not S["host"]: raise Stop(f"{app_id}: the server address is not in state yet, so there is no database to write to. Nothing was contacted.")
     if not infra.get("deployed_at") or not (infra.get("vm_remote") or {}).get("production_url"):
@@ -2341,7 +2439,7 @@ def workspace_remote(app_id, S, app, infra, adir, P, a, crons, runner=real_runne
     r = runner({"id": "workspace", "argv": workspace_argv(S), "timeout": 1800}, json.dumps(doc))
     outs = [json.loads(l[len("WORKSPACE "):]) for l in (r.stdout or "").splitlines() if l.startswith("WORKSPACE {")]
     for l in redact(r.stdout or "").splitlines():
-        if l.strip() and not l.startswith("WORKSPACE {"): say(l[:300])
+        if l.strip() and not l.startswith(("WORKSPACE {", "SURFACE {")): say(l[:300])
     done = {}; failed = False
     for (key, label, item), out in zip(plan_, outs):
         if out.get("error") == "other_workspaces":
@@ -2357,6 +2455,18 @@ def workspace_remote(app_id, S, app, infra, adir, P, a, crons, runner=real_runne
     if r.returncode and len(outs) < len(plan_):
         failed = True
         say(f"{app_id}: the workspace step did not finish on the server: " + redact(((r.stderr or "").strip().splitlines() or ["no reason was printed"])[-1])[:300])
+    if surf:
+        souts = [json.loads(l[len("SURFACE "):]) for l in (r.stdout or "").splitlines() if l.startswith("SURFACE {")]
+        so = souts[-1] if souts else None
+        bad = None if so is None else so.get("error") or so.get("skipped") or "; ".join(f"{t}: {v[4:].strip()}" for t, v in so.items() if isinstance(v, str) and v.startswith("ERR"))
+        if so is None:
+            if STATE_SEED in done: failed = True; say(f"{app_id}: NOT finished: the application's surface: the server said nothing about it")
+        elif bad:
+            failed = True; say(f"{app_id}: NOT finished: the application's surface: {str(bad)[:400]}")
+        else:
+            say(f"{app_id}: written: the application's surface: the default agent profile, {so.get('agent_configs', 0)} subagent config(s), {so.get('workflow_definitions', 0)} workflow definition(s), "
+                f"{so.get('workflows', 0)} workflow script(s) added (one already there is left as it is)")
+            done[SURFACE_KEY] = surface_digest(app)
     done = {k: v for k, v in done.items() if v}
     if done:
         # What was applied, as written: the same record mint.py keeps for the Vercel path, so `mint.py <app>` knows.
@@ -2368,7 +2478,8 @@ def workspace_remote(app_id, S, app, infra, adir, P, a, crons, runner=real_runne
             infra["configured_at"] = P.NOW; P.save(os.path.join(adir, "infrastructure.json"), infra)
     if failed:
         say(f"  Every write is safe to repeat: python3 .claude/scripts/provision.py {app_id} --workspace-remote"); return 1
-    say(f"{app_id}: {len(done)} workspace(s) are in the server's database as state describes them. Nothing was removed, and no connection string left the server.")
+    say(f"{app_id}: {len([k for k in done if k != SURFACE_KEY])} workspace(s) are in the server's database as state describes them"
+        + (", and the application's surface with them" if SURFACE_KEY in done else "") + ". Nothing was removed, and no connection string left the server.")
     return 0
 
 def prepare_source(app_id, app):
@@ -2510,7 +2621,7 @@ def cli(a):
     if cmd == "workspace-seed":
         try: doc = json.loads(sys.stdin.read())
         except ValueError: print("workspace: what arrived on stdin is not the list of workspaces; nothing was written"); return 2
-        return workspace_seed(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--script"), doc)
+        return workspace_seed(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--script"), doc, surface_script=_opt(a, "--surface-script"))
     if cmd == "pg-admin":
         pg_admin(f, _opt(a, "--db"), int(_opt(a, "--port", "5432")), _opt(a, "--sslmode", "require")); return 0
     if cmd == "host-chain":

@@ -108,7 +108,7 @@ def run():
           f"the storage conflict it refuses, host qualification, dry-run plan, deploy sequence, database chain order, records, lanes, desktop-notification keys per service, "
           f"sandbox pruning on a fixture tree with a stand-in msb, the private tunnel and its lockout guard run against stand-in commands, "
           f"one user per service with the move of a single-user server run against stand-in commands, the egress rule for the server's own SSH port, "
-          f"the brief's workspace written on the server through a stand-in for the remote runner); "
+          f"the brief's workspace and the application's surface written on the server through a stand-in for the remote runner); "
           f"offline, nothing contacted, nothing on this machine changed")
     import vm_users_selftest as later
     print("  also run here: " + ("; ".join(later.RAN) if later.RAN else "none of the optional checks (they need root, unshare, nft and node)"))
@@ -935,6 +935,7 @@ def _lane_scripts(check, docs, dep, typed, other):
         # the rls.health row for a vm_remote app is MEASURED through its own address (it used to print "skipped: no production_url")
         asked = []
         class Resp:
+            status = 200
             def __init__(self, body): self.body = body
             def read(self): return self.body.encode()
         real_row, real_run = T.health_row, T.subprocess.run
@@ -948,6 +949,8 @@ def _lane_scripts(check, docs, dep, typed, other):
                   and re.search(r"\| rls\.health\s*\| pass \|.*RLS enforced", out) and "skipped" not in out, out)
             stage(json.dumps({"db": {"ok": True, "detail": "role postgres — WARNING: BYPASSRLS, row-level security is NOT enforced"}})); code, out, _ = run_main(T, ["vmr_deployed"])
             check("  ...and fails when the running app says row-level security is not enforced", code == 1 and re.search(r"\| rls\.health\s*\| fail \|", out), out)
+            stage("<html>502 Bad Gateway</html>"); code, out, _ = run_main(T, ["vmr_deployed"])
+            check("  ...and fails when what answers is not the app's health document (mold_v1-159: no answer is never a pass)", code == 1 and re.search(r"\| rls\.health\s*\| fail \|.*not JSON", out), out)
             asked.clear(); stage(json.dumps(HEALTH_DOC)); code, out, _ = run_main(T, ["vmr_undeployed"])
             check("  ...an undeployed one is still `skipped`, never read anywhere", "| skipped | no production_url" in out and asked == [], out)
             code, out, _ = run_main(T, ["vercel_deployed"])

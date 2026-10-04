@@ -1,6 +1,10 @@
 // Surface I/O against a mold_v1 database and blob store. Used by clone.py; never run by hand.
 //   node surface.mjs extract   env: ORG_ID DATABASE_URL                      -> JSON surface+datainfra on stdout
 //   node surface.mjs apply     env: ORG_ID DATABASE_URL, state JSON on stdin -> upserts the surface rows
+//                              env SURFACE_ONLY=<table,table>: write ONLY those of apply's tables (the rest are left
+//                              exactly as they are). provision.py <app> --workspace-remote sets it ON an application's
+//                              own server, where lib/workspace_seed.mjs has already written the workspace, its people and
+//                              its roster through the app's own modules, so this file adds only what that does not write.
 //   node surface.mjs diff      env: ORG_ID DATABASE_URL LIVE_DATABASE_URL [BLOB_READ_WRITE_TOKEN LIVE_BLOB_READ_WRITE_TOKEN BLOB_PREFIX] -> JSON diff
 //   node surface.mjs blobcopy  env: BLOB_PREFIX LIVE_BLOB_READ_WRITE_TOKEN BLOB_READ_WRITE_TOKEN  [--apply]
 // Secrets arrive only through the environment; this file never writes them anywhere.
@@ -9,7 +13,14 @@ import { readFileSync } from "node:fs";
 const MOLD = process.env.MOLD_DIR; if (!MOLD) throw new Error("MOLD_DIR unset");
 const require = createRequire(MOLD + "/package.json");
 const postgres = require("postgres");
-const pg = (url) => postgres(url, { max: 2, prepare: false, connect_timeout: 20, ssl: /localhost|127\.0\.0\.1/.test(url) ? false : "require" });
+// TLS: required for every remote database, as always. A loopback database used to mean "no TLS", which is right for a
+// throwaway local Postgres and wrong on an application's own server (target vm_remote), whose cluster listens on
+// 127.0.0.1 and accepts TLS only (pg_hba `hostssl`): there the URL itself says sslmode=require, and an explicit
+// `ssl: false` here would override it and be refused. So a loopback URL that names an sslmode decides for itself
+// (no ssl option is passed, exactly as the app's own client connects); one that names none stays plaintext.
+const LOOPBACK = /localhost|127\.0\.0\.1/;
+const pgOptions = (url) => ({ max: 2, prepare: false, connect_timeout: 20, ...(LOOPBACK.test(url) ? (/[?&]sslmode=/.test(url) ? {} : { ssl: false }) : { ssl: "require" }) });
+const pg = (url) => postgres(url, pgOptions(url));
 const cmd = process.argv[2]; const ORG = process.env.ORG_ID;
 
 // Tables that carry the service surface, with the columns that identify a row and the columns worth diffing.
@@ -122,8 +133,16 @@ async function pkCols(sql, t) {
   const r = await sql`select a.attname from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey) where i.indrelid = ${t}::regclass and i.indisprimary order by array_position(i.indkey, a.attnum)`;
   return r.map(x => x.attname);
 }
-async function apply(url, state) {
-  const root = pg(url); let sql = root; const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) pk[t] = await pkCols(sql, t); const s = state.surface; const mp = state.workspace; const ws = mp.org; const me = mp.fde_self.email; const done = {};
+// Everything apply writes, in the order it writes it. SURFACE_ONLY (see the head of this file) names a subset.
+const APPLY_TABLES = ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions","workflows"];
+function applyOnly(raw) {
+  if (!raw || !raw.trim()) return null;
+  const want = raw.split(",").map(x => x.trim()).filter(Boolean); const unknown = want.filter(t => !APPLY_TABLES.includes(t));
+  if (unknown.length) throw new Error("SURFACE_ONLY names " + unknown.join(", ") + ", which apply does not write (it writes " + APPLY_TABLES.join(", ") + ")");
+  return new Set(want);
+}
+async function apply(url, state, only = null) {
+  const root = pg(url); let sql = root; const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) { if (!only || only.has(t)) pk[t] = await pkCols(sql, t); } const s = state.surface; const mp = state.workspace; const ws = mp.org; const me = mp.fde_self.email; const done = {};
   // Org-scoped tables are written INSIDE a transaction that names the workspace (set_config('app.org_id', …, true)),
   // exactly as the app's own withOrgDb does. This goes through app_rw on purpose, and under fail_closed RLS a
   // write that names no workspace is refused: on a fresh database every scoped insert failed with "new row
@@ -131,6 +150,7 @@ async function apply(url, state) {
   // its rows arrived by snapshot restore through the admin role).
   const SCOPED = new Set(["people_roster", "agent_profiles", "agent_configs", "workflow_definitions", "workflows"]);
   const up = async (label, fn) => {
+    if (only && !only.has(label)) return;   // not asked for: no statement names this table, and it is absent from the result
     try {
       if (!SCOPED.has(label)) { done[label] = await fn(); return; }
       await root.begin(async (tx) => {
@@ -147,8 +167,13 @@ async function apply(url, state) {
     await up("platform_admins", async () => { let n = 0; for (const e of mp.platform_admins ?? []) { await sql`insert into platform_admins (email, added_by) values (${e}, ${me}) on conflict do nothing`; n++; } return n; });
     await up("people_roster", async () => { let n = 0; for (const r of mp.roster ?? []) { await sql`insert into people_roster (org_id, email, name, team, manager_email, escalations) values (${ws.org_id}, ${r.email}, ${r.name ?? null}, ${r.team ?? null}, ${r.manager_email ?? null}, ${r.escalations && r.escalations.length ? sql.json(r.escalations) : null}) on conflict (${sql(pk.people_roster)}) do update set name = excluded.name, team = excluded.team, manager_email = excluded.manager_email, escalations = excluded.escalations`; n++; } return n; });
     const p = s.primary_context.instructions ?? {}; const ws_ = s.web_search ?? {}, br = s.browser ?? {};
+    // The workspace's default profile is the row with email '' (agent/lib/agent-profile.ts), and the app's own settings
+    // screen creates it under a random id (app/api/ops/agent-profile/route.ts: nanoid(), conflict target org_id + email).
+    // Arbitrating on the primary key therefore only ever found a row THIS file had made: on a workspace whose profile
+    // somebody had already saved in the app, the insert below hit the (org_id, email) unique index and failed. The same
+    // target as the app's own write updates whichever row is the default, and a second run changes nothing.
     await up("agent_profiles", () => sql`insert into agent_profiles (id, org_id, email, persona_name, tone, instructions, default_mode, web_search_default, browser_default, model, updated_by) values (${ws.org_id + ":default"}, ${ws.org_id}, '', ${p.persona_name ?? null}, ${p.tone ?? null}, ${p.workspace ?? null}, ${p.default_mode ?? null}, ${ws_.default_on_for_agent ?? null}, ${br.default_on_for_agent ?? null}, ${p.model ?? null}, ${me})
-      on conflict (${sql(pk.agent_profiles)}) do update set persona_name = excluded.persona_name, tone = excluded.tone, instructions = excluded.instructions, default_mode = excluded.default_mode, web_search_default = excluded.web_search_default, browser_default = excluded.browser_default, model = excluded.model`.then(() => 1));
+      on conflict (org_id, email) do update set persona_name = excluded.persona_name, tone = excluded.tone, instructions = excluded.instructions, default_mode = excluded.default_mode, web_search_default = excluded.web_search_default, browser_default = excluded.browser_default, model = excluded.model`.then(() => 1));
     await up("agent_configs", async () => { let n = 0; for (const c of s.primary_context.instructions?.subagents ?? []) { await sql`insert into agent_configs (org_id, agent_key, paused, instructions) values (${ws.org_id}, ${c.agent_key}, ${!!c.paused}, ${c.instructions ?? null}) on conflict (${sql(pk.agent_configs)}) do update set paused = excluded.paused, instructions = excluded.instructions`; n++; } return n; });
     await up("workflow_definitions", async () => { let n = 0; for (const d of s.custom_workflow_builder.definitions ?? []) { await sql`insert into workflow_definitions (id, org_id, name, entity, stages, current_version, is_default, created_by) values (${d.id}, ${ws.org_id}, ${d.name}, ${d.entity}, ${sql.json(d.stages)}, 1, ${!!d.is_default}, ${me}) on conflict (${sql(pk.workflow_definitions)}) do update set name = excluded.name, stages = excluded.stages, is_default = excluded.is_default`; n++; } return n; });
     await up("workflows", async () => { let n = 0; for (const w of s.custom_workflow_builder.scripts ?? []) { if (w.file) continue; /* file-backed scripts go through operator:seed-workflows */
@@ -203,7 +228,7 @@ const E = process.env;
 (async () => {
   let out;
   if (cmd === "extract") out = await extract(E.DATABASE_URL);
-  else if (cmd === "apply") out = await apply(E.DATABASE_URL, JSON.parse(readFileSync(0, "utf8")));
+  else if (cmd === "apply") out = await apply(E.DATABASE_URL, JSON.parse(readFileSync(0, "utf8")), applyOnly(E.SURFACE_ONLY));
   else if (cmd === "diff") out = await diff(E.DATABASE_URL, E.LIVE_DATABASE_URL, E.BLOB_READ_WRITE_TOKEN, E.LIVE_BLOB_READ_WRITE_TOKEN, E.BLOB_PREFIX ?? "");
   else if (cmd === "blobcheck") { const { list } = require("@vercel/blob"); try { const r = await list({ token: E.BLOB_READ_WRITE_TOKEN, prefix: E.BLOB_PREFIX ?? "", limit: 1 }); out = { ok: true, sample: r.blobs[0]?.pathname ?? null }; } catch (e) { out = { ok: false, error: e.message }; } }
   else if (cmd === "clear-sealed") {
