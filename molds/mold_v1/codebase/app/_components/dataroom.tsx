@@ -2026,6 +2026,8 @@ export function Dataroom({
   const [search, setSearch] = useState("");
   const [uploads, setUploads] = useState<FileItem[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /** Set only when the server reports its file store is misconfigured (HTTP 503, code storage_misconfigured). */
+  const [storeError, setStoreError] = useState<string | null>(null);
   const [archived, setArchived] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set(DOMAIN_FOLDER_IDS));
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -2075,13 +2077,16 @@ export function Dataroom({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    setStoreError(null);
     setLivePaths(null);
     setFileBodies({});
     fetch("/api/dataroom", { headers: getAuthHeaders ? getAuthHeaders() : {} })
       .then((res) => res.json())
-      .then((data: { paths?: unknown }) => {
+      .then((data: { paths?: unknown; code?: unknown; error?: unknown }) => {
         if (cancelled) return;
         setLivePaths(Array.isArray(data?.paths) ? (data.paths as string[]) : []);
+        // A misconfigured file store is not an empty data room: say what the server said (lib/storage-http.ts).
+        if (data?.code === "storage_misconfigured" && typeof data.error === "string") setStoreError(data.error);
       })
       .catch(() => {
         if (!cancelled) setLivePaths([]);
@@ -2348,6 +2353,11 @@ export function Dataroom({
                 </button>
                 <input ref={uploadRef} type="file" multiple className="hidden" onChange={onUpload} />
               </div>
+              {storeError ? (
+                <div role="alert" data-testid="dataroom-store-error" className="border-border border-b px-2 py-1.5 text-2xs text-destructive">
+                  {storeError}
+                </div>
+              ) : null}
               {uploadError ? (
                 <div className="border-border border-b px-2 py-1.5 text-2xs text-destructive">
                   {uploadError}

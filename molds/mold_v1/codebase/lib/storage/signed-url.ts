@@ -12,6 +12,7 @@
  * The key stays in the PATH so a link still ends in the file's name (the console reads the extension from it).
  * app/api/storage/object/[...key]/route.ts is the only thing that honours one.
  */
+import "./server-guard.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { isStorageKey } from "./keys.ts";
 

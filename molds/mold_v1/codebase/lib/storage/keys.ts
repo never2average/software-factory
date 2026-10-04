@@ -9,6 +9,7 @@
  * The Vercel Blob driver does not use it: there a key is an opaque name in a flat store, and the calls it makes today
  * must not change.
  */
+import "./server-guard.ts";
 import { StorageKeyError } from "./types.ts";
 
 const MAX_KEY_BYTES = 1024;

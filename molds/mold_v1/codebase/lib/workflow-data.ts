@@ -18,6 +18,7 @@ import {
  * an unhandled 500.
  */
 import { listDataroomPaths, readDataroomFile } from "@/lib/dataroom-blob";
+import { isStorageConfigError } from "@/lib/storage/types";
 import { withOrgRls } from "@/lib/ops-db";
 import { accountOwnerSql } from "@/agent/lib/db/owner-columns";
 import type { WorkflowData } from "@/lib/workflow-runtime";
@@ -212,7 +213,9 @@ export function workflowDataFor(orgId: string): WorkflowData {
       if (!path) return null;
       try {
         return await readDataroomFile(path, orgId);
-      } catch {
+      } catch (error) {
+        // A misconfigured file store is not a missing file: the script fails, naming the setting (lib/storage).
+        if (isStorageConfigError(error)) throw error;
         return null;
       }
     },

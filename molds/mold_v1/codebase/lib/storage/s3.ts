@@ -14,6 +14,7 @@
  * ignores it; the keys written that way (append parts, suffixed artifacts) are unique by construction, so the header
  * is a second guard, not the only one.
  */
+import "./server-guard.ts";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { assertStorageKey, isStorageKey, withSuffix } from "./keys.ts";
 import type { S3Settings } from "./settings.ts";

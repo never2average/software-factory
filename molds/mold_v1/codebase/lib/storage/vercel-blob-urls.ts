@@ -3,6 +3,7 @@
  * FOLLOWS a link (the artifact proxy, the PDF fetcher) does not load the Vercel client, and so that it works with no
  * token: the artifact proxy has never held one.
  */
+import "./server-guard.ts";
 import { isVercelBlobHost } from "./hosts.ts";
 import type { StorageUrlRules } from "./types.ts";
 

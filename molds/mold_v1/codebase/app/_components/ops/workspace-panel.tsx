@@ -1761,7 +1761,9 @@ function DataroomTab({ role }: { role: Role }) {
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/dataroom", { headers: authToken() ? { Authorization: `Bearer ${authToken()}` } : {} });
-      const d = (await res.json()) as { paths?: string[] };
+      const d = (await res.json()) as { paths?: string[]; code?: string; error?: string };
+      // A misconfigured file store is not an empty data room (lib/storage-http.ts): show the server's sentence.
+      if (d.code === "storage_misconfigured" && d.error) setError(d.error);
       const paths = d.paths ?? [];
       setRows(
         paths.map((p) => {

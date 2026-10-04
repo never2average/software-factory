@@ -40,6 +40,7 @@ import {
   statDataroomObject,
 } from "@/lib/dataroom-blob";
 import { orgContextForRequest } from "@/lib/org-context";
+import { storageErrorResponse, storageMisconfigured } from "@/lib/storage-http";
 import {
   MAX_PDF_PREVIEW_BYTES,
   megabytes,
@@ -61,6 +62,10 @@ export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
+  // A misconfigured store (a mistyped STORAGE_DRIVER, a selected driver missing a setting) is a 503 naming the setting,
+  // never "empty" and never "not configured" (lib/storage-http.ts). Null, and nothing else happens, when nothing is wrong.
+  const misconfigured = storageMisconfigured();
+  if (misconfigured) return misconfigured;
   const path = request.nextUrl.searchParams.get("path");
   const wantsBytes = request.nextUrl.searchParams.get("as") === "bytes";
 
@@ -140,6 +145,8 @@ export async function GET(request: NextRequest) {
     }
     return NextResponse.json({ path, content });
   } catch (error) {
+    const misconfiguredNow = storageErrorResponse(error);
+    if (misconfiguredNow) return misconfiguredNow;
     const message = error instanceof Error ? error.message : "Data-room read failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }

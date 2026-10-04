@@ -27,6 +27,7 @@
  * One difference from an object store, by nature: a key cannot be both an object and the folder of another
  * (`a/b` and `a/b/c`). The data room's grammar never produces that pair; a write that would need it fails loudly.
  */
+import "./server-guard.ts";
 import { randomBytes } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import nodePath from "node:path";

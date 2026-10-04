@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { filesystemUrlRules } from "@/lib/storage/filesystem";
 import { filesystemSettings, storageKind } from "@/lib/storage/settings";
+import { storageMisconfiguredPublic } from "@/lib/storage-http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,14 +44,12 @@ function refuse(status: number, error: string) {
 }
 
 export async function GET(request: NextRequest) {
-  let settings;
-  try {
-    if (storageKind() !== "filesystem") return refuse(404, "Not found");
-    settings = filesystemSettings();
-  } catch {
-    // The driver is selected but a setting is missing: there is nothing to serve (the health check says which).
-    return refuse(404, "Not found");
-  }
+  // A misconfigured store is a 503, not "that file does not exist": the file may well exist. No setting is named here
+  // (anyone can call this route); the server log and the health check name it.
+  const misconfigured = storageMisconfiguredPublic();
+  if (misconfigured) return misconfigured;
+  if (storageKind() !== "filesystem") return refuse(404, "Not found");
+  const settings = filesystemSettings();
 
   // The driver checks the path, the signature and the expiry itself. It is handed the path and query of the request
   // on the origin it signs links for, so a forwarded host header cannot change what is verified.

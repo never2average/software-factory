@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
+import { connectionsFromEnv, connectionsWorkspace, isProvidedConnectorKind } from "@/lib/connections-provider";
+import { workspaceSecretLive } from "@/lib/connector-health";
 import { connectorSecrets, connectors, runtimeEnvPresence } from "@/agent/lib/db/schema";
 import { secretsForConnector } from "@/lib/connector-secrets-manifest";
 import { recordOpsAudit } from "@/lib/ops-audit";
@@ -120,6 +122,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
         )
       : [];
 
+    // CONNECTIONS_PROVIDER=env (lib/connections-provider.ts): for Slack and GitHub the agent reads the workspace's
+    // stored secret at call time, so stored IS live; the server's environment counts only for the workspace it is
+    // bound to. False with the setting unset, and then `live` is computed exactly as before.
+    const perWorkspace = connectionsFromEnv() && isProvidedConnectorKind(connector.kind);
+    const serverIsThisWorkspace = perWorkspace && connectionsWorkspace() === octx.orgId;
+    // A personal connector is never a workspace's credential: what is stored on one is not read for Slack or GitHub.
+    const storedCounts = perWorkspace && !connector.ownerEmail;
+    const storedNames = new Set(stored.map((x) => x.name));
+    const presentNow = new Map(live.map((x) => [x.name, x.present]));
     const items = required.map((r) => {
       const s = stored.find((x) => x.name === r.name);
       const l = live.find((x) => x.name === r.name);
@@ -129,13 +140,17 @@ export async function GET(request: NextRequest, context: RouteContext) {
         optional: r.optional ?? false,
         // Set in the RUNNING agent's environment — the only thing that means
         // the connector actually works. `null` = the agent has not reported yet.
-        live: l ? l.present : null,
+        live: perWorkspace ? (workspaceSecretLive(r.name, storedCounts ? storedNames : undefined, presentNow, serverIsThisWorkspace) ?? null) : l ? l.present : null,
         liveSeenAt: l?.seenAt ?? null,
         // Stored here (encrypted). Not the same as live.
         stored: Boolean(s),
         hint: s?.hint ?? null,
         updatedBy: s?.updatedBy ?? null,
         updatedAt: s?.updatedAt ?? null,
+        // Present only with CONNECTIONS_PROVIDER=env: the panel then says a stored secret is read at call time,
+        // instead of telling the operator to promote it into the agent's environment. Absent otherwise, so the
+        // response is exactly what it was.
+        ...(storedCounts ? { storedIsLive: true } : {}),
       };
     });
     return NextResponse.json({ items, canStore: hasSecretsKey() });

@@ -10,6 +10,7 @@ import {
   writeDataroomFile,
 } from "@/lib/dataroom-blob";
 import { orgContextForRequest } from "@/lib/org-context";
+import { storageErrorResponse, storageMisconfigured } from "@/lib/storage-http";
 import { recordOpsAudit } from "@/lib/ops-audit";
 import { recordFileVersion } from "@/lib/dataroom-versions";
 import { getOpsDb } from "@/lib/ops-db";
@@ -42,6 +43,10 @@ export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
+  // A misconfigured store (a mistyped STORAGE_DRIVER, a selected driver missing a setting) is a 503 naming the setting,
+  // never "empty" and never "not configured" (lib/storage-http.ts). Null, and nothing else happens, when nothing is wrong.
+  const misconfigured = storageMisconfigured();
+  if (misconfigured) return misconfigured;
   if (!storageConfigured()) return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
   const url = new URL(request.url);
   const path = url.searchParams.get("path");
@@ -58,6 +63,8 @@ export async function GET(request: NextRequest) {
     const all = await listDataroomPaths(ctx.orgId);
     return NextResponse.json({ paths: prefix ? all.filter((p) => p.startsWith(prefix)) : all });
   } catch (e) {
+    const misconfiguredNow = storageErrorResponse(e);
+    if (misconfiguredNow) return misconfiguredNow;
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }
@@ -82,6 +89,8 @@ export async function POST(request: NextRequest) {
   if (ctx instanceof Response) return ctx;
   const identity = await verifyOpsAuth(request.headers.get("authorization"));
   if (!ctx || !identity) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const misconfigured = storageMisconfigured();
+  if (misconfigured) return misconfigured;
   if (!storageConfigured()) return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
   const parsed = writeSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -124,6 +133,8 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ ok: true, path, bytes: body.length });
   } catch (e) {
+    const misconfiguredNow = storageErrorResponse(e);
+    if (misconfiguredNow) return misconfiguredNow;
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

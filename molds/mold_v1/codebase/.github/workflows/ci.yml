@@ -146,6 +146,23 @@ jobs:
         if: always()
         run: npm run test:storage-drivers
 
+      # A MISCONFIGURED store is not "not configured". A mistyped STORAGE_DRIVER, or a selected driver missing a
+      # setting, used to read as an empty data room (GET /api/dataroom 200 {"paths":[]}) and as "storage is not
+      # configured": storageConfigured() swallowed the error and answered false. Now every storage route answers 503
+      # naming the setting, the agent throws the same error, and it is logged once when the module loads. The
+      # not-configured answers (default driver, no token) are asserted byte-for-byte unchanged, and so is "nothing
+      # logged" with nothing set. Fails on the code before the fix (113 of 172 checks).
+      - name: A misconfigured storage driver fails loudly (503 naming the setting; not-configured unchanged)
+        if: always()
+        run: npm run test:storage-misconfigured
+
+      # lib/storage is server-only: it holds the store's credentials. `import "server-only"` throws in the agent and
+      # in plain node scripts, which load these modules too, so the guard is lib/storage/server-guard.ts at run time
+      # and this at build time: no "use client" file may reach anything under lib/storage/ except hosts.ts.
+      - name: Storage modules are server-only (a client component may import lib/storage/hosts.ts only)
+        if: always()
+        run: npm run check:storage-server-only
+
       # A link to a chat names its workspace and the tab adopts it; each tab keeps its own workspace and names it on
       # every request, the /eve proxy included (the agent side is in test:session-guard, isolation job).
       - name: Deep links and tabs carry their workspace
@@ -277,6 +294,25 @@ jobs:
       - name: Web app service identity off Vercel (session-key token, real channel, setting on and unset)
         if: always()
         run: npm run test:service-identity
+
+      # CONNECTOR CREDENTIALS WITHOUT VERCEL CONNECT (CONNECTIONS_PROVIDER=env), for a server that is not on Vercel.
+      #
+      #   1. The default: with the setting unset (and again with vercel-connect) the two files that import
+      #      @vercel/connect make the SAME calls into it with the same arguments, hand eve the same definitions, and
+      #      the GitHub token path sends the same request, as the code before the setting (recorded at 4ad0c2c by
+      #      this same script: scripts/fixtures/connections/default-provider.golden.json).
+      #   2. The setting on: a workspace's credentials are its own stored connector secrets, or the server's
+      #      environment values for the one workspace they are bound to; never another workspace's. With nothing
+      #      configured the real eve modules still load, Vercel Connect is never called, a tool call gets eve's own
+      #      authorization-failed error (what an uninstalled Connect connector raises), and the real Slack route
+      #      refuses an inbound request. No request is made to Slack or GitHub.
+      - name: Connectors with CONNECTIONS_PROVIDER unset make today's exact Vercel Connect calls (recorded before the setting)
+        if: always()
+        run: npm run test:connections-default
+
+      - name: Connector credentials off Vercel (workspace's own, or the server's bound one; nothing configured is "not connected")
+        if: always()
+        run: npm run test:connections-provider
 
       # The other BEHAVIOURAL chat test — it executes the real module rather than
       # grepping source, which is how every other chat regression got past CI.
@@ -963,6 +999,16 @@ jobs:
       # A chat lives in one workspace and is visible only there: the real thread routes, the session gate and the
       # notification recipients, for a member of that workspace, a member of both currently in the other, an
       # outside guest following the chat's link (read-only, nothing else of the workspace), and an uninvited person.
+      # connector_secrets is RLS-strict and each row is sealed under a key derived from its workspace: this holds the
+      # real read to both. A's stored Slack token is A's; B gets B's or "not connected"; a disabled or personal
+      # connector is never used; A's ciphertext copied onto another workspace's connector does not decrypt.
+      - name: Connector credentials off Vercel are per workspace (stored secrets, strict RLS, per-workspace key), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:connector-credentials-db
+
       - name: A chat is visible only in its own workspace (guests read-only via its link), against a real Postgres
         if: always()
         run: |

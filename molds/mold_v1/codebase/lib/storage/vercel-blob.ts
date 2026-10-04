@@ -15,6 +15,7 @@
  * option is absent and "0" when it is false, and a published artifact relies on the first.
  * scripts/test-storage-default-unchanged.mjs compares all of it with a recording made before this file existed.
  */
+import "./server-guard.ts";
 import { del, head, issueSignedToken, list as listBlobs, presignUrl, put } from "@vercel/blob";
 import type { StorageDriver } from "./types.ts";
 import { vercelBlobUrlRules } from "./vercel-blob-urls.ts";

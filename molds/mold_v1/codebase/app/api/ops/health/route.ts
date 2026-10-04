@@ -3,7 +3,7 @@ import { errorMessage } from "@/lib/ops-errors";
 import { sql } from "drizzle-orm";
 import { getOpsDb } from "@/lib/ops-db";
 import { normalizeAgentUrl } from "@/lib/agent-url";
-import { storageDriver } from "@/lib/storage/index";
+import { storageConfigError, storageDriver } from "@/lib/storage/index";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,6 +100,8 @@ async function checkDb(): Promise<Check> {
 async function checkBlob(): Promise<Check> {
   return timed(async () => {
     // Throws, naming the setting, when a selected driver is missing one; null is the default driver with no token.
+    const misconfigured = storageConfigError();
+    if (misconfigured) throw new Error(`file storage is MISCONFIGURED (every storage route answers 503): ${misconfigured.message}`);
     const store = storageDriver();
     if (!store) throw new Error("no BLOB_READ_WRITE_TOKEN — the blob store is not configured");
     // The data-room store is PRIVATE (private blobs are not publicly fetchable),

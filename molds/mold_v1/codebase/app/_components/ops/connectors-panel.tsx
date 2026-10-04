@@ -463,7 +463,11 @@ function SecretsSection({
   const { items, error, loading, refetch } = useOpsList<ApiConnectorSecret>(
     `/api/ops/connectors/${connector.id}/secrets`,
   );
+  // Stored IS live for a bring-your-own connector, and (on a server whose connector credentials are its own,
+  // CONNECTIONS_PROVIDER=env) for a built-in one whose stored secrets the agent reads per workspace at call time.
+  // The server says which; with that setting unset no row carries the flag and this is `custom`, as before.
   const custom = Boolean(connector.endpointUrl);
+  const readAtCallTime = custom || (items ?? []).some((s) => s.storedIsLive === true);
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       <DetailLabel icon={KeyRoundIcon}>Secrets</DetailLabel>
@@ -502,7 +506,7 @@ function SecretsSection({
               connector would send an operator to run a deploy they don't need. */}
           <p className={cn("text-muted-foreground/60", TYPE.micro)}>
             Stored encrypted, never returned.{" "}
-            {custom ? (
+            {readAtCallTime ? (
               <>
                 The agent reads this connector&apos;s credentials at call time, so storing one here
                 is all it takes — no deploy.

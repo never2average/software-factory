@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorText, zodMessage } from "@/lib/ops-errors";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
+import { connectionsFromEnv, connectionsWorkspace, isProvidedConnectorKind } from "@/lib/connections-provider";
+import { workspaceConnectorHealth } from "@/lib/connector-health";
 import { connectorSecrets, connectors, runtimeEnvPresence } from "@/agent/lib/db/schema";
 import {
   SECRET_NAME_RE,
@@ -92,12 +94,22 @@ function healthFor(
   connector: { kind: string; requiredSecrets?: { name: string; purpose: string; optional?: boolean }[] | null },
   present: Map<string, boolean>,
   stored?: Set<string>,
+  /**
+   * CONNECTIONS_PROVIDER=env only (lib/connections-provider.ts): is the server's environment bound to THIS workspace?
+   * Undefined with the setting unset, and then nothing below it runs.
+   */
+  serverIsThisWorkspace?: boolean,
 ): ConnectorHealth {
   const kind = connector.kind;
   if (UNIMPLEMENTED_KINDS.has(kind.toLowerCase())) return "unimplemented";
   const byo = secretsForKind(kind).length === 0;
   const secrets = secretsForConnector(connector);
   if (secrets.length === 0) return "unknown";
+  if (serverIsThisWorkspace !== undefined && isProvidedConnectorKind(kind)) {
+    // Off Vercel the agent reads Slack's and GitHub's credentials per workspace at call time: what is stored on
+    // this workspace's connector is live, and the server's environment counts only for the workspace it is bound to.
+    return workspaceConnectorHealth(secrets, stored, present, serverIsThisWorkspace);
+  }
   if (byo) {
     const have = (n: string) => stored?.has(n) ?? false;
     if (!secrets.filter((s) => !s.optional).every((s) => have(s.name))) return "missing";
@@ -139,7 +151,16 @@ export async function GET(request: NextRequest) {
       set.add(s.name);
       storedBy.set(s.connectorId, set);
     }
-    const items = rows.map((c) => ({ ...c, health: healthFor(c, present, storedBy.get(c.id)) }));
+    // Undefined unless CONNECTIONS_PROVIDER=env: with the setting unset healthFor is called exactly as before.
+    const serverIsThisWorkspace = connectionsFromEnv() ? connectionsWorkspace() === ctx.orgId : undefined;
+    // A personal connector is never a workspace's credential (the agent does not read it for Slack or GitHub), so
+    // what is stored on one does not count.
+    const personalProvided = (c: { kind: string; ownerEmail: string | null }) =>
+      serverIsThisWorkspace !== undefined && Boolean(c.ownerEmail) && isProvidedConnectorKind(c.kind);
+    const items = rows.map((c) => ({
+      ...c,
+      health: healthFor(c, present, personalProvided(c) ? new Set<string>() : storedBy.get(c.id), serverIsThisWorkspace),
+    }));
     return NextResponse.json({ items });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });

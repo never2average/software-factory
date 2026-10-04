@@ -3,6 +3,7 @@ import { verifyOpsAuth } from "@/lib/ops-auth";
 import { orgContextForRequest } from "@/lib/org-context";
 import { storageConfigured, isSafeDataroomPath, writeDataroomFile } from "@/lib/dataroom-blob";
 import { FOLDER } from "@/agent/lib/dataroom-folders";
+import { storageMisconfigured } from "@/lib/storage-http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,6 +57,10 @@ export async function POST(request: NextRequest) {
   if (!org?.orgId) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
+  // A misconfigured store (a mistyped STORAGE_DRIVER, a selected driver missing a setting) is a 503 naming the setting,
+  // never "empty" and never "not configured" (lib/storage-http.ts). Null, and nothing else happens, when nothing is wrong.
+  const misconfigured = storageMisconfigured();
+  if (misconfigured) return misconfigured;
   if (!storageConfigured()) {
     return NextResponse.json({ error: "Data room storage is not configured." }, { status: 503 });
   }

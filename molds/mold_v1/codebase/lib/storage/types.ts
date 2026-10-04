@@ -101,12 +101,25 @@ export interface StorageDriver {
   signedUrl(key: string, ttlMs: number): Promise<StorageSignedUrl>;
 }
 
-/** A deployment setting is missing or invalid. The message names the setting, never a value. */
+/**
+ * A deployment setting is missing or invalid: the storage driver is MISCONFIGURED. The message names the setting,
+ * never a value.
+ *
+ * This is not "storage is not configured". That phrase means one thing only: the default driver (Vercel Blob) with no
+ * BLOB_READ_WRITE_TOKEN, where the app degrades as it always has (an empty data room listing, a local scratch tree on
+ * the agent). A misconfigured driver never degrades: every door refuses with this error (HTTP 503 on the web app,
+ * lib/storage-http.ts), so a typing mistake in STORAGE_DRIVER cannot pass for an empty data room.
+ */
 export class StorageConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "StorageConfigError";
   }
+}
+
+/** `instanceof` fails across two copies of this module (a bundle and a loader can each hold one): the name does not. */
+export function isStorageConfigError(error: unknown): error is StorageConfigError {
+  return error instanceof StorageConfigError || (error instanceof Error && error.name === "StorageConfigError");
 }
 
 /** A key that could address something outside the store. Nothing was read or written. */

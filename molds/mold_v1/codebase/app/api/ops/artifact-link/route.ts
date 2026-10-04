@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { signStoredObject, storageConfigured } from "@/lib/dataroom-blob";
 import { orgContextForRequest } from "@/lib/org-context";
 import { storageUrlRules } from "@/lib/storage/urls";
+import { storageErrorResponse, storageMisconfigured } from "@/lib/storage-http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +52,10 @@ export async function GET(request: NextRequest) {
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
 
+  // A misconfigured store (a mistyped STORAGE_DRIVER, a selected driver missing a setting) is a 503 naming the setting,
+  // never "empty" and never "not configured" (lib/storage-http.ts). Null, and nothing else happens, when nothing is wrong.
+  const misconfigured = storageMisconfigured();
+  if (misconfigured) return misconfigured;
   if (!storageConfigured()) {
     return NextResponse.json({ error: "Artifact storage is not configured." }, { status: 503 });
   }
@@ -93,6 +98,8 @@ export async function GET(request: NextRequest) {
       expiresAt: new Date(expiresAt).toISOString(),
     });
   } catch (error) {
+    const misconfiguredNow = storageErrorResponse(error);
+    if (misconfiguredNow) return misconfiguredNow;
     const message = error instanceof Error ? error.message : "Could not sign the artifact link";
     return NextResponse.json({ error: message }, { status: 500 });
   }

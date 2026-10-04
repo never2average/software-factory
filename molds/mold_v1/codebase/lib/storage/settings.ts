@@ -26,8 +26,9 @@
  * Read on every call, not cached at import: a test flips them, and the agent and the web app are separate processes
  * that each read their own environment.
  */
+import "./server-guard.ts";
 import nodePath from "node:path";
-import { StorageConfigError, type StorageDriverKind } from "./types.ts";
+import { isStorageConfigError, StorageConfigError, type StorageDriverKind } from "./types.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -40,6 +41,50 @@ export function storageKind(env: Env = process.env): StorageDriverKind {
   if (raw === "fs") return "filesystem";
   if ((STORAGE_DRIVER_KINDS as readonly string[]).includes(raw)) return raw as StorageDriverKind;
   throw new StorageConfigError(`STORAGE_DRIVER must be one of ${STORAGE_DRIVER_KINDS.join(", ")} (or unset for vercel-blob).`);
+}
+
+/** Messages already written to the log by this process: a misconfiguration is said once, not on every request. */
+const reported = new Set<string>();
+
+/**
+ * Write a storage misconfiguration to the server log, once per distinct message for the life of the process. Every
+ * place that meets one calls this (the startup check in lib/storage/index.ts, `storageDriver()`, the link rules), so
+ * the log holds it whichever door was tried first. Returns the error so a caller can `throw reportStorageConfigError(e)`.
+ */
+export function reportStorageConfigError<E extends Error>(error: E, log: (line: string) => void = console.error): E {
+  if (!reported.has(error.message)) {
+    reported.add(error.message);
+    log(`[storage] MISCONFIGURED: ${error.message} File storage is refused (HTTP 503, and the agent's file tools fail) until the setting is corrected. This is not the same as "not configured".`);
+  }
+  return error;
+}
+
+/** For tests: forget what was reported. */
+export function resetStorageConfigReports(): void {
+  reported.clear();
+}
+
+/**
+ * What is wrong with the deployment's storage settings, or null when nothing is.
+ *
+ *   null    the default driver (STORAGE_DRIVER unset, empty or vercel-blob), WITH OR WITHOUT a BLOB_READ_WRITE_TOKEN:
+ *           no token is "not configured", today's behaviour, and not an error;
+ *           or a selected driver with every setting it requires.
+ *   error   STORAGE_DRIVER is not a driver's name, or the selected driver is missing a required setting (or has an
+ *           invalid one). The message names the setting.
+ *
+ * Reads settings only: it builds no driver, touches no store and loads no client. Logged once (above).
+ */
+export function storageConfigError(env: Env = process.env): StorageConfigError | null {
+  try {
+    const kind = storageKind(env);
+    if (kind === "filesystem") filesystemSettings(env);
+    else if (kind === "s3") s3Settings(env);
+    return null;
+  } catch (error) {
+    if (isStorageConfigError(error)) return reportStorageConfigError(error);
+    throw error;
+  }
 }
 
 export interface FilesystemSettings {

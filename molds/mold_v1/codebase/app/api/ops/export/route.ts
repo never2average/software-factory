@@ -13,6 +13,7 @@ import {
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { isSafeDataroomPath, parseJsonlRecords, readDataroomFile } from "@/lib/dataroom-blob";
+import { storageMisconfigured } from "@/lib/storage-http";
 import { W } from "@/lib/ui-words";
 import { FOLDER } from "@/agent/lib/dataroom-folders";
 
@@ -121,6 +122,9 @@ export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
+  // The data-room reads below swallow their errors into an empty bundle: a misconfigured store is refused first.
+  const misconfigured = storageMisconfigured();
+  if (misconfigured) return misconfigured;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const url = new URL(request.url);

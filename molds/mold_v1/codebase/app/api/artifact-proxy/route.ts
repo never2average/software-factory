@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { storageUrlRules } from "@/lib/storage/urls";
 import type { StorageUrlRules } from "@/lib/storage/types";
+import { storageMisconfiguredPublic } from "@/lib/storage-http";
 
 /**
  * GET /api/artifact-proxy?url=<signed GET for one stored object>
@@ -27,7 +28,8 @@ function storeLinks(): StorageUrlRules | null {
   try {
     return storageUrlRules();
   } catch {
-    // The selected driver is missing a setting: there is no store to follow a link into.
+    // Unreachable in practice: GET answers 503 for a misconfigured store before it asks. Kept so that a store whose
+    // rules cannot be read is still "no host is allowed", never a followed link.
     return null;
   }
 }
@@ -44,6 +46,11 @@ export async function GET(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid artifact URL" }, { status: 400 });
   }
+
+  // A misconfigured store used to read as "Artifact host is not allowed" (400), which sent people looking at the link.
+  // It is the server's settings: 503, without the setting's name (this route takes no sign-in; the log has it).
+  const misconfigured = storageMisconfiguredPublic();
+  if (misconfigured) return misconfigured;
 
   const links = storeLinks();
   if (!links || !links.ownsUrl(artifactUrl)) {

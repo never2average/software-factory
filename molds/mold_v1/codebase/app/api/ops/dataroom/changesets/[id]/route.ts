@@ -3,6 +3,7 @@ import { errorText } from "@/lib/ops-errors";
 import { z } from "zod";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { changesetDiff, getChangeset, readSnapshot, revertChangeset } from "@/lib/dataroom-versions";
+import { storageMisconfigured } from "@/lib/storage-http";
 import { recordOpsAudit } from "@/lib/ops-audit";
 import { getOpsDb } from "@/lib/ops-db";
 import { isOrgAdmin, orgContextForRequest } from "@/lib/org-context";
@@ -23,6 +24,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
+  const misconfigured = storageMisconfigured();
+  if (misconfigured) return misconfigured;
   const { id } = await context.params;
   if (!uuidSchema.safeParse(id).success) {
     return NextResponse.json({ error: "Invalid changeset id" }, { status: 400 });
@@ -59,6 +62,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (!isOrgAdmin(ctx.role)) {
     return NextResponse.json({ error: "Admin or owner only." }, { status: 403 });
   }
+  const misconfigured = storageMisconfigured();
+  if (misconfigured) return misconfigured;
   const { id } = await context.params;
   if (!uuidSchema.safeParse(id).success) {
     return NextResponse.json({ error: "Invalid changeset id" }, { status: 400 });

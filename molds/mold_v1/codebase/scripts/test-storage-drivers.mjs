@@ -69,6 +69,16 @@ const attempt = async (fn) => {
   }
 };
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** Run with console.error silenced: a deliberately misconfigured store is logged, once, by design. */
+const quietErrors = async (fn) => {
+  const saved = console.error;
+  console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.error = saved;
+  }
+};
 /** Every regular file under a directory, as paths relative to it. */
 const filesUnder = (dir) =>
   !existsSync(dir)
@@ -149,7 +159,8 @@ try {
       const r = await attempt(() => storage.storageDriver(env));
       check(`a selected driver without ${missing} is an error naming it (not another store, not null)`, r.threw && r.name === "StorageConfigError" && r.message.includes(missing), r);
       check(`…and the message carries no value`, r.threw && !r.message.includes(SECRET) && !r.message.includes(S3_KEYS.secretAccessKey));
-      check(`…and the routes' "is storage configured" answer is no`, storage.storageConfigured(env) === false);
+      const asked = await attempt(() => storage.storageConfigured(env));
+      check(`…and "is storage configured" throws it too: a misconfigured store is not "not configured"`, asked.threw && asked.name === "StorageConfigError" && asked.message.includes(missing), asked);
     }
     check("a relative STORAGE_FS_ROOT is refused", (await attempt(() => settings.filesystemSettings({ ...fsEnv("relative/dir") }))).threw);
     check("an http STORAGE_PUBLIC_URL is refused (https, or loopback for local runs)", (await attempt(() => settings.filesystemSettings({ ...fsEnv("/x"), STORAGE_PUBLIC_URL: "http://app.example.com" }))).threw && settings.filesystemSettings({ ...fsEnv("/x"), STORAGE_PUBLIC_URL: "http://127.0.0.1:3000" }).publicUrl === "http://127.0.0.1:3000");
@@ -429,7 +440,8 @@ try {
     useEnv(s3Env());
     check("…and on the S3 driver", (await hit(signed.url)).status === 404);
     useEnv({ ...fsEnv(root), STORAGE_SIGNING_SECRET: "" });
-    check("…and when the filesystem driver is missing a setting", (await hit(signed.url)).status === 404);
+    const misconfigured = await quietErrors(() => hit(signed.url));
+    check("…but when the filesystem driver is missing a setting it is a 503 (misconfigured), not \"no such file\"", misconfigured.status === 503, misconfigured.status);
     useEnv({ ...fsEnv(root), STORAGE_SIGNING_SECRET: "a-different-deployment-secret-0123456789" });
     check("a link signed under another secret is refused after rotation", (await hit(signed.url)).status === 403);
   }
@@ -650,7 +662,7 @@ try {
     const pub = await attempt(() => artifact.publishArtifact({ orgId: A, filename: "x.html", content: "x" }));
     check("publish_artifact fails the same way", pub.threw && pub.name === "StorageConfigError", pub);
     const list = await call("../app/api/ops/dataroom/route.ts", "GET", "http://storage.test/api/ops/dataroom");
-    check("the routes answer 'storage is not configured' (503)", list.status === 503, list);
+    check("the routes answer 503 'misconfigured', naming the setting (scripts/test-storage-misconfigured.mjs holds every route to it)", list.status === 503 && list.body?.code === "storage_misconfigured" && list.body.error.includes("STORAGE_FS_ROOT"), list);
     const health = await quietly(() => call("../app/api/ops/health/route.ts", "GET", "http://storage.test/api/ops/health"));
     check("the health check names the missing setting", health.body?.blob?.ok === false && health.body.blob.detail.includes("STORAGE_FS_ROOT"), health.body?.blob);
     check("…and nothing was written to Vercel Blob", blob.keys().length === 0);

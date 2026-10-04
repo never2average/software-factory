@@ -22,7 +22,7 @@ and both read these, so give both the same values.
 
 | Setting | Driver | What it is |
 |---|---|---|
-| `STORAGE_DRIVER` | all | `vercel-blob` (default), `filesystem`, `s3`. Anything else is an error. |
+| `STORAGE_DRIVER` | all | `vercel-blob` (default), `filesystem` (or `fs`), `s3`. Anything else is a misconfiguration: 503, see below. |
 | `BLOB_READ_WRITE_TOKEN` | vercel-blob | The store's token. Without it storage is "not configured", as before. |
 | `STORAGE_FS_ROOT` | filesystem | Absolute directory for the files. Not under any web root. |
 | `STORAGE_SIGNING_SECRET` | filesystem | Signs the app's own expiring file links. 32+ characters. |
@@ -34,9 +34,35 @@ and both read these, so give both the same values.
 | `STORAGE_S3_ADDRESSING` | s3 | `path` (default, `<endpoint>/<bucket>/<key>`) or `virtual` (`<bucket>.<endpoint>/<key>`). |
 | `NEXT_PUBLIC_STORAGE_HOST` | s3, build time | The host signed links are served from, for the browser. |
 
-A driver that is selected and missing a setting is an error that names the setting. It is never treated as "no
-storage": the agent does not fall back to its local scratch tree, and nothing is written to another store.
-`GET /api/ops/health` reports the missing name under `blob`, and the data-room routes answer 503.
+### Not configured, and misconfigured, are two different answers
+
+**Not configured** means exactly one thing: the default driver (`STORAGE_DRIVER` unset, empty or `vercel-blob`)
+with no `BLOB_READ_WRITE_TOKEN`. The app degrades as it always has: `GET /api/dataroom` lists nothing, the write
+routes say "Data room storage is not configured.", and the agent uses its local scratch tree.
+
+**Misconfigured** is `STORAGE_DRIVER` set to something that is not a driver (a typing mistake such as `filesytem`),
+or a selected driver missing a required setting. It never degrades, and never looks like an empty data room:
+
+- every storage route answers **503** with `code: "storage_misconfigured"` and a sentence naming the setting
+  (`lib/storage-http.ts`). The two routes that take no sign-in (`/api/artifact-proxy`, `/api/storage/object/…`)
+  answer the same 503 without the setting's name;
+- the data room shows that sentence instead of an empty tree;
+- the agent's store and `publish_artifact` throw the same error: no fall-back to the local scratch tree, and
+  nothing is written to another store;
+- `GET /api/ops/health` reports it under `blob` as MISCONFIGURED, with the setting's name;
+- the server log has one line, `[storage] MISCONFIGURED: …`, written when the storage module is first loaded (the
+  agent at startup, the web app on the first request that reaches a storage route, or during `next build`), and
+  not repeated per request.
+
+`npm run test:storage-misconfigured` holds every one of those, and that the not-configured answers are unchanged.
+
+### Server only
+
+Everything under `lib/storage/` except `hosts.ts` holds or reads the store's credentials. A client component may
+import `lib/storage/hosts.ts` and nothing else there. `import "server-only"` cannot be used in these modules (the
+agent and every plain `node` script load them, and outside Next's server bundles that package throws), so the guard
+is `lib/storage/server-guard.ts` (throws in a browser) plus `npm run check:storage-server-only` (fails when a
+`"use client"` file can reach any other module under `lib/storage/`, through any chain of imports).
 
 `DATAROOM_DIR` is not the filesystem driver. It is the agent's developer fallback, used only when no store is
 configured at all, in a layout the web app does not read.
