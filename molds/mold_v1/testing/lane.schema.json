@@ -63,7 +63,20 @@
           },
           "run": {
             "type": "string",
-            "description": "One shell command. Placeholders: {app_id} {root} {mold} {codebase} {default_codebase} {testing} {lane} {date} {url} {report}."
+            "description": "One shell command. Placeholders: {app_id} {root} {mold} {codebase} {default_codebase} {testing} {lane} {date} {url} {report} {deploy}. {deploy} is the flag of the one deploy command the application's target has (`--deploy`; `--deploy-remote` for a vm_remote application), so an instruction written once names the right command for every target: `python3 .claude/scripts/provision.py {app_id} {deploy}`."
+          },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "vercel",
+                "vm",
+                "vm_remote"
+              ]
+            },
+            "description": "The deploy targets (infrastructure.target) this check exists for. Absent: every target. For an application of any other target the check is not part of the lane at all: it is not run, not listed, not counted and cannot make the lane `skipped`. Use it only for a check that measures something one target alone has (a python tool call in a sandbox the app's own server starts); a check that merely cannot run yet is a `requires`, which is recorded `skipped`."
           },
           "cwd": {
             "type": "string",

@@ -16,7 +16,10 @@ python3 .claude/scripts/mint.py list                                        # ev
 ```
 
 Stations, in order: brief, state, packs, brand, keys, deploy, workspaces, tests, package, address. `run` is safe to
-repeat at any time. Never drive the underlying scripts one by one unless a station failed and you are fixing it.
+repeat at any time. For an application on a server of its own (`target: vm_remote`) the workspaces station also writes
+the brief's own workspace, on that server (`provision.py <app_id> --workspace-remote`); if it stops because the server
+already has a workspace under another id, tell the user the two ids and ask which is right. The package, report and
+handoff stations read that application's address from `vm_remote.production_url`. Never drive the underlying scripts one by one unless a station failed and you are fixing it.
 
 ## Starting from a conversation
 

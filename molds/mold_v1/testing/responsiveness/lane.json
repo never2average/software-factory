@@ -29,11 +29,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
-          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         }
       ],
       "why": "A page that scrolls sideways at 320px, or that shifts under the reader's finger, or that hides a control where no scroll can reach it, is a customer who cannot finish the task on the device they actually own."
@@ -57,11 +57,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
-          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         }
       ],
       "why": "A control smaller than a fingertip, with another control beside it, is a mis-tap: on a touch screen that is the difference between sending a message and deleting one."
@@ -85,11 +85,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
-          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         }
       ],
       "why": "Interaction to Next Paint over 200ms is the lag where a person taps a second time because the first tap looked ignored \u2014 the layout can be perfect and the app still feel broken."
@@ -120,11 +120,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
-          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         },
         {
           "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",
@@ -159,11 +159,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
-          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /onboard /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /onboard, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         },
         {
           "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 900",
@@ -198,11 +198,11 @@
       "requires": [
         {
           "cmd": "python3 {testing}/responsiveness/lane-url.py {app_id}",
-          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} --deploy); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
+          "else": "This lane measures rendered pages and this application has no URL to measure yet. Deploy it (python3 .claude/scripts/provision.py {app_id} {deploy}); or, for a `target: vm` fixture, start the mold on this box against the app's own env and name it: MOLD_V1_LANE_URL=http://127.0.0.1:<port> python3 .claude/scripts/lanes.py {app_id} --lane responsiveness (molds/mold_v1/testing/responsiveness/README.md, \"Measuring a vm fixture\"). `python3 {testing}/responsiveness/lane-url.py {app_id}` says which of those applies."
         },
         {
           "cmd": "python3 {testing}/responsiveness/target-up.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" / /workspace --expect '<title>[^<]*{product_name}' --expect 'self.__next_f'",
-          "else": "The deployed app did not serve this application on /, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} --deploy"
+          "else": "The deployed app did not serve this application on /, /workspace \u2014 either it is not deployed, or the URL now answers with something that is not this mold (mold_v1 apps share one Vercel project). Redeploy it: python3 .claude/scripts/provision.py {app_id} {deploy}"
         },
         {
           "cmd": "python3 {root}/.claude/scripts/lib/session.py {app_id} -- python3 {testing}/responsiveness/session-live.py \"$(python3 {testing}/responsiveness/lane-url.py {app_id})\" --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200",

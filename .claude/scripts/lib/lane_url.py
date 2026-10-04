@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Which URL do the lanes grade for this application? The runner's own answer, per deploy target (mold_v1-078).
+"""The deployed address of an application, per deploy target: one reading, for the factory's own scripts.
 
   lane_url.py <app_id>             the URL alone
   lane_url.py <app_id> --harness   the browser harness arguments: `--url <url>`
 
-Exit 0 with the answer on stdout, or exit 1 with one sentence on stderr, which lanes.py records as an unmet
-precondition and a `skipped` check: never `pass`, never `fail`.
+Exit 0 with the answer on stdout, or exit 1 with one sentence on stderr.
 
-  target vercel     infrastructure.vercel.production_url, exactly as before.
+  target vercel     infrastructure.vercel.production_url.
   target vm_remote  infrastructure.vm_remote.production_url, and only when it is https://<vm_remote.domain> and
                     infrastructure.deployed_at is recorded: both are written by provision.py --deploy-remote after
-                    the deployed app answered its health checks, so a URL someone typed is never graded as this
+                    the deployed app answered its health checks, so a URL someone typed is never read as this
                     app (factory.py validate refuses that state too; the reader does not trust the validator alone).
-  target vm         no URL. The mold's own lane-url.py handles its loopback fixture (MOLD_V1_LANE_URL); lanes.py
-                    sends only vm_remote applications here.
+  target vm         no URL.
 
-lanes.py imports target_url() for `{url}` and for the `infrastructure.vercel.production_url` precondition the mold's
-lane.json files declare, and points their `lane-url.py` calls at this file for a vm_remote application, so the
-five lanes grade a vm_remote app's own address without a second copy of every check.
+WHO USES IT. lanes.py for the {url} placeholder, and mint.py / mint_report.py / mint_handoff.py / agent_cli.py for
+"where does this application live" (target_url below). The lane CHECKS do not: since mold_v1-154 each lane decides
+what it grades in its own folder (molds/<mold>/testing/<lane>/lane-url.py, functional/tenant-isolation.py), under
+the same rule, and lanes.py no longer points their calls here. The vm_remote self-test holds the three readings
+to one answer over the same set of states.
 """
 import json, os, sys
 

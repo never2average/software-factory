@@ -329,10 +329,28 @@ For the Google sign-in button, add `https://research.yourcompany.com` under **Au
 | Want to | Run |
 |---|---|
 | re-prove that workspaces cannot see each other | `python3 .claude/scripts/provision.py <app_id> --verify-rls` |
+| put the brief's workspace and its people into the app | `python3 .claude/scripts/provision.py <app_id> --workspace-remote` (see "The workspace" below; add `--dry-run` to read it first) |
 | run the five lanes against the server | `python3 .claude/scripts/lanes.py <app_id>` (they grade `https://<your domain>`; the functional lane adds `tool.python`, which asks the agent to really run Python in its sandbox) |
 | know what the server costs | `docs/COST_MODEL.md` §7 |
 | see what old sandboxes are taking up | `python3 .claude/scripts/provision.py <app_id> --prune-sandboxes` (only lists; see "The disk" below) |
 | close the login port to the internet | step H below |
+
+**The workspace.** A freshly deployed app has no workspace and nobody in it. This one command creates the workspace the brief
+describes, with its owner, its members and their roles, and the built-in library of recipes and workflows; if you keep extra
+workspaces under `state/application/<app_id>/seed/orgs/`, it writes those too:
+
+```
+python3 .claude/scripts/provision.py <app_id> --workspace-remote
+```
+
+It does its writing on the server itself, so the database's address and password never leave the server, and it is safe to run
+again: it adds what is missing and never removes anything. If the server already has a workspace under a different name than the
+brief's, it stops and tells you the two names instead of making a second, empty workspace; say which name is right and the agent
+fixes the brief's record. `python3 .claude/scripts/mint.py <app_id> run` does this step for you after a deploy.
+
+**Who runs what on the server.** The app is three programs (the web app, the agent, and the workflow service). Each runs under
+its own account, so that even if the agent were tricked into misbehaving it could not read the web app's keys. You do not need to
+do anything for this: the deploy sets it up and checks it every time, and says so if a check fails.
 
 **Desktop notifications.** The deploy makes the pair of keys that browser notifications need on the server itself,
 once, and keeps them; nobody types or sees them. The contact address the notification services are given is the
@@ -432,9 +450,8 @@ and, once whatever broke the tunnel is fixed, step H again.
 
 If any screen looks different from what is described here, say what it shows and we go from there.
 
-Not built yet for a server of your own, and said so rather than half-done: writing the brief's members into the
-database (§6's `clone.py configure` reads a Vercel project) and backups of the database and the file store.
-Each is a named task (`python3 .claude/scripts/factory.py tasks mold_v1`).
+Not built yet for a server of your own, and said so rather than half-done: backups of the database and the file store.
+It is a named task (`python3 .claude/scripts/factory.py tasks mold_v1`).
 
 ## What this runbook does not cover
 

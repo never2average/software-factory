@@ -127,6 +127,12 @@ before start), six cron timers, Caddy, and the same `/api/ops/health` gate. It r
 off-Vercel switches (`SANDBOX_BACKEND`, `STORAGE_DRIVER`, `SERVICE_AUTH`) or the `sandbox:prewarm` script; the check and the
 dry run name them. With files on the server's disk (`storage.driver: fs`) the sandbox must reach the app's public address, so
 validate, `--qualify-remote` and the deploy refuse a sandbox deny list that holds it. When asking the operator for the server or the DNS record, use `docs/RUNBOOK.md` §9, one step at a time.
+Each service runs as its own user (`sfweb`, `sfapp` for the agent API, `sfwork`; the code is `sfbuild`'s), and the health step
+tries, as the agent's user, the web app's env file, its process, another service's code and the server's own SSH port: any that
+works fails the deploy.
+`--workspace-remote` writes the brief's workspace, its people and its companies (and every seed under `seed/orgs/`) into the
+server's database, on the server, through the app role; `--dry-run` prints it first. If the server already has a workspace under
+another id it refuses rather than make a second one: tell the user which two ids disagree and ask which is right.
 `--prune-sandboxes` lists what the server's nightly sandbox prune would remove and the space (read-only; `--apply` removes it now).
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this

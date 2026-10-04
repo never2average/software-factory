@@ -7,6 +7,7 @@
   provision.py <app_id> [--set-remote host=.. domain=..] [--remote-key] [--qualify-remote]
                         [--deploy-remote [--dry-run [--out DIR]]]      target=vm_remote only; see below
                         [--prune-sandboxes [--apply]] [--tunnel-remote [--dry-run] [--factory-apply] [--off]] [--tunnel-factory [--apply]]
+                        [--workspace-remote [seed.json] [--new-workspace] [--dry-run]]
                                                                        target=vm_remote only; lib/vm_remote.py and lib/vm_tunnel.py
 
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
