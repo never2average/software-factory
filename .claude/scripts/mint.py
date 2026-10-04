@@ -26,7 +26,9 @@ so `run` can be repeated at any time and picks up where things stand:
   keys       every credential the deploy needs is present BY NAME          <- the operator, once per operator
   deploy     the three services answer, on the current mold snapshot
   workspaces every seed under state/application/<app_id>/seed/orgs/ is applied as it is now written; for an app on a
-             server of its own, the brief's own workspace too, written on that server (provision.py --workspace-remote)
+             server of its own, the brief's own workspace too, and then the application's surface (the default agent
+             profile, per-subagent configs, workflow definitions and scripts), written on that server
+             (provision.py --workspace-remote)
   tests      the five lanes ran after the last deploy, none failed, signed-in checks measured  <- a code from the operator
   package    the application's own agent package is published at the app's address (vercel.production_url, or
              vm_remote.production_url for a server of its own)                                <- the operator's npm sign-in
@@ -145,7 +147,11 @@ def st_workspaces(app, a, i):
         try: own = vm_remote.state_seed_digest(a, adir(app))
         except vm_remote.Stop as e: return FAILED, str(e)[:220]
         stale = (["the application's own workspace"] if done.get(vm_remote.STATE_SEED) != own else []) + [os.path.basename(s)[:-5] for s in ss if done.get(os.path.basename(s)) != seed_digest(s)]
-        return (TODO, f"write to the server's database: {', '.join(stale)}") if stale else (DONE, f"{len(ss) + 1} workspace(s) as written")
+        # mold_v1-163: the same command writes the application's surface after its own workspace (the Vercel path's
+        # clone.py configure), and records it under its own key. An app whose state has no surface asks for none.
+        surf = vm_remote.surface_digest(a)
+        if surf and done.get(vm_remote.SURFACE_KEY) != surf: stale.append("the application's surface (agent profile, subagent configs, workflow definitions and scripts)")
+        return (TODO, f"write to the server's database: {', '.join(stale)}") if stale else (DONE, f"{len(ss) + 1} workspace(s) as written" + (", and the application's surface" if surf else ""))
     if not ss: return NA, "no extra workspace is described under seed/orgs/"
     stale = [os.path.basename(s)[:-5] for s in ss if done.get(os.path.basename(s)) != seed_digest(s)]
     return (TODO, f"apply: {', '.join(stale)}") if stale else (DONE, f"{len(ss)} workspace(s) as written")
@@ -349,9 +355,19 @@ def self_test():
         ws["workspace"]["members"].append({"email": "new@acme.test", "role": "member"})
         assert st_workspaces("x", ws, {"target": "vm_remote"})[0] == TODO          # state changed: the server no longer matches it
         assert st_workspaces("x", ws, {"target": "vercel"}) == (NA, "no extra workspace is described under seed/orgs/")
+        # mold_v1-163: a state with a surface is not done until the surface, as it is now written, is on the server too
+        ap = os.path.join(tmp, "x", "seed", "orgs", ".applied.json")
+        ws["surface"] = {"primary_context": {"instructions": {"persona_name": "Ava", "subagents": [{"agent_key": "research"}]}}, "custom_workflow_builder": {"definitions": [], "scripts": []}}
+        json.dump({vm_remote.STATE_SEED: vm_remote.state_seed_digest(ws, os.path.join(tmp, "x"))}, open(ap, "w"))
+        st, why = st_workspaces("x", ws, {"target": "vm_remote"})
+        assert st == TODO and "the application's surface" in why and "own workspace" not in why, (st, why)
+        json.dump({vm_remote.STATE_SEED: vm_remote.state_seed_digest(ws, os.path.join(tmp, "x")), vm_remote.SURFACE_KEY: vm_remote.surface_digest(ws)}, open(ap, "w"))
+        assert st_workspaces("x", ws, {"target": "vm_remote"}) == (DONE, "1 workspace(s) as written, and the application's surface")
+        ws["surface"]["primary_context"]["instructions"]["persona_name"] = "Bo"
+        assert st_workspaces("x", ws, {"target": "vm_remote"})[0] == TODO          # the surface changed in state: written again
     finally:
         globals()["adir"] = real_adir; shutil.rmtree(tmp, ignore_errors=True)
-    print("mint: 11 checks passed"); return 0
+    print("mint: 14 checks passed"); return 0
 
 def main(a):
     if "--self-test" in a: return self_test()

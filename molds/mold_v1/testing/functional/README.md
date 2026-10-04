@@ -30,7 +30,7 @@ Two rows, both required, neither satisfiable by a status code. The lane MEASURES
                               "policies_executed":52,"policies_unverified":[],"unmeasured":[],
                               "probe_tables":40,"own_org_rows":40,"foreign_rows":0,
                               "cross_org_write":"42501","unset_org_rows":0}
-    | rls.health    | pass | the deployed app's own /api/ops/health db detail, with no BYPASSRLS in it
+    | rls.health    | pass | the deployed app's own /api/ops/health db detail, saying "role app_rw (RLS enforced)"
 
 `rls.isolation` runs `provision.py <app_id> --verify-rls --no-repair`, which connects as the app role
 on the app's own deployed DATABASE_URL and proves, rather than asserts:
@@ -69,6 +69,14 @@ check passed and the database still leaked. The second version passed too — on
 which reads as scoped and is not, while `app_rw` scoped to one workspace read another's row. That is
 why the row above quotes counts, a SQLSTATE, and how many policies were actually RUN, instead of a
 word.
+
+`rls.health` passes on one thing only (mold_v1-159): the deployed app answers `/api/ops/health` with HTTP 200,
+the body is its JSON health document, the database check is ok, and `db.detail` carries the mold's own
+`role <name> (RLS enforced)` sentence. An app that does not answer, any other status, a body that is not JSON,
+a body with no database check and a detail that names no role are each `fail` with one plain reason. The row
+used to fail only on a body that said BYPASSRLS, so an unreachable app read `pass`. An app with no deployed
+address yet is `skipped`. `python3 molds/mold_v1/testing/functional/tenant-isolation.py --self-test` replays
+every one of those cases against a stand-in server on loopback.
 
 `rls.health` exists because the stored `DATABASE_URL` passing the gate is a different fact from the
 RUNNING build using it: a Vercel env change only takes effect on the next build. The mold's `checkDb`
