@@ -91,9 +91,12 @@
       "api": "200",
       "web": "200",
       "kvm": "ok",
-      "qualified_at": "2026-10-04T10:39:12+00:00"
+      "push": "on",
+      "disk_percent": 14,
+      "sandbox_store_mb": 15515,
+      "qualified_at": "2026-10-04T12:08:52+00:00"
     },
     "production_url": "https://hfc.useimmaculate.com"
   },
-  "deployed_at": "2026-10-04T10:39:12+00:00"
+  "deployed_at": "2026-10-04T12:08:52+00:00"
 }
