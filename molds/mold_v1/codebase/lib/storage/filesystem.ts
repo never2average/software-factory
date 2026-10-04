@@ -24,6 +24,11 @@
  *     cursor: what the Vercel Blob listing gives the callers. The cursor is the last key returned, so a page is
  *     stable under concurrent writes.
  *
+ * WHO MAY OPEN THE FILES. By default the service user and nobody else: every folder is created 0700 and every file
+ * 0600. With STORAGE_FS_GROUP_SHARED=1 (two service users, one group; ./fs-group-shared.ts) every folder is 2770 and
+ * every file 0660, set explicitly so the umask can neither narrow nor widen them. Never more than the group, in
+ * either mode.
+ *
  * One difference from an object store, by nature: a key cannot be both an object and the folder of another
  * (`a/b` and `a/b/c`). The data room's grammar never produces that pair; a write that would need it fails loudly.
  */
@@ -32,6 +37,7 @@ import { randomBytes } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import nodePath from "node:path";
 import { Readable } from "node:stream";
+import { SHARED_DIR_MODE, SHARED_FILE_MODE } from "./fs-group-shared.ts";
 import { assertStorageKey, assertStoragePrefix, withSuffix } from "./keys.ts";
 import type { FilesystemSettings } from "./settings.ts";
 import { isServableKey, keyFromObjectPath, signObjectUrl, STORAGE_OBJECT_ROUTE, verifyObjectLink } from "./signed-url.ts";
@@ -206,15 +212,66 @@ export function filesystemUrlRules(settings: FilesystemSettings): StorageUrlRule
   };
 }
 
+/**
+ * How long a write waits for a folder the OTHER service user has just created to become group-writable. A folder is
+ * created and then given its mode (mkdir cannot set the setgid bit, and applies the umask); for those few
+ * milliseconds the other user is denied. Group-shared mode only.
+ */
+const DENIED_RETRIES = 40;
+const DENIED_RETRY_MS = 25;
+
 export function createFilesystemDriver(settings: FilesystemSettings): StorageDriver {
   const paths = layout(settings.root);
+  // Absent on a settings object built before the setting existed: off.
+  const shared = settings.groupShared === true;
+
+  /** Group-shared mode: run `step` again while it is denied, for the moment described above. Off: run it once. */
+  async function whenAllowed<T>(step: () => Promise<T>): Promise<T> {
+    if (!shared) return step();
+    for (let tries = 0; ; tries++) {
+      try {
+        return await step();
+      } catch (error) {
+        if (errno(error) !== "EACCES" || tries >= DENIED_RETRIES) throw error;
+        await new Promise((resolve) => setTimeout(resolve, DENIED_RETRY_MS));
+      }
+    }
+  }
+
+  /**
+   * The folder, and any missing folder above it. Off: 0700, the one call it always was. Group-shared: every folder
+   * THIS call created is then set to 2770 (the group's members may enter and write; what is created inside takes
+   * the folder's group). A folder the other user created at the same moment is theirs to set: EPERM is not an error.
+   */
+  async function makeDir(dir: string): Promise<void> {
+    if (!shared) {
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      return;
+    }
+    const first = await whenAllowed(() => fs.mkdir(dir, { recursive: true, mode: SHARED_DIR_MODE & 0o777 }));
+    if (first === undefined) return;
+    const created: string[] = [];
+    for (let path = dir; path.length >= first.length; path = nodePath.dirname(path)) {
+      created.unshift(path);
+      if (path === first || path === nodePath.dirname(path)) break;
+    }
+    for (const path of created) {
+      try {
+        await fs.chmod(path, SHARED_DIR_MODE);
+      } catch (error) {
+        if (errno(error) !== "EPERM") throw error;
+      }
+    }
+  }
 
   /** Write bytes under tmp/ and flush them, so the move that follows publishes a complete file. */
   async function stage(bytes: string | Uint8Array): Promise<string> {
-    await fs.mkdir(paths.tmp, { recursive: true, mode: 0o700 });
+    await makeDir(paths.tmp);
     const tmp = nodePath.join(paths.tmp, `${process.pid}-${Date.now()}-${randomBytes(8).toString("hex")}`);
-    const handle = await fs.open(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600);
+    const handle = await whenAllowed(() => fs.open(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, shared ? SHARED_FILE_MODE : 0o600));
     try {
+      // The mode it is published with, set on the open file before it has a name anyone reads it by.
+      if (shared) await handle.chmod(SHARED_FILE_MODE);
       await handle.writeFile(bytes);
       await handle.sync();
     } finally {
@@ -230,9 +287,9 @@ export function createFilesystemDriver(settings: FilesystemSettings): StorageDri
       await unlinkIfPresent(metaPath);
       return;
     }
-    await fs.mkdir(nodePath.dirname(metaPath), { recursive: true, mode: 0o700 });
+    await makeDir(nodePath.dirname(metaPath));
     const tmp = await stage(JSON.stringify({ contentType }));
-    await fs.rename(tmp, metaPath);
+    await whenAllowed(() => fs.rename(tmp, metaPath));
   }
 
   /** Every key at or under `dir` whose path starts with `prefix`, unsorted. Only regular files are objects. */
@@ -262,17 +319,17 @@ export function createFilesystemDriver(settings: FilesystemSettings): StorageDri
       assertStorageKey(requestedKey);
       const key = options.addRandomSuffix ? withSuffix(requestedKey, randomBytes(15).toString("base64url").replace(/[-_]/g, "x")) : requestedKey;
       const target = paths.objectPath(key);
-      await fs.mkdir(nodePath.dirname(target), { recursive: true, mode: 0o700 });
+      await makeDir(nodePath.dirname(target));
       if (!(await parentIsInside(paths, target))) throw new StorageKeyError(key, "its folder is not inside the storage root");
       const tmp = await stage(body);
       try {
         if (options.allowOverwrite) {
           await writeMeta(key, options.contentType);
-          await fs.rename(tmp, target);
+          await whenAllowed(() => fs.rename(tmp, target));
         } else {
           try {
             // link() fails with EEXIST if the key is taken: an atomic "create, never replace".
-            await fs.link(tmp, target);
+            await whenAllowed(() => fs.link(tmp, target));
           } catch (error) {
             if (errno(error) === "EEXIST") throw new Error(`storage object already exists: "${key}"`);
             throw error;

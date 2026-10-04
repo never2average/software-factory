@@ -22,6 +22,7 @@
     "test:storage-default": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-storage-default-unchanged.mjs && STORAGE_DRIVER=vercel-blob node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-storage-default-unchanged.mjs",
     "check:storage-server-only": "node scripts/check-storage-server-only.mjs --self-test && node scripts/check-storage-server-only.mjs",
     "test:storage-misconfigured": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-storage-misconfigured.mjs",
+    "test:storage-fs-group-shared": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-storage-fs-group-shared.mjs",
     "test:storage-drivers": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-storage-drivers.mjs",
     "test:storage-isolation-http-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-storage-isolation-http-db.mjs",
     "storage:probe": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/storage-probe.mjs",

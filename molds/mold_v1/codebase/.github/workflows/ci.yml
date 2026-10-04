@@ -146,6 +146,17 @@ jobs:
         if: always()
         run: npm run test:storage-drivers
 
+      # THE FILESYSTEM DRIVER SHARED BY TWO SERVICE USERS (STORAGE_FS_GROUP_SHARED=1), for a server that runs the web
+      # app and the agent as different users. Unset, every folder and file has the mode it had before the setting
+      # (0700 / 0600; recorded at 1f43117 by this same script: scripts/fixtures/storage/filesystem-modes.golden.json).
+      # On, folders are 2770 and files 0660 under any umask, the root is refused unless it is set up for exactly
+      # that, and two real user ids in one group read, overwrite and delete each other's files through the driver
+      # while a third reads nothing. That last part runs as other users through the runner's passwordless sudo (no
+      # account is created; one scratch directory, removed). REQUIRE_TWO_USERS makes "could not run it" a failure here.
+      - name: Filesystem storage shared by two users (unset is today's modes; on, one group and nobody else)
+        if: always()
+        run: REQUIRE_TWO_USERS=1 npm run test:storage-fs-group-shared
+
       # A MISCONFIGURED store is not "not configured". A mistyped STORAGE_DRIVER, or a selected driver missing a
       # setting, used to read as an empty data room (GET /api/dataroom 200 {"paths":[]}) and as "storage is not
       # configured": storageConfigured() swallowed the error and answered false. Now every storage route answers 503
@@ -536,30 +547,17 @@ jobs:
         if: always()
         run: npm run test:check-cross-workspace
 
-      # What a PERSON reads comes from the deployment profile. The gate before this looked for one word (the
-      # member's legacy word) in four source folders and skipped generated files, so a research deployment
-      # (companies / analysts / coverage reports) shipped a bundle that named the member roster by the legacy word, and "Customer DMs":
-      # the subagent roster and the whole workflow library reached the client as generated text. This builds the
-      # app under a relabelling profile and fails on any base word (customer, deployment, implementation, rollout,
-      # the legacy member word) in the source text a person reads, in every string of the built client bundle (mapped back to its
-      # file; allow-listed only with a reason, scripts/fixtures/ui-vocabulary/allow.json) and in the prerendered
-      # pages; and holds the default profile's words to its neutral ones (no legacy member word on any label).
-      # Its last pass reads what a person SEES: `next start` of the relabelled build, Chromium over every page and
-      # tab (visible text, titles, placeholders, options, hover tooltips), signed in with a locally made token and
-      # the ops API faked, so it needs no secret. A code value joined into a sentence ("filed under a
-      # deployment/implementation") passed every static rule; the rendered DOM is where it shows.
-      - name: Chromium for the rendered-page pass
+      # Chromium for the rendered checks below, from a cache keyed on the Playwright version and proved to start
+      # (.github/actions/chromium). The download and its apt packages were 37 s of this job when quick and minutes
+      # when not, and the job was cancelled at its limit for it.
+      - name: Chromium for the rendered-page checks
         if: always()
-        run: npx playwright install --with-deps chromium
+        uses: ./.github/actions/chromium
 
       # The service worker in a real Chromium with notifications granted: a pushed payload is shown under its
       # event's tag (never twice), not for the chat on screen, and a click opens that chat.
       - name: Desktop notifications service worker (push shown, deduped, click opens the chat)
         run: npm run test:push-sw
-
-      - name: UI vocabulary comes from the deployment profile (source, enum labels, built bundle, rendered pages)
-        if: always()
-        run: npm run check:ui-vocabulary
 
       # No invented record reaches a person (factory task mold_v1-120). Every live workspace showed two bundled
       # sample accounts ("Acme Bank", "Northwind Capital") in the data room's Master.xlsx previews, with a real
@@ -611,13 +609,6 @@ jobs:
       - name: Heavy libraries load on first use, and work (built chunks, rendered chat)
         if: always()
         run: npm run check:lazy-features
-
-      # …and what the scans cannot read: keys in JSON a person copies or views, ops API errors, the base library
-      # rows a workspace does not run (still listed and adoptable, naming no excluded specialist), a visible enum
-      # value with no profile label, and the profile generator while an eve build moves specialists aside.
-      - name: UI vocabulary, behavioural (keys, API errors, library rows, enum labels, concurrent build)
-        if: always()
-        run: npm run test:ui-vocabulary
 
       # The same bug one layer in, on the identifiers rather than the words: the
       # tool names a coding assistant is served, the environment variables a person
@@ -723,6 +714,50 @@ jobs:
       - name: Off-Vercel defaults (agent address required off Vercel, TLS setting for migrations)
         if: always()
         run: npm run test:off-vercel-defaults
+
+  # WHAT A PERSON READS, in its own job: it copies the checkout, stamps the copy with a relabelling profile and runs
+  # its OWN `next build` and `next start`, so it uses nothing the verify job builds. It was the longest step of
+  # verify (3 minutes of 13.5, against a 15-minute limit; run 37211119371) and waits on nothing there, so it runs
+  # beside it instead of the limit being raised.
+  ui-vocabulary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Chromium for the rendered-page pass
+        uses: ./.github/actions/chromium
+
+      # What a PERSON reads comes from the deployment profile. The gate before this looked for one word (the
+      # member's legacy word) in four source folders and skipped generated files, so a research deployment
+      # (companies / analysts / coverage reports) shipped a bundle that named the member roster by the legacy word, and "Customer DMs":
+      # the subagent roster and the whole workflow library reached the client as generated text. This builds the
+      # app under a relabelling profile and fails on any base word (customer, deployment, implementation, rollout,
+      # the legacy member word) in the source text a person reads, in every string of the built client bundle (mapped back to its
+      # file; allow-listed only with a reason, scripts/fixtures/ui-vocabulary/allow.json) and in the prerendered
+      # pages; and holds the default profile's words to its neutral ones (no legacy member word on any label).
+      # Its last pass reads what a person SEES: `next start` of the relabelled build, Chromium over every page and
+      # tab (visible text, titles, placeholders, options, hover tooltips), signed in with a locally made token and
+      # the ops API faked, so it needs no secret. A code value joined into a sentence ("filed under a
+      # deployment/implementation") passed every static rule; the rendered DOM is where it shows.
+      - name: UI vocabulary comes from the deployment profile (source, enum labels, built bundle, rendered pages)
+        if: always()
+        run: npm run check:ui-vocabulary
+
+      # …and what the scans cannot read: keys in JSON a person copies or views, ops API errors, the base library
+      # rows a workspace does not run (still listed and adoptable, naming no excluded specialist), a visible enum
+      # value with no profile label, and the profile generator while an eve build moves specialists aside.
+      - name: UI vocabulary, behavioural (keys, API errors, library rows, enum labels, concurrent build)
+        if: always()
+        run: npm run test:ui-vocabulary
 
   # EVERY sandbox takes the SANDBOX_* settings off Vercel, through the REAL `eve build`. On the first self-hosted
   # server only the two definitions that named the settings had them: the other specialists, and all four of a

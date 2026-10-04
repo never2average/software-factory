@@ -59,7 +59,7 @@ export function storageDriver(env: Env = process.env): StorageDriver | null {
     const kind = storageKind(env);
     if (kind === "filesystem") {
       const settings = filesystemSettings(env);
-      return cached(JSON.stringify(["filesystem", settings.root, settings.publicUrl, settings.signingSecret]), () => createFilesystemDriver(settings));
+      return cached(JSON.stringify(["filesystem", settings.root, settings.publicUrl, settings.signingSecret, settings.groupShared]), () => createFilesystemDriver(settings));
     }
     if (kind === "s3") {
       const settings = s3Settings(env);

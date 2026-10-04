@@ -27,6 +27,7 @@ and both read these, so give both the same values.
 | `STORAGE_FS_ROOT` | filesystem | Absolute directory for the files. Not under any web root. |
 | `STORAGE_SIGNING_SECRET` | filesystem | Signs the app's own expiring file links. 32+ characters. |
 | `STORAGE_PUBLIC_URL` | filesystem | The web app's public `https://` address. Falls back to `WEB_ORIGIN`. |
+| `STORAGE_FS_GROUP_SHARED` | filesystem | `1` when the web app and the agent API run as two different users. Folders 2770, files 0660, one group. Unset: 0700 and 0600, one user. See "Two service users sharing the directory". |
 | `STORAGE_S3_ENDPOINT` | s3 | `https://<region>.digitaloceanspaces.com`, or a MinIO address. |
 | `STORAGE_S3_BUCKET` | s3 | The bucket. It must be private. |
 | `STORAGE_S3_REGION` | s3 | Defaults to `us-east-1`. |
@@ -91,7 +92,8 @@ tampered one that does not, and (on S3) that the bucket refuses an unsigned read
 ## The filesystem driver
 
 Layout under `STORAGE_FS_ROOT`: `objects/<key>` holds the bytes, `meta/<key>.json` the content type, `tmp/`
-in-flight writes. Files are created readable by the service user only.
+in-flight writes. Files are created readable by the service user only (folders 0700, files 0600), unless
+`STORAGE_FS_GROUP_SHARED=1` (below).
 
 - A key cannot leave the root: `..`, `.`, empty segments, backslashes, control characters and absolute paths are
   refused before a path is built. Symbolic links are never followed.
@@ -101,6 +103,68 @@ in-flight writes. Files are created readable by the service user only.
   pair; a write that would need it fails.
 - Listing walks the directory on each call. A workspace with tens of thousands of files lists more slowly than on
   an object store.
+
+### Two service users sharing the directory
+
+One user for everything needs nothing here. This section is for a server that runs the web app as one user and
+the agent API as another, so that the agent, which runs work a model directs, cannot read the web app's secrets.
+Both processes read and write the same `STORAGE_FS_ROOT`. With the default modes (0700 and 0600) each can open
+only what it wrote itself, whatever the root's own group and mode are.
+
+Set `STORAGE_FS_GROUP_SHARED=1` in the environment of **both** services. The driver then makes every folder
+`2770` and every file `0660`: the owner and one group may read and write, and nobody else may do anything. The `2`
+is the setgid bit: whatever is created inside a folder takes that folder's group, so neither service ever has to
+change a file's group. The modes are set explicitly, so the services' umask does not matter. They apply to new
+files, to overwrites and to append parts alike.
+
+What the server must have before the services start (once, as root; the names are examples):
+
+```
+groupadd filestore                                   # 1. one group, made for these files and nothing else
+usermod -aG filestore web                            # 2. both service users are in it,
+usermod -aG filestore agent                          #    as an ADDITIONAL group, not their main one
+install -d -m 2770 -o web -g filestore /srv/files    # 3. the root: owner one of the two (or root), group filestore, mode 2770
+systemctl restart web agent                          # 4. a running service does not see a new group until it restarts
+```
+
+Then `STORAGE_FS_ROOT=/srv/files` and `STORAGE_FS_GROUP_SHARED=1` for both. If a service is started by systemd with
+a fixed list of groups, `filestore` has to be in it (`SupplementaryGroups=filestore`).
+
+With the setting on, the app examines the root when it starts and **refuses to use it** (503, and one
+`[storage] MISCONFIGURED` line in the log, as for any other storage misconfiguration) when:
+
+| The root | Why it is refused |
+|---|---|
+| does not exist | It is not created for you: its group and mode decide who can read every file. |
+| has any permission for "other" (`2775`, `2777`, ...) | Every user on the server could list or read the files. |
+| is not exactly `2770` (`0770`, `2750`, `0700`, a sticky bit) | The group could not write, or new files would not take the group, or one user could not delete the other's files. |
+| belongs to a general-purpose group (`root`, `users`, `staff`, `sudo`, `adm`, `www-data`, `docker`, ...) | Other users are in those groups for other reasons, and would get the files. |
+| belongs to a group that is some user's main group (for example the web user's own group `web`) | To share by it the other service would have to join it, and would then also get everything else that user owns by group: its home folder, its environment file. |
+| belongs to a group this service's user is not in | It could not share anything. (Added to the group but not restarted is the same.) |
+| already holds `objects/`, `meta/` or `tmp/` that are not `2770` in that group | They were made with the setting off; see below. |
+
+Each refusal is one sentence that names the setting and says what to run. With the setting unset the root is not
+examined at all, as before.
+
+**Turning it on for a directory that already holds files.** Files written with the setting off are 0700 and
+0600 and owned by one user; the driver does not go back over them. Convert them once, as root, with both services
+stopped:
+
+```
+chgrp -R filestore /srv/files
+find /srv/files -type d -exec chmod 2770 {} +
+find /srv/files -type f -exec chmod 0660 {} +
+```
+
+**What it does not do.** It never gives anything to "other", it does not change who owns a file, and it does not
+make the directory safe to share with a third user: every member of the group can read and change every
+workspace's files, exactly as each service user already can. Keep the group to the two service users.
+
+`npm run test:storage-fs-group-shared` holds all of it: with the setting unset every folder and file has the mode
+it had before the setting existed (a recording made on the code before it); with it on, two real user ids in one
+group read, overwrite, add to and delete each other's files through the driver, a third user outside the group
+reads nothing, and each refusal above is checked. The two-user part needs root or passwordless `sudo`; where it
+has neither it says so and is skipped.
 
 ### File links on this driver
 

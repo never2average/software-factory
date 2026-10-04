@@ -253,6 +253,42 @@ await check("the stored-path census is byte for byte the one taken before the fo
   assert.deepEqual(pinnedCensus.store.listed, [...pinnedCensus.store.written].sort());
   assert.ok(pinnedCensus.tools.calls.length >= 25 && !JSON.stringify(pinnedCensus.seeders).includes('"failed"'));
 });
+// The census is compared byte for byte, so what it masks must not depend on which id a run happened to draw. An id
+// is `PREFIX-${nanoid(10)}`; about one in 64 ends in "-", which the masking expression's closing `\b` did not accept,
+// and the check above failed at random (CI run 37207524888: "INT-76chYeL52-").
+await check("a generated id is masked whatever its last character (ids ending in \"-\" and \"_\" included), and nothing else is", async () => {
+  const { mask, maskText, GENERATED_ID } = await import("./lib/census-mask.mjs");
+  const { nanoid, urlAlphabet } = await import("nanoid");
+  assert.equal(new Set(urlAlphabet).size, 64);
+  for (const c of urlAlphabet) assert.match(c, /^[A-Za-z0-9_-]$/, `nanoid draws "${c}", which the expression does not name`);
+  // The two ids CI drew, and one of each prefix ending in each of the two characters that are not a letter or digit.
+  assert.deepEqual(mask({ interactionId: "INT-76chYeL52-", other: "INT-VlWug8bW_-" }), { interactionId: "INT-<id>", other: "INT-<id>" });
+  for (const prefix of ["SYNC", "INT", "TCK", "CS"]) {
+    for (const last of urlAlphabet) {
+      const id = `${prefix}-aB3_-9xYz${last}`;
+      // As a whole value, as a file's name, as a folder, before a comma in prose, and at the very end of the text.
+      assert.equal(maskText(JSON.stringify({ id })), `{"id":"${prefix}-<id>"}`, id);
+      assert.equal(maskText(`"a/${id}.jsonl"`), `"a/${prefix}-<id>.jsonl"`, id);
+      assert.equal(maskText(`"a/${id}/b"`), `"a/${prefix}-<id>/b"`, id);
+      assert.equal(maskText(`logged ${id}, then`), `logged ${prefix}-<id>, then`, id);
+      assert.equal(maskText(id), `${prefix}-<id>`, id);
+    }
+  }
+  // Ids as the generator really draws them: every one is masked.
+  for (let i = 0; i < 20_000; i++) {
+    const id = `INT-${nanoid(10)}`;
+    assert.equal(maskText(`"${id}"`), '"INT-<id>"', id);
+  }
+  // Nothing the expression matched before is lost, and nothing fixed is newly masked: the before-images are held
+  // byte for byte, and they and the fixture ids read the same under the old expression and this one.
+  const old = (t) => t.replace(/\b(SYNC|INT|TCK|CS)-[A-Za-z0-9_-]{10}\b/g, "$1-<id>");
+  const now = (t) => t.replace(GENERATED_ID, "$1-<id>");
+  for (const f of ["stored-paths-before.json", "keys-before.json"]) {
+    const text = readFileSync(join(FIXTURES, f), "utf8");
+    assert.ok(old(text) === now(text), `${f} is masked differently`);
+  }
+  for (const fixed of ["tickets_TCK-1.jsonl", "INT-test-0001", "INT-ACME-2026-07-03-QBR", "SYNC-short", "CS-1", "POINT-abcdefghij", "INT-abcdefghijk"]) assert.equal(now(`"${fixed}"`), old(`"${fixed}"`), fixed);
+});
 await check("every door to the store (both drivers, the web routes, the root migration) passes, and asks for exactly the keys it asked for before", () => {
   const out = join(tmp("folders-keys"), "keys.json");
   const r = runIn(pinned, ["scripts/migrate-dataroom-root.mjs", "--self-test"]);

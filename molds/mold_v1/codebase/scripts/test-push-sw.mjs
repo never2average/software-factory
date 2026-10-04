@@ -17,6 +17,7 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { chromium } from "playwright";
+import { until } from "./lib/wait.mjs";
 
 let passed = 0;
 const failed = [];
@@ -68,17 +69,24 @@ try {
     for (const r of e.registrations) if (r.scopeURL.startsWith(ORIGIN)) registrationId = r.registrationId;
   });
   await cdp.send("ServiceWorker.enable");
-  for (let i = 0; i < 50 && !registrationId; i++) await page.waitForTimeout(100);
+  await until("the service worker to register", () => registrationId).catch(() => {});
   check("the page registers /sw.js", Boolean(registrationId));
 
-  const pushed = async (payload) => {
-    await cdp.send("ServiceWorker.deliverPushMessage", { origin: ORIGIN, registrationId, data: JSON.stringify(payload) });
-    await page.waitForTimeout(700);
-  };
   const shown = () =>
     page.evaluate(async () =>
       (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => ({ title: n.title, body: n.body, tag: n.tag, data: n.data })),
     );
+  /**
+   * Deliver a push and wait for what it should do. A push that must be SHOWN is waited for by its tag (a busy
+   * runner can take longer than any fixed pause to wake the worker); the pause that follows only gives a second,
+   * unwanted notification time to appear. `{ shown: false }` is a push that must not be shown: there is nothing to
+   * wait for, so it is watched for the same pause.
+   */
+  const pushed = async (payload, { shown: expected = true } = {}) => {
+    await cdp.send("ServiceWorker.deliverPushMessage", { origin: ORIGIN, registrationId, data: JSON.stringify(payload) });
+    if (expected) await until(`the push ${payload.tag} to be shown`, async () => (await shown()).some((n) => n.tag === payload.tag)).catch(() => {});
+    await page.waitForTimeout(700);
+  };
   const clear = () => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).forEach((n) => n.close()));
 
   console.log("1. A push is shown:");
@@ -106,7 +114,8 @@ try {
   await page.bringToFront();
   const focused = await page.evaluate(() => document.visibilityState === "visible" && document.hasFocus());
   await page.evaluate(() => (window.__viewing = "wrun_9"));
-  await pushed({ v: 1, kind: "reply", title: "On screen", body: "…", tag: "wrun_9:turn_1:reply", url: "/?chatSession=wrun_9", sessionId: "wrun_9" });
+  // Shown or not depends on whether headless Chromium reports the tab as focused (both arms below): watch, do not wait.
+  await pushed({ v: 1, kind: "reply", title: "On screen", body: "…", tag: "wrun_9:turn_1:reply", url: "/?chatSession=wrun_9", sessionId: "wrun_9" }, { shown: false });
   list = await shown();
   const asked = await page.evaluate(() => window.__msgs.filter((m) => m.type === "which-chat").length);
   if (focused && asked > 0) {
@@ -122,7 +131,8 @@ try {
   console.log("\n5. A click opens that chat:");
   await page.evaluate(() => (window.__msgs = []));
   await page.evaluate(async () => (await navigator.serviceWorker.ready).active.postMessage({ type: "open-notification", tag: "wrun_8:turn_1:reply" }));
-  await page.waitForTimeout(700);
+  await until("the open tab to be told to open the chat", () => page.evaluate(() => window.__msgs.some((m) => m.type === "open-chat"))).catch(() => {});
+  await page.waitForTimeout(300); // a second, unwanted message would show here
   const opened = await page.evaluate(() => window.__msgs.filter((m) => m.type === "open-chat"));
   check("the app's open tab is told to open THAT chat", opened.length === 1 && opened[0].sessionId === "wrun_8" && opened[0].url === `${ORIGIN}/?chatSession=wrun_8`, opened);
   check("…and the clicked notification is closed", !(await shown()).some((n) => n.tag === "wrun_8:turn_1:reply"));

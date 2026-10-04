@@ -28,6 +28,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { MOCKS } from "./lib/rendered-text.mjs";
 import { freePort, waitForNextStart } from "./lib/own-listener.mjs";
+import { quiet, settle, until } from "./lib/wait.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const argAfter = (flag) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : null);
@@ -132,13 +133,19 @@ async function main() {
         return json(200, mocks[u.pathname] ?? { items: [], ok: true });
       });
       const page = await ctx.newPage();
-      page.setDefaultTimeout(20_000);
+      // Generous: every wait below is on a condition and returns the moment it holds; the limit is only for "never".
+      page.setDefaultTimeout(30_000);
       const errors = [];
       page.on("pageerror", (e) => errors.push(String(e.message ?? e)));
       return { ctx, page, requests, errors };
     };
     const visible = (page, sel) => page.locator(sel).filter({ visible: true }).count();
     const refusalShown = (page) => page.locator("[data-workspace-refused]").filter({ visible: true }).first().waitFor();
+    /**
+     * The person's own workspaces arrive AFTER the refusal is on screen (the page asks /api/ops/me/workspaces once it
+     * has mounted), so each of these is waited for; reading the page the moment the sentence shows raced that answer.
+     */
+    const ownShown = (page) => page.locator(`[data-own-workspace="${OWN}"]`).filter({ visible: true }).first().waitFor();
     const stored = (page) => page.evaluate((k) => ({ session: sessionStorage.getItem(k), local: localStorage.getItem(k) }), STORAGE_KEYS.activeOrg);
     /** Each part reports on its own: one that cannot run fails by name and the rest still run. */
     const section = async (name, fn) => {
@@ -154,14 +161,16 @@ async function main() {
       const { ctx, page, requests, errors } = await tab();
       await page.goto(base + "/", { waitUntil: "load" });
       await refusalShown(page);
+      await ownShown(page);
       check("a refused workspace shows the plain sentence", (await page.getByText(SENTENCE).filter({ visible: true }).count()) > 0);
       check("…and offers the person's own workspace by name", (await visible(page, `[data-own-workspace="${OWN}"]`)) === 1 && (await page.locator(`[data-own-workspace="${OWN}"]`).innerText()).includes("Research"));
       check("…instead of the console (no composer, no sidebar)", (await visible(page, "textarea")) === 0);
       check("…and nothing of any workspace's records is on the page", (await page.getByText("Acme Housing").count()) === 0);
       check("…and the page did not crash", errors.length === 0 && (await page.getByText("Application error").count()) === 0, errors.join(" | "));
       // No error loop: once refused, the page asks for nothing more by itself (the console polls; this page does not).
-      await page.waitForTimeout(1500);
-      const settled = requests.length;
+      // "Nothing more" cannot be waited for, only watched: the 4 s window opens once the page has stopped asking
+      // (a page that never stops fails here, by name), not a fixed time after load.
+      const settled = await quiet(requests);
       await page.waitForTimeout(4000);
       check("once refused, the page makes no further requests by itself (no retry loop)", requests.length === settled, `${requests.length - settled} more requests in 4 s: ${requests.slice(settled).map((r) => r.path).join(", ")}`);
       const refusedCount = requests.filter((r) => r.refused).length;
@@ -174,8 +183,10 @@ async function main() {
       check("…through the switcher's own call, naming that workspace", Boolean(chosen) && JSON.parse(chosen.body || "{}").orgId === OWN && chosen.named === OWN, JSON.stringify(chosen));
       const s = await stored(page);
       check("…which this tab and new tabs now remember", s.session === OWN && s.local === OWN, JSON.stringify(s));
-      await page.waitForTimeout(1500);
-      const after = requests.slice(before).filter((r) => r.path.startsWith("/api/ops/") && !ABOUT_ME.has(r.path));
+      const sinceChosen = () => requests.slice(before).filter((r) => r.path.startsWith("/api/ops/") && !ABOUT_ME.has(r.path));
+      await until("the console's first request in the chosen workspace", () => sinceChosen().length > 0);
+      await settle(requests); // the console polls: look at its startup reads too, without depending on how many
+      const after = sinceChosen();
       check("…and every request from then on names it; none is refused", after.length > 0 && after.every((r) => r.named === OWN && !r.refused), JSON.stringify(after.filter((r) => r.named !== OWN || r.refused).slice(0, 3)));
       await ctx.close();
     });
@@ -200,6 +211,7 @@ async function main() {
       const own = await tab();
       await own.page.goto(base + "/workspace", { waitUntil: "load" });
       await refusalShown(own.page);
+      await ownShown(own.page);
       check("the settings page shows the plain sentence and the person's own workspace", (await own.page.getByText(SENTENCE).filter({ visible: true }).count()) > 0 && (await visible(own.page, `[data-own-workspace="${OWN}"]`)) === 1);
       check("…and none of the workspace's settings", (await own.page.getByText("switch workspace from the sidebar").count()) === 0 && (await own.page.getByRole("link", { name: "Back to chat" }).count()) === 0);
       await own.ctx.close();
@@ -207,6 +219,7 @@ async function main() {
       await down.page.goto(base + "/workspace", { waitUntil: "load" });
       await refusalShown(down.page);
       await down.page.getByText("could not be loaded").first().waitFor();
+      await down.page.getByRole("button", { name: "Try again" }).waitFor();
       check("when their workspaces cannot be loaded, it still says what happened and offers a retry and a way on (never blank)", (await down.page.getByText(SENTENCE).filter({ visible: true }).count()) > 0 && (await down.page.getByRole("button", { name: "Try again" }).count()) === 1 && (await down.page.getByRole("button", { name: "Continue without it" }).count()) === 1);
       await down.ctx.close();
     });
@@ -217,13 +230,16 @@ async function main() {
       await guest.page.goto(`${base}/?chatSession=sess_guest&org=${REFUSED}`, { waitUntil: "load" });
       await guest.page.getByText(GUEST_TEXT).first().waitFor();
       check("a guest opens the chat its link shares with them", true);
-      await guest.page.waitForTimeout(1500);
+      // The refused lists are asked for after the chat is on screen; wait for one, then for what it would draw.
+      await until("a list request refused for the guest", () => guest.requests.some((r) => r.refused));
+      await settle(guest.requests);
       check("…and is not shown the refusal: the lists that are refused for a guest are simply empty", (await visible(guest.page, "[data-workspace-refused]")) === 0 && guest.requests.some((r) => r.refused), `${guest.requests.filter((r) => r.refused).length} refused`);
       check("…with no error on the page", guest.errors.length === 0, guest.errors.join(" | "));
       await guest.ctx.close();
       const stranger = await tab({ stored: OWN, mine: "own", stream: 404 });
       await stranger.page.goto(`${base}/?chatSession=sess_guest&org=${REFUSED}`, { waitUntil: "load" });
       await refusalShown(stranger.page);
+      await ownShown(stranger.page);
       check("someone the chat is not shared with gets the plain sentence, not an empty chat", (await stranger.page.getByText(SENTENCE).filter({ visible: true }).count()) > 0 && (await visible(stranger.page, "textarea")) === 0);
       check("…and their own workspace to open", (await visible(stranger.page, `[data-own-workspace="${OWN}"]`)) === 1);
       await stranger.ctx.close();
@@ -231,11 +247,16 @@ async function main() {
       const lapsed = await tab({ stored: null, mine: "none", stream: 404 });
       await lapsed.page.goto(`${base}/?chatSession=sess_guest&org=${REFUSED}`, { waitUntil: "load" });
       await refusalShown(lapsed.page);
+      // The line that failed on CI: "no workspace yet" is drawn when the (empty) list of their workspaces answers,
+      // which is after the refusal itself is on screen.
+      await lapsed.page.getByText("not a member of any workspace yet").filter({ visible: true }).first().waitFor();
+      await lapsed.page.getByRole("button", { name: "Continue", exact: true }).waitFor();
       check("with no workspace of their own, it says so and offers to continue", (await lapsed.page.getByText("not a member of any workspace yet").count()) > 0 && (await lapsed.page.getByRole("button", { name: "Continue", exact: true }).count()) === 1);
       await lapsed.page.getByRole("button", { name: "Continue", exact: true }).click();
       await lapsed.page.waitForURL((u) => !u.searchParams.has("org"));
+      // The page is navigating: a read can land on the old document or fail mid-navigation, so read until it is so.
       let s = null;
-      for (let i = 0; i < 20 && !s; i++) s = await stored(lapsed.page).catch(() => null) ?? (await lapsed.page.waitForTimeout(250), null);
+      await until("the reloaded page to hold no remembered workspace", async () => ((s = await stored(lapsed.page)), s.session === null && s.local === null)).catch(() => {});
       check("…and continuing forgets the refused workspace and leaves the link behind", s !== null && s.session === null && s.local === null, JSON.stringify(s));
       await lapsed.ctx.close();
     });

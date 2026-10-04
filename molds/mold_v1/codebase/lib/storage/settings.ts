@@ -12,6 +12,9 @@
  *                                  agent API must hold the same value.
  *     STORAGE_PUBLIC_URL           the web app's public address (https://…): where a signed link points. Falls back
  *                                  to WEB_ORIGIN.
+ *     STORAGE_FS_GROUP_SHARED      1 when the web app and the agent API run as two users that share the directory by
+ *                                  one group: folders 2770, files 0660, and the root is refused unless it is set up
+ *                                  for that (./fs-group-shared.ts). Unset: 0700 / 0600, the service user alone.
  *
  *   s3
  *     STORAGE_S3_ENDPOINT          https://<region>.digitaloceanspaces.com, or a MinIO address
@@ -28,6 +31,7 @@
  */
 import "./server-guard.ts";
 import nodePath from "node:path";
+import { assertGroupSharedRoot, groupSharedSetting } from "./fs-group-shared.ts";
 import { isStorageConfigError, StorageConfigError, type StorageDriverKind } from "./types.ts";
 
 type Env = Record<string, string | undefined>;
@@ -92,6 +96,8 @@ export interface FilesystemSettings {
   signingSecret: string;
   /** Origin only, no trailing slash: `https://app.example.com`. */
   publicUrl: string;
+  /** STORAGE_FS_GROUP_SHARED: folders 2770 and files 0660 instead of 0700 and 0600. False when unset. */
+  groupShared: boolean;
 }
 
 function isLoopback(hostname: string): boolean {
@@ -123,7 +129,11 @@ export function filesystemSettings(env: Env = process.env): FilesystemSettings {
     throw new StorageConfigError("STORAGE_SIGNING_SECRET is not set or shorter than 32 characters (it signs the app's file links).");
   }
   const publicUrl = originSetting(env.STORAGE_PUBLIC_URL?.trim() ? "STORAGE_PUBLIC_URL" : "STORAGE_PUBLIC_URL (or WEB_ORIGIN)", env.STORAGE_PUBLIC_URL?.trim() || env.WEB_ORIGIN);
-  return { root: nodePath.resolve(root), signingSecret, publicUrl };
+  const groupShared = groupSharedSetting(env.STORAGE_FS_GROUP_SHARED);
+  const resolved = nodePath.resolve(root);
+  // Only with the setting on: off, the root is not looked at here, as it never was.
+  if (groupShared) assertGroupSharedRoot(resolved);
+  return { root: resolved, signingSecret, publicUrl, groupShared };
 }
 
 export interface S3Settings {

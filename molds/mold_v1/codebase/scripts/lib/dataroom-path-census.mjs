@@ -35,6 +35,7 @@ import { register } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { mask } from "./census-mask.mjs";
 
 const ROOT = process.cwd();
 // eve's `.js` -> `.ts` specifiers, the web app's `@/` alias and extensionless imports, Next's `server-only` guard.
@@ -80,16 +81,6 @@ function walk(dir) {
   try { visit(dir); } catch { /* nothing written */ }
   return out.sort();
 }
-/** Generated ids, timestamps and dates: the same on no two runs, and never part of where a file is stored. */
-const mask = (value) =>
-  JSON.parse(
-    JSON.stringify(value)
-      .replace(/\b(SYNC|INT|TCK|CS)-[A-Za-z0-9_-]{10}\b/g, "$1-<id>")
-      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "<timestamp>")
-      .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "<date>")
-      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>"),
-  );
-
 const census = {};
 try {
   // The system of record, seeded from the test fixture (in memory; moves the process to a scratch directory).

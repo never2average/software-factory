@@ -36,6 +36,7 @@ import { join } from "node:path";
 import http from "node:http";
 import { MOCKS } from "./lib/rendered-text.mjs";
 import { freePort, waitForNextStart } from "./lib/own-listener.mjs";
+import { until } from "./lib/wait.mjs";
 import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
@@ -455,6 +456,10 @@ async function render() {
         // A plugin arrives after the text it formats: give it time rather than read the first paint.
         if (sc.verify) check(`${sc.name}: ${sc.verify[0]}`, await page.waitForFunction(sc.verify[1], null, { timeout: 15_000 }).then(() => true, () => false));
         if (sc.steps) await sc.steps({ page, locate, state, ctx });
+        // What this scenario must download is waited FOR (it arrives when the browser gets to it, which on a busy
+        // runner can be later than any fixed pause); a miss is reported by the checks below. What it must NOT
+        // download can only be watched for, so that window stays, and opens after the expected ones are in.
+        await until("its libraries to be downloaded", () => (sc.loads ?? []).every((l) => loaded.has(l)), { timeout: 30_000 }).catch(() => {});
         await page.waitForTimeout(1500); // anything a render would still fetch
         await Promise.all(pending);
         for (const lib of sc.loads ?? []) check(`${sc.name}: loads ${lib} on use`, loaded.has(lib));
