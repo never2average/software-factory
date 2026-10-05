@@ -1624,6 +1624,13 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         # MATCH the main project's, not merely exist, so it is written every deploy.
         if vals.get("AUTH_JWT_PUBLIC_KEY"): _set_env("AUTH_JWT_PUBLIC_KEY", vals["AUTH_JWT_PUBLIC_KEY"], mold_dir, project=f"{proj}-api"); print(f"  {proj}-api: AUTH_JWT_PUBLIC_KEY set to the main project's current public key")
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=f"{proj}-api")
+        # The agent trusts the web app's Vercel OIDC token as the platform's service identity only for the web project
+        # these settings name (fde-agent #118: no deployment is hard-coded in the base any more). A function sees only
+        # the environment its deployment was BUILT with, so they, and WEB_ORIGIN, go in before the api build.
+        _set_env("VERCEL_FRONTEND_TEAM_SLUG", infra["vercel"]["team"], mold_dir, project=f"{proj}-api")
+        _set_env("VERCEL_FRONTEND_PROJECT", proj, mold_dir, project=f"{proj}-api")
+        _set_env("WEB_ORIGIN", infra["vercel"].get("production_url") or f"https://{proj}.vercel.app", mold_dir, project=f"{proj}-api")
+        print(f"  {proj}-api: trusts {infra['vercel']['team']}/{proj} (production) as the service identity")
         subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
         run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build", kind="build")
@@ -1642,7 +1649,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
                               "belongs to another application and this deploy neither bootstraps nor gates it"})
         v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
         cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
-    # The eve API defaults WEB_ORIGIN to the live app (agent/channels/eve.ts, agent/lib/run-tools.ts).
+    # WEB_ORIGIN has no default in the base (fde-agent #118); the agent got it before its build above.
     # Point it at this app's own front door; the value is only known once the web app has a URL, so a
     # first deploy sets it from the project alias and later deploys correct it.
     web_origin = infra["vercel"].get("production_url") or f"https://{proj}.vercel.app"
