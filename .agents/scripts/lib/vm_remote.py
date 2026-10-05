@@ -275,6 +275,12 @@ def ssh_argv(S, remote, shown=False):
     return ["ssh", *ssh_opts(S, shown), f"{S['user']}@{S['host_shown']}", "--", remote]
 def rsync_argv(S, src, dst, excludes=(), shown=False):
     a = ["rsync", "-az", "--delete"]
+    # The bundle is assembled in a private temp directory (mode 700) and `-a` copies that mode onto the server's
+    # factory directory, which the service users must be able to enter: the API unit's ExecStartPre runs
+    # factory/api-prestart.sh as its own user. A bundle sent by --workspace-remote or --library-cleanup left the
+    # directory at 700 and the next start failed with "Permission denied" (first real server, 2026-10-05). It
+    # holds scripts and unit files, never a secret: those are in the env directory.
+    if dst == S.get("factory_dir"): a += ["--chmod=Dgo+rx"]
     for x in excludes: a += ["--exclude", x]
     if S["user"] != "root": a += ["--rsync-path", "sudo rsync"]
     return a + ["-e", shlex.join(["ssh", *ssh_opts(S, shown)]), src.rstrip("/") + "/", f"{S['user']}@{S['host_shown']}:{dst.rstrip('/')}/"]

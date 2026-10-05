@@ -3,7 +3,7 @@
   "app_id": "onfinance_hfc_vm",
   "mold_id": "mold_v1",
   "mold_commit": "1f43117a5eb687b52fdf3b7a1d0352d3761f03b3",
-  "status": "stamped",
+  "status": "reverted",
   "brief": "briefs/onfinance_hfc_vm.md",
   "product_id": "onfinance_hfc_research",
   "model": {
@@ -219,5 +219,10 @@
   "customer_id": "internal",
   "packs": [
     "hfc-research"
-  ]
+  ],
+  "revert": {
+    "reason": "step units stopped (exit 1): Oct 05 10:12:47 ubuntu-s-4vcpu-8gb-nyc1 systemd[1]: sf-onfinance-hfc-vm-api.service: Control process exited, code=exited, status=1/FAILURE / Oct 05 10:12:47 ubuntu-s-4vcpu-8gb-nyc1 systemd[1]: sf-onfinance-hfc-vm-api.service: Failed with result 'exit-code'. / Oct 05 10:12:47 ubuntu-s-4vcpu-8gb-nyc1 systemd[1]: Failed to start sf-onfinance-hfc-vm-api.service - onfinance Deploy target: this app's own server; run --deploy-remote again once the cause is fixed.",
+    "lane": "functional",
+    "at": "2026-10-05T10:07:22+00:00"
+  }
 }
