@@ -2307,6 +2307,7 @@ def main_for(app_id, a, app, infra, ds, adir, P):
             sys.path.insert(0, HERE); import vm_tunnel
             return vm_tunnel.main_for(app_id, a, S, adir)
         if "--prune-sandboxes" in a: return prune_remote(S, apply="--apply" in a, dry="--dry-run" in a)
+        if "--sandbox-load" in a: return sandbox_load_remote(S, app, a, source_for(app_id, app))
         if "--library-cleanup" in a:
             return library_cleanup_remote(app_id, S, app, infra, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
         if "--library-apply" in a:
@@ -2382,6 +2383,137 @@ def prune_remote(S, apply=False, dry=False, runner=real_runner, say=print):
         say(f"{S['app_id']}: the prune did not finish cleanly: " + redact(((r.stderr or "").strip().splitlines() or ["see the lines above"])[-1])[:300]); return 1
     if not apply: say(f"Nothing was removed. To remove these now: python3 .claude/scripts/provision.py {S['app_id']} --prune-sandboxes --apply")
     return 0
+
+# ---------------------------------------------------------------------------------------------------------
+# sandboxes under load, after a deploy (mold_v1-183)
+# ---------------------------------------------------------------------------------------------------------
+# On the first server a specialist's second model step failed with "no agent socket found" every time: eve 0.25.1
+# stops a session's VM when it commits a step, and handed the next step that stopped VM from its cache. One specialist
+# also started 3 minutes late: VMs booted several at once on 4 vCPUs and a guest stalled. The mold's guard
+# (agent/lib/sandbox-guard.ts) is the fix; this is how to see that it holds on a real server, from the outside (the
+# mold's rig: concurrent delegated turns, each specialist running bash in two steps) and from the inside (what the
+# agent API and the VMs themselves logged during that run).
+SANDBOX_RIG = "scripts/rig-sandbox-load.mjs"
+
+def sandbox_facts_sh(S, since, home=SERVICE_HOME):
+    """READ-ONLY, as root on the server: what the agent's sandboxes did since `since` (epoch seconds), KEY=VALUE."""
+    return fill("""set -u
+since=@SINCE@
+iso="$(date -u -d "@$since" '+%Y-%m-%d %H:%M:%S UTC')"
+log="$(journalctl -u @UNIT@-api.service --since "$iso" --no-pager -o cat 2>/dev/null || true)"
+count() { printf '%s\\n' "$log" | grep -c -e "$1" || true; }
+echo "SOCKET_ERRORS=$(count "message: 'RuntimeError: runtime error: no agent socket found")"
+echo "GUARD_WAITS=$(count '\\[sandbox\\] waiting for a sandbox')"
+echo "GUARD_RETRIES=$(count '\\[sandbox\\] a sandbox did not start within')"
+echo "GUARD_GAVE_UP=$(count 'No sandbox started within')"
+vms=0; stalls=0; kernel=0
+for d in @HOME@/.microsandbox/sandboxes/eve-sbx-ses-*; do
+  f="$d/logs/runtime.log"; [ -f "$f" ] || continue
+  [ "$(stat -c %Y "$f")" -ge "$since" ] || continue
+  vms=$((vms+1))
+  if ! grep -q 'core.ready' "$f" && grep -q 'Vmm is stopping' "$f"; then stalls=$((stalls+1)); fi
+  if grep -q 'BUG: scheduling while atomic' "$d/logs/kernel.log" 2>/dev/null; then kernel=$((kernel+1)); fi
+done
+echo "SESSION_VMS=$vms"
+echo "BOOT_STALLS=$stalls"
+echo "KERNEL_WARNINGS=$kernel"
+# Session VMs running now, and those that have kept a host CPU busy for their whole life (a hung guest spins at ~100%).
+ps -eo pcpu=,args= 2>/dev/null | awk '/msb sandbox --name eve-sbx-ses-/ { n++; if ($1 + 0 >= 90) hot++ } END { printf "RUNNING_VMS=%d\\nHOT_VMS=%d\\n", n, hot }'
+""", SINCE=str(int(since)), UNIT=S["unit"], HOME=home)
+
+def sandbox_facts_argv(S, since, shown=False):
+    return ssh_argv(S, f"{S['sudo']}bash -c {shlex.quote(sandbox_facts_sh(S, since))}", shown)
+
+def sandbox_load_verdict(rig_rc, facts):
+    """(passed, sentences). The rig's own verdict, and what the server logged during the run; either can fail it."""
+    def n(k):
+        try: return int(facts.get(k) or 0)
+        except ValueError: return 0
+    lines, ok = [], rig_rc == 0
+    if rig_rc == 3: lines.append("the rig was skipped (no address or no token reached it)"); ok = False
+    elif rig_rc: lines.append("the rig itself failed: see its lines above")
+    if not facts:
+        lines.append("what the server logged could not be read, so only the rig's own result counts"); return ok, lines
+    if n("SOCKET_ERRORS"):
+        ok = False
+        lines.append(f"{n('SOCKET_ERRORS')} sandbox call(s) failed on the server with 'no agent socket found' during the run: the deployed agent "
+                     f"lacks the sandbox guard (agent/lib/sandbox-guard.ts in the mold), or the guard did not hold")
+    if n("BOOT_STALLS"):
+        ok = False
+        lines.append(f"{n('BOOT_STALLS')} of {n('SESSION_VMS')} sandbox VM(s) started during the run never reported ready (a stalled boot)")
+    if n("GUARD_GAVE_UP"):
+        ok = False
+        lines.append(f"{n('GUARD_GAVE_UP')} step(s) were told no sandbox started at all")
+    if n("HOT_VMS"):
+        lines.append(f"WARNING: {n('HOT_VMS')} of {n('RUNNING_VMS')} running sandbox VM(s) have kept a host CPU busy for their whole life, which is "
+                     f"what a hung guest does (seen 2026-10-05 under 12 concurrent specialists). Not counted as a failure: a real user's job can be busy too")
+    lines.append(f"server: {n('SESSION_VMS')} sandbox VM(s) started, {n('GUARD_WAITS')} waited for a boot slot, {n('GUARD_RETRIES')} boot(s) "
+                 f"abandoned and retried, {n('KERNEL_WARNINGS')} with a guest kernel warning, {n('RUNNING_VMS')} running now")
+    return ok, lines
+
+def _rig_token(a, mold_id, env):
+    """The signed-in session the rig uses: --token-file <file> (a JSON object with "token", or the token alone), else
+    <MOLD>_SESSION_TOKEN or RIG_TOKEN from the environment. Never printed, never on a command line."""
+    if "--token-file" in a:
+        i = a.index("--token-file"); path = a[i + 1] if i + 1 < len(a) else ""
+        try: text = open(os.path.expanduser(path)).read().strip()
+        except OSError: raise Stop(f"--token-file: {path or '(no file named)'} could not be read. Nothing was started.")
+        try: doc = json.loads(text)
+        except ValueError: doc = text
+        tok = (doc.get("token") if isinstance(doc, dict) else doc) or ""
+        if not isinstance(tok, str) or not tok.strip(): raise Stop(f"--token-file: {path} holds no token (expected the token itself, or JSON with a \"token\" field). Nothing was started.")
+        return tok.strip()
+    tok = (env.get(f"{mold_id.upper()}_SESSION_TOKEN") or env.get("RIG_TOKEN") or "").strip()
+    if not tok:
+        raise Stop(f"the check needs a signed-in session of a member of the app's workspace: pass --token-file <file>, or set "
+                   f"{mold_id.upper()}_SESSION_TOKEN. Nothing was started.")
+    return tok
+
+def _run_rig(argv, env, timeout):
+    """The rig, with its lines straight to this terminal. Returns its exit code."""
+    try: return subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, timeout=timeout).returncode
+    except subprocess.TimeoutExpired: return 1
+
+def sandbox_load_remote(S, app, a, source, runner=real_runner, rig_runner=_run_rig, env=None, clock=time.time, say=print):
+    """`provision.py <app> --sandbox-load [--turns N] [--per-turn K] [--steps S] [--specialists a,b] [--token-file F]
+    [--dry-run]`: N delegated turns at once against the app's own address and workspace, then what the server logged
+    meanwhile. Starts test chats (with real model calls) in the app's workspace; changes nothing on the server."""
+    env = dict(os.environ if env is None else env)
+    def opt(name, default):
+        if name not in a: return default
+        i = a.index(name); return a[i + 1] if i + 1 < len(a) else default
+    turns, per, steps = opt("--turns", "3"), opt("--per-turn", "3"), opt("--steps", "2")
+    for k, v in (("--turns", turns), ("--per-turn", per), ("--steps", steps)):
+        if not v.isdigit() or not 1 <= int(v) <= 20: raise Stop(f"{k} must be a whole number from 1 to 20, not {v!r}. Nothing was started.")
+    rig = os.path.join(source, SANDBOX_RIG)
+    org = ((app.get("workspace") or {}).get("org") or {}).get("org_id") or ""
+    argv = ["node", rig, "--turns", turns, "--per-turn", per, "--steps", steps]
+    if opt("--specialists", ""): argv += ["--specialists", opt("--specialists", "")]
+    since = int(clock()) - 5
+    if "--dry-run" in a:
+        say(f"DRY RUN for {S['app_id']}: nothing below was run and nothing was contacted.")
+        say(f"    $ RIG_BASE={S['url']} RIG_ORG={org or '(none)'} RIG_TOKEN=<from --token-file or {app['mold_id'].upper()}_SESSION_TOKEN> " + shlex.join(argv))
+        say("    $ " + shown_cmd(S, ssh_argv(S, f"{S['sudo']}bash -c <read what the agent's sandboxes logged since the rig started>", shown=True)))
+        return 0
+    if not S["domain"]: raise Stop(f"{S['app_id']}: the app's domain is not in state yet, so there is nothing to call. Nothing was started.")
+    if not os.path.isfile(rig):
+        raise Stop(f"{S['app_id']}: {SANDBOX_RIG} is not in the source this app deploys from ({os.path.relpath(source, ROOT)}). It arrives with the "
+                   f"mold's sandbox guard (fde-agent, mold_v1-183): refresh the mold, redeploy, then run this again. Nothing was started.")
+    token = _rig_token(a, app["mold_id"], env)
+    child = {k: v for k, v in env.items() if not k.endswith("_SESSION_TOKEN")}
+    child.update({"RIG_BASE": S["url"], "RIG_TOKEN": token, **({"RIG_ORG": org} if org else {})})
+    say(f"{S['app_id']}: {turns} delegated turn(s) at once against {S['url']}, {per} specialist(s) each, bash in {steps} step(s) per specialist.")
+    rc = rig_runner(argv, child, 1800)
+    facts = {}
+    if S["host"] and os.path.isfile(key_path(S)):
+        try:
+            r = runner({"id": "sandbox-facts", "argv": sandbox_facts_argv(S, since), "timeout": 120})
+            if r.returncode == 0: facts = parse_kv(r.stdout)
+        except Stop: facts = {}
+    ok, lines = sandbox_load_verdict(rc, facts)
+    for l in lines: say(f"  {l}")
+    say(f"sandbox-load {S['app_id']}: {'PASS' if ok else 'FAIL'}")
+    return 0 if ok else 1
 
 # ---------------------------------------------------------------------------------------------------------
 # the brief's workspace, on the server (mold_v1-152)
