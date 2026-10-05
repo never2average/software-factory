@@ -39,6 +39,7 @@ ALLOWED = [re.compile(p) for p in (
     r"^scripts/subagent-shared/[a-z][a-z0-9_-]*/.+",
     r"^docs/packs/[A-Za-z0-9_.-]+\.md$",
     r"^profiles/\d{2}-pack-[a-z0-9-]+\.json$",
+    r"^library/[a-z][a-z0-9-]*/.+",   # the pack's own starter library (workflows, recipes, starter apps); its profile must name it in library.sources
     r"^agent-kit/(kit\.json|skills/[a-z][a-z0-9-]*/.+)$",   # what the app's own agent CLI package installs into a coding agent; PUBLIC, so never operator material   # the pack's deployment profile: wording, data-room shape, agent briefing
 )]
 SKIP = ("__pycache__", ".pyc", ".DS_Store")
