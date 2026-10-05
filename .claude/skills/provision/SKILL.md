@@ -156,6 +156,19 @@ Always show the operator the dry run first and let them say yes before `--apply`
 ever removed; everything else is kept and listed with the reason. It runs through the app role (row-level security in force) and
 the database address is never printed. If it says the running code does not match state, deploy first: the cleanup decides what
 is a leftover from the library the deployed code was built with.
+
+Its twin gives a workspace that ALREADY exists the starter apps of the running build's library (a pack's own library included);
+a new workspace is made with them, an old one only gets them this way:
+
+```
+python3 .claude/scripts/provision.py <app_id> --library-apply                    # a dry run: per workspace, "would add: app ..." and what is left alone and why
+python3 .claude/scripts/provision.py <app_id> --library-apply --org <id>         # one workspace
+python3 .claude/scripts/provision.py <app_id> --library-apply --org <id> --apply # add exactly what the dry run listed
+```
+
+Same rules: dry run first, the operator says yes, then `--apply`, which adds only what that dry run listed, one workspace at a
+time. Nothing is generated: each app is written by its specialist the first time someone opens it. An app deployed before the
+mold had this command is refused in a sentence: deploy it first.
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this
 machine and is the user's to approve. If the tunnel is ever down, give the user `docs/RUNBOOK.md` §9, "If the factory cannot reach the

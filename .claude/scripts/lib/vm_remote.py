@@ -15,6 +15,9 @@ Called by provision.py for an application whose infrastructure.target is "vm_rem
   provision.py <app_id> --library-cleanup [--apply] [--org <id>]
                                                  the starter workflows and recipes an earlier version left in each
                                                  workspace that this app does not use: listed (a dry run), or removed
+  provision.py <app_id> --library-apply [--apply] [--org <id>]
+                                                 its twin: the starter apps of the running build's library that each
+                                                 EXISTING workspace lacks: listed (a dry run), or added
   provision.py <app_id> --workspace-remote [seed.json] [--new-workspace] [--dry-run]
                                                  write the brief's workspace, its people and its companies into the server's
                                                  database (mold_v1-152), then the application's surface (mold_v1-163: the
@@ -1516,7 +1519,7 @@ def bundle(S, crons):
 def bundle_copies():
     """The factory's own database tooling, copied verbatim so the server runs the same chain this VM does."""
     out = [(os.path.join(SCRIPTS, "provision.py"), ".claude/scripts/provision.py"), (os.path.abspath(__file__), ".claude/scripts/lib/vm_remote.py"),
-           (os.path.join(SCRIPTS, "library.py"), ".claude/scripts/library.py")]     # the library cleanup's rules and words (library-cleanup, below)
+           (os.path.join(SCRIPTS, "library.py"), ".claude/scripts/library.py")]     # the library cleanup's and apply's rules and words (library-cleanup, library-apply, below)
     for f in sorted(os.listdir(HERE)):
         if f.endswith(".mjs"): out.append((os.path.join(HERE, f), f".claude/scripts/lib/{f}"))
     return out
@@ -2059,16 +2062,27 @@ def library_cleanup(env_file, user, home, app_dir, expect, org=None, apply=False
     only after that dry run showed the running code was built with what state says (`expect`: "all" or "none").
     Prints one `LIBRARY {json}` line: the mold's report, or {"error": why}; every value of the env file is searched for
     in it before it is shown. Returns the exit code."""
+    return _library_on_server("cleanup", env_file, user, home, app_dir, expect, org, apply, run, say)
+
+def library_apply(env_file, user, home, app_dir, expect, org=None, apply=False, run=None, say=print):
+    """ON THE SERVER, as root: the twin of library_cleanup for the mold's operator:library-apply (fde-agent #115): the
+    starter apps of the running build's library, for workspaces that already exist. Same user, same env file, same
+    dry run first; with `apply`, one run per workspace the dry run listed (library.run_apply). The LIBRARY line also
+    carries `sources` (starter key -> who writes it), read from the built app, so the factory can say it."""
+    return _library_on_server("apply", env_file, user, home, app_dir, expect, org, apply, run, say)
+
+def _library_on_server(kind, env_file, user, home, app_dir, expect, org, apply, run, say):
     import pwd
     lib = _library()
+    script, step = (lib.CLEANUP_SCRIPT, lib.run_cleanup) if kind == "cleanup" else (lib.APPLY_SCRIPT, lib.run_apply)
     def out(doc, rc): say("LIBRARY " + clean(json.dumps(doc))); return rc
     clean = redact
     try: pw = pwd.getpwnam(user)
     except KeyError: return out({"error": f"this server has no user {user} yet: it was deployed before each service got a user of its own. Deploy once, then run this again. Nothing was changed."}, 1)
     vals = env_read(env_file)
     if not vals.get("DATABASE_URL"): return out({"error": "the web app's env file has no DATABASE_URL yet (the deploy writes it), so there is no database to look at. Nothing was changed."}, 1)
-    if not os.path.isfile(os.path.join(app_dir, lib.CLEANUP_SCRIPT)):
-        return out({"error": "the app on this server was deployed before this cleanup existed. Deploy it once, then run this again. Nothing was changed."}, 1)
+    if not os.path.isfile(os.path.join(app_dir, script)):
+        return out({"error": f"the app on this server was deployed before this {kind} existed. Deploy it once, then run this again. Nothing was changed."}, 1)
     secrets_ = sorted((v for v in vals.values() if len(v) >= 12), key=len, reverse=True)
     def clean(text):
         text = redact(text or "")
@@ -2078,20 +2092,26 @@ def library_cleanup(env_file, user, home, app_dir, expect, org=None, apply=False
     def as_user(argv):
         kw = dict(user=pw.pw_uid, group=pw.pw_gid, extra_groups=os.getgrouplist(user, pw.pw_gid)) if os.getuid() == 0 else {}
         return subprocess.run(argv, cwd=app_dir, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900, **kw)
-    report, err = lib.run_cleanup(run or as_user, expect, org, apply)
-    return out({"error": err}, 1) if err else out(report, 0)
+    report, err = step(run or as_user, expect, org, apply)
+    if err: return out({"error": err}, 1)
+    if kind == "apply": report = dict(report, sources={k: list(v) for k, v in lib.starter_sources(app_dir).items()})
+    return out(report, 0)
 
-def library_cleanup_argv(S, expect, org=None, apply=False, shown=False):
-    """The one remote command behind --library-cleanup. Nothing secret is on the command line."""
+def library_cleanup_argv(S, expect, org=None, apply=False, shown=False, kind="cleanup"):
+    """The one remote command behind --library-cleanup (or, kind="apply", --library-apply). Nothing secret is on the command line."""
     web = SERVICE_USERS["web"]
-    cmd = guarded(S, f"python3 {S['tool']} library-cleanup --file {S['env_files']['web']} --user {web} --home {SERVICE_HOMES['web']} "
+    cmd = guarded(S, f"python3 {S['tool']} library-{kind} --file {S['env_files']['web']} --user {web} --home {SERVICE_HOMES['web']} "
                      f"--app-dir {S['app_dir']} --expect {expect}" + (f" --org {shlex.quote(org)}" if org else "") + (" --apply" if apply else ""))
     return ssh_argv(S, cmd, shown)
 
-def library_cleanup_remote(app_id, S, app, infra, a, crons, runner=real_runner, say=print):
+def library_apply_argv(S, expect, org=None, apply=False, shown=False):
+    return library_cleanup_argv(S, expect, org, apply, shown, kind="apply")
+
+def library_cleanup_remote(app_id, S, app, infra, a, crons, runner=real_runner, say=print, kind="cleanup"):
     """`provision.py <app> --library-cleanup [--apply] [--org <id>]` for an app on its own server: per workspace, the
     starter workflows and recipes an earlier version left behind that this app does not use. A dry run unless --apply.
-    The database is on the server's loopback and its address never leaves the server: the cleanup runs THERE."""
+    The database is on the server's loopback and its address never leaves the server: the cleanup runs THERE.
+    kind="apply" is its twin, --library-apply (library_apply_remote)."""
     lib = _library(); org, do_apply = lib.cleanup_args(a); expect = lib.install(app)
     if org and not lib.ORG_ID.match(org): raise Stop(f"{app_id}: '{org}' is not a workspace id (letters, digits, dots, hyphens and underscores). Nothing was contacted.")
     if not S["host"]: raise Stop(f"{app_id}: the server address is not in state yet, so there is no database to look at. Nothing was contacted.")
@@ -2107,7 +2127,7 @@ def library_cleanup_remote(app_id, S, app, infra, a, crons, runner=real_runner, 
     finally: shutil.rmtree(bdir, ignore_errors=True)
     if r.returncode:
         raise Stop(f"{app_id}: could not reach the server to send the factory's scripts: " + redact(((r.stderr or "").strip().splitlines() or ["no answer"])[-1])[:300] + ". Nothing was changed.")
-    r = runner({"id": "library-cleanup", "argv": library_cleanup_argv(S, expect, org, do_apply), "timeout": 1800})
+    r = runner({"id": f"library-{kind}", "argv": library_cleanup_argv(S, expect, org, do_apply, kind=kind), "timeout": 1800})
     docs_ = []
     for l in (r.stdout or "").splitlines():
         if not l.startswith("LIBRARY {"): continue
@@ -2116,13 +2136,21 @@ def library_cleanup_remote(app_id, S, app, infra, a, crons, runner=real_runner, 
     doc = docs_[-1] if docs_ else None
     if doc is None:
         tail = redact(((r.stderr or r.stdout or "").strip().splitlines() or ["no reason was printed"])[-1])[:300]
-        say(f"{app_id}: the cleanup did not finish on the server: {tail}. "
-            + ("Whether anything was removed is not known; run it again without --apply to see what is left." if do_apply else "Nothing was changed."))
+        say(f"{app_id}: the {kind} did not finish on the server: {tail}. "
+            + ((f"Whether anything was {'removed' if kind == 'cleanup' else 'added'} is not known; run it again without --apply to see "
+                + ("what is left." if kind == "cleanup" else "what is still missing.")) if do_apply else "Nothing was changed."))
         return 1
     if doc.get("error"): say(f"{app_id}: {str(doc['error'])[:600]}"); return 1
-    lib.render(app_id, doc, bool(doc.get("applied")), say, org)
+    if kind == "cleanup": lib.render(app_id, doc, bool(doc.get("applied")), say, org)
+    else: lib.render_apply(app_id, doc, bool(doc.get("applied")), say, org, {k: tuple(v) for k, v in (doc.get("sources") or {}).items() if isinstance(v, list) and len(v) == 2})
     say("  The database address never left the server.")
     return 0
+
+def library_apply_remote(app_id, S, app, infra, a, crons, runner=real_runner, say=print):
+    """`provision.py <app> --library-apply [--apply] [--org <id>]` for an app on its own server: per workspace that
+    already exists, the starter apps of the running build's library it does not have yet. A dry run unless --apply,
+    which adds only what that dry run listed. Runs ON the server, as the web app's user, like the cleanup."""
+    return library_cleanup_remote(app_id, S, app, infra, a, crons, runner, say, kind="apply")
 
 def _surface_apply(surf, script, app_dir, run, written, clean):
     """One run of surface.mjs apply for workspace_seed (above): {"org", table: count | "ERR ..."} or {"org", "skipped" | "error"}."""
@@ -2281,6 +2309,8 @@ def main_for(app_id, a, app, infra, ds, adir, P):
         if "--prune-sandboxes" in a: return prune_remote(S, apply="--apply" in a, dry="--dry-run" in a)
         if "--library-cleanup" in a:
             return library_cleanup_remote(app_id, S, app, infra, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
+        if "--library-apply" in a:
+            return library_apply_remote(app_id, S, app, infra, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
         if "--workspace-remote" in a:
             return workspace_remote(app_id, S, app, infra, adir, P, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
         if not any(f in a for f in ("--deploy-remote", "--qualify-remote", "--verify-rls")):
@@ -2725,6 +2755,8 @@ def cli(a):
         return workspace_seed(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--script"), doc, surface_script=_opt(a, "--surface-script"))
     if cmd == "library-cleanup":
         return library_cleanup(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--expect", "none"), org=_opt(a, "--org"), apply="--apply" in a)
+    if cmd == "library-apply":
+        return library_apply(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--expect", "none"), org=_opt(a, "--org"), apply="--apply" in a)
     if cmd == "pg-admin":
         pg_admin(f, _opt(a, "--db"), int(_opt(a, "--port", "5432")), _opt(a, "--sslmode", "require")); return 0
     if cmd == "host-chain":
