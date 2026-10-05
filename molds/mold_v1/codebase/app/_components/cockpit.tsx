@@ -38,6 +38,7 @@ import {
 import { defaultMessageReducer } from "eve/react";
 import type { EveMessage } from "eve/react";
 import { handbackStates, withSessionEpochs } from "@/lib/chat-turn-state";
+import { SESSION_DELEGATION_HEADER, canMessageSession, delegationFromHeader, refusalText, runControl } from "@/lib/specialist-run-actions";
 import { AgentMessage } from "./agent-message";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { ChatComposer } from "./composer";
@@ -381,12 +382,23 @@ export function Cockpit({
       appendLocal(sid, "Cancel failed (network)");
     }
   };
-  // Resuming a cancelled/parked child needs its continuation token (captured
-  // from the feed's session.waiting events) — without one there is no handle.
+  // What the header offers for the open run. A delegated specialist is never resumed from here: a message on its own
+  // session starts an unrelated conversation in eve 0.25.1, and the turn it would hand back to is gone
+  // (lib/specialist-run-actions.ts). Resume is for a workflow step's own session, which a message does continue.
+  const railControl = runControl({
+    // A run the main agent delegated is one by definition; any other (a workflow step's row, which often opens the
+    // specialist the step called) is whatever the agent's stream said it is, and unknown until it has.
+    delegated: railRun !== null && railRun === selectedRun ? true : railFeed?.delegated,
+    running: railRun?.status === "running",
+    turnActive: railFeed?.turnActive,
+    continuationToken: railFeed?.continuationToken,
+    stopped: railFeed?.stopped,
+  });
+  // Resuming a workflow step needs its continuation token (captured from the feed's session.waiting events).
   const resumeSelectedRun = async () => {
     const sid = railRun?.childSessionId;
     const continuationToken = railFeed?.continuationToken;
-    if (!sid || !continuationToken) return;
+    if (!sid || !continuationToken || railControl.button !== "resume") return;
     try {
       const res = await fetch(`/eve/v1/session/${encodeURIComponent(sid)}`, {
         method: "POST",
@@ -396,7 +408,7 @@ export function Cockpit({
           continuationToken,
         }),
       });
-      appendLocal(sid, res.ok ? "Resume requested" : `Resume failed (${res.status})`);
+      appendLocal(sid, res.ok ? "Resume requested" : await refusalText(res, `Resume failed (${res.status})`));
     } catch {
       appendLocal(sid, "Resume failed (network)");
     }
@@ -850,9 +862,7 @@ export function Cockpit({
               <SquareIcon className="size-4" />
             </button>
           ) : null}
-          {railRun?.childSessionId &&
-          railRun.status === "running" &&
-          railFeed?.turnActive !== false ? (
+          {railRun?.childSessionId && railControl.button === "stop" ? (
             <button
               type="button"
               onClick={() => void cancelSelectedRun()}
@@ -862,7 +872,7 @@ export function Cockpit({
             >
               <SquareIcon className="size-4" />
             </button>
-          ) : railRun?.childSessionId && railFeed?.continuationToken ? (
+          ) : railRun?.childSessionId && railControl.button === "resume" ? (
             <button
               type="button"
               onClick={() => void resumeSelectedRun()}
@@ -915,6 +925,12 @@ export function Cockpit({
           </Dialog>
         ) : null}
       </div>
+      {railControl.note ? (
+        // A stopped specialist cannot be resumed; what to do instead.
+        <p className="shrink-0 border-b px-3 py-2 text-muted-foreground text-xs" data-testid="stopped-specialist-note">
+          {railControl.note}
+        </p>
+      ) : null}
 
       {selectedRun ? (
         <SubagentDetail
@@ -2671,6 +2687,15 @@ interface ChildFeed {
    *  parked on an approval (which emits session.waiting). Only a completed run
    *  can be a "stuck handoff". */
   completed?: boolean;
+  /** The agent's word on whether this session is a delegation (its stream's
+   *  `x-eve-session-delegation`); undefined until a stream has said. A message
+   *  to a delegation can only be refused, so none is offered
+   *  (lib/specialist-run-actions.ts). */
+  delegated?: boolean;
+  /** Its last turn was cancelled (`turn.cancelled`, cleared by the next
+   *  `turn.started`): a stopped specialist, which cannot be resumed on its own
+   *  (lib/specialist-run-actions.ts). */
+  stopped?: boolean;
   /** The child session's resume handle (from its session.waiting events) —
    *  REQUIRED to deliver a follow-up/steer message (posting without it is a
    *  guaranteed 400). Latest one seen wins; mid-turn deliveries to it are
@@ -2762,7 +2787,8 @@ function useChildFeeds(targets: readonly string[], liveTargets: readonly string[
               patch(sid, (f) => ({ ...f, status: "unavailable" }));
               return;
             }
-            patch(sid, (f) => ({ ...f, status: "live" }));
+            const delegated = delegationFromHeader(res.headers.get(SESSION_DELEGATION_HEADER));
+            patch(sid, (f) => ({ ...f, status: "live", ...(delegated === undefined ? {} : { delegated }) }));
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buf = "";
@@ -2806,9 +2832,13 @@ function useChildFeeds(targets: readonly string[], liveTargets: readonly string[
                 };
               });
               if (event.type === "turn.started") {
-                patch(sid, (f) => ({ ...f, turnActive: true }));
+                patch(sid, (f) => ({ ...f, turnActive: true, stopped: false }));
               } else if (event.type === "turn.completed" || event.type === "turn.failed") {
                 patch(sid, (f) => ({ ...f, turnActive: false }));
+              } else if (event.type === "turn.cancelled") {
+                // `turnActive` is left as it was: Stop stays on a stopped specialist so pressing it again retries a
+                // hand-back that could not be delivered (agent/lib/specialist-handback.ts).
+                patch(sid, (f) => ({ ...f, stopped: true }));
               }
               // A delegation BELOW this child — record it so the rail attaches
               // to the grandchild too and its work rolls up as well.
@@ -3087,11 +3117,12 @@ function SubagentDetail({
         headers: { "content-type": "application/json", ...eveAuthHeaders() },
         body: JSON.stringify({ message, continuationToken }),
       });
+      // A refusal says why and what to do instead (lib/specialist-run-actions.ts): show that, never a bare status.
       appendLocal(
         sid,
         res.ok
           ? `You → ${raw.slice(0, 90)}${outgoing.length ? ` (+${outgoing.length} file${outgoing.length === 1 ? "" : "s"})` : ""} (queued; applies at the next step boundary)`
-          : `Steer failed (${res.status})`,
+          : await refusalText(res, `Steer failed (${res.status})`),
       );
     } catch {
       appendLocal(sid, "Steer failed (network)");
@@ -3169,10 +3200,12 @@ function SubagentDetail({
           </div>
         ) : null}
       </div>
-      {run.childSessionId && live ? (
-        // Steering only makes sense while the subagent is RUNNING. Once it has
-        // handed back to the main agent, the composer is hidden (you continue in
-        // the main chat, not by messaging a finished child).
+      {run.childSessionId && live && canMessageSession(feed?.delegated) ? (
+        // Steering only makes sense while the subagent is RUNNING, and only for
+        // a session a message can reach: never a delegated specialist's (the
+        // agent refuses it; lib/specialist-run-actions.ts), and not before the
+        // agent has said which kind this is. Once it has handed back to the
+        // main agent, the composer is hidden (you continue in the main chat).
         // pb-5 matches the main composer wrapper (agent-chat "shrink-0 pb-5")
         // so the two boxes sit on the same baseline across the divider.
         <div className="shrink-0 px-3 pt-1 pb-5">

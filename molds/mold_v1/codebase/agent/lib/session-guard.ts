@@ -39,6 +39,9 @@
  *     reaches clients only on the parent's stream (`subagent.called`), which this guard serves — so the guard records
  *     the child's owner as that line passes, before forwarding it (agent/lib/session-lineage-stream.ts).
  *   · A VIEWER's stream is served without continuation tokens.
+ *   · A message to a DELEGATED SPECIALIST's own session is refused (409, saying what to do instead): eve cannot
+ *     deliver it there and would start an unrelated conversation (lib/specialist-run-actions.ts). Every stream it
+ *     serves says which kind of session it is (`x-eve-session-delegation`), so no panel offers such a message.
  *
  * Failures: a database the guard cannot read answers 503 (closed), never "let it through". Every refusal is 404.
  */
@@ -82,6 +85,7 @@ import { noticeDelegations } from "./session-lineage-stream.ts";
 import { candidateParents, scanForChildren } from "./session-lineage-backfill.ts";
 import { DELEGATION_EVENT_TYPES, delegationRunRecorder } from "./session-delegation-runs.ts";
 import { handBackStopped, planStop, refusalMessage, retryOwed, type HandbackOutcome, type HandbackWorld, type StreamEvent } from "./specialist-handback.ts";
+import { SESSION_DELEGATION_HEADER, SPECIALIST_MESSAGE_REFUSAL, SPECIALIST_MESSAGE_REFUSAL_CODE } from "../../lib/specialist-run-actions.ts";
 import { handbackLedger } from "./handback-ledger.ts";
 
 type AuthContext = Exclude<Awaited<ReturnType<typeof routeAuth>>, Response>;
@@ -797,6 +801,17 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
     }
 
     if (key === CONTINUE_ROUTE) {
+      // A DELEGATED SPECIALIST's own session cannot take a message: its token is the one eve minted for the delegation
+      // (`<parent>:<callId>`), which this channel namespaces into one no session holds, so eve would answer 200 and
+      // start a new, unrelated conversation (the Control Panel's old Resume; lib/specialist-run-actions.ts has the
+      // measurement). Refused before anything is spent or started, and only once access was decided, so a stranger
+      // still gets the plain 404.
+      if (decision.ownership?.source === "lineage") {
+        return Response.json(
+          { error: SPECIALIST_MESSAGE_REFUSAL, code: SPECIALIST_MESSAGE_REFUSAL_CODE, ok: false },
+          { status: 409, headers: noStore },
+        );
+      }
       // Read the body once, check its token belongs to THIS session, and hand eve an identical request.
       const text = await request.text();
       let body: Record<string, unknown> | null = null;
@@ -928,7 +943,11 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
     }
     // A viewer reads the conversation, never the capability to continue it.
     if (decision.role === "viewer") body = withoutContinuationTokens(body);
-    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    // Say whether this session is a delegation, by the fact a message to it is refused on (above), so a panel never
+    // offers a message, a steer or a Resume that can only be refused (lib/specialist-run-actions.ts).
+    const headers = new Headers(response.headers);
+    if (ownership) headers.set(SESSION_DELEGATION_HEADER, ownership.source === "lineage" ? "1" : "0");
+    return new Response(body, { status: response.status, statusText: response.statusText, headers });
   };
 }
 

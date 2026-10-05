@@ -58,10 +58,11 @@
  *   UI_VOCABULARY_FIXTURE=<file.json>                   render another relabelling profile instead
  */
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import { removeCopy, temporaryCopy } from "./lib/checkout-copy.mjs";
 import { clientLiterals } from "./lib/client-literals.mjs";
 import { CANARY, HIDDEN_MARK, PAGE_SPECS, PAGES, renderedText } from "./lib/rendered-text.mjs";
 import { LEGACY_MEMBER, LEGACY_OWNER_KEY } from "../agent/lib/legacy-member.ts";
@@ -132,28 +133,15 @@ const run = (cwd, cmd, args, what, env = {}) => {
   return r.stdout;
 };
 
-/** The files of this checkout: git's view when there is one (tracked + untracked, not ignored), else a walk. */
-function checkoutFiles() {
-  const r = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (r.status === 0) return r.stdout.split("\0").filter((f) => f && existsSync(join(ROOT, f)));
-  const skip = new Set(["node_modules", ".next", ".git", ".ui-vocabulary", "test-results", ".eve", ".vercel"]);
-  const walk = (d) => readdirSync(join(ROOT, d)).flatMap((n) => (skip.has(n) ? [] : statSync(join(ROOT, d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
-  return walk("");
-}
-
 /**
- * A copy under ROOT/.ui-vocabulary/<name>: inside the checkout so the copy resolves this checkout's node_modules by
- * walking up (Turbopack refuses a node_modules symlink that leaves the project root), with the copy's
- * next.config.ts wrapping the real one to turn on browser source maps and point Turbopack's root at the checkout.
+ * A copy under ROOT/.ui-vocabulary/<name> (scripts/lib/checkout-copy.mjs): inside the checkout so the copy resolves
+ * this checkout's node_modules by walking up (Turbopack refuses a node_modules symlink that leaves the project root),
+ * with the copy's next.config.ts wrapping the real one to turn on browser source maps and point Turbopack's root at
+ * the checkout. The relabelling profile is stamped on the COPY, never on this checkout's profiles/, and the copy is
+ * removed on every way out (an error, `process.exit` from a failed step, SIGINT, SIGTERM), unless --keep.
  */
 function makeCopy(name) {
-  const dir = join(ROOT, ".ui-vocabulary", name);
-  rmSync(dir, { recursive: true, force: true });
-  for (const f of checkoutFiles()) {
-    if (f.startsWith(".ui-vocabulary/")) continue;
-    mkdirSync(dirname(join(dir, f)), { recursive: true });
-    cpSync(join(ROOT, f), join(dir, f));
-  }
+  const { dir } = temporaryCopy(ROOT, name, { keep: KEEP });
   if (PACK) {
     // A pack is applied the way .claude/scripts/packs.py applies one: its files/** copied over the tree.
     cpSync(join(PACK, "files"), dir, { recursive: true, filter: (src) => !src.includes("__pycache__") });
@@ -557,9 +545,8 @@ try {
     } else console.log("check-ui-vocabulary: --no-render: the rendered-DOM pass was skipped");
   }
 } finally {
-  if (!KEEP) rmSync(copy, { recursive: true, force: true });
+  if (!KEEP) removeCopy(ROOT, copyName);
   else console.log(`check-ui-vocabulary: the copy is kept at ${relative(ROOT, copy)}`);
-  if (!KEEP && existsSync(join(ROOT, ".ui-vocabulary")) && !readdirSync(join(ROOT, ".ui-vocabulary")).length) rmSync(join(ROOT, ".ui-vocabulary"), { recursive: true, force: true });
 }
 
 if (!PACK) {

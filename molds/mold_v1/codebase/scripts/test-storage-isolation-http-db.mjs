@@ -32,6 +32,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import postgres from "postgres";
 import { freePort, waitForNextStart } from "./lib/own-listener.mjs";
 
@@ -93,8 +94,10 @@ const { privateKey, publicKey } = await generateKeyPair("ES256", { extractable: 
 process.env.AUTH_JWT_PRIVATE_KEY = await exportPKCS8(privateKey);
 process.env.AUTH_JWT_PUBLIC_KEY = await exportSPKI(publicKey);
 const { mintSessionToken } = await import("../lib/auth-session.ts");
-/** The deployment's stored folder names (agent/lib/dataroom-folders.ts): paths are built from them. */
-const { FOLDER: F } = await import("../agent/lib/dataroom-folders.ts");
+/** The deployment's stored folder names (agent/lib/dataroom-folders.ts): paths are built from them. Read from the
+ *  build under test (--dir), whose profile may not be this checkout's (CI's is a copy stamped with the relabelling
+ *  profile, scripts/relabelled-build.mjs). */
+const { FOLDER: F } = await import(pathToFileURL(join(DIR, "agent/lib/dataroom-folders.ts")).href);
 const tokens = { [ALICE]: await mintSessionToken(ALICE), [BOB]: await mintSessionToken(BOB) };
 
 const port = await freePort();

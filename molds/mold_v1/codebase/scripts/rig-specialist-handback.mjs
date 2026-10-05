@@ -18,7 +18,7 @@
  * thread's history. Every time is `meta.at`, the timestamp eve stamps on the event as it writes it, so the number is
  * the server-side hand-back and owes nothing to when this script happened to look.
  *
- * SHAPES (default: single,question,two,stopped,answered)
+ * SHAPES (default: single,question,two,stopped,answered,apart,resume)
  *   single    one specialist, awaited. It answers; the main agent must continue.
  *   question  one specialist that asks the person a question; this script answers it; then as `single`.
  *   two       two specialists called in ONE step, one of which asks a question. While that one waits, the other's
@@ -34,6 +34,18 @@
  *             reason, and the working one left alone. (Then the main thread is stopped, to leave nothing running.)
  *   failed    one specialist whose model call fails every time (scripted model only): the main agent must receive
  *             the failure as that delegation's result and continue.
+ *   apart     (mold_v1-184) two independent pieces of work, one of which needs the PERSON's choice. eve hands a step's
+ *             specialists back together, so a specialist that asks the person mid-step holds every finished result
+ *             of that step until the person answers; the root's delegation rule (agent/prompt-*.md) is to still fan out
+ *             independent work, but get the person's answer or approval first, or run that specialist on its own.
+ *             This script plays a person who takes a while: a specialist's question is answered only after
+ *             --max-ms + 5 s (the main agent's own question at once). Pass when every specialist's result reached
+ *             the main agent within --max-ms of that specialist finishing, and the main agent finished a reply.
+ *             Scripted: the second specialist returns its question as its result instead of asking (`returns`).
+ *   resume    (mold_v1-184) as `stopped`, then the Control Panel's old "Resume": a message posted to the stopped
+ *             specialist's own session on its own token. eve would start an unrelated conversation with it; the
+ *             agent must refuse it (409, code specialist-session-not-addressable), start nothing, and send the main
+ *             thread nothing.
  *
  * TWO KINDS OF MODEL
  *   real      (default) a deployed app. The shapes are asked for in words; pass the specialists to use with
@@ -62,7 +74,7 @@ if (!BASE || !TOKEN) {
 const ORG = process.env.RIG_ORG ?? "";
 const HOST = process.env.RIG_HOST ?? "";
 const SCRIPTED = argv.includes("--scripted");
-const SHAPES = opt("shapes", SCRIPTED ? "single,question,two,stopped,answered,sibling,failed" : "single,question,two,stopped,answered").split(",").map((s) => s.trim()).filter(Boolean);
+const SHAPES = opt("shapes", SCRIPTED ? "single,question,two,stopped,answered,sibling,failed,apart,resume" : "single,question,two,stopped,answered,apart,resume").split(",").map((s) => s.trim()).filter(Boolean);
 const MAX_MS = Number(opt("max-ms", "15000"));
 const WORK_S = Number(opt("work-s", "240")); // how long a real specialist may take over its own work
 const SPECIALISTS = opt("specialists", SCRIPTED ? "research,customer-context" : "agent,agent").split(",").map((s) => s.trim());
@@ -257,6 +269,8 @@ const words = {
   two: `${PREAMBLE} In ONE step, make two delegations at the same time. First: ${tool(S1)} with the message 'Use no tools. Reply with exactly: CHILD-FAST'. Second: ${tool(S2)} with the message 'Before anything else, ask the person exactly one question with your ask_question tool: "Which fiscal year?" with the options FY25 and FY26. After the answer, use no other tools and reply with exactly: CHILD-YEAR followed by the answer.' When both have handed back, reply to me with exactly: PARENT-GOT followed by both replies.`,
   stopped: `${PREAMBLE} Call ${tool(S1)} once with this message: 'Use no tools. Write a 3000-word essay on the history of canal building, then end with the line CHILD-ESSAY-DONE.' When it hands back, reply to me with one short sentence saying what you received.`,
   answered: `${PREAMBLE} Call ${tool(S1)} once with this message: 'Before anything else, ask the person exactly one question with your ask_question tool: "Which fiscal year?" with the options FY25 and FY26. After the answer, use no other tools and write a 3000-word essay on the history of canal building.' When it hands back, reply to me with one short sentence saying what you received.`,
+  // Not the preamble: here the main agent is ALLOWED to ask, and how it arranges the work around the question is the test.
+  apart: `This is an automated check of delegation. I need two independent things. First, have ${tool(S1)} do this: 'Use no tools. Reply with exactly: CHILD-FAST'. Second, have ${tool(S2)} write a one-line greeting for our newsletter. Its tone, formal or casual, is my choice and must not be guessed: I will say which when asked. When you have both, reply to me with one short sentence containing both results.`,
   sibling: `${PREAMBLE} In ONE step, make two delegations at the same time. First: ${tool(S1)} with the message 'Use no tools. Write a 3000-word essay on the history of canal building.' Second: ${tool(S2)} with the message 'Use no tools. Write a 3000-word essay on the history of lighthouse building.' When both have handed back, reply to me with one short sentence.`,
 };
 const directed = {
@@ -267,7 +281,10 @@ const directed = {
   answered: `[[hb ${S1}:askslow=120000]]`,
   sibling: `[[hb ${S1}:slow=120000 ${S2}:slow=120000]]`,
   failed: `[[hb ${S1}:fail]]`,
+  apart: `[[hb ${S1}:fast ${S2}:returns]]`,
+  resume: `[[hb ${S1}:slow=120000]]`,
 };
+words.resume = words.stopped;
 const ask = (shape) => (SCRIPTED ? `rig ${shape} ${directed[shape]}` : words[shape]);
 
 /* ---- the shapes ------------------------------------------------------------------------------------------------ */
@@ -436,6 +453,92 @@ const shapes = {
     } finally {
       await request("POST", `/eve/v1/session/${parent.sessionId}/cancel`, {}); // leave nothing running
     }
+  },
+
+  async apart() {
+    const parent = await start(ask("apart"));
+    const answered = new Set();
+    const firstSeen = new Map(); // a specialist's request id → when this script first saw it
+    const deadline = Date.now() + WORK_S * 1000 + 60_000;
+    let events = [];
+    let reply = null;
+    for (;;) {
+      events = await history(parent.sessionId, 1_500);
+      const results = subagentResults(events);
+      const calls = events.filter((e) => e.type === "subagent.called");
+      // Done: every delegation is back and the main agent finished a reply after the last one.
+      if (calls.length > 0 && results.length >= calls.length) {
+        reply = replyAfter(events, events.lastIndexOf(results[results.length - 1]));
+        if (reply) break;
+      }
+      // Answer what is asked. The main agent's own question at once; a specialist's only after --max-ms + 5 s. eve
+      // copies a specialist's question onto the main thread unmarked; it is the specialist's when its request id is
+      // on that specialist's own stream.
+      const parked = events.filter((e) => e.type === "session.waiting").pop();
+      const childAsks = new Set();
+      for (const c of calls) {
+        for (const e of await history(c.data.childSessionId, 800)) {
+          if (e.type === "input.requested") for (const r of e.data?.requests ?? []) childAsks.add(r.requestId);
+        }
+      }
+      for (const e of events.filter((x) => x.type === "input.requested")) {
+        for (const r of e.data?.requests ?? []) {
+          if (answered.has(r.requestId)) continue;
+          if (!firstSeen.has(r.requestId)) firstSeen.set(r.requestId, Date.now());
+          if (childAsks.has(r.requestId) && Date.now() - firstSeen.get(r.requestId) < MAX_MS + 5_000) continue;
+          const res = await request("POST", `/eve/v1/session/${parent.sessionId}`, {
+            continuationToken: parked?.data?.continuationToken ?? parent.token,
+            inputResponses: [{ requestId: r.requestId, text: "casual", ...(r.options?.length ? { optionId: (r.options.find((o) => /casual/i.test(`${o.id} ${o.label}`)) ?? r.options[r.options.length - 1]).id } : {}) }],
+          });
+          if (res.status !== 200) fail(`apart: an answer was refused (${res.status} ${res.text.slice(0, 120)})`);
+          answered.add(r.requestId);
+        }
+      }
+      // A plain-text question from the main agent (no ask_question): answer it as a person would, once.
+      const last = events[events.length - 1];
+      if (last?.type === "session.waiting" && calls.length === 0 && !answered.has("text") && replyAfter(events, 0)) {
+        const res = await request("POST", `/eve/v1/session/${parent.sessionId}`, { continuationToken: last.data?.continuationToken ?? parent.token, message: "Casual." });
+        if (res.status !== 200) fail(`apart: the answer was refused (${res.status})`);
+        answered.add("text");
+      }
+      if (Date.now() >= deadline) fail(`apart: the main agent did not finish within ${WORK_S + 60} s; its stream ends ${events.slice(-3).map((e) => e.type).join(" → ")}`);
+      await sleep(1_000);
+    }
+    // Every result: how long after its specialist finished did it reach the main agent?
+    const calls = events.filter((e) => e.type === "subagent.called").map((e) => ({ callId: e.data.callId, name: e.data.name, child: e.data.childSessionId }));
+    assertOnce(events, calls, "apart");
+    const held = [];
+    for (const c of calls) {
+      const own = await history(c.child, 1_500);
+      const finished = own.find((e) => e.type === "session.completed" || e.type === "session.failed");
+      const got = subagentResults(events).find((e) => e.data.result.callId === c.callId);
+      held.push({ name: c.name, ms: at(got) - at(finished), asked: own.some((e) => e.type === "input.requested") });
+    }
+    const worst = held.reduce((a, b) => (b.ms > a.ms ? b : a));
+    if (worst.ms > MAX_MS) fail(`apart: the "${worst.name}" specialist's result waited ${worst.ms} ms after it finished before reaching the main agent (limit ${MAX_MS} ms) — held behind a question to the person (${held.map((h) => `${h.name}${h.asked ? " asked" : ""}`).join(", ")})`);
+    const steps = new Set(events.map((e, i) => (e.type === "subagent.called" ? events.slice(0, i).filter((x) => x.type === "step.started").length : null)).filter((n) => n !== null)).size;
+    return `${calls.length} delegation(s) in ${steps} step(s); no result held (worst ${worst.ms} ms, "${worst.name}"); ${held.some((h) => h.asked) ? "a specialist asked the person" : "no specialist asked the person mid-step"}; the main agent replied ${JSON.stringify(reply.text.slice(0, 70))}`;
+  },
+
+  async resume() {
+    const parent = await start(ask("resume"));
+    const called = await untilCalled(parent.sessionId, 1);
+    await read(called[0].child, { timeoutMs: 120_000, until: (e) => e.type === "step.started" || e.type === "reasoning.appended" || e.type === "message.appended" });
+    await sleep(1_500);
+    const told = await stopAndExpectTold("resume", parent, called[0]);
+    // What the old Resume sent: a message on the token the stopped specialist's session parks on.
+    const own = await history(called[0].child, 1_500);
+    const token = own.filter((e) => e.type === "session.waiting").pop()?.data?.continuationToken;
+    if (!token) fail("resume: the stopped specialist's stream carries no token to try (is this caller a viewer?)");
+    const before = (await history(parent.sessionId)).length;
+    const res = await request("POST", `/eve/v1/session/${called[0].child}`, { message: "Resume — continue the task from where you left off.", continuationToken: token });
+    if (res.status !== 409 || res.json?.code !== "specialist-session-not-addressable") {
+      fail(`resume: a message to the stopped specialist's own session answered ${res.status} ${JSON.stringify(res.json).slice(0, 160)}${res.json?.sessionId && res.json.sessionId !== called[0].child ? ` — eve started an unrelated session (${res.json.sessionId})` : ""}`);
+    }
+    await sleep(3_000);
+    if ((await history(parent.sessionId)).length !== before) fail("resume: the refused message still reached the main thread");
+    if ((await history(called[0].child, 1_500)).length !== own.length) fail("resume: the refused message still reached the specialist");
+    return `${told}; a message to the stopped specialist's own session was refused (409: ${String(res.json.error).slice(0, 70)}…), nothing started`;
   },
 
   async failed() {

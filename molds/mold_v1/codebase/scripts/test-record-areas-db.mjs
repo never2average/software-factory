@@ -252,13 +252,20 @@ try {
   // OTHER's company (the foreign key names both columns). Nothing may land under THIS workspace's account, and a row
   // stamped OTHER with no company of OTHER's to hang off is refused by the database.
   const FIXTURE = readJsonFixture(new URL("./fixtures/customers.fixture.json", import.meta.url)).customers[0];
+  // Each table's rows in an order of their own content. This read once ended `order by 1::text`, which sorts by a
+  // constant: the rows came back in whatever order the plan gave, and the planner moves between an index scan (key
+  // order) and a sequential scan (heap order) when autovacuum or autoanalyze refreshes the statistics after the
+  // 40-round races above. Then the same rows, same tuples, read in a new order and every comparison after it failed
+  // (mold_v1-179). No row of this workspace changes: its tuples kept their ctid and xmin.
   const mineNow = async () => {
     const out = {};
     for (const t of ["customers", "deployments", "implementation", "platform", "solutions", "tickets", "interactions"]) {
-      out[t] = await admin.unsafe(`select to_jsonb(x) - 'updated_at' as r from ${t} x where customer_id = $1 and org_id = $2 order by 1::text`, [CO, ORG]);
+      out[t] = (await admin.unsafe(`select (to_jsonb(x) - 'updated_at')::text as r from ${t} x where customer_id = $1 and org_id = $2 order by 1`, [CO, ORG])).map((row) => row.r);
     }
-    return JSON.stringify(out);
+    return out;
   };
+  /** The tables whose rows differ from `before`, or none. */
+  const changedSince = (before, now) => Object.keys(before).filter((t) => JSON.stringify(before[t]) !== JSON.stringify(now[t]));
   const orphans = async () =>
     (await admin.unsafe(`select count(*)::int as n from (
        select org_id, customer_id from deployments union all select org_id, customer_id from implementation
@@ -282,9 +289,10 @@ try {
       written = String(e?.message ?? e);
     }
     const theirs = typeof written === "object" && written !== null;
+    const changed = changedSince(mineBefore, await mineNow());
     check(`${area}: OTHER's write lands in OTHER's own company of this id, never under this workspace's account`,
-      (await mineNow()) === mineBefore && (await orphans()) === 0 && (!theirs || (written.name === CO && !JSON.stringify(written).includes("Areas Co"))),
-      { written: typeof written === "string" ? written.slice(0, 160) : written?.name, orphans: await orphans() });
+      changed.length === 0 && (await orphans()) === 0 && (!theirs || (written.name === CO && !JSON.stringify(written).includes("Areas Co"))),
+      { written: typeof written === "string" ? written.slice(0, 160) : written?.name, orphans: await orphans(), changed });
   }
   const { deployments: depTable } = await import("../agent/lib/db/schema.ts");
   const planted = await withOrgDb(OTHER, (tx) => tx.insert(depTable).values({ orgId: OTHER, customerId: `areas-none-${process.pid}`, deploymentId: "X", ...REQUIRED_DEP })).then(() => "inserted", (e) => e?.code ?? e?.cause?.code ?? String(e));

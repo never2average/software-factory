@@ -15,6 +15,7 @@ import { MessageResponse } from "@/components/ai-elements/message";
 import { RunStatusDot } from "./detail";
 import { CustomerMark } from "../customer-mark";
 import { authToken, linkInWorkspace, type WorkflowRunEvent } from "./lib";
+import { SESSION_DELEGATION_HEADER, canMessageSession, delegationFromHeader, refusalText } from "@/lib/specialist-run-actions";
 import { Chip } from "./primitives";
 import { SURFACE, TYPE } from "./tokens";
 
@@ -203,8 +204,13 @@ function eveAuth(): Record<string, string> {
  * mechanism the Control Panel uses to steer a chat subagent. Delivery only lands
  * at a pause point (an approval or the child's next boundary), so a message may
  * queue until then; a single-turn step can finish before it delivers.
+ *
+ * The row's session is often the SPECIALIST the step called, not the step's own, and a message to a delegated
+ * specialist's session can only be refused. So nothing is offered until the agent's stream has said this session is
+ * not a delegation (lib/specialist-run-actions.ts).
  */
 function WorkflowStepSteer({ sessionId }: { readonly sessionId: string }) {
+  const [delegated, setDelegated] = useState<boolean | undefined>(undefined);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -225,7 +231,7 @@ function WorkflowStepSteer({ sessionId }: { readonly sessionId: string }) {
         headers: { "content-type": "application/json", ...eveAuth() },
         body: JSON.stringify({ message, continuationToken }),
       });
-      setNote(res.ok ? "Guidance delivered — applies at the next step boundary." : `Steer failed (${res.status}).`);
+      setNote(res.ok ? "Guidance delivered — applies at the next step boundary." : await refusalText(res, `Steer failed (${res.status}).`));
     } catch {
       setNote("Steer failed (network).");
     } finally {
@@ -242,6 +248,7 @@ function WorkflowStepSteer({ sessionId }: { readonly sessionId: string }) {
           signal: ctrl.signal,
         });
         if (!res.ok || !res.body) return;
+        setDelegated(delegationFromHeader(res.headers.get(SESSION_DELEGATION_HEADER)));
         const reader = res.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -283,6 +290,7 @@ function WorkflowStepSteer({ sessionId }: { readonly sessionId: string }) {
     void deliver(m);
   };
 
+  if (!canMessageSession(delegated)) return null;
   return (
     <div className="mt-2 flex flex-col gap-1">
       <div className="flex items-center gap-1.5">

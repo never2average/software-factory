@@ -283,6 +283,26 @@ const create = async (token, message = "hello", headers = {}, via = channel) => 
   return { ...r, sessionId: r.json?.sessionId, ct: r.json?.continuationToken };
 };
 const stream = (id, token, via = channel) => call("GET", `/eve/v1/session/${encodeURIComponent(id)}/stream`, { token, via });
+/** The stream route's own Response (headers included), its body drained. */
+async function streamRaw(id, token) {
+  const path = `/eve/v1/session/${encodeURIComponent(id)}/stream`;
+  const hit = match("GET", path);
+  const request = new Request(`${HOST}${path}`, { method: "GET", headers: { authorization: `Bearer ${token}` } });
+  const res = await hit.route.handler(request, {
+    send,
+    cancel: async () => ({ status: "no_active_turn" }),
+    getSession: (sid) => handle(sid, ""),
+    receive: async () => {
+      throw new Error("not used");
+    },
+    params: hit.params,
+    waitUntil: () => {},
+    requestIp: null,
+    __eveRouteAgent: routeAgent,
+  });
+  await res.text();
+  return res;
+}
 const post = (id, token, body, via = channel) => call("POST", `/eve/v1/session/${encodeURIComponent(id)}`, { token, body, via });
 const cancel = (id, token, via = channel) => call("POST", `/eve/v1/session/${encodeURIComponent(id)}/cancel`, { token, body: {}, via });
 
@@ -581,6 +601,34 @@ try {
   check("the root's viewer reads the child (200) but may not steer it (404)", (await stream(C, T.vic)).status === 200 && (await post(C, T.vic, { message: "steer" })).status === 404);
   check("another workspace is refused (404)", (await stream(C, T.carol)).status === 404);
   check("the same workspace, not the owner, is refused (404)", (await stream(C, T.bob)).status === 404);
+  {
+    // mold_v1-184: the Control Panel's Resume posted a message to a stopped specialist with the token its session
+    // parks on. eve cannot deliver that to the specialist and starts an unrelated session (shown on the real runtime
+    // by scripts/test-specialist-batch.mjs; the in-memory eve above does the same). The agent refuses it instead.
+    const { SPECIALIST_MESSAGE_REFUSAL, SPECIALIST_MESSAGE_REFUSAL_CODE, SESSION_DELEGATION_HEADER } = await import("../lib/specialist-run-actions.ts");
+    // A panel offers a message, a steer or a Resume only to a session the agent says is not a delegation, by the same
+    // fact the refusal below is decided on: every stream the guard serves states it.
+    const childStream = await streamRaw(C, T.alice);
+    const rootStream = await streamRaw(S, T.alice);
+    check(
+      "the specialist's stream says it is a delegation (x-eve-session-delegation: 1); the main thread's says it is not (0)",
+      childStream.status === 200 && childStream.headers.get(SESSION_DELEGATION_HEADER) === "1" && rootStream.status === 200 && rootStream.headers.get(SESSION_DELEGATION_HEADER) === "0",
+      { child: childStream.headers.get(SESSION_DELEGATION_HEADER), root: rootStream.headers.get(SESSION_DELEGATION_HEADER) },
+    );
+    sessions.get(C).events.push({ type: "turn.cancelled", data: {} });
+    park(C);
+    const count = sessions.size;
+    const resume = await post(C, T.alice, { message: "Resume — continue the task from where you left off.", continuationToken: sessions.get(C).token });
+    check(
+      "the root's OWNER posting to the specialist's own session (the old Resume) is refused: 409, saying what to do instead",
+      resume.status === 409 && resume.json?.error === SPECIALIST_MESSAGE_REFUSAL && resume.json?.code === SPECIALIST_MESSAGE_REFUSAL_CODE,
+      { status: resume.status, json: resume.json },
+    );
+    check("…and nothing was started or delivered: no new session, nothing on the specialist's", sessions.size === count && sessions.get(C).delivered.length === 0);
+    const answer = await post(C, T.alice, { inputResponses: [{ requestId: "r1", optionId: "approve" }], continuationToken: sessions.get(C).token });
+    check("…an answer posted there is refused the same way (answers go through the main thread)", answer.status === 409 && sessions.size === count);
+    check("…while a stranger still learns nothing from it (404, not 409)", (await post(C, T.carol, { message: "x", continuationToken: sessions.get(C).token })).status === 404);
+  }
   // A delegation announced on a stream the caller may NOT read is never learned from their request.
   const ghostChild = newSession("subagent:ghost");
   sessions.get(s2.sessionId).events.push({ type: "subagent.called", data: { childSessionId: ghostChild, sessionId: s2.sessionId } });

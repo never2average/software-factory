@@ -12,6 +12,21 @@
  *  5. a click brings the app's tab forward on THAT chat (`open-chat` with its session), and with no tab open,
  *     opens the chat's own link.
  *
+ * NOTHING IS READ WHILE A NOTIFICATION IS BEING SHOWN (factory task mold_v1-186). Chromium's getNotifications()
+ * keeps a stored notification only if the platform already reports it as displayed or it was created after the call
+ * began, and DELETES every other one from its database (content/browser/notifications/
+ * platform_notification_context_impl.cc, DoReadAllNotificationDataForServiceWorkerRegistration). A read that starts
+ * after the worker wrote a notification but before the platform has it on display drops it for good: it stays on
+ * screen, and every later read lists nothing. This test polled getNotifications() every 100 ms while each push was
+ * being shown, and about one CI run in three lost a push that way ("title, preview and tag as sent — []", "Previews
+ * off", "another chat is still notified"), then waited 30 s for it. The app never reads its notifications while
+ * showing one (the only read is the test-only `open-notification` below), so no person was affected.
+ *
+ * So the served worker is the real sw.js behind a test-only prefix that reports, to every open tab, when its own
+ * showNotification() has resolved (`test:shown`) and when a push or page message it handled has finished
+ * (`test:handled`, after the event's waitUntil promise settles). The test waits on those, then reads once. No fixed
+ * pauses: whether a second, unwanted notification or message appeared is known once the handler has finished.
+ *
  * Run: npm run test:push-sw   (needs Chromium: npx playwright install chromium)
  */
 import { readFileSync } from "node:fs";
@@ -31,13 +46,38 @@ const check = (label, ok, detail) => {
   }
 };
 
-const SW = readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
+// The test-only prefix (see the header). It wraps the worker's own calls; it changes nothing the worker decides.
+const TEST_HOOK = `
+const __tellTabs = async (message) => {
+  for (const c of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) c.postMessage(message);
+};
+const __showNotification = self.registration.showNotification.bind(self.registration);
+self.registration.showNotification = (title, options) =>
+  __showNotification(title, options).then((r) => __tellTabs({ type: "test:shown", tag: options && options.tag }).then(() => r));
+const __addEventListener = self.addEventListener.bind(self);
+self.addEventListener = (type, listener, options) => {
+  if (type !== "push" && type !== "message") return __addEventListener(type, listener, options);
+  return __addEventListener(type, (event) => {
+    let key = null;
+    try { key = type === "push" ? (event.data ? event.data.json().tag : null) : (event.data && (event.data.tag || (event.data.payload && event.data.payload.tag))) || null; } catch {}
+    const kind = type === "push" ? "push" : (event.data && event.data.type) || "message";
+    const pending = [];
+    const waitUntil = event.waitUntil.bind(event);
+    event.waitUntil = (p) => { pending.push(Promise.resolve(p).catch(() => {})); waitUntil(p); };
+    listener(event);
+    waitUntil(Promise.all(pending).then(() => __tellTabs({ type: "test:handled", kind, key })));
+  }, options);
+};
+`;
+const SW = TEST_HOOK + readFileSync(new URL("../public/sw.js", import.meta.url), "utf8");
 const PAGE = `<!doctype html><title>push test</title><body>
 <script>
   window.__msgs = [];
+  window.__events = [];
   window.__viewing = null;
   navigator.serviceWorker.addEventListener("message", (e) => {
     const m = e.data || {};
+    if (m.type === "test:shown" || m.type === "test:handled") return void window.__events.push(m);
     window.__msgs.push(m);
     if (m.type === "which-chat") e.ports[0].postMessage({ sessionId: window.__viewing });
   });
@@ -76,16 +116,21 @@ try {
     page.evaluate(async () =>
       (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => ({ title: n.title, body: n.body, tag: n.tag, data: n.data })),
     );
+  /** How many times the worker has reported `type` (test:shown / test:handled) for `key`. */
+  const reported = (type, key, kind) =>
+    page.evaluate(([t, k, kd]) => window.__events.filter((e) => e.type === t && (t === "test:shown" ? e.tag === k : e.key === k && (!kd || e.kind === kd))).length, [type, key, kind]);
+  /** Wait until the worker has finished handling one more `kind` event for `key` than `before` (its waitUntil settled). */
+  const handled = async (kind, key, before) => {
+    await until(`the worker to finish the ${kind} for ${key}`, async () => (await reported("test:handled", key, kind)) > before);
+  };
   /**
-   * Deliver a push and wait for what it should do. A push that must be SHOWN is waited for by its tag (a busy
-   * runner can take longer than any fixed pause to wake the worker); the pause that follows only gives a second,
-   * unwanted notification time to appear. `{ shown: false }` is a push that must not be shown: there is nothing to
-   * wait for, so it is watched for the same pause.
+   * Deliver a push and wait until the worker has FINISHED with it (shown or decided not to). Only then is
+   * getNotifications() read: see the header for why a read during the show loses the notification.
    */
-  const pushed = async (payload, { shown: expected = true } = {}) => {
+  const pushed = async (payload) => {
+    const before = await reported("test:handled", payload.tag, "push");
     await cdp.send("ServiceWorker.deliverPushMessage", { origin: ORIGIN, registrationId, data: JSON.stringify(payload) });
-    if (expected) await until(`the push ${payload.tag} to be shown`, async () => (await shown()).some((n) => n.tag === payload.tag)).catch(() => {});
-    await page.waitForTimeout(700);
+    await handled("push", payload.tag, before);
   };
   const clear = () => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).forEach((n) => n.close()));
 
@@ -104,8 +149,9 @@ try {
 
   console.log("\n3. One event, one notification:");
   await pushed(reply);
+  const showsBefore = await reported("test:handled", reply.tag, "show");
   await page.evaluate(async (p) => (await navigator.serviceWorker.ready).active.postMessage({ type: "show", payload: p }), reply);
-  await page.waitForTimeout(500);
+  await handled("show", reply.tag, showsBefore);
   list = await shown();
   check("a re-sent push and a hidden tab's own notice for the same event are ONE notification", list.filter((n) => n.tag === reply.tag).length === 1, list.map((n) => n.tag));
 
@@ -114,8 +160,9 @@ try {
   await page.bringToFront();
   const focused = await page.evaluate(() => document.visibilityState === "visible" && document.hasFocus());
   await page.evaluate(() => (window.__viewing = "wrun_9"));
-  // Shown or not depends on whether headless Chromium reports the tab as focused (both arms below): watch, do not wait.
-  await pushed({ v: 1, kind: "reply", title: "On screen", body: "…", tag: "wrun_9:turn_1:reply", url: "/?chatSession=wrun_9", sessionId: "wrun_9" }, { shown: false });
+  // Shown or not depends on whether headless Chromium reports the tab as focused (both arms below); either way the
+  // worker reports when it has finished deciding.
+  await pushed({ v: 1, kind: "reply", title: "On screen", body: "…", tag: "wrun_9:turn_1:reply", url: "/?chatSession=wrun_9", sessionId: "wrun_9" });
   list = await shown();
   const asked = await page.evaluate(() => window.__msgs.filter((m) => m.type === "which-chat").length);
   if (focused && asked > 0) {
@@ -130,9 +177,11 @@ try {
 
   console.log("\n5. A click opens that chat:");
   await page.evaluate(() => (window.__msgs = []));
+  const opensBefore = await reported("test:handled", "wrun_8:turn_1:reply", "open-notification");
   await page.evaluate(async () => (await navigator.serviceWorker.ready).active.postMessage({ type: "open-notification", tag: "wrun_8:turn_1:reply" }));
-  await until("the open tab to be told to open the chat", () => page.evaluate(() => window.__msgs.some((m) => m.type === "open-chat"))).catch(() => {});
-  await page.waitForTimeout(300); // a second, unwanted message would show here
+  // The worker posts open-chat before it reports the message handled, to the same tab, so both are here now (and a
+  // second, unwanted open-chat would be too).
+  await handled("open-notification", "wrun_8:turn_1:reply", opensBefore);
   const opened = await page.evaluate(() => window.__msgs.filter((m) => m.type === "open-chat"));
   check("the app's open tab is told to open THAT chat", opened.length === 1 && opened[0].sessionId === "wrun_8" && opened[0].url === `${ORIGIN}/?chatSession=wrun_8`, opened);
   check("…and the clicked notification is closed", !(await shown()).some((n) => n.tag === "wrun_8:turn_1:reply"));

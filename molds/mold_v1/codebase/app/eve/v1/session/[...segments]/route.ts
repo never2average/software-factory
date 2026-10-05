@@ -4,6 +4,7 @@ import { rightFor } from "@/lib/chat-gate";
 import { agentUrlFallback } from "@/lib/agent-url";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { ORG_HEADER, isWorkspaceRefusal, resolveOrgForIdentity, workspaceRefusedResponse } from "@/lib/org-context";
+import { SESSION_DELEGATION_HEADER } from "@/lib/specialist-run-actions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -167,7 +168,9 @@ async function proxy(request: NextRequest, segments: string[]): Promise<Response
   // live tail, and reading it into memory here would hold the whole answer back
   // until the turn ended, turning a streaming chat into a long silence.
   const headers = new Headers();
-  for (const name of ["content-type", "x-eve-session-id"]) {
+  // x-eve-session-delegation: the agent's word on whether this session is a delegation, which decides whether a panel
+  // may offer to message it (lib/specialist-run-actions.ts).
+  for (const name of ["content-type", "x-eve-session-id", SESSION_DELEGATION_HEADER]) {
     const value = upstream.headers.get(name);
     if (value) headers.set(name, value);
   }

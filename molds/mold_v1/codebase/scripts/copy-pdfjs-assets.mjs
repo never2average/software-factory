@@ -12,14 +12,20 @@
  * installed version, made by `prebuild` / `predev`, so it can never drift from
  * the library that reads it.
  */
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
 
-const from = "node_modules/pdfjs-dist";
-const to = "public/pdfjs";
-if (!existsSync(from)) {
+// Found the way Node finds it (walking up from this script), not at ./node_modules: a copy of the checkout under
+// .ui-vocabulary/ (scripts/relabelled-build.mjs) has no node_modules of its own and uses the checkout's.
+let from;
+try {
+  from = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+} catch {
   console.error("copy-pdfjs-assets: pdfjs-dist is not installed");
   process.exit(1);
 }
+const to = "public/pdfjs";
 rmSync(to, { recursive: true, force: true });
 mkdirSync(to, { recursive: true });
 for (const dir of ["wasm", "cmaps", "standard_fonts", "iccs"]) {

@@ -18,10 +18,103 @@ the specialist's last event to its result on the main thread.
 | One specialist finishes | its result | within seconds |
 | One specialist fails | the failure, as that delegation's result | within seconds |
 | A specialist asks a question or needs an approval | nothing yet: it is waiting for the person | when the person answers and it finishes |
-| Two called together, one finishes first | nothing yet: the finished result is **held** | when the other is back too, both together |
+| Two called together, one finishes first | nothing yet: the finished result is **held** | when the other is back too, both together ([below](#called-together)) |
 | A specialist is stopped on its own | a plain note: it was stopped, no result | within seconds (this repo, below) |
 
 "Held" is eve's design, not a loss: a model that called two tools needs both results before its next step.
+
+## Called together
+
+When the main agent calls two specialists in one step, eve resumes it only when both are back. A finished result
+waits for its sibling: 6 minutes measured while a sibling worked, and for as long as nobody answers when the sibling
+asks the person a question or for an approval. Read in eve 0.25.1 and run on its real runtime
+(`npm run test:specialist-batch`), this is what can and cannot be done about it.
+
+**eve has no mode that resumes on each result.** A step's delegations are one batch
+(`setPendingRuntimeActionBatch`, harness/runtime-actions.js). The waiting turn loops in `waitForRuntimeActionResults`
+(execution/turn-workflow.js) until `resolveRuntimeActionResultsForKeys` finds a result for EVERY key, and only then
+is the model called again (`resolvePendingRuntimeActions` returns `unresolved` otherwise). Each child resumes the
+turn's inbox hook (`<completion token>:inbox`) with its own result from `notifyDelegatedParentStep`, so results do
+arrive one at a time; nothing in eve hands an incomplete batch to the model. No agent setting, tool option or
+`experimental` flag changes this (`docs/subagents.mdx`: "eve runs the batch concurrently and returns every result
+before the root continues"; the experimental `Workflow` tool is the same barrier, run as one step).
+
+**The app cannot deliver a finished result early without a duplicate or a loss.** Two ways were examined:
+
+- *A message to the main thread while it waits* (the system-attributed hand-back #114 uses). eve accepts it (200),
+  emits nothing, and keeps it: the session driver buffers deliveries during a turn (`TurnControlReceiver`), and the
+  only delivery a waiting turn takes is routed to the children by request id (`routeDeliverPayload`; a plain message
+  is "for self" and buffered). It runs as a turn of its own after eve has delivered the batch. Measured: the note
+  reached the main agent AFTER both results and after its reply on them. So the result would reach it twice, and no
+  sooner.
+- *Ending the waiting turn, then telling it* (what #114 does for a stopped specialist). Cancelling the turn cancels
+  every child still at work (`cancelDescendantTurnsStep`), and settling it clears the turn's pending delegations and
+  every proxied question (`settleCancelledTurnStep`). A sibling waiting on the person is left parked on a token
+  nothing can address, its question gone from the main thread: the person's work is lost. That is why a lone Stop
+  is refused while a sibling is live, and it is the same here.
+
+**What this repo does instead: it avoids the shape.** The root agent's delegation rule (`delegate-rules` in
+`agent/prompt-neutral.md` and `agent/prompt-persona.md`) still says to fan out independent work, and now adds:
+"Specialists called in one step return together, so if one will need the person's answer or an approval, get that
+first or run that specialist on its own." A specialist told in its brief to return a question instead of asking holds
+nothing either; on the real runtime such a batch handed a finished result to the main agent 0.8 s after its
+specialist finished. To make room, five passages of `agent/prompt-core.md` were reworded without dropping a rule, and
+the stable prompt is at 1,311 of its 1,400 words (`test:prompt-context`; `test:specialist-batch` holds it at 1,350 or
+less). This is guidance to the model, not a guarantee: a model can still batch a specialist that asks. The `apart` rig shape (below) measures what a deployed model actually does. Everything
+#114 established is unchanged (no new message is sent, no new record is kept).
+
+### Proposal: per-result delegation in eve (not filed)
+
+The smallest change upstream that would remove the wait, for a maintainer to judge. Nothing was filed.
+
+1. **An opt-in setting.** `defineAgent({ subagents: { batch: "all" | "detach" } })`, default `"all"` (today).
+2. **Detach the rest when the batch would wait on a person.** In `waitForRuntimeActionResults`, under `"detach"`,
+   when at least one result is in and a still-pending child has a proxied input request (the session's
+   `hasProxyInputRequests`), resolve the batch with the results that are in plus, for each delegation still out, a
+   synthetic `subagent-result` `{ status: "running", childSessionId }` the model reads as "this one reports later".
+   Record those as `eve.runtime.detachedDelegations` (callId, name, childSessionId) in the session state.
+   (Optionally also after `detachAfterMs`, for a sibling that is merely slow.)
+3. **Give a detached child a way home.** At dispatch, add the parent SESSION's delivery token to the subagent adapter
+   state beside `parentContinuationToken`. In `notifyDelegatedParentStep`, when the callId is detached (or the inbox
+   hook is gone), resume the session's delivery hook with a new payload `{ delegationResult }`, which the session
+   driver turns into the next turn's input as a TOOL-role message (never user-role), and removes from
+   `detachedDelegations`: once per child, through the durable queue.
+4. **Keep the person's question routable.** Wherever a turn's end clears proxied input requests
+   (`settleCancelledTurnStep` clears all of them today), keep those whose child is detached, and let the session
+   driver route an `inputResponses` delivery to a child between turns as the waiting turn does now
+   (`routeProxiedDeliverStep`), so the person's answer still reaches it. `cancelDescendantTurnsStep` cancels detached
+   children too, so stopping the main thread stops them.
+
+With that in eve, this repo would set `batch: "detach"`, and the rule above could relax to "approval work alone".
+
+## Resume on a stopped specialist
+
+The Control Panel offered "Resume" on a stopped specialist. It posted a message to the specialist's own session with
+the token that session parks on. On the real runtime (`npm run test:specialist-batch`): that token is the one eve
+mints for the delegation, `<main thread>:<call id>`; eve's HTTP channel namespaces every token it is given, so it
+matches no session, and eve answered 200 and started a NEW conversation that began with "Resume — continue the task…"
+and no context. The specialist and the main thread received nothing.
+
+**Resume is not offered for a specialist the main agent called, and the panel says what to do instead.** Continuing
+it within its parent's turn is not possible in eve's model: a specialist hands back only into the inbox of the turn
+that called it, and by the time it is stopped that turn has been ended (by the hand-back above, which also told the
+main agent "stopped, no result", or by the person stopping the main thread), and eve's settle of an ended turn
+clears its pending delegations. A result produced afterwards would reach nobody and contradict what the main agent
+was told. So for a stopped specialist the Control Panel shows: "Stopped. A specialist cannot be resumed on its own …
+ask the main agent in the chat to run it again." (`lib/specialist-run-actions.ts`). Stop stays beside it while the
+panel still counts the turn active, because pressing Stop again is how a hand-back that could not be delivered is
+retried. Resume stays for a workflow step's own session, which a message on its token does continue (shown on the
+same runtime).
+
+The agent enforces it too: a message posted to a delegated specialist's own session is answered **409** with
+`code: "specialist-session-not-addressable"` and the same advice, before anything is started
+(`agent/lib/session-guard.ts`). And so that no panel offers such a message in the first place, every stream the guard
+serves says whether its session is a delegation (`x-eve-session-delegation: 1` or `0`, from the same lineage record),
+and the web app's /eve proxy passes it through. The Control Panel's steer box and Resume, and the run timeline's step
+steer, are offered only when it says `0`. A workflow step's row usually opens the specialist the step called, so the
+journal alone cannot decide this. Where a refusal can still happen, the panel shows the agent's own text, never a
+bare status code. An answer to a specialist's question still goes through the main thread, as the chat
+sends it. A stranger still gets the plain 404.
 
 ## What this repo adds around that rule
 
@@ -78,6 +171,11 @@ RIG_BASE=https://<the app> RIG_TOKEN=<a signed-in session token> [RIG_ORG=<works
   node scripts/rig-specialist-handback.mjs --shapes single,question,two,stopped
 ```
 
+`apart` and `resume` are the two added for mold_v1-184: `apart` asks for two independent pieces of work, one of
+which needs the person's choice, plays a person who answers a specialist's question only after `--max-ms` + 5 s, and
+fails if any specialist's result waited longer than `--max-ms` after it finished; `resume` stops a specialist and then
+sends the old Resume, which must be refused (409) with nothing started.
+
 It starts one test chat per shape, closes its read of the main thread as soon as the specialist is called, follows
 the specialist to its end, and then reads what the main thread did on its own. It exits 0 only if, in every shape,
 the main agent received the result (or the plain failure) and finished a reply within `--max-ms` (default 15000) of
@@ -90,8 +188,14 @@ The same script runs against `eve dev` with a scripted model (`--scripted`,
 demand: `sibling` (a lone stop refused while another specialist works) and `failed`.
 
 `npm run test:specialist-handback` runs the same rules offline, over streams recorded from the live runtime.
+`npm run test:specialist-batch` runs a two-specialist app on the real eve runtime (eve dev, a scripted model,
+in-process sandboxes) and shows the batch rule, why an early message duplicates, and the Resume defect and fix.
 
 ## Deploying and rolling back
+
+**mold_v1-184 adds nothing to deploy:** no table, no migration, no new message sent to any session, and nothing new
+recorded per session. It changes the root agent's system prompt (the delegation rule), one HTTP answer (a message to
+a delegated specialist's own session is now 409 instead of a new, unrelated session), and the Control Panel.
 
 **Before the agent:** apply `drizzle/0031_specialist_handbacks.sql` (`npm run db:migrate:production`). It adds one
 table and nothing else. Without it a Stop on a specialist still stops it and is reported as `not-delivered`.

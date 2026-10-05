@@ -34,6 +34,16 @@ jobs:
       - name: Install
         run: npm ci
 
+      # A checkout another job (or a local run) stamped with another deployment profile fails here, by name, before
+      # anything builds from it (mold_v1-188). Every job also runs this last.
+      - name: Checkout matches the commit (profiles/, generated files)
+        run: npm run check:checkout-clean
+
+      # The copy those profile-stamping checks build in is removed on every way out (pass, fail, process.exit,
+      # SIGINT, SIGTERM), and the guard above fails on a profile or generated file left behind.
+      - name: Stamped copies leave nothing behind (every exit path; the guard both ways)
+        run: npm run test:checkout-copy
+
       # Generated artifacts must match their sources. Every one of these is
       # committed AND derived, so a source edit without a regenerate ships
       # yesterday's output — silently. subagent-meta had drifted 146 lines,
@@ -414,6 +424,15 @@ jobs:
       - name: A specialist's result reaches the main agent (behavioural)
         if: always()
         run: npm run test:specialist-handback
+
+      # On the REAL eve runtime (`eve dev` of a two-specialist app written to a temp dir, a scripted model, eve's
+      # in-process just-bash sandbox; no provider, no VM, about 30 s): eve hands a step's specialists back together,
+      # a message sent to the main thread meanwhile runs only after that (so an early hand-back would be a duplicate),
+      # and the delegation rule's shape holds nothing. And the Control Panel's old Resume on a stopped specialist:
+      # eve answered 200 and started an unrelated session; the panel no longer offers it (mold_v1-184).
+      - name: Specialists called together, and Resume on a stopped one (real eve runtime)
+        if: always()
+        run: npm run test:specialist-batch
 
       # A parked approval survives a reload on purpose; one whose run has ENDED
       # must not, or it comes back as a live prompt and wedges the composer on a
@@ -797,6 +816,12 @@ jobs:
         if: always()
         run: npm run test:off-vercel-defaults
 
+      # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
+      # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
+
   # WHAT A PERSON READS, in its own job: it copies the checkout, stamps the copy with a relabelling profile and runs
   # its OWN `next build` and `next start`, so it uses nothing the verify job builds. It was the longest step of
   # verify (3 minutes of 13.5, against a 15-minute limit; run 37211119371) and waits on nothing there, so it runs
@@ -850,6 +875,12 @@ jobs:
         if: always()
         run: npx playwright test tests/cards.spec.ts
 
+      # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
+      # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
+
   # EVERY sandbox takes the SANDBOX_* settings off Vercel, through the REAL `eve build`. On the first self-hosted
   # server only the two definitions that named the settings had them: the other specialists, and all four of a
   # pack's, built on eve's default microsandbox (1 vCPU, allow-all egress) and the second template hung for 1h50m.
@@ -874,6 +905,12 @@ jobs:
 
       - name: Every sandbox takes the SANDBOX_* settings (real eve build; unset is eve's own choice)
         run: npm run test:sandbox-coverage
+
+      # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
+      # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
 
   # The most important test in the repo: it proves one tenant cannot read or
   # write another's rows. It needs a real Postgres, which is why it sat outside
@@ -900,6 +937,8 @@ jobs:
           --health-retries 10
     env:
       ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/workspace_test
+      # Where scripts/relabelled-build.mjs makes the relabelling-profile build the HTTP checks run against.
+      RELABELLED_BUILD: ${{ github.workspace }}/.ui-vocabulary/relabelled-build
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -1175,12 +1214,15 @@ jobs:
       # (hfc-research) profile, so its 26 hidden account fields are what is asserted absent.
       - name: Data room workbook route, against a fail-closed Postgres (relabelling profile build)
         if: always()
+        # The relabelled build is made in a copy (scripts/relabelled-build.mjs, .ui-vocabulary/relabelled-build), never
+        # here: this step used to copy the profile into profiles/ and build in the checkout, leaving both behind
+        # (mold_v1-188). The HTTP checks below reuse it with --dir; the job's last steps remove it and check the
+        # checkout is the commit.
         run: |
-          cp scripts/fixtures/agent-vocabulary/50-relabelled.json profiles/
-          npm run build
+          npm run build:relabelled
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
-          npm run test:workbook-route-db
+          npm run test:workbook-route-db -- --dir "$RELABELLED_BUILD"
 
       # THE WORKSPACE SWITCHER'S COUNTS. lib/workspace-attention.ts counted every workspace at once on the bare
       # handle, so under the fail-closed policy every count was 0. Seeds known numbers in two workspaces, flips the
@@ -1269,7 +1311,7 @@ jobs:
         run: |
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
-          npm run test:storage-isolation-http-db
+          npm run test:storage-isolation-http-db -- --dir "$RELABELLED_BUILD"
 
       # THE CHAT QUEUE MOVED TO THE SERVER (closing a tab no longer loses a queued message), and the devices people
       # asked to be notified on. Database facts only: that both tables are owner-only AND workspace-scoped (the
@@ -1290,7 +1332,7 @@ jobs:
         run: |
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
-          npm run test:deployment-upsert-db
+          npm run test:deployment-upsert-db -- --dir "$RELABELLED_BUILD"
 
       # The same over HTTP (reuses the relabelling build above): the Ops API, the workbook route, the export and the
       # hosted MCP endpoint, for one person in two workspaces that both hold `aditya-birla-hfl`.
@@ -1299,7 +1341,7 @@ jobs:
         run: |
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
-          npm run test:shared-company-id-http-db
+          npm run test:shared-company-id-http-db -- --dir "$RELABELLED_BUILD"
 
       # A NAMED WORKSPACE IS NEVER SWAPPED FOR ANOTHER (found live, 2026-10-02): `x-ops-org` / `?org=` was "a
       # preference", so a request naming a workspace the caller was not in — or one that did not exist — was answered
@@ -1313,7 +1355,17 @@ jobs:
         run: |
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
-          npm run test:named-workspace-http-db
+          npm run test:named-workspace-http-db -- --dir "$RELABELLED_BUILD"
+
+      - name: Remove the relabelled build's copy
+        if: always()
+        run: npm run clean:relabelled
+
+      # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
+      # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
 
 # NOT RUN HERE, deliberately:
 #

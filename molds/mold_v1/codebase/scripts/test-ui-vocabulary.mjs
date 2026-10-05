@@ -20,11 +20,11 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { register } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { scratchDir } from "./lib/checkout-copy.mjs";
 
 // The web app's `@/` alias and extensionless imports, and Next's `server-only` guard (a no-op outside a client
 // bundle), so a server module such as lib/org-seed.ts loads here as it does in a route.
@@ -645,7 +645,8 @@ async function recordLiterals() {
 /** 8: gen-deployment-profile while an eve build moves the excluded specialists aside and back. */
 async function concurrentBuild() {
   console.log("\nprofile generator during an eve build (8):");
-  const dir = mkdtempSync(join(tmpdir(), "ui-vocab-race-"));
+  // Removed on every way out, SIGINT and SIGTERM included (mold_v1-188).
+  const { dir, remove } = scratchDir("ui-vocab-race-");
   try {
     for (const e of ["scripts", "profiles", "lib", "agent"]) cpSync(join(ROOT, e), join(dir, e), { recursive: true, filter: (s) => !s.includes("__pycache__") });
     cpSync(FIXTURE, join(dir, "profiles/50-relabelled.json"));
@@ -670,7 +671,7 @@ async function concurrentBuild() {
     }
     await check(`8 no run of ${runs} refuses an excluded specialist a build has moved aside (failures: ${failures})`, () => assert.equal(failures, 0));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    remove();
   }
 }
 
@@ -684,7 +685,7 @@ if (STAMPED) {
   // STAMPED: a copy stamped with a fixture profile, this file re-run inside it. The relabelled fixture runs every
   // relabelled check and the record checks; the neutral-records fixture the record checks alone.
   for (const [fixture, flags] of [[FIXTURE, []], [NEUTRAL_FIXTURE, ["--records-only"]]]) {
-    const dir = mkdtempSync(join(tmpdir(), "ui-vocab-stamped-"));
+    const { dir, remove } = scratchDir("ui-vocab-stamped-");
     try {
       for (const e of ["agent", "lib", "data", "scripts", "library", "profiles", "package.json", "dm.md", "docs"]) if (existsSync(join(ROOT, e))) cpSync(join(ROOT, e), join(dir, e), { recursive: true, filter: (s) => !s.includes("__pycache__") });
       mkdirSync(join(dir, "app/_components"), { recursive: true });
@@ -700,7 +701,7 @@ if (STAMPED) {
       const r = spawnSync(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "scripts/test-ui-vocabulary.mjs", "--stamped", ...flags], { cwd: dir, encoding: "utf8", stdio: "inherit" });
       if (r.status !== 0) process.exitCode = 1;
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      remove();
     }
   }
   await concurrentBuild();

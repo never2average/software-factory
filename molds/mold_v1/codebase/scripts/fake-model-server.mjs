@@ -65,7 +65,9 @@
  *                      STEP, each with the message `HBMODE:<mode>`, and once all have handed back
  *                      answers `PARENT-DONE: <their results>`. A specialist's mode is `fast` (answers
  *                      at once), `slow=<ms>` (answers after that long), `ask` (asks a question first),
- *                      `askslow=<ms>` (asks, then works that long after the answer)
+ *                      `askslow=<ms>` (asks, then works that long after the answer), `returns` (needs the
+ *                      person's decision but RETURNS the question as its result instead of asking, so the batch it
+ *                      was called in holds nothing)
  *                      or `fail` (its model call is refused with a 500 every time, so the session
  *                      fails). A root that receives the system's automatic hand-back (a stopped
  *                      specialist, agent/lib/specialist-handback.ts) answers `PARENT-TOLD: …` naming
@@ -168,6 +170,9 @@ function decideHandback(messages) {
     const mode = /HBMODE:([a-z]+)(?:=(\d+))?/.exec(messages.map((m) => textOf(m.content)).join("\n"));
     const kind = mode?.[1] ?? "fast";
     if (kind === "fail") return { fail: true };
+    // `returns`: a specialist called alongside others that needs the person's decision stops and RETURNS the question as
+    // its result instead of asking, so the batch it was called in holds nothing.
+    if (kind === "returns") return { text: `CHILD-QUESTION ${child}: Which fiscal year should I use? (work so far: the figures for FY25 and FY26 are both ready)` };
     if ((kind === "ask" || kind === "askslow") && !childAlreadyAsked(messages)) {
       return { tool: "ask_question", args: { prompt: "Which fiscal year should I use?", options: [{ id: "fy26", label: "FY26" }], allowFreeform: true } };
     }

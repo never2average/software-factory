@@ -51,7 +51,8 @@ check("...with a command that works whether or not the image manages python pack
 check("...and it is scoped to READING a file, not only to building one", /READING an uploaded file/i.test(instr));
 check(
   "the rule sits outside the deliverable section, so any bash use reaches it",
-  instr.indexOf("missing library never ends a task") < instr.indexOf("Two hard rules"),
+  // (The publish rules after it were one "Two hard rules" list until mold_v1-184 merged them into one paragraph.)
+  instr.indexOf("missing library never ends a task") < instr.indexOf("give the user a `/workspace/...` path, and never ask"),
 );
 
 console.log(`\nsandbox libraries and recovery: ${passed}/${passed} checks passed`);

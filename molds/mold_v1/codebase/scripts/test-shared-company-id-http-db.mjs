@@ -129,7 +129,9 @@ const mcp = async (org, name, args = {}) => {
 const rowOf = async (table, org, extra = "") => (await admin.unsafe(`select * from ${table} where customer_id = $1 and org_id = $2 ${extra}`, [ID, org]));
 const snapshot = async (org) => {
   const out = {};
-  for (const t of ["customers", ...CHILDREN]) out[t] = await admin.unsafe(`select to_jsonb(x) - 'updated_at' as r from ${t} x where customer_id = $1 and org_id = $2 order by 1::text`, [ID, org]);
+  // Ordered by each row's own text: `order by 1::text` sorted by a constant, so the order followed the plan (see
+  // scripts/test-record-areas-db.mjs, mold_v1-179).
+  for (const t of ["customers", ...CHILDREN]) out[t] = (await admin.unsafe(`select (to_jsonb(x) - 'updated_at')::text as r from ${t} x where customer_id = $1 and org_id = $2 order by 1`, [ID, org])).map((row) => row.r);
   return JSON.stringify(out);
 };
 

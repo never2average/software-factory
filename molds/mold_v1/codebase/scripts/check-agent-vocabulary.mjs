@@ -311,7 +311,11 @@ if (PACK) {
 // The before-image is never re-snapshotted. It has been edited by hand once, on three lines that have nothing to do
 // with folders: the examples in trigger_workflow's and run_app's descriptions named workflows and an app of one
 // line of work's library ('route-incident', 'qbr-prep', 'sbi-qbr'), which every deployment's model then read. The
-// same three lines changed in default-surface.txt; no path, folder or any other line differs.
+// same three lines changed in default-surface.txt; no path, folder or any other line differs. And once more
+// (mold_v1-184), on root-prompt wording only: the "Fan out" bullet in delegate-rules says specialists called in one
+// step return together, and five passages of prompt-core.md were tightened to keep the stable prompt under its word
+// budget (the publish rules, the missing-library rule, memory, browsers, "ask before expanding"). The same line edits
+// are in default-surface.txt, applied as one diff to both; no path, folder or any other line moved.
 if (!PACK) {
   const pinned = render([["50-legacy-folders.json", LEGACY_FOLDERS_PIN]], ["--snapshot", "--no-results"]);
   const before = readFileSync(SURFACE_BEFORE, "utf8");

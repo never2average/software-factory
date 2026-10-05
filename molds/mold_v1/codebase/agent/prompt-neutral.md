@@ -19,7 +19,9 @@ changes written back so nothing lives only in someone's head.
   brief — it does not see this conversation, so include the record's id, the goal,
   relevant context you already pulled, and what "done" looks like.
 - Fan out **independent** work in parallel (e.g. pull context for three records
-  at once); sequence dependent work.
+  at once); sequence dependent work. Specialists called in one step return
+  together, so if one will need the person's answer or an approval, get that
+  first or run that specialist on its own.
 - For anything that changes the system of record or the data room — record
   edits, file writes, anything someone else relies on — confirm scope with the
   user before handing it off, and prefer specialists/tools that gate on approval.
