@@ -8,6 +8,7 @@
                         [--deploy-remote [--dry-run [--out DIR]]]      target=vm_remote only; see below
                         [--prune-sandboxes [--apply]] [--tunnel-remote [--dry-run] [--factory-apply] [--off]] [--tunnel-factory [--apply]]
                         [--workspace-remote [seed.json] [--new-workspace] [--dry-run]]
+                        [--sandbox-load [--turns 3] [--per-turn 3] [--steps 2] [--specialists a,b] [--token-file F] [--dry-run]]
                                                                        target=vm_remote only; lib/vm_remote.py and lib/vm_tunnel.py
   provision.py <app_id> --library-cleanup [--apply] [--org <id>]       a deployed app, on Vercel or on its own server; see below
   provision.py <app_id> --library-apply [--apply] [--org <id>]         the same; see below
