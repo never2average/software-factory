@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""library.py <app_id> show | apply | cleanup [--apply] [--org <id>]   |   --self-test
+"""library.py <app_id> show | build | apply [--apply] [--org <id>] | cleanup [--apply] [--org <id>]   |   --self-test
 
 The starter library of an application: the workflows and onboarding recipes every NEW workspace is given.
 
@@ -12,8 +12,11 @@ which it wants in state (application.json, surface.custom_workflow_builder.libra
   "all"                   the account-delivery library
 
   show      what state says and what the build copy under build/<app_id>/ was built with
-  apply     put state's choice into build/<app_id>/ and regenerate (packs.py apply and branding.py prepare do this
+  build     put state's choice into build/<app_id>/ and regenerate (packs.py apply and branding.py prepare do this
             themselves; this is the same step on its own)
+  apply     the same as `provision.py <app_id> --library-apply [--apply] [--org <id>]`: per workspace that ALREADY
+            exists, the starter apps of the running build's library it does not have yet: what would be added, what is
+            left alone and why. A DRY RUN unless --apply is given; --apply adds only what the dry run listed.
   cleanup   the same as `provision.py <app_id> --library-cleanup [--apply] [--org <id>]`: per workspace, the rows an
             earlier build left behind that this app does not use: what would be removed, what is kept and why.
             A DRY RUN unless --apply is given. Only rows nobody edited, ran or built on are ever removed.
@@ -36,6 +39,7 @@ GENERATED = "agent/lib/workflow-library.generated.ts"
 PROFILE_AWARE = "scripts/lib/profile-library.mjs"          # a mold that has this reads its library from the profile
 GENERATORS = ("scripts/build-workflow-library.mjs", "scripts/gen-deployment-profile.mjs")   # in the order npm run build:generated runs them
 CLEANUP_SCRIPT = "scripts/operator/library-cleanup.mjs"
+APPLY_SCRIPT = "scripts/operator/library-apply.mjs"         # fde-agent #115: starter apps for workspaces that already exist
 ORG_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
 LISTED = ('surface.custom_workflow_builder.library.install is "listed", which no longer exists: the library is all or nothing. '
           'Write "all" for the whole account-delivery library (13 workflows, 5 recipes), or "none" and put the workflows '
@@ -216,6 +220,115 @@ def cleanup_local(app_id, app, infra, a, pull_env=None, runner=None, say=print):
     if err: say(f"{app_id}: {hide(err)}"); return 1
     render(app_id, report, bool(report.get("applied")), say, org); return 0
 
+# ------------------------------------------------------------------------------------------- the apply (its twin)
+def starter_sources(build):
+    """{starter key: (source kind, source)} from the build's generated library, or {} when it cannot be read. The
+    mold's JSON names the apps by key only; this is where "written by <specialist>" comes from."""
+    p = os.path.join(build, GENERATED)
+    if not os.path.isfile(p): return {}
+    m = re.search(r"STARTER_APP_LIBRARY[^=\n]*=\s*(\[.*?\n\]|\[\])\s*as const", open(p).read(), re.S)
+    try: apps = json.loads(m.group(1)) if m else []
+    except ValueError: return {}
+    return {a["key"]: (a.get("sourceKind"), a.get("source")) for a in apps if isinstance(a, dict) and a.get("key")}
+
+def _keys(w, part): return [r.get("key") for r in (w.get(part) or []) if isinstance(r, dict)]
+
+def run_apply(run, expect, org=None, do_apply=False):
+    """The mold's own operator:library-apply, through `run(argv) -> CompletedProcess` (as run_cleanup). Always a dry
+    run first; with --apply, then ONE run per workspace the dry run said would get something, and only after the
+    dry run showed the code and the state agree. Whatever an --apply created that its dry run did not list is said
+    as an error. -> (report | None, error | None). The report is the dry run's, or, after --apply, one with
+    applied: true and, per workspace, `created` as it was written ("planned" keeps what the dry run listed)."""
+    if org and not ORG_ID.match(org): return None, f"'{org}' is not a workspace id (letters, digits, dots, hyphens and underscores)."
+    base = NODE + [APPLY_SCRIPT, "--json"]
+    def once(extra):
+        try: r = run(base + extra)
+        except (OSError, subprocess.SubprocessError) as e: return None, f"the apply could not be run ({type(e).__name__})"
+        doc = parse_report(r.stdout)
+        if r.returncode or doc is None:
+            tail = " / ".join(l.strip() for l in ((r.stdout or "") + "\n" + (r.stderr or "")).splitlines() if l.strip())[-400:]
+            return None, "the apply did not finish: " + (tail or "it printed nothing")
+        return doc, None
+    plan, err = once(["--org", org] if org else [])
+    if err: return None, err
+    why = mismatch(plan, expect)
+    if why: return None, why
+    todo = [w for w in plan["workspaces"] if w.get("created")]
+    if not do_apply or not todo: return plan, None
+    done = []; out = dict(plan, applied=True, workspaces=[])
+    for w in plan["workspaces"]:
+        if not w.get("created"): out["workspaces"].append(dict(w, planned=[])); continue
+        ws = str(w.get("workspace"))
+        doc, err = once(["--org", ws, "--apply"])
+        if err:
+            return None, (f"{err}. Workspace {ws} may have been given some of its apps" + (f"; these were done before it: {', '.join(done)}" if done else "")
+                          + ". Run it again without --apply to see what is still missing.")
+        got = next((x for x in doc.get("workspaces") or [] if str(x.get("workspace")) == ws), {"created": [], "skipped": []})
+        extra = [k for k in _keys(got, "created") if k not in _keys(w, "created")]
+        if extra:
+            return None, (f"workspace {ws} was given app(s) the dry run did not list ({', '.join(map(str, extra))}): something changed between the "
+                          "two runs. Nothing more was added. Run it again without --apply to see where each workspace stands.")
+        out["workspaces"].append(dict(got, planned=w.get("created") or [])); done.append(ws)
+    return out, None
+
+def _by(sources, key, kind_default="its source"):
+    kind, src = sources.get(key) or (None, None)
+    if not src: return kind_default
+    return f"the specialist {src}" if kind == "specialist" else f"the workflow {src}"
+
+def render_apply(app_id, report, applied, say=print, org=None, sources=None):
+    """The apply's report in plain words: per workspace, what is (or would be) added and what is left alone, and why."""
+    sources = sources or {}; ws = report.get("workspaces") or []; libs = report.get("library") or []
+    say(f"{app_id}: " + ("ADDED what is listed below as added." if applied else "DRY RUN. Nothing was changed."))
+    if not report.get("starterApps"):
+        say("  The running build has " + (f"the library {', '.join(libs)}, which gives no starter apps it can make" if libs else "no starter library")
+            + ", so there are no starter apps to add."); return
+    say(f"  This app is built with the starter library {', '.join(libs)} ({len(report['starterApps'])} starter app(s)). "
+        "A workspace made before that gets them only from this command; a new workspace is made with them.")
+    if not ws: say("  There is no workspace in this app's database yet, so there is nothing to add to."); return
+    total = 0
+    for w in sorted(ws, key=lambda x: str(x.get("workspace"))):
+        add = w.get("created") or []; left = w.get("skipped") or []; total += len(add)
+        say(f"  Workspace {w.get('workspace')}:")
+        if add:
+            for r in add: say(f'    {"added" if applied else "would add"}: app "{r.get("name")}" (written by {_by(sources, r.get("key"))} the first time someone opens it)')
+        else: say("    nothing to add")
+        for r in left: say(f'    left alone: app "{r.get("name")}": {r.get("detail") or r.get("why")}')
+    if applied: say("  No document was written yet: each app's first one is written when someone first opens it, or on its schedule.")
+    elif total:
+        say(f"  Nothing was changed. To add the {total} app(s) listed as would add: python3 .claude/scripts/provision.py {app_id} --library-apply"
+            + (f" --org {org}" if org else "") + " --apply")
+    else: say("  There is nothing to add.")
+
+def apply_local(app_id, app, infra, a, pull_env=None, runner=None, say=print):
+    """`provision.py <app> --library-apply` for an application on Vercel: the mold's library-apply, run from the
+    app's own build copy with the app role's DATABASE_URL, exactly as cleanup_local (never printed)."""
+    org, do_apply = cleanup_args(a); expect = install(app)
+    if org and not ORG_ID.match(org): say(f"{app_id}: '{org}' is not a workspace id (letters, digits, dots, hyphens and underscores). Nothing was contacted."); return 1
+    if infra.get("target") != "vercel" or not (infra.get("vercel") or {}).get("production_url"):
+        say(f"{app_id}: this app is not deployed, so it has no database to add to. Nothing was contacted."); return 1
+    build = build_dir_for(app_id, app)
+    if not os.path.isfile(os.path.join(build, APPLY_SCRIPT)):
+        say(f"{app_id}: the app's code under {os.path.relpath(build, ROOT)}/ was built before this command existed (or is not there), so it cannot "
+            f"add starter apps. Deploy the app first, which rebuilds it: python3 .claude/scripts/provision.py {app_id} --deploy. Nothing was contacted."); return 1
+    have = built_sources(build)
+    if have is not None:
+        why = mismatch({"library": have}, expect)
+        if why: say(f"{app_id}: {why.replace('Nothing was changed.', 'Nothing was contacted.')}"); return 1
+    if pull_env is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import clone
+        pull_env = clone.pull_env
+    url = (pull_env(infra["vercel"]["project"], build) or {}).get("DATABASE_URL")
+    if not url or url == "[SENSITIVE]":
+        say(f"{app_id}: the database address could not be read from the project's production environment. Nothing was changed."); return 1
+    hide = lambda s: re.sub(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@\"']*:[^\s/@\"']*@", r"\1***:***@", (s or "").replace(url, "[redacted]"))
+    def run(argv):
+        r = (runner or subprocess.run)(argv, cwd=build, env=dict(os.environ, DATABASE_URL=url, NODE_ENV="production"), capture_output=True, text=True, timeout=900)
+        return subprocess.CompletedProcess(argv, r.returncode, hide(r.stdout), hide(r.stderr))
+    report, err = run_apply(run, expect, org, do_apply)
+    if err: say(f"{app_id}: {hide(err)}"); return 1
+    render_apply(app_id, report, bool(report.get("applied")), say, org, starter_sources(build)); return 0
+
 # ------------------------------------------------------------------------------------------- command line
 def _docs(app_id):
     d = os.path.join(ROOT, "state", "application", app_id)
@@ -236,11 +349,11 @@ def main(a):
         print(f"  build/{app_id}/: " + ("no build copy yet" if not os.path.isdir(build) else "cannot tell what it was built with" if have is None
                                        else "built with " + (", ".join(have) if have else "no library")))
         return 0
-    if verb == "apply":
+    if verb == "build":
         if not os.path.isdir(build): sys.exit(f"no build copy at build/{app_id}; run: python3 .claude/scripts/packs.py apply {app_id}")
         print(f"{app_id}: {apply(build, app, mold_dir)}"); return 0
-    if verb == "cleanup":
-        return subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/provision.py"), app_id, "--library-cleanup", *a[2:]]).returncode
+    if verb in ("cleanup", "apply"):
+        return subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/provision.py"), app_id, f"--library-{verb}", *a[2:]]).returncode
     sys.exit(__doc__)
 
 if __name__ == "__main__": sys.exit(main(sys.argv[1:]))

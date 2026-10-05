@@ -9,6 +9,9 @@
   cleanup    the rules around the mold's operator:library-cleanup: a dry run first, --apply only when the running code
              matches state, the report in plain words, no database address anywhere; for an app on Vercel and for an
              app on its own server (the server step run for real with node against a stand-in for the mold's script)
+  apply      the same for its twin, the mold's operator:library-apply: a dry run first, --apply one workspace at a time
+             and only what the dry run listed, "would add: app ... (written by <specialist> ...)", a build from before
+             the command refused, no database address anywhere; on Vercel and on its own server
 
 NOTHING HERE TOUCHES A SERVER, A DATABASE OR THE REAL build/ AND state/. The stamp checks run in a temp tree that holds
 a COPY of the mold; the real mold, packs and state are only read. The cleanup checks use stand-ins for the remote
@@ -118,7 +121,18 @@ def stamp(check, L, tmp):
     os.makedirs(os.path.join(mold, "node_modules"), exist_ok=True)          # build_copy hard-links it; empty is enough for the generators
     shutil.copytree(os.path.join(ROOT, "molds", "mold_v1", "branding"), os.path.join(fx, "molds", "mold_v1", "branding"))
     os.symlink(os.path.join(ROOT, "packs"), os.path.join(fx, "packs"))
-    pack = next((p for p in sorted(os.listdir(os.path.join(ROOT, "packs"))) if os.path.isfile(os.path.join(ROOT, "packs", p, "pack.json")) and not packs.check_pack(p)), None)
+    # A pack that can carry the account-delivery library at all: one whose profile excludes a specialist that
+    # library's starter apps are written by cannot (the mold's generator refuses it), so it is no pack to try "all" with.
+    try: need = {(a.get("source") or {}).get("specialist") for a in json.load(open(os.path.join(MOLD, "library", "account-delivery", "apps.json"))).get("apps", [])} - {None}
+    except (OSError, ValueError): need = set()
+    def excludes(p):
+        out = set()
+        for r, _, fs in os.walk(os.path.join(ROOT, "packs", p, "files", "profiles")):
+            for f in fs:
+                try: out |= set(((json.load(open(os.path.join(r, f))) or {}).get("specialists") or {}).get("exclude") or [])
+                except (OSError, ValueError, AttributeError): pass
+        return out
+    pack = next((p for p in sorted(os.listdir(os.path.join(ROOT, "packs"))) if os.path.isfile(os.path.join(ROOT, "packs", p, "pack.json")) and not packs.check_pack(p) and not (need & excludes(p))), None)
     def state(app_id, **kw):
         d = os.path.join(fx, "state", "application", app_id); os.makedirs(d, exist_ok=True)
         app = _app(app_id=app_id, **kw); json.dump(app, open(os.path.join(d, "application.json"), "w")); return app
@@ -176,7 +190,7 @@ def stamp(check, L, tmp):
         check("stamp: nothing was written into the mold", _digest(mold) == mold_before)
     finally:
         packs.ROOT, packs.PACKS, branding.ROOT, branding.ST, L.ROOT = saved
-    return bool(pack)
+    return True if pack else None          # None: the temp-tree steps ran, but no pack here can carry the library
 
 # ------------------------------------------------------------------------------------------------ cleanup
 def _report(library=(), applied=False, removed=None):
@@ -385,6 +399,190 @@ def remote(check, tmp):
           V.source_for("x", {"mold_id": "mold_v1", "surface": {"custom_workflow_builder": {"library": {"install": "all"}}}}).endswith(os.path.join("build", "x"))
           and V.source_for("x", {"mold_id": "mold_v1", "surface": {"custom_workflow_builder": {"library": {"install": "none"}}}}).endswith(os.path.join("molds", "mold_v1", "codebase")))
 
+# ------------------------------------------------------------------------------------------------ apply (the twin)
+GEN_APPS = [{"key": "hfc-research/kpis", "library": "hfc-research", "name": "KPI table", "description": "d", "brief": "b", "sourceKind": "specialist",
+             "source": "hfc-kpi-extraction", "refreshCron": "0 3 * * 1", "firstContent": "on_open"},
+            {"key": "hfc-research/weekly", "library": "hfc-research", "name": "Weekly", "description": "d", "brief": "b", "sourceKind": "workflow",
+             "source": "weekly-digest", "refreshCron": None, "firstContent": "on_open"}]
+
+def _gen_text(sources, apps):
+    return (f"export const LIBRARY_SOURCES: readonly string[] = {json.dumps(sources)};\n\n"
+            f"export const STARTER_APP_LIBRARY: readonly LibraryStarterApp[] = {json.dumps(apps, indent=2)} as const;\n")
+
+def _plan(applied=False, acme=("hfc-research/kpis",), library=("hfc-research",)):
+    names = {a["key"]: a["name"] for a in GEN_APPS}
+    return {"applied": applied, "library": list(library), "starterApps": [a["key"] for a in GEN_APPS], "workspaces": [
+        {"workspace": "acme", "created": [{"key": k, "name": names[k], "firstContent": "on_open"} for k in acme],
+         "skipped": [{"key": "hfc-research/weekly", "name": "Weekly", "why": "deleted", "detail": "a person deleted it from this workspace; it is not created again"}]},
+        {"workspace": "beta", "created": [], "skipped": [{"key": "hfc-research/kpis", "name": "KPI table", "why": "present", "detail": "already in this workspace"}]}]}
+
+def apply_rules(check, L, tmp):
+    calls = []
+    def runner(dry, wet=None):
+        def run(argv):
+            calls.append(list(argv)); doc = wet if "--apply" in argv and wet is not None else dry
+            return doc if isinstance(doc, CP) else CP(argv, 0, "a notice first\n" + json.dumps(doc, indent=2) + "\n", "")
+        return run
+    calls.clear(); rep, err = L.run_apply(runner(_plan()), "none")
+    check("apply: without --apply it runs the mold's library-apply once, as a dry run, and asks for JSON", err is None and len(calls) == 1 and calls[0][-2:] == [L.APPLY_SCRIPT, "--json"] and calls[0][0] == "node" and rep["applied"] is False, calls)
+    calls.clear(); rep, err = L.run_apply(runner(_plan()), "none", org="acme; rm -rf /")
+    check("apply: something that is not a workspace id is refused before anything runs", rep is None and "not a workspace id" in err and calls == [])
+    calls.clear(); rep, err = L.run_apply(runner(_plan(), _plan(applied=True)), "none", do_apply=True)
+    check("apply: --apply is a dry run FIRST, then one run per workspace the dry run listed (and none for a workspace with nothing to add)",
+          err is None and len(calls) == 2 and "--apply" not in calls[0] and calls[1][-3:] == ["--org", "acme", "--apply"] and rep["applied"] is True
+          and [w["workspace"] for w in rep["workspaces"]] == ["acme", "beta"] and rep["workspaces"][0]["planned"][0]["key"] == "hfc-research/kpis", (calls, rep))
+    calls.clear(); rep, err = L.run_apply(runner(_plan(), _plan(applied=True, acme=("hfc-research/kpis", "hfc-research/weekly"))), "none", do_apply=True)
+    check("apply: an --apply that created something its dry run did not list is said as an error", rep is None and "did not list" in err and "hfc-research/weekly" in err, err)
+    calls.clear(); rep, err = L.run_apply(runner(_plan(acme=())), "none", do_apply=True)
+    check("apply: --apply with nothing to add never runs the write", err is None and len(calls) == 1 and rep["applied"] is False)
+    calls.clear(); rep, err = L.run_apply(runner(_plan(library=["account-delivery"])), "none", do_apply=True)
+    check("apply: code built WITH the account-delivery library while state says none is refused after the dry run, nothing added", rep is None and "Deploy the app first" in err and len(calls) == 1, err)
+    calls.clear(); rep, err = L.run_apply(runner(CP([], 1, "", "x No such workspace: nope\n")), "none", org="nope")
+    check("apply: a failure of the mold's script comes back as one sentence", rep is None and "did not finish" in err and "No such workspace: nope" in err, err)
+    build = os.path.join(tmp, "apply-gen"); os.makedirs(os.path.join(build, "agent", "lib"))
+    open(os.path.join(build, L.GENERATED), "w").write(_gen_text(["hfc-research"], GEN_APPS)); src = L.starter_sources(build)
+    check("apply: who writes each starter app is read from the build's generated library", src == {"hfc-research/kpis": ("specialist", "hfc-kpi-extraction"), "hfc-research/weekly": ("workflow", "weekly-digest")}, src)
+    open(os.path.join(build, L.GENERATED), "w").write(_gen_text([], []))
+    check("apply:   ...and an empty library reads as nothing", L.starter_sources(build) == {})
+    said = []; L.render_apply("acme_app", _plan(), False, said.append, sources=src); text = "\n".join(said)
+    check("apply: the dry run says so, per workspace, in plain words: would add, by whom, and what is left alone and why",
+          "DRY RUN. Nothing was changed." in said[0] and 'Workspace acme:\n    would add: app "KPI table" (written by the specialist hfc-kpi-extraction the first time someone opens it)' in text
+          and 'left alone: app "Weekly": a person deleted it' in text and "Workspace beta:\n    nothing to add" in text, text)
+    check("apply:   ...and ends with the exact command that adds them", said[-1].strip().endswith("python3 .claude/scripts/provision.py acme_app --library-apply --apply") and "1 app(s)" in said[-1], said[-1])
+    said = []; L.render_apply("acme_app", dict(_plan(applied=True), applied=True), True, said.append, sources=src); text = "\n".join(said)
+    check("apply: after --apply it says what was added and offers no further command", "ADDED" in said[0] and 'added: app "KPI table"' in text and "--apply" not in text, text)
+    said = []; L.render_apply("acme_app", {"applied": False, "library": [], "starterApps": [], "workspaces": []}, False, said.append)
+    check("apply: a build with no starter library is told so", "no starter library" in "\n".join(said), said)
+
+def apply_local(check, L, tmp):
+    """An app on Vercel, as cleanup_local."""
+    fx = os.path.join(tmp, "apply-local"); build = os.path.join(fx, "build", "acme_app"); os.makedirs(os.path.join(build, "scripts", "operator")); os.makedirs(os.path.join(build, "agent", "lib"))
+    gen = lambda srcs: open(os.path.join(build, L.GENERATED), "w").write(_gen_text(srcs, GEN_APPS))
+    app = _app("none", brand=True, app_id="acme_app"); infra = {"target": "vercel", "vercel": {"project": "acme-app", "production_url": "https://acme.example"}}
+    pulls = []; runs = []
+    def pull(project, cwd): pulls.append((project, cwd)); return {"DATABASE_URL": DB_URL}
+    def fake(dry, wet=None, leak=False):
+        def run(argv, cwd=None, env=None, **kw):
+            runs.append({"argv": list(argv), "cwd": cwd, "url": (env or {}).get("DATABASE_URL")})
+            if leak: return CP(argv, 1, "", f"Error: connect ECONNREFUSED {DB_URL}\n")
+            return CP(argv, 0, json.dumps(wet if wet is not None and "--apply" in argv else dry, indent=2), "")
+        return run
+    saved = L.ROOT; L.ROOT = fx
+    try:
+        said = []; rc = L.apply_local("acme_app", app, {"target": "vercel", "vercel": {"project": "acme-app"}}, ["acme_app", "--library-apply"], pull_env=pull, runner=fake(_plan()), say=said.append)
+        check("apply (vercel): an app that is not deployed is told so, and nothing is read", rc == 1 and "not deployed" in said[0] and pulls == [] and runs == [])
+        open(os.path.join(build, L.CLEANUP_SCRIPT), "w").close(); gen(["hfc-research"])
+        said = []; rc = L.apply_local("acme_app", app, infra, ["acme_app", "--library-apply"], pull_env=pull, runner=fake(_plan()), say=said.append)
+        check("apply (vercel): a build from before the command existed (it has the cleanup, not the apply) is refused plainly, with the deploy command, before the environment is read",
+              rc == 1 and "before this command existed" in said[0] and "--deploy" in said[0] and "Nothing was contacted" in said[0] and pulls == [] and runs == [], said)
+        open(os.path.join(build, L.APPLY_SCRIPT), "w").close(); gen(["account-delivery"])
+        said = []; rc = L.apply_local("acme_app", app, infra, ["acme_app", "--library-apply", "--apply"], pull_env=pull, runner=fake(_plan()), say=said.append)
+        check("apply (vercel): a build WITH the account-delivery library while state says none is refused before the environment is read", rc == 1 and "Deploy the app first" in said[0] and pulls == [] and runs == [], said)
+        gen(["hfc-research"])
+        said = []; rc = L.apply_local("acme_app", app, infra, ["acme_app", "--library-apply"], pull_env=pull, runner=fake(_plan()), say=said.append); text = "\n".join(said)
+        check("apply (vercel): the dry run reads DATABASE_URL from the production environment, runs the mold's script in the build copy, and says who writes each app",
+              rc == 0 and pulls == [("acme-app", build)] and len(runs) == 1 and runs[0]["cwd"] == build and runs[0]["url"] == DB_URL and "--apply" not in runs[0]["argv"]
+              and 'would add: app "KPI table" (written by the specialist hfc-kpi-extraction the first time someone opens it)' in text, text)
+        check("apply (vercel):   ...the database address is in the child's environment only", all(DB_URL not in " ".join(r["argv"]) for r in runs) and DB_URL not in text and "PASSWORD" not in text)
+        runs.clear(); said = []
+        rc = L.apply_local("acme_app", app, infra, ["acme_app", "--library-apply", "--org", "acme", "--apply"], pull_env=pull, runner=fake(_plan(), dict(_plan(applied=True), workspaces=_plan()["workspaces"][:1])), say=said.append)
+        check("apply (vercel): --org --apply runs the dry run for that workspace, then the write for it", rc == 0 and len(runs) == 2 and runs[0]["argv"][-2:] == ["--org", "acme"] and runs[1]["argv"][-3:] == ["--org", "acme", "--apply"] and "ADDED" in said[0], runs)
+        runs.clear(); said = []
+        rc = L.apply_local("acme_app", app, infra, ["acme_app", "--library-apply"], pull_env=pull, runner=fake(None, leak=True), say=said.append)
+        check("apply (vercel): an error that quotes the database address is shown without it", rc == 1 and "did not finish" in said[0] and DB_URL not in said[0] and "PASSWORD" not in said[0], said)
+    finally: L.ROOT = saved
+
+# What the mold's scripts/operator/library-apply.mjs does, as far as the factory can see it, backed by a JSON file.
+FAKE_APPLY = r'''import { readFileSync, writeFileSync } from "node:fs";
+const has = (f) => process.argv.includes("--" + f);
+const flag = (f) => { const i = process.argv.indexOf("--" + f); return i !== -1 ? (process.argv[i + 1] ?? "") : ""; };
+if (!process.env.DATABASE_URL) { console.error("x No DATABASE_URL"); process.exit(1); }
+if (process.env.FAKE_LEAK) { console.error("Error: cannot reach " + process.env.DATABASE_URL); process.exit(1); }
+const db = JSON.parse(readFileSync(process.env.FAKE_DB, "utf8"));
+const only = flag("org"); const apply = has("apply");
+if (only && !db.workspaces[only]) { console.error("x No such workspace: " + only); process.exit(1); }
+const report = [];
+for (const [id, w] of Object.entries(db.workspaces).sort()) {
+  if (only && id !== only) continue;
+  const created = db.apps.filter((a) => !w.apps.includes(a.key)).map((a) => ({ key: a.key, name: a.name, firstContent: "on_open" }));
+  const skipped = db.apps.filter((a) => w.apps.includes(a.key)).map((a) => ({ key: a.key, name: a.name, why: "present", detail: "already in this workspace" }));
+  if (apply) w.apps.push(...created.map((a) => a.key));
+  report.push({ workspace: id, created, skipped });
+}
+db.runs = [...(db.runs ?? []), { argv: process.argv.slice(2), cwd: process.cwd(), node_env: process.env.NODE_ENV ?? null }];
+writeFileSync(process.env.FAKE_DB, JSON.stringify(db));
+if (has("json")) console.log(JSON.stringify({ applied: apply, library: db.library, starterApps: db.apps.map((a) => a.key), workspaces: report }, null, 2));
+'''
+
+def apply_remote(check, tmp):
+    """An app on its own server: the server step with node against FAKE_APPLY, and the factory side against a stand-in runner."""
+    import vm_remote as V
+    import library as L
+    node = shutil.which("node"); me = pwd.getpwuid(os.getuid()).pw_name
+    appd = os.path.join(tmp, "apply-server", "app"); os.makedirs(os.path.join(appd, "scripts", "operator")); os.makedirs(os.path.join(appd, "agent", "lib"))
+    dbf = os.path.join(tmp, "apply-server", "db.json"); envf = os.path.join(tmp, "apply-server", "web.env")
+    open(os.path.join(appd, L.GENERATED), "w").write(_gen_text(["hfc-research"], GEN_APPS))
+    def reset(**kw): json.dump(dict({"library": ["hfc-research"], "apps": [{"key": a["key"], "name": a["name"]} for a in GEN_APPS],
+                                     "workspaces": {"acme": {"apps": []}, "beta": {"apps": ["hfc-research/kpis", "hfc-research/weekly"]}}}, **kw), open(dbf, "w"))
+    def call(expect, env=None, **kw):
+        said = []; V.env_write(envf, dict({"DATABASE_URL": DB_URL, "FAKE_DB": dbf}, **(env or {})))
+        rc = V.library_apply(envf, me, tmp, appd, expect, say=said.append, **kw)
+        doc = json.loads(said[-1][len("LIBRARY "):]) if said and said[-1].startswith("LIBRARY {") else None
+        return rc, doc, said
+    reset(); rc, doc, said = call("none")
+    check("apply (server): an app deployed before the command existed is told to deploy once, and nothing runs", rc == 1 and doc and "deployed before this apply existed" in doc["error"] and "runs" not in json.load(open(dbf)), said)
+    if node and subprocess.run([node, "-e", "process.exit(process.features.typescript ? 0 : 1)"], capture_output=True).returncode == 0:
+        open(os.path.join(appd, L.APPLY_SCRIPT), "w").write(FAKE_APPLY); open(os.path.join(appd, "package.json"), "w").write('{"type": "module"}\n')
+        reset(); rc, doc, said = call("none"); db = json.load(open(dbf))
+        check("apply (server, run with node): the dry run runs the app's own script once, in the built app, and adds nothing",
+              rc == 0 and [r["argv"] for r in db["runs"]] == [["--json"]] and db["runs"][0]["cwd"] == os.path.realpath(appd) and db["runs"][0]["node_env"] == "production" and db["workspaces"]["acme"]["apps"] == [], (said, db))
+        check("apply (server, run with node):   ...one LIBRARY line, with who writes each app read from the built app",
+              len(said) == 1 and [len(w["created"]) for w in doc["workspaces"]] == [2, 0] and doc["sources"]["hfc-research/kpis"] == ["specialist", "hfc-kpi-extraction"], said)
+        reset(); rc, doc, said = call("none", apply=True); db = json.load(open(dbf))
+        check("apply (server, run with node): --apply is the dry run, then one write for the workspace that lacked apps; the other is not touched",
+              rc == 0 and [r["argv"] for r in db["runs"]] == [["--json"], ["--json", "--org", "acme", "--apply"]] and doc["applied"] is True
+              and db["workspaces"]["acme"]["apps"] == ["hfc-research/kpis", "hfc-research/weekly"], (said, db))
+        rc, doc, said = call("none", apply=True); db = json.load(open(dbf))
+        check("apply (server, run with node): a second --apply finds nothing to add and writes nothing", rc == 0 and db["runs"][-1]["argv"] == ["--json"] and doc["applied"] is False, said)
+        reset(library=["account-delivery"]); rc, doc, said = call("none", apply=True); db = json.load(open(dbf))
+        check("apply (server, run with node): running code built WITH account-delivery while state says none: refused after the dry run, nothing added",
+              rc == 1 and "Deploy the app first" in doc["error"] and len(db["runs"]) == 1 and db["workspaces"]["acme"]["apps"] == [], said)
+        reset(); rc, doc, said = call("none", env={"FAKE_LEAK": "1"})
+        check("apply (server, run with node): an error that quotes the database address is shown without it", rc == 1 and "did not finish" in doc["error"] and DB_URL not in said[-1] and "PASSWORD" not in said[-1], said)
+    import vm_remote_selftest as B
+    import vm_users_selftest as U
+    d, docs = U._deployed(tmp, "apply-remote", lambda x: x["application"]["surface"]["custom_workflow_builder"].update(library={"install": "none"}))
+    S = V.settings("vm_remote_fixture", docs["application"], docs["infrastructure"], docs["datastores"]); crons = list(V.CRONS); WEB = V.SERVICE_USERS["web"]
+    rem = V.library_apply_argv(S, "none", shown=True)[-1]
+    check("apply (remote): one SSH command: library-apply, as the web app's user, with the web service's own env file, in the built app",
+          rem == f"env {V.GUARD_VAR}=vm_remote_fixture python3 {S['tool']} library-apply --file {S['env_files']['web']} --user {WEB} --home {V.SERVICE_HOMES['web']} --app-dir {S['app_dir']} --expect none"
+          and "DATABASE_URL" not in rem and "POSTGRES_ADMIN_URL" not in rem, rem)
+    check("apply (remote):   ...--org and --apply are passed through", V.library_apply_argv(S, "none", org="acme", apply=True)[-1].endswith("--expect none --org acme --apply"))
+    class Remote:
+        def __init__(self, doc=None, raw=None, rc=0): self.calls = []; self.doc = doc; self.raw = raw; self.rc = rc; self.argv = None
+        def __call__(self, step, stdin=None):
+            self.calls.append(step["id"])
+            if step["id"] == "bundle": return B.CP(step["argv"], 0, "", "")
+            self.argv = step["argv"]
+            return B.CP(step["argv"], self.rc, self.raw if self.raw is not None else "LIBRARY " + json.dumps(self.doc) + "\n", "")
+    real_key = V.key_path
+    V.key_path = lambda S_: os.path.join(tmp, "apply-key-that-exists"); open(os.path.join(tmp, "apply-key-that-exists"), "w").close()
+    try:
+        srcs = {"hfc-research/kpis": ["specialist", "hfc-kpi-extraction"]}
+        said = []; r = Remote(dict(_plan(), sources=srcs))
+        rc = V.library_apply_remote("vm_remote_fixture", S, docs["application"], docs["infrastructure"], ["vm_remote_fixture", "--library-apply"], crons, runner=r, say=said.append); text = "\n".join(said)
+        check("apply (remote): the dry run sends the factory's scripts, runs the one command, and says what would be added, by whom",
+              rc == 0 and r.calls == ["bundle", "library-apply"] and "--apply" not in r.argv[-1] and "DRY RUN. Nothing was changed." in said[0]
+              and 'would add: app "KPI table" (written by the specialist hfc-kpi-extraction the first time someone opens it)' in text
+              and "provision.py vm_remote_fixture --library-apply --apply" in text and said[-1].strip() == "The database address never left the server.", text)
+        said = []; r = Remote(raw="", rc=255)
+        rc = V.library_apply_remote("vm_remote_fixture", S, docs["application"], docs["infrastructure"], ["vm_remote_fixture", "--library-apply", "--apply"], crons, runner=r, say=said.append)
+        check("apply (remote): a server that answers nothing during --apply says it is not known what was added", rc == 1 and "did not finish on the server" in said[0] and "what is still missing" in said[0], said)
+        r = Remote(_plan())
+        out, _ = B.quiet(V.library_apply_remote, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], ["vm_remote_fixture", "--library-apply", "--org", "a b;c"], crons, runner=r)
+        check("apply (remote): something that is not a workspace id is refused before the server is contacted", isinstance(out, V.Stop) and r.calls == [], out)
+    finally: V.key_path = real_key
+
 def run(L):
     n = [0]; fails = []
     def check(name, cond, detail=""):
@@ -401,12 +599,15 @@ def run(L):
         cleanup_rules(check, L)
         cleanup_local(check, L, tmp)
         remote(check, tmp); ran.append("the server step run with node against a stand-in for the mold's cleanup script")
+        apply_rules(check, L, tmp)
+        apply_local(check, L, tmp)
+        apply_remote(check, tmp); ran.append("the same for library-apply, against a stand-in for the mold's library-apply script")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     check("the real state/ and packs/ are byte-identical after the self-test", (_digest(os.path.join(ROOT, "state")), _digest(os.path.join(ROOT, "packs"))) == real)
     check("nothing was left under the real build/", not any(x.startswith(("plain_", "pk_", "brand_", "listed")) for x in (os.listdir(os.path.join(ROOT, "build")) if os.path.isdir(os.path.join(ROOT, "build")) else [])))
     if fails: print("library self-test FAILED:\n  " + "\n  ".join(fails)); return 1
     print(f"library: {n[0]} checks passed (the choice in state, the opt-in file and its absence, idempotency, the build and lane copies, "
-          f"the cleanup's dry run and --apply for an app on Vercel and on its own server; offline, stand-ins only)")
+          f"the cleanup's and the apply's dry run and --apply for an app on Vercel and on its own server; offline, stand-ins only)")
     print("  also run here: " + ("; ".join(ran) if ran else "nothing optional (needs node, rsync and the mold's library/)"))
     return 0
