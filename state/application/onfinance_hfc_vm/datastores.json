@@ -15,10 +15,10 @@
     "admin_url_ref": "POSTGRES_ADMIN_URL",
     "exposure": "remote_loopback",
     "rls_verified": {
-      "at": "2026-10-04T18:51:46+00:00",
+      "at": "2026-10-05T10:23:41+00:00",
       "backend": "self_hosted",
       "mode": "fail_closed",
-      "source": "provision.py --verify-rls (vm_remote, on the server)",
+      "source": "provision.py --deploy-remote (on the server)",
       "role": "app_rw",
       "superuser": false,
       "bypassrls": false,
