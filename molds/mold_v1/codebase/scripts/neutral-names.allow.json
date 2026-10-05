@@ -446,5 +446,66 @@
       "scripts/operator/seed-workflows.mjs": "operator:seed-workflows: the deployment profile's library into a workspace an operator names; nothing when the profile names none",
       "scripts/seed-ops.mjs": "a legacy local demo seeder in no npm script, kept for its --print test: its rows carry no org_id, which the NOT NULL column refuses, so it cannot write to a current database"
     }
+  },
+  "period_words": {
+    "$comment": "What a work period is called is the deployment profile's (work_periods.label; agent/lib/work-periods.ts). The default profile's word for it (read from profiles/00-default.json by scripts/lib/period-words.mjs, never spelled there) may appear only: in the default profile and the modules generated from it (default_profile); in ONE legacy definition, with an exact count (legacy_definition); inside a listed contract, a pattern for an exact name something outside this repository already holds, optionally limited to the files it may appear in (contracts); or under an exempt path (exempt_paths). Anything else fails check:neutral-names.",
+    "default_profile": {
+      "profiles/00-default.json": "The default profile: work_periods.label is where the word lives.",
+      "lib/deployment-profile.generated.ts": "Generated from profiles/*.json (the web app's copy of the merged profile).",
+      "agent/lib/deployment-profile.generated.ts": "Generated from profiles/*.json (the agent's copy of the merged profile).",
+      "setup/deployment.generated.mjs": "Generated from the default profile: the generic coding-agent package's settings (workPeriods.label)."
+    },
+    "legacy_definition": {
+      "why": "The `cycles` table's own comment says what a cycle was in the base product's words. One sentence, kept so the stored name can be understood; it also says that nothing else spells the word.",
+      "files": {
+        "agent/lib/db/schema.ts": 1
+      }
+    },
+    "contracts": [
+      {
+        "pattern": "sprint_(?:list|create|\\*)",
+        "files": [
+          "setup/workspace-tools.mjs",
+          "docs/MCP.md",
+          "docs/DEPLOYMENT_PROFILE.md",
+          "scripts/lib/work-period-probe.mjs",
+          "scripts/test-work-periods.mjs",
+          "scripts/test-work-periods-db.mjs"
+        ],
+        "why": "The coding agent's two period tools, by their wire names: a saved MCP configuration and a published package call them. Their descriptions take the profile's word; a rename would be an additive alias (setup/workspace-tools.mjs `aliases`), never a replacement."
+      },
+      {
+        "pattern": "view=sprints|\"sprints\"",
+        "files": [
+          "lib/work-periods-ui.ts",
+          "scripts/lib/rendered-text.mjs",
+          "tests/cards.spec.ts",
+          "scripts/test-work-periods.mjs",
+          "docs/DEPLOYMENT_PROFILE.md"
+        ],
+        "why": "The period view's key in a Todos deep link (/?ops=todos&view=…): links people already shared carry it. It is a key, defined once (PERIOD_VIEW in lib/work-periods-ui.ts), never a label."
+      },
+      {
+        "pattern": "go-live-sprint",
+        "files": [
+          "docs/AGENT_INVENTORY.md",
+          "scripts/test-library-provisioning-db.mjs",
+          "scripts/test-workflow-library.mjs"
+        ],
+        "why": "A workflow of the account-delivery library, by its stored name (workflows.name in every workspace provisioned with that library). It names a readiness push, not a work period; the library itself is exempt below."
+      }
+    ],
+    "exempt_paths": {
+      "drizzle/": "Migration history and its snapshots: never rewritten.",
+      "library/": "A library a deployment profile opts into (library.sources) is that library's own content, in its own line of work's words: not base text.",
+      "scripts/fixtures/": "Recorded before-images of what a default deployment's model and pages read, and test fixtures: they hold the default profile's word because the default deployment reads it.",
+      ".migrate-cycles.mjs": "A one-off migration script that already ran: history.",
+      ".migrate-cycles-lead.mjs": "A one-off migration script that already ran: history.",
+      ".migrate-workspace-v2.mjs": "A one-off migration script that already ran: history.",
+      "data/sample/": "The local demo's sample records: data, never shipped as product text (scripts/test-sample-data.mjs holds that).",
+      "scripts/neutral-names.allow.json": "This list.",
+      "services/task-workflow/package-lock.json": "A lockfile.",
+      "package-lock.json": "A lockfile."
+    }
   }
 }

@@ -247,6 +247,13 @@ export interface ApiRefImplementation {
   custom?: Record<string, string | number>;
 }
 
+/** One person's own goal for one period (mode individual): GET /api/ops/cycles/:id/goals. */
+export interface ApiMemberGoal {
+  member: string;
+  goal: string | null;
+  targetCount: number | null;
+}
+
 /** One roster row — the org graph the TODO scope filters resolve against. */
 export interface ApiRosterMember {
   email: string;
@@ -257,7 +264,7 @@ export interface ApiRosterMember {
   escalations?: { email: string; reason: string }[];
 }
 
-/** A cycle (sprint) that groups todos. */
+/** A cycle: the period that groups todos (what it is called and how it works is the profile's `work_periods`). */
 export interface ApiCycle {
   id: string;
   name: string;
@@ -267,7 +274,7 @@ export interface ApiCycle {
   state: string;
   goal: string | null;
   capacity: number | null;
-  /** The sprint lead's email (resolved against the roster). */
+  /** The lead's email (resolved against the roster). Mode team only. */
   lead: string | null;
   createdBy: string;
   archivedAt: string | null;
@@ -608,12 +615,14 @@ export async function opsFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return data as T;
 }
 
-export function useOpsList<T>(path: string) {
-  const [items, setItems] = useState<T[] | null>(null);
+export function useOpsList<T>(path: string | null) {
+  // A null path is a list this deployment does not have (a feature its profile turns off): empty, never fetched.
+  const [items, setItems] = useState<T[] | null>(path === null ? [] : null);
   const [error, setError] = useState<string | null>(null);
   /** The rest of the list response, beside `items` (e.g. the workflows list's `libraryNote`). */
   const [extra, setExtra] = useState<Record<string, unknown>>({});
   const refetch = useCallback(async () => {
+    if (path === null) return;
     try {
       const { items: list, ...rest } = await opsFetch<{ items: T[] } & Record<string, unknown>>(path);
       setItems(list);

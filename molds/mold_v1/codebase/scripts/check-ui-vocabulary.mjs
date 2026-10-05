@@ -67,6 +67,15 @@ import { CANARY, HIDDEN_MARK, PAGE_SPECS, PAGES, renderedText } from "./lib/rend
 import { LEGACY_MEMBER, LEGACY_OWNER_KEY } from "../agent/lib/legacy-member.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+/** The period words of the default profile as recorded before they were a profile setting (W.period, W.periodList, W.periodItem). */
+function periodWordsBefore() {
+  const { settings: b } = JSON.parse(readFileSync(join(ROOT, "scripts/fixtures/work-periods/default-before.json"), "utf8"));
+  const cap = (w) => w[0].toUpperCase() + w.slice(1);
+  return {
+    period: b.label.singular, periods: b.label.plural, Period: cap(b.label.singular), Periods: cap(b.label.plural),
+    periodList: b.listLabel.singular, periodLists: b.listLabel.plural, periodItem: b.itemLabel.singular, periodItems: b.itemLabel.plural,
+  };
+}
 const argAfter = (flag) => (process.argv.includes(flag) ? process.argv[process.argv.indexOf(flag) + 1] : null);
 const STATIC = process.argv.includes("--static");
 /** --no-render: skip the rendered-DOM pass (no Chromium here). CI never passes it. */
@@ -386,6 +395,9 @@ async function defaultWords() {
     implementation: "project", implementations: "projects", Implementation: "Project", Implementations: "Projects",
     rollout: "plan", rollouts: "plans", Rollout: "Plan", Rollouts: "Plans",
     accountIdExample: "account-id", install: "workspace",
+    // What a work period is called (work_periods): the words a default deployment read before they were the
+    // profile's, from the recorded before-image, so that this file does not spell them (check:neutral-names).
+    ...periodWordsBefore(),
   };
   const wrong = Object.entries(want).filter(([k, v]) => W[k] !== v).map(([k, v]) => `W.${k} is ${JSON.stringify(W[k])}, the default profile says ${JSON.stringify(v)}`);
   if (Object.keys(W).some((k) => !(k in want))) wrong.push(`lib/ui-words.ts has words this check does not pin: ${Object.keys(W).filter((k) => !(k in want)).join(", ")}`);

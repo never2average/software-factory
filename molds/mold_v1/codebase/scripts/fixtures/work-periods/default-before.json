@@ -1,0 +1,36 @@
+{
+  "$comment": "What a DEFAULT deployment read about work periods BEFORE the words and the mode became the profile's (profiles/00-default.json work_periods). `strings` were literals in app/_components/ops/todos-panel.tsx; `mcp` and `instructions_line` were literals in setup/workspace-tools.mjs; `activity_label` was the literal in services/task-workflow/lib/task-activity.ts. A before-image: never re-recorded. scripts/test-work-periods.mjs holds the default profile to it, to the letter.",
+  "settings": { "mode": "team", "enabled": true, "team": true, "individual": false, "label": { "singular": "sprint", "plural": "sprints" }, "listLabel": { "singular": "cycle", "plural": "cycles" }, "itemLabel": { "singular": "target", "plural": "targets" }, "lengthDays": null, "autoRollover": false },
+  "views": ["sprints", "tasks", "deployments", "implementations"],
+  "filled": "sprint sprints Sprint Sprints target targets Target Targets",
+  "strings": {
+    "navLabel": "Sprints",
+    "navBlurb": "Time-boxed cycles that group tasks.",
+    "listLabel": "Cycle",
+    "backlogOption": "Backlog (no cycle)",
+    "searchNoun": "cycle",
+    "searchNounPlural": "cycles",
+    "createLabel": "New cycle",
+    "emptyNone": "No cycles yet — hit New cycle.",
+    "emptyNoMatch": "No cycles match.",
+    "eyebrow": "Sprint",
+    "untitled": "Untitled sprint",
+    "newName": "New sprint",
+    "tableLabel": "Sprint",
+    "deleteLabel": "Delete sprint",
+    "slugPrefix": "SP",
+    "goalPlaceholder": "What this sprint is trying to achieve…",
+    "leadLabel": "Sprint lead",
+    "leadTitle": "Sprint lead · lead@example.com",
+    "rolloverLabel": "Roll over unfinished"
+  },
+  "mcp": {
+    "sprint_list": { "description": "Sprints (cycles): name, window, and state.", "cycleId": null },
+    "sprint_create": { "description": "Create a sprint (cycle) with a name and an ISO start/end window.", "cycleId": null },
+    "task_update": { "cycleId": { "type": "string" } },
+    "task_list": { "description": "The team's TODOs: status, assignee, sprint, container and any linked object.", "cycleId": null },
+    "task_create": { "description": "Create a task, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under a sprint (cycleId) or a deployment/implementation (containerType + containerId).", "cycleId": { "type": "string", "description": "Sprint id from sprint_list." } }
+  },
+  "instructions_line": "- **Delivery** — `sprint_*`, `implementation_upsert`, `deployment_upsert`.",
+  "activity_label": "Sprint"
+}

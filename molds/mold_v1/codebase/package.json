@@ -147,6 +147,8 @@
     "test:library-provisioning-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-library-provisioning-db.mjs",
     "fde:seed-subagent-rows": "node --experimental-strip-types --disable-warning=ExperimentalWarning --env-file=.env.local scripts/operator/seed-subagent-rows.mjs",
     "build:deployment-profile": "node scripts/gen-deployment-profile.mjs",
+    "test:work-periods": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-work-periods.mjs",
+    "test:work-periods-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-work-periods-db.mjs",
     "test:deployment-profile": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-profile.mjs",
     "test:custom-fields": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-custom-fields.mjs",
     "test:session-scope": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-session-scope.mjs",

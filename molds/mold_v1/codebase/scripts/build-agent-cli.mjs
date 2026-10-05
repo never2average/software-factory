@@ -33,7 +33,7 @@ import { fileURLToPath } from "node:url";
 import {
   ALLOWED_HOSTS, ALWAYS_ALLOWED_FILES, BASE_PRODUCT_WORD, GENERIC_MODULE_FILES, buildManifest, defaultDeployment, isSemver,
   moduleFileNames, moduleSpecifiers, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter,
-  renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate,
+  periodsForTools, renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate,
 } from "./lib/agent-cli.mjs";
 import { fillPlaceholders, storedFolders } from "./lib/profile-words.mjs";
 // The migration tables the wire-name gate allows and nothing else, read from the modules that
@@ -183,7 +183,7 @@ const write = (rel, text) => { mkdirSync(dirname(join(OUT, rel)), { recursive: t
 // name, product word or folder of their own, only lookups into the generated module below.
 for (const [role, source] of Object.entries(GENERIC_MODULE_FILES)) write(moduleFiles[role], readFileSync(join(SETUP, source)));
 write("deployment.generated.mjs", renderDeploymentModule({
-  packageName: name, name: productName, slug, tagline, origin, mcpEndpoint: connect.endpoint, vocabulary: profile.vocabulary, folders: storedFolders(profile),
+  packageName: name, name: productName, slug, tagline, origin, mcpEndpoint: connect.endpoint, vocabulary: profile.vocabulary, folders: storedFolders(profile), workPeriods: periodsForTools(profile),
   commands, modules: moduleSpecifiers(moduleFiles), configDir,
   connect: { claudeCommand: connect.claudeCommand, tokenCommands: connect.tokenCommands, tokenNote: connect.tokenNote, packageAlternative: connect.packageAlternative },
 }));

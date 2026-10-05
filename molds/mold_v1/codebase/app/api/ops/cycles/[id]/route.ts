@@ -6,6 +6,8 @@ import { cycles } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordFieldChanges } from "@/lib/ops-activity";
 import { orgContextForRequest } from "@/lib/org-context";
+import { WORK_PERIODS } from "@/agent/lib/work-periods";
+import { periodsNotFound } from "@/lib/work-periods-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +25,8 @@ const patchSchema = z.strictObject({
 });
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const off = periodsNotFound();
+  if (off) return off;
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
@@ -38,6 +42,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   }
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
+  // Mode individual: a period has no shared lead and no team capacity (each person's goal and planned count are
+  // their own, /api/ops/cycles/:id/goals). Clearing one that an earlier mode stored is still allowed.
+  if (WORK_PERIODS.individual && (parsed.data.lead != null || parsed.data.capacity != null)) {
+    return NextResponse.json({ error: "lead and capacity are not used here" }, { status: 400 });
+  }
   const { startsAt, endsAt, actor = "web", ...rest } = parsed.data;
   const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
   if (startsAt !== undefined) set.startsAt = startsAt ? new Date(startsAt) : null;
@@ -69,6 +78,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 }
 
 export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const off = periodsNotFound();
+  if (off) return off;
   const ctx = await orgContextForRequest(request);
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (ctx instanceof Response) return ctx;
@@ -77,7 +88,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   const { id } = await context.params;
   if (!UUID.test(id)) return NextResponse.json({ error: "Invalid cycle id" }, { status: 400 });
   try {
-    // Hard delete — the sprint row is removed. Its todos keep their (now
+    // Hard delete — the period's row is removed. Its todos keep their (now
     // dangling) cycleId and simply fall out of any cycle grouping.
     const [item] = await withOrgRls(ctx.orgId, (tx) =>
       tx.delete(cycles).where(and(eq(cycles.id, id), eq(cycles.orgId, ctx.orgId))).returning({ id: cycles.id }),

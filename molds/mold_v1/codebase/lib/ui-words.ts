@@ -31,6 +31,7 @@ import { labelOf, type DataroomDomainId } from "../agent/lib/dataroom-folders.ts
 import { LEGACY_MEMBER } from "../agent/lib/legacy-member.ts";
 import { DEPLOYMENT_PROFILE } from "./deployment-profile.generated.ts";
 import { domainView, lowerFirst } from "./profile-domains.ts";
+import { WORK_PERIODS as PERIODS } from "../agent/lib/work-periods.ts";
 
 export const upperFirst = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
@@ -66,6 +67,17 @@ export const W = {
   rollouts: lowerFirst(ROLLOUT.plural),
   Rollout: ROLLOUT.singular,
   Rollouts: ROLLOUT.plural,
+  /** A time-boxed period that groups tasks (`work_periods.label`). Sentences come from lib/work-periods-ui.ts. */
+  period: PERIODS.label.singular,
+  periods: PERIODS.label.plural,
+  Period: upperFirst(PERIODS.label.singular),
+  Periods: upperFirst(PERIODS.label.plural),
+  /** The same period where tasks are grouped and filtered by it (`work_periods.list_label`). */
+  periodList: PERIODS.listLabel.singular,
+  periodLists: PERIODS.listLabel.plural,
+  /** One task in a period under mode individual (`work_periods.item_label`): "target". */
+  periodItem: PERIODS.itemLabel.singular,
+  periodItems: PERIODS.itemLabel.plural,
   /** An account id as a placeholder shows it: the account word, then "-id". */
   accountIdExample: `${V.account.singular.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}-id`,
   /** The product install ("not configured on this workspace"). */

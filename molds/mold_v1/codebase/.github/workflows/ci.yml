@@ -681,6 +681,19 @@ jobs:
         if: always()
         run: npm run test:deployment-profile
 
+      # WORK PERIODS (profiles `work_periods`). The base product had one idea of a period, a shared one under its
+      # own word, written into the UI, the model's tools, the coding agent's tools, the routes and the activity feed;
+      # a deployment whose people each hold their own targets for a week could neither reshape it nor turn it off.
+      # The profile now says which of three things it is and what it is called. A mode is decided at build time, so
+      # this renders three builds: the DEFAULT (mode team) is held to a before-image to the letter (every UI string,
+      # the coding agent's tools, the model's three tool definitions, the routes); under "off" (a copy of the
+      # checkout) the view is gone, the model has no period tool and no cycleId, every cycles route is a 404 and
+      # nothing the model reads mentions one; under "individual" (another copy) the words, tools and routes are a
+      # person's own items. Plus the generator's refusals and the rules (whose an item is, the reporting chain).
+      - name: Work periods follow the profile (generator, each mode's views, words, tools and routes; the default to the letter)
+        if: always()
+        run: npm run test:work-periods
+
       # A profile's OWN fields on the two record areas and the account record: the one validator every write path shares, the agent's
       # write path, the MCP tool inputs, the migration, and a ratchet that a new writer of the two tables
       # cannot skip the validator.
@@ -777,6 +790,15 @@ jobs:
       - name: UI vocabulary, behavioural (keys, API errors, library rows, enum labels, concurrent build)
         if: always()
         run: npm run test:ui-vocabulary
+
+      # Work periods as a person SEES them under each mode (profiles `work_periods.mode`), in Chromium against the
+      # auth-free preview: team is a card with a burndown; off has no period view among the navigation's entries;
+      # individual groups a period by person, the signed-in person first, each with their own progress and items and
+      # no burndown. The relabelled build above renders mode individual in the real Todos workspace
+      # (scripts/lib/rendered-text.mjs periodExpectations); this holds all three side by side from one dev server.
+      - name: Work periods rendered in each mode (team, individual, off)
+        if: always()
+        run: npx playwright test tests/cards.spec.ts
 
   # EVERY sandbox takes the SANDBOX_* settings off Vercel, through the REAL `eve build`. On the first self-hosted
   # server only the two definitions that named the settings had them: the other specialists, and all four of a
@@ -1015,6 +1037,21 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:library-provisioning-db
+
+      # WORK PERIODS IN EACH MODE, as app_rw under the fail-closed policies (the database half of
+      # test:work-periods). drizzle/0030_cycle_member_goals.sql: the new table is row-level secured like its
+      # neighbours and the file applies again over rows without touching one. Then two workspaces per mode (team:
+      # this checkout; individual and off: a copy under each fixture profile), through the real routes and the
+      # model's real tools: A reads none of B's periods, tasks or goals and can change none; an ended period rolls
+      # over inside its own workspace only, each person's unfinished items into their next period; an item or a
+      # goal is set for oneself or a reportee per the roster and for nobody else; under "off" every route is a 404
+      # and the stored rows are byte for byte what they were.
+      - name: Work periods in each mode, two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:work-periods-db
 
       # The two record areas (deployments[], implementation) written by upsert_customer: only the rows and fields
       # a patch names change, each in SQL onto what is stored at write time; a row is deleted only by remove: true;

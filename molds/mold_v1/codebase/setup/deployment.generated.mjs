@@ -33,6 +33,17 @@ export const DEPLOYMENT = {
     "people": "People",
     "uploads": "Uploads"
   },
+  "workPeriods": {
+    "mode": "team",
+    "label": {
+      "singular": "sprint",
+      "plural": "sprints"
+    },
+    "itemLabel": {
+      "singular": "target",
+      "plural": "targets"
+    }
+  },
   "commands": {
     "login": "workspace-login",
     "mcp": "workspace-mcp",
@@ -53,4 +64,4 @@ export const DEPLOYMENT = {
   "configDir": "workspace-mcp",
   "connect": null
 };
-export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, folders, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;
+export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, folders, workPeriods, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;

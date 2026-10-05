@@ -172,6 +172,10 @@ variable or storage key grows the word back.
 | Bulk writes | `backfill_start`, `backfill_finish`, `backfill_list`, `backfill_show`, `backfill_revert` |
 | Sessions and learnings | `record_coding_session`, `session_upload`, `session_upload_batch`, `session_continue_url`, `learning_distil`, `learning_list` |
 
+The two period tools (`sprint_list`, `sprint_create`) follow the deployment profile's `work_periods`
+([`DEPLOYMENT_PROFILE.md`](DEPLOYMENT_PROFILE.md)): their descriptions read the profile's word for a period, and a
+deployment whose profile turns work periods off is offered neither, and no task tool there takes or names a period.
+
 Writes to the data room and invites preview by default and need `confirm: true`
 plus the preview token; see the server's `instructions`. Through the hosted
 endpoint the data room is always reached via the Ops API — as the caller,

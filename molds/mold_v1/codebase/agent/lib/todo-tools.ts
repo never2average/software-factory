@@ -14,6 +14,9 @@ import { todos } from "./db/schema.ts";
 import { orgForSession } from "./org-context.ts";
 import { taskWorkflowRequest } from "./task-workflow-service.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
+import { fill } from "./agent-vocabulary.ts";
+import { WORK_PERIODS, currentPeriod, progressByPerson } from "./work-periods.ts";
+import { ensureCurrentPeriod, goalsFor, rollOverEnded, setMemberGoal, taskWriteRefusal } from "./work-period-store.ts";
 
 function callerEmail(ctx: {
   session: {
@@ -67,12 +70,36 @@ export const upsertTodoTool = modelFacing("upsert_todo", defineTool({
     linkId: z.string().nullable().optional(),
     linkLabel: z.string().nullable().optional().describe("Human label for the link chip."),
     assignee: z.string().nullable().optional().describe("Email of the assignee; null = the creator."),
-    cycleId: z.string().nullable().optional().describe("The cycle (sprint) id from list_cycles; null = backlog."),
+    // The period parameter exists only where the deployment has periods (profile work_periods.mode). Under mode
+    // individual a task in a period is one person's {period_item}, and "current" names the period that contains today.
+    ...(WORK_PERIODS.enabled
+      ? {
+          cycleId: z
+            .string()
+            .nullable()
+            .optional()
+            .describe(fill(
+              WORK_PERIODS.individual
+                ? "Makes this todo a {period_item} of a {period}: the cycle id from list_cycles, or \"current\" for the {period} that contains today. It is the assignee's {period_item} (yours when no assignee is given); you may only set one for yourself or for a person who reports to you on the roster. null = not in any {period}."
+                : "The cycle ({period}) id from list_cycles; null = backlog.",
+            )),
+        }
+      : {}),
   }),
   async execute(input, ctx) {
-    const { id, ...fields } = input;
+    const { id, ...fields } = input as typeof input & { cycleId?: string | null };
     const orgId = await orgForSession(ctx);
     const actor = callerEmail(ctx);
+    if (!WORK_PERIODS.enabled) delete fields.cycleId;
+    if (WORK_PERIODS.individual) {
+      if (fields.cycleId === "current") {
+        const period = await withOrgDb(orgId, (tx) => ensureCurrentPeriod(tx, orgId, actor));
+        if (!period) throw new Error(`There is no current ${WORK_PERIODS.label.singular}. Create one with upsert_cycle first.`);
+        fields.cycleId = period.id;
+      }
+      const refused = await withOrgDb(orgId, (tx) => taskWriteRefusal(tx, orgId, actor, id ?? null, { cycleId: fields.cycleId, assignee: fields.assignee }));
+      if (refused) throw new Error(refused);
+    }
 
     if (id) {
       const item = await taskWorkflowRequest<{ id: string; title: string; done: boolean }>(
@@ -148,65 +175,173 @@ export const hideTodoTool = modelFacing("hide_todo", defineTool({
 
 import { cycles } from "./db/schema.ts";
 
-export const listCyclesTool = modelFacing("list_cycles", defineTool({
-  description:
-    "List the team's cycles (sprints) — for filing todos into with upsert_todo. Returns id, name, and window.",
-  inputSchema: z.object({}),
-  async execute(_input, ctx) {
-    const db = requireDb();
-    // Was unscoped in both senses: no workspace resolved, and no org filter on
-    // the query — so this listed every workspace's cycles.
-    const orgId = await orgForSession(ctx);
-    const rows = await withOrgDb(orgId, (tx) =>
-      tx
-        .select()
-        .from(cycles)
-        .where(and(eq(cycles.orgId, orgId), isNull(cycles.archivedAt)))
-        .orderBy(desc(cycles.createdAt)),
-    );
-    return {
-      cycles: rows.map((c) => ({
-        id: c.id,
-        name: c.name,
-        startsAt: c.startsAt?.toISOString() ?? null,
-        endsAt: c.endsAt?.toISOString() ?? null,
-      })),
-    };
-  },
-}));
+/**
+ * The two period tools. Which of them the model is given, and what they say, follows the deployment profile's
+ * `work_periods` (agent/lib/work-periods.ts):
+ *   mode "team"         the base product's tools, to the byte (the description fills the profile's word);
+ *   mode "individual"   the same names with a person's own {period_items}: list_cycles also returns one person's
+ *                       items and progress for the current period, upsert_cycle also sets a person's goal;
+ *   mode "off"          neither is registered (agent/tools/list_cycles.ts and upsert_cycle.ts export disableTool()),
+ *                       and upsert_todo above has no cycleId parameter.
+ * Each mode's definition is written INSIDE its modelFacing(...) call, like every other tool here: the source scans
+ * that tell a read-only tool from an approval-gated one read a tool from its modelFacing( to the next.
+ */
+export const listCyclesTool = modelFacing("list_cycles", !WORK_PERIODS.individual
+  ? defineTool({
+    description:
+      "List the team's cycles ({periods}) — for filing todos into with upsert_todo. Returns id, name, and window.",
+    inputSchema: z.object({}),
+    async execute(_input, ctx) {
+      const db = requireDb();
+      // Was unscoped in both senses: no workspace resolved, and no org filter on
+      // the query — so this listed every workspace's cycles.
+      const orgId = await orgForSession(ctx);
+      const rows = await withOrgDb(orgId, async (tx) => {
+        await rollOverEnded(tx, orgId);
+        return tx
+          .select()
+          .from(cycles)
+          .where(and(eq(cycles.orgId, orgId), isNull(cycles.archivedAt)))
+          .orderBy(desc(cycles.createdAt));
+      });
+      return {
+        cycles: rows.map((c) => ({
+          id: c.id,
+          name: c.name,
+          startsAt: c.startsAt?.toISOString() ?? null,
+          endsAt: c.endsAt?.toISOString() ?? null,
+        })),
+      };
+    },
+  })
+  : (defineTool({
+    description:
+      "List the {periods} (cycles) and one person's {period_items} in one of them. Each person has their own {period_items} within a {period}: a {period_item} is a todo filed into the {period} and assigned to them. Returns every {period} (id, name, window, state) and, for `person` (the signed-in person when omitted) in `cycleId` (the {period} that contains today when omitted): their goal, how many they planned, how many are done, and each {period_item}. Add one with upsert_todo (cycleId: \"current\"), complete one with upsert_todo (id, done: true).",
+    inputSchema: z.object({
+      person: z.string().email().optional().describe(fill("Whose {period_items} to return, by email. Omit for the signed-in person.")),
+      cycleId: z.string().optional().describe(fill("Which {period}: an id from this tool's `cycles`. Omit for the {period} that contains today.")),
+    }),
+    async execute({ person, cycleId }, ctx) {
+      const db = requireDb();
+      const orgId = await orgForSession(ctx);
+      const me = callerEmail(ctx).toLowerCase();
+      const who = (person ?? me).trim().toLowerCase();
+      return withOrgDb(orgId, async (tx) => {
+        await rollOverEnded(tx, orgId);
+        const rows = await tx
+          .select()
+          .from(cycles)
+          .where(and(eq(cycles.orgId, orgId), isNull(cycles.archivedAt)))
+          .orderBy(desc(cycles.createdAt));
+        const period = cycleId ? rows.find((c) => c.id === cycleId) : currentPeriod(rows);
+        const listed = rows.map((c) => ({
+          id: c.id,
+          name: c.name,
+          startsAt: c.startsAt?.toISOString() ?? null,
+          endsAt: c.endsAt?.toISOString() ?? null,
+          state: c.state,
+          current: c.id === currentPeriod(rows)?.id,
+        }));
+        if (!period) return { cycles: listed, person: who, cycle: null, items: [] };
+        const tasks = await tx
+          .select()
+          .from(todos)
+          .where(and(eq(todos.orgId, orgId), eq(todos.cycleId, period.id), isNull(todos.archivedAt)));
+        const mine = progressByPerson(period.id, tasks, await goalsFor(tx, orgId, period.id), who).find((p) => p.person === who);
+        return {
+          cycles: listed,
+          person: who,
+          cycle: { id: period.id, name: period.name },
+          goal: mine?.goal ?? null,
+          planned: mine?.planned ?? 0,
+          done: mine?.done ?? 0,
+          items: (mine?.items ?? []).map((t) => ({ id: t.id, title: t.title, done: t.done, status: t.status, dueAt: t.dueAt?.toISOString() ?? null })),
+        };
+      });
+    },
+  }) as never));
 
-export const upsertCycleTool = modelFacing("upsert_cycle", defineTool({
-  description:
-    "Create OR update a cycle (sprint) — a time-boxed window that groups todos. Omit `id` to create; pass `id` to update. Then file todos into it with upsert_todo (cycleId).",
-  approval: once(),
-  inputSchema: z.object({
-    id: z.string().optional().describe("Cycle id to update; omit to create."),
-    name: z.string().min(1).max(200).optional().describe("Required when creating, e.g. 'Sprint 12'."),
-    startsAt: z.string().datetime({ offset: true }).nullable().optional(),
-    endsAt: z.string().datetime({ offset: true }).nullable().optional(),
-  }),
-  async execute({ id, name, startsAt, endsAt }, ctx) {
-    const db = requireDb();
-    const fields: Record<string, unknown> = {};
-    if (name !== undefined) fields.name = name;
-    if (startsAt !== undefined) fields.startsAt = startsAt ? new Date(startsAt) : null;
-    if (endsAt !== undefined) fields.endsAt = endsAt ? new Date(endsAt) : null;
-    if (id) {
-      const org = await orgForSession(ctx);
-      const [c] = await withOrgDb(org, (tx) =>
-        tx.update(cycles).set({ ...fields, updatedAt: new Date() }).where(and(eq(cycles.id, id), eq(cycles.orgId, org))).returning(),
+export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individual
+  ? defineTool({
+    description:
+      "Create OR update a cycle ({period}) — a time-boxed window that groups todos. Omit `id` to create; pass `id` to update. Then file todos into it with upsert_todo (cycleId).",
+    approval: once(),
+    inputSchema: z.object({
+      id: z.string().optional().describe("Cycle id to update; omit to create."),
+      name: z.string().min(1).max(200).optional().describe(fill("Required when creating, e.g. '{Period} 12'.")),
+      startsAt: z.string().datetime({ offset: true }).nullable().optional(),
+      endsAt: z.string().datetime({ offset: true }).nullable().optional(),
+    }),
+    async execute({ id, name, startsAt, endsAt }, ctx) {
+      const db = requireDb();
+      const fields: Record<string, unknown> = {};
+      if (name !== undefined) fields.name = name;
+      if (startsAt !== undefined) fields.startsAt = startsAt ? new Date(startsAt) : null;
+      if (endsAt !== undefined) fields.endsAt = endsAt ? new Date(endsAt) : null;
+      if (id) {
+        const org = await orgForSession(ctx);
+        const [c] = await withOrgDb(org, (tx) =>
+          tx.update(cycles).set({ ...fields, updatedAt: new Date() }).where(and(eq(cycles.id, id), eq(cycles.orgId, org))).returning(),
+        );
+        if (!c) throw new Error(`No cycle with id "${id}".`);
+        return { updated: true as const, cycle: { id: c.id, name: c.name } };
+      }
+      if (!fields.name) throw new Error("Creating a cycle needs a `name`.");
+      const cycleOrg = await orgForSession(ctx);
+      const [c] = await withOrgDb(cycleOrg, (tx) =>
+        tx
+          .insert(cycles)
+          .values({ ...(fields as { name: string }), orgId: cycleOrg, createdBy: callerEmail(ctx) })
+          .returning(),
       );
-      if (!c) throw new Error(`No cycle with id "${id}".`);
-      return { updated: true as const, cycle: { id: c.id, name: c.name } };
-    }
-    if (!fields.name) throw new Error("Creating a cycle needs a `name`.");
-    const cycleOrg = await orgForSession(ctx);
-    const [c] = await withOrgDb(cycleOrg, (tx) =>
-      tx
-        .insert(cycles)
-        .values({ ...(fields as { name: string }), orgId: cycleOrg, createdBy: callerEmail(ctx) })
-        .returning(),
-    );
-    return { created: true as const, cycle: { id: c.id, name: c.name } };
-  },
-}));
+      return { created: true as const, cycle: { id: c.id, name: c.name } };
+    },
+  })
+  : (defineTool({
+    description:
+      "Create OR update a {period} (a cycle: a time-boxed window people hold their own {period_items} in), or set one person's goal for it. Omit `id` to create a {period}; pass `id` to update it. With `id` you may also set `goal` and `planned` for `person` (the signed-in person when omitted); you may only do that for yourself or for a person who reports to you on the roster. A {period} has no shared lead and no team capacity. Add a {period_item} with upsert_todo (cycleId).",
+    approval: once(),
+    inputSchema: z.object({
+      id: z.string().optional().describe(fill("Cycle id to update, or \"current\" for the {period} that contains today; omit to create.")),
+      name: z.string().min(1).max(200).optional().describe(fill("Required when creating, e.g. '{Period} 12'.")),
+      startsAt: z.string().datetime({ offset: true }).nullable().optional(),
+      endsAt: z.string().datetime({ offset: true }).nullable().optional(),
+      person: z.string().email().optional().describe("Whose goal to set, by email. Omit for the signed-in person."),
+      goal: z.string().max(2000).nullable().optional().describe(fill("What the person means to get done in this {period}; null clears it.")),
+      planned: z.number().int().min(0).max(1000).nullable().optional().describe(fill("How many {period_items} the person planned for this {period}; null clears it.")),
+    }),
+    async execute({ id, name, startsAt, endsAt, person, goal, planned }, ctx) {
+      const db = requireDb();
+      const org = await orgForSession(ctx);
+      const actor = callerEmail(ctx).toLowerCase();
+      const fields: Record<string, unknown> = {};
+      if (name !== undefined) fields.name = name;
+      if (startsAt !== undefined) fields.startsAt = startsAt ? new Date(startsAt) : null;
+      if (endsAt !== undefined) fields.endsAt = endsAt ? new Date(endsAt) : null;
+      const setsGoal = goal !== undefined || planned !== undefined;
+      return withOrgDb(org, async (tx) => {
+        let cycleId = id;
+        let row: { id: string; name: string } | undefined;
+        if (cycleId === "current") {
+          const period = await ensureCurrentPeriod(tx, org, actor);
+          if (!period) throw new Error(`There is no current ${WORK_PERIODS.label.singular}. Create one first (omit \`id\`, give a \`name\`).`);
+          cycleId = period.id;
+        }
+        if (cycleId) {
+          if (Object.keys(fields).length) {
+            [row] = await tx.update(cycles).set({ ...fields, updatedAt: new Date() }).where(and(eq(cycles.id, cycleId), eq(cycles.orgId, org))).returning();
+          } else {
+            [row] = await tx.select().from(cycles).where(and(eq(cycles.id, cycleId), eq(cycles.orgId, org)));
+          }
+          if (!row) throw new Error(`No cycle with id "${cycleId}".`);
+        } else {
+          if (!fields.name) throw new Error("Creating a cycle needs a `name`.");
+          [row] = await tx.insert(cycles).values({ ...(fields as { name: string }), orgId: org, createdBy: actor }).returning();
+        }
+        if (!setsGoal) return id ? { updated: true as const, cycle: { id: row.id, name: row.name } } : { created: true as const, cycle: { id: row.id, name: row.name } };
+        const set = await setMemberGoal(tx, org, actor, { cycleId: row.id, member: person ?? actor, goal, targetCount: planned });
+        if ("refused" in set) throw new Error(set.refused);
+        return { updated: true as const, cycle: { id: row.id, name: row.name }, person: set.item.member, goal: set.item.goal, planned: set.item.targetCount };
+      });
+    },
+  }) as never));

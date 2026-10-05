@@ -907,6 +907,10 @@ export const appVersions = pgTable(
  * A CYCLE — a time-boxed iteration (a sprint) that groups todos. "Build cycles"
  * in the TODOs section: give it a name + a start/end window, then file todos
  * into it. The "current" cycle is the one whose window contains now.
+ *
+ * That sentence is the ONE place the base product's own word for a period is written (the legacy definition). What a
+ * deployment calls a period, whether it is shared by the team or held per person, and whether it exists at all are
+ * the deployment profile's `work_periods` (agent/lib/work-periods.ts); nothing else in base text spells the word.
  */
 export const cycles = pgTable("cycles", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -915,12 +919,12 @@ export const cycles = pgTable("cycles", {
   name: text("name").notNull(),
   startsAt: timestamp("starts_at", { withTimezone: true }),
   endsAt: timestamp("ends_at", { withTimezone: true }),
-  // Sprint lifecycle: "planning" | "active" | "closed".
+  // Lifecycle: "planning" | "active" | "closed".
   state: text("state").notNull().default("planning"),
-  // The sprint's goal / theme.
+  // The period's goal / theme (mode team; a person's own goal is in cycle_member_goals).
   goal: text("goal"),
-  // The sprint lead — the person accountable for the sprint (an email, resolved
-  // against the roster). Distinct from createdBy (who filed it).
+  // The lead — the person accountable for the period (an email, resolved
+  // against the roster). Distinct from createdBy (who filed it). Mode team only.
   lead: text("lead"),
   // Committed capacity as a task count — the burndown's ideal-line start.
   capacity: integer("capacity"),
@@ -929,6 +933,29 @@ export const cycles = pgTable("cycles", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * One person's own goal for one period, under the deployment profile's `work_periods.mode: "individual"`
+ * (agent/lib/work-periods.ts): what they mean to get done in it, and how many items they planned. The period is a
+ * `cycles` row and the items are the `todos` filed into it, by assignee; this table adds only what neither holds.
+ * `member` is the person's email, lower case (the roster's key). One row per (workspace, period, person).
+ */
+export const cycleMemberGoals = pgTable(
+  "cycle_member_goals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    cycleId: uuid("cycle_id").notNull(),
+    member: text("member").notNull(),
+    goal: text("goal"),
+    // How many items the person planned for the period; null = not stated (the count of items filed is used).
+    targetCount: integer("target_count"),
+    updatedBy: text("updated_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("cycle_member_goals_member_uidx").on(t.orgId, t.cycleId, t.member)],
+);
 
 /**
  * The org roster — who's on which team and who they report to. Powers the
@@ -961,7 +988,7 @@ export const todos = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     // Tenant scope (nullable → backfills to 'onfinance'; NOT NULL deferred).
     orgId: text("org_id").notNull(),
-    // The cycle (sprint) this todo is filed into; null = backlog.
+    // The cycle (the period) this todo is filed into; null = backlog.
     cycleId: uuid("cycle_id"),
     // Parent TODO — a subtask points at its parent's id. Null = a top-level task.
     parentId: uuid("parent_id"),

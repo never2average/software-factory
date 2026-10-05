@@ -16,6 +16,7 @@
  */
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { freePort, waitForNextStart } from "./own-listener.mjs";
 import { BASE_PRODUCT_WORD } from "./agent-cli.mjs";
@@ -36,7 +37,9 @@ export const PAGE_SPECS = [
   { path: "/?ops=todos&view=tasks", ready: "The team's internal action list", then: [{ click: "Chase the Q2 filing", expect: "Properties" }] },
   { path: "/?ops=todos&view=deployments", ready: "The team's internal action list", then: [{ click: "Acme Housing", expect: "Properties" }] },
   { path: "/?ops=todos&view=implementations", ready: "The team's internal action list" },
-  { path: "/?ops=todos&view=sprints", ready: "The team's internal action list" },
+  // The period view. What it shows is the profile's (work_periods.mode): renderedText() fills in what to click and
+  // what must (and must not) be there from periodExpectations(), for the mode of the build it renders.
+  { path: "/?ops=todos&view=sprints", ready: "The team's internal action list", period: true },
   { path: "/?dataroom=customers", ready: "Master.xlsx" },
   { path: "/?dataroom=platform", ready: "Master.xlsx" },
   { path: "/?dataroom=deployments", ready: "Master.xlsx" },
@@ -62,6 +65,39 @@ export const PAGE_SPECS = [
   { name: "account picker, could not be read", path: "/", ready: "css:textarea", mocks: { "/api/ops/customers": { $status: 503, $body: { error: "unavailable" } } }, then: [{ click: "css:[data-testid=account-picker]", expect: "css:[data-testid=account-picker-error]" }] },
 ];
 export const PAGES = PAGE_SPECS.map((p) => p.path);
+
+/** The period the mocked ops API answers, by the name a person clicks. */
+export const PERIOD_NAME = "Planning window 41";
+/** The work-period mode of a build: read from the profile module the build was made from. */
+export function periodModeOf(dir) {
+  try {
+    const m = /"work_periods":\s*\{\s*"mode":\s*"(off|team|individual)"/.exec(readFileSync(join(dir, "lib/deployment-profile.generated.ts"), "utf8"));
+    return m ? m[1] : "team";
+  } catch {
+    return "team";
+  }
+}
+/**
+ * What the period view must show a person under each mode (and must not), as steps of its page spec:
+ *   team        the period is listed; opening it shows its shared panel with the burndown;
+ *   individual  the period is listed; opening it shows one block per person, the signed-in person's first, and no
+ *               burndown anywhere in it;
+ *   off         the view does not exist: the link lands on the task list, and no period is listed.
+ */
+export function periodExpectations(mode) {
+  if (mode === "off") return { then: [], absent: [PERIOD_NAME] };
+  if (mode === "individual") {
+    return {
+      then: [{
+        click: PERIOD_NAME,
+        expect: 'css:[data-testid=period-people] section[data-testid=period-person]:first-of-type[data-person="reviewer@example.com"]',
+        present: ['css:[data-testid=period-people] section[data-testid=period-person][data-person="colleague@example.com"]', "css:[data-testid=period-people] [data-testid=period-person-progress]", "Read the annual report"],
+        absent: ["css:[data-testid=period-people] .recharts-surface", "Burndown"],
+      }],
+    };
+  }
+  return { then: [{ click: PERIOD_NAME, expect: "Burndown", present: ["Read the annual report"], absent: ["css:[data-testid=period-people]"] }] };
+}
 
 /** What the app shows when a page crashed. Seeing it fails the pass. A region's own boundary ("The Ops Center hit an
  *  error", app/_components/error-boundary.tsx; "This page hit an error", app/error.tsx) is a crash too: the panel
@@ -99,7 +135,12 @@ export const MOCKS = () => ({
   },
   // A project workflow governing the implementation record area: its entity is a CODE value the UI must name in the profile's words.
   "/api/ops/workflow-definitions": { items: [{ id: "d1", name: "Pipeline", entity: "implementation", stages: [{ id: "s1", name: "Scoping", description: "x", assign: { type: "customer_owner" }, transitions: [] }], createdBy: "reviewer@example.com" }], canEdit: true },
-  "/api/ops/todos": { items: [{ id: "t1", title: "Chase the Q2 filing", notes: null, done: false, doneAt: null, status: "open", priority: "normal", dueAt: null, containerType: "deployment", containerId: "d1", containerLabel: "Q2 results", linkType: "customer", linkId: "acme", linkLabel: "Acme Housing", cycleId: null, parentId: null, createdBy: "reviewer@example.com", assignee: null, archivedAt: null, createdAt: at(2), updatedAt: at(1) }] },
+  // One task outside every period, and two inside the period below: the signed-in person's and a colleague's.
+  "/api/ops/todos": { items: [{ id: "t1", title: "Chase the Q2 filing", notes: null, done: false, doneAt: null, status: "open", priority: "normal", dueAt: null, containerType: "deployment", containerId: "d1", containerLabel: "Q2 results", linkType: "customer", linkId: "acme", linkLabel: "Acme Housing", cycleId: null, parentId: null, createdBy: "reviewer@example.com", assignee: null, archivedAt: null, createdAt: at(2), updatedAt: at(1) }, { id: "t2", title: "Read the annual report", notes: null, done: false, doneAt: null, status: "open", priority: "normal", dueAt: null, containerType: null, containerId: null, containerLabel: null, linkType: null, linkId: null, linkLabel: null, cycleId: "c1", parentId: null, createdBy: "reviewer@example.com", assignee: "reviewer@example.com", archivedAt: null, createdAt: at(2), updatedAt: at(1) }, { id: "t3", title: "Update the quarterly model", notes: null, done: true, doneAt: at(1), status: "done", priority: "normal", dueAt: null, containerType: null, containerId: null, containerLabel: null, linkType: null, linkId: null, linkLabel: null, cycleId: "c1", parentId: null, createdBy: "colleague@example.com", assignee: "colleague@example.com", archivedAt: null, createdAt: at(2), updatedAt: at(1) }] },
+  // The period those two are filed into: current, led by the signed-in person (mode team reads the lead, the goal and
+  // the capacity; mode individual reads each person's own goal instead).
+  "/api/ops/cycles": { items: [{ id: "c1", name: PERIOD_NAME, startsAt: at(2), endsAt: at(-5), state: "active", goal: "Close out the quarter", capacity: 4, lead: "reviewer@example.com", createdBy: "reviewer@example.com", archivedAt: null, createdAt: at(2), updatedAt: at(1) }] },
+  "/api/ops/cycles/c1/goals": { items: [{ member: "reviewer@example.com", goal: "Finish the three reads", targetCount: 3 }] },
   "/api/ops/deployments": { items: [{ id: "d1", label: "Q2 results", displayName: null, owner: "reviewer@example.com", status: "deployed", health: "healthy", env: "prod", version: "1", customer: "acme", customerLabel: "Acme Housing", uptime: null, errorRate: null, lastDeployAt: at(3), fields: {}, custom: {} }] },
   "/api/ops/implementations": { items: [{ id: "acme", label: "Acme Housing", displayName: null, owner: "reviewer@example.com", stage: "UAT", risk: "low", progress: 40, customer: "acme", customerLabel: "Acme Housing", solutionName: null, goLiveDate: null, fields: { blockerOwner: "Customer" }, custom: {} }] },
   "/api/ops/schedules": { items: [{ id: "s1", name: "daily-digest", cron: "0 9 * * *", everyMinutes: null, kind: "prompt", workflow: null, prompt: "Summarise yesterday's filings", channelId: null, customerId: null, notifyEmail: null, notifyEmails: null, enabled: true, nextRunAt: null, lastRunAt: null, lastError: null, createdBy: "reviewer@example.com", createdAt: at(5), updatedAt: at(5) }] },
@@ -186,7 +227,9 @@ export async function renderedText({ dir, root, specs = PAGE_SPECS }) {
     page.on("pageerror", (e) => pageErrors.push(String(e?.message ?? e).split("\n")[0]));
     // The first VISIBLE match: a list's text may also sit in a closed menu or a hidden <option>.
     const locate = (m) => (m.startsWith("css:") ? page.locator(m.slice(4)) : page.getByText(m, { exact: false })).filter({ visible: true }).first();
-    for (const spec of specs) {
+    const mode = periodModeOf(dir);
+    for (const given of specs) {
+      const spec = given.period ? { ...given, ...periodExpectations(mode) } : given;
       const p = spec.path;
       mocks = spec.mocks ? { ...base_mocks, ...spec.mocks } : base_mocks;
       const started = Date.now();
@@ -215,6 +258,8 @@ export async function renderedText({ dir, root, specs = PAGE_SPECS }) {
           for (const t of await page.$$eval("[role=tooltip]", (els) => els.map((e) => e.textContent))) add(t);
         }
         await read();
+        // `absent` on the page itself: what its first paint must not show.
+        for (const m of spec.absent ?? []) if (await locate(m).count()) throw new Error(`shows ${JSON.stringify(m)}, which this mode does not have`);
         for (const step of spec.then ?? []) {
           // `mocks`: what the API answers from this step on (a list that failed, then loads on Retry).
           if (step.mocks) mocks = { ...mocks, ...step.mocks };
@@ -222,6 +267,9 @@ export async function renderedText({ dir, root, specs = PAGE_SPECS }) {
           await locate(step.expect).waitFor({ state: "visible", timeout: 10_000 });
           await page.waitForTimeout(300);
           await read();
+          // `present` / `absent`: what else the opened view must show, and what it must not.
+          for (const m of step.present ?? []) await locate(m).waitFor({ state: "visible", timeout: 5_000 });
+          for (const m of step.absent ?? []) if (await locate(m).count()) throw new Error(`shows ${JSON.stringify(m)}, which this mode does not have`);
           // `keepOpen`: the next step clicks inside what this one opened.
           if (!step.keepOpen) await page.keyboard.press("Escape").catch(() => {});
         }

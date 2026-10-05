@@ -25,6 +25,7 @@ import { CronsPanel } from "./ops/crons-panel";
 import { SECTION_META, type OpsSection } from "./ops/lib";
 import { WorkflowsPanel } from "./ops/workflows-panel";
 import { SURFACE } from "./ops/tokens";
+import type { TodoViewKey } from "@/lib/work-periods-ui";
 
 export { OPS_SECTIONS } from "./ops/lib";
 export type { OpsSection } from "./ops/lib";
@@ -45,7 +46,7 @@ export function OpsCenter({
   // the modal first shows. For crons this may be a system cron NAME.
   readonly initialSelectedId?: string;
   // Deep-link (`&view=<tab>`) for the TODOs workspace's tab.
-  readonly initialView?: "tasks" | "sprints" | "deployments" | "implementations";
+  readonly initialView?: TodoViewKey;
 }) {
   const meta = SECTION_META[section];
 

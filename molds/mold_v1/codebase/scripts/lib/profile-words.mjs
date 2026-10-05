@@ -47,6 +47,16 @@ export function placeholderWords(profile) {
     out[upperFirst(key)] = upperFirst(pair.singular);
     out[`${upperFirst(key)}s`] = upperFirst(pair.plural);
   }
+  // The period words (agent/lib/work-periods.ts periodWordOf): the profile's word as it is written, or capitalised.
+  const wp = profile.work_periods;
+  if (wp) {
+    for (const [key, pair] of [["period", wp.label], ["period_item", wp.item_label]]) {
+      out[key] = pair.singular;
+      out[`${key}s`] = pair.plural;
+      out[upperFirst(key)] = upperFirst(pair.singular);
+      out[`${upperFirst(key)}s`] = upperFirst(pair.plural);
+    }
+  }
   return out;
 }
 
@@ -64,4 +74,4 @@ export function fillPlaceholders(text, profile) {
 }
 
 /** Does this text still hold a placeholder? */
-export const hasPlaceholder = (text) => /(?<!\$)\{(members?|Members?|owner|Owner|accounts?|Accounts?|deployments?|Deployments?|implementations?|Implementations?|rollouts?|Rollouts?|(?:folder|domain):[a-z]+)\}/.test(String(text));
+export const hasPlaceholder = (text) => /(?<!\$)\{(members?|Members?|owner|Owner|accounts?|Accounts?|deployments?|Deployments?|implementations?|Implementations?|rollouts?|Rollouts?|period_items?|Period_items?|periods?|Periods?|(?:folder|domain):[a-z]+)\}/.test(String(text));

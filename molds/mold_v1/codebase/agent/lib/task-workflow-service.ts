@@ -1,3 +1,5 @@
+import { WORK_PERIODS, periodWordOf } from "./work-periods.ts";
+
 interface ServiceResponse<T> {
   item?: T;
   error?: string;
@@ -23,6 +25,8 @@ export async function taskWorkflowRequest<T>(
         "x-org-id": orgId,
         "x-actor-email": actor.toLowerCase(),
         "x-actor-role": "engineer",
+        // The word the service's activity feed names a period by (the deployment profile's). Nothing under "off".
+        ...(WORK_PERIODS.enabled ? { "x-period-label": encodeURIComponent(periodWordOf(WORK_PERIODS, "Period")) } : {}),
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });

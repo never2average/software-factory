@@ -17,27 +17,59 @@ import {
   type ImplCardData,
   type TaskCardData,
 } from "@/app/_components/ops/cards";
-import { CycleCard } from "@/app/_components/ops/todos-panel";
-import type { ApiCycle } from "@/app/_components/ops/lib";
+import { CycleCard, PeriodPeopleCard, PersonItems } from "@/app/_components/ops/todos-panel";
+import type { ApiCycle, ApiTodo } from "@/app/_components/ops/lib";
 import { W } from "@/lib/ui-words";
+import { WORK_PERIODS, progressByPerson, workPeriodsOf, type WorkPeriods } from "@/agent/lib/work-periods";
+import { periodUi, todoViews } from "@/lib/work-periods-ui";
 
 const iso = (n: number) => new Date(2026, 6, 8 + n).toISOString();
 const CYCLES: { cycle: ApiCycle; stats: { total: number; done: number; committed: number; doneDates: string[] } }[] = [
   {
-    cycle: { id: "1", name: "Sprint 12", startsAt: iso(0), endsAt: iso(14), state: "active", goal: "Ship the Example Bank assistant to UAT", capacity: 10, lead: "priya@example.com", createdBy: "priya@example.com", archivedAt: null, createdAt: iso(0), updatedAt: iso(0) },
+    cycle: { id: "1", name: `${W.Period} 12`, startsAt: iso(0), endsAt: iso(14), state: "active", goal: "Ship the Example Bank assistant to UAT", capacity: 10, lead: "priya@example.com", createdBy: "priya@example.com", archivedAt: null, createdAt: iso(0), updatedAt: iso(0) },
     stats: { total: 10, done: 4, committed: 10, doneDates: [iso(2), iso(3), iso(5), iso(6)] },
   },
   {
-    cycle: { id: "2", name: "Sprint 13", startsAt: iso(14), endsAt: iso(28), state: "planning", goal: null, capacity: null, lead: null, createdBy: "arjun@example.com", archivedAt: null, createdAt: iso(14), updatedAt: iso(14) },
+    cycle: { id: "2", name: `${W.Period} 13`, startsAt: iso(14), endsAt: iso(28), state: "planning", goal: null, capacity: null, lead: null, createdBy: "arjun@example.com", archivedAt: null, createdAt: iso(14), updatedAt: iso(14) },
     stats: { total: 5, done: 0, committed: 5, doneDates: [] },
   },
 ];
+
+// The three modes, as a profile states them. "this build" is whatever profiles/ says here.
+const INDIVIDUAL: WorkPeriods = workPeriodsOf({
+  work_periods: { mode: "individual", label: { singular: "week", plural: "weeks" }, list_label: { singular: "week", plural: "weeks" }, item_label: { singular: "target", plural: "targets" }, length_days: 7, auto_rollover: true },
+});
+const PERIOD_MODES: { key: string; wp: WorkPeriods }[] = [
+  { key: "this-build", wp: WORK_PERIODS },
+  { key: "team", wp: { ...WORK_PERIODS, mode: "team", enabled: true, team: true, individual: false } },
+  { key: "individual", wp: INDIVIDUAL },
+  { key: "off", wp: { ...WORK_PERIODS, mode: "off", enabled: false, team: false, individual: false } },
+];
+const VIEW_LABEL = (v: string, wp: WorkPeriods) => (v === "tasks" ? "Tasks" : v === "deployments" ? W.Deployments : v === "implementations" ? W.Implementations : periodUi(wp).navLabel);
+const PERSON_UI = periodUi(INDIVIDUAL);
+const PERSON_PERIOD: ApiCycle = { id: "p1", name: "Week of 2026-07-06", startsAt: iso(-2), endsAt: iso(5), state: "active", goal: null, capacity: null, lead: null, createdBy: "priya@example.com", archivedAt: null, createdAt: iso(-2), updatedAt: iso(-2) };
+const item = (id: string, title: string, assignee: string, done: boolean): ApiTodo =>
+  ({ id, title, done, doneAt: done ? iso(0) : null, status: done ? "done" : "open", priority: "normal", assignee, createdBy: assignee, cycleId: "p1", archivedAt: null, createdAt: iso(-2), updatedAt: iso(-2) }) as unknown as ApiTodo;
+const PEOPLE = progressByPerson(
+  "p1",
+  [
+    item("i1", "Update the quarterly model for Example Housing Finance", "priya@example.com", true),
+    item("i2", "Read the annual report and note what changed", "priya@example.com", false),
+    item("i3", "Draft the results note", "priya@example.com", false),
+    item("i4", "Initiate coverage on Example Mutual Bank", "arjun@example.com", true),
+  ],
+  [
+    { member: "priya@example.com", goal: "Close out the quarter for my three names", targetCount: 4 },
+    { member: "arjun@example.com", goal: null, targetCount: null },
+  ],
+  "priya@example.com",
+);
 
 const TASKS: { col: string; items: TaskCardData[] }[] = [
   {
     col: "Open",
     items: [
-      { title: "Wire the circular scraper into the assistant's data layer", priority: "high", assignee: "paartha@example.com", cycleLabel: "Sprint 12", due: { text: "in 2d", overdue: false } },
+      { title: "Wire the circular scraper into the assistant's data layer", priority: "high", assignee: "paartha@example.com", cycleLabel: `${W.Period} 12`, due: { text: "in 2d", overdue: false } },
       { title: `Draft SLA reconciliation note for bare-metal ${W.deployments}`, priority: "normal", assignee: "priya@example.com", containerType: "deployment", containerLabel: "example-bank/prod" },
       { title: "Follow up on audit-trail ticket", priority: "low", cycleLabel: "Backlog" },
     ],
@@ -107,11 +139,46 @@ export default function CardsPreview() {
         </div>
       </section>
 
-      <section data-testid="sprint-cards" className="mb-10">
-        <h2 className="mb-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Sprints</h2>
+      <section data-testid="period-cards" className="mb-10">
+        <h2 className="mb-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">{W.Periods}</h2>
         <div className="flex max-w-3xl flex-col gap-4">
           {CYCLES.map((c) => (
             <CycleCard key={c.cycle.id} cycle={c.cycle} stats={c.stats} onClick={() => {}} />
+          ))}
+        </div>
+      </section>
+
+      {/* Work periods under each mode a deployment profile can choose (work_periods.mode): what the Todos
+          navigation offers, and the per-person view of mode individual. This build's own mode is the first row. */}
+      <section data-testid="period-modes" className="mb-10">
+        <h2 className="mb-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Work periods by mode</h2>
+        <div className="flex max-w-3xl flex-col gap-2">
+          {PERIOD_MODES.map(({ key, wp }) => (
+            <div key={key} data-testid={`period-nav-${key}`} data-mode={wp.mode} className="flex items-center gap-2 text-xs">
+              <span className="w-28 shrink-0 text-muted-foreground">{key}</span>
+              {todoViews(wp).map((v) => (
+                <span key={v} data-testid="period-nav-entry" data-view={v} className="rounded-md border border-border/60 px-2 py-1">
+                  {VIEW_LABEL(v, wp)}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div data-testid="period-people" className="mt-4 flex max-w-3xl flex-col gap-4">
+          <PeriodPeopleCard cycle={PERSON_PERIOD} people={PEOPLE} me="priya@example.com" current ui={PERSON_UI} onClick={() => {}} />
+          {PEOPLE.map((p) => (
+            <PersonItems
+              key={p.person}
+              person={p}
+              name={p.person.split("@")[0]}
+              mine={p.person === "priya@example.com"}
+              canEdit={p.person === "priya@example.com"}
+              ui={PERSON_UI}
+              onToggle={() => {}}
+              onAdd={() => {}}
+              onOpen={() => {}}
+              onSetGoal={() => {}}
+            />
           ))}
         </div>
       </section>

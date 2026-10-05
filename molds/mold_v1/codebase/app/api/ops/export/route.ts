@@ -16,6 +16,7 @@ import { isSafeDataroomPath, parseJsonlRecords, readDataroomFile } from "@/lib/d
 import { storageMisconfigured } from "@/lib/storage-http";
 import { W } from "@/lib/ui-words";
 import { FOLDER } from "@/agent/lib/dataroom-folders";
+import { WORK_PERIODS } from "@/agent/lib/work-periods";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -144,6 +145,12 @@ export async function GET(request: NextRequest) {
       );
       if (!row) return NextResponse.json({ error: "Task not found" }, { status: 404 });
       bundle.record = row as Record<string, unknown>;
+      // A deployment without work periods (profile work_periods.mode "off") exports a task without one: neither
+      // the pointer nor the period it resolves to. The stored row is untouched.
+      if (!WORK_PERIODS.enabled) {
+        const { cycleId: _drop, ...rest } = row as Record<string, unknown>;
+        bundle.record = rest;
+      }
 
       // Parent + subtasks (the parent_id tree).
       if (row.parentId) {
@@ -158,13 +165,13 @@ export async function GET(request: NextRequest) {
       );
       if (kids.length) bundle.resolved.subtasks = kids.map((k) => ({ id: k.id, title: k.title, done: k.done, status: k.status }));
 
-      // Cycle (sprint) it's filed into.
-      if (row.cycleId) {
+      // The cycle (the period) it's filed into. Under mode individual a period has no shared lead.
+      if (row.cycleId && WORK_PERIODS.enabled) {
         const cycleId = row.cycleId;
         const [cyc] = await withOrgRls(ctx.orgId, (tx) =>
           tx.select().from(cycles).where(eq(cycles.id, cycleId)).limit(1),
         );
-        if (cyc) bundle.resolved.cycle = { id: cyc.id, name: cyc.name, state: cyc.state, lead: cyc.lead };
+        if (cyc) bundle.resolved.cycle = WORK_PERIODS.individual ? { id: cyc.id, name: cyc.name, state: cyc.state } : { id: cyc.id, name: cyc.name, state: cyc.state, lead: cyc.lead };
       }
 
       // Container (the epic-analog): a full deployment / implementation row.

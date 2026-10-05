@@ -130,12 +130,22 @@ const baseAllow = () => ({
     skip: { "tests/**": "tests insert the rows they assert on" },
     writers: {},
   },
+  // What a work period is called (scripts/lib/period-words.mjs). The planted tree's default word is made up
+  // ("lap"), so that the real one is not written in this file.
+  period_words: {
+    default_profile: { "profiles/00-default.json": "the word's home" },
+    legacy_definition: { why: "the one definition", files: { "src/schema.ts": 1 } },
+    contracts: [{ pattern: "lap_(?:list|create)", files: ["src/wire.ts"], why: "wire tool names" }],
+    exempt_paths: { "allow.json": "the list", "history/": "immutable" },
+  },
 });
 const clean = {
   // The planted tree's own folder names: a former one and the default profile's. Made up, so that no real one is
   // written in this file.
   "scripts/lib/legacy-dataroom-folders.json": '{"$comment": "the former names", "accounts": "Oldbooks", "uploads": "Inbox"}\n',
-  "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}, "library": {"sources": {}}}\n',
+  "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}, "library": {"sources": {}}, "work_periods": {"label": {"singular": "lap", "plural": "laps"}}}\n',
+  "src/schema.ts": "// A CYCLE: a time-boxed iteration (a lap).\nexport const cycles = 1;\n",
+  "src/wire.ts": 'export const tools = ["lap_list", "lap_create"];\n',
   "src/a.ts": `select ${w}_owner from customers; // the contract, anywhere\nconst owner = 1;\n`,
   "prompt.md": `You help an ${U} and their ${U} owner.\n`,
   "history/0001.json": `{"${w}Thing": "${U}_OLD"}\n`,
@@ -218,8 +228,8 @@ const cases = [
   // The built-in library (scripts/lib/builtin-library.mjs): base code ships no workflow and no recipe of its own.
   ["a workflow script outside a library directory fails", { "scripts/operator/workflows/qbr.workflow.js": 'export const meta = { name: "qbr", description: "d" };\n' }, null, 1, /scripts\/operator\/workflows\/qbr\.workflow\.js: a workflow script outside a library directory/],
   ["…and passes inside one", { "library/ops/workflows/qbr.workflow.js": 'export const meta = { name: "qbr", description: "d" };\n' }, null, 0, /no workflow or recipe library in base code/],
-  ["the default profile naming a library source fails", { "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}, "library": {"sources": {"ops": "library/ops"}}}\n' }, null, 1, /profiles\/00-default\.json: library\.sources names ops/],
-  ["the default profile with no library key fails", { "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}}\n' }, null, 1, /profiles\/00-default\.json: library\.sources is missing/],
+  ["the default profile naming a library source fails", { "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}, "work_periods": {"label": {"singular": "lap", "plural": "laps"}}, "library": {"sources": {"ops": "library/ops"}}}\n' }, null, 1, /profiles\/00-default\.json: library\.sources names ops/],
+  ["the default profile with no library key fails", { "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}, "work_periods": {"label": {"singular": "lap", "plural": "laps"}}}\n' }, null, 1, /profiles\/00-default\.json: library\.sources is missing/],
   ["a recipe written as a literal in base code fails", { "src/b.ts": 'export const BUILTIN = [{ slug: "onboard-self", title: "Sign in", satisfiesCheck: "members" }];\n' }, null, 1, /src\/b\.ts: a recipe written as a literal/],
   ["…and passes as a row of a library's recipes.json", { "library/ops/recipes.json": '{"recipes": [{"slug": "onboard-self", "title": "Sign in", "satisfiesCheck": "members"}]}\n' }, null, 0, /no recipe literal/],
   ["a new file that inserts into workflows fails until it is listed", { "src/b.ts": "await db.insert(workflows).values(rows);\n" }, null, 1, /src\/b\.ts: inserts into the workflows or recipes table and is not a listed writer/],
@@ -228,6 +238,20 @@ const cases = [
   ["a listed writer that no longer inserts fails", {}, (a) => ({ ...a, builtin_library: { ...a.builtin_library, writers: { "src/b.ts": "one row a person asked for" } } }), 1, /src\/b\.ts: listed in builtin_library\.writers but no longer inserts/],
   ["a test may insert the rows it asserts on", { "tests/a.ts": "await db.insert(workflows).values(rows);\n" }, null, 0, /0 listed writer\(s\)/],
   ["an allow-list with no builtin_library section is refused, not treated as nothing to check", {}, (a) => ({ ...a, builtin_library: undefined }), 1, /builtin_library\.libraries parsed as empty/],
+  // What a work period is called: the default profile's word (here "lap"), anywhere but its declared homes.
+  ["the clean tree spells the period word only in its homes", {}, null, 0, /word for a work period \("laps", "lap", read from profiles\/00-default\.json\) is spelled 3 time\(s\) outside it/],
+  ["the period word in a label fails", { "src/panel.tsx": 'export const label = "Lap lead";\n' }, null, 1, /src\/panel\.tsx:1: the default profile's word for a work period \("lap"\) is spelled 1 time/],
+  ["the plural in a sentence fails", { "src/tool.ts": 'export const d = "List the team\'s cycles (laps).";\n' }, null, 1, /src\/tool\.ts:1: .* spelled 1 time/],
+  ["as part of an identifier it fails (camelCase, snake_case, a file name)", { "src/a2.ts": "const lapCount = 1; const next_lap = 2; const isLap = 3;\n", "src/lap-board.ts": "export {};\n" }, null, 1, /src\/a2\.ts:1: .* spelled 3 time[\s\S]*src\/lap-board\.ts:path/],
+  ["a word that merely contains the letters is not an occurrence", { "src/b2.ts": 'const overlap = 1; const laptop = "collapse"; // elapsed, lapse, Laplace\n' }, null, 0, /spelled 3 time\(s\) outside it/],
+  ["a placeholder and a word taken from the profile are not spellings", { "src/c2.ts": 'export const d = fill("List the {periods}."); export const l = W.Period;\n' }, null, 0, /spelled 3 time\(s\) outside it/],
+  ["a contract name outside the files it is listed for fails", { "src/other.ts": 'call("lap_list");\n' }, null, 1, /src\/other\.ts:1: .* spelled 1 time/],
+  ["a second spelling in the legacy definition fails", { "src/schema.ts": "// A CYCLE: a time-boxed iteration (a lap). Every lap has a lead.\n" }, null, 1, /src\/schema\.ts: the legacy definition spells the period word 2 times, over its count of 1/],
+  ["a legacy definition that no longer spells it fails", { "src/schema.ts": "// A CYCLE: a time-boxed iteration.\n" }, null, 1, /src\/schema\.ts: listed as the legacy definition but no longer spells/],
+  ["a second legacy definition is refused", {}, (a) => ({ ...a, period_words: { ...a.period_words, legacy_definition: { why: "two", files: { "src/schema.ts": 1, "src/wire.ts": 1 } } } }), 1, /there is ONE legacy definition/],
+  ["a contract that no longer occurs fails", { "src/wire.ts": "export const tools = [];\n" }, null, 1, /period_words contract \/lap_\(\?:list\|create\)\/ no longer occurs anywhere/],
+  ["a contract with no reason is refused", {}, (a) => ({ ...a, period_words: { ...a.period_words, contracts: [{ pattern: "lap_list" }] } }), 1, /contracts\[0\] needs a "pattern" and a "why"/],
+  ["an allow-list with no period_words section is refused, not treated as nothing to check", {}, (a) => ({ ...a, period_words: undefined }), 1, /has no "period_words" section/],
 ];
 for (const [name, plant, editAllow, status, pattern] of cases) {
   const allow = editAllow ? editAllow(baseAllow()) : baseAllow();
@@ -245,4 +269,4 @@ const real = spawnSync(process.execPath, [CHECK], { cwd: ROOT, encoding: "utf8" 
 check("this repository passes its own list", real.status === 0, `${real.stdout}${real.stderr}`.trim().split("\n").slice(0, 6).join(" | "));
 
 assert.equal(failures, 0, `${failures} neutral-names check(s) failed`);
-console.log("\ntest-neutral-names: every kind of new occurrence is caught (the role word, the record words as prose, a data-room folder name, a workflow or recipe library in base code); every declared allowance holds");
+console.log("\ntest-neutral-names: every kind of new occurrence is caught (the role word, the record words as prose, a data-room folder name, a workflow or recipe library in base code, a work period's word); every declared allowance holds");

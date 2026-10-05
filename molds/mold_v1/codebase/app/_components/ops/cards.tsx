@@ -2,7 +2,7 @@
 
 /**
  * Workspace list cards, built from three shared, formattable primitives so
- * Tasks / Deployments / Implementations / Sprints all look the same:
+ * Tasks / Deployments / Implementations / the periods all look the same:
  *   - <WorkspaceCard>  the card shell + title + owner slot
  *   - <Badge>          a formattable primary/secondary badge (tone + icon)
  *   - <MetaLine>       the icon metadata row

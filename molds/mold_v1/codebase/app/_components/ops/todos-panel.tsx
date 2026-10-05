@@ -57,6 +57,7 @@ import {
   opsFetch,
   useOpsList,
   type ApiCycle,
+  type ApiMemberGoal,
   type ApiRefDeployment,
   type ApiRefImplementation,
   type ApiRosterMember,
@@ -80,6 +81,8 @@ import { displayCustom, validateCustom } from "@/agent/lib/custom-fields";
 import type { CustomFieldSpec, DomainArea } from "@/lib/deployment-profile.generated";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { bundleToMarkdown, exportJson, type ExportBundle } from "@/lib/record-export";
+import { PERIOD_UI, PERIOD_VIEW, resolveTodoView, todoViews, type PeriodUi, type TodoViewKey } from "@/lib/work-periods-ui";
+import { currentPeriod, managesPerson, progressByPerson, type PersonProgress } from "@/agent/lib/work-periods";
 import { domainView, groupRows, groupSlug, groupTitle, withProfileFields, type DomainFormField, type DomainView } from "@/lib/profile-domains";
 
 /**
@@ -275,11 +278,12 @@ function FilterMenu({ groups }: { readonly groups: readonly FilterGroup[] }) {
 
 /**
  * The standardized per-tab toolbar. Two dropdowns only: a nested **Filter**
- * (Status / Scope / Cycle) and **Views** (ordering). Every TODO view renders
+ * (Status / Scope / the period) and **Views** (ordering). Every TODO view renders
  * this so the top row is identical everywhere; all controls share one height.
  */
 function TabToolbar({
   noun,
+  nounPlural,
   q,
   setQ,
   onCreate,
@@ -292,6 +296,7 @@ function TabToolbar({
   viewSwitcher,
 }: {
   readonly noun: string;
+  readonly nounPlural?: string;
   readonly q: string;
   readonly setQ: (v: string) => void;
   readonly onCreate?: () => void;
@@ -307,7 +312,7 @@ function TabToolbar({
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-border/60 border-b px-2 py-2 [&_button]:h-9 [&_input]:h-9">
       <div className="relative min-w-40 flex-1">
-        <SearchBox noun={noun} value={q} onChange={setQ} />
+        <SearchBox noun={noun} nounPlural={nounPlural} value={q} onChange={setQ} />
       </div>
       {viewSwitcher}
       {onCreate ? (
@@ -417,14 +422,16 @@ function dueLabel(iso: string): { text: string; overdue: boolean } {
 
 /* ------------------------------- the panel -------------------------------- */
 
-type TodoView = "sprints" | "tasks" | "deployments" | "implementations";
+type TodoView = TodoViewKey;
 
-const NAV: { key: TodoView; label: string; icon: LucideIcon; blurb: string }[] = [
-  { key: "sprints", label: "Sprints", icon: LayersIcon, blurb: "Time-boxed cycles that group tasks." },
+// The period view exists only where the deployment has periods (profile work_periods.mode; lib/work-periods-ui.ts).
+const NAV_ALL: { key: TodoView; label: string; icon: LucideIcon; blurb: string }[] = [
+  { key: PERIOD_VIEW, label: PERIOD_UI.navLabel, icon: LayersIcon, blurb: PERIOD_UI.navBlurb },
   { key: "tasks", label: "Tasks", icon: ListTodoIcon, blurb: "The team's internal checklist." },
   { key: "deployments", label: DEP.title, icon: RocketIcon, blurb: DEP.description },
   { key: "implementations", label: IMP.title, icon: PackageIcon, blurb: IMP.description },
 ];
+const NAV = NAV_ALL.filter((n) => todoViews().includes(n.key));
 
 export function TodosPanel({
   authorEmail,
@@ -442,7 +449,7 @@ export function TodosPanel({
   readonly onInitialConsumed?: () => void;
 }) {
   const { items, error, refetch, loading } = useOpsList<ApiTodo>("/api/ops/todos");
-  const [view, setView] = useState<TodoView>(initialView ?? "tasks");
+  const [view, setView] = useState<TodoView>(resolveTodoView(initialView));
   const [taskView, setTaskView] = useState<ViewMode>("kanban");
   const { scopes, setScopes, inScope } = useScope(authorEmail, []);
   const [q, setQ] = useState("");
@@ -451,7 +458,7 @@ export function TodosPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cycleSel, setCycleSel] = useState<string[]>([]);
-  const cyclesQ = useOpsList<ApiCycle>("/api/ops/cycles");
+  const cyclesQ = useOpsList<ApiCycle>(PERIOD_UI.enabled ? "/api/ops/cycles" : null);
   const cycles = cyclesQ.items ?? [];
   const now = Date.now();
   const currentCycle = cycles.find(
@@ -598,16 +605,20 @@ export function TodosPanel({
           <FilterMenu
             groups={[
               { label: "Scope", selected: scopes, onChange: setScopes, options: SCOPE_OPTIONS },
-              {
-                label: "Cycle",
-                selected: cycleSel,
-                onChange: setCycleSel,
-                options: [
-                  ...(currentCycle ? [{ value: "current", label: `Current · ${currentCycle.name}` }] : []),
-                  { value: "backlog", label: "Backlog" },
-                  ...cycles.map((c) => ({ value: c.id, label: c.name })),
-                ],
-              },
+              ...(PERIOD_UI.enabled
+                ? [
+                    {
+                      label: PERIOD_UI.listLabel,
+                      selected: cycleSel,
+                      onChange: setCycleSel,
+                      options: [
+                        ...(currentCycle ? [{ value: "current", label: `Current · ${currentCycle.name}` }] : []),
+                        { value: "backlog", label: "Backlog" },
+                        ...cycles.map((c) => ({ value: c.id, label: c.name })),
+                      ],
+                    },
+                  ]
+                : []),
             ]}
           />
         }
@@ -653,7 +664,7 @@ export function TodosPanel({
               { key: "title", label: "Task", render: (t) => <span className={cn("font-medium", t.done && "text-muted-foreground/60 line-through")}>{t.title}</span> },
               { key: "status", label: "Status", render: (t) => <span className="capitalize">{t.status.replace("_", " ")}</span> },
               { key: "priority", label: "Priority", render: (t) => <span className="capitalize">{t.priority}</span> },
-              { key: "cycle", label: "Cycle", render: (t) => cycleName(t.cycleId) ?? "—" },
+              ...(PERIOD_UI.enabled ? [{ key: "cycle", label: PERIOD_UI.listLabel, render: (t: ApiTodo) => cycleName(t.cycleId) ?? "—" }] : []),
               { key: "due", label: "Due", render: (t) => (t.dueAt ? dueLabel(t.dueAt).text : "—") },
               { key: "assignee", label: "Assignee", render: (t) => (t.assignee ? t.assignee.split("@")[0] : "—") },
             ],
@@ -731,7 +742,7 @@ export function TodosPanel({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {view === "tasks" ? (
           list
-        ) : view === "sprints" ? (
+        ) : view === PERIOD_VIEW && PERIOD_UI.enabled ? (
           <CyclesManager
             cycles={cycles}
             todos={items ?? []}
@@ -1404,7 +1415,7 @@ function GroupHeader<T>({
 
 /** The create panel shared by Deployments & Implementations — a small typed form
  *  that POSTs to the list endpoint, then opens the new record's detail. Mirrors
- *  New task / New cycle: create, then refine in the detail. */
+ *  New task / a new period: create, then refine in the detail. */
 export function RefCreate({
   noun,
   endpoint,
@@ -1867,22 +1878,24 @@ function TodoDetail({
                 }}
               />
             </Field>
-            <div className="col-span-2">
-              <Field label="Cycle">
-                <OpsSelect
-                  value={todo.cycleId ?? ""}
-                  disabled={busy}
-                  onChange={(e) => onPatch({ cycleId: e.target.value || null })}
-                >
-                  <option value="">Backlog (no cycle)</option>
-                  {cycles.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </OpsSelect>
-              </Field>
-            </div>
+            {PERIOD_UI.enabled ? (
+              <div className="col-span-2">
+                <Field label={PERIOD_UI.listLabel}>
+                  <OpsSelect
+                    value={todo.cycleId ?? ""}
+                    disabled={busy}
+                    onChange={(e) => onPatch({ cycleId: e.target.value || null })}
+                  >
+                    <option value="">{PERIOD_UI.backlogOption}</option>
+                    {cycles.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </OpsSelect>
+                </Field>
+              </div>
+            ) : null}
           </div>
         </PanelSection>
 
@@ -2082,7 +2095,7 @@ function PanelActionsMenu({
   exportCustomerId,
   copyTitle,
 }: {
-  readonly shareView: "tasks" | "sprints" | "deployments" | "implementations";
+  readonly shareView: TodoViewKey;
   readonly shareId: string;
   readonly onDelete: () => void;
   readonly deleteLabel: string;
@@ -2264,8 +2277,8 @@ function fmtRange(s: string | null, e: string | null): string {
   return "no dates";
 }
 
-/** One sprint as a clickable read-first card matching the other tabs: title,
- *  the sprint lead avatar, an icon metadata line, the goal, and the burndown.
+/** One period (mode team) as a clickable read-first card matching the other tabs: title,
+ *  the lead's avatar, an icon metadata line, the goal, and the burndown.
  *  Clicking opens the detail panel, where lead / dates / state / lifecycle
  *  actions are edited (same click-through model as Deployments & Implementations). */
 export function CycleCard({
@@ -2287,7 +2300,7 @@ export function CycleCard({
       onClick={onClick}
       headerRight={
         c.lead ? (
-          <span title={`Sprint lead · ${c.lead}`}>
+          <span title={PERIOD_UI.leadTitle(c.lead)}>
             <CustomerMark name={c.lead} size="sm" />
           </span>
         ) : undefined
@@ -2308,9 +2321,9 @@ export function CycleCard({
   );
 }
 
-/** The sprint detail/create panel — the click-through for a cycle card, and
- *  where a just-created sprint opens. Mirrors TodoDetail: an eyebrow + editable
- *  name, a Properties grid, the burndown, the sprint's tasks, then Activity and
+/** The period's detail/create panel (mode team) — the click-through for a cycle card, and
+ *  where a just-created one opens. Mirrors TodoDetail: an eyebrow + editable
+ *  name, a Properties grid, the burndown, the period's tasks, then Activity and
  *  Comments, with roll-over / archive in the footer. */
 function CycleDetail({
   cycle: c,
@@ -2346,10 +2359,10 @@ function CycleDetail({
   );
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-      <PanelHeader eyebrow="Sprint" eyebrowDot={stateDot} slug={slug}>
+      <PanelHeader eyebrow={PERIOD_UI.eyebrow} eyebrowDot={stateDot} slug={slug}>
         <input
           defaultValue={c.name}
-          placeholder="Untitled sprint"
+          placeholder={PERIOD_UI.untitled}
           className="w-full bg-transparent font-semibold text-[15px] text-foreground leading-snug outline-none placeholder:text-muted-foreground/40"
           onBlur={(e) => {
             const v = e.target.value.trim();
@@ -2368,7 +2381,7 @@ function CycleDetail({
                 <option value="closed">Closed</option>
               </OpsSelect>
             </Field>
-            <Field label="Sprint lead">
+            <Field label={PERIOD_UI.leadLabel}>
               <OpsSelect
                 value={c.lead ?? ""}
                 disabled={busy}
@@ -2418,7 +2431,7 @@ function CycleDetail({
             <OpsTextarea
               rows={2}
               defaultValue={c.goal ?? ""}
-              placeholder="What this sprint is trying to achieve…"
+              placeholder={PERIOD_UI.goalPlaceholder}
               onBlur={(e) => {
                 const v = e.target.value.trim();
                 if (v !== (c.goal ?? "")) onPatch({ goal: v || null });
@@ -2452,14 +2465,15 @@ function CycleDetail({
           onClick={onRollover}
           className={cn("text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50", TYPE.meta)}
         >
-          Roll over unfinished
+          {PERIOD_UI.rolloverLabel}
         </button>
       </div>
     </div>
   );
 }
 
-/** Sprint cards with a burndown, opening a detail/create panel per cycle. */
+/** The period view. Mode team: cards with a burndown, opening a detail/create panel per cycle. Mode individual:
+ *  the same list, each card and panel grouped by person (PeriodPeopleCard / PeriodPeopleDetail below). */
 function CyclesManager({
   cycles,
   todos,
@@ -2473,7 +2487,7 @@ function CyclesManager({
   readonly authorEmail?: string;
   readonly onChanged: () => void | Promise<void>;
   readonly onClose: () => void;
-  /** Jump to a task in the Tasks tab (from the sprint's task list). */
+  /** Jump to a task in the Tasks tab (from the period's task list). */
   readonly onOpenTodo: (id: string) => void;
 }) {
   const [selectedCycleId, setSelectedCycleId] = useState<string | null>(null);
@@ -2484,7 +2498,8 @@ function CyclesManager({
   const [cycleView, setCycleView] = useState<ViewMode>("kanban");
   const { items: rosterItems } = useOpsList<ApiRosterMember>("/api/ops/roster");
   const roster = rosterItems ?? [];
-  const { scopes, setScopes, inScope } = useScope(authorEmail, ["me"]);
+  // Mode team: a period is its lead's, so the list opens on "mine". Mode individual: a period is everyone's.
+  const { scopes, setScopes, inScope } = useScope(authorEmail, PERIOD_UI.individual ? [] : ["me"]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -2498,13 +2513,14 @@ function CyclesManager({
       setBusy(false);
     }
   };
-  // "New cycle" creates a blank sprint and opens its detail panel — the same
-  // create-then-edit flow as New task (no separate inline form).
+  // The create button makes a blank period and opens its detail panel — the same
+  // create-then-edit flow as New task (no separate inline form). Mode individual: the
+  // server opens the period that follows the latest one, named and dated by the profile's length.
   const create = () =>
     void run(async () => {
       const res = await opsFetch<{ item: { id: string } }>("/api/ops/cycles", {
         method: "POST",
-        body: JSON.stringify({ name: "New sprint", createdBy: authorEmail ?? "web" }),
+        body: JSON.stringify(PERIOD_UI.individual ? { createdBy: authorEmail ?? "web" } : { name: PERIOD_UI.newName, createdBy: authorEmail ?? "web" }),
       });
       setSelectedCycleId(res.item.id);
     });
@@ -2512,22 +2528,30 @@ function CyclesManager({
     run(() => opsFetch(`/api/ops/cycles/${id}`, { method: "PATCH", body: JSON.stringify({ ...body, actor: authorEmail }) }));
   const archive = (id: string) =>
     run(() => opsFetch(`/api/ops/cycles/${id}`, { method: "DELETE" }));
-  const rollover = (id: string) =>
+  // Mode team: unfinished tasks go back to the backlog. Mode individual: into the period that follows, each still
+  // its person's; `assignee` carries one person's only.
+  const rollover = (id: string, assignee?: string) =>
     run(() =>
       opsFetch(`/api/ops/cycles/${id}/rollover`, {
         method: "POST",
-        body: JSON.stringify({ target: null, actor: authorEmail }),
+        body: JSON.stringify(PERIOD_UI.individual ? { target: "next", ...(assignee ? { assignee } : {}), actor: authorEmail } : { target: null, actor: authorEmail }),
       }),
     );
-  // Subtask helpers for the sprint panel: a sprint's subtasks are the todos
-  // filed into its cycle.
-  const addTaskToCycle = (cycleId: string, title: string) =>
+  // Subtask helpers for the period's panel: a period's subtasks are the todos
+  // filed into its cycle. Mode individual: `assignee` makes it that person's.
+  const addTaskToCycle = (cycleId: string, title: string, assignee?: string) =>
     run(() =>
       opsFetch("/api/ops/todos", {
         method: "POST",
-        body: JSON.stringify({ title, cycleId, createdBy: authorEmail ?? "web" }),
+        body: JSON.stringify({ title, cycleId, ...(assignee ? { assignee } : {}), createdBy: authorEmail ?? "web" }),
       }),
     );
+  const [goalsKey, setGoalsKey] = useState(0);
+  const setGoal = (cycleId: string, body: Record<string, unknown>) =>
+    run(async () => {
+      await opsFetch(`/api/ops/cycles/${cycleId}/goals`, { method: "PUT", body: JSON.stringify(body) });
+      setGoalsKey((k) => k + 1);
+    });
   const patchTodoStatus = (id: string, done: boolean) =>
     run(() =>
       opsFetch(`/api/ops/todos/${id}`, {
@@ -2549,7 +2573,7 @@ function CyclesManager({
 
   const query = q.trim().toLowerCase();
   const shown = [...cycles]
-    .filter((c) => inScope(c.lead ?? c.createdBy) && (!query || c.name.toLowerCase().includes(query)))
+    .filter((c) => (PERIOD_UI.individual || inScope(c.lead ?? c.createdBy)) && (!query || c.name.toLowerCase().includes(query)))
     .sort((a, b) => {
       if (sort === "name") return a.name.localeCompare(b.name);
       if (sort === "starts") {
@@ -2569,17 +2593,18 @@ function CyclesManager({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TabToolbar
-        noun="cycle"
+        noun={PERIOD_UI.searchNoun}
+        nounPlural={PERIOD_UI.searchNounPlural}
         q={q}
         setQ={setQ}
         onCreate={create}
-        createLabel="New cycle"
+        createLabel={PERIOD_UI.createLabel}
         sort={sort}
         setSort={setSort}
         sortOptions={CYCLE_SORTS}
         onClose={onClose}
         viewSwitcher={<ViewSwitcher view={cycleView} setView={setCycleView} />}
-        filter={<FilterMenu groups={[{ label: "Scope", selected: scopes, onChange: setScopes, options: SCOPE_OPTIONS }]} />}
+        filter={PERIOD_UI.individual ? undefined : <FilterMenu groups={[{ label: "Scope", selected: scopes, onChange: setScopes, options: SCOPE_OPTIONS }]} />}
       />
 
       {err ? <p className={cn("px-4 pt-2 text-red-400", TYPE.meta)}>{err}</p> : null}
@@ -2588,7 +2613,7 @@ function CyclesManager({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {shown.length === 0 ? (
             <p className={cn("py-16 text-center text-muted-foreground/60 italic", TYPE.meta)}>
-              {query ? "No cycles match." : "No cycles yet — hit New cycle."}
+              {query ? PERIOD_UI.emptyNoMatch : PERIOD_UI.emptyNone}
             </p>
           ) : (
             <WorkspaceViews
@@ -2597,21 +2622,31 @@ function CyclesManager({
                 items: shown,
                 selectedId: selectedCycleId,
                 onSelect: setSelectedCycleId,
-                renderCard: (c) => (
-                  <CycleCard
-                    cycle={c}
-                    stats={statsFor(c)}
-                    selected={selectedCycleId === c.id}
-                    onClick={() => setSelectedCycleId(c.id)}
-                  />
-                ),
+                renderCard: (c) =>
+                  PERIOD_UI.individual ? (
+                    <PeriodPeopleCard
+                      cycle={c}
+                      people={progressByPerson(c.id, todos, [], authorEmail)}
+                      me={authorEmail}
+                      current={currentPeriod(cycles)?.id === c.id}
+                      selected={selectedCycleId === c.id}
+                      onClick={() => setSelectedCycleId(c.id)}
+                    />
+                  ) : (
+                    <CycleCard
+                      cycle={c}
+                      stats={statsFor(c)}
+                      selected={selectedCycleId === c.id}
+                      onClick={() => setSelectedCycleId(c.id)}
+                    />
+                  ),
                 kanban: {
                   columns: CYCLE_COLUMNS,
                   columnOf: (c) => c.state,
                   onMove: (c, state) => void patchCycle(c.id, { state }),
                 },
                 table: [
-                  { key: "name", label: "Sprint", render: (c) => <span className="font-medium">{c.name}</span> },
+                  { key: "name", label: PERIOD_UI.tableLabel, render: (c) => <span className="font-medium">{c.name}</span> },
                   { key: "state", label: "State", render: (c) => <span className="capitalize">{c.state}</span> },
                   { key: "dates", label: "Dates", render: (c) => fmtRange(c.startsAt, c.endsAt) },
                   { key: "done", label: "Done", render: (c) => `${statsFor(c).done}/${statsFor(c).committed}` },
@@ -2630,9 +2665,9 @@ function CyclesManager({
             onClose={() => setSelectedCycleId(null)}
             actions={
               <PanelActionsMenu
-                shareView="sprints"
+                shareView={PERIOD_VIEW}
                 shareId={selectedCycle.id}
-                deleteLabel="Delete sprint"
+                deleteLabel={PERIOD_UI.deleteLabel}
                 onDelete={() => {
                   void archive(selectedCycle.id);
                   setSelectedCycleId(null);
@@ -2640,6 +2675,24 @@ function CyclesManager({
               />
             }
           >
+            {PERIOD_UI.individual ? (
+              <PeriodPeopleDetail
+                key={selectedCycle.id}
+                cycle={selectedCycle}
+                roster={roster}
+                busy={busy}
+                authorEmail={authorEmail}
+                tasks={todos}
+                goalsKey={goalsKey}
+                slug={seqSlug(PERIOD_UI.slugPrefix, cycleSeq.get(selectedCycle.id) ?? 0)}
+                onPatch={(body) => void patchCycle(selectedCycle.id, body)}
+                onRollover={(assignee) => void rollover(selectedCycle.id, assignee)}
+                onOpenTodo={onOpenTodo}
+                onAddItem={(person, title) => void addTaskToCycle(selectedCycle.id, title, person)}
+                onToggleItem={(id, done) => void patchTodoStatus(id, done)}
+                onSetGoal={(body) => void setGoal(selectedCycle.id, body)}
+              />
+            ) : (
             <CycleDetail
               cycle={selectedCycle}
               stats={statsFor(selectedCycle)}
@@ -2647,15 +2700,337 @@ function CyclesManager({
               busy={busy}
               authorEmail={authorEmail}
               tasks={todos.filter((t) => t.cycleId === selectedCycle.id)}
-              slug={seqSlug("SP", cycleSeq.get(selectedCycle.id) ?? 0)}
+              slug={seqSlug(PERIOD_UI.slugPrefix, cycleSeq.get(selectedCycle.id) ?? 0)}
               onPatch={(body) => void patchCycle(selectedCycle.id, body)}
               onRollover={() => void rollover(selectedCycle.id)}
               onOpenTodo={onOpenTodo}
               onAddSubtask={(title) => void addTaskToCycle(selectedCycle.id, title)}
               onToggleSubtask={(id, done) => void patchTodoStatus(id, done)}
             />
+            )}
           </SidePanel>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------- periods, each person's own (mode individual) ---------- */
+
+/** A person as a short name: their roster name, else the part of the email before the @. */
+function personName(email: string, roster: readonly ApiRosterMember[]): string {
+  return roster.find((r) => r.email.toLowerCase() === email)?.name ?? email.split("@")[0];
+}
+
+/** done / planned as a thin bar. A plain per-person bar replaces the team burndown under mode individual: a person
+ *  holds a handful of items for a short period, which a day-by-day line says nothing about. */
+function ProgressBar({ done, planned, label }: { readonly done: number; readonly planned: number; readonly label: string }) {
+  const pct = planned ? Math.min(100, Math.round((done / planned) * 100)) : 0;
+  return (
+    <div className="flex items-center gap-2" data-testid="period-person-progress">
+      <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted/40" role="progressbar" aria-valuemin={0} aria-valuemax={planned} aria-valuenow={done} aria-label={label}>
+        <div className="h-full rounded-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
+      </div>
+      <span className={cn("shrink-0 text-muted-foreground tabular-nums", TYPE.micro)}>{label}</span>
+    </div>
+  );
+}
+
+/** One period under mode individual, as a card: its window, then each person's progress, the signed-in person
+ *  first. No lead, no capacity, no burndown. */
+export function PeriodPeopleCard({
+  cycle: c,
+  people,
+  me,
+  current,
+  selected,
+  onClick,
+  ui = PERIOD_UI,
+}: {
+  readonly cycle: ApiCycle;
+  readonly people: readonly PersonProgress<ApiTodo>[];
+  readonly me?: string;
+  readonly current?: boolean;
+  readonly selected?: boolean;
+  readonly onClick?: () => void;
+  readonly ui?: PeriodUi;
+}) {
+  const mine = me?.toLowerCase();
+  const daysLeft = c.endsAt ? Math.round((Date.parse(c.endsAt) - Date.now()) / 86_400_000) : null;
+  const shown = people.filter((p) => p.person === mine || p.planned > 0);
+  return (
+    <WorkspaceCard title={c.name} selected={selected} onClick={onClick} headerRight={current ? <Badge>Current</Badge> : undefined}>
+      <MetaLine
+        items={[
+          { icon: CalendarIcon, node: fmtRange(c.startsAt, c.endsAt) },
+          ...(daysLeft != null && c.state !== "closed"
+            ? [{ icon: ClockIcon, node: daysLeft < 0 ? `${-daysLeft}d over` : `${daysLeft}d left`, danger: daysLeft < 0 }]
+            : []),
+          { node: ui.peopleCount(shown.filter((p) => p.planned > 0).length) },
+        ]}
+      />
+      <div className="flex flex-col gap-1.5">
+        {shown.map((p) => (
+          <div key={p.person} className="flex flex-col gap-0.5" data-testid="period-person-row">
+            <span className={cn("truncate text-foreground/80", TYPE.micro)}>{p.person === mine ? ui.myItemsLabel : p.person.split("@")[0]}</span>
+            <ProgressBar done={p.done} planned={p.planned} label={ui.progressLabel(p.done, p.planned)} />
+          </div>
+        ))}
+      </div>
+    </WorkspaceCard>
+  );
+}
+
+/** One person's block in a period's panel: their goal, how many they planned, their progress and their items. Only
+ *  the person, or someone they report to on the roster, can change it (the server holds the same rule). */
+export function PersonItems({
+  person: p,
+  name,
+  mine,
+  canEdit,
+  busy,
+  onToggle,
+  onAdd,
+  onOpen,
+  onSetGoal,
+  ui = PERIOD_UI,
+}: {
+  readonly person: PersonProgress<ApiTodo>;
+  readonly name: string;
+  readonly mine: boolean;
+  readonly canEdit: boolean;
+  readonly busy?: boolean;
+  readonly onToggle: (id: string, done: boolean) => void;
+  readonly onAdd: (title: string) => void;
+  readonly onOpen: (id: string) => void;
+  readonly onSetGoal: (body: { goal?: string | null; targetCount?: number | null }) => void;
+  readonly ui?: PeriodUi;
+}) {
+  const [draft, setDraft] = useState("");
+  const submit = () => {
+    const v = draft.trim();
+    if (!v) return;
+    onAdd(v);
+    setDraft("");
+  };
+  return (
+    <section className="flex flex-col gap-2.5 rounded-lg border border-border/60 px-3 py-3" data-testid="period-person" data-person={p.person}>
+      <div className="flex items-center gap-2">
+        <CustomerMark name={p.person} size="sm" />
+        <span className={cn("min-w-0 flex-1 truncate font-medium text-foreground", TYPE.body)}>{mine ? ui.myItemsLabel : name}</span>
+      </div>
+      <ProgressBar done={p.done} planned={p.planned} label={ui.progressLabel(p.done, p.planned)} />
+      {canEdit ? (
+        <div className="grid grid-cols-[1fr_5.5rem] gap-x-3 gap-y-2">
+          <Field label={ui.personGoalLabel}>
+            <OpsTextarea
+              rows={2}
+              defaultValue={p.goal ?? ""}
+              placeholder={ui.personGoalPlaceholder}
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                if (v !== (p.goal ?? "")) onSetGoal({ goal: v || null });
+              }}
+            />
+          </Field>
+          <Field label={ui.plannedLabel} hint={ui.plannedHint}>
+            <OpsInput
+              type="number"
+              min={0}
+              defaultValue={p.targetCount ?? ""}
+              placeholder="—"
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                const n = v ? Number(v) : null;
+                if (n !== (p.targetCount ?? null)) onSetGoal({ targetCount: n !== null && Number.isFinite(n) ? n : null });
+              }}
+            />
+          </Field>
+        </div>
+      ) : p.goal ? (
+        <p className="text-muted-foreground text-xs">{p.goal}</p>
+      ) : null}
+      {p.items.length > 0 ? (
+        <ul className="flex flex-col gap-0.5">
+          {p.items.map((t) => (
+            <li key={t.id} className="flex items-center gap-2" data-testid="period-item">
+              <button
+                type="button"
+                disabled={!canEdit || busy}
+                onClick={() => onToggle(t.id, !t.done)}
+                title={t.done ? "Mark open" : "Mark done"}
+                className="shrink-0 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+              >
+                {t.done ? <CheckIcon className="size-4 text-emerald-500" /> : <CircleIcon className="size-4" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpen(t.id)}
+                className={cn(
+                  "min-w-0 flex-1 truncate py-0.5 text-left hover:text-foreground",
+                  TYPE.body,
+                  t.done ? "text-muted-foreground/60 line-through" : "text-foreground/90",
+                )}
+              >
+                {t.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className={cn("text-muted-foreground/60 italic", TYPE.meta)}>{ui.noItems}</p>
+      )}
+      {canEdit ? (
+        <div className="flex items-center gap-1.5 rounded-md border border-border/50 px-2 py-1.5 focus-within:border-border">
+          <PlusIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
+          <input
+            value={draft}
+            disabled={busy}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder={ui.addItemPlaceholder}
+            className={cn("min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground/40", TYPE.body)}
+          />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** A period's panel under mode individual: the window, then one block per person (the signed-in person first), then
+ *  Activity and Comments, with the two carry-forward actions in the footer. No lead, no capacity, no burndown. */
+function PeriodPeopleDetail({
+  cycle: c,
+  roster,
+  busy,
+  authorEmail,
+  tasks,
+  goalsKey,
+  slug,
+  onPatch,
+  onRollover,
+  onOpenTodo,
+  onAddItem,
+  onToggleItem,
+  onSetGoal,
+}: {
+  readonly cycle: ApiCycle;
+  readonly roster: readonly ApiRosterMember[];
+  readonly busy: boolean;
+  readonly authorEmail?: string;
+  readonly tasks: readonly ApiTodo[];
+  /** Changes when a goal was saved, so the goals are read again. */
+  readonly goalsKey: number;
+  readonly slug: string;
+  readonly onPatch: (body: Record<string, unknown>) => void;
+  readonly onRollover: (assignee?: string) => void;
+  readonly onOpenTodo: (id: string) => void;
+  readonly onAddItem: (person: string, title: string) => void;
+  readonly onToggleItem: (id: string, done: boolean) => void;
+  readonly onSetGoal: (body: Record<string, unknown>) => void;
+}) {
+  const me = authorEmail?.toLowerCase();
+  const goalsQ = useOpsList<ApiMemberGoal>(`/api/ops/cycles/${c.id}/goals`);
+  const refetchGoals = goalsQ.refetch;
+  useEffect(() => {
+    if (goalsKey > 0) void refetchGoals();
+  }, [goalsKey, refetchGoals]);
+  const people = progressByPerson(c.id, tasks, goalsQ.items ?? [], me);
+  const lines = roster.map((r) => ({ email: r.email, managerEmail: r.managerEmail }));
+  const stateDot =
+    c.state === "active" ? "bg-emerald-500" : c.state === "closed" ? "bg-muted-foreground/50" : "bg-indigo-500";
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto" data-testid="period-people">
+      <PanelHeader eyebrow={PERIOD_UI.eyebrow} eyebrowDot={stateDot} slug={slug}>
+        <input
+          defaultValue={c.name}
+          placeholder={PERIOD_UI.untitled}
+          className="w-full bg-transparent font-semibold text-[15px] text-foreground leading-snug outline-none placeholder:text-muted-foreground/40"
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v && v !== c.name) onPatch({ name: v });
+          }}
+        />
+      </PanelHeader>
+
+      <div className="flex flex-col gap-5 px-5 py-4">
+        <PanelSection label="Properties">
+          <div className="grid grid-cols-3 gap-x-3 gap-y-4">
+            <Field label="State">
+              <OpsSelect value={c.state} disabled={busy} onChange={(e) => onPatch({ state: e.target.value })}>
+                <option value="planning">Planning</option>
+                <option value="active">Active</option>
+                <option value="closed">Closed</option>
+              </OpsSelect>
+            </Field>
+            <Field label="Starts">
+              <OpsInput
+                type="date"
+                defaultValue={c.startsAt ? c.startsAt.slice(0, 10) : ""}
+                onChange={(e) =>
+                  onPatch({ startsAt: e.target.value ? new Date(`${e.target.value}T09:00:00Z`).toISOString() : null })
+                }
+              />
+            </Field>
+            <Field label="Ends">
+              <OpsInput
+                type="date"
+                defaultValue={c.endsAt ? c.endsAt.slice(0, 10) : ""}
+                onChange={(e) =>
+                  onPatch({ endsAt: e.target.value ? new Date(`${e.target.value}T09:00:00Z`).toISOString() : null })
+                }
+              />
+            </Field>
+          </div>
+        </PanelSection>
+
+        <PanelSection label={PERIOD_UI.itemsLabel}>
+          {people.map((p) => (
+            <PersonItems
+              key={`${p.person}:${p.goal ?? ""}:${p.targetCount ?? ""}`}
+              person={p}
+              name={personName(p.person, roster)}
+              mine={p.person === me}
+              canEdit={p.person === me || (me ? managesPerson(lines, me, p.person) : false)}
+              busy={busy}
+              onToggle={onToggleItem}
+              onAdd={(title) => onAddItem(p.person, title)}
+              onOpen={onOpenTodo}
+              onSetGoal={(body) => onSetGoal({ member: p.person, ...body })}
+            />
+          ))}
+        </PanelSection>
+      </div>
+
+      <div className="flex flex-col gap-4 border-border/60 border-t px-5 py-4">
+        <ActivityFeed entity="cycle" id={c.id} refreshKey={c.updatedAt} />
+        <CommentThread entity="cycle" id={c.id} label={c.name} authorEmail={authorEmail} />
+      </div>
+
+      <div className="mt-auto flex flex-wrap items-center gap-4 border-border/60 border-t px-5 py-3">
+        {me ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onRollover(me)}
+            className={cn("text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50", TYPE.meta)}
+          >
+            {PERIOD_UI.carryMineLabel}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onRollover()}
+          className={cn("text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50", TYPE.meta)}
+        >
+          {PERIOD_UI.rolloverLabel}
+        </button>
       </div>
     </div>
   );

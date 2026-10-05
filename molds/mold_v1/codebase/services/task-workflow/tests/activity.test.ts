@@ -64,10 +64,20 @@ test("several fields in one patch produce one sentence each", async () => {
   ]);
 });
 
-test("a sprint move names the sprints rather than their uuids", async () => {
-  const { sql, events } = stubSql({ "c-1": "Sprint 4", "c-2": "Sprint 5" });
+// The word for a period is the calling deployment's (its profile's, sent as `x-period-label`): this service has none
+// of its own. The default profile sends its word, a relabelling one sends another, and a caller that sends nothing
+// reads the neutral one.
+test("a period move names the periods rather than their uuids, in the caller's word", async () => {
+  const names = { "c-1": "Iteration 4", "c-2": "Iteration 5" };
+  const a = stubSql(names);
+  await recordTaskChanges(a.sql, { ...ctx, periodLabel: "Iteration" }, "t1", withRow({ cycle_id: "c-1" }), withRow({ cycle_id: "c-2" }));
+  assert.deepEqual(a.events, ["Iteration changed Iteration 4 → Iteration 5"]);
+  const b = stubSql(names);
+  await recordTaskChanges(b.sql, { ...ctx, periodLabel: "Week" }, "t1", withRow({ cycle_id: "c-1" }), withRow({ cycle_id: null }));
+  assert.deepEqual(b.events, ["Week changed Iteration 4 → —"]);
+  const { sql, events } = stubSql(names);
   await recordTaskChanges(sql, ctx, "t1", withRow({ cycle_id: "c-1" }), withRow({ cycle_id: "c-2" }));
-  assert.deepEqual(events, ["Sprint changed Sprint 4 → Sprint 5"]);
+  assert.deepEqual(events, ["Period changed Iteration 4 → Iteration 5"]);
 });
 
 test("notes say that they changed, not the whole new body", async () => {

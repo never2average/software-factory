@@ -48,7 +48,8 @@ dropped in, no fork, no edits to base files. See
 
 What a deployment is *for* (the product name, what an account and a team member are called,
 which data-room domains show and under what label, the starter tree, the chat's opening
-lines, a short per-turn briefing for the model) is a **deployment profile**: JSON files
+lines, a short per-turn briefing for the model, whether tasks are grouped into time-boxed periods the team shares,
+periods each person holds their own items in, or none at all, and what a period is called) is a **deployment profile**: JSON files
 added under `profiles/`, never an edit to a component. See
 [`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md). When a profile relabels the
 domains, the agent's model reads only its words: tool names, parameters, results, paths,

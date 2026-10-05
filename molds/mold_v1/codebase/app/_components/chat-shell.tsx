@@ -31,6 +31,7 @@ import { withFreshestToken } from "@/lib/chat-session-cursor";
 import { MARKERS_MAX_BYTES_CLIENT, capMarkers, isPersistedMarker } from "@/lib/chat-turn-state";
 import { createPersistWriter } from "@/lib/chat-persist";
 import { cn } from "@/lib/utils";
+import { isTodoViewKey, type TodoViewKey } from "@/lib/work-periods-ui";
 
 /**
  * The data room and the Ops Center are fetched the first time one is opened, not with the chat. Between them they
@@ -470,7 +471,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const opsMounted = useRef(false);
   if (opsOpen) opsMounted.current = true;
   const [opsInitialView, setOpsInitialView] = useState<
-    "tasks" | "sprints" | "deployments" | "implementations" | undefined
+    TodoViewKey | undefined
   >(undefined);
   const openOps = useCallback((section: OpsSection, id?: string) => {
     setOpsSection(section);
@@ -503,7 +504,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       setOpsSection(ops);
       setOpsInitialId(params.get("id") ?? undefined);
       const view = params.get("view");
-      if (view === "tasks" || view === "sprints" || view === "deployments" || view === "implementations") {
+      if (isTodoViewKey(view)) {
         setOpsInitialView(view);
       }
       setOpsOpen(true);

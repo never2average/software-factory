@@ -81,7 +81,7 @@ const LEGACY_AS_WORD = new RegExp(`(?<![A-Za-z0-9_\\-.])(${BASE_PRODUCT_WORD}s?)
 const LEGACY_STORED_VALUES = new Set([BASE_PRODUCT_WORD.toUpperCase(), `${BASE_PRODUCT_WORD.toUpperCase()} Verified`]);
 const isStoredValueLine = (line) => LEGACY_STORED_VALUES.has(line.trim().replace(/^"|",?$|"$/g, ""));
 /** A role or record placeholder base text writes, which every boundary must fill from the profile. */
-const UNFILLED = /(?<!\$)\{(members?|Members?|owner|Owner|accounts?|Accounts?|deployments?|Deployments?|implementations?|Implementations?|rollouts?|Rollouts?|(?:folder|domain):[a-z]+)\}/g;
+const UNFILLED = /(?<!\$)\{(members?|Members?|owner|Owner|accounts?|Accounts?|deployments?|Deployments?|implementations?|Implementations?|rollouts?|Rollouts?|period_items?|Period_items?|periods?|Periods?|(?:folder|domain):[a-z]+)\}/g;
 /** Names that are not prose where they stand (a specialist's directory name, a stored enum value): the ratchet's own list. */
 const RECORD_NAMES = readRecordAllow(JSON.parse(readFileSync(join(ROOT, "scripts", "neutral-names.allow.json"), "utf8"))).names;
 /**

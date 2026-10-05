@@ -26,6 +26,11 @@
  *                             fields this deployment's profile declares on the two record areas and on the
  *                             account record (custom_fields). The hosted endpoint knows them; the package
  *                             does not and describes `custom` generically
+ *   workPeriods               optional { mode: "team" | "individual" | "off", label: { singular, plural },
+ *                             itemLabel: { singular, plural } }: this deployment's profile `work_periods`. What a
+ *                             period is called is the deployment's, so no period word is written in this file; under
+ *                             "off" the two period tools are not offered and no task tool takes or names a period.
+ *                             A host that does not say gets the shared-period tools in a neutral word
  *   blobStore()               optional direct blob store (package, inside the repo)
  *   parseClaudeTranscript /   optional transcript redactor; the session tools are
  *   sessionToSyncItem         withheld without it rather than advertised and failing
@@ -91,8 +96,19 @@ export function compatEnv(env, name, onLegacy) {
 /** The data-room domains, by id, in the data model's order (the host's `ctx.folders` names each one's folder). */
 const DOMAIN_IDS = ["accounts", "platform", "deliveries", "solutions", "projects", "tickets", "people"];
 
+/** A host's `workPeriods`, with the neutral words and the shared-period behaviour for a host that gives none. */
+export function workPeriodsOf(given) {
+  const pair = (p, singular, plural) => (p && typeof p.singular === "string" && p.singular && typeof p.plural === "string" && p.plural ? p : { singular, plural });
+  const mode = given && ["team", "individual", "off"].includes(given.mode) ? given.mode : "team";
+  return { mode, enabled: mode !== "off", individual: mode === "individual", label: pair(given?.label, "period", "periods"), itemLabel: pair(given?.itemLabel, "item", "items") };
+}
+const capFirst = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
 export function createTools(ctx) {
   const api = ctx.api;
+  const WP = workPeriodsOf(ctx.workPeriods);
+  // The `cycleId` of a task tool: there only where the deployment has periods.
+  const periodParam = (description) => (WP.enabled ? { cycleId: description ? { type: "string", description } : { type: "string" } } : {});
   // The folder names are the deployment's: a host that does not know them must say so, not have one guessed.
   const F = ctx.folders;
   if (!F || [...DOMAIN_IDS, "uploads"].some((id) => typeof F[id] !== "string" || !F[id])) {
@@ -673,16 +689,20 @@ const TOOLS = [
     },
     handler: async (a) => json(await api("POST", "/api/ops/apps", { ...a, createdBy: ctx.actor })),
   },
-  // ------------------------------------------------- Delivery (sprints/rollouts)
+  // ------------------------------------------------- Delivery (periods/rollouts)
+  // The two period tools keep their wire names (a coding agent's saved configuration calls them); what a period is
+  // CALLED is the deployment's (ctx.workPeriods), and a deployment without periods is not offered them (`requires`).
   {
     name: "sprint_list",
-    description: "Sprints (cycles): name, window, and state.",
+    requires: "periods",
+    description: `${capFirst(WP.label.plural)} (cycles): name, window, and state.${WP.individual ? ` Each person holds their own ${WP.itemLabel.plural} in a ${WP.label.singular}: a ${WP.itemLabel.singular} is a task filed into it for its assignee (task_create with cycleId and assignee).` : ""}`,
     inputSchema: { type: "object", properties: {} },
     handler: async () => json((await api("GET", "/api/ops/cycles")).items),
   },
   {
     name: "sprint_create",
-    description: "Create a sprint (cycle) with a name and an ISO start/end window.",
+    requires: "periods",
+    description: `Create a ${WP.label.singular} (cycle) with a name and an ISO start/end window.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -751,7 +771,7 @@ const TOOLS = [
         priority: { type: "string", enum: ["low", "normal", "high"] },
         assignee: { type: "string" },
         dueAt: { type: "string", description: "ISO-8601" },
-        cycleId: { type: "string" },
+        ...periodParam(),
       },
       required: ["id"],
     },
@@ -794,7 +814,7 @@ const TOOLS = [
   },
   {
     name: "task_list",
-    description: "The team's TODOs: status, assignee, sprint, container and any linked object.",
+    description: `The team's TODOs: status, assignee, ${WP.enabled ? `${WP.label.singular}, ` : ""}container and any linked object.`,
     inputSchema: {
       type: "object",
       properties: { includeDone: { type: "boolean" } },
@@ -806,7 +826,7 @@ const TOOLS = [
   {
     name: "task_create",
     description:
-      "Create a task, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under a sprint (cycleId) or a deployment/implementation (containerType + containerId).",
+      `Create a task, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under ${WP.enabled ? `a ${WP.label.singular} (cycleId) or ` : ""}a deployment/implementation (containerType + containerId).`,
     inputSchema: {
       type: "object",
       properties: {
@@ -816,7 +836,7 @@ const TOOLS = [
         priority: { type: "string", enum: ["low", "normal", "high"] },
         dueAt: { type: "string", description: "ISO-8601" },
         assignee: { type: "string" },
-        cycleId: { type: "string", description: "Sprint id from sprint_list." },
+        ...periodParam(`${capFirst(WP.label.singular)} id from sprint_list.`),
         linkType: { type: "string", enum: ["ticket", "customer", "app", "cron", "workflow", "chat"] },
         linkId: { type: "string" },
         linkLabel: { type: "string" },
@@ -1544,11 +1564,13 @@ const TOOLS = [
 
 /** Tools this host can actually serve — withheld rather than advertised and then failing on call. */
 export function availableTools(tools, ctx) {
-  return tools.filter((t) => t.requires !== "sessions" || Boolean(ctx.parseClaudeTranscript));
+  const periods = workPeriodsOf(ctx.workPeriods).enabled;
+  return tools.filter((t) => (t.requires !== "sessions" || Boolean(ctx.parseClaudeTranscript)) && (t.requires !== "periods" || periods));
 }
 
 /** What `initialize` tells the connecting agent. */
-export function serverInstructions({ productName, opsUrl, signInHint }) {
+export function serverInstructions({ productName, opsUrl, signInHint, workPeriods }) {
+  const periods = workPeriodsOf(workPeriods).enabled;
   return [
     `${productName} control plane — operate a real workspace from this editor.`,
     "",
@@ -1573,7 +1595,7 @@ export function serverInstructions({ productName, opsUrl, signInHint }) {
     "  schedules one. A saved script has been validated, not executed.",
     "- **Crons** — schedules that run a workflow on a cadence (`cron_*`).",
     "- **Apps** — living documents regenerated on a cadence (`app_*`).",
-    "- **Delivery** — `sprint_*`, `implementation_upsert`, `deployment_upsert`.",
+    `- **Delivery** — ${periods ? "`sprint_*`, " : ""}\`implementation_upsert\`, \`deployment_upsert\`.`,
     "- **Work** — `task_*` and `ticket_list`; link a task to its ticket with",
     "  `linkType:'ticket'` + `linkId`.",
     "- **Data room** — read/write the customer document store (`dataroom_*`). Call",

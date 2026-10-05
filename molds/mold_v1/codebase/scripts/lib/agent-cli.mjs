@@ -111,6 +111,12 @@ export function parseOrigin(raw) {
  * out in the sources precisely so a built package can carry its OWN names without the copied
  * sources differing by a byte from setup/'s.
  */
+/** A profile's `work_periods` as the tools take it (setup/workspace-tools.mjs ctx.workPeriods). */
+export function periodsForTools(profile) {
+  const wp = profile.work_periods;
+  return wp ? { mode: wp.mode, label: wp.label, itemLabel: wp.item_label } : null;
+}
+
 export function renderDeploymentModule(d) {
   const data = {
     packageName: d.packageName,
@@ -122,6 +128,8 @@ export function renderDeploymentModule(d) {
     vocabulary: d.vocabulary,
     // The data-room folders' stored names in this deployment, by domain id: the tools build every path from them.
     folders: d.folders,
+    // What a period is for this deployment (its profile's work_periods): the period tools follow the mode and the words.
+    workPeriods: d.workPeriods ?? null,
     commands: d.commands,
     legacyCommands: d.legacyCommands ?? null,
     modules: d.modules,
@@ -134,7 +142,7 @@ export function renderDeploymentModule(d) {
 // file names); a package built for one deployment carries that deployment's own. See
 // docs/AGENT_CLI.md.
 export const DEPLOYMENT = ${JSON.stringify(data, null, 2)};
-export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, folders, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;
+export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, folders, workPeriods, commands, legacyCommands, modules, configDir, connect } = DEPLOYMENT;
 `;
 }
 
@@ -156,6 +164,7 @@ export function defaultDeployment({ packageName, profile, slug }) {
     mcpEndpoint: null,
     vocabulary: profile.vocabulary,
     folders: storedFolders(profile),
+    workPeriods: periodsForTools(profile),
     commands: GENERIC_COMMANDS,
     legacyCommands: LEGACY_GENERIC_COMMANDS,
     modules: moduleSpecifiers(GENERIC_MODULE_FILES),

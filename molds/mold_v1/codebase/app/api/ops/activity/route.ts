@@ -4,11 +4,13 @@ import { and, desc, eq } from "drizzle-orm";
 import { entityActivity } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
+import { WORK_PERIODS } from "@/agent/lib/work-periods";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ENTITIES = new Set(["task", "cycle", "deployment", "implementation"]);
+// A deployment without work periods (profile work_periods.mode "off") has no "cycle" entity to read or write.
+const ENTITIES = new Set(["task", ...(WORK_PERIODS.enabled ? ["cycle"] : []), "deployment", "implementation"]);
 
 /**
  * GET /api/ops/activity?entity=<type>&id=<id> — the newest-first activity feed

@@ -145,6 +145,8 @@ const ownerPair = async (db, org, id) => (await db`select fde_owner, account_own
 const both = (row, v) => row?.ae_owner === v && row?.secondary_owner === v;
 const ownerBoth = (row, v) => row?.fde_owner === v && row?.account_owner === v;
 const touchesOurs = (x) => x.includes('"customers"') || x.includes(NEW_COLUMN);
+/** What a LATER journal entry adds (0030's cycle_member_goals table and its index; scripts/test-work-periods-db.mjs proves it): not this migration's to do. */
+const laterEntry = (x) => /"cycle_member_goals(_member_uidx)?"/.test(x);
 
 /** The deploy's drift step after the journal: nothing to apply, nothing refused, and no DROP COLUMN / DROP INDEX at all. */
 function checkPlan(url, label, { oursOnly = false } = {}) {
@@ -155,7 +157,8 @@ function checkPlan(url, label, { oursOnly = false } = {}) {
     const other = plan.apply.filter((x) => !touchesOurs(x));
     check(`${label}: the drift dry run plans nothing on customers (${other.length} older unrelated statement(s): ${other.map((x) => x.split("\n")[0].slice(0, 70)).join(" / ") || "none"})`, plan.apply.filter(touchesOurs).length === 0, plan.apply.filter(touchesOurs));
   } else {
-    check(`${label}: the drift dry run plans NOTHING to apply (0029 did the whole change)`, plan.apply.length === 0, plan.apply);
+    const ours = plan.apply.filter((x) => !laterEntry(x));
+    check(`${label}: the drift dry run plans NOTHING to apply (0029 did the whole change; what 0030 adds is 0030's)`, ours.length === 0, ours);
   }
   check(`${label}: …and nothing the deploy would refuse (no data loss, no index drop)`, plan.refused.length === 0, plan.refused);
   check(`${label}: …and no DROP COLUMN, no truncate, and no DROP INDEX but the one out-of-band index anywhere in the plan`, all.every((x) => !/DROP\s+COLUMN|^\s*truncate/i.test(x)) && all.filter((x) => /DROP\s+INDEX/i.test(x)).every((x) => /workflow_definitions_one_default_idx/.test(x)), all.filter((x) => /DROP|truncate/i.test(x) && !/POLICY/i.test(x)));
@@ -345,10 +348,11 @@ try {
     const cols0 = await columns(db);
     check("before 0029 the neutral column does not exist, and 0028's does", !cols0.some((x) => x.includes(`.${NEW_COLUMN} `)) && cols0.some((x) => x.startsWith("customers.account_owner ")), cols0);
     const planBefore = driftPlan(url);
-    const named = (planBefore.apply ?? []).join("\n");
+    const oursBefore = (planBefore.apply ?? []).filter((x) => !laterEntry(x));
+    const named = oursBefore.join("\n");
     check(
       "…and the drift plan against schema.ts names it, and only it (so an empty plan after 0029 means something)",
-      !planBefore.error && planBefore.apply.length === 1 && /ADD COLUMN "secondary_owner" text/.test(named) && planBefore.refused.length === 0,
+      !planBefore.error && oursBefore.length === 1 && /ADD COLUMN "secondary_owner" text/.test(named) && planBefore.refused.length === 0,
       planBefore.error ? planBefore : { apply: planBefore.apply, refused: planBefore.refused },
     );
     const f0 = await fingerprint(db);

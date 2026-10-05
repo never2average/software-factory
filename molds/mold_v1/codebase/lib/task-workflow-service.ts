@@ -3,6 +3,8 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import type { OrgContext } from "@/lib/org-context";
+import { WORK_PERIODS } from "@/agent/lib/work-periods";
+import { periodHeaders, withoutPeriod } from "@/lib/work-periods-server";
 
 function serviceConfig(): { url: string; token: string } | null {
   const url = process.env.TASK_WORKFLOW_SERVICE_URL?.replace(/\/$/, "");
@@ -17,6 +19,8 @@ export async function proxyTaskWorkflow(
   request: NextRequest,
   ctx: OrgContext,
   path: string,
+  /** The request body, when the caller has already read it (lib/work-periods-server.ts guardTaskRequest). */
+  bodyText?: string,
 ): Promise<NextResponse> {
   const config = serviceConfig();
   if (!config) {
@@ -35,10 +39,16 @@ export async function proxyTaskWorkflow(
         "x-org-id": ctx.orgId,
         "x-actor-email": identity.email.toLowerCase(),
         "x-actor-role": ctx.role,
+        ...periodHeaders(),
       },
-      body: hasBody ? await request.text() : undefined,
+      body: hasBody ? (bodyText ?? (await request.text())) : undefined,
       cache: "no-store",
     });
+    // A deployment without work periods (profile work_periods.mode "off") answers a task without its period.
+    if (!WORK_PERIODS.enabled && (upstream.headers.get("content-type") ?? "").includes("application/json")) {
+      const payload = await upstream.json().catch(() => null);
+      return NextResponse.json(withoutPeriod(payload), { status: upstream.status });
+    }
     return new NextResponse(upstream.body, {
       status: upstream.status,
       headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },

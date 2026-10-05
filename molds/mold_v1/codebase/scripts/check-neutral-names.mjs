@@ -8,6 +8,8 @@
  * folder name is spelled in base code at all: the names are the deployment
  * profile's (scripts/lib/stored-folders.mjs). And base code ships no workflow and no recipe of its own: a workspace's
  * library is the deployment profile's (scripts/lib/builtin-library.mjs).
+ * And what a work period is called is the profile's too: its default word is spelled only in the default
+ * profile, one legacy definition and the listed contracts (scripts/lib/period-words.mjs).
  *
  *   node scripts/check-neutral-names.mjs                 the gate (CI)
  *   node scripts/check-neutral-names.mjs --report        bare-word count per file, for lowering ceilings
@@ -21,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkTree, readAllowList } from "./lib/neutral-names.mjs";
 import { checkRecordWords, readRecordAllow } from "./lib/record-words.mjs";
+import { checkPeriodWords, defaultPeriodWords, readPeriodAllow } from "./lib/period-words.mjs";
 import { checkStoredFolders, readFolderAllow, storedFolderNames } from "./lib/stored-folders.mjs";
 import { checkBuiltinLibrary, readLibraryAllow } from "./lib/builtin-library.mjs";
 
@@ -45,6 +48,8 @@ const folders = checkStoredFolders(ROOT, readFolderAllow(JSON.parse(readFileSync
 
 // A workflow or recipe library in base code, and every file that writes one into a workspace.
 const library = checkBuiltinLibrary(ROOT, readLibraryAllow(JSON.parse(readFileSync(ALLOW, "utf8"))));
+// What a work period is called: the default profile's word, spelled only where the allow-list says.
+const periods = checkPeriodWords(ROOT, readPeriodAllow(JSON.parse(readFileSync(ALLOW, "utf8"))));
 
 if (args.includes("--folders")) {
   const only = opt("--folders");
@@ -82,7 +87,11 @@ if (library.problems.length) {
   console.error(`${problems.length || records.problems.length || folders.problems.length ? "\n" : ""}check-neutral-names: ${library.problems.length} built-in-library problem(s). Base code ships no workflow and no recipe of its own: what a workspace is provisioned with is the deployment profile's (library.sources in profiles/*.json), so a deployment for another line of work is never handed the first product's content.\n`);
   for (const p of library.problems) console.error(`  - ${p}`);
 }
-if (problems.length || records.problems.length || folders.problems.length || library.problems.length) process.exit(1);
+if (periods.problems.length) {
+  console.error(`${problems.length || records.problems.length || folders.problems.length || library.problems.length ? "\n" : ""}check-neutral-names: ${periods.problems.length} period-word problem(s). What a work period is called is the deployment profile's (work_periods.label): base text writes {period} / {periods} for the model and takes the word from lib/work-periods-ui.ts for a person. Its default word is allowed only in the default profile, one legacy definition and the listed contracts (period_words in scripts/neutral-names.allow.json).\n`);
+  for (const p of periods.problems) console.error(`  - ${p}`);
+}
+if (problems.length || records.problems.length || folders.problems.length || library.problems.length || periods.problems.length) process.exit(1);
 const total = [...baseCounts.values()].reduce((a, b) => a + b, 0);
 const recordTotal = [...records.counts.values()].reduce((a, b) => a + b, 0);
 console.log(
@@ -93,3 +102,4 @@ console.log(`check-neutral-names: record words as prose in base text: ${recordTo
 const folderTotal = [...folders.counts.values()].reduce((a, b) => a + b, 0);
 console.log(`check-neutral-names: stored folder names (${folderNames.length} known: the former ones and the default profile's) spelled in base code: ${folderTotal} under ${folders.counts.size} file ceiling(s); every other scanned file spells none.`);
 console.log(`check-neutral-names: no workflow or recipe library in base code: the default profile names no library source, no workflow script outside a library directory, no recipe literal, ${library.writers} listed writer(s) of the workflows and recipes tables.`);
+console.log(`check-neutral-names: the default profile's word for a work period (${defaultPeriodWords(ROOT).map((w) => `"${w}"`).join(", ")}, read from profiles/00-default.json) is spelled ${periods.total} time(s) outside it, each inside a listed contract or the one legacy definition.`);

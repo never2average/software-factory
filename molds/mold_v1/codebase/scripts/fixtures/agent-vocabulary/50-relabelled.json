@@ -580,5 +580,13 @@
       { "key": "notes", "label": "Notes", "type": "long_text", "help": "What the desk knows about the company: filings read, calls held, open questions." },
       { "key": "house_view", "label": "House view", "type": "pick_list", "options": ["Positive", "Neutral", "Negative"], "show_in_list": true }
     ]
+  },
+  "work_periods": {
+    "$comment": "Analysts do not run a shared sprint: each holds their own targets for the week. Mode individual, in the desk's words; the list reads the same word (list_label follows label).",
+    "mode": "individual",
+    "label": { "singular": "week", "plural": "weeks" },
+    "item_label": { "singular": "target", "plural": "targets" },
+    "length_days": 7,
+    "auto_rollover": true
   }
 }

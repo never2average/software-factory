@@ -4,7 +4,7 @@
  * Only `assignee` used to be recorded. The Tasks board's whole interaction is
  * dragging a card between columns — a STATUS change — so the activity feed on
  * the detail panel stayed empty through every move, and rendered a section
- * nothing ever wrote to. Priority, due date, title and sprint were equally
+ * nothing ever wrote to. Priority, due date, title and period were equally
  * silent. (Workflow stage moves were recorded, but only for tasks with a
  * workflow instance attached, which most do not have.)
  *
@@ -43,14 +43,19 @@ export type ActivitySql = postgres.TransactionSql;
 export interface ActivityContext {
   orgId: string;
   actor: string;
+  /** What the calling deployment calls a period (its profile's word). Absent: the neutral word below. */
+  periodLabel?: string;
 }
+
+/** A period move when the caller did not say what its deployment calls one. */
+const NEUTRAL_PERIOD_LABEL = "Period";
 
 const TRACKED_FIELDS: [keyof TaskActivityRow, string][] = [
   ["status", "Status"],
   ["title", "Title"],
   ["priority", "Priority"],
   ["assignee", "Assignee"],
-  ["cycle_id", "Sprint"],
+  ["cycle_id", NEUTRAL_PERIOD_LABEL],
   ["due_at", "Due date"],
   ["container_label", "Container"],
   ["notes", "Notes"],
@@ -82,9 +87,9 @@ export async function recordTaskChanges(
   after: TaskActivityRow,
 ): Promise<void> {
   /**
-   * A sprint is stored as a uuid and read by a person. "Sprint changed
+   * A period is stored as a uuid and read by a person. "<Period> changed
    * 4f3c… → 91ab…" is a line nobody can act on, so the two ids in play are
-   * resolved to names — one query, and only when the sprint actually moved.
+   * resolved to names — one query, and only when the period actually moved.
    */
   const cycleNames = new Map<string, string>();
   if (before.cycle_id !== after.cycle_id) {
@@ -107,7 +112,8 @@ export async function recordTaskChanges(
     const to = show(after[field]);
     if (from === to) continue;
     // Notes are free text and often long; say that they changed, not what to.
-    const event = field === "notes" ? "Notes edited" : `${label} changed ${from} → ${to}`;
+    const shown = field === "cycle_id" ? (ctx.periodLabel ?? label) : label;
+    const event = field === "notes" ? "Notes edited" : `${shown} changed ${from} → ${to}`;
     await insertActivity(sql, ctx, taskId, event);
   }
 

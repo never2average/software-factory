@@ -379,6 +379,79 @@ it. Everything else is kept and listed with the evidence. Until it is run, a lef
 delegates to an excluded specialist is shown as not part of the workspace and refused by every
 run path (`lib/workflow-availability.ts`).
 
+### `work_periods`
+
+A time-boxed period that groups tasks (the `cycles` table; a task's `cycleId`). The base product had one idea of it,
+a period the whole team shares, under its own word. A deployment says here which of three things a period is, what it
+is called, and whether it exists at all. Everything that shows, offers or answers anything about a period reads the
+mode and the words from one module, `agent/lib/work-periods.ts`.
+
+| Key | Meaning | Default |
+|---|---|---|
+| `work_periods.mode` | `"team"`: one shared period with a lead, a capacity and a burndown. `"individual"`: each person has their own items within the period (their own goal and planned count, in `cycle_member_goals`); no shared lead, no team capacity; every view groups by person and shows the signed-in person first. `"off"`: the feature does not exist in this deployment. | `"team"` |
+| `work_periods.label` | `{ singular, plural }`: what a period is called, wherever a person or the model reads it. | the base product's word (see `profiles/00-default.json`) |
+| `work_periods.list_label` | `{ singular, plural }`: what it is called where tasks are grouped and filtered by it (the filter, the task's field, the New button). The base product has always used a second word there. A profile that states only `label` gets its label here too. | the base product's second word |
+| `work_periods.item_label` | `{ singular, plural }`: what one task in a period is called under mode `individual`. | `target` / `targets` |
+| `work_periods.length_days` | How long a new period runs. `null`: a new period has no dates until someone sets them. Required by mode `individual` and by `auto_rollover`. | `null` |
+| `work_periods.auto_rollover` | When a period has ended, it is closed and every unfinished task is carried into the period that follows (opened, `length_days` long, when there is none), each keeping its assignee. `false`: someone rolls over by hand. | `false` |
+
+**What each mode is, everywhere.**
+
+| | `team` | `individual` | `off` |
+|---|---|---|---|
+| Todos navigation | the period view, under `label` | the period view, under `label` | no period view; a link to it opens the task list |
+| A period's card and panel | lead, capacity, shared goal, burndown, its tasks | one block per person, the signed-in person first: their goal, planned count, a done/planned bar, their items; no lead, capacity or burndown | none |
+| Task list | filter, column and field for the period | the same, in the profile's word | none of them |
+| Rolling over | by hand, to the backlog | to the next period, each item still its person's; one person's or everyone's; automatic with `auto_rollover` | none |
+| The model's tools | `list_cycles`, `upsert_cycle`, `upsert_todo`'s `cycleId` | the same names: `list_cycles` also returns one person's items and progress for the current period (the signed-in person by default), `upsert_cycle` sets a person's goal and planned count, `upsert_todo` takes `cycleId: "current"` | `list_cycles` and `upsert_cycle` are not registered; `upsert_todo` has no `cycleId` |
+| The coding agent's tools | the two period tools; task tools take `cycleId` | the same, in the profile's words | neither period tool; no task tool takes or names a period |
+| `/api/ops/cycles/**` | as before; `…/goals` is a 404 | plus `GET`/`PUT /api/ops/cycles/:id/goals`; a period refuses a lead or a capacity | every route is a 404 |
+| A task write that names a period | forwarded | checked first: see below | refused (400); a task is answered without its period |
+| Exports, activity, comments | carry the period | carry it, without a lead | omit it; there is no `cycle` entity |
+
+Under `off` nothing is deleted: `cycles` rows, every task's `cycle_id` and every goal stay exactly as stored, and are
+there again if the mode changes.
+
+**Whose an item is (mode `individual`).** A task in a period belongs to its assignee (to its creator when it has
+none). Setting, changing or completing one that is, or would become, somebody else's needs the caller to be in that
+person's reporting chain on the roster (`people_roster.manager_email`: their manager, that manager's manager, and so
+on). The same rule holds a person's goal, and carrying one person's items forward. It is enforced at the ops routes
+and at the model's tools alike (`agent/lib/work-period-store.ts`), and the answer says who does not report to whom.
+A task in no period is the team's shared checklist, as it always was.
+
+**The words.** Text the model reads writes a placeholder, filled at the same boundary as the role and record words:
+`{period}`, `{periods}`, `{Period}`, `{Periods}` (the `label`) and `{period_item}`, `{period_items}`, `{Period_item}`,
+`{Period_items}` (the `item_label`). Text a person reads comes from `lib/work-periods-ui.ts` (every label and sentence
+about a period, per mode) and `W.period` / `W.periodList` / `W.periodItem` in `lib/ui-words.ts`. Identifiers do not
+change with a profile: the `cycles` table, `cycle_id`, the `/api/ops/cycles` routes, the tool names, the `cycleId`
+parameter, the coding agent's two period tools (`sprint_list`, `sprint_create`) and the view key in a shared link
+(`view=sprints`) keep their names. The task service is a separate deployment with no profile of its own: the web app
+and the agent tell it the word on each request (`x-period-label`), and its activity feed names a period move by it.
+
+**Automatic rollover has no timer.** It runs when a workspace's periods are read (the list route, the model's list
+tool), inside that workspace's own transaction, so it cannot reach another workspace and needs no scheduled job. A
+period that ended overnight is rolled over the first time anyone, or the agent, looks.
+
+Each person's own targets for a week:
+
+```json
+{
+  "work_periods": {
+    "mode": "individual",
+    "label": { "singular": "week", "plural": "weeks" },
+    "item_label": { "singular": "target", "plural": "targets" },
+    "length_days": 7,
+    "auto_rollover": true
+  }
+}
+```
+
+No periods at all:
+
+```json
+{ "work_periods": { "mode": "off" } }
+```
+
 ### `account_fields`
 
 | Key | Meaning | Default |
@@ -921,7 +994,7 @@ neutral, and a deployment that pins a former name shows it only where it gives n
 npm run build:deployment-profile   # merge + validate + write both generated files
 npm run test:deployment-profile    # merge rules, domains (defaults exact, example validates, bad profiles fail), the briefing; offline
 npm run check:agent-vocabulary     # the model-facing surface under a relabelling fixture has no base word and carries the profile's; the default's is unchanged and reads no record word as prose; under the folder pin it is byte for byte what it was before folder names were a setting
-npm run check:neutral-names        # the role word only as a listed contract; the record words as prose only under a per-file ceiling; no data-room folder name spelled in base code; no workflow or recipe library in base code
+npm run check:neutral-names        # the role word only as a listed contract; the record words as prose only under a per-file ceiling; no data-room folder name spelled in base code; no workflow or recipe library in base code; a work period's default word only in the default profile, one legacy definition and the listed contracts
 npm run test:workflow-library      # the default profile provisions no library; the opt-in builds exactly the former built-ins; bad sources are refused; the cleanup's rules; offline
 npm run test:dataroom-folders      # the folder names are the profile's; a pinned deployment's stored paths, object keys, starter tree and seeders are byte for byte what they were; an unpinned one is refused
 npm run check:dataroom-folders     # the store this build is configured for holds no former folder its profile does not use (run by prebuild and prebuild:eve)
@@ -931,6 +1004,8 @@ npm run test:ui-vocabulary         # keys in JSON and exports, ops API errors, l
 npm run test:agent-vocabulary      # what the model writes in the profile's words lands in unchanged storage; specialists.exclude moves and restores
 npm run test:custom-fields         # the custom-field validator, the agent's write path, the MCP inputs, the migration; offline
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
+npm run test:work-periods          # work_periods: the generator's rules, each mode's views, words, tools and routes (three builds rendered), the default to the letter; offline
+npm run test:work-periods-db       # the same three modes against a real Postgres: two workspaces, the routes and the model's tools, rollover, whose an item is
 npm run check:generated            # fails if a generated file is stale
 npm run typecheck
 ```

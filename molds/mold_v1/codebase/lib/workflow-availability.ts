@@ -19,7 +19,7 @@
  */
 import { VOCABULARY, type Vocabulary } from "../agent/lib/agent-vocabulary.ts";
 import { WORKFLOW_LIBRARY, type LibraryWorkflow } from "../agent/lib/workflow-library.generated.ts";
-import { delegatesTo, speakLibraryWorkflow } from "../agent/lib/workflow-library-view.ts";
+import { delegatesTo, needsWorkPeriods, speakLibraryWorkflow } from "../agent/lib/workflow-library-view.ts";
 
 export type WorkflowAvailability =
   | { available: true }
@@ -31,6 +31,15 @@ export function workflowAvailability(
   library: readonly LibraryWorkflow[] = WORKFLOW_LIBRARY,
 ): WorkflowAvailability {
   const script = row.script ?? "";
+  // A row that files tasks into work periods, in a deployment whose profile turns them off (work_periods.mode
+  // "off"): the tools it calls are not registered, so it cannot run. The feature is not named to a person.
+  if (!v.periods.enabled && needsWorkPeriods({ script })) {
+    return {
+      available: false,
+      needsExcluded: [],
+      reason: "It uses a tool this workspace does not have, so it cannot run here. Edit it to use this workspace's tools and it becomes yours to run.",
+    };
+  }
   const needs = delegatesTo(script).filter((k) => v.excludedSpecialists.includes(k));
   if (!needs.length) {
     // The row a specialist's runs are filed under, for a specialist this deployment excludes: there is nothing to

@@ -296,6 +296,30 @@ for (const area of Object.keys(AREAS)) {
   checkCustomFields("account_fields", profile.account_fields.custom_fields, new Set([...Object.keys(account), ...Object.keys(dbColumns("customers")), "customerId", "customerName", "orgId", "custom"]), "customers", null);
 }
 
+// --- work_periods: the time-boxed periods that group tasks, switched and worded by the profile ---------------------
+{
+  const wp = profile.work_periods; const at = "work_periods";
+  if (!isObj(wp)) fail(`${at} must be an object`);
+  const MODES = ["off", "team", "individual"];
+  if (!MODES.includes(wp.mode)) fail(`${at}.mode: ${JSON.stringify(wp.mode)} is not a mode. Use "team" (one shared period with a lead, a capacity and a burndown), "individual" (each person's own items within the period) or "off" (no periods in this deployment)`);
+  for (const k of ["label", "list_label", "item_label"]) {
+    if (!isObj(wp[k])) fail(`${at}.${k} must be an object with a "singular" and a "plural"`);
+    for (const n of Object.keys(wp[k])) if (n !== "singular" && n !== "plural") fail(`${at}.${k}.${n}: unknown key (a label takes singular, plural)`);
+    for (const n of ["singular", "plural"]) {
+      const w = wp[k][n];
+      if (typeof w !== "string" || !w.trim() || w !== w.trim() || w.length > 40 || /[{}<>\n]/.test(w)) fail(`${at}.${k}.${n} must be a non-empty word or short phrase (at most 40 characters, no braces or line breaks), for example "week"`);
+    }
+  }
+  // A profile that renames the period states `label`; unless it also states `list_label`, the list reads the same word.
+  const sameLabel = (a, b) => a.singular === b.singular && a.plural === b.plural;
+  if (sameLabel(wp.list_label, defaults.work_periods.list_label) && !sameLabel(wp.label, defaults.work_periods.label)) wp.list_label = { ...wp.label };
+  if (wp.length_days !== null && (!Number.isInteger(wp.length_days) || wp.length_days < 1 || wp.length_days > 366)) fail(`${at}.length_days must be null (a new period has no dates until someone sets them) or a whole number of days from 1 to 366`);
+  if (typeof wp.auto_rollover !== "boolean") fail(`${at}.auto_rollover must be true or false`);
+  if (wp.mode === "individual" && wp.length_days === null) fail(`${at}.length_days: mode "individual" needs a length in days (for example 7): a person's unfinished items are carried into the next period, which is opened with this length when there is none`);
+  if (wp.auto_rollover && wp.length_days === null) fail(`${at}.length_days: auto_rollover needs a length in days, to open the next period with`);
+  if (wp.auto_rollover && wp.mode === "off") fail(`${at}.auto_rollover: there is nothing to roll over when mode is "off"`);
+}
+
 if (profile.agent.briefing !== null && (typeof profile.agent.briefing !== "string" || profile.agent.briefing.split(/\s+/).length > 400)) fail("agent.briefing must be null or a string of at most 400 words (it is sent on every turn)");
 
 // --- what the model is: the base persona, and which base specialists it has ------------------------------------
@@ -420,7 +444,26 @@ export interface DeploymentProfile {
    * custom_fields: the deployment's OWN fields on the account record, by key in the customers table's \`custom\` column.
    */
   account_fields: { hidden: string[]; custom_fields: CustomFieldSpec[] };
+  /**
+   * The time-boxed periods that group tasks (the \`cycles\` table). mode "team": one shared period with a lead, a
+   * capacity and a burndown. "individual": each person's own items within the period. "off": the feature does not
+   * exist in this deployment (agent/lib/work-periods.ts is what every surface reads).
+   */
+  work_periods: {
+    mode: WorkPeriodMode;
+    /** What a period is called. */
+    label: { singular: string; plural: string };
+    /** What it is called where tasks are grouped and filtered by it. */
+    list_label: { singular: string; plural: string };
+    /** What one task in a period is called under mode "individual". */
+    item_label: { singular: string; plural: string };
+    /** How long a new period runs; null = no dates until someone sets them. */
+    length_days: number | null;
+    /** An ended period's unfinished tasks are carried into the next one, opened when there is none. */
+    auto_rollover: boolean;
+  };
 }
+export type WorkPeriodMode = "off" | "team" | "individual";
 
 /** The data-room domains, by the id code and profiles call them. Their stored folder names are the profile's. */
 export type DataroomDomainId = ${DOMAINS.map((d) => JSON.stringify(d)).join(" | ")};

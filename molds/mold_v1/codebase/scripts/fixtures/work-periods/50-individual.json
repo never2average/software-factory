@@ -1,0 +1,10 @@
+{
+  "$comment": "Each person's own targets within a week, the way a research desk works (scripts/test-work-periods.mjs). The same block the relabelled fixture carries (scripts/fixtures/agent-vocabulary/50-relabelled.json).",
+  "work_periods": {
+    "mode": "individual",
+    "label": { "singular": "week", "plural": "weeks" },
+    "item_label": { "singular": "target", "plural": "targets" },
+    "length_days": 7,
+    "auto_rollover": true
+  }
+}

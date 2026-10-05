@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { NextRequest } from "next/server";
 import { FOLDER, fillFolders } from "@/agent/lib/dataroom-folders";
+import { WORK_PERIODS } from "@/agent/lib/work-periods";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import { handleMcpRequest, type McpDeps } from "@/lib/mcp-server";
 import { verifyOpsAuth } from "@/lib/ops-auth";
@@ -36,6 +37,8 @@ const deps: McpDeps = {
     implementations: DEPLOYMENT_PROFILE.domains.implementations.custom_fields,
     account: DEPLOYMENT_PROFILE.account_fields.custom_fields,
   },
+  // What a period is for this deployment (its profile's work_periods): the period tools follow the mode and the words.
+  workPeriods: { mode: WORK_PERIODS.mode, label: WORK_PERIODS.label, itemLabel: WORK_PERIODS.itemLabel },
   webOrigin: process.env.WEB_ORIGIN?.trim() || null,
   internalOrigin: process.env.MCP_INTERNAL_ORIGIN?.trim() || null,
 };

@@ -9,6 +9,7 @@
  * fills. Under a profile:
  *   - a workflow that delegates to a specialist the profile EXCLUDES is not provisioned at all — it would fail
  *     at its first step, and offering it would tell the model about work this deployment does not do;
+ *   - a workflow that needs work periods is not provisioned when the profile turns them off (`needsWorkPeriods`);
  *   - every other workflow's name-free text — its description, step names, and the string literals of its script
  *     (the prompts it sends) — is spoken in the profile's words, like any prompt. Code is not touched: the script
  *     still reads `args.customerId`, which trigger_workflow maps the model's `companyId` back to, and still names
@@ -22,6 +23,18 @@ import { RECIPE_LIBRARY, WORKFLOW_LIBRARY, type LibraryRecipe, type LibraryWorkf
 /** The specialists a script delegates to (`agent(…, { subagent: "key" })`). */
 export function delegatesTo(script: string): string[] {
   return [...new Set([...script.matchAll(/subagent:\s*["']([a-z0-9-]+)["']/g)].map((m) => m[1]))];
+}
+
+/**
+ * Does a workflow need work periods (the deployment profile's `work_periods`, agent/lib/work-periods.ts)? It does
+ * when its script or its text names one of the model's period tools, the period parameter of a task, or a period
+ * placeholder. Under mode "off" none of those exist, so such a workflow is not provisioned, and one a workspace
+ * already holds is unavailable (lib/workflow-availability.ts): it would fail at the first step that files a task
+ * into a period, and offering it would tell the model about a feature this deployment does not have.
+ */
+export function needsWorkPeriods(w: { script?: string | null; description?: string | null; steps?: readonly string[] | null }): boolean {
+  const text = [w.script, w.description, ...(w.steps ?? [])].filter((t): t is string => typeof t === "string").join("\n");
+  return /\b(?:list_cycles|upsert_cycle|cycleId|cycle_id)\b|(?<!\$)\{(?:period_items?|Period_items?|periods?|Periods?)\}/.test(text);
 }
 
 /** A script with only its double-quoted string literals spoken; code, and specialist names, unchanged. */
@@ -58,6 +71,8 @@ export function speakLibraryWorkflow<T extends { description?: string | null; st
 export function deploymentWorkflowLibrary(v: Vocabulary = VOCABULARY, library: readonly LibraryWorkflow[] = WORKFLOW_LIBRARY): LibraryWorkflow[] {
   return library
     .filter((w) => !delegatesTo(w.script).some((k) => v.excludedSpecialists.includes(k)))
+    // …nor one that needs work periods, in a deployment whose profile turns them off.
+    .filter((w) => v.periods.enabled || !needsWorkPeriods(w))
     .map((w) => speakLibraryWorkflow(v, w));
 }
 

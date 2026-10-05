@@ -1010,10 +1010,13 @@ export function SectionHeaderCard({
 
 export function SearchBox({
   noun,
+  nounPlural,
   value,
   onChange,
 }: {
   readonly noun: string;
+  /** The plural a person reads, when it is not `${noun}s`. */
+  readonly nounPlural?: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
 }) {
@@ -1023,7 +1026,7 @@ export function SearchBox({
       <OpsInput
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={`Search ${noun}s…`}
+        placeholder={`Search ${nounPlural ?? `${noun}s`}…`}
         className="py-2 pr-2.5 pl-8"
       />
     </div>

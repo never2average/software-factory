@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * A sprint burndown as a NEGATIVE area: remaining task count is plotted below a
+ * A period's burndown (mode team) as a NEGATIVE area: remaining task count is plotted below a
  * 0 baseline (work "hangs" under the line), reconstructed from each task's
- * done_at. The dashed ideal line runs from −committed → 0 across the sprint
+ * done_at. The dashed ideal line runs from −committed → 0 across the period's
  * dates; the actual area only reaches the 0 baseline (empty) — early if ahead of
  * schedule, late if behind.
  */

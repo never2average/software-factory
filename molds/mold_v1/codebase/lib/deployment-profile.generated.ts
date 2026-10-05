@@ -60,7 +60,26 @@ export interface DeploymentProfile {
    * custom_fields: the deployment's OWN fields on the account record, by key in the customers table's `custom` column.
    */
   account_fields: { hidden: string[]; custom_fields: CustomFieldSpec[] };
+  /**
+   * The time-boxed periods that group tasks (the `cycles` table). mode "team": one shared period with a lead, a
+   * capacity and a burndown. "individual": each person's own items within the period. "off": the feature does not
+   * exist in this deployment (agent/lib/work-periods.ts is what every surface reads).
+   */
+  work_periods: {
+    mode: WorkPeriodMode;
+    /** What a period is called. */
+    label: { singular: string; plural: string };
+    /** What it is called where tasks are grouped and filtered by it. */
+    list_label: { singular: string; plural: string };
+    /** What one task in a period is called under mode "individual". */
+    item_label: { singular: string; plural: string };
+    /** How long a new period runs; null = no dates until someone sets them. */
+    length_days: number | null;
+    /** An ended period's unfinished tasks are carried into the next one, opened when there is none. */
+    auto_rollover: boolean;
+  };
 }
+export type WorkPeriodMode = "off" | "team" | "individual";
 
 /** The data-room domains, by the id code and profiles call them. Their stored folder names are the profile's. */
 export type DataroomDomainId = "accounts" | "platform" | "deliveries" | "solutions" | "projects" | "tickets" | "people";
@@ -329,6 +348,23 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
   },
   "library": {
     "sources": {}
+  },
+  "work_periods": {
+    "mode": "team",
+    "label": {
+      "singular": "sprint",
+      "plural": "sprints"
+    },
+    "list_label": {
+      "singular": "cycle",
+      "plural": "cycles"
+    },
+    "item_label": {
+      "singular": "target",
+      "plural": "targets"
+    },
+    "length_days": null,
+    "auto_rollover": false
   },
   "account_fields": {
     "hidden": [],

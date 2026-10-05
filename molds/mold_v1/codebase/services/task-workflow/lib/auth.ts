@@ -22,7 +22,20 @@ export function authenticateServiceRequest(request: Request): ServiceContext | R
   const rawRole = request.headers.get("x-actor-role")?.trim();
   if (!orgId || !actor) return Response.json({ error: "Missing service context" }, { status: 400 });
   const role = rawRole === "owner" || rawRole === "admin" || rawRole === "engineer" ? rawRole : "member";
-  return { orgId, actor, role };
+  return { orgId, actor, role, ...periodLabelOf(request) };
+}
+
+/**
+ * What the calling deployment calls a period (its profile's word, sent by the web app and the agent as
+ * `x-period-label`, URI-encoded). This service knows no deployment's words of its own.
+ */
+function periodLabelOf(request: Request): { periodLabel?: string } {
+  const raw = request.headers.get("x-period-label");
+  if (!raw) return {};
+  let label = raw;
+  try { label = decodeURIComponent(raw); } catch { /* sent plain */ }
+  label = label.replace(/[\u0000-\u001f{}<>]/g, "").trim().slice(0, 40);
+  return label ? { periodLabel: label } : {};
 }
 
 export function isServiceContext(value: ServiceContext | Response): value is ServiceContext {

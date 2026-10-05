@@ -6,11 +6,13 @@ import { comments } from "@/agent/lib/db/schema";
 import { createDraft } from "@/agent/lib/email";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
+import { WORK_PERIODS } from "@/agent/lib/work-periods";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ENTITIES = new Set(["task", "cycle", "deployment", "implementation"]);
+// A deployment without work periods (profile work_periods.mode "off") has no "cycle" entity to read or write.
+const ENTITIES = new Set(["task", ...(WORK_PERIODS.enabled ? ["cycle"] : []), "deployment", "implementation"]);
 
 /**
  * GET  /api/ops/comments?entity=<type>&id=<id> — the flat comment thread.
@@ -77,6 +79,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues.map((i) => i.message).join("; ") }, { status: 400 });
   }
   const { entityType, entityId, author, body, label } = parsed.data;
+  if (!ENTITIES.has(entityType)) return NextResponse.json({ error: "entity + id required" }, { status: 400 });
   const mentions = [...new Set([...body.matchAll(MENTION_RE)].map((m) => m[1].toLowerCase()))];
   try {
     const [item] = await withOrgRls(ctx.orgId, (tx) =>

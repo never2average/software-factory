@@ -39,6 +39,7 @@ import { SUBAGENT_KEYS } from "./subagent-registry.generated.ts";
 import { DATAROOM_DOMAIN_IDS, DATAROOM_FOLDER_IDS, foldersOf, type DataroomDomainId, type DataroomFolderId } from "./dataroom-folders.ts";
 import { LEGACY_MEMBER } from "./legacy-member.ts";
 import { withOwnerKeyTwins } from "./owner-keys.ts";
+import { PERIOD_KEYS, periodWordOf, workPeriodsOf, type WorkPeriods } from "./work-periods.ts";
 
 /**
  * What the base product calls things: the neutral words profiles/00-default.json carries. A term is relabelled
@@ -97,6 +98,8 @@ export interface Vocabulary {
   roles: { member: string; members: string; owner: string };
   /** What each record placeholder is filled with: the profile's word for the record, singular and plural. */
   records: { account: Pair; deployment: Pair; implementation: Pair; rollout: Pair };
+  /** The work periods as this profile has them (agent/lib/work-periods.ts): what the period placeholders are filled with. */
+  periods: WorkPeriods;
   /** The memory scope prefix for an account: `customer` by default, derived from the profile's word otherwise. */
   memoryPrefix: string;
   /** Keep the base product's customer-management persona in the root prompt. */
@@ -189,6 +192,7 @@ export function createVocabulary(profile: VocabularyProfile, specialists: readon
       implementation: profile.domains.implementations.label,
       rollout: profile.domains.implementations.group_label,
     },
+    periods: workPeriodsOf(profile),
     memoryPrefix,
     personaBase: profile.persona?.base !== false,
     excludedSpecialists: [...(profile.specialists?.exclude ?? [])],
@@ -412,7 +416,9 @@ export const RECORD_KEYS = [
   "implementation", "implementations", "Implementation", "Implementations",
   "rollout", "rollouts", "Rollout", "Rollouts",
 ] as const;
-export const PLACEHOLDER_KEYS: readonly string[] = [...ROLE_KEYS, ...RECORD_KEYS];
+/** The period placeholders (agent/lib/work-periods.ts): `{periods}` and `{period_item}` are the profile's words for a period and for one task in it. */
+export { PERIOD_KEYS };
+export const PLACEHOLDER_KEYS: readonly string[] = [...ROLE_KEYS, ...RECORD_KEYS, ...PERIOD_KEYS];
 /**
  * The data-room placeholders (agent/lib/dataroom-folders.ts): `{folder:accounts}` is the domain's folder as this
  * deployment's reader addresses it (the head of a path), `{domain:accounts}` the domain in a sentence (its label).
@@ -438,6 +444,7 @@ export function wordForWith(v: Vocabulary, key: string): string {
     if (kind === "folder" || id === "uploads") return v.folders.get(name) ?? name;
     return v.labels[id];
   }
+  if ((PERIOD_KEYS as readonly string[]).includes(key)) return periodWordOf(v.periods, key);
   const r = v.roles;
   const lower = key[0].toLowerCase() + key.slice(1);
   const plural = lower.endsWith("s");

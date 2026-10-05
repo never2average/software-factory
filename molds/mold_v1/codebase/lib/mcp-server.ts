@@ -55,6 +55,8 @@ export interface McpDeps {
   folders: Record<string, string>;
   /** The profile's custom_fields per record (the two areas, the account), so the write tools can name them. Absent = described generically. */
   customFields?: { deployments: unknown[]; implementations: unknown[]; account?: unknown[] };
+  /** The profile's `work_periods` (mode and words), so the period tools follow them. Absent = shared periods, a neutral word. */
+  workPeriods?: { mode: string; label: { singular: string; plural: string }; itemLabel: { singular: string; plural: string } };
   /** Injected for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
   /** Extra addresses this deployment answers on (WEB_ORIGIN), for the Origin check and links. */
@@ -218,6 +220,7 @@ export async function handleMcpRequest(request: Request, deps: McpDeps): Promise
     readSpec: deps.readSpec,
     folders: deps.folders,
     customFields: deps.customFields,
+    workPeriods: deps.workPeriods,
     // No direct blob access: the data room is reached through the Ops API, as the caller, org-scoped and audited.
     blobStore: () => null,
     parseClaudeTranscript,
@@ -230,7 +233,7 @@ export async function handleMcpRequest(request: Request, deps: McpDeps): Promise
       title: deps.productName,
       version: deps.version ?? "1.0.0",
     },
-    instructions: serverInstructions({ productName: deps.productName, opsUrl: publicOrigin, signInHint }),
+    instructions: serverInstructions({ productName: deps.productName, opsUrl: publicOrigin, signInHint, workPeriods: deps.workPeriods }),
     maxResultChars: MAX_RESULT_CHARS,
   };
 

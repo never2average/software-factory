@@ -319,6 +319,8 @@ const ctx = {
   readSpec: () => readPkgFile(new URL("./dm.md", import.meta.url), "utf8"),
   // The folder names of the deployment this package was built for (deployment.generated.mjs).
   folders: DEPLOYMENT.folders,
+  // What a period is for that deployment (its profile's work_periods); absent in a package built before it existed.
+  workPeriods: DEPLOYMENT.workPeriods ?? undefined,
   blobStore: currentStore,
   parseClaudeTranscript,
   sessionToSyncItem,
@@ -344,6 +346,7 @@ const RPC = {
     productName: env("WORKSPACE_PRODUCT_NAME")?.trim() || (DEPLOYMENT.origin ? DEPLOYMENT.name : "Workspace"),
     opsUrl: OPS_URL || "(WORKSPACE_OPS_URL not set)",
     signInHint: SIGN_IN_HINT,
+    workPeriods: DEPLOYMENT.workPeriods ?? undefined,
   }),
 };
 

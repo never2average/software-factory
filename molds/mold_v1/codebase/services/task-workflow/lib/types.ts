@@ -125,6 +125,8 @@ export interface ServiceContext {
   orgId: string;
   actor: string;
   role: "owner" | "admin" | "engineer" | "member";
+  /** What the calling deployment calls a period (`x-period-label`); the activity feed names a period move by it. */
+  periodLabel?: string;
 }
 
 export interface WorkflowDefinitionRow {
