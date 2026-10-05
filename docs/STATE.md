@@ -38,17 +38,19 @@ How people work together: sprint planning, onboarding, escalation handling, expr
 
 | Field | Mold |
 |---|---|
-| `processes[]` | `name` from a fixed list (or `custom` with `label`), `implemented_by[]` pointing at `workflow_script` (workflows table / library), `workflow_definition` (state machine by entity or id), `recipe` (onboarding recipes), `cycles` (sprints: planning, active, closed, lead, capacity, rollover via /api/ops/cycles), `todos`, `roster_escalations`, `ticket_folder`, `schedule_rule`. Extract marks each `present` on the source; an empty or all-absent list is a parity gap |
-| `escalation` | `roster_escalations` fan-out or PagerDuty through the `route-incident` workflow; `ticket_folders` the Tickets/ folders in use |
+| `processes[]` | `name` from a fixed list (or `custom` with `label`), `implemented_by[]` pointing at `workflow_script` (workflows table: the app's own scripts, and the starter library's when `library.install` is `all`), `workflow_definition` (state machine by entity or id), `recipe` (onboarding recipes), `cycles` (sprints: planning, active, closed, lead, capacity, rollover via /api/ops/cycles), `todos`, `roster_escalations`, `ticket_folder`, `schedule_rule`. Extract marks each `present` on the source; an empty or all-absent list is a parity gap |
+| `escalation` | `roster_escalations` fan-out or PagerDuty through the `route-incident` workflow (a workflow of the account-delivery library, so `incident_workflow` is written only with `library.install: all`); `ticket_folders` the Tickets/ folders in use |
 | `collaboration` | chat threads, presence, comments, inbox: mold constants |
+
+The workflows and recipes named below belong to the account-delivery starter library. Intake writes them into `implemented_by` only when the app asks for that library (`library.install: all`); with `none` (the default) they are in no workspace, so a process they alone implement is recorded with an empty `implemented_by` (a gap to fill with the app's own scripts or a pack).
 
 Default processes for mold_v1: sprint_planning (cycles, todos, task definition), onboarding (five recipes, onboard-account, assign-account), escalation_handling (roster escalations, route-incident, bug tickets), incident_postmortem, go_live (go-live-sprint, infra-sizing, infosec-checklist), account_review (qbr-prep).
 
 ## surface.custom_workflow_builder
 | Field | Mold |
 |---|---|
-| `library.install` | the 13 scripts in `scripts/operator/workflows/`, installed by `provisionWorkspace` on `new-org`; `listed` keeps only `names` |
-| `scripts[]` | extra `workflows` rows; give `file` for system-owned ones because `operator:seed-workflows` prunes rows without a backing file |
+| `library.install` | the starter library every NEW workspace is provisioned with. `none` (the default): none; the mold's base code carries no workflows or recipes of its own. `all`: the mold's `library/account-delivery/` (13 workflows, 5 onboarding recipes), which the stamp step opts the build into by copying `library/account-delivery/profile.json` to `profiles/40-library-account-delivery.json` in `build/<app_id>/` before the profile is generated (`library.py`, run by `packs.py apply` and `branding.py prepare`; profile key `library.sources`). `listed` no longer exists and `factory.py validate` refuses it: write `all`, or `none` plus the workflows you want under `scripts[]`. Changing the value never changes a workspace that already exists: `provision.py <app_id> --library-cleanup` lists what an earlier build left behind, and with `--apply` removes the rows nobody edited, ran or built on |
+| `scripts[]` | the app's own `workflows` rows, written by `lib/surface.mjs apply` (each added only if no workflow of that name exists). One with a `file` is kept as a file and is not written by that step. Nothing prunes a row any more: the mold's `operator:seed-workflows` only inserts and updates the library the profile names |
 | `definitions[]` | `workflow_definitions` state machines (`entity`, `stages[].assign`, `transitions[].migrate`); one `is_default` per entity |
 
 ## datastores.postgres

@@ -2,7 +2,7 @@
 """workspace.py <app_id> <org-seed.json> [customers.json]
 
 Create or update ONE workspace on a deployed application and fill it: the workspace row, its members, the
-recipe catalog and workflow library, one "on delegation" row per declared subagent (the mold's own
+starter library its build names (recipes and workflows; none unless state says library.install "all"), one "on delegation" row per declared subagent (the mold's own
 provisionWorkspace, so a pack's subagents are included), the people roster, and its companies.
 
 An application's state describes one workspace; a multi-workspace deployment gets its others here, from

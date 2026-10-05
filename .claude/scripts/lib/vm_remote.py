@@ -12,6 +12,9 @@ Called by provision.py for an application whose infrastructure.target is "vm_rem
                                                  file, in order, WITHOUT connecting; --out also writes the bundle
   provision.py <app_id> --deploy-remote          the deploy
   provision.py <app_id> --verify-rls [--no-repair]   re-prove tenant isolation on the server's database and running app
+  provision.py <app_id> --library-cleanup [--apply] [--org <id>]
+                                                 the starter workflows and recipes an earlier version left in each
+                                                 workspace that this app does not use: listed (a dry run), or removed
   provision.py <app_id> --workspace-remote [seed.json] [--new-workspace] [--dry-run]
                                                  write the brief's workspace, its people and its companies into the server's
                                                  database (mold_v1-152), then the application's surface (mold_v1-163: the
@@ -1500,7 +1503,8 @@ def bundle(S, crons):
     return b
 def bundle_copies():
     """The factory's own database tooling, copied verbatim so the server runs the same chain this VM does."""
-    out = [(os.path.join(SCRIPTS, "provision.py"), ".claude/scripts/provision.py"), (os.path.abspath(__file__), ".claude/scripts/lib/vm_remote.py")]
+    out = [(os.path.join(SCRIPTS, "provision.py"), ".claude/scripts/provision.py"), (os.path.abspath(__file__), ".claude/scripts/lib/vm_remote.py"),
+           (os.path.join(SCRIPTS, "library.py"), ".claude/scripts/library.py")]     # the library cleanup's rules and words (library-cleanup, below)
     for f in sorted(os.listdir(HERE)):
         if f.endswith(".mjs"): out.append((os.path.join(HERE, f), f".claude/scripts/lib/{f}"))
     return out
@@ -2034,6 +2038,80 @@ def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=pri
         shutil.rmtree(tmp, ignore_errors=True)
     return rc
 
+def library_cleanup(env_file, user, home, app_dir, expect, org=None, apply=False, run=None, say=print):
+    """ON THE SERVER, as root: the mold's own operator:library-cleanup, inside the built app, AS THE WEB APP'S USER with
+    the web service's own env file as its environment. So the connection is the app role's (DATABASE_URL, app_rw) with
+    row-level security in force, and nothing here holds the admin URL. The script is the application's own
+    (scripts/operator/library-cleanup.mjs under the app directory, which the web app's user reads through the code
+    group), so unlike the factory's seed it needs no private copy. Always a dry run first; with `apply` the removal runs
+    only after that dry run showed the running code was built with what state says (`expect`: "all" or "none").
+    Prints one `LIBRARY {json}` line: the mold's report, or {"error": why}; every value of the env file is searched for
+    in it before it is shown. Returns the exit code."""
+    import pwd
+    lib = _library()
+    def out(doc, rc): say("LIBRARY " + clean(json.dumps(doc))); return rc
+    clean = redact
+    try: pw = pwd.getpwnam(user)
+    except KeyError: return out({"error": f"this server has no user {user} yet: it was deployed before each service got a user of its own. Deploy once, then run this again. Nothing was changed."}, 1)
+    vals = env_read(env_file)
+    if not vals.get("DATABASE_URL"): return out({"error": "the web app's env file has no DATABASE_URL yet (the deploy writes it), so there is no database to look at. Nothing was changed."}, 1)
+    if not os.path.isfile(os.path.join(app_dir, lib.CLEANUP_SCRIPT)):
+        return out({"error": "the app on this server was deployed before this cleanup existed. Deploy it once, then run this again. Nothing was changed."}, 1)
+    secrets_ = sorted((v for v in vals.values() if len(v) >= 12), key=len, reverse=True)
+    def clean(text):
+        text = redact(text or "")
+        for v in secrets_: text = text.replace(v, "[redacted]")
+        return text
+    env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": home, "LANG": "C.UTF-8", "NODE_ENV": "production", **vals}
+    def as_user(argv):
+        kw = dict(user=pw.pw_uid, group=pw.pw_gid, extra_groups=os.getgrouplist(user, pw.pw_gid)) if os.getuid() == 0 else {}
+        return subprocess.run(argv, cwd=app_dir, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900, **kw)
+    report, err = lib.run_cleanup(run or as_user, expect, org, apply)
+    return out({"error": err}, 1) if err else out(report, 0)
+
+def library_cleanup_argv(S, expect, org=None, apply=False, shown=False):
+    """The one remote command behind --library-cleanup. Nothing secret is on the command line."""
+    web = SERVICE_USERS["web"]
+    cmd = guarded(S, f"python3 {S['tool']} library-cleanup --file {S['env_files']['web']} --user {web} --home {SERVICE_HOMES['web']} "
+                     f"--app-dir {S['app_dir']} --expect {expect}" + (f" --org {shlex.quote(org)}" if org else "") + (" --apply" if apply else ""))
+    return ssh_argv(S, cmd, shown)
+
+def library_cleanup_remote(app_id, S, app, infra, a, crons, runner=real_runner, say=print):
+    """`provision.py <app> --library-cleanup [--apply] [--org <id>]` for an app on its own server: per workspace, the
+    starter workflows and recipes an earlier version left behind that this app does not use. A dry run unless --apply.
+    The database is on the server's loopback and its address never leaves the server: the cleanup runs THERE."""
+    lib = _library(); org, do_apply = lib.cleanup_args(a); expect = lib.install(app)
+    if org and not lib.ORG_ID.match(org): raise Stop(f"{app_id}: '{org}' is not a workspace id (letters, digits, dots, hyphens and underscores). Nothing was contacted.")
+    if not S["host"]: raise Stop(f"{app_id}: the server address is not in state yet, so there is no database to look at. Nothing was contacted.")
+    if not infra.get("deployed_at") or not (infra.get("vm_remote") or {}).get("production_url"):
+        raise Stop(f"{app_id}: the app is not deployed yet, so its database does not exist. Nothing was contacted. Deploy it first: python3 .claude/scripts/provision.py {app_id} --deploy-remote")
+    if not os.path.isfile(key_path(S)): raise Stop(f"{app_id}: there is no SSH key named {S['key_ref']} on this VM ({key_shown(S)}). Nothing was contacted.")
+    # The server runs the factory's own copy of this step: send this version of it first (the deploy's own bundle step;
+    # nothing it carries runs by itself, so this changes nothing for the running app).
+    bdir = tempfile.mkdtemp(prefix="sf-vm-remote-")
+    try:
+        write_bundle(S, crons, bdir)
+        r = runner({"id": "bundle", "argv": rsync_argv(S, bdir, S["factory_dir"]), "timeout": 300})
+    finally: shutil.rmtree(bdir, ignore_errors=True)
+    if r.returncode:
+        raise Stop(f"{app_id}: could not reach the server to send the factory's scripts: " + redact(((r.stderr or "").strip().splitlines() or ["no answer"])[-1])[:300] + ". Nothing was changed.")
+    r = runner({"id": "library-cleanup", "argv": library_cleanup_argv(S, expect, org, do_apply), "timeout": 1800})
+    docs_ = []
+    for l in (r.stdout or "").splitlines():
+        if not l.startswith("LIBRARY {"): continue
+        try: docs_.append(json.loads(l[len("LIBRARY "):]))
+        except ValueError: pass
+    doc = docs_[-1] if docs_ else None
+    if doc is None:
+        tail = redact(((r.stderr or r.stdout or "").strip().splitlines() or ["no reason was printed"])[-1])[:300]
+        say(f"{app_id}: the cleanup did not finish on the server: {tail}. "
+            + ("Whether anything was removed is not known; run it again without --apply to see what is left." if do_apply else "Nothing was changed."))
+        return 1
+    if doc.get("error"): say(f"{app_id}: {str(doc['error'])[:600]}"); return 1
+    lib.render(app_id, doc, bool(doc.get("applied")), say, org)
+    say("  The database address never left the server.")
+    return 0
+
 def _surface_apply(surf, script, app_dir, run, written, clean):
     """One run of surface.mjs apply for workspace_seed (above): {"org", table: count | "ERR ..."} or {"org", "skipped" | "error"}."""
     org = surf.get("org_id"); only = [t for t in surf.get("only") or [] if isinstance(t, str)]
@@ -2068,8 +2146,15 @@ def env_run(env_file, user, home, cwd, cmd):
 # ---------------------------------------------------------------------------------------------------------
 def source_for(app_id, app):
     """Where the source to ship comes from: the branded/packed build copy when the app has either, else the mold."""
-    if (app.get("surface") or {}).get("branding") or app.get("packs"): return os.path.join(ROOT, "build", app_id)
+    if (app.get("surface") or {}).get("branding") or app.get("packs") or _library().install(app) == "all": return os.path.join(ROOT, "build", app_id)
     return os.path.join(ROOT, "molds", app["mold_id"], "codebase")
+
+def _library():
+    """The factory's library.py (the starter library an app asks for, and its cleanup). On the server it sits where the
+    bundle put it, beside provision.py."""
+    if SCRIPTS not in sys.path: sys.path.insert(0, SCRIPTS)
+    import library
+    return library
 
 def state_problems(app_id, adir):
     sys.path.insert(0, SCRIPTS); import factory
@@ -2182,6 +2267,8 @@ def main_for(app_id, a, app, infra, ds, adir, P):
             sys.path.insert(0, HERE); import vm_tunnel
             return vm_tunnel.main_for(app_id, a, S, adir)
         if "--prune-sandboxes" in a: return prune_remote(S, apply="--apply" in a, dry="--dry-run" in a)
+        if "--library-cleanup" in a:
+            return library_cleanup_remote(app_id, S, app, infra, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
         if "--workspace-remote" in a:
             return workspace_remote(app_id, S, app, infra, adir, P, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
         if not any(f in a for f in ("--deploy-remote", "--qualify-remote", "--verify-rls")):
@@ -2305,7 +2392,7 @@ SURFACE_KEY = "application.json#surface"        # the key the applied surface is
 # What `clone.py configure` writes on the Vercel path is lib/surface.mjs `apply`: orgs, org_members, platform_admins,
 # people_roster, agent_profiles, agent_configs, workflow_definitions, workflows. On a server the first four are the
 # workspace seed's (workspace_seed.mjs, through the app's own modules, which also adds what apply never did: the
-# recipes, the workflow library and the companies). These four are what is left, and all four are org-scoped, so each
+# starter library, when the build names one, and the companies). These four are what is left, and all four are org-scoped, so each
 # is written inside a transaction that names the workspace, as the app role, under row-level security. None needs the
 # admin connection.
 SURFACE_TABLES = ("agent_profiles", "agent_configs", "workflow_definitions", "workflows")
@@ -2348,7 +2435,7 @@ def surface_lines(d):
             f"workflow_definitions: {_n(len(defs), 'workflow definition', 'workflow definitions')}, created or updated{names(defs, 'id')}",
             f"workflows: {_n(len(mine), 'workflow script', 'workflow scripts')}, each added only if no workflow of that name exists{names(mine, 'name')}"
             + (f"; {len(filed)} file-backed script(s) are not written by this step ({', '.join(str(w.get('name')) for w in filed)})" if filed else ""),
-            "already written by the workspace step above, and not touched again: the org row, members, platform admins, roster, recipes, the workflow library, companies"]
+            "already written by the workspace step above, and not touched again: the org row, members, platform admins, roster, the starter library (if the app has one), companies"]
 
 def workspace_plan(app_id, app, adir, only=None, new_workspace=False):
     """[(key, label, {"seed", "customers"})] in the order they are written: the state's own workspace first, then every
@@ -2450,7 +2537,7 @@ def workspace_remote(app_id, S, app, infra, adir, P, a, crons, runner=real_runne
         if out.get("error") or out.get("customers_failed"):
             failed = True; say(f"{app_id}: NOT finished: {label}: {str(out.get('error') or '; '.join(out.get('customers_failed') or []))[:300]}"); continue
         say(f"{app_id}: written: {label}: workspace {out.get('orgs')}, {out.get('org_members')} member(s), {out.get('platform_admins', 0)} platform admin(s), {out.get('recipes')} recipe(s) added, "
-            f"workflow library {out.get('workflows_created')} installed / {out.get('workflows_present')} already there, {out.get('people_roster')} on the roster, {out.get('customers_in_workspace')} companies in the workspace")
+            f"starter workflows {out.get('workflows_created')} installed / {out.get('workflows_present')} already there, {out.get('people_roster')} on the roster, {out.get('customers_in_workspace')} companies in the workspace")
         done[key] = state_seed_digest(app, adir) if key == STATE_SEED else seed_digest(os.path.join(adir, "seed", "orgs", key)) if os.path.exists(os.path.join(adir, "seed", "orgs", key)) else None
     if r.returncode and len(outs) < len(plan_):
         failed = True
@@ -2488,8 +2575,10 @@ def prepare_source(app_id, app):
         r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "branding.py"), app_id, "prepare"], capture_output=True, text=True)
         print((r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else "")
         if r.returncode: raise Stop("branding failed; not deploying. Nothing was contacted.")
-    if app.get("packs"):
-        for verb in ("apply", "verify"):
+    # packs.py apply also gives the copy the starter library state asks for, so an app with no packs that asks for the
+    # library goes through it too (and has nothing to verify).
+    if app.get("packs") or _library().install(app) == "all":
+        for verb in ("apply", "verify") if app.get("packs") else ("apply",):
             r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "packs.py"), verb, app_id], capture_output=True, text=True)
             print("\n".join((r.stdout + r.stderr).strip().splitlines()[-3:]))
             if r.returncode: raise Stop("a pack did not apply or does not pass the mold's own checks; not deploying. Nothing was contacted.")
@@ -2622,6 +2711,8 @@ def cli(a):
         try: doc = json.loads(sys.stdin.read())
         except ValueError: print("workspace: what arrived on stdin is not the list of workspaces; nothing was written"); return 2
         return workspace_seed(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--script"), doc, surface_script=_opt(a, "--surface-script"))
+    if cmd == "library-cleanup":
+        return library_cleanup(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--expect", "none"), org=_opt(a, "--org"), apply="--apply" in a)
     if cmd == "pg-admin":
         pg_admin(f, _opt(a, "--db"), int(_opt(a, "--port", "5432")), _opt(a, "--sslmode", "require")); return 0
     if cmd == "host-chain":

@@ -404,6 +404,11 @@ def prepare(app_id, app, mold_dir, force=False):
     if not b:
         print("no branding on this app; building from the mold as-is"); return mold_dir
     build_dir = build_copy(app_id, mold_dir, force)
+    # The starter library state asks for goes in BEFORE the overlay, which regenerates the deployment profile with
+    # the brand: library.install "all" names the mold's account-delivery library in profiles/, "none" leaves it out.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import library
+    library.apply(build_dir, app, mold_dir)
     rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
     applied = apply_overlay(build_dir, b, rules)
     print(f"branded build copy: {os.path.relpath(build_dir, ROOT)}  ({b['product_name']}, {len(applied)} rule(s))")

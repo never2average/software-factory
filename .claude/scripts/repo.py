@@ -41,7 +41,7 @@ import urllib.error, urllib.parse, urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 S = os.path.join(ROOT, ".claude", "scripts")
 sys.path.insert(0, S)
-import branding, packs
+import branding, library, packs
 
 ENV = dict(os.environ)                      # what every child process sees; the self-test swaps it for stand-ins
 AUTHOR = ("Software Factory", "factory@software-factory.invalid")
@@ -168,7 +168,7 @@ def assemble(app_id, dest):
         with contextlib.redirect_stdout(out):
             b = branding.resolve(app)
             if b: branding.apply_overlay(dest, b, load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json")))
-            if app.get("packs"): packs.apply(app_id, build=dest)
+            if app.get("packs") or library.install(app) == "all": packs.apply(app_id, build=dest)   # also names the starter library state asks for
     except SystemExit as e:
         raise Stop(f"the app could not be assembled the way a deploy assembles it: {e}")
     finally:
