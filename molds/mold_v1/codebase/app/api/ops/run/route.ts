@@ -5,7 +5,8 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { apps, workflows } from "@/agent/lib/db/schema";
 import { analyzeWorkflowScript } from "@/lib/workflow-validate";
-import { refreshApp } from "@/lib/app-refresh";
+import { driveAppRefresh, refreshBackgroundMs, startAppRefresh } from "@/lib/app-refresh";
+import { inBackground } from "@/lib/background";
 import { makeDelegate } from "@/lib/workflow-delegate";
 import {
   finishWorkflowRun,
@@ -59,6 +60,7 @@ const bodySchema = z.strictObject({
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: NextRequest) {
+  const begun = Date.now();
   // This route is EXEMPT from the proxy's Google-identity gate (see proxy.ts) —
   // it is the sole auth for the endpoint, so it must fail CLOSED. A missing
   // secret is a misconfiguration, not an open door.
@@ -114,10 +116,34 @@ export async function POST(request: NextRequest) {
           )
         )[0];
       if (!row) return NextResponse.json({ error: `App "${target}" not found.` }, { status: 404 });
-      const outcome = await refreshApp(db, row, bearer, actor);
+      // Started here, finished in the background and by the refresh-apps cron (lib/app-refresh.ts): a refresh can
+      // take far longer than this request may live. A refresh already in progress is joined, never doubled.
+      const outcome = await startAppRefresh(row, { bearer, actor });
+      if (outcome.status === "failed") {
+        return NextResponse.json(
+          { kind, app: row.slug, ok: false, error: outcome.error, ...(outcome.cause ? { cause: outcome.cause } : {}) },
+          { status: outcome.cause === "source" ? 409 : 500 },
+        );
+      }
+      if (outcome.status === "started") {
+        const handle = outcome.handle;
+        inBackground(
+          () => driveAppRefresh(handle, { bearer, budgetMs: Math.max(1_000, refreshBackgroundMs() - (Date.now() - begun)) }),
+          `refresh of app ${row.id}`,
+        );
+      }
       return NextResponse.json(
-        { kind, app: row.slug, ...outcome },
-        { status: outcome.ok ? 200 : 500 },
+        {
+          kind,
+          app: row.slug,
+          ok: true,
+          started: outcome.status === "started",
+          joined: outcome.status === "running",
+          startedAt: outcome.startedAt,
+          sessionId: outcome.sessionId,
+          runId: outcome.runId,
+        },
+        { status: 202 },
       );
     }
 

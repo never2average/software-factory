@@ -302,6 +302,10 @@ export interface ApiApp {
   lastSessionId: string | null;
   lastError: string | null;
   lastRefreshAt: string | null;
+  /** Set while a refresh is in progress: when it started. The refresh runs in the background (lib/app-refresh.ts). */
+  refreshingAt?: string | null;
+  /** Set on a STARTER APP: one this workspace was created with (the deployment's library), not made by a person. */
+  starterKey?: string | null;
   enabled: boolean;
   /** Whether what generates this app can run as it is set now. Absent from an older API. */
   source?: ApiAppSource;
@@ -314,6 +318,23 @@ export interface ApiApp {
  * Whether a source can produce an app's document (lib/app-source.ts), derived by the API on every read: a workflow
  * script, the row of one of the workspace's specialists, or a prompt; or the reason it cannot run and what to do.
  */
+/**
+ * A starter app that has never been written: no document, no attempt. It is created with the workspace as a
+ * definition only (creating a workspace runs no model); its first document is written when a person first opens it,
+ * or when its schedule first comes due.
+ */
+export function awaitsFirstDocument(app: Pick<ApiApp, "starterKey" | "contentUpdatedAt" | "lastRefreshAt">): boolean {
+  return Boolean(app.starterKey) && !app.contentUpdatedAt && !app.lastRefreshAt;
+}
+
+/**
+ * Is a refresh of this app under way? The server ends a marker its work outlived (lib/app-refresh.ts `refreshVerdict`,
+ * applied on every read of the list), so a marker the list shows is a refresh that is running, however long it takes.
+ */
+export function refreshUnderWay(app: Pick<ApiApp, "refreshingAt">): boolean {
+  return Boolean(app.refreshingAt);
+}
+
 export type ApiAppSource =
   | { ok: true; kind: "script" | "specialist" | "prompt"; specialist?: string }
   | { ok: false; kind: "script" | "specialist" | "prompt" | "none"; reason: string; fix: string };

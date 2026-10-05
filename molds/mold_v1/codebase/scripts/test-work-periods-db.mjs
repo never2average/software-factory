@@ -5,6 +5,8 @@
  *
  *   0. THE MIGRATION (drizzle/0030_cycle_member_goals.sql): the table is row-level secured and forced, with the
  *      org_isolation policy its neighbours have; applying the file again is harmless and touches no row.
+ *   0b. A WORKSPACE'S OWN LENGTH (drizzle/0033_org_period_length.sql): one nullable column on `orgs`, additive, harmless
+ *      applied again, and the deploy's drift dry run plans nothing after it.
  *   1-3. For each mode (team: this checkout; individual and off: a copy of it under scripts/fixtures/work-periods/),
  *      scripts/lib/work-period-db-probe.mjs seeds two workspaces and proves:
  *        every mode   A reads none of B's periods, tasks or goals and can change none of them (the rows under RLS,
@@ -14,6 +16,10 @@
  *                     moving to their next period; a goal or an item is set for oneself or a reportee per the
  *                     roster, never for anyone else, at the routes and at the model's tools alike;
  *        off          every route is a 404 and STORED ROWS ARE UNTOUCHED.
+ *      and, in two more workspaces, the period length a workspace admin chooses: a member cannot, a value outside the
+ *      profile's range is refused, one workspace's admin cannot reach another's, the change is audited, and the
+ *      periods opened afterwards (by hand, by the model's tool, by auto rollover) run that long while the other
+ *      workspace's run the profile's and every period that existed keeps its dates; under "off" the route is a 404.
  *
  * Needs ADMIN_URL (policy DDL, seeding) and DATABASE_URL (app_rw); without them it skips. Every policy is restored.
  *
@@ -91,6 +97,49 @@ try {
   await admin`DELETE FROM cycle_member_goals WHERE org_id = ${ORG}`;
   await admin`DELETE FROM cycles WHERE org_id = ${ORG}`;
   await admin`DELETE FROM orgs WHERE org_id = ${ORG}`;
+
+  /* --------------------------------------------- 0b. a workspace's own period length (drizzle/0033_org_period_length.sql) */
+  console.log("\n0b. A workspace's own period length (drizzle/0033_org_period_length.sql)");
+  {
+    const TAG = "0033_org_period_length";
+    const [col] = await admin`SELECT data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'orgs' AND column_name = 'period_length_days'`;
+    check("orgs.period_length_days exists: a nullable whole number with no default (null = the profile's length)", col?.data_type === "integer" && col.is_nullable === "YES" && col.column_default === null, col);
+    const journal = JSON.parse(readFileSync(join(ROOT, "drizzle/meta/_journal.json"), "utf8"));
+    const at = journal.entries.findIndex((e) => e.tag === TAG);
+    check(`the journal carries ${TAG}, numbered after the one before`, at > 0 && journal.entries[at].idx === journal.entries[at - 1].idx + 1, journal.entries[at]);
+    const statements = readFileSync(join(ROOT, `drizzle/${TAG}.sql`), "utf8").split("--> statement-breakpoint").map((v) => v.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean);
+    check("it is additive: one nullable column added to orgs, and nothing else altered, dropped, written or secured", statements.length === 1 && /^ALTER TABLE "orgs" ADD COLUMN IF NOT EXISTS "period_length_days" integer;$/.test(statements[0]), statements);
+    const ORG = `org-plen-mig-${process.pid}`;
+    await admin`INSERT INTO orgs (org_id, name, status) VALUES (${ORG}, 'Length migration', 'active') ON CONFLICT DO NOTHING`;
+    await admin`UPDATE orgs SET period_length_days = 21 WHERE org_id = ${ORG}`;
+    const orgsBefore = JSON.stringify(await admin`SELECT to_jsonb(x) AS r FROM orgs x ORDER BY org_id`);
+    let again = "ok";
+    try { for (let i = 0; i < 2; i++) for (const x of statements) await admin.unsafe(x); } catch (e) { again = String(e?.message ?? e); }
+    check("applying it twice more, over workspaces that hold a length, is harmless and changes no row", again === "ok" && JSON.stringify(await admin`SELECT to_jsonb(x) AS r FROM orgs x ORDER BY org_id`) === orgsBefore, again);
+    await admin`DELETE FROM orgs WHERE org_id = ${ORG}`;
+
+    // The deploy's drift step against a database as the live ones are before 0033: the plan names the column and only
+    // it; after the file, it plans nothing.
+    const { driftPlan, kit } = await import("./lib/drift-plan.mjs");
+    const SCRATCH = `plenmig_${process.pid}`;
+    const scratchUrl = (() => { const u = new URL(adminUrl); u.pathname = `/${SCRATCH}`; return u.toString(); })();
+    await admin.unsafe(`drop database if exists "${SCRATCH}" with (force)`);
+    await admin.unsafe(`create database "${SCRATCH}"`);
+    const sdb = postgres(scratchUrl, { ssl, prepare: false, max: 1, onnotice: () => {} });
+    try {
+      const pushed = kit(["push", "--force", "--verbose"], scratchUrl);
+      check("a database built from schema.ts has the column", pushed.status === 0 && (await sdb`select 1 from information_schema.columns where table_name = 'orgs' and column_name = 'period_length_days'`).length === 1, pushed.out.slice(-300));
+      await sdb.unsafe('alter table "orgs" drop column "period_length_days"');
+      const before = driftPlan(scratchUrl);
+      check("before 0033 the drift plan against schema.ts names the column, and only it", !before.error && before.apply.length === 1 && /ADD COLUMN "period_length_days" integer/.test(before.apply[0]) && before.refused.length === 0, before.error ? before : { apply: before.apply, refused: before.refused });
+      await sdb.begin(async (tx) => { for (const x of statements) await tx.unsafe(x); });
+      const after = driftPlan(scratchUrl);
+      check("after 0033 the drift dry run plans NOTHING to apply, and refuses nothing", !after.error && after.apply.length === 0 && after.refused.length === 0, after.error ? after : { apply: after.apply, refused: after.refused });
+    } finally {
+      await sdb.end({ timeout: 2 });
+      await admin.unsafe(`drop database if exists "${SCRATCH}" with (force)`).catch(() => {});
+    }
+  }
 
   /* ---------------------------------------------------------------------------------------- 1-3. each mode */
   const policies = await admin`SELECT tablename, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND policyname = 'org_isolation'`;

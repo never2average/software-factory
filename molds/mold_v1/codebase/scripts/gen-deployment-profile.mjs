@@ -318,6 +318,14 @@ for (const area of Object.keys(AREAS)) {
   if (wp.mode === "individual" && wp.length_days === null) fail(`${at}.length_days: mode "individual" needs a length in days (for example 7): a person's unfinished items are carried into the next period, which is opened with this length when there is none`);
   if (wp.auto_rollover && wp.length_days === null) fail(`${at}.length_days: auto_rollover needs a length in days, to open the next period with`);
   if (wp.auto_rollover && wp.mode === "off") fail(`${at}.auto_rollover: there is nothing to roll over when mode is "off"`);
+  // A workspace's own length (its admin sets it in the workspace's settings): the range it may choose from, and
+  // whether it may choose at all. null = yes, unless there are no periods.
+  const range = wp.length_days_range;
+  if (!Array.isArray(range) || range.length !== 2 || !range.every((n) => Number.isInteger(n) && n >= 1 && n <= 366) || range[0] > range[1]) fail(`${at}.length_days_range must be [min, max]: two whole numbers of days from 1 to 366, the smaller first (for example [1, 90])`);
+  if (wp.length_days !== null && (wp.length_days < range[0] || wp.length_days > range[1])) fail(`${at}.length_days: ${wp.length_days} is outside length_days_range [${range[0]}, ${range[1]}]; the default length must be one a workspace could choose`);
+  if (wp.workspace_can_set_length !== null && typeof wp.workspace_can_set_length !== "boolean") fail(`${at}.workspace_can_set_length must be true, false or null (null = true unless mode is "off")`);
+  if (wp.workspace_can_set_length === true && wp.mode === "off") fail(`${at}.workspace_can_set_length: there is no length to set when mode is "off"`);
+  if (wp.workspace_can_set_length === null) wp.workspace_can_set_length = wp.mode !== "off";
 }
 
 if (profile.agent.briefing !== null && (typeof profile.agent.briefing !== "string" || profile.agent.briefing.split(/\s+/).length > 400)) fail("agent.briefing must be null or a string of at most 400 words (it is sent on every turn)");
@@ -461,6 +469,10 @@ export interface DeploymentProfile {
     length_days: number | null;
     /** An ended period's unfinished tasks are carried into the next one, opened when there is none. */
     auto_rollover: boolean;
+    /** [min, max]: the lengths in days a workspace admin may choose for their own workspace. */
+    length_days_range: [number, number];
+    /** May a workspace admin change the length for their workspace? (Resolved: never null in a built profile.) */
+    workspace_can_set_length: boolean;
   };
 }
 export type WorkPeriodMode = "off" | "team" | "individual";

@@ -327,22 +327,23 @@ cannot be cleared.*
 
 ### `library`
 
-What every **new** workspace of the deployment is provisioned with: workflow scripts and the
-onboarding recipe catalog. Base code ships neither. Both are content, in directories the
-profile names:
+What every **new** workspace of the deployment is provisioned with: workflow scripts, the
+onboarding recipe catalog and starter apps. Base code ships none of them. All three are
+content, in directories the profile names:
 
 | Key | Meaning | Default |
 |---|---|---|
-| `library.sources` | A map of source id to a directory in the repository. Each directory holds `workflows/*.workflow.js` (scripts: `export const meta = { name, description }` plus `phase()` / `agent()`) and/or `recipes.json` (`{ "recipes": [{ slug, title, summary, satisfiesCheck }] }`, in checklist order). `npm run build:workflow-library` compiles every named source into `agent/lib/workflow-library.generated.ts`, which `provisionWorkspace` writes into a new workspace and `GET /api/ops/recipes` falls back to. Objects merge, so a later profile ADDS a source under its own id and turns one off with `null`. Two sources shipping the same workflow name or recipe slug fail the build. | `{}`: no workflow and no recipe |
+| `library.sources` | A map of source id to a directory in the repository. Each directory holds `workflows/*.workflow.js` (scripts: `export const meta = { name, description }` plus `phase()` / `agent()`) and/or `recipes.json` (`{ "recipes": [{ slug, title, summary, satisfiesCheck }] }`, in checklist order). `npm run build:workflow-library` compiles every named source into `agent/lib/workflow-library.generated.ts`, which `provisionWorkspace` writes into a new workspace and `GET /api/ops/recipes` falls back to. Objects merge, so a later profile ADDS a source under its own id and turns one off with `null`. Two sources shipping the same workflow name or recipe slug fail the build. A directory may also hold `apps.json` (or `apps/*.json`): starter apps, below. | `{}`: no workflow, no recipe, no starter app |
 
 The default is **empty, not "neutral"**. A starter workflow has to delegate to some specialist
 and ask for some piece of work, and a checklist has to name some first step: whatever was
 chosen would be one line of work's idea of a default, handed to every deployment. So the
 default deployment provisions only what is derived from the build itself (one "on delegation"
 row per specialist it has), and `npm run check:neutral-names` refuses a library in base code:
-a workflow script outside `library/`, a recipe written as a literal, a source named by the
-default profile, or a new file that inserts into the `workflows` or `recipes` table without
-being listed with what decides its rows.
+a workflow script outside `library/`, a recipe written as a literal, a starter app outside a
+library (an `apps.json` elsewhere, or one written as a literal), a source named by the
+default profile, or a new file that inserts into the `workflows`, `recipes` or `apps` table
+without being listed with what decides its rows.
 
 The workflows and recipes this product carried as built-ins before are
 [`library/account-delivery/`](../library/account-delivery/README.md), unchanged. A deployment
@@ -360,13 +361,68 @@ What the profile does to a library it names is unchanged: a workflow that delega
 specialist under `specialists.exclude` is not provisioned, and every other workflow's and
 recipe's text is written in the profile's words.
 
-**Workspaces that already exist are never changed by a build.** Nothing is deleted
+#### Starter apps
+
+A **starter app** is an app (a saved document a specialist or a workflow regenerates, shown in
+the Apps tab) that every new workspace of the deployment is created with. A library declares
+them in `apps.json`, or one per file under `apps/`:
+
+```json
+{
+  "apps": [
+    {
+      "key": "open-follow-ups",
+      "name": "Open follow-ups",
+      "description": "Every open follow-up and commitment, oldest first, with who owes it.",
+      "brief": "List every open follow-up across all {accounts}, oldest first. One table: …",
+      "source": { "specialist": "follow-ups" },
+      "refresh": "0 7 * * 1-5",
+      "first_content": "on_open"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `key` | Stable, unique in its library, lower-case letters, digits and hyphens. A workspace's row carries `<library id>/<key>` (`apps.starter_key`, unique per workspace), which is what makes provisioning idempotent. **Never change it**: a changed key is a new app, and the old one becomes a leftover. |
+| `name`, `description` | What a person reads in the Apps tab. The name is unique across every library the build names. |
+| `brief` | What the source is asked for at every refresh. Say what the document must hold. |
+| `source` | `{ "specialist": "<id>" }`: a specialist this build has (a directory under `agent/subagents/`, not under `specialists.exclude`); its reply is the document. Or `{ "workflow": "<name>" }`: a workflow the **same** library ships; its script's return value is the document. |
+| `refresh` | Optional. A 5-field UTC cron expression. Without it the app is refreshed only when a person asks. |
+| `first_content` | Optional. `"on_open"` (the default): the first document is written when a person first opens the app, or when its schedule first comes due. `"on_create"`: the request that creates the workspace starts it, as the person creating it. |
+
+Text may write the placeholders the profile fills (`{account}`, `{accounts}`, `{owner}`, …),
+like a library workflow; a workspace's row is stored in the deployment's words.
+
+**The build refuses** (`npm run build:workflow-library`, part of `build:generated`) a starter
+app it could not generate or should not carry, naming the file and the reason: a source that
+is not a specialist of this build, one the profile excludes, a workflow that is not this
+library's or that this build does not provision (it delegates to an excluded specialist), a
+duplicate key or name, a schedule that is not a cron expression, a missing brief, an unknown
+key, or text that looks like a credential (an API key, a token, a password, a URL with one).
+
+**Creating a workspace runs no model.** A starter app is created as a definition with no
+document, by `system`. Until it has one, the Apps tab lists it with a `starter` mark and
+"written when first opened"; opening it shows "This app came with the workspace and has not
+been written yet" and starts its first document, once, however many people open it
+(`POST /api/ops/apps/:id/refresh?first=1`, `lib/starter-apps.ts`). Only an app whose library
+says `"on_create"` is written when the workspace is created.
+
+After that a starter app is an ordinary app: a person can rename it, change its brief, source
+or schedule, pause it or delete it. **A deleted one does not come back**: the row is
+soft-deleted and keeps its key, and provisioning never creates a key twice. An edited one is
+never overwritten.
+
+**Workspaces that already exist are never changed by a build.** Nothing is added or deleted
 automatically:
 
 | To | Run |
 |---|---|
 | give an existing workspace the library the profile names | `npm run operator:seed-workflows -- --org <id>` (inserts and updates by name; removes nothing) |
 | give it the row of a specialist added since | `npm run operator:seed-subagent-rows -- --org <id>` |
+| see which starter apps the library would add to an existing workspace | `npm run operator:library-apply` (a dry run: per workspace, what would be added, what would not and why) |
+| add them | `npm run operator:library-apply -- --org <id> --apply` (adds only what the dry run listed; an app the workspace has, one a person deleted, and one whose name is taken are left alone; nothing is generated) |
 | see what an earlier build left behind that this deployment does not use | `npm run operator:library-cleanup` (a dry run: per workspace, what would go and what stays, with why) |
 | remove it | `npm run operator:library-cleanup -- --org <id> --apply` |
 
@@ -375,7 +431,10 @@ workflow with the name and the code of one a library directory has shipped that 
 does not provision, the scriptless row of a specialist the profile excludes, or a recipe of
 such a library; never edited (no later update, no instructions, no saved version, no
 recipients, no account scope), never run, and with no app, schedule or system cron built on
-it. Everything else is kept and listed with the evidence. Until it is run, a leftover that
+it. A **starter app** is a leftover when it carries the key of a library this build no longer
+names (or that no longer ships it): removable while nobody has edited, opened or refreshed it
+(no later change, no document, no attempt, no version in its history), kept from then on. An
+app a person or the agent made has no key and is never looked at. Everything else is kept and listed with the evidence. Until it is run, a leftover that
 delegates to an excluded specialist is shown as not part of the workspace and refused by every
 run path (`lib/workflow-availability.ts`).
 
@@ -394,6 +453,8 @@ mode and the words from one module, `agent/lib/work-periods.ts`.
 | `work_periods.item_label` | `{ singular, plural }`: what one task in a period is called under mode `individual`. | `target` / `targets` |
 | `work_periods.length_days` | How long a new period runs. `null`: a new period has no dates until someone sets them. Required by mode `individual` and by `auto_rollover`. | `null` |
 | `work_periods.auto_rollover` | When a period has ended, it is closed and every unfinished task is carried into the period that follows (opened, `length_days` long, when there is none), each keeping its assignee. `false`: someone rolls over by hand. | `false` |
+| `work_periods.length_days_range` | `[min, max]`: the whole numbers of days a workspace admin may choose from for their own workspace's length (below). `length_days`, when set, must lie inside it. Each from 1 to 366, the smaller first. | `[1, 90]` |
+| `work_periods.workspace_can_set_length` | May a workspace admin change the length for their workspace? `false`: every workspace runs `length_days`. `null`: yes, unless the mode is `off` (`true` under `off` fails the build). | `null` (yes) |
 
 **What each mode is, everywhere.**
 
@@ -428,6 +489,21 @@ parameter, the coding agent's two period tools (`sprint_list`, `sprint_create`) 
 (`view=sprints`) keep their names. The task service is a separate deployment with no profile of its own: the web app
 and the agent tell it the word on each request (`x-period-label`), and its activity feed names a period move by it.
 
+**A workspace's own length.** `length_days` is the deployment's default; a workspace admin (role owner or admin)
+may choose another for their workspace, in the workspace settings screen, on a tab named by the profile's word
+(`label.plural`, e.g. "Coverage targets"), as "{Period} length" ("Coverage target length"), with the note "Applies to
+new {periods}; the current one keeps its dates." Everyone else in the workspace sees the value read-only. It is
+stored on the workspace's own row (`orgs.period_length_days`, drizzle/0033; null = the default) and read and written
+by `GET`/`PUT /api/ops/orgs/:id/period-length` (`{ "lengthDays": 14 }`, or `null` for the default). A value outside
+`length_days_range` is refused (400), a member is refused (403), and under mode `off`, or with
+`workspace_can_set_length: false`, the tab is not shown and the route refuses it (404 under `off`). Every change is a
+line in the workspace's audit trail. The chosen length applies to every period the workspace opens from then on, at
+every door: by hand, by the model's `upsert_cycle` (a new period given no dates), by `upsert_todo`'s
+`cycleId: "current"` and by `auto_rollover`. A period that exists keeps its dates. One workspace's length never
+reaches another's, and the agent reads it (`agent/lib/work-period-store.ts`, `workspacePeriodLength`) but has no way
+to change it. The `settings` object of `agent/lib/work-periods.ts` (`WORK_PERIODS`) is unchanged; the choice and its
+bounds are `PERIOD_LENGTH` beside it.
+
 **Automatic rollover has no timer.** It runs when a workspace's periods are read (the list route, the model's list
 tool), inside that workspace's own transaction, so it cannot reach another workspace and needs no scheduled job. A
 period that ended overnight is rolled over the first time anyone, or the agent, looks.
@@ -441,10 +517,13 @@ Each person's own targets for a week:
     "label": { "singular": "week", "plural": "weeks" },
     "item_label": { "singular": "target", "plural": "targets" },
     "length_days": 7,
-    "auto_rollover": true
+    "auto_rollover": true,
+    "length_days_range": [7, 28]
   }
 }
 ```
+
+(Each workspace's admin may then choose a length from 7 to 28 days for their own workspace; a new one runs a week.)
 
 No periods at all:
 

@@ -590,5 +590,10 @@
     },
     "length_days": 7,
     "auto_rollover": true
+  },
+  "library": {
+    "sources": {
+      "hfc-research": "library/hfc-research"
+    }
   }
 }

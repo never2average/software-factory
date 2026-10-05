@@ -187,6 +187,8 @@ export const listAppsTool = modelFacing("list_apps", defineTool({
         enabled: a.enabled,
         lastRefreshAt: a.lastRefreshAt?.toISOString() ?? null,
         lastError: a.lastError,
+        // One this workspace was created with (its library's), not made by a person. Absent on every other app.
+        ...(a.starterKey ? { starter: true } : {}),
       })),
     };
   },

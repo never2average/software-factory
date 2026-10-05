@@ -67,7 +67,9 @@ sibling with it. It is offered only when everything the main agent waits for has
 A workflow step, a cron step and an app refreshed from a specialist read the main agent's stream. A turn that ends
 while a specialist is still out is eve parking on that specialist's question, not the end of the step. A person's
 step keeps reading; a step that runs on the platform's own identity has nobody to answer, so it stops the parked
-turn and fails at once, naming the specialist and what it asked for.
+turn and fails at once, naming the specialist and what it asked for. An app refresh is always the latter: it runs in
+the background as the platform's identity (`lib/app-refresh.ts`), so a refresh whose specialist asks a question ends
+as a failed refresh that says what was asked, never as one that waits.
 
 ## Checking a running app
 

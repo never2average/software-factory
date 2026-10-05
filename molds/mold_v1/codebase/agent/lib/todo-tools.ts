@@ -16,7 +16,7 @@ import { taskWorkflowRequest } from "./task-workflow-service.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { fill } from "./agent-vocabulary.ts";
 import { WORK_PERIODS, currentPeriod, progressByPerson } from "./work-periods.ts";
-import { ensureCurrentPeriod, goalsFor, rollOverEnded, setMemberGoal, taskWriteRefusal } from "./work-period-store.ts";
+import { ensureCurrentPeriod, goalsFor, newPeriodWindow, rollOverEnded, setMemberGoal, taskWriteRefusal } from "./work-period-store.ts";
 
 function callerEmail(ctx: {
   session: {
@@ -286,14 +286,16 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
         if (!c) throw new Error(`No cycle with id "${id}".`);
         return { updated: true as const, cycle: { id: c.id, name: c.name } };
       }
-      if (!fields.name) throw new Error("Creating a cycle needs a `name`.");
       const cycleOrg = await orgForSession(ctx);
-      const [c] = await withOrgDb(cycleOrg, (tx) =>
-        tx
+      const [c] = await withOrgDb(cycleOrg, async (tx) => {
+        // The workspace's length (its admin's choice, else the profile's): a new cycle given no dates runs that long.
+        const window = startsAt === undefined && endsAt === undefined ? await newPeriodWindow(tx, cycleOrg) : null;
+        if (!fields.name && !window) throw new Error("Creating a cycle needs a `name`.");
+        return tx
           .insert(cycles)
-          .values({ ...(fields as { name: string }), orgId: cycleOrg, createdBy: callerEmail(ctx) })
-          .returning(),
-      );
+          .values({ ...(window ? { name: window.name, startsAt: window.startsAt, endsAt: window.endsAt } : {}), ...(fields as { name: string }), orgId: cycleOrg, createdBy: callerEmail(ctx) })
+          .returning();
+      });
       return { created: true as const, cycle: { id: c.id, name: c.name } };
     },
   })
@@ -335,8 +337,10 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
           }
           if (!row) throw new Error(`No cycle with id "${cycleId}".`);
         } else {
-          if (!fields.name) throw new Error("Creating a cycle needs a `name`.");
-          [row] = await tx.insert(cycles).values({ ...(fields as { name: string }), orgId: org, createdBy: actor }).returning();
+          // The workspace's length (its admin's choice, else the profile's): a new {period} given no dates runs that long.
+          const window = startsAt === undefined && endsAt === undefined ? await newPeriodWindow(tx, org) : null;
+          if (!fields.name && !window) throw new Error("Creating a cycle needs a `name`.");
+          [row] = await tx.insert(cycles).values({ ...(window ? { name: window.name, startsAt: window.startsAt, endsAt: window.endsAt } : {}), ...(fields as { name: string }), orgId: org, createdBy: actor }).returning();
         }
         if (!setsGoal) return id ? { updated: true as const, cycle: { id: row.id, name: row.name } } : { created: true as const, cycle: { id: row.id, name: row.name } };
         const set = await setMemberGoal(tx, org, actor, { cycleId: row.id, member: person ?? actor, goal, targetCount: planned });

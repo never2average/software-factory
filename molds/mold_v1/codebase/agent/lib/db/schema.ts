@@ -865,10 +865,19 @@ export const apps = pgTable(
     // Soft delete — the UI hides it but a restore clears this again.
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdBy: text("created_by").notNull(),
+    // A STARTER APP's key: `<library id>/<key>` of the library entry this row was created from
+    // (agent/lib/provision-workspace.ts). NULL for every app a person or the agent made. Unique per workspace, so
+    // provisioning twice (a retry, an operator's apply) cannot create it twice; and kept on a soft-deleted row, so a
+    // starter app a person deleted is never created again.
+    starterKey: text("starter_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("apps_slug_idx").on(t.slug), index("apps_customer_id_idx").on(t.customerId)],
+  (t) => [
+    index("apps_slug_idx").on(t.slug),
+    index("apps_customer_id_idx").on(t.customerId),
+    uniqueIndex("apps_org_starter_key_uq").on(t.orgId, t.starterKey),
+  ],
 );
 
 /**
@@ -2147,6 +2156,12 @@ export const orgs = pgTable("orgs", {
   // New writes land under this blob prefix; OnFinance's legacy root is aliased.
   blobPrefix: text("blob_prefix"),
   dataResidency: text("data_residency"), // optional region hint per org
+  /**
+   * How long a new work period of this workspace runs, in days, as its admin chose it (the workspace's settings,
+   * PUT /api/ops/orgs/{id}/period-length). null = the deployment profile's `work_periods.length_days`. Read through
+   * agent/lib/work-period-store.ts (workspacePeriodLength), never written by the agent. drizzle/0033.
+   */
+  periodLengthDays: integer("period_length_days"),
   status: text("status").notNull().default("provisioning"), // provisioning | active | suspended
   createdBy: text("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

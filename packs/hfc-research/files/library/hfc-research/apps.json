@@ -1,0 +1,49 @@
+{
+  "$comment": "The STARTER APPS of the hfc-research pack: every new workspace of this deployment is created with them; existing workspaces get them only by the operator's explicit apply. Each is written by its specialist the first time someone opens it, then on its schedule (UTC cron).",
+  "apps": [
+    {
+      "key": "latest-quarter-kpis",
+      "name": "Latest quarter KPI table",
+      "description": "The standard quarterly KPIs for every covered HFC, latest reported quarter, cited.",
+      "brief": "For every covered company, the standard quarterly KPI table for the latest quarter with filed results: AUM, disbursements, NII, NIM, cost of funds, GNPA/NNPA %, PCR, CRAR, PAT, ROA, ROE. Rs crore, standalone, discrete quarter. One row per company; each figure cited to its document and page or slide; mark needs_review and not_found as such.",
+      "source": {
+        "specialist": "hfc-kpi-extraction"
+      },
+      "refresh": "0 3 * * 1",
+      "first_content": "on_open"
+    },
+    {
+      "key": "lodr-filings-this-week",
+      "name": "New LODR filings this week",
+      "description": "Every SEBI LODR disclosure filed by a covered company in the last 7 days.",
+      "brief": "List every LODR filing made by a covered company in the last 7 days, newest first: company, date, regulation (Reg 30/33/52/…), what it is (results, rating action, material event, shareholding, related party, security cover), one line on what it says, link to the filed document. Flag rating actions and results first.",
+      "source": {
+        "specialist": "lodr-filings"
+      },
+      "refresh": "30 2 * * 1-5",
+      "first_content": "on_open"
+    },
+    {
+      "key": "guidance-tracker",
+      "name": "Guidance tracker",
+      "description": "What management guided on growth, margins, credit cost and asset quality, and how it changed from last quarter.",
+      "brief": "For each covered company, the latest management guidance from its investor presentation or concall transcript (AUM growth, disbursement growth, NIM, credit cost, GNPA, cost of funds), the prior quarter's guidance beside it, and whether it was raised, held or cut. Cite slide or transcript page. Say 'no guidance given' rather than infer.",
+      "source": {
+        "specialist": "investor-presentations"
+      },
+      "refresh": "0 4 * * 1",
+      "first_content": "on_open"
+    },
+    {
+      "key": "annual-report-status",
+      "name": "Annual report extract status",
+      "description": "Which covered companies have their latest annual report mapped and extracted, and what is missing.",
+      "brief": "For each covered company: the latest annual report year on file, whether it has been mapped, which standard sections were extracted (borrowing mix, ALM, segment/product AUM, related party, provisioning note), what is missing, and the filing date. One table; companies with no annual report on file listed last.",
+      "source": {
+        "specialist": "annual-report-format"
+      },
+      "refresh": "0 4 1 * *",
+      "first_content": "on_open"
+    }
+  ]
+}

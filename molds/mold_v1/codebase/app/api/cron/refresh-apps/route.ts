@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bearerMatches } from "@/lib/secret-compare";
-import { and, eq, isNull, lt, or } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { apps } from "@/agent/lib/db/schema";
 import { cronMatches } from "@/agent/lib/cron-match";
-import { refreshApp } from "@/lib/app-refresh";
+import { collectAppRefreshes, driveAppRefresh, refreshBackgroundMs, startAppRefresh } from "@/lib/app-refresh";
 import { acrossOrgsRls, getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { serviceBearerFor } from "@/lib/service-identity";
 
@@ -12,22 +12,29 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /**
- * Regenerates every APP whose refresh cadence is due this minute.
+ * Every minute, two jobs, in this order:
  *
- * AUTH mirrors run-cron-workflows: the front-end's own Vercel OIDC service
- * token (the agent trusts this project's subject) — or, off Vercel with
- * SERVICE_AUTH=session-key, the service token it signs itself
- * (lib/service-identity.ts); CRON_SECRET guards the endpoint. Each app is
- * CLAIMED atomically (refreshing_at) so two ticks — or a
- * tick overlapping a long refresh — never regenerate the same document twice.
+ *  1. COLLECT. Every app with a refresh in progress, in every workspace: a refresh started by a person, the agent or
+ *     an earlier tick is finished here when the function that started it was killed (Vercel's 300 s, a crash, a
+ *     deploy) — its session is read from the first event (durable on the agent), its workflow run's row is read
+ *     (the resume-workflows cron re-drives the script) — and a marker its work outlived is ended as a failure with
+ *     a sentence (lib/app-refresh.ts `refreshVerdict`). Never "refreshing" for ever.
+ *  2. START what is due. Every live app whose cadence matches this minute and that is not already refreshing, one
+ *     per tick, followed inline for what is left of this invocation; the next ticks collect the rest.
+ *
+ * AUTH mirrors run-cron-workflows: the front-end's own Vercel OIDC service token (the agent trusts this project's
+ * subject) — or, off Vercel with SERVICE_AUTH=session-key, the service token it signs itself
+ * (lib/service-identity.ts); CRON_SECRET guards the endpoint. A start CLAIMS the app atomically (refreshing_at), so
+ * two ticks — or a tick and a person's Try again — never run the same app twice.
  */
-// One app per tick: a dashboard refresh can run up to ~250s, so two in a single
-// invocation could exceed the 300s function limit. One a minute is ample.
 const PER_TICK = 1;
-// A claim older than this is treated as abandoned (the function died mid-run).
-const CLAIM_STALE_MS = 10 * 60 * 1000;
+/** How long one tick reads each refreshing app's session before moving on (in parallel). */
+const COLLECT_FOLLOW_MS = 20_000;
+/** What this invocation may spend following the refresh it started (under the 300 s limit, after collecting). */
+const DRIVE_CAP_MS = 240_000;
 
 export async function GET(request: NextRequest) {
+  const begun = Date.now();
   // FAIL CLOSED. This was `if (secret && …)`, which skips the check entirely
   // when CRON_SECRET is unset — and it is set on Production ONLY, so every
   // preview deployment exposed this endpoint unauthenticated. A missing
@@ -47,9 +54,11 @@ export async function GET(request: NextRequest) {
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const bearer = serviceBearerFor(request);
 
-  const now = new Date();
-  const staleBefore = new Date(now.getTime() - CLAIM_STALE_MS);
+  // 1. Whatever is in progress, wherever it was started.
+  const collected = await collectAppRefreshes({ bearer, followMs: COLLECT_FOLLOW_MS });
 
+  // 2. What is due now.
+  const now = new Date();
   /**
    * Live, cadenced apps not currently being refreshed — swept per workspace.
    *
@@ -58,17 +67,11 @@ export async function GET(request: NextRequest) {
    * fails closed, and a refresh cron that finds nothing looks exactly like one
    * with nothing due.
    */
-  const candidates = await acrossOrgsRls((tx) =>
+  const candidates = await acrossOrgsRls((tx, orgId) =>
     tx
       .select()
       .from(apps)
-      .where(
-        and(
-          eq(apps.enabled, true),
-          isNull(apps.deletedAt),
-          or(isNull(apps.refreshingAt), lt(apps.refreshingAt, staleBefore)),
-        ),
-      ),
+      .where(and(eq(apps.orgId, orgId), eq(apps.enabled, true), isNull(apps.deletedAt), isNull(apps.refreshingAt))),
   );
 
   const outcomes: Array<{ app: string; status: string }> = [];
@@ -87,45 +90,34 @@ export async function GET(request: NextRequest) {
     // Already refreshed within this same minute — don't fire twice.
     if (app.lastRefreshAt && now.getTime() - app.lastRefreshAt.getTime() < 60_000) continue;
 
-    // Claim it atomically: only the tick that flips refreshing_at proceeds.
-    /**
-     * The claim is short and scoped; the REFRESH below is not wrapped at all.
-     *
-     * refreshApp can run ~250s, and withOrgRls holds a transaction — wrapping
-     * it would pin a pooled connection for the duration. Short statements get
-     * their own scope, the long agent call stays outside any transaction, and
-     * refreshApp scopes its own writes.
-     */
-    const claimed = await withOrgRls(app.orgId, (tx) =>
-      tx
-        .update(apps)
-        .set({ refreshingAt: now })
-        .where(
-          and(
-            eq(apps.id, app.id),
-            or(isNull(apps.refreshingAt), lt(apps.refreshingAt, staleBefore)),
-          ),
-        )
-        .returning({ id: apps.id }),
-    );
-    if (claimed.length === 0) continue;
-
     if (!bearer) {
       await withOrgRls(app.orgId, (tx) =>
         tx
           .update(apps)
-          .set({ refreshingAt: null, lastError: "No service token available to reach the agent." })
-          .where(eq(apps.id, app.id)),
+          .set({ lastError: "No service token available to reach the agent." })
+          .where(and(eq(apps.id, app.id), eq(apps.orgId, app.orgId), isNull(apps.refreshingAt))),
       );
       outcomes.push({ app: app.slug, status: "no-service-token" });
       ran++;
       continue;
     }
 
-    const outcome = await refreshApp(db, app, bearer);
-    outcomes.push({ app: app.slug, status: outcome.ok ? "refreshed" : "failed" });
+    const started = await startAppRefresh(app, { bearer, actor: "cron" });
+    if (started.status === "running") continue; // claimed by somebody else a moment ago
     ran++;
+    if (started.status === "failed") {
+      outcomes.push({ app: app.slug, status: "failed" });
+      continue;
+    }
+    const budgetMs = Math.max(1_000, Math.min(refreshBackgroundMs(), DRIVE_CAP_MS, 270_000 - (Date.now() - begun)));
+    const driven = await driveAppRefresh(started.handle, { bearer, budgetMs });
+    outcomes.push({ app: app.slug, status: driven });
   }
 
-  return NextResponse.json({ scanned: candidates.length, ran, outcomes });
+  return NextResponse.json({
+    scanned: candidates.length,
+    ran,
+    outcomes,
+    collected: collected.map((c) => ({ app: c.app, status: c.status })),
+  });
 }

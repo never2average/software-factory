@@ -28,7 +28,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { CustomerMark } from "../customer-mark";
 import { CronChip, RunStatusDot } from "./detail";
 import {
+  awaitsFirstDocument,
   errMessage,
+  refreshUnderWay,
   fmtTime,
   opsFetch,
   useOpsList,
@@ -62,6 +64,7 @@ import {
 import { TYPE } from "./tokens";
 import { Dashboard, parseDashboardSpec } from "./dashboard";
 import { W } from "@/lib/ui-words";
+import { STORAGE_KEYS, readActiveOrg, readStored } from "@/lib/browser-storage";
 
 type SourceKind = "workflow" | "prompt";
 
@@ -113,6 +116,54 @@ function relTime(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
+/** "started just now" / "started 4 min ago" / "started 1 h 5 min ago", for a refresh in progress. */
+function startedAgo(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "started a moment ago";
+  const m = Math.floor(Math.max(0, Date.now() - t) / 60_000);
+  if (m < 1) return "started just now";
+  if (m < 60) return `started ${m} min ago`;
+  return `started ${Math.floor(m / 60)} h ${m % 60} min ago`;
+}
+
+/**
+ * A refresh THIS person started has finished while the tab is hidden or unfocused: a desktop notification, if they
+ * turned desktop notifications on (the same stored choice and service worker as the chat's, app/_components/
+ * desktop-notify.ts; not imported, to keep it out of this panel's chunk). Page-side only: nothing is pushed from the
+ * server, so a closed tab shows nothing and the app says how it went the next time it is opened.
+ */
+async function notifyRefreshFinished(input: { appId: string; appName: string; ok: boolean }): Promise<void> {
+  if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "granted") return;
+  if (document.visibilityState === "visible" && document.hasFocus()) return;
+  let prefs: { on?: boolean; preview?: boolean } | null = null;
+  try {
+    prefs = JSON.parse(readStored(STORAGE_KEYS.desktopNotifications) ?? "null");
+  } catch {
+    prefs = null;
+  }
+  if (prefs?.on !== true) return;
+  const org = readActiveOrg();
+  const payload = {
+    v: 1,
+    kind: input.ok ? "reply" : "failed",
+    title: prefs.preview === false ? "An app finished refreshing" : input.appName,
+    body: input.ok ? "Refreshed: the new document is ready." : "The refresh failed. Open the app to see why.",
+    tag: `app-refresh:${input.appId}`,
+    url: `/?ops=apps&id=${encodeURIComponent(input.appId)}${org ? `&org=${encodeURIComponent(org)}` : ""}`,
+    sessionId: "",
+  };
+  try {
+    const reg = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration("/") : undefined;
+    if (reg?.active) reg.active.postMessage({ type: "show", payload });
+    else new Notification(payload.title, { body: payload.body, tag: payload.tag });
+  } catch {
+    /* a notification is a courtesy; failing to show one changes nothing */
+  }
+}
+
+/** While any app is refreshing, the list is read again this often, so the result shows without a reload. */
+const REFRESHING_POLL_MS = 5_000;
+
 /**
  * Hovering the Source cell reveals what actually generates the document — the
  * prompt in full, or the workflow it runs — so the table stays scannable while
@@ -154,6 +205,34 @@ export function AppsPanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  /**
+   * A refresh runs in the background and can take many minutes (lib/app-refresh.ts): while any app is refreshing,
+   * read the list again every few seconds, so "Refreshing…" turns into the document or the error by itself.
+   */
+  const refreshingIds = (items ?? [])
+    .filter((a) => a.refreshingAt)
+    .map((a) => a.id)
+    .join(",");
+  useEffect(() => {
+    if (!refreshingIds) return;
+    const timer = setInterval(() => void refetch().catch(() => {}), REFRESHING_POLL_MS);
+    return () => clearInterval(timer);
+  }, [refreshingIds, refetch]);
+
+  // The refreshes THIS person started from this page: when one ends while they are elsewhere, a desktop notification.
+  const startedHere = useRef(new Set<string>());
+  const wasRefreshing = useRef(new Map<string, boolean>());
+  useEffect(() => {
+    for (const a of items ?? []) {
+      const now = Boolean(a.refreshingAt);
+      if (wasRefreshing.current.get(a.id) && !now && startedHere.current.has(a.id)) {
+        startedHere.current.delete(a.id);
+        void notifyRefreshFinished({ appId: a.id, appName: a.name, ok: !a.lastError });
+      }
+      wasRefreshing.current.set(a.id, now);
+    }
+  }, [items]);
 
   // Honour a deep-link (/?ops=apps&id=…) once the list has arrived.
   if (initialSelectedId && items?.some((a) => a.id === initialSelectedId)) {
@@ -203,8 +282,17 @@ export function AppsPanel({
       }),
     );
 
+  // Answers at once (202): the refresh carries on in the background, and the list follows it (above).
   const refreshNow = (id: string) =>
-    run(id, () => opsFetch(`/api/ops/apps/${id}/refresh`, { method: "POST" }));
+    run(id, async () => {
+      startedHere.current.add(id);
+      await opsFetch(`/api/ops/apps/${id}/refresh`, { method: "POST" });
+    });
+
+  // Opening a starter app that has never been written asks for its first document. The server starts at most one
+  // generation however many people or tabs ask (lib/starter-apps.ts); a person's own Refresh always runs.
+  const firstOpen = (id: string) =>
+    run(id, () => opsFetch(`/api/ops/apps/${id}/refresh?first=1`, { method: "POST" }));
 
   const remove = (id: string) =>
     run(id, async () => {
@@ -246,6 +334,8 @@ export function AppsPanel({
       onOpenSettings={() => setSettingsOpen(true)}
       onPatch={(body) => patch(openItem.id, body)}
       onRefresh={() => refreshNow(openItem.id)}
+      onFirstOpen={() => firstOpen(openItem.id)}
+      onPoll={() => void refetch().catch(() => {})}
     />
   ) : null;
 
@@ -364,8 +454,27 @@ export function AppsPanel({
                             </span>
                           </SourceTooltip>
                           <span className="min-w-0 truncate font-medium">{a.name}</span>
-                          {/* Failed, or cannot refresh as it is set: said on the row itself, at any width. */}
-                          {a.lastError || a.source?.ok === false ? (
+                          {/* A starter app: it came with the workspace, nobody here made it. */}
+                          {a.starterKey ? (
+                            <span
+                              data-app-starter
+                              title="This app came with the workspace. Edit it or delete it like any other; a deleted one does not come back."
+                              className={cn("shrink-0 rounded border border-border px-1 text-muted-foreground", TYPE.micro)}
+                            >
+                              starter
+                            </span>
+                          ) : null}
+                          {/* Refreshing, failed, or cannot refresh as it is set: said on the row itself, at any width. */}
+                          {a.refreshingAt ? (
+                            <span
+                              data-app-refreshing
+                              title={`Refreshing, ${startedAgo(a.refreshingAt)}`}
+                              className={cn("flex shrink-0 items-center gap-1 text-muted-foreground", TYPE.micro)}
+                            >
+                              <Spinner className="size-2.5" />
+                              refreshing
+                            </span>
+                          ) : a.lastError || a.source?.ok === false ? (
                             <span
                               data-app-problem
                               title={a.source?.ok === false ? `${a.source.reason} ${a.source.fix}` : `The last refresh failed: ${a.lastError}`}
@@ -395,12 +504,14 @@ export function AppsPanel({
                           </Td>
                           <Td className="truncate text-muted-foreground">
                             <span className="flex items-center gap-1.5">
-                              {a.lastError ? (
+                              {a.refreshingAt ? (
+                                <RunStatusDot status="running" />
+                              ) : a.lastError ? (
                                 <RunStatusDot status="failed" />
                               ) : a.contentUpdatedAt ? (
                                 <RunStatusDot status="success" />
                               ) : null}
-                              {fmtTime(a.lastRefreshAt) ?? "never"}
+                              {fmtTime(a.lastRefreshAt) ?? (awaitsFirstDocument(a) ? (refreshUnderWay(a) ? "being written" : "written when first opened") : "never")}
                             </span>
                           </Td>
                         </>
@@ -410,7 +521,7 @@ export function AppsPanel({
                         <span className="flex items-center justify-end">
                           <RowMenu
                             enabled={a.enabled}
-                            pending={busyId === a.id}
+                            pending={busyId === a.id || Boolean(a.refreshingAt)}
                             onReview={() => {
                               setCreating(false);
                               setSelectedId(a.id);
@@ -543,6 +654,8 @@ function AppDetail({
   onOpenSettings,
   onPatch,
   onRefresh,
+  onFirstOpen,
+  onPoll,
 }: {
   readonly app: ApiApp;
   readonly busy: boolean;
@@ -551,19 +664,55 @@ function AppDetail({
   readonly onOpenSettings: () => void;
   readonly onPatch: (body: Record<string, unknown>) => void;
   readonly onRefresh: () => Promise<unknown> | void;
+  /** Ask for the first document of a starter app that has never been written. */
+  readonly onFirstOpen: () => Promise<unknown> | void;
+  /** Read the list again (while a first document is being written by another tab or person). */
+  readonly onPoll: () => void;
 }) {
+  // A STARTER APP OPENED FOR THE FIRST TIME. It was created with the workspace and has no document: nothing ran then.
+  // Opening it is what writes it, once. Asked once per app per mount (a second ask is harmless: the server starts at
+  // most one generation), and never for an app that cannot refresh as it is set, or that is paused.
+  const awaiting = awaitsFirstDocument(app);
+  const canGenerate = app.source?.ok !== false && app.enabled;
+  // Under way already (another tab, another person, the request that created the workspace)? The server ends an
+  // attempt that died (lib/app-refresh.ts), and then it shows as failed with a Try again.
+  const underWay = refreshUnderWay(app);
+  const askedFirst = useRef<string | null>(null);
+  useEffect(() => {
+    if (!awaiting || !canGenerate || underWay || askedFirst.current === app.id) return;
+    askedFirst.current = app.id;
+    void onFirstOpen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.id, awaiting, canGenerate, underWay]);
+  // Somebody else is writing it: look again until it is there.
+  const writingElsewhere = awaiting && underWay && !busy;
+  useEffect(() => {
+    if (!writingElsewhere) return;
+    const t = setInterval(onPoll, 8000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [writingElsewhere]);
+
   // A past version being read instead of the current document.
   const [viewing, setViewing] = useState<ApiAppVersion | null>(null);
   const { items: versions, refetch: refetchVersions } = useOpsList<ApiAppVersion>(
     `/api/ops/apps/${app.id}/versions`,
   );
   const cadence = app.refreshCron ? (describeCron(app.refreshCron) ?? app.refreshCron) : null;
+  const refreshing = Boolean(app.refreshingAt);
+  // A Try again while a refresh is in progress would only join it: the buttons say it is running instead.
+  const blocked = busy || refreshing;
 
   const doRefresh = async () => {
     await onRefresh();
     setViewing(null);
     await refetchVersions();
   };
+
+  // When a refresh ends (here or anywhere), its version joins the history.
+  useEffect(() => {
+    if (!refreshing) void refetchVersions();
+  }, [refreshing, refetchVersions]);
 
   const shownContent = viewing ? viewing.contentMd : app.contentMd;
   const shownError = viewing ? viewing.error : app.lastError;
@@ -578,13 +727,21 @@ function AppDetail({
         <div className="min-w-0 flex-1">
           <h3 className={cn("truncate", TYPE.title)}>{app.name}</h3>
           <p className={cn("mt-1 flex items-center gap-1.5 text-muted-foreground", TYPE.micro)}>
-            {app.lastError ? (
+            {refreshing ? (
+              <RunStatusDot status="running" />
+            ) : app.lastError ? (
               <RunStatusDot status="failed" />
             ) : app.contentUpdatedAt ? (
               <RunStatusDot status="success" />
             ) : null}
             <span className="truncate">
-              {app.contentUpdatedAt ? `Refreshed ${relTime(app.contentUpdatedAt)}` : "Never refreshed"}
+              {app.refreshingAt
+                ? `Refreshing… ${startedAgo(app.refreshingAt)}`
+                : app.contentUpdatedAt
+                  ? `Refreshed ${relTime(app.contentUpdatedAt)}`
+                  : awaiting
+                    ? "Starter app · not written yet"
+                    : "Never refreshed"}
               {cadence ? ` · ${cadence}` : " · manual only"}
               {app.enabled ? "" : " · paused"}
             </span>
@@ -619,7 +776,22 @@ function AppDetail({
             ) : null}
             {/* What generates this app cannot run as it is set (lib/app-source.ts): say so before anyone refreshes,
                 with what to do. An app saved before the form checked this, or whose workflow changed under it. */}
-            {!viewing && app.source?.ok === false ? (
+            {/* A starter app's first document says so in its own words below. */}
+            {!viewing && app.refreshingAt && !awaiting ? (
+              <div
+                data-app-refreshing
+                className={cn("mb-6 flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-muted-foreground", TYPE.meta)}
+              >
+                <Spinner className="mt-0.5 size-3 shrink-0" />
+                <p>
+                  <span className="font-medium text-foreground">Refreshing… {startedAgo(app.refreshingAt)}.</span>{" "}
+                  {app.contentMd
+                    ? "The document below is the last one; it is replaced when this finishes."
+                    : "The document appears here when it finishes."}{" "}
+                  This can take several minutes. You can close this page; it carries on.
+                </p>
+              </div>
+            ) : !viewing && app.source?.ok === false ? (
               <div
                 data-app-source-problem
                 className={cn("mb-6 flex flex-col gap-2 rounded-md border border-red-500/30 bg-red-500/5 p-3 text-red-400", TYPE.meta)}
@@ -650,11 +822,11 @@ function AppDetail({
                         : "Nothing has been generated yet. Try again; if it fails the same way, change what generates this app."}
                     </p>
                     <div className="flex items-center gap-2">
-                      <OpsButton intent="primary" size="sm" disabled={busy} onClick={() => void doRefresh()}>
-                        {busy ? <Spinner className="size-3" /> : null}
+                      <OpsButton intent="primary" size="sm" disabled={blocked} onClick={() => void doRefresh()}>
+                        {blocked ? <Spinner className="size-3" /> : null}
                         Try again
                       </OpsButton>
-                      <OpsButton intent="secondary" size="sm" disabled={busy} onClick={onOpenSettings}>
+                      <OpsButton intent="secondary" size="sm" disabled={blocked} onClick={onOpenSettings}>
                         Change what generates it
                       </OpsButton>
                     </div>
@@ -679,7 +851,31 @@ function AppDetail({
               />
             ) : shownContent ? (
               <MessageResponse components={DOCUMENT_COMPONENTS}>{shownContent}</MessageResponse>
-            ) : shownError ? null : (
+            ) : shownError ? null : awaiting && app.source?.ok !== false ? (
+              // A starter app before its first document: say what it is, and what is happening now.
+              <div data-app-first-document className={cn("flex flex-col items-center gap-3 py-16 text-center text-muted-foreground", TYPE.meta)}>
+                <p className="max-w-md">
+                  <span className="font-medium text-foreground">This app came with the workspace and has not been written yet.</span>{" "}
+                  {app.description}
+                </p>
+                {busy || underWay ? (
+                  <p className="flex items-center gap-2" data-app-first-document-writing>
+                    <Spinner className="size-3" />
+                    Its first document is being written now. This can take a few minutes; you can leave this tab and it will be here when you come back.
+                  </p>
+                ) : app.enabled ? (
+                  <p>
+                    {cadence ? `It is written on its schedule (${cadence}), or now: ` : "It is written when somebody asks for it: "}
+                    <button type="button" className="font-medium text-foreground underline-offset-4 hover:underline" onClick={() => void doRefresh()}>
+                      write it now
+                    </button>
+                    .
+                  </p>
+                ) : (
+                  <p>It is paused. Resume it to have it written.</p>
+                )}
+              </div>
+            ) : refreshing && !viewing ? null : (
               <p className={cn("py-16 text-center text-muted-foreground/60 italic", TYPE.meta)}>
                 No document yet — refresh to generate it.
               </p>
@@ -765,7 +961,7 @@ function AppDetail({
 
             <VersionList
               versions={versions}
-              busy={busy}
+              busy={blocked}
               selectedId={viewing?.id ?? null}
               onSelect={(v) => setViewing(v)}
               onLatest={() => setViewing(null)}

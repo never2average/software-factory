@@ -302,14 +302,11 @@ const dataroom = {
 
 const json = (v) => JSON.stringify(v, null, 2);
 
-/** The built-in eve subagents, used for listings and hints. A deployment may declare more (a subagent is a
- *  directory under agent/subagents/, and packs add them), and this CLI ships without the codebase, so the list
- *  is a hint, never a gate: any well-formed key is passed through and the server decides. */
+/** A specialist's key. This package names none: which specialists exist is the deployment's (a specialist is a
+ *  directory under agent/subagents/, a pack adds its own, and a profile leaves base ones out), and this CLI ships
+ *  without the codebase. `agent_list` asks the server (GET /api/ops/agent-configs `specialists`). It used to carry
+ *  the base product's ten, so every deployment's tools named specialists its workspaces do not have. */
 const SUBAGENT_KEY = /^[a-z][a-z0-9-]{0,79}$/;
-const SUBAGENT_IDS = [
-  "research", "customer-context", "configuration", "deployment", "data-migration",
-  "evals", "workflow-author", "app-author", "follow-ups", "browser",
-];
 
 // -------------------------------------------------------------------- the tools
 
@@ -627,11 +624,13 @@ const TOOLS = [
     description: "The specialist subagents the orchestrator delegates to, with their per-workspace state: paused or active, and any custom instructions.",
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
-      const { items = [] } = await api("GET", "/api/ops/agent-configs").catch(() => ({ items: [] }));
+      const { items = [], specialists } = await api("GET", "/api/ops/agent-configs").catch(() => ({ items: [] }));
       const cfg = new Map(items.map((i) => [i.agentKey, i]));
+      // The specialists this deployment has, as its server says; then any other key this workspace has configured.
+      // (A server from before it answered the list: the configured ones only.)
+      const known = Array.isArray(specialists) ? specialists.filter((k) => typeof k === "string") : [];
       return json(
-        // Built-in keys, then any other key this workspace has configured (a subagent the deployment added).
-        [...SUBAGENT_IDS, ...[...cfg.keys()].filter((k) => !SUBAGENT_IDS.includes(k))].map((key) => ({
+        [...known, ...[...cfg.keys()].filter((k) => !known.includes(k))].map((key) => ({
           agent: key,
           paused: cfg.get(key)?.paused ?? false,
           instructions: cfg.get(key)?.instructions ?? null,
@@ -646,7 +645,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        agent: { type: "string", description: "A subagent key. Built in: " + SUBAGENT_IDS.join(", ") + ". A deployment may declare more; agent_configs lists what is set." },
+        agent: { type: "string", description: "A subagent key, as agent_list returns it." },
         paused: { type: "boolean" },
         instructions: { type: "string", description: "Standing instructions; pass an empty string to clear." },
       },
@@ -654,7 +653,7 @@ const TOOLS = [
     },
     handler: async ({ agent, paused, instructions }) => {
       if (typeof agent !== "string" || !SUBAGENT_KEY.test(agent)) {
-        throw new Error(`"${agent}" is not a subagent key (lowercase letters, digits and hyphens). Built in: ${SUBAGENT_IDS.join(", ")}`);
+        throw new Error(`"${agent}" is not a subagent key (lowercase letters, digits and hyphens). agent_list returns the ones this workspace has.`);
       }
       const body = { agentKey: agent };
       if (paused !== undefined) body.paused = paused;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { appVersions } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -40,7 +40,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
       tx
         .select()
         .from(appVersions)
-        .where(eq(appVersions.appId, id))
+        // A refresh still in progress has a version with neither a document nor an error yet (lib/app-refresh.ts):
+        // it is shown as the app's "Refreshing…", not as an empty entry in the history.
+        .where(and(eq(appVersions.appId, id), or(isNotNull(appVersions.contentMd), isNotNull(appVersions.error))))
         .orderBy(desc(appVersions.createdAt))
         .limit(limit),
     );

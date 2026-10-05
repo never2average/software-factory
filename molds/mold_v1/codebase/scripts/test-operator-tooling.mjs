@@ -45,7 +45,7 @@ const missing = COMMANDS.filter((c) => !scripts[`${w}:${c}`]);
 check(`every old npm script is still there (${COMMANDS.length})`, missing.length === 0, `missing: ${missing.join(", ")}`);
 check("and no other", oldNames.length === COMMANDS.length, oldNames.join(", "));
 // Commands added after the move have a neutral name only: there is no old name to keep.
-const ADDED = ["library-cleanup"];
+const ADDED = ["library-cleanup", "library-apply"];
 check("there is one operator:* script per old one, plus the commands added since", newNames.length === oldNames.length + ADDED.length && ADDED.every((c) => scripts[`operator:${c}`] && !scripts[`${w}:${c}`]), `${newNames.length} vs ${oldNames.length} + ${ADDED.length}`);
 for (const old of oldNames) {
   const neu = `operator:${old.slice(w.length + 1)}`;

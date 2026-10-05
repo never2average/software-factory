@@ -12,14 +12,17 @@
 import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as schema from "./db/schema.ts";
-import { cycleMemberGoals, cycles, entityActivity, peopleRoster, todos } from "./db/schema.ts";
+import { cycleMemberGoals, cycles, entityActivity, orgs, peopleRoster, todos } from "./db/schema.ts";
 import {
+  PERIOD_LENGTH,
   WORK_PERIODS,
   currentPeriod,
+  effectivePeriodLength,
   followingWindow,
   mayActFor,
   nextPeriod,
   taskOwner,
+  type PeriodLengthPolicy,
   type RosterLine,
   type WorkPeriods,
 } from "./work-periods.ts";
@@ -27,6 +30,30 @@ import {
 /** A workspace-scoped transaction (or the database handle inside one). */
 export type PeriodTx = Pick<PostgresJsDatabase<typeof schema>, "select" | "insert" | "update" | "delete">;
 export type CycleRow = typeof cycles.$inferSelect;
+
+/**
+ * How long a NEW period of this workspace runs, in days (null = no dates until someone sets them): the length its
+ * admin chose (`orgs.period_length_days`, the workspace's own row, read by its primary key) when the profile lets a
+ * workspace choose, the profile's `length_days` otherwise. Every door that opens a period asks this (the routes, the
+ * model's tools, auto rollover), so they agree; nothing in the agent writes it.
+ */
+export async function workspacePeriodLength(tx: PeriodTx, orgId: string, wp: WorkPeriods = WORK_PERIODS, policy: PeriodLengthPolicy = PERIOD_LENGTH): Promise<number | null> {
+  if (!wp.enabled) return null;
+  if (!policy.workspaceCanSet) return wp.lengthDays;
+  const [row] = await tx.select({ days: orgs.periodLengthDays }).from(orgs).where(eq(orgs.orgId, orgId)).limit(1);
+  return effectivePeriodLength(row?.days ?? null, wp, policy);
+}
+
+/**
+ * The window and name of a period opened now with no dates given (by a person or the model): the one that follows
+ * the workspace's latest period, the workspace's length long. Null when the workspace has no length.
+ */
+export async function newPeriodWindow(tx: PeriodTx, orgId: string, wp: WorkPeriods = WORK_PERIODS): Promise<{ name: string; startsAt: Date; endsAt: Date } | null> {
+  const length = await workspacePeriodLength(tx, orgId, wp);
+  if (length === null) return null;
+  const latest = (await listPeriods(tx, orgId)).filter((c) => c.endsAt).sort((a, b) => b.endsAt!.getTime() - a.endsAt!.getTime())[0] ?? null;
+  return followingWindow(latest, length, wp);
+}
 
 /** The workspace's periods that are not archived, earliest start first. */
 export async function listPeriods(tx: PeriodTx, orgId: string): Promise<CycleRow[]> {
@@ -118,24 +145,26 @@ export async function taskWriteRefusal(
   return null;
 }
 
-/** The period that contains now; when there is none and the profile gives a length, it is opened. */
+/** The period that contains now; when there is none and the workspace has a length, it is opened, that long. */
 export async function ensureCurrentPeriod(tx: PeriodTx, orgId: string, actor: string, wp: WorkPeriods = WORK_PERIODS): Promise<CycleRow | null> {
   const all = await listPeriods(tx, orgId);
   const now = currentPeriod(all);
   if (now) return now;
-  if (wp.lengthDays === null) return null;
+  const length = await workspacePeriodLength(tx, orgId, wp);
+  if (length === null) return null;
   const last = [...all].filter((c) => c.endsAt && c.endsAt.getTime() <= Date.now()).sort((a, b) => b.endsAt!.getTime() - a.endsAt!.getTime())[0] ?? null;
-  const window = followingWindow(last, wp.lengthDays, wp);
+  const window = followingWindow(last, length, wp);
   const [created] = await tx.insert(cycles).values({ orgId, ...window, state: "active", createdBy: actor }).returning();
   return created;
 }
 
-/** The period after `from`; opened (with the profile's length) when there is none and a length is set. */
+/** The period after `from`; opened (the workspace's length long) when there is none and the workspace has a length. */
 export async function ensureNextPeriod(tx: PeriodTx, orgId: string, from: CycleRow, actor: string, wp: WorkPeriods = WORK_PERIODS): Promise<{ period: CycleRow | null; created: boolean }> {
   const found = nextPeriod(await listPeriods(tx, orgId), from);
   if (found) return { period: found, created: false };
-  if (wp.lengthDays === null) return { period: null, created: false };
-  const window = followingWindow(from, wp.lengthDays, wp);
+  const length = await workspacePeriodLength(tx, orgId, wp);
+  if (length === null) return { period: null, created: false };
+  const window = followingWindow(from, length, wp);
   const [created] = await tx.insert(cycles).values({ orgId, ...window, state: "planning", createdBy: actor }).returning();
   return { period: created, created: true };
 }
@@ -206,7 +235,7 @@ export function rolloverSentence(r: RolloverResult, wp: WorkPeriods = WORK_PERIO
  * no path that crosses workspaces; running it again finds nothing to do. Returns what it did, earliest first.
  */
 export async function rollOverEnded(tx: PeriodTx, orgId: string, wp: WorkPeriods = WORK_PERIODS, now: number = Date.now()): Promise<{ from: CycleRow; result: RolloverResult }[]> {
-  if (!wp.autoRollover || wp.lengthDays === null) return [];
+  if (!wp.autoRollover || (await workspacePeriodLength(tx, orgId, wp)) === null) return [];
   const out: { from: CycleRow; result: RolloverResult }[] = [];
   // Each pass may open a period; a long gap is crossed in one step (followingWindow), so this ends quickly.
   for (let pass = 0; pass < 12; pass++) {

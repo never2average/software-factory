@@ -225,6 +225,222 @@ async function workspaceStepGrant(bearer: ServiceBearer): Promise<string | null>
   return grant;
 }
 
+/**
+ * Thrown when the step itself has an outcome that is not an answer: the turn failed, it was cancelled, or a specialist
+ * parked on a person nobody will answer. Final: following the session again gives the same result. Anything else a
+ * follow throws (the network, a 5xx, a stream that kept disconnecting) is the reader's trouble, not the step's, and a
+ * later follow of the same session may still read the answer.
+ */
+export class StepOutcomeError extends Error {}
+
+/** Thrown when the agent no longer has the session a follow asked for (404): final, like {@link StepOutcomeError}. */
+export class StepSessionGone extends StepOutcomeError {}
+
+/**
+ * Open a step's session on the agent and return its id, without waiting for the turn. The session is durable on the
+ * agent: it runs to its end whether or not anybody is reading it, and {@link followStepSession} can read it later,
+ * from any process (the request that started it, a background continuation, a cron tick).
+ */
+export async function openStepSession(input: {
+  readonly bearer: ServiceBearer;
+  readonly prompt: string;
+  readonly subagent?: string;
+  readonly context?: StepContext;
+  readonly orgId?: string | null;
+  readonly visibility?: DelegateVisibility;
+  readonly signal?: AbortSignal;
+}): Promise<string> {
+  if (!AGENT_URL) throw new Error("The agent's URL is not configured (NEXT_PUBLIC_EVE_API_URL).");
+  const grant = (input.visibility ?? "private") === "step" ? await workspaceStepGrant(input.bearer) : null;
+  const started = await fetch(`${AGENT_URL}/eve/v1/session`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${await bearerToken(input.bearer)}`,
+      ...(input.orgId ? { [SERVICE_SCOPE_HEADER]: input.orgId } : {}),
+      // A step belongs to its run, and a run is the workspace's: the run timeline opens every step's session for
+      // whoever in the workspace is looking at it (to READ — lib/chat-gate.ts). The agent honours that only with a
+      // grant signed here, server-side, for the person whose token creates the step (lib/session-token-kinds.ts).
+      // The service token needs none: a session a service starts is the workspace's already.
+      ...(grant ? { [SESSION_VISIBILITY_GRANT_HEADER]: grant } : {}),
+    },
+    body: JSON.stringify({ message: composeStepMessage(input.prompt, input.subagent, input.context) }),
+    signal: input.signal ?? AbortSignal.timeout(30_000),
+  });
+  if (!started.ok) {
+    throw new Error(`The agent refused the step (${started.status}).`);
+  }
+  const { sessionId } = (await started.json()) as { sessionId?: string };
+  if (!sessionId) throw new Error("The agent did not open a session for this step.");
+  return sessionId;
+}
+
+/**
+ * Read a step's session from its first event, for at most `budgetMs`, and say where it stands:
+ *
+ *   done      the turn settled with nothing outstanding; `text` is the step's answer (the root's reply, or the
+ *             delegated specialist's own last message when the root did not echo it)
+ *   running   the budget ran out first: the step is still working, and a later follow picks it up from the start
+ *
+ * and throws {@link StepOutcomeError} for an outcome that is not an answer (failed, cancelled, or parked on a person
+ * when `unattended`: the #114 rule, the parked turn is cancelled and the message names the specialist and what it
+ * asked). Reading from the first event every time is what lets any process follow any step: the stream is durable.
+ */
+export async function followStepSession(input: {
+  readonly sessionId: string;
+  readonly bearer: ServiceBearer;
+  readonly orgId?: string | null;
+  readonly budgetMs: number;
+  /** Nobody can answer a question the step parks on: fail it at once (lib/step-handback.ts). */
+  readonly unattended: boolean;
+  readonly signal?: AbortSignal;
+  readonly onChild?: (childSessionId: string) => void;
+}): Promise<{ readonly state: "done"; readonly text: string } | { readonly state: "running" }> {
+  try {
+    const text = await readStep(input.sessionId, {
+      bearer: input.bearer,
+      orgId: input.orgId,
+      timeoutMs: input.budgetMs,
+      signal: input.signal,
+      unattended: input.unattended,
+      onChild: input.onChild,
+    });
+    return { state: "done", text };
+  } catch (error) {
+    if (error instanceof BudgetSpent) return { state: "running" };
+    throw error;
+  }
+}
+
+/** The follow's budget ran out before the turn settled (and nothing says it never will). */
+class BudgetSpent extends Error {}
+
+/**
+ * The stream reader both {@link makeDelegate} and {@link followStepSession} use. Reads from `startIndex` 0, keeps the
+ * LAST finalized assistant text, and ends where lib/step-handback.ts says the step ends.
+ */
+async function readStep(
+  sessionId: string,
+  opts: {
+    readonly bearer: ServiceBearer;
+    readonly orgId: string | null | undefined;
+    readonly timeoutMs: number;
+    readonly signal?: AbortSignal;
+    readonly unattended: boolean;
+    readonly onChild?: (childSessionId: string) => void;
+  },
+): Promise<string> {
+  const { bearer, orgId, signal, unattended } = opts;
+  // Eve cancellation is cooperative and durable. The session's stream remains
+  // the source of truth (`turn.cancelled` -> `session.waiting`); aborting our
+  // local fetch alone would merely detach and leave the turn running.
+  const onAbort = () => void cancelEveSession(sessionId, bearer, orgId);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  // ONE budget for the whole read, reconnects included.
+  const budget = requestSignal(opts.timeoutMs, signal);
+
+  // Read the turn's NDJSON stream and keep the LAST finalized assistant text:
+  // interim `message.completed` events narrate tool calls, and the terminal one
+  // is the answer (docs/concepts/sessions-runs-and-streaming.md).
+  // The orchestrator's own final reply. When it DELEGATES to a subagent it
+  // often ends its own turn without echoing the subagent's output — that
+  // output lives in the CHILD session, so we read it directly (below).
+  let answer = "";
+  let childSessionId: string | undefined;
+
+  // Prefer the orchestrator's own reply; else the delegated subagent's own
+  // final message, read from its session.
+  const finish = async (): Promise<string> => {
+    if (answer.trim() || !childSessionId) return answer;
+    const child = await readSessionAnswer(childSessionId, bearer, orgId).catch(() => "");
+    return child || answer;
+  };
+
+  // The Eve stream is durable. Persist a local event-count cursor for this
+  // request and reconnect to the SAME session by startIndex after transient
+  // disconnects; never start a replacement turn or maintain an in-memory
+  // pseudo-stream.
+  let streamIndex = 0;
+  let reconnects = 0;
+  // A turn that ends while a specialist is still out is eve PARKING on that specialist's question, not the end of
+  // the step (lib/step-handback.ts). A person's step keeps reading; the platform's own has nobody to answer.
+  const watch = createStepWatch();
+  try {
+    while (reconnects <= 3) {
+      const stream = await fetch(
+        `${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=${streamIndex}`,
+        {
+          headers: await agentHeaders(bearer, orgId),
+          signal: budget,
+        },
+      );
+      if (stream.status === 404) throw new StepSessionGone(`The agent no longer has this step's session (${sessionId}).`);
+      if (!stream.ok || !stream.body) {
+        throw new Error(`The agent's stream could not be read (${stream.status}).`);
+      }
+      const reader = stream.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let event: { type?: string; data?: Record<string, unknown> };
+            try {
+              event = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            streamIndex++;
+            if (event.type === "message.completed" && typeof event.data?.message === "string") {
+              answer = event.data.message as string;
+            }
+            if (event.type === "subagent.called" && typeof event.data?.childSessionId === "string") {
+              childSessionId = event.data.childSessionId as string;
+              opts.onChild?.(childSessionId);
+            }
+            if (event.type === "turn.failed") {
+              throw new StepOutcomeError(`The agent failed this step: ${String(event.data?.message ?? "the turn failed")}`);
+            }
+            if (event.type === "turn.cancelled") {
+              throw signal?.reason instanceof Error ? signal.reason : new StepOutcomeError("The agent step was cancelled.");
+            }
+            const verdict = watch.see(event);
+            if (verdict.kind === "done") {
+              await reader.cancel();
+              return finish();
+            }
+            if (verdict.kind === "waiting-on-person" && unattended) {
+              await reader.cancel();
+              // Nobody will ever answer: stop the parked turn (and with it the specialist) and say why.
+              await cancelEveSession(sessionId, bearer, orgId);
+              throw new StepOutcomeError(waitingOnPersonMessage(verdict.ask, { unattended: true }));
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      reconnects++;
+    }
+    throw new Error("The agent stream disconnected repeatedly before the turn settled.");
+  } catch (error) {
+    // The budget ran out with a specialist parked on a request: say that, not "the operation was aborted".
+    const ask = watch.asked();
+    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") && !signal?.aborted;
+    if (timedOut && ask && watch.outstanding().length > 0) throw new StepOutcomeError(waitingOnPersonMessage(ask, { unattended }));
+    if (timedOut) throw new BudgetSpent(error instanceof Error ? error.message : String(error));
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 export function makeDelegate(
   /** A person's token, the Vercel service token, or the web app's minted service identity (lib/service-identity.ts). */
   bearer: ServiceBearer,
@@ -248,140 +464,40 @@ export function makeDelegate(
     onSession?: OnStepSession,
     step?: Pick<StepContext, "call" | "phase">,
   ): Promise<string> {
-    if (!AGENT_URL) throw new Error("The agent's URL is not configured (NEXT_PUBLIC_EVE_API_URL).");
     const stepContext: StepContext | undefined =
       context || step ? { ...context, ...step } : undefined;
 
     // The browser subagent's steps get the longer budget.
     const effectiveTimeout = subagent === "browser" ? Math.max(timeoutMs, BROWSER_STEP_TIMEOUT_MS) : timeoutMs;
 
-    const grant = visibility === "step" ? await workspaceStepGrant(bearer) : null;
-    const started = await fetch(`${AGENT_URL}/eve/v1/session`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${await bearerToken(bearer)}`,
-        ...(orgId ? { [SERVICE_SCOPE_HEADER]: orgId } : {}),
-        // A step belongs to its run, and a run is the workspace's: the run timeline opens every step's session for
-        // whoever in the workspace is looking at it (to READ — lib/chat-gate.ts). The agent honours that only with a
-        // grant signed here, server-side, for the person whose token creates the step (lib/session-token-kinds.ts).
-        // The service token needs none: a session a service starts is the workspace's already.
-        ...(grant ? { [SESSION_VISIBILITY_GRANT_HEADER]: grant } : {}),
-      },
-      body: JSON.stringify({ message: composeStepMessage(prompt, subagent, stepContext) }),
+    const sessionId = await openStepSession({
+      bearer,
+      prompt,
+      subagent,
+      context: stepContext,
+      orgId,
+      visibility,
       signal: requestSignal(effectiveTimeout, signal),
     });
-    if (!started.ok) {
-      throw new Error(`The agent refused the step (${started.status}).`);
-    }
-    const { sessionId } = (await started.json()) as { sessionId?: string };
-    if (!sessionId) throw new Error("The agent did not open a session for this step.");
     // Surface the session immediately — the step is now steerable while it runs.
     onSession?.({ sessionId });
-    // Eve cancellation is cooperative and durable. The session's stream remains
-    // the source of truth (`turn.cancelled` -> `session.waiting`); aborting our
-    // local fetch alone would merely detach and leave the turn running.
-    const onAbort = () => void cancelEveSession(sessionId, bearer, orgId);
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    // Read the turn's NDJSON stream and keep the LAST finalized assistant text:
-    // interim `message.completed` events narrate tool calls, and the terminal one
-    // is the answer (docs/concepts/sessions-runs-and-streaming.md).
-    // The orchestrator's own final reply. When it DELEGATES to a subagent it
-    // often ends its own turn without echoing the subagent's output — that
-    // output lives in the CHILD session, so we read it directly (below).
-    let answer = "";
-    let childSessionId: string | undefined;
-
-    // Prefer the orchestrator's own reply; else the delegated subagent's own
-    // final message, read from its session.
-    const finish = async (): Promise<string> => {
-      if (answer.trim() || !childSessionId) return answer;
-      const child = await readSessionAnswer(childSessionId, bearer, orgId).catch(() => "");
-      return child || answer;
-    };
-
-    // The Eve stream is durable. Persist a local event-count cursor for this
-    // request and reconnect to the SAME session by startIndex after transient
-    // disconnects; never start a replacement turn or maintain an in-memory
-    // pseudo-stream.
-    let streamIndex = 0;
-    let reconnects = 0;
-    // A turn that ends while a specialist is still out is eve PARKING on that specialist's question, not the end of
-    // the step (lib/step-handback.ts). A person's step keeps reading; the platform's own has nobody to answer.
-    const watch = createStepWatch();
-    const unattended = isServiceSource(bearer) || bearerEmail(bearer) === null;
     try {
-      while (reconnects <= 3) {
-        const stream = await fetch(
-          `${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=${streamIndex}`,
-          {
-            headers: await agentHeaders(bearer, orgId),
-            signal: requestSignal(effectiveTimeout, signal),
-          },
-        );
-        if (!stream.ok || !stream.body) {
-          throw new Error(`The agent's stream could not be read (${stream.status}).`);
-        }
-        const reader = stream.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              let event: { type?: string; data?: Record<string, unknown> };
-              try {
-                event = JSON.parse(line);
-              } catch {
-                continue;
-              }
-              streamIndex++;
-              if (event.type === "message.completed" && typeof event.data?.message === "string") {
-                answer = event.data.message as string;
-              }
-              if (event.type === "subagent.called" && typeof event.data?.childSessionId === "string") {
-                childSessionId = event.data.childSessionId as string;
-                onSession?.({ sessionId, childSessionId });
-              }
-              if (event.type === "turn.failed") {
-                throw new Error(`The agent failed this step: ${String(event.data?.message ?? "the turn failed")}`);
-              }
-              if (event.type === "turn.cancelled") {
-                throw signal?.reason instanceof Error ? signal.reason : new Error("The agent step was cancelled.");
-              }
-              const verdict = watch.see(event);
-              if (verdict.kind === "done") {
-                await reader.cancel();
-                return finish();
-              }
-              if (verdict.kind === "waiting-on-person" && unattended) {
-                await reader.cancel();
-                // Nobody will ever answer: stop the parked turn (and with it the specialist) and say why.
-                await cancelEveSession(sessionId, bearer, orgId);
-                throw new Error(waitingOnPersonMessage(verdict.ask, { unattended: true }));
-              }
-            }
-          }
-        } finally {
-          reader.releaseLock();
-        }
-        reconnects++;
-      }
-      throw new Error("The agent stream disconnected repeatedly before the turn settled.");
+      return await readStep(sessionId, {
+        bearer,
+        orgId,
+        timeoutMs: effectiveTimeout,
+        signal,
+        unattended: isServiceSource(bearer) || bearerEmail(bearer) === null,
+        onChild: (childSessionId) => onSession?.({ sessionId, childSessionId }),
+      });
     } catch (error) {
-      // The budget ran out with a specialist parked on a request: say that, not "the operation was aborted".
-      const ask = watch.asked();
-      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") && !signal?.aborted;
-      if (timedOut && ask && watch.outstanding().length > 0) throw new Error(waitingOnPersonMessage(ask, { unattended }));
+      // A step that ran out of its budget fails the step, as it always has (the run's journal retries it).
+      if (error instanceof BudgetSpent) {
+        const e = new Error(error.message);
+        e.name = "TimeoutError";
+        throw e;
+      }
       throw error;
-    } finally {
-      signal?.removeEventListener("abort", onAbort);
     }
   };
 }

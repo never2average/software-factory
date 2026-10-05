@@ -13,6 +13,7 @@ import {
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { canAccessOrg, orgContextForRequest, tenancyEnabled } from "@/lib/org-context";
 import { W } from "@/lib/ui-words";
+import { LIBRARY_SOURCES } from "@/agent/lib/workflow-library.generated";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -109,7 +110,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       },
       {
         id: "workflows",
-        label: "Seed the workflow library and crons",
+        // A build whose profile names no library has no library to seed: its workspaces start with one row per
+        // specialist, and the check says what it counts. (It named a library every deployment was assumed to have.)
+        label: LIBRARY_SOURCES.length ? "Seed the workflow library and crons" : "Have at least one workflow",
         ok: wfN > 0,
         detail: `${wfN} workflow${wfN === 1 ? "" : "s"}`,
         deepLink: "/?ops=workflows",

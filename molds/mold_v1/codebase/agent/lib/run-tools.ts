@@ -63,10 +63,10 @@ async function triggerRun(
 
 export const triggerWorkflowTool = modelFacing("trigger_workflow", defineTool({
   description:
-    "RUN a saved workflow NOW, durably, and return its result. Use this whenever someone wants to EXECUTE or VALIDATE a workflow on demand — 'run the QBR workflow', 'trigger route-incident', 'show me the workflow working before we turn it on'. Pass the workflow NAME exactly as it appears in the Workflows list. A run delegates to subagents and SPENDS TOKENS, so it is gated on approval. Returns the runId (openable as a chat) plus the workflow's return value; if it hits the wall clock it reports timedOut and keeps running durably.",
+    "RUN a saved workflow NOW, durably, and return its result. Use this whenever someone wants to EXECUTE or VALIDATE a workflow on demand — 'run that workflow', 'trigger it now', 'show me the workflow working before we turn it on'. Pass the workflow NAME exactly as it appears in the Workflows list. A run delegates to subagents and SPENDS TOKENS, so it is gated on approval. Returns the runId (openable as a chat) plus the workflow's return value; if it hits the wall clock it reports timedOut and keeps running durably.",
   approval: once(),
   inputSchema: z.strictObject({
-    workflow: z.string().min(1).describe("The workflow name to run, e.g. 'qbr-prep'."),
+    workflow: z.string().min(1).describe("The workflow name to run, exactly as the Workflows list shows it."),
     args: z
       .record(z.string(), z.unknown())
       .optional()
@@ -103,7 +103,7 @@ export const runAppTool = modelFacing("run_app", defineTool({
     "REFRESH an App NOW — regenerate its living document (running its workflow or prompt) on demand, instead of waiting for the app's cadence or a human clicking refresh in the Apps tab. Use when someone wants to see or validate an app's current output now. Pass the app NAME or slug (from list_apps). A refresh SPENDS TOKENS (it runs the app's source), so it is gated on approval. Returns whether it refreshed; read the fresh document in the Apps tab.",
   approval: once(),
   inputSchema: z.strictObject({
-    app: z.string().min(1).describe("The app name or slug to refresh, e.g. 'sbi-qbr'."),
+    app: z.string().min(1).describe("The app name or slug to refresh, as list_apps returns it."),
   }),
   async execute({ app }, ctx) {
     const data = await triggerRun(
@@ -112,6 +112,20 @@ export const runAppTool = modelFacing("run_app", defineTool({
       callerEmail(ctx),
       await orgForSession(ctx as SessionCtxLike),
     );
-    return { refreshed: data.ok === true, app: data.app, error: data.error };
+    // The refresh is started, not finished: it runs in the background (lib/app-refresh.ts on the web app) and can
+    // take many minutes. `refreshed` keeps its meaning for the model: the refresh was accepted.
+    return {
+      refreshed: data.ok === true,
+      app: data.app,
+      error: data.error,
+      ...(data.ok === true
+        ? {
+            note:
+              data.joined === true
+                ? "A refresh of this app was already running; it was joined, not started again. The new document (or why it failed) appears in the Apps tab when it finishes."
+                : "The refresh has started and runs in the background; it can take several minutes. The new document (or why it failed) appears in the Apps tab when it finishes.",
+          }
+        : {}),
+    };
   },
 }));

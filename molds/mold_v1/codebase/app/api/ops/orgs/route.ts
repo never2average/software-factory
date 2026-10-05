@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { errorMessage, errorText } from "@/lib/ops-errors";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
@@ -252,6 +252,23 @@ export async function POST(request: NextRequest) {
     } catch (e) {
       provisionError = errorMessage(e);
       console.error("provisionWorkspace failed", { orgId, error: provisionError });
+    }
+    // A starter app whose library says `first_content: "on_create"` gets its first document now, as the person who
+    // created the workspace, after the response has gone (it can take minutes). Every other starter app waits for
+    // the first person to open it, or for its schedule: creating a workspace runs no model unless the library asks.
+    const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    const eager = (provisioned?.starterApps.created ?? []).filter((a) => a.firstContent === "on_create" && a.id);
+    if (bearer && eager.length) {
+      const run = async () => {
+        // Loaded only when a library asks for it: the refresh engine is not part of creating a workspace.
+        const { generateFirstDocument } = await import("@/lib/starter-apps");
+        for (const a of eager) await generateFirstDocument(db, orgId, a.id as string, bearer, identity.email).catch((e) => console.error("starter app first refresh failed", { orgId, app: a.key, error: errorMessage(e) }));
+      };
+      try {
+        after(run);
+      } catch {
+        void run(); // outside a request scope (a test calling the handler directly)
+      }
     }
     return NextResponse.json(
       {

@@ -300,6 +300,108 @@ try {
     const takenB = await tool(t.upsertCycleTool, { id: B1, goal: "planted" }, AMY);
     check("individual: the model cannot touch B's period from A's session", /No cycle with id/.test(takenB.error ?? ""), takenB);
   }
+  /* ------------------------------------------- every mode: a workspace's own period length (orgs.period_length_days) */
+  // Two fresh workspaces: C, whose admin chooses a length, and D, which never does. Each has one period that ended
+  // two days ago (seven days long) with an unfinished item in it, so a rollover has something to open a period for.
+  {
+    const C = `org-plen-c-${TAG}`; const D = `org-plen-d-${TAG}`;
+    const OWN = `owen-${TAG}@plen-c.test`; const MEM = `mia-${TAG}@plen-c.test`; const DOWN = `dora-${TAG}@plen-d.test`;
+    for (const who of [OWN, MEM, DOWN]) bearers[who] = `Bearer ${await mintSessionToken(who)}`;
+    const extraCleanup = async () => {
+      for (const t of ["todos", "cycles", "entity_activity", "automation_audit", "people_roster", "org_members"]) await admin.unsafe(`DELETE FROM ${t} WHERE org_id IN ($1, $2)`, [C, D]).catch(() => undefined);
+      await admin`DELETE FROM orgs WHERE org_id IN (${C}, ${D})`.catch(() => undefined);
+    };
+    closers.unshift(extraCleanup);
+    await extraCleanup();
+    await admin`INSERT INTO orgs (org_id, name, status) VALUES (${C}, 'Length C', 'active'), (${D}, 'Length D', 'active')`;
+    await admin`INSERT INTO org_members (org_id, email, role) VALUES (${C}, ${OWN}, 'owner'), (${C}, ${MEM}, 'member'), (${D}, ${DOWN}, 'owner')`;
+    await admin`INSERT INTO people_roster (email, org_id, name, manager_email) VALUES (${OWN}, ${C}, 'Owen', null), (${MEM}, ${C}, 'Mia', ${OWN}), (${DOWN}, ${D}, 'Dora', null)`;
+    const C0 = await cycle(C, "C zero", ago(9), ago(2), OWN);
+    const D0 = await cycle(D, "D zero", ago(9), ago(2), DOWN);
+    const tC = await todo(C, "mia open in C0", C0, MEM, MEM);
+    const tD = await todo(D, "dora open in D0", D0, DOWN, DOWN);
+    // A checkout without the route (the code before it) fails each check below by name instead of stopping here.
+    const length = (who, method, org, body) => call(who, "app/api/ops/orgs/[id]/period-length/route.ts", method, `/api/ops/orgs/${org}/period-length`, { body, id: org }).catch((e) => ({ status: `no route (${String(e?.message ?? e).slice(0, 60)})`, body: {} }));
+    const orgRow = (who, org) => call(who, "app/api/ops/orgs/[id]/route.ts", "GET", `/api/ops/orgs/${org}`, { id: org });
+    const stored = async (org) => (await admin`SELECT period_length_days AS d FROM orgs WHERE org_id = ${org}`)[0]?.d ?? null;
+    const windowOf = async (id) => (await admin`SELECT to_jsonb(x) - 'state' - 'updated_at' AS r FROM cycles x WHERE id = ${id}`)[0]?.r;
+    const daysLong = (row) => (row?.ends_at && row?.starts_at ? Math.round((new Date(row.ends_at) - new Date(row.starts_at)) / DAY) : null);
+    const C0before = await windowOf(C0);
+    const audits = async (org) => (await admin`SELECT actor, event FROM automation_audit WHERE org_id = ${org} AND automation_type = 'org' ORDER BY created_at`).map((r) => r);
+
+    const g = await orgRow(OWN, C);
+    check("length: the workspace settings answer (GET /api/ops/orgs/{id}) is what it was, with no period length in it", g.status === 200 && !!g.body?.item && !("periodLengthDays" in g.body.item), g.body);
+
+    if (MODE === "off") {
+      const answers = [await length(OWN, "GET", C), await length(OWN, "PUT", C, { lengthDays: 14 })].map((r) => r.status);
+      check("length (off): the setting does not exist: GET and PUT answer 404, and nothing is stored", same(answers, [404, 404]) && (await stored(C)) === null, answers);
+      check("length (off): …and nothing is audited", (await audits(C)).length === 0);
+    } else {
+      const P = await import(root("agent/lib/work-periods.ts"));
+      const POLICY = P.PERIOD_LENGTH ?? { workspaceCanSet: true, min: 1, max: 90 };
+      const CHOSEN = Math.min(POLICY.max, Math.max(POLICY.min, (WP.lengthDays ?? 7) * 2));
+      const read = await length(MEM, "GET", C);
+      check("length: a member reads the workspace's length: the deployment's default, read-only for them", read.status === 200 && read.body.lengthDays === null && read.body.effectiveDays === WP.lengthDays && read.body.defaultDays === WP.lengthDays && read.body.canEdit === false && read.body.workspaceCanSet === true, read.body);
+      const asAdmin = await length(OWN, "GET", C);
+      check("length: …an admin reads that they may change it, and the range", asAdmin.status === 200 && asAdmin.body.canEdit === true && asAdmin.body.min === POLICY.min && asAdmin.body.max === POLICY.max, asAdmin.body);
+      const byMember = await length(MEM, "PUT", C, { lengthDays: CHOSEN });
+      check("length: a member cannot set it (403), and nothing is stored or audited", byMember.status === 403 && (await stored(C)) === null && (await audits(C)).length === 0, byMember);
+      const bad = [];
+      for (const v of [0, POLICY.min - 1, POLICY.max + 1, 7.5, String(CHOSEN), true]) bad.push([v, (await length(OWN, "PUT", C, { lengthDays: v })).status]);
+      const extra = await length(OWN, "PUT", C, { lengthDays: CHOSEN, orgId: D });
+      check("length: an admin's out-of-range or malformed value is refused (400), and nothing is stored", bad.every(([, s]) => s === 400) && extra.status === 400 && (await stored(C)) === null, [bad, extra.status]);
+      const across = await length(OWN, "PUT", D, { lengthDays: CHOSEN });
+      const acrossRead = await length(OWN, "GET", D);
+      check("length: C's admin can neither set nor read D's (403), and D's is untouched", across.status === 403 && acrossRead.status === 403 && (await stored(D)) === null, [across, acrossRead.status]);
+      const set = await length(OWN, "PUT", C, { lengthDays: CHOSEN });
+      check(`length: an admin sets it (${CHOSEN} days): stored on C's own row, D's still the default`, set.status === 200 && set.body.lengthDays === CHOSEN && set.body.effectiveDays === CHOSEN && (await stored(C)) === CHOSEN && (await stored(D)) === null, set);
+      const trail = await audits(C);
+      check("length: the change is in C's audit trail, by the admin, in the deployment's words; none in D's", trail.length === 1 && trail[0].actor === OWN && trail[0].event.includes(`${WP.label.singular} length`) && trail[0].event.includes(`to ${CHOSEN} days`) && (await audits(D)).length === 0, trail);
+      const feed = await call(OWN, "app/api/ops/orgs/[id]/audit/route.ts", "GET", `/api/ops/orgs/${C}/audit`, { id: C });
+      check("length: …and the admin reads it in the workspace's audit feed", feed.status === 200 && (feed.body?.items ?? []).some((r) => r.event === trail[0]?.event), feed.body?.items?.length);
+      check("length: setting it changed no period: C's existing one keeps its dates", same(await windowOf(C0), C0before));
+
+      if (MODE === "individual") {
+        // Auto rollover, on a member's read: C's ended period is followed by one the workspace's length long, D's by one the profile's.
+        await cycles(MEM);
+        const [cNext] = await admin`SELECT to_jsonb(x) AS r FROM cycles x WHERE org_id = ${C} AND id <> ${C0}`.then((r) => r.map((x) => x.r));
+        check(`length (rollover): C's ended period rolled over into a new one ${CHOSEN} days long, right after it, carrying the unfinished item`, daysLong(cNext) === CHOSEN && Math.abs(new Date(cNext.starts_at) - new Date(C0before.ends_at)) < 1000 && (await cycleOf(tC)) === cNext.id, cNext);
+        check("length (rollover): …C's ended period kept its dates (it was only closed)", same(await windowOf(C0), C0before) && (await stateOf(C0)) === "closed");
+        await cycles(DOWN);
+        const [dNext] = await admin`SELECT to_jsonb(x) AS r FROM cycles x WHERE org_id = ${D} AND id <> ${D0}`.then((r) => r.map((x) => x.r));
+        check(`length (rollover): D, which chose nothing, rolled over into one the profile's ${WP.lengthDays} days long`, daysLong(dNext) === WP.lengthDays && (await cycleOf(tD)) === dNext.id, dNext);
+        const made = await cycles(MEM, "POST", {});
+        check(`length (by hand): a period opened in C with no dates runs ${CHOSEN} days`, made.status === 201 && daysLong({ starts_at: made.body.item.startsAt, ends_at: made.body.item.endsAt }) === CHOSEN, made);
+      } else {
+        // Mode team: no auto rollover. A period opened by hand with no dates now takes C's length; D's still has none.
+        check("length (team): reading the list rolled nothing over and changed C's period not at all", (await cycles(MEM)).status === 200 && same(await windowOf(C0), C0before) && (await cycleOf(tC)) === C0);
+        const made = await cycles(MEM, "POST", { name: "By hand" });
+        check(`length (by hand): a period opened in C with no dates runs ${CHOSEN} days, starting where the last one ended`, made.status === 201 && made.body.item.name === "By hand" && daysLong({ starts_at: made.body.item.startsAt, ends_at: made.body.item.endsAt }) === CHOSEN, made);
+        const dMade = await cycles(DOWN, "POST", { name: "By hand in D" });
+        check("length (by hand): …in D, which chose nothing, as before: no dates (the profile gives no length)", dMade.status === 201 && dMade.body.item.startsAt === null && dMade.body.item.endsAt === null, dMade);
+        const dNameless = await cycles(DOWN, "POST", {});
+        check("length (by hand): …and D still needs a name, the answer it always had", dNameless.status === 400, dNameless);
+      }
+
+      // The model's tools read the same value.
+      const t = await import(root("agent/lib/todo-tools.ts"));
+      const byModel = await tool(t.upsertCycleTool, { name: "By the model" }, MEM);
+      const modelRow = byModel.cycle ? await windowOf(byModel.cycle.id) : null;
+      check(`length (model): a period the model opens in C with no dates runs ${CHOSEN} days`, !byModel.error && daysLong(modelRow) === CHOSEN && modelRow?.org_id === C, [byModel, modelRow]);
+      const dByModel = await tool(t.upsertCycleTool, { name: "By the model in D" }, DOWN);
+      const dModelRow = dByModel.cycle ? await windowOf(dByModel.cycle.id) : null;
+      check(`length (model): …in D it runs the profile's length (${WP.lengthDays === null ? "none: no dates" : `${WP.lengthDays} days`})`, !dByModel.error && daysLong(dModelRow) === WP.lengthDays && dModelRow?.org_id === D, [dByModel, dModelRow]);
+
+      const windowsBefore = JSON.stringify(await admin`SELECT id, starts_at, ends_at FROM cycles WHERE org_id = ${C} ORDER BY id`);
+      const back = await length(OWN, "PUT", C, { lengthDays: null });
+      const trail2 = await audits(C);
+      check("length: an admin puts it back to the default; that is audited too", back.status === 200 && back.body.lengthDays === null && back.body.effectiveDays === WP.lengthDays && (await stored(C)) === null && trail2.length === 2 && /\(the default\)/.test(trail2[1].event), [back.body, trail2]);
+      const same2 = await length(OWN, "PUT", C, { lengthDays: null });
+      check("length: setting the value it already has writes no audit line", same2.status === 200 && (await audits(C)).length === 2);
+      check("length: changing it again moved no period of C, the current one included: every one keeps its dates", JSON.stringify(await admin`SELECT id, starts_at, ends_at FROM cycles WHERE org_id = ${C} ORDER BY id`) === windowsBefore && JSON.parse(windowsBefore).length >= 3);
+      check("length: after everything, C's first period still has the dates it was made with", same(await windowOf(C0), C0before));
+    }
+  }
 } catch (e) {
   failures++;
   console.log(`  FAIL [${MODE}] the probe threw — ${e?.stack ?? e}`);

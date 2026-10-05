@@ -77,6 +77,10 @@ export interface DeploymentProfile {
     length_days: number | null;
     /** An ended period's unfinished tasks are carried into the next one, opened when there is none. */
     auto_rollover: boolean;
+    /** [min, max]: the lengths in days a workspace admin may choose for their own workspace. */
+    length_days_range: [number, number];
+    /** May a workspace admin change the length for their workspace? (Resolved: never null in a built profile.) */
+    workspace_can_set_length: boolean;
   };
 }
 export type WorkPeriodMode = "off" | "team" | "individual";
@@ -364,7 +368,12 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
       "plural": "targets"
     },
     "length_days": null,
-    "auto_rollover": false
+    "auto_rollover": false,
+    "length_days_range": [
+      1,
+      90
+    ],
+    "workspace_can_set_length": true
   },
   "account_fields": {
     "hidden": [],

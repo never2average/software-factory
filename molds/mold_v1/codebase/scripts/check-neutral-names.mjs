@@ -6,7 +6,7 @@
  * (customer, deployment, implementation, rollout) are written as prose in base
  * text only under a per-file ceiling (scripts/lib/record-words.mjs), and no data-room
  * folder name is spelled in base code at all: the names are the deployment
- * profile's (scripts/lib/stored-folders.mjs). And base code ships no workflow and no recipe of its own: a workspace's
+ * profile's (scripts/lib/stored-folders.mjs). And base code ships no workflow, no recipe and no starter app of its own: a workspace's
  * library is the deployment profile's (scripts/lib/builtin-library.mjs).
  * And what a work period is called is the profile's too: its default word is spelled only in the default
  * profile, one legacy definition and the listed contracts (scripts/lib/period-words.mjs).
@@ -84,7 +84,7 @@ if (folders.problems.length) {
   for (const p of folders.problems) console.error(`  - ${p}`);
 }
 if (library.problems.length) {
-  console.error(`${problems.length || records.problems.length || folders.problems.length ? "\n" : ""}check-neutral-names: ${library.problems.length} built-in-library problem(s). Base code ships no workflow and no recipe of its own: what a workspace is provisioned with is the deployment profile's (library.sources in profiles/*.json), so a deployment for another line of work is never handed the first product's content.\n`);
+  console.error(`${problems.length || records.problems.length || folders.problems.length ? "\n" : ""}check-neutral-names: ${library.problems.length} built-in-library problem(s). Base code ships no workflow, no recipe and no starter app of its own: what a workspace is provisioned with is the deployment profile's (library.sources in profiles/*.json), so a deployment for another line of work is never handed the first product's content.\n`);
   for (const p of library.problems) console.error(`  - ${p}`);
 }
 if (periods.problems.length) {
@@ -101,5 +101,5 @@ console.log(
 console.log(`check-neutral-names: record words as prose in base text: ${recordTotal} under ${records.counts.size} file ceiling(s); every other scanned file carries none.`);
 const folderTotal = [...folders.counts.values()].reduce((a, b) => a + b, 0);
 console.log(`check-neutral-names: stored folder names (${folderNames.length} known: the former ones and the default profile's) spelled in base code: ${folderTotal} under ${folders.counts.size} file ceiling(s); every other scanned file spells none.`);
-console.log(`check-neutral-names: no workflow or recipe library in base code: the default profile names no library source, no workflow script outside a library directory, no recipe literal, ${library.writers} listed writer(s) of the workflows and recipes tables.`);
+console.log(`check-neutral-names: no workflow or recipe library in base code: the default profile names no library source, no workflow script outside a library directory, no recipe literal, no starter app outside a library, ${library.writers} listed writer(s) of the workflows, recipes and apps tables.`);
 console.log(`check-neutral-names: the default profile's word for a work period (${defaultPeriodWords(ROOT).map((w) => `"${w}"`).join(", ")}, read from profiles/00-default.json) is spelled ${periods.total} time(s) outside it, each inside a listed contract or the one legacy definition.`);

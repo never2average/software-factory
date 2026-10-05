@@ -58,6 +58,8 @@ const FALLBACK: DeploymentProfile["work_periods"] = {
   item_label: { singular: "item", plural: "items" },
   length_days: null,
   auto_rollover: false,
+  length_days_range: [1, 90],
+  workspace_can_set_length: true,
 };
 
 /** What a profile says about periods. A parameter so a test or a preview can pass another profile's. */
@@ -78,6 +80,59 @@ export function workPeriodsOf(profile: { work_periods?: Partial<DeploymentProfil
 
 /** This deployment's. */
 export const WORK_PERIODS: WorkPeriods = workPeriodsOf(DEPLOYMENT_PROFILE);
+
+/**
+ * A WORKSPACE'S OWN PERIOD LENGTH. The profile's `length_days` is the default; a workspace admin may choose another
+ * for their workspace (the workspace's settings screen, PUT /api/ops/orgs/{id}/period-length), stored on the
+ * workspace's own row (`orgs.period_length_days`, null = the default). It applies to the periods the workspace opens
+ * from then on, at every door (a person, the model's tools, auto rollover); a period that exists keeps its dates.
+ * The profile bounds the choice (`length_days_range`) and may withhold it (`workspace_can_set_length`).
+ *
+ * Kept apart from `WorkPeriods` on purpose: that object is a recorded surface of the default profile.
+ */
+export interface PeriodLengthPolicy {
+  /** May a workspace admin choose their workspace's length? Never under mode "off". */
+  workspaceCanSet: boolean;
+  min: number;
+  max: number;
+}
+
+export function periodLengthPolicyOf(profile: { work_periods?: Partial<DeploymentProfile["work_periods"]> }): PeriodLengthPolicy {
+  const wp = profile.work_periods ?? {};
+  const mode = wp.mode ?? FALLBACK.mode;
+  const range = Array.isArray(wp.length_days_range) && wp.length_days_range.length === 2 ? wp.length_days_range : [1, 90];
+  const canSet = typeof wp.workspace_can_set_length === "boolean" ? wp.workspace_can_set_length : true;
+  return { workspaceCanSet: canSet && mode !== "off", min: range[0], max: range[1] };
+}
+
+/** This deployment's. */
+export const PERIOD_LENGTH: PeriodLengthPolicy = periodLengthPolicyOf(DEPLOYMENT_PROFILE);
+
+/**
+ * The length a new period of a workspace runs, in days: the workspace's own when the profile lets it choose one and
+ * it has (brought inside the profile's range, should the range have narrowed since), the profile's otherwise.
+ * null = a new period has no dates until someone sets them.
+ */
+export function effectivePeriodLength(stored: number | null | undefined, wp: WorkPeriods = WORK_PERIODS, policy: PeriodLengthPolicy = PERIOD_LENGTH): number | null {
+  if (!wp.enabled) return null;
+  if (!policy.workspaceCanSet || stored == null || !Number.isInteger(stored)) return wp.lengthDays;
+  return Math.min(policy.max, Math.max(policy.min, stored));
+}
+
+/** Why `value` cannot be a workspace's length (a sentence in the deployment's words), or null when it can. null = back to the default. */
+export function periodLengthRefusal(value: unknown, wp: WorkPeriods = WORK_PERIODS, policy: PeriodLengthPolicy = PERIOD_LENGTH): string | null {
+  if (!wp.enabled || !policy.workspaceCanSet) return `A workspace here cannot change how long a ${wp.label.singular} runs.`;
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < policy.min || value > policy.max) {
+    return `A ${wp.label.singular} runs a whole number of days from ${policy.min} to ${policy.max}.`;
+  }
+  return null;
+}
+
+/** "7 days", "1 day", or "no fixed length". */
+export function daysPhrase(days: number | null): string {
+  return days === null ? "no fixed length" : `${days} day${days === 1 ? "" : "s"}`;
+}
 
 /** The placeholders base text writes for the period words (agent/lib/agent-vocabulary.ts fills them). */
 export const PERIOD_KEYS = [

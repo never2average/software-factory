@@ -12,17 +12,27 @@
 //               code skeleton is one of that library's (scripts/lib/profile-library.mjs: the code without the words it
 //               sends, so a row stored in another vocabulary still matches and a script somebody rewrote does not);
 //   specialist  it is the scriptless "on delegation" row of a specialist this build's profile excludes;
-//   recipe      its slug is one a library directory has shipped and this deployment's profile does not provision it.
+//   recipe      its slug is one a library directory has shipped and this deployment's profile does not provision it;
+//   starter app it carries a starter key (apps.starter_key: `<library id>/<key>`, written only by provisioning) that
+//               is not one of the starter apps this build's library ships: the library is no longer named by the
+//               profile, or no longer ships that app. An app a person or the agent made has no key and is never
+//               looked at.
 //
 // A leftover is KEPT, and reported with why, when a person edited it, ran it, or built on it:
 //   edited      updated after it was created; operator instructions; a saved version (script or instructions);
 //               notification recipients; an account scope; for a recipe, a body or a later update
 //   ran         a workflow run or a recorded specialist run
 //   built on    an app, a schedule or a system cron names it
+// and a leftover starter app is kept when a person
+//   edited      it (changed after it was created: renamed, rescheduled, paused, its brief or source changed)
+//   opened      it, or refreshed it, or its schedule ran: it has a document, a recorded attempt, or one under way.
+//               Opening a starter app is what writes its first document, so an opened one always has one of these.
+// A starter app a person DELETED is already gone from every list; its row is left as it is (it is what stops the
+// app from being created again) and is not reported.
 //
 // A row with a library workflow's NAME whose script is not the library's is not a leftover at all: it is somebody's
 // own workflow. It is reported (so the operator sees why it was not offered for removal) and never removed.
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 
 const EDIT_GRACE_MS = 2000;
 const ms = (d) => (d instanceof Date ? d.getTime() : d ? new Date(d).getTime() : 0);
@@ -33,12 +43,35 @@ const ms = (d) => (d instanceof Date ? d.getTime() : d ? new Date(d).getTime() :
  *
  *   ctx.libraries   knownLibraries(root): [{ id, workflows: Map<name, Set<skeleton>>, recipes: Set<slug> }]
  *   ctx.skeleton    scriptSkeleton
- *   ctx.provisioned { workflows: Set<name>, recipes: Set<slug> } what THIS deployment's profile provisions
+ *   ctx.provisioned { workflows: Set<name>, recipes: Set<slug>, apps: Set<starter key> } what THIS deployment's profile
+ *                   provisions (without `apps`, starter apps are not looked at)
+ *   ctx.sources     the library ids this build's profile names (only to word a starter app's origin)
  *   ctx.excluded    the specialists this deployment's profile excludes
  */
-export function classify({ workflows, recipes, evidence }, ctx) {
+export function classify({ workflows, recipes, evidence, apps = [], appEvidence = new Map() }, ctx) {
   const removable = [];
   const kept = [];
+  // Starter apps first: one that is going is not a reason to keep the workflow it was built on.
+  const goingApps = new Set();
+  for (const a of ctx.provisioned.apps ? apps : []) {
+    if (!a.starterKey || a.deletedAt || ctx.provisioned.apps.has(a.starterKey)) continue;
+    const lib = a.starterKey.split("/")[0];
+    const origin = (ctx.sources ?? []).includes(lib)
+      ? `starter app of the "${lib}" library, which no longer ships it`
+      : `starter app of the "${lib}" library, which this build's profile does not name`;
+    const why = [];
+    const e = appEvidence.get(a.id) ?? {};
+    const opened = a.contentUpdatedAt || a.lastRefreshAt || (a.contentMd ?? "").trim() || a.lastRunId || a.lastSessionId || a.lastError;
+    if (opened) why.push(`opened or refreshed: ${a.contentUpdatedAt ? "it has a document" : "a refresh was attempted"}`);
+    if (e.versions) why.push(`opened or refreshed: ${e.versions} version(s) in its history`);
+    if (a.refreshingAt) why.push("opened or refreshed: a refresh is under way");
+    // A refresh changes updated_at too; only an app nobody has refreshed can be told "edited" by its timestamps.
+    if (!opened && !a.refreshingAt && ms(a.updatedAt) - ms(a.createdAt) > EDIT_GRACE_MS) why.push("edited: changed after it was created");
+    if (a.enabled === false) why.push("edited: paused");
+    if (a.createdBy && a.createdBy !== "system") why.push(`not created by provisioning (created by ${a.createdBy})`);
+    if (!why.length) goingApps.add(a.id);
+    (why.length ? kept : removable).push({ table: "apps", id: a.id, name: a.name, origin, ...(why.length ? { why } : {}) });
+  }
   const libraryOf = (name) => ctx.libraries.find((l) => l.workflows.has(name));
   for (const w of workflows) {
     let origin = null;
@@ -63,7 +96,9 @@ export function classify({ workflows, recipes, evidence }, ctx) {
     if (w.customerId) why.push("edited: scoped to one account");
     if (e.workflowRuns) why.push(`ran: ${e.workflowRuns} workflow run(s)`);
     if (e.automationRuns) why.push(`ran: ${e.automationRuns} recorded run(s)`);
-    if (e.apps?.length) why.push(`built on: app(s) ${e.apps.map((a) => `"${a}"`).join(", ")}`);
+    // An app is { id, name } (planWorkspace) or, from a caller that has only names, a name.
+    const builtOn = (e.apps ?? []).filter((a) => typeof a === "string" || !goingApps.has(a.id));
+    if (builtOn.length) why.push(`built on: app(s) ${builtOn.map((a) => `"${typeof a === "string" ? a : a.name}"`).join(", ")}`);
     if (e.schedules) why.push(`built on: ${e.schedules} schedule(s)`);
     if (e.crons) why.push(`built on: ${e.crons} system cron(s)`);
     (why.length ? kept : removable).push({ table: "workflows", id: w.id, name: w.name, origin, ...(why.length ? { why } : {}) });
@@ -83,7 +118,7 @@ export function classify({ workflows, recipes, evidence }, ctx) {
 
 /** One workspace's plan. `tx` is scoped to `orgId` (withOrgDb); `schema` is agent/lib/db/schema.ts. */
 export async function planWorkspace(tx, schema, orgId, ctx) {
-  const { workflows, recipes, workflowInstructionVersions, workflowRuns, automationRuns, apps, scheduleRules, systemCronOverrides } = schema;
+  const { workflows, recipes, workflowInstructionVersions, workflowRuns, automationRuns, apps, appVersions, scheduleRules, systemCronOverrides } = schema;
   const wfRows = await tx.select().from(workflows).where(eq(workflows.orgId, orgId));
   const recipeRows = await tx.select().from(recipes).where(eq(recipes.orgId, orgId));
   const evidence = new Map(wfRows.map((w) => [w.id, {}]));
@@ -102,9 +137,9 @@ export async function planWorkspace(tx, schema, orgId, ctx) {
     }
     for (const r of await tx.select({ id: automationRuns.automationId, n: sql`count(*)` }).from(automationRuns)
       .where(and(eq(automationRuns.orgId, orgId), eq(automationRuns.automationType, "workflow"), inArray(automationRuns.automationId, ids))).groupBy(automationRuns.automationId)) bump(r.id, "automationRuns", r.n);
-    for (const a of await tx.select({ name: apps.name, workflow: apps.workflow }).from(apps)
+    for (const a of await tx.select({ id: apps.id, name: apps.name, workflow: apps.workflow }).from(apps)
       .where(and(eq(apps.orgId, orgId), isNull(apps.deletedAt), eq(apps.sourceKind, "workflow"), inArray(apps.workflow, names)))) {
-      for (const id of idByName.get(a.workflow) ?? []) { const e = evidence.get(id); e.apps = [...(e.apps ?? []), a.name]; }
+      for (const id of idByName.get(a.workflow) ?? []) { const e = evidence.get(id); e.apps = [...(e.apps ?? []), { id: a.id, name: a.name }]; }
     }
     for (const r of await tx.select({ workflow: scheduleRules.workflow, n: sql`count(*)` }).from(scheduleRules)
       .where(and(eq(scheduleRules.orgId, orgId), inArray(scheduleRules.workflow, names))).groupBy(scheduleRules.workflow)) for (const id of idByName.get(r.workflow) ?? []) bump(id, "schedules", r.n);
@@ -112,13 +147,21 @@ export async function planWorkspace(tx, schema, orgId, ctx) {
     for (const r of await tx.select({ workflow: systemCronOverrides.workflow, n: sql`count(*)` }).from(systemCronOverrides)
       .where(inArray(systemCronOverrides.workflow, names)).groupBy(systemCronOverrides.workflow)) for (const id of idByName.get(r.workflow) ?? []) bump(id, "crons", r.n);
   }
-  return classify({ workflows: wfRows, recipes: recipeRows, evidence }, ctx);
+  // Starter apps: every row that carries a key, with how many versions its history holds.
+  const appRows = ctx.provisioned.apps ? await tx.select().from(apps).where(and(eq(apps.orgId, orgId), isNotNull(apps.starterKey))) : [];
+  const appEvidence = new Map();
+  if (appRows.length) {
+    for (const r of await tx.select({ id: appVersions.appId, n: sql`count(*)` }).from(appVersions)
+      .where(and(eq(appVersions.orgId, orgId), inArray(appVersions.appId, appRows.map((a) => a.id)))).groupBy(appVersions.appId)) appEvidence.set(r.id, { versions: Number(r.n) });
+  }
+  return classify({ workflows: wfRows, recipes: recipeRows, evidence, apps: appRows, appEvidence }, ctx);
 }
 
 /** Delete exactly the rows a plan called removable, re-checked by id inside the workspace's scope. Returns counts. */
 export async function applyPlan(tx, schema, orgId, plan) {
-  const out = { workflows: 0, recipes: 0 };
-  for (const table of ["workflows", "recipes"]) {
+  const out = { workflows: 0, recipes: 0, apps: 0 };
+  // Apps first: a starter app that is going was the only thing built on its workflow.
+  for (const table of ["apps", "workflows", "recipes"]) {
     const ids = plan.removable.filter((r) => r.table === table).map((r) => r.id);
     if (!ids.length) continue;
     const t = schema[table];

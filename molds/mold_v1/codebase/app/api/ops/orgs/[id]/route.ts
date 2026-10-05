@@ -7,6 +7,13 @@ import { getOpsDb } from "@/lib/ops-db";
 import { canAccessOrg, DEFAULT_DOMAIN, DEFAULT_ORG, isOrgAdmin, orgContextForRequest, tenancyEnabled } from "@/lib/org-context";
 
 export const runtime = "nodejs";
+
+/** The row as this route has always answered it. The work-period length has its own door (./period-length): it is
+ *  read and changed there, under the profile's rules, and not shown at all where the deployment has no periods. */
+const asSettings = <T extends { periodLengthDays?: unknown }>(row: T): Omit<T, "periodLengthDays"> => {
+  const { periodLengthDays: _own, ...rest } = row;
+  return rest;
+};
 export const dynamic = "force-dynamic";
 
 /**
@@ -30,7 +37,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   try {
     const [row] = await db.select().from(orgs).where(eq(orgs.orgId, id)).limit(1);
     if (!row) return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
-    return NextResponse.json({ item: row, role: ctx.role });
+    return NextResponse.json({ item: asSettings(row), role: ctx.role });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
@@ -101,7 +108,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const [row] = await db.update(orgs).set(set).where(eq(orgs.orgId, id)).returning();
     if (!row) return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
-    return NextResponse.json({ item: row });
+    return NextResponse.json({ item: asSettings(row) });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }

@@ -78,6 +78,8 @@ import { SUBAGENT_META } from "../subagent-meta.generated";
 import { an, W } from "@/lib/ui-words";
 import { lowerFirst } from "@/lib/profile-domains";
 import { jsonForPeople } from "@/lib/ui-keys";
+import { PERIOD_UI } from "@/lib/work-periods-ui";
+import { PERIOD_LENGTH } from "@/agent/lib/work-periods";
 type Role = "owner" | "admin" | "engineer" | "member";
 type WorkspaceTab =
   | "dataroom"
@@ -85,6 +87,7 @@ type WorkspaceTab =
   | "agents"
   | "connectors"
   | "workflows"
+  | "periods"
   | "audit"
   | "readiness"
   | "settings"
@@ -244,6 +247,9 @@ const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: "agents", label: "Agents" },
   { key: "connectors", label: "Connectors" },
   { key: "workflows", label: "Project workflows" },
+  // The workspace's own period length, under the deployment's word for a period. Only where the deployment has
+  // periods and lets a workspace choose their length (profile work_periods.workspace_can_set_length).
+  ...(PERIOD_UI.enabled && PERIOD_LENGTH.workspaceCanSet ? [{ key: "periods" as const, label: PERIOD_UI.navLabel }] : []),
   { key: "audit", label: "Audit trail" },
 ];
 
@@ -556,6 +562,8 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
         <div className="flex min-h-0 flex-1 flex-col p-4"><PeopleTab orgId={orgId} role={role} authorEmail={authorEmail} /></div>
       ) : tab === "agents" ? (
         <div className="flex min-h-0 flex-1 flex-col p-4"><AgentsTab role={role} /></div>
+      ) : tab === "periods" && TABS.some((t) => t.key === "periods") ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4"><PeriodLengthTab orgId={orgId} /></div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col p-4"><AuditTab orgId={orgId} /></div>
       )}
@@ -1069,6 +1077,101 @@ function SettingsTab({ orgId, role }: { orgId: string; role: Role }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------- Work-period length ---------------------------- */
+
+interface PeriodLengthAnswer {
+  lengthDays: number | null;
+  effectiveDays: number | null;
+  defaultDays: number | null;
+  min: number;
+  max: number;
+  workspaceCanSet: boolean;
+  canEdit: boolean;
+}
+
+/**
+ * How long a new period of this workspace runs (GET/PUT /api/ops/orgs/{id}/period-length), in the deployment's word
+ * for a period. A workspace admin changes it; everyone else reads it. The server decides who may (`canEdit`) and
+ * what is allowed (`min`..`max`); this only shows it.
+ */
+function PeriodLengthTab({ orgId }: { orgId: string }) {
+  const [state, setState] = useState<PeriodLengthAnswer | null>(null);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const url = `/api/ops/orgs/${orgId}/period-length`;
+  const take = useCallback((d: PeriodLengthAnswer) => {
+    setState(d);
+    setDraft(d.effectiveDays == null ? "" : String(d.effectiveDays));
+  }, []);
+  useEffect(() => {
+    setState(null);
+    opsFetch<PeriodLengthAnswer>(url).then(take).catch((e) => setError(errMessage(e)));
+  }, [url, take]);
+
+  async function put(lengthDays: number | null) {
+    setSaving(true);
+    setSaved(false);
+    setError(null);
+    try {
+      take(await opsFetch<PeriodLengthAnswer>(url, { method: "PUT", body: JSON.stringify({ lengthDays }) }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError(errMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!state) return error ? <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div> : <div className="flex justify-center py-16"><Spinner /></div>;
+  const days = draft.trim() === "" ? null : Number(draft);
+  const valid = days !== null && Number.isInteger(days) && days >= state.min && days <= state.max;
+  const usesDefault = state.lengthDays === null;
+  const shown = (n: number | null) => (n === null ? "No fixed length" : `${n} day${n === 1 ? "" : "s"}`);
+  return (
+    <div className="max-w-lg space-y-4" data-testid="period-length">
+      {error && <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
+      <div className="space-y-1.5">
+        <label htmlFor="period-length-days" className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">{PERIOD_UI.lengthLabel}</label>
+        {state.canEdit ? (
+          <div className="flex items-center gap-2">
+            <Input
+              id="period-length-days"
+              type="number"
+              inputMode="numeric"
+              min={state.min}
+              max={state.max}
+              step={1}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              className="w-28"
+              aria-describedby="period-length-note"
+            />
+            <span className="text-sm text-muted-foreground">days</span>
+            <Button onClick={() => valid && put(days)} disabled={!valid || saving || days === state.lengthDays}>Save</Button>
+            {!usesDefault && (
+              <Button variant="outline" onClick={() => put(null)} disabled={saving}>Use the default</Button>
+            )}
+            {saved && <span className="text-xs text-emerald-700 dark:text-emerald-400">Saved</span>}
+          </div>
+        ) : (
+          <div className="text-sm" id="period-length-days">{shown(state.effectiveDays)}</div>
+        )}
+        <p id="period-length-note" className="text-xs text-muted-foreground">{PERIOD_UI.lengthNote}</p>
+        {state.canEdit && !valid && draft.trim() !== "" && (
+          <p className="text-xs text-destructive">Choose a whole number of days from {state.min} to {state.max}.</p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          {usesDefault ? PERIOD_UI.lengthDefault(state.defaultDays) : `${PERIOD_UI.lengthDefault(state.defaultDays)} This workspace uses its own.`}
+          {state.canEdit ? ` Allowed: ${state.min} to ${state.max} days.` : " Only a workspace admin or owner can change it."}
+        </p>
+      </div>
     </div>
   );
 }

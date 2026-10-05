@@ -6,6 +6,9 @@
 //   npm run operator:library-cleanup -- --org <id> --apply # remove the rows listed as removable; nothing else
 //   npm run operator:library-cleanup -- --json             # the same plan as JSON on stdout
 //
+// It knows starter apps too (the apps a library gives a new workspace): one from a library this build no longer
+// names is removable while nobody has edited, opened or refreshed it, and kept from then on.
+//
 // Nothing is ever removed without --apply, and --apply removes only rows nobody edited, ran or built on. A row a
 // person touched is kept and listed with the evidence. The rules are in scripts/operator/lib/library-cleanup.mjs.
 //
@@ -15,7 +18,7 @@ import { dirname, join } from "node:path";
 import { getDb, closeDb, withOrgDb } from "../../agent/lib/db/index.ts";
 import * as schema from "../../agent/lib/db/schema.ts";
 import { VOCABULARY } from "../../agent/lib/agent-vocabulary.ts";
-import { deploymentRecipes, deploymentWorkflowLibrary } from "../../agent/lib/workflow-library-view.ts";
+import { deploymentRecipes, deploymentStarterApps, deploymentWorkflowLibrary } from "../../agent/lib/workflow-library-view.ts";
 import { LIBRARY_SOURCES } from "../../agent/lib/workflow-library.generated.ts";
 import { knownLibraries, scriptSkeleton } from "../lib/profile-library.mjs";
 import { applyPlan, planWorkspace } from "./lib/library-cleanup.mjs";
@@ -36,7 +39,12 @@ async function main() {
   const ctx = {
     libraries: knownLibraries(ROOT),
     skeleton: scriptSkeleton,
-    provisioned: { workflows: new Set(deploymentWorkflowLibrary().map((w) => w.name)), recipes: new Set(deploymentRecipes().map((r) => r.slug)) },
+    provisioned: {
+      workflows: new Set(deploymentWorkflowLibrary().map((w) => w.name)),
+      recipes: new Set(deploymentRecipes().map((r) => r.slug)),
+      apps: new Set(deploymentStarterApps().map((a) => a.key)),
+    },
+    sources: LIBRARY_SOURCES,
     excluded: VOCABULARY.excludedSpecialists,
   };
   const all = only
@@ -61,11 +69,12 @@ async function main() {
     report.push({ workspace: org.orgId, ...result });
     say(`\n${org.orgId}  (${org.name})`);
     if (!result.removable.length && !result.kept.length) { say(`  ${glyph.ok} nothing left over`); continue; }
-    say(`  ${apply ? "removed" : "would remove"} (${result.removable.length}): never edited, never run, nothing built on them`);
-    for (const r of result.removable) say(`    ${glyph.info} ${r.table === "recipes" ? "recipe  " : "workflow"} ${r.name}  — ${r.origin}`);
+    const kind = (r) => (r.table === "recipes" ? "recipe  " : r.table === "apps" ? "app     " : "workflow");
+    say(`  ${apply ? "removed" : "would remove"} (${result.removable.length}): never edited, never run or opened, nothing built on them`);
+    for (const r of result.removable) say(`    ${glyph.info} ${kind(r)} ${r.name}  — ${r.origin}`);
     say(`  kept (${result.kept.length}):`);
-    for (const r of result.kept) say(`    ${glyph.warn} ${r.table === "recipes" ? "recipe  " : "workflow"} ${r.name}  — ${r.origin}; ${r.why.join("; ")}`);
-    if (result.removed) say(`  ${glyph.ok} removed ${result.removed.workflows} workflow row(s) and ${result.removed.recipes} recipe row(s)`);
+    for (const r of result.kept) say(`    ${glyph.warn} ${kind(r)} ${r.name}  — ${r.origin}; ${r.why.join("; ")}`);
+    if (result.removed) say(`  ${glyph.ok} removed ${result.removed.workflows} workflow row(s), ${result.removed.recipes} recipe row(s) and ${result.removed.apps} starter app(s)`);
   }
   if (json) console.log(JSON.stringify({ applied: apply, library: LIBRARY_SOURCES, excluded: ctx.excluded, workspaces: report }, null, 2));
   else if (!apply && report.some((r) => r.removable.length)) say(`\nNothing was changed. To remove the rows listed as removable: npm run operator:library-cleanup -- ${only ? `--org ${only} ` : ""}--apply`);

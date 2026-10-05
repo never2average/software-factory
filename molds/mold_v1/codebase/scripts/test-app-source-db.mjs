@@ -215,7 +215,19 @@ try {
   const appsRoute = await import("../app/api/ops/apps/route.ts");
   const appRoute = await import("../app/api/ops/apps/[id]/route.ts");
   const refreshRoute = await import("../app/api/ops/apps/[id]/refresh/route.ts");
-  const refresh = async (id) => json(await refreshRoute.POST(as(`/api/ops/apps/${id}/refresh`, { method: "POST" }), { params: Promise.resolve({ id }) }));
+  // A refresh answers at once (202) and finishes in the background (lib/app-refresh.ts): wait for it to settle.
+  const settled = async (id, ms = 20_000) => {
+    for (const t0 = Date.now(); Date.now() - t0 < ms; await new Promise((r) => setTimeout(r, 50))) {
+      const row = await appRow(id);
+      if (!row?.refreshing_at) return row;
+    }
+    return appRow(id);
+  };
+  const refresh = async (id) => {
+    const out = await json(await refreshRoute.POST(as(`/api/ops/apps/${id}/refresh`, { method: "POST" }), { params: Promise.resolve({ id }) }));
+    await settled(id);
+    return out;
+  };
   const patch = async (id, body) => json(await appRoute.PATCH(as(`/api/ops/apps/${id}`, { method: "PATCH", body }), { params: Promise.resolve({ id }) }));
   const create = async (body) => json(await appsRoute.POST(as("/api/ops/apps", { method: "POST", body: { createdBy: ANALYST, ...body } })));
   const listed = async () => (await json(await appsRoute.GET(as("/api/ops/apps")))).body?.items ?? [];
@@ -256,7 +268,7 @@ try {
     const mark = asked.length;
     const out = await refresh(specialistApp.id);
     const row = await appRow(specialistApp.id);
-    check("the refresh succeeds (200)", out.status === 200 && out.body?.ok === true, out);
+    check("the refresh starts (202) and settles", out.status === 202 && out.body?.ok === true && out.body.started === true, out);
     check("its document is the specialist's reply", row.content_md === DOCUMENT(SPECIALIST), row.content_md);
     check("no error on the app, and the session it came from is recorded", row.last_error === null && Boolean(row.last_session_id) && row.content_updated_at !== null, { last_error: row.last_error, last_session_id: row.last_session_id });
     const ask = asked.slice(mark);
@@ -270,7 +282,7 @@ try {
     const mark2 = asked.length;
     const out2 = await refresh(briefed.body?.item?.id);
     const said = asked.slice(mark2)[0]?.message ?? "";
-    check("with a brief, the specialist is given the brief, and the company the app is about, in this deployment's word", out2.status === 200 && /Table of borrowings by instrument/.test(said) && /It is about one company: acme-housing\./.test(said) && !/Produce the document for the app/.test(said), said);
+    check("with a brief, the specialist is given the brief, and the company the app is about, in this deployment's word", out2.status === 202 && /Table of borrowings by instrument/.test(said) && /It is about one company: acme-housing\./.test(said) && !/Produce the document for the app/.test(said), said);
   }
 
   /* ---- 4. an app from a script --------------------------------------------------------------------------------- */
@@ -280,7 +292,7 @@ try {
     check("created (201), as a script", made.status === 201 && made.body?.item?.source?.kind === "script", made);
     const out = await refresh(made.body.item.id);
     const row = await appRow(made.body.item.id);
-    check("the refresh succeeds and the document is what the script returned", out.status === 200 && row.content_md === DOCUMENT(SPECIALIST) && row.last_error === null, { out, content: row.content_md, error: row.last_error });
+    check("the refresh succeeds and the document is what the script returned", out.status === 202 && row.content_md === DOCUMENT(SPECIALIST) && row.last_error === null, { out, content: row.content_md, error: row.last_error });
     const [run] = row.last_run_id ? await admin`SELECT status, workflow_name FROM workflow_runs WHERE run_id = ${row.last_run_id}` : [];
     check("…through a durable workflow run, recorded completed", run?.status === "completed" && run.workflow_name === "kpi-table", { run, last_run_id: row.last_run_id });
   }
@@ -296,7 +308,7 @@ try {
     check("the list still shows its error, and says its source CAN run now", item?.lastError === 'Workflow "annual-report-format" has no script.' && item.source?.ok === true && item.source.kind === "specialist", item);
     const out = await refresh(old.id);
     const row = await appRow(old.id);
-    check("a retry succeeds on the same app (200)", out.status === 200 && out.body?.ok === true && out.body.item?.id === old.id, out);
+    check("a retry starts on the same app (202)", out.status === 202 && out.body?.ok === true && out.body.item?.id === old.id, out);
     check("it has its document and the error is gone", row.content_md === DOCUMENT(SPECIALIST) && row.last_error === null, { content: row.content_md, error: row.last_error });
   }
 
@@ -325,7 +337,7 @@ try {
     const [attempt] = await admin`SELECT error FROM app_versions WHERE app_id = ${broken.id} AND error IS NOT NULL ORDER BY created_at DESC LIMIT 1`;
     check("the failed attempt stays in the version history", attempt?.error === sentence, attempt);
     const out2 = await refresh(broken.id);
-    check("and the same app now refreshes to a document", out2.status === 200 && (await appRow(broken.id)).content_md === DOCUMENT(SPECIALIST), out2);
+    check("and the same app now refreshes to a document", out2.status === 202 && (await appRow(broken.id)).content_md === DOCUMENT(SPECIALIST), out2);
     const renamed = await patch(broken.id, { name: "Notes board (renamed)" });
     check("an edit that does not touch the source leaves the document and state alone", renamed.status === 200 && (await appRow(broken.id)).content_md === DOCUMENT(SPECIALIST), renamed);
   }

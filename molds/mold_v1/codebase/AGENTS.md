@@ -71,13 +71,15 @@ deployment that already holds files pins the names it has and nothing moves; one
 exported through `modelFacing(...)`; the root prompt is `agent/prompt-*.md`, rendered by
 `agent/instructions.ts`, and a base specialist's is its `prompt.md`.
 
-Base code ships **no workflow and no recipe of its own**. What a new workspace is provisioned
-with (workflow scripts, the onboarding recipe catalog) is the content of the directories the
+Base code ships **no workflow, no recipe and no starter app of its own**. What a new workspace is provisioned
+with (workflow scripts, the onboarding recipe catalog, the apps its Apps tab opens with) is the content of the directories the
 profile names under `library.sources`: none by default, the first product's under
 [`library/account-delivery/`](library/account-delivery/README.md) for a deployment that opts in
 (`cp library/account-delivery/profile.json profiles/40-library-account-delivery.json`), a
 pack's own beside its specialists. A specialist the profile excludes gets no row. Existing
-workspaces are never changed by a build: `npm run operator:library-cleanup` lists what an
+workspaces are never changed by a build: `npm run operator:library-apply` lists the starter
+apps a library would add to one (a dry run) and adds them only with `--apply`;
+`npm run operator:library-cleanup` lists what an
 earlier build left behind (a dry run) and removes only untouched rows, only with `--apply`.
 `npm run check:neutral-names` refuses a library in base code. See "library" in
 [`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md).

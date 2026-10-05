@@ -74,6 +74,10 @@ export interface PeriodUi {
   carryMineLabel: string;
   progressLabel: (done: number, planned: number) => string;
   peopleCount: (n: number) => string;
+  /** The workspace's own period length (the workspace settings screen; admins change it). */
+  lengthLabel: string;
+  lengthNote: string;
+  lengthDefault: (days: number | null) => string;
 }
 
 export function periodUi(wp: WorkPeriods = WORK_PERIODS): PeriodUi {
@@ -112,6 +116,9 @@ export function periodUi(wp: WorkPeriods = WORK_PERIODS): PeriodUi {
     carryMineLabel: `Carry my unfinished ${i.plural} to the next ${p.singular}`,
     progressLabel: (done, planned) => `${done}/${planned} ${planned === 1 ? i.singular : i.plural} done`,
     peopleCount: (n) => `${n} ${n === 1 ? "person" : "people"}`,
+    lengthLabel: `${cap(p.singular)} length`,
+    lengthNote: `Applies to new ${p.plural}; the current one keeps its dates.`,
+    lengthDefault: (days) => `Default: ${days === null ? `no fixed length (a new ${p.singular} has no dates until someone sets them)` : `${days} day${days === 1 ? "" : "s"}`}.`,
   };
 }
 

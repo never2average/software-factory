@@ -21,6 +21,9 @@
  *      write that names a period is refused, and NOTHING the model reads mentions a cycle or the default's word for one.
  *   5. MODE "individual" (a copy under 50-individual.json): the views, the words, the tools and their descriptions
  *      are a person's own items within the period; no lead and no capacity anywhere; the goals route exists.
+ *   7. A WORKSPACE'S OWN LENGTH (work_periods.length_days_range, workspace_can_set_length): the generator's refusals,
+ *      the rule that picks a workspace's length, the words of the settings screen, and that only a workspace admin's
+ *      route writes it (the agent reads it and holds no write). The database half is in test-work-periods-db.mjs.
  *   6. The relabelled fixture (scripts/fixtures/agent-vocabulary/50-relabelled.json), which check:agent-vocabulary
  *      and check:ui-vocabulary render, is in mode individual, so those two gates hold that mode's whole surface.
  *
@@ -324,6 +327,72 @@ await part("the relabelled fixture", async () => {
   check("scripts/fixtures/agent-vocabulary/50-relabelled.json is in mode individual, the same block as 50-individual.json", same(mine, block), mine);
   const spec = readFileSync(join(ROOT, "scripts/lib/rendered-text.mjs"), "utf8");
   check("the rendered-page pass opens a period and expects each person's own items (scripts/lib/rendered-text.mjs)", spec.includes(`view=${BEFORE.views[0]}`) && /periodExpectations/.test(spec));
+});
+
+/* ------------------------------------------------------------------------- 7. a workspace's own period length */
+console.log("\n7. A workspace's own period length (work_periods.length_days_range, workspace_can_set_length)");
+await part("the workspace's length: the generator", async () => {
+  const d = generate(null);
+  check("the default profile: workspaces may choose, from 1 to 90 days, and the default length is still none", d.status === 0 && same(d.wp?.length_days_range, [1, 90]) && d.wp.workspace_can_set_length === true && d.wp.length_days === null, d.wp ?? d.err);
+  const refused = [
+    ["a range that is not a pair", { length_days_range: [7] }, /work_periods\.length_days_range must be \[min, max\]/],
+    ["a range written largest first", { length_days_range: [30, 7] }, /work_periods\.length_days_range must be \[min, max\]/],
+    ["a range starting at zero days", { length_days_range: [0, 30] }, /work_periods\.length_days_range must be \[min, max\]/],
+    ["a range of fractions", { length_days_range: [1.5, 30] }, /work_periods\.length_days_range must be \[min, max\]/],
+    ["a range past a year", { length_days_range: [1, 400] }, /work_periods\.length_days_range must be \[min, max\]/],
+    ["a default length outside the range", { mode: "individual", length_days: 120 }, /work_periods\.length_days: 120 is outside length_days_range \[1, 90\]/],
+    ["…or outside a narrowed one", { mode: "individual", length_days: 7, length_days_range: [14, 28] }, /outside length_days_range \[14, 28\]/],
+    ["workspace_can_set_length that is not true, false or null", { workspace_can_set_length: "yes" }, /work_periods\.workspace_can_set_length must be true, false or null/],
+    ["workspace_can_set_length under mode off", { mode: "off", workspace_can_set_length: true }, /no length to set when mode is "off"/],
+  ];
+  for (const [what, block, message] of refused) {
+    const r = wpOf(block);
+    check(`refused: ${what}`, r.status !== 0 && message.test(r.err), r.err.trim().slice(0, 300) || r.wp);
+  }
+  const individual = generate(JSON.parse(readFileSync(join(FIXTURES, "50-individual.json"), "utf8")));
+  check("mode individual (a week): workspaces may choose, the week stays the default", individual.status === 0 && individual.wp.workspace_can_set_length === true && individual.wp.length_days === 7, individual.wp ?? individual.err);
+  const off = generate(JSON.parse(readFileSync(join(FIXTURES, "50-off.json"), "utf8")));
+  check('mode "off": no workspace may choose (it resolves to false)', off.status === 0 && off.wp.workspace_can_set_length === false, off.wp ?? off.err);
+  const fixed = wpOf({ mode: "individual", length_days: 14, length_days_range: [7, 28], workspace_can_set_length: false });
+  check("a profile may fix the length for every workspace, and state its own range", fixed.status === 0 && fixed.wp.workspace_can_set_length === false && same(fixed.wp.length_days_range, [7, 28]), fixed.wp ?? fixed.err);
+  const longer = wpOf({ mode: "individual", length_days: 120, length_days_range: [30, 180] });
+  check("…and a long default builds once the range holds it", longer.status === 0 && longer.wp.length_days === 120, longer.err);
+});
+await part("the workspace's length: the rules", async () => {
+  const wp = await import("../agent/lib/work-periods.ts");
+  const block = (over) => ({ work_periods: { mode: "individual", label: { singular: "week", plural: "weeks" }, list_label: { singular: "week", plural: "weeks" }, item_label: { singular: "target", plural: "targets" }, length_days: 7, auto_rollover: true, length_days_range: [3, 30], workspace_can_set_length: true, ...over } });
+  const ind = wp.workPeriodsOf(block({})); const pol = wp.periodLengthPolicyOf(block({}));
+  check("the policy reads the range and the switch", same(pol, { workspaceCanSet: true, min: 3, max: 30 }), pol);
+  check("a workspace that chose nothing gets the profile's length", wp.effectivePeriodLength(null, ind, pol) === 7 && wp.effectivePeriodLength(undefined, ind, pol) === 7);
+  check("a workspace's own choice wins", wp.effectivePeriodLength(14, ind, pol) === 14);
+  check("a choice the range has since narrowed past is brought inside it", wp.effectivePeriodLength(60, ind, pol) === 30 && wp.effectivePeriodLength(1, ind, pol) === 3);
+  const fixedPol = wp.periodLengthPolicyOf(block({ workspace_can_set_length: false }));
+  check("where the profile fixes the length, a stored choice is ignored", wp.effectivePeriodLength(14, ind, fixedPol) === 7);
+  const offWp = wp.workPeriodsOf(block({ mode: "off", auto_rollover: false })); const offPol = wp.periodLengthPolicyOf(block({ mode: "off", auto_rollover: false }));
+  check('under mode "off" there is no length and no choice, whatever is stored', wp.effectivePeriodLength(14, offWp, offPol) === null && offPol.workspaceCanSet === false);
+  const refusals = [0, 2, 31, 7.5, "14", true, undefined].map((v) => wp.periodLengthRefusal(v, ind, pol));
+  check("out of range, fractional and non-numbers are refused, in the profile's words", refusals.every((r) => r === "A week runs a whole number of days from 3 to 30."), refusals);
+  check("in range, and null (back to the default), are accepted", wp.periodLengthRefusal(3, ind, pol) === null && wp.periodLengthRefusal(30, ind, pol) === null && wp.periodLengthRefusal(null, ind, pol) === null);
+  check("where the profile fixes it, every value is refused", /A workspace here cannot change how long a week runs/.test(wp.periodLengthRefusal(14, ind, fixedPol) ?? ""));
+  const older = wp.periodLengthPolicyOf({ work_periods: { mode: "team" } });
+  check("a profile written before the keys existed: workspaces may choose, 1 to 90 days", same(older, { workspaceCanSet: true, min: 1, max: 90 }), older);
+  const ui = await import("../lib/work-periods-ui.ts");
+  const strings = ui.periodUi(ind);
+  check("the settings screen names it in the profile's word and says what a change does", strings.lengthLabel === "Week length" && strings.lengthNote === "Applies to new weeks; the current one keeps its dates." && strings.lengthDefault(7) === "Default: 7 days.", strings.lengthLabel);
+  const coverage = ui.periodUi(wp.workPeriodsOf(block({ label: { singular: "coverage target", plural: "coverage targets" } })));
+  check('…so a deployment whose period is a "coverage target" reads "Coverage target length"', coverage.lengthLabel === "Coverage target length" && coverage.lengthNote === "Applies to new coverage targets; the current one keeps its dates.", coverage.lengthLabel);
+});
+await part("the workspace's length: who may change it", async () => {
+  const { execSync } = await import("node:child_process");
+  // The agent reads the length (agent/lib/work-period-store.ts) and holds no way to write it: no file under agent/
+  // names the column in a write, and no tool takes it.
+  const hits = execSync(`git grep -n -E "periodLengthDays|period_length_days" -- agent`, { cwd: ROOT, encoding: "utf8" }).trim().split("\n").filter(Boolean);
+  const writes = hits.filter((l) => !/agent\/lib\/db\/schema\.ts:/.test(l) && !/select\(\{ days: orgs\.periodLengthDays \}\)/.test(l) && !/^\S+:\d+:\s*(\*|\/\/)/.test(l));
+  check("nothing under agent/ writes the workspace's length: the schema declares it, the period store reads it", writes.length === 0 && hits.some((l) => l.startsWith("agent/lib/work-period-store.ts:")), writes);
+  const route = readFileSync(join(ROOT, "app/api/ops/orgs/[id]/period-length/route.ts"), "utf8");
+  check("the one door that writes it is a workspace admin's, refused under mode off, and audited", /if \(!isOrgAdmin\(ctx\.role\)\)/.test(route) && /periodsNotFound\(\)/.test(route) && /recordOpsAudit\(/.test(route) && /canAccessOrg\(ctx, id\)/.test(route));
+  const panel = readFileSync(join(ROOT, "app/_components/ops/workspace-panel.tsx"), "utf8");
+  check("the workspace settings screen offers it only where the deployment has periods and lets a workspace choose", /PERIOD_UI\.enabled && PERIOD_LENGTH\.workspaceCanSet/.test(panel) && /PERIOD_UI\.lengthLabel/.test(panel) && /PERIOD_UI\.lengthNote/.test(panel) && /state\.canEdit \?/.test(panel));
 });
 
 console.log(`\ntest-work-periods: ${passed} passed, ${failed.length} failed`);

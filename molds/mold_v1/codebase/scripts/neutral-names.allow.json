@@ -429,9 +429,9 @@
     }
   },
   "builtin_library": {
-    "$comment": "Base code ships no workflow and no recipe of its own: what a workspace is provisioned with is the deployment profile's (library.sources; scripts/lib/builtin-library.mjs says what is checked). libraries: where a library's content may live. skip: tests and pinned fixtures, which never run in a deployment. writers: every source file that inserts into the workflows or recipes table, each with what decides its rows; a new one fails until it is listed here with its reason, and one that stops inserting fails until it is removed.",
+    "$comment": "Base code ships no workflow, no recipe and no starter app of its own: what a workspace is provisioned with is the deployment profile's (library.sources; scripts/lib/builtin-library.mjs says what is checked). libraries: where a library's content may live. skip: tests and pinned fixtures, which never run in a deployment. writers: every source file that inserts into the workflows, recipes or apps table, each with what decides its rows; a new one fails until it is listed here with its reason, and one that stops inserting fails until it is removed.",
     "libraries": {
-      "library/**": "the library directories a deployment profile names under library.sources (workflows/*.workflow.js, recipes.json, history.json)"
+      "library/**": "the library directories a deployment profile names under library.sources (workflows/*.workflow.js, recipes.json, apps.json, history.json)"
     },
     "skip": {
       "scripts/fixtures/**": "pinned before-images, among them the built-ins base code carried before the library became the profile's",
@@ -441,7 +441,9 @@
       "services/**": "the task-workflow service: its own tables and tests, no workspace library"
     },
     "writers": {
-      "agent/lib/provision-workspace.ts": "a new workspace: the deployment profile's library (recipes and workflows, none by default) and one row per specialist of the generated registry, minus the ones the profile excludes",
+      "agent/lib/app-tools.ts": "create_app: one app a person asked the agent for, approved by them",
+      "agent/lib/provision-workspace.ts": "a new workspace: the deployment profile's library (recipes, workflows and starter apps, none by default) and one row per specialist of the generated registry, minus the ones the profile excludes",
+      "app/api/ops/apps/route.ts": "POST /api/ops/apps: one app a signed-in person asked for",
       "app/api/ops/workflows/route.ts": "POST /api/ops/workflows: one row a signed-in person asked for",
       "scripts/operator/seed-workflows.mjs": "operator:seed-workflows: the deployment profile's library into a workspace an operator names; nothing when the profile names none",
       "scripts/seed-ops.mjs": "a legacy local demo seeder in no npm script, kept for its --print test: its rows carry no org_id, which the NOT NULL column refuses, so it cannot write to a current database"

@@ -146,8 +146,9 @@ await check("the refresh runs the three kinds and fails with the same sentence; 
   const s = read("lib/app-refresh.ts");
   assert.match(s, /workflowAppSource\(wf, name\)/);
   assert.match(s, /source\.kind === "specialist"/);
-  assert.match(s, /delegate\(specialistBrief\(app\), source\.specialist/);
-  assert.match(s, /promptAppSource\(app\.subagent\)/);
+  // The specialist is asked for the app's document from its brief (in a session opened, then followed in the background).
+  assert.match(s, /prompt: specialistBrief\(claimed\),\s*subagent: source\.specialist/);
+  assert.match(s, /promptAppSource\(claimed\.subagent\)/);
   assert.doesNotMatch(s, /has no script\.`/);
   assert.match(read("app/api/ops/apps/[id]/refresh/route.ts"), /outcome\.cause === "source" \? 409 : 500/);
 });

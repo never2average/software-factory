@@ -237,7 +237,7 @@ try {
     check("--json prints the same plan for a program, still without changing anything", parsed.applied === false && parsed.workspaces[0].removable.length === 18 && (await recipesOf(ORG.cli)).length === 5);
     const applied = cli("--apply");
     const left = await rowsOf(ORG.cli);
-    check("--apply removes them, and leaves the specialists' rows (this build excludes none)", applied.status === 0 && /removed 13 workflow row\(s\) and 5 recipe row\(s\)/.test(applied.stdout) && left.length === SUBAGENT_KEYS.length && left.every((w) => !w.script), applied.stdout + applied.stderr);
+    check("--apply removes them, and leaves the specialists' rows (this build excludes none)", applied.status === 0 && /removed 13 workflow row\(s\), 5 recipe row\(s\) and 0 starter app\(s\)/.test(applied.stdout) && left.length === SUBAGENT_KEYS.length && left.every((w) => !w.script), applied.stdout + applied.stderr);
     const other = run("--org", "no-such-workspace", "--apply");
     check("an unknown workspace is refused", other.status === 1 && /No such workspace/.test(other.stderr));
   }

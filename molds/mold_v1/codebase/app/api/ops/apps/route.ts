@@ -4,6 +4,7 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { apps, workflows } from "@/agent/lib/db/schema";
 import { appSource, appSourceAmong, sourceProblem } from "@/lib/app-source";
+import { expireStaleRefreshes } from "@/lib/app-refresh";
 import { cronMatches } from "@/agent/lib/cron-match";
 import { recordOpsAudit } from "@/lib/ops-audit";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -56,6 +57,8 @@ export async function GET(request: NextRequest) {
   if (ctx instanceof Response) return ctx;
   if (!getOpsDb()) return NextResponse.json({ items: [] });
   try {
+    // A refresh marker its work outlived ends here too, not only on the cron: nobody is shown "refreshing" for ever.
+    await expireStaleRefreshes(ctx.orgId).catch((e) => console.error("[apps] expiring stale refreshes:", e));
     const items = await withOrgRls(ctx.orgId, (tx) =>
       tx.select().from(apps).where(and(eq(apps.orgId, ctx.orgId), isNull(apps.deletedAt))).orderBy(asc(apps.createdAt)),
     );

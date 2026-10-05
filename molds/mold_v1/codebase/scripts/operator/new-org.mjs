@@ -83,12 +83,18 @@ async function main() {
   // script already knows. What gets seeded — the recipe catalog and the
   // workflow library — lives in provisionWorkspace, shared with the self-serve
   // wizard (POST /api/ops/orgs), so the two doors cannot drift apart.
-  const { recipesCreated, recipesSkipped, workflowsCreated, workflowsSkipped } = await withOrgDb(id, (tx) =>
-    provisionWorkspace(tx, id, owner),
+  // Starter apps (the library's apps.json) go into a NEW workspace only. With --force this is one that already
+  // exists: it gets them from operator:library-apply, which shows what it would add before it adds anything.
+  const { recipesCreated, recipesSkipped, workflowsCreated, workflowsSkipped, starterApps } = await withOrgDb(id, (tx) =>
+    provisionWorkspace(tx, id, owner, existing ? { starterApps: false } : {}),
   );
   console.log(`${glyph.info} Library: ${LIBRARY_SOURCES.length ? LIBRARY_SOURCES.join(", ") : "none (the profile of this build names no library source; see docs/DEPLOYMENT_PROFILE.md, \"library\")"}.`);
   console.log(`${glyph.ok} Recipe catalog: ${recipesCreated} new, ${recipesSkipped} already present.`);
   console.log(`${glyph.ok} Workflows (the library's, and one row per specialist): ${workflowsCreated} installed, ${workflowsSkipped} already present.`);
+
+  if (existing) console.log(`${glyph.info} Starter apps: not touched, because this workspace already existed. To see what its library would add: npm run operator:library-apply -- --org ${id}`);
+  else if (starterApps.created.length) console.log(`${glyph.ok} Starter apps: ${starterApps.created.map((a) => a.name).join(", ")}. None has a document yet: each is written when a person first opens it, or on its schedule.`);
+  else console.log(`${glyph.info} Starter apps: none (the library of this build ships none).`);
 
   console.log(`\n${glyph.ok} Workspace "${id}" provisioned at ${nowIso()}.`);
   console.log(`   Next: invite operators, connect a source, onboard the first ${W.account}.`);

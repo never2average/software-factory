@@ -225,6 +225,20 @@
       "when": 1791900000000,
       "tag": "0031_specialist_handbacks",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0032_app_starter_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792100000000,
+      "tag": "0033_org_period_length",
+      "breakpoints": true
     }
   ]
 }

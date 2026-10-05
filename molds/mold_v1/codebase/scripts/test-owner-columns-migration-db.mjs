@@ -141,10 +141,11 @@ const both = (row, v) => row?.fde_owner === v && row?.account_owner === v;
 const solBoth = (row, v) => row?.solution_fde_owner === v && row?.solution_owner === v;
 /**
  * What a LATER journal entry adds: not this migration's to do. 0029's customers.secondary_owner
- * (scripts/test-secondary-owner-migration-db.mjs proves it) and 0030's cycle_member_goals table with its index
- * (scripts/test-work-periods-db.mjs proves that one).
+ * (scripts/test-secondary-owner-migration-db.mjs proves it), 0030's cycle_member_goals table with its index
+ * (scripts/test-work-periods-db.mjs proves that one) and 0032's apps.starter_key with its index
+ * (scripts/test-starter-apps-db.mjs runs on it; scripts/test-migrations-db.mjs builds it from the journal).
  */
-const laterEntry = (x) => /ADD COLUMN "secondary_owner"/.test(x) || /"cycle_member_goals(_member_uidx)?"/.test(x) || /"specialist_handbacks(_org_idx)?"/.test(x); // …and 0031's table (scripts/test-specialist-handback-db.mjs)
+const laterEntry = (x) => /ADD COLUMN "secondary_owner"/.test(x) || /"cycle_member_goals(_member_uidx)?"/.test(x) || /"specialist_handbacks(_org_idx)?"/.test(x) || /"apps" ADD COLUMN "starter_key"|"apps_org_starter_key_uq"/.test(x) || /ADD COLUMN "period_length_days"/.test(x); // …and 0031's table (scripts/test-specialist-handback-db.mjs), 0032's column, 0033's column (scripts/test-work-periods-db.mjs)
 const touchesOurs = (x) => TABLES.some((t) => x.includes(`"${t}"`)) || NEW_COLUMNS.some((c) => x.includes(c)) || /owner_idx/.test(x);
 
 /** The deploy's drift step after the journal: nothing to apply, nothing refused, and no DROP COLUMN / DROP INDEX at all. */
@@ -157,7 +158,7 @@ function checkPlan(url, label, { oursOnly = false } = {}) {
     check(`${label}: the drift dry run plans nothing on customers / solutions (${other.length} older unrelated statement(s): ${other.map((x) => x.split("\n")[0].slice(0, 70)).join(" / ") || "none"})`, plan.apply.filter(touchesOurs).length === 0, plan.apply.filter(touchesOurs));
   } else {
     const ours = plan.apply.filter((x) => !laterEntry(x));
-    check(`${label}: the drift dry run plans NOTHING to apply (0028 did the whole change; what 0029 and 0030 add is theirs)`, ours.length === 0, ours);
+    check(`${label}: the drift dry run plans NOTHING to apply (0028 did the whole change; what later entries add is theirs)`, ours.length === 0, ours);
   }
   check(`${label}: …and nothing the deploy would refuse (no data loss, no index drop)`, plan.refused.length === 0, plan.refused);
   check(`${label}: …and no DROP COLUMN, no truncate, and no DROP INDEX but the one out-of-band index anywhere in the plan`, all.every((x) => !/DROP\s+COLUMN|^\s*truncate/i.test(x)) && all.filter((x) => /DROP\s+INDEX/i.test(x)).every((x) => /workflow_definitions_one_default_idx/.test(x)), all.filter((x) => /DROP|truncate/i.test(x) && !/POLICY/i.test(x)));

@@ -1496,7 +1496,7 @@ REFRESH an App NOW — regenerate its living document (running its workflow or p
     "app": {
       "type": "string",
       "minLength": 1,
-      "description": "The app name or slug to refresh, e.g. 'sbi-qbr'."
+      "description": "The app name or slug to refresh, as list_apps returns it."
     }
   },
   "required": [
@@ -1622,7 +1622,7 @@ Pull one upstream source into the data room's dm.md syncs landing zone (one dura
 
 === root :: tool :: trigger_workflow
 trigger_workflow
-RUN a saved workflow NOW, durably, and return its result. Use this whenever someone wants to EXECUTE or VALIDATE a workflow on demand — 'run the QBR workflow', 'trigger route-incident', 'show me the workflow working before we turn it on'. Pass the workflow NAME exactly as it appears in the Workflows list. A run delegates to subagents and SPENDS TOKENS, so it is gated on approval. Returns the runId (openable as a chat) plus the workflow's return value; if it hits the wall clock it reports timedOut and keeps running durably.
+RUN a saved workflow NOW, durably, and return its result. Use this whenever someone wants to EXECUTE or VALIDATE a workflow on demand — 'run that workflow', 'trigger it now', 'show me the workflow working before we turn it on'. Pass the workflow NAME exactly as it appears in the Workflows list. A run delegates to subagents and SPENDS TOKENS, so it is gated on approval. Returns the runId (openable as a chat) plus the workflow's return value; if it hits the wall clock it reports timedOut and keeps running durably.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -1630,7 +1630,7 @@ RUN a saved workflow NOW, durably, and return its result. Use this whenever some
     "workflow": {
       "type": "string",
       "minLength": 1,
-      "description": "The workflow name to run, e.g. 'qbr-prep'."
+      "description": "The workflow name to run, exactly as the Workflows list shows it."
     },
     "args": {
       "description": "The payload the workflow runs with, as a JSON object — e.g. {\"customerId\": \"acme-bank\"} when someone asks to run it FOR a particular account. Keys must be the ones the script actually reads: the run is REFUSED, before spending anything, if a key is misspelled or unused, and the error lists the keys it does read. Omit entirely when the request names no scope — most workflows read what they need for themselves.",

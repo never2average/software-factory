@@ -6,7 +6,7 @@ Five web routes call the agent as the web app itself, with no person behind the 
 |---|---|
 | `GET /api/cron/resume-workflows` | re-drives a workflow run whose driver died |
 | `GET /api/cron/run-cron-workflows` | runs the workflow a schedule or system cron fire routes to |
-| `GET /api/cron/refresh-apps` | regenerates an app whose refresh is due |
+| `GET /api/cron/refresh-apps` | finishes app refreshes already in progress (whatever a killed function left), then starts an app whose refresh is due |
 | `POST /api/ops/run` | the on-demand run trigger the agent's own tools call |
 | `POST /api/ops/workflow-runs/:runId/cancel` | signals a cancelled run's step sessions |
 

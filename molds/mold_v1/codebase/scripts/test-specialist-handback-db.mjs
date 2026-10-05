@@ -146,7 +146,8 @@ try {
   const TAG = "0031_specialist_handbacks";
   const journal = JSON.parse(readFileSync(join(ROOT, "drizzle/meta/_journal.json"), "utf8"));
   const at = journal.entries.findIndex((e) => e.tag === TAG);
-  check(`the journal carries ${TAG} as its newest entry, numbered after the one before`, at === journal.entries.length - 1 && journal.entries[at].idx === journal.entries[at - 1].idx + 1, journal.entries.at(-1));
+  // Not necessarily the newest: a later entry (0032's apps.starter_key) comes after it. Every entry is numbered by its place.
+  check(`the journal carries ${TAG}, numbered after the one before`, at > 0 && journal.entries[at].idx === journal.entries[at - 1].idx + 1 && journal.entries.every((e, i) => e.idx === i), journal.entries.slice(at - 1, at + 2));
   const statements = readFileSync(join(ROOT, `drizzle/${TAG}.sql`), "utf8").split("--> statement-breakpoint").map((v) => v.trim()).filter(Boolean);
   check("it is additive: it creates one table and its index, and alters or drops nothing else", statements.every((x) => !/\bDROP\s+(TABLE|COLUMN|INDEX)\b|\bALTER\s+TABLE\s+"(?!specialist_handbacks")/i.test(x.replace(/^--.*$/gm, ""))), statements.map((x) => x.split("\n").pop().slice(0, 60)));
   const SCRATCH = `hbmig_${process.pid}`;

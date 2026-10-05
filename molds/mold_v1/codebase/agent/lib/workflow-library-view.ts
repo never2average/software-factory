@@ -18,7 +18,7 @@
  * Under the default profile only the role placeholders are filled.
  */
 import { hasRolePlaceholder, speakPromptWith, VOCABULARY, type Vocabulary } from "./agent-vocabulary.ts";
-import { RECIPE_LIBRARY, WORKFLOW_LIBRARY, type LibraryRecipe, type LibraryWorkflow } from "./workflow-library.generated.ts";
+import { RECIPE_LIBRARY, STARTER_APP_LIBRARY, WORKFLOW_LIBRARY, type LibraryRecipe, type LibraryStarterApp, type LibraryWorkflow } from "./workflow-library.generated.ts";
 
 /** The specialists a script delegates to (`agent(…, { subagent: "key" })`). */
 export function delegatesTo(script: string): string[] {
@@ -79,4 +79,24 @@ export function deploymentWorkflowLibrary(v: Vocabulary = VOCABULARY, library: r
 /** The recipe catalog a new workspace receives, in checklist order, in the profile's words. Empty unless the profile names a library. */
 export function deploymentRecipes(v: Vocabulary = VOCABULARY, library: readonly LibraryRecipe[] = RECIPE_LIBRARY): LibraryRecipe[] {
   return library.map((r) => ({ ...r, title: speakPromptWith(v, r.title), summary: r.summary === null ? null : speakPromptWith(v, r.summary) }));
+}
+
+/**
+ * The starter apps a new workspace of this deployment is created with, in the profile's words (name, description and
+ * the brief its source is asked for). Empty unless the profile names a library that ships some (`<library>/apps.json`).
+ *
+ * The build already refused a starter app whose source it does not have (scripts/lib/profile-library.mjs). The same
+ * rule is applied here, so a library handed in by a test, or a registry generated before a specialist was excluded,
+ * cannot provision an app that could only fail: one whose specialist this deployment does not have, or whose
+ * workflow is not provisioned, is left out.
+ */
+export function deploymentStarterApps(
+  v: Vocabulary = VOCABULARY,
+  library: readonly LibraryStarterApp[] = STARTER_APP_LIBRARY,
+  workflows: readonly LibraryWorkflow[] = WORKFLOW_LIBRARY,
+): LibraryStarterApp[] {
+  const provisioned = new Set(deploymentWorkflowLibrary(v, workflows).map((w) => w.name));
+  return library
+    .filter((a) => (a.sourceKind === "specialist" ? v.specialists.includes(a.source) : provisioned.has(a.source)))
+    .map((a) => ({ ...a, name: speakPromptWith(v, a.name), description: speakPromptWith(v, a.description), brief: speakPromptWith(v, a.brief) }));
 }

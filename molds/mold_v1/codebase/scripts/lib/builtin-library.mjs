@@ -1,5 +1,5 @@
 /**
- * THE BUILT-IN-LIBRARY RATCHET: base code ships no workflow and no recipe of its own.
+ * THE BUILT-IN-LIBRARY RATCHET: base code ships no workflow, no recipe and no starter app of its own.
  *
  * Base code once carried a workflow library (every script under one base directory, compiled into
  * agent/lib/workflow-library.generated.ts) and a recipe list (a constant in agent/lib/provision-workspace.ts), and
@@ -13,10 +13,14 @@
  *      deployment opts into a library by ADDING a profile file; the default deployment has none;
  *   3. a recipe written as a literal in base code: an object with both `slug` and `satisfiesCheck` in a source
  *      file. A recipe is a row of a library's recipes.json;
- *   4. a new WRITER: a source file that inserts into the `workflows` or `recipes` table. Each one that exists is
- *      listed with what decides its rows (`builtin_library.writers` in scripts/neutral-names.allow.json: a person's
- *      request, the profile's library, the specialist registry); a file that starts inserting must be added there
- *      with its reason, where a reviewer reads it, and one that stops must be removed.
+ *   4. a new WRITER: a source file that inserts into the `workflows`, `recipes` or `apps` table. Each one that exists
+ *      is listed with what decides its rows (`builtin_library.writers` in scripts/neutral-names.allow.json: a
+ *      person's request, the profile's library, the specialist registry); a file that starts inserting must be added
+ *      there with its reason, where a reviewer reads it, and one that stops must be removed;
+ *   5. a STARTER APP (an app a new workspace is created with) anywhere but a library: an `apps.json` outside the
+ *      library directories, or one written as a literal in a source file (an object with a `starterKey` string, or
+ *      with a `brief` and a `first_content`). A starter app is an entry of a library's apps.json, named by the
+ *      deployment profile; the default profile names no library, so the default deployment has none.
  *
  * Tests and pinned fixtures are not base code that runs in a deployment: `skip` lists them.
  *
@@ -42,7 +46,9 @@ export function readLibraryAllow(doc) {
 
 const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 /** An insert into one of the two tables a library is written to: the query builder's, or SQL. */
-export const WRITER = /\.insert\(\s*(?:schema\.)?(?:workflows|recipes)\s*\)|\binsert\s+into\s+"?(?:workflows|recipes)\b/i;
+export const WRITER = /\.insert\(\s*(?:schema\.)?(?:workflows|recipes|apps)\s*\)|\binsert\s+into\s+"?(?:workflows|recipes|apps)\b/i;
+/** A starter app as an object literal: a `starterKey` given as a string, or `brief` and `first_content` in one pair of braces. */
+export const STARTER_APP_LITERAL = /\{[^{}]*\bstarter_?[kK]ey\s*:\s*["'`][^{}]*\}|\{[^{}]*\bbrief\s*:\s*["'`][^{}]*\bfirst_?[cC]ontent\s*:[^{}]*\}|\{[^{}]*\bfirst_?[cC]ontent\s*:\s*["'`][^{}]*\bbrief\s*:[^{}]*\}/;
 /** A recipe as an object literal: `slug` and `satisfiesCheck` in one pair of braces. */
 export const RECIPE_LITERAL = /\{[^{}]*\bslug\s*:\s*["'`][^{}]*\bsatisfiesCheck\s*:[^{}]*\}|\{[^{}]*\bsatisfiesCheck\s*:\s*["'`][^{}]*\bslug\s*:[^{}]*\}/;
 
@@ -56,6 +62,9 @@ export function checkBuiltinLibrary(root, allow) {
     if (path.endsWith(".workflow.js") && !inLibrary(path) && !skipped(path)) {
       problems.push(`${path}: a workflow script outside a library directory. Base code ships no workflow of its own: put it in a library the deployment profile names (library/<id>/workflows/, docs/DEPLOYMENT_PROFILE.md "library"), or in a pack.`);
     }
+    if ((path === "apps.json" || path.endsWith("/apps.json")) && !inLibrary(path) && !skipped(path)) {
+      problems.push(`${path}: starter apps outside a library directory. Base code ships no app of its own: a starter app is an entry of a library the deployment profile names (library/<id>/apps.json, docs/DEPLOYMENT_PROFILE.md "library"), or of a pack's.`);
+    }
     if (!SOURCE.test(path) || inLibrary(path) || skipped(path)) continue;
     let text;
     try {
@@ -66,15 +75,18 @@ export function checkBuiltinLibrary(root, allow) {
     if (RECIPE_LITERAL.test(text)) {
       problems.push(`${path}: a recipe written as a literal ({ slug, satisfiesCheck }). Base code ships no recipe of its own: a recipe is a row of a library's recipes.json, named by the deployment profile.`);
     }
+    if (STARTER_APP_LITERAL.test(text)) {
+      problems.push(`${path}: a starter app written as a literal. Base code ships no app of its own: a starter app is an entry of a library's apps.json, named by the deployment profile.`);
+    }
     if (WRITER.test(text)) {
       writersSeen.add(path);
       if (!allow.writers.has(path)) {
-        problems.push(`${path}: inserts into the workflows or recipes table and is not a listed writer. What a workspace receives is decided by a person's request, the deployment profile's library or the specialist registry, never by a list in base code: if this is one of those, add the file to builtin_library.writers in scripts/neutral-names.allow.json with what decides its rows.`);
+        problems.push(`${path}: inserts into the workflows, recipes or apps table and is not a listed writer. What a workspace receives is decided by a person's request, the deployment profile's library or the specialist registry, never by a list in base code: if this is one of those, add the file to builtin_library.writers in scripts/neutral-names.allow.json with what decides its rows.`);
       }
     }
   }
   for (const w of allow.writers) {
-    if (!writersSeen.has(w)) problems.push(`${w}: listed in builtin_library.writers but no longer inserts into workflows or recipes. Remove it from the list.`);
+    if (!writersSeen.has(w)) problems.push(`${w}: listed in builtin_library.writers but no longer inserts into workflows, recipes or apps. Remove it from the list.`);
   }
   let sources;
   try {

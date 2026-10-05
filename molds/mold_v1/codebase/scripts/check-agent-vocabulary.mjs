@@ -308,6 +308,10 @@ if (PACK) {
 /* 3. PINNED FOLDERS -------------------------------------------------------------------------------------- */
 // A deployment whose data room was filled before the folder names were a profile setting pins the names it has.
 // Its model must read what it read then, to the byte: every prompt, every tool description, every path.
+// The before-image is never re-snapshotted. It has been edited by hand once, on three lines that have nothing to do
+// with folders: the examples in trigger_workflow's and run_app's descriptions named workflows and an app of one
+// line of work's library ('route-incident', 'qbr-prep', 'sbi-qbr'), which every deployment's model then read. The
+// same three lines changed in default-surface.txt; no path, folder or any other line differs.
 if (!PACK) {
   const pinned = render([["50-legacy-folders.json", LEGACY_FOLDERS_PIN]], ["--snapshot", "--no-results"]);
   const before = readFileSync(SURFACE_BEFORE, "utf8");

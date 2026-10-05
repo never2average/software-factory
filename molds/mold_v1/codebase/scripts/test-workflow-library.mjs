@@ -115,7 +115,7 @@ console.log("\n3. A source that cannot be used is refused, by name");
   for (const [what, value, pattern] of [
     ["a directory that is not there", "library/nowhere", /library\.sources\.mine: "library\/nowhere" is not a directory/],
     ["a path outside the repository", "../elsewhere", /must be a path inside the repository/],
-    ["a directory with no library in it", "docs", /holds neither workflows\/\*\.workflow\.js nor recipes\.json/],
+    ["a directory with no library in it", "docs", /holds none of workflows\/\*\.workflow\.js, recipes\.json, apps\.json/],
     ["a value that is not a path", 7, /must be the path of a directory/],
   ]) {
     const dir = profiles({ "40-mine.json": { library: { sources: { mine: value } } } });

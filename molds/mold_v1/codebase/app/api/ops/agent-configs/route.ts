@@ -8,6 +8,7 @@ import { verifyOpsAuth } from "@/lib/ops-auth";
 import { isOrgAdmin, orgContextForRequest, tenancyEnabled } from "@/lib/org-context";
 import { isEmptyStore } from "@/lib/pg-error";
 import { recordPromptVersion } from "@/lib/agent-prompt-versions";
+import { VOCABULARY } from "@/agent/lib/agent-vocabulary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,10 @@ export const dynamic = "force-dynamic";
 /**
  * Per-subagent workspace config — pause/resume + per-agent instructions.
  *
- *  GET /api/ops/agent-configs         — this workspace's per-agent state.
+ *  GET /api/ops/agent-configs         — this workspace's per-agent state, and `specialists`: the keys of the
+ *                                       specialists THIS deployment has (the generated registry, a pack's included,
+ *                                       minus the ones its profile excludes). The published tools list from it
+ *                                       (setup/workspace-tools.mjs agent_list), so they name no specialist of their own.
  *  PUT /api/ops/agent-configs {agentKey, paused?, instructions?} — upsert one.
  *
  * Writes are admin/owner only. Fail-safe: no table → empty, so the Agents tab
@@ -27,13 +31,15 @@ export async function GET(request: NextRequest) {
   if (!ctx) return NextResponse.json({ items: [] });
   if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
-  if (!db || !(await tenancyEnabled(db))) return NextResponse.json({ items: [], canEdit: isOrgAdmin(ctx.role) });
+  if (!db || !(await tenancyEnabled(db))) return NextResponse.json({ items: [], specialists: VOCABULARY.specialists, canEdit: isOrgAdmin(ctx.role) });
   try {
     const rows = await withOrgRls(ctx.orgId, (tx) =>
       tx.select().from(agentConfigs).where(eq(agentConfigs.orgId, ctx.orgId)),
     );
     return NextResponse.json({
-      items: rows.map((r) => ({ agentKey: r.agentKey, paused: r.paused, instructions: r.instructions ?? null })),
+      // A row an earlier build left for a specialist this deployment excludes is not this workspace's to see.
+      items: rows.filter((r) => !VOCABULARY.excludedSpecialists.includes(r.agentKey)).map((r) => ({ agentKey: r.agentKey, paused: r.paused, instructions: r.instructions ?? null })),
+      specialists: VOCABULARY.specialists,
       canEdit: isOrgAdmin(ctx.role),
     });
   } catch (e) {
@@ -41,7 +47,7 @@ export async function GET(request: NextRequest) {
     // emptiness. A failed read shown as "no agent configs" invites someone to
     // recreate settings that already exist.
     if (isEmptyStore(e)) {
-      return NextResponse.json({ items: [], canEdit: isOrgAdmin(ctx.role) });
+      return NextResponse.json({ items: [], specialists: VOCABULARY.specialists, canEdit: isOrgAdmin(ctx.role) });
     }
     console.error("agent-configs GET failed", e);
     return NextResponse.json({ error: "agent config store unavailable" }, { status: 503 });
