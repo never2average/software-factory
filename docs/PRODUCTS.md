@@ -25,7 +25,7 @@ self-contained and editing the product later does not change an app that already
 - `application.product_id`, and `application.surface.branding` = a full copy of `brand` (icon inline).
 - The **surface** — one block per item of the factory's service surface (`state/factory.json`): `dm.md` (the data
   room folders), `browser` and `web_search` (on/off), `primary_context` (the corpus the agent knows),
-  `multiplayer_context` (the team's processes), `custom_workflow_builder` (the workflow library). Field-by-field
+  `multiplayer_context` (the team's processes), `custom_workflow_builder` (the app's own workflow scripts and definitions, and whether new workspaces get the account-delivery starter library). Field-by-field
   mapping to the mold: `docs/STATE.md`.
 - `workspace`: the org, the operator identity, members and roles, the roster.
 - `infrastructure.json`: target, Vercel projects, secret **names** (`secrets_user` the customer supplies,

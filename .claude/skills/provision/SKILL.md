@@ -138,6 +138,24 @@ agent profile, the per-subagent configs, workflow definitions and workflow scrip
 State is the source: a default profile or a subagent's instructions edited in the app are replaced by what state says, so read the
 `--dry-run` list first when people already use the workspace.
 `--prune-sandboxes` lists what the server's nightly sandbox prune would remove and the space (read-only; `--apply` removes it now).
+
+## The starter library, and what an older version left behind
+
+New workspaces get no starter workflows or recipes unless state says `surface.custom_workflow_builder.library.install: "all"`
+(the mold's account-delivery library; `"none"` is the default). A deploy puts that choice into the build (`library.py`, run by
+`packs.py apply` and `branding.py prepare`). It never changes a workspace that already exists. For any deployed app, on Vercel or
+on its own server:
+
+```
+python3 .claude/scripts/provision.py <app_id> --library-cleanup                  # a dry run: per workspace, what would go, what stays and why
+python3 .claude/scripts/provision.py <app_id> --library-cleanup --org <id>       # one workspace
+python3 .claude/scripts/provision.py <app_id> --library-cleanup --apply          # remove exactly the rows listed as removable
+```
+
+Always show the operator the dry run first and let them say yes before `--apply`. Only rows nobody edited, ran or built on are
+ever removed; everything else is kept and listed with the reason. It runs through the app role (row-level security in force) and
+the database address is never printed. If it says the running code does not match state, deploy first: the cleanup decides what
+is a leftover from the library the deployed code was built with.
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this
 machine and is the user's to approve. If the tunnel is ever down, give the user `docs/RUNBOOK.md` §9, "If the factory cannot reach the

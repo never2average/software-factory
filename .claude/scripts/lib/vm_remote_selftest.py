@@ -97,6 +97,8 @@ def run():
             more.push(check, tmp); more.prune(check, tmp); more.tunnel(check, tmp)
             import vm_users_selftest as later
             later.users(check, tmp); later.workspace(check, tmp)
+            import library_selftest
+            library_selftest.remote(check, tmp)
             check("the whole self-test opened no socket and started no ssh/rsync/curl", not net.tripped, net.tripped)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -108,7 +110,8 @@ def run():
           f"the storage conflict it refuses, host qualification, dry-run plan, deploy sequence, database chain order, records, lanes, desktop-notification keys per service, "
           f"sandbox pruning on a fixture tree with a stand-in msb, the private tunnel and its lockout guard run against stand-in commands, "
           f"one user per service with the move of a single-user server run against stand-in commands, the egress rule for the server's own SSH port, "
-          f"the brief's workspace and the application's surface written on the server through a stand-in for the remote runner); "
+          f"the brief's workspace and the application's surface written on the server through a stand-in for the remote runner, "
+          f"the starter-library cleanup on the server and through that stand-in); "
           f"offline, nothing contacted, nothing on this machine changed")
     import vm_users_selftest as later
     print("  also run here: " + ("; ".join(later.RAN) if later.RAN else "none of the optional checks (they need root, unshare, nft and node)"))
@@ -315,7 +318,7 @@ def _generated_files(check, tmp):
     check("packages: Node 24, Caddy, PostgreSQL 17, ufw, fail2ban; a no-login service user; no Docker", all(x in pk for x in ("setup_24.x", "caddy", "postgresql-17", "ufw", "fail2ban", "--shell /usr/sbin/nologin sfapp")) and "docker" not in pk.lower())
     check("  ...the env directory is root's alone", "install -d -m 700 /etc/software-factory /etc/software-factory/vm_remote_fixture" in pk)
     copies = [rel for _, rel in V.bundle_copies()]
-    check("the server gets the factory's own chain: provision.py, this module and every lib .mjs", ".claude/scripts/provision.py" in copies and ".claude/scripts/lib/vm_remote.py" in copies
+    check("the server gets the factory's own chain: provision.py, library.py, this module and every lib .mjs", ".claude/scripts/library.py" in copies and ".claude/scripts/provision.py" in copies and ".claude/scripts/lib/vm_remote.py" in copies
           and all(f".claude/scripts/lib/{m}" in copies for m in ("deploy-window.mjs", "rls-cover.mjs", "rls-policy.mjs", "verify-apprw.mjs")), copies)
     check("  ...and they are in the written bundle, byte for byte", open(os.path.join(out, ".claude/scripts/provision.py"), "rb").read() == open(os.path.join(SCRIPTS, "provision.py"), "rb").read())
     check("generation is deterministic: a second bundle is identical (a re-run changes nothing by itself)", V.bundle(_settings(), V.read_crons(mold)) == B)

@@ -493,7 +493,7 @@ def workspace(check, tmp):
                 wrote.add(sd["org_id"])
                 was = sd["org_id"] in self.orgs; self.orgs.add(sd["org_id"])
                 lines.append("WORKSPACE " + json.dumps({"org": sd["org_id"], "orgs": "updated" if was else "created", "org_members": 1 + len([m for m in sd["members"] if m["email"] != sd["owner"]]),
-                                                        "platform_admins": len(sd.get("platform_admins") or []), "recipes": 0 if was else 9, "workflows_created": 0 if was else 13, "workflows_present": 13 if was else 0,
+                                                        "platform_admins": len(sd.get("platform_admins") or []), "recipes": 0 if was else 5, "workflows_created": 0 if was else 13, "workflows_present": 13 if was else 0,     # answers as a server whose build names the account-delivery library: 5 recipes, 13 workflows
                                                         "people_roster": len(sd.get("roster") or sd["members"]), "customers": len(item["customers"]), "customers_in_workspace": len(item["customers"])}))
             sf = json.loads(stdin).get("surface")
             if sf and self.surface != "silent":
@@ -531,7 +531,7 @@ def workspace(check, tmp):
         text = "\n".join(said); sent = json.loads(rem.stdin)
         check("workspace: a real run sends this version of the factory's scripts, then the workspaces on the stdin of ONE command", rc == 0 and rem.calls == ["bundle", "workspace"] and [x["seed"]["org_id"] for x in sent["seeds"]] == ["example", "second"]
               and sent["seeds"][0]["seed"]["members"] == seed["members"] and sent["seeds"][1]["customers"][0]["id"] == "acme" and all(json.dumps(sent["seeds"][0]["seed"]["owner"]) not in a for a in rem.argv), text)
-        check("workspace:   ...it says what was written, in counts", "written: the application's own workspace, example" in text and "workspace created, 3 member(s), 1 platform admin(s), 9 recipe(s) added" in text and "written: the workspace second" in text and "2 companies in the workspace" in text, text)
+        check("workspace:   ...it says what was written, in counts", "written: the application's own workspace, example" in text and "workspace created, 3 member(s), 1 platform admin(s), 5 recipe(s) added, starter workflows 13 installed" in text and "written: the workspace second" in text and "2 companies in the workspace" in text, text)
         check("workspace:   ...a connection string in anything the server printed is not repeated here", "Zk3-app-rw-PASSWORD-77" not in text and "***:***@" in text, text)
         rec = B.load(os.path.join(sdir, ".applied.json")); infra_now = B.load(os.path.join(d, "infrastructure.json"))
         check("surface: the surface travels on the same stdin, after the workspaces, and nothing of it is on the command line", sent.get("surface") == V.surface_doc(docs["application"]) and all("Ava" not in a and "agent_profiles" not in a for a in rem.argv), sent.get("surface"))
@@ -674,10 +674,14 @@ export const orgMembers = { __t: "org_members", __key: ["orgId", "email"], orgId
 export const platformAdmins = { __t: "platform_admins", __key: ["email"] };
 export const peopleRoster = { __t: "people_roster" };
 ''',
+# The stand-in for the mold's provisionWorkspace: like the real one it gives a new workspace the library the BUILD names
+# and nothing else. FAKE_LIBRARY stands for that build: unset is the default profile (no library at all, which is what
+# an app with library.install "none" is built with); "account-delivery" is the 13 workflows and 5 recipes of "all".
 "agent/lib/provision-workspace.ts": '''import { state } from "./db/index.ts";
+const LIBRARY = process.env.FAKE_LIBRARY === "account-delivery" ? { recipes: 5, workflows: 13 } : { recipes: 0, workflows: 0 };
 export async function provisionWorkspace(tx, org, owner) {
   const first = !state.provisioned[org]; state.provisioned[org] = owner;
-  return first ? { recipesCreated: 9, workflowsCreated: 13, workflowsSkipped: 0 } : { recipesCreated: 0, workflowsCreated: 0, workflowsSkipped: 13 };
+  return first ? { recipesCreated: LIBRARY.recipes, workflowsCreated: LIBRARY.workflows, workflowsSkipped: 0 } : { recipesCreated: 0, workflowsCreated: 0, workflowsSkipped: LIBRARY.workflows };
 }
 ''',
 "agent/lib/system-of-record.ts": '''import { state } from "./db/index.ts";
@@ -708,11 +712,12 @@ def _real_seed(check, tmp):
     for rel, text in FAKE_APP.items():
         p = os.path.join(appd, rel); os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "w").write(text)
     script = os.path.join(HERE, "workspace_seed.mjs")
-    def run(seed, customers=None, url="postgresql://stand-in"):
+    def run(seed, customers=None, url="postgresql://stand-in", library="account-delivery"):
         sp = os.path.join(tmp, "seed-in.json"); json.dump(seed, open(sp, "w")); args = [sp]
         if customers is not None:
             cp = os.path.join(tmp, "cust-in.json"); json.dump({"customers": customers}, open(cp, "w")); args.append(cp)
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "FAKE_DB": dbf, "HOME": tmp}
+        if library: env["FAKE_LIBRARY"] = library
         if url: env["DATABASE_URL"] = url
         r = subprocess.run([node, "--experimental-strip-types", "--disable-warning=ExperimentalWarning", script, *args], cwd=appd, env=env, capture_output=True, text=True, timeout=120)
         try: out = json.loads((r.stdout.strip().splitlines() or ["{}"])[-1])
@@ -728,7 +733,7 @@ def _real_seed(check, tmp):
           and (db["orgs"][0]["orgId"], db["orgs"][0]["name"], db["orgs"][0]["googleHostedDomain"], db["orgs"][0]["branding"], db["orgs"][0]["blobPrefix"]) == ("example", "Example", "example.com", {"displayName": "Example Co"}, "orgs/example"), (rc, out))
     check("seed (run with node):   ...the owner and the members with their roles", [(m["email"], m["role"]) for m in db["org_members"]] == [("operator@example.com", "owner"), ("ana@example.com", "admin")] and out["org_members"] == 2)
     check("seed (run with node):   ...the platform administrators", [a["email"] for a in db["platform_admins"]] == ["operator@example.com"] and out["platform_admins"] == 1)
-    check("seed (run with node):   ...the recipes and the workflow library, through the mold's own provisionWorkspace", out["recipes"] == 9 and out["workflows_created"] == 13 and db["provisioned"] == {"example": "operator@example.com"})
+    check("seed (run with node):   ...the starter library the build names (here the account-delivery one: 5 recipes, 13 workflows), through the mold's own provisionWorkspace", out["recipes"] == 5 and out["workflows_created"] == 13 and db["provisioned"] == {"example": "operator@example.com"})
     check("seed (run with node):   ...the people roster from state, with reporting lines", [(p["email"], p["team"], p["manager_email"]) for p in db["people_roster"]] == [("operator@example.com", None, None), ("ana@example.com", "Credit", "operator@example.com")] and out["people_roster"] == 2)
     check("seed (run with node):   ...and the companies", out["customers"] == 1 and out["customers_in_workspace"] == 1 and db["customers"][0]["org"] == "example")
     check("seed (run with node):   ...every org-scoped write went inside that workspace's own scope", set(db["scopes"]) == {"example"} and len(db["scopes"]) >= 3)
@@ -749,6 +754,10 @@ def _real_seed(check, tmp):
           and [p for p in db["people_roster"] if p["email"] == "cy@third.example"][0]["team"] == "Research", out)
     rc, out, db = run(seed, url=None)
     check("seed (run with node): with no DATABASE_URL it writes nothing and exits non-zero", rc == 1 and len(db["orgs"]) == 3)
+    bare = dict(seed, org_id="bare", name="Bare"); bare.pop("guard")
+    rc, out, db = run(bare, library=None)
+    check("seed (run with node): in a build that names no library (library.install none, the default) the workspace is created with no starter recipes and no starter workflows, and the seed does not mind",
+          rc == 0 and out["orgs"] == "created" and out["recipes"] == 0 and out["workflows_created"] == 0 and out["workflows_present"] == 0 and db["provisioned"].get("bare") == "operator@example.com", out)
     rc, out, db = run(dict(seed), [{"name": "No Id"}])
     check("seed (run with node): a company the app refuses is reported by id and fails the run, without hiding the rest", rc == 1 and out.get("customers_failed") and out["orgs"] == "updated")
 

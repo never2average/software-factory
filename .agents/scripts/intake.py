@@ -96,8 +96,18 @@ def parse_brief(text):
     if m: h["brand_logo"] = m.group(1).strip()
     m = re.search(r"^\s*tagline:\s*([^\n]+?)\s*$", text, re.I | re.M)
     if m: h["brand_tagline"] = m.group(1).strip()
-    m = re.search(r"(?:workflows?)[:\s]+(all|none|library)", t)
+    # The starter library a new workspace is given. The mold carries none of its own; the original product's (13
+    # workflows and 5 onboarding recipes for a team that delivers a platform to accounts) is the mold's
+    # library/account-delivery/, and an app gets it only by asking: "workflows: all" (or "library"), or in plain
+    # words, "with the starter library", "the account-delivery library", "the original workflow library".
+    # "workflows: none", "no starter library" or silence mean none.
+    # Written as a setting first ("workflows: all", "workflows none", "starter library: none"), then in plain words,
+    # refusals before requests so that "no starter library" is never read as asking for one.
+    m = re.search(r"\bworkflows?\s*:\s*(all|none|library)\b", t) or re.search(r"\bworkflows?\s+(all|none)\b", t) or re.search(r"\blibrar(?:y|ies)\s*:\s*(all|none)\b", t)
     if m: h["library"] = "all" if m.group(1) in ("all", "library") else "none"
+    elif re.search(r"\b(?:no|without(?: the| a| any)?) (?:starter |built-?in |default |original |workflow |account[- ]delivery )+librar", t) \
+         or re.search(r"(?:\bnot|n't|\bnever) (?:want|need|install|include|use|ship|have)\b[^.\n]{0,40}\blibrar", t): h["library"] = "none"
+    elif re.search(r"\b(?:starter|built-?in|default|original|account[- ]delivery)(?: product'?s?)?(?: workflow)? librar", t): h["library"] = "all"
     return h
 
 def slug(s): return re.sub(r"[^a-z0-9-]+", "-", s.lower()).strip("-")
@@ -169,6 +179,11 @@ PROCESSES = {
   "integration_wiring":   ("integration|wiring|connector",     [("workflow_script","integration-wiring")]),
   "eval_triage":          ("eval|regression triage",           [("workflow_script","eval-regression-triage")]),
 }
+# What the account-delivery starter library provides. A process is implemented by these only in an app that asked
+# for the library (library.install "all"); with "none" they are not in any workspace, so state does not claim them.
+LIBRARY_REFS = {"recipe": {"onboard-self","import-roster","connect-sources","seed-workflows","onboard-customer"},
+                "workflow_script": {"assign-account","data-migration-plan","eval-regression-triage","go-live-sprint","incident-postmortem","infosec-checklist",
+                                    "infra-sizing","integration-wiring","onboard-account","qbr-prep","renewal-risk","route-incident","solution-engineering"}}
 DEFAULT_PROCESSES = ["sprint_planning","onboarding","escalation_handling","incident_postmortem","go_live","account_review"]
 def match(phrases, table):
     """Brief phrases -> known keys, or ('custom', phrase) when nothing in the mold matches."""
@@ -216,8 +231,8 @@ QUESTIONS = [
    lambda d,h,c: h.get("workspace_name") or d.get("workspace_name")),
  ("operator_email", "application.workspace.operator_self.email", "Email of the operator who owns this workspace (must match the identity domain the mold accepts).", None,
    lambda d,h,c: h.get("operator_email") or d.get("operator_email") or d.get("fde_email")),   # fde_email: pre-rename default, read for one release
- ("library", "application.surface.custom_workflow_builder.library.install", "Install the mold's default workflow library?", ["all","none"],
-   lambda d,h,c: h.get("library", "all")),
+ ("library", "application.surface.custom_workflow_builder.library.install", "Give new workspaces the original product's starter library (13 workflows and 5 onboarding recipes for account delivery)? none = no starter library.", ["none","all"],
+   lambda d,h,c: h.get("library", "none")),
 ]
 
 def coerce(v):
@@ -341,7 +356,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     processes = []
     for name, phrase in (match(hints["processes"], PROCESSES) if hints.get("processes") else [(k, None) for k in DEFAULT_PROCESSES]):
         if name == "custom": processes.append({"name": "custom", "label": phrase, "enabled": True, "implemented_by": []})
-        else: processes.append({"name": name, "enabled": True, "implemented_by": [{"kind": k, "ref": r} for k, r in PROCESSES[name][1]], **({"label": phrase} if phrase else {})})
+        else: processes.append({"name": name, "enabled": True, "implemented_by": [{"kind": k, "ref": r} for k, r in PROCESSES[name][1] if ans["library"] == "all" or r not in LIBRARY_REFS.get(k, ())], **({"label": phrase} if phrase else {})})
     workspace = {
       "org": {"org_id": org_id, "name": ans["workspace_name"], "display_name": ans["workspace_name"], "blob_prefix": f"orgs/{org_id}"},
       "operator_self": {"email": owner, "name": owner.split("@")[0].replace(".", " ").title(), "title": "Workspace owner", "skills": [], "capacity_target_accounts": 8},
@@ -357,7 +372,7 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         "entity_vocabulary": {"account_noun": hints.get("account_noun", "customer")}},
       "multiplayer_context": {
         "processes": processes,
-        "escalation": {"path": "roster_escalations", "incident_workflow": "route-incident", "ticket_folders": ["bug","onboarding","feat"]},
+        "escalation": {"path": "roster_escalations", **({"incident_workflow": "route-incident"} if ans["library"] == "all" else {}), "ticket_folders": ["bug","onboarding","feat"]},
         "collaboration": {"chat_threads": True, "presence": True, "comments": True, "inbox": True}},
       "custom_workflow_builder": {"library": {"install": ans["library"]}, "scripts": [], "definitions": []},
     }
@@ -530,6 +545,10 @@ def self_test(app_id="onfinance_hfc"):
         if after["application"].get("mold_commit") != before["application"].get("mold_commit"):
             fails.append(f"mold_commit (what is deployed) changed: {before['application'].get('mold_commit')} -> {after['application'].get('mold_commit')}")
         n += 1
+        lib_of = lambda a: a["surface"]["custom_workflow_builder"].get("library")
+        if lib_of(after["application"]) != lib_of(before["application"]):
+            fails.append(f"the starter library set in state ({lib_of(before['application'])}) was changed by a same-answers re-run to {lib_of(after['application'])}")
+        n += 1
         if after["application"]["model"] != before["application"]["model"]:
             fails.append("the operator's model choice was reset by a re-run that did not change the provider")
         # a real change of database provider must NOT keep the old database's isolation proof
@@ -579,6 +598,13 @@ def main(a):
         q = {"id":qid,"path":path,"question":prompt,"options":options,"suggested":v}
         if qid == "deploy_target" and hints.get("deploy_target_conflict"): q["why"] = "the brief names both the vm and Vercel"
         pending.append(q)
+    # The starter library is a choice people also make in state, by hand (the default went from all to none, and live
+    # apps were set to none there). A re-run that only repeats the answer RECORDED at the last intake must not undo
+    # that: state wins over a recorded answer that nobody gave again. A new answer, or a brief that says, still decides.
+    ex_lib = ((((existing.get("application") or {}).get("surface") or {}).get("custom_workflow_builder") or {}).get("library") or {}).get("install")
+    recorded = os.path.join(outdir, "answers.json")
+    if ex_lib in ("all", "none") and "library" not in hints and os.path.exists(recorded) and load(recorded).get("library") == resolved.get("library") != ex_lib:
+        resolved["library"] = ex_lib
     if "--ask" in opts and pending:
         for q in pending:
             hint = f" [{'/'.join(q['options'])}]" if q["options"] else ""

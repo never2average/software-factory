@@ -20,11 +20,38 @@ What the factory needs to know before it can stamp an application, and where eac
 | vercel_project | infrastructure.vercel.project | never (product project for the first app, `<project>-<suffix>` after) | free text |
 | workspace_name | application.workspace.org.name | brief silent and no factory default | free text |
 | operator_email | application.workspace.operator_self.email | brief silent and no factory default | email |
-| library | application.surface.custom_workflow_builder.library.install | never (brief hint, default all) | all, none |
+| library | application.surface.custom_workflow_builder.library.install | never (brief hint, default none) | none, all |
 
-Brief hints recognised: "vercel" / "vm, droplet, self-host" / "vm_remote, the customer's own server, a remote server, a dedicated server" (a server that serves the app; add "server: <address>" and "domain: <name>" if known, else the operator supplies them later); "neon" / "supabase" / "self-host the postgres, database on the vm, local postgres"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "operator: <email>" (also "owner:", and the pre-rename "fde:" for one release); "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none"; "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
+Brief hints recognised: "vercel" / "vm, droplet, self-host" / "vm_remote, the customer's own server, a remote server, a dedicated server" (a server that serves the app; add "server: <address>" and "domain: <name>" if known, else the operator supplies them later); "neon" / "supabase" / "self-host the postgres, database on the vm, local postgres"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "operator: <email>" (also "owner:", and the pre-rename "fde:" for one release); "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none" (the starter library; see below); "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
 
 Steady state after the first confirmed intake: zero questions for a five-line brief; everything comes from the brief or defaults. Secrets are always by name; `provision.py` checks presence in the store and lists what the user still has to set.
+
+## The starter library
+
+A mold's base code carries no workflows or recipes of its own. The original product's (13 workflows and 5 onboarding
+recipes, written for a team that delivers a platform to accounts) is kept in the mold as `library/account-delivery/`,
+and an application gets it only by asking.
+
+| the brief says | `library.install` | a new workspace starts with |
+| --- | --- | --- |
+| nothing, `workflows: none`, "no starter library", "without the workflow library" | `none` **(default)** | no library: only the app's own `scripts[]` and what its packs bring |
+| `workflows: all`, `workflows: library`, "with the starter library", "the account-delivery library", "the original (product's) workflow library" | `all` | the account-delivery library |
+
+With `all`, the stamp step names the library in the build's deployment profile (`build/<app_id>/profiles/40-library-account-delivery.json`,
+copied from the mold; `library.py`) before the profile is generated; with `none` the file is left out and a stale copy is
+removed. There is no subset by name (`listed` is refused by `factory.py validate`): write `none` and put the workflows
+you want under `surface.custom_workflow_builder.scripts`.
+
+Under `none`, intake does not write the library's workflows and recipes into a process's `implemented_by`, and leaves
+`escalation.incident_workflow` out: state does not claim what no workspace has.
+
+Changing the value later changes what NEW workspaces get. A workspace that already exists keeps its rows; see what an
+earlier build left behind, and remove the untouched ones, with:
+
+```
+python3 .claude/scripts/provision.py <app_id> --library-cleanup            # a dry run: what would go, what stays and why
+python3 .claude/scripts/provision.py <app_id> --library-cleanup --apply    # remove exactly what the dry run listed as removable
+```
 
 ## Postgres providers
 

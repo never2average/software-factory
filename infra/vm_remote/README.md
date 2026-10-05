@@ -167,15 +167,21 @@ into the sandbox deny list, and prewarms the templates one at a time with three 
   `vm_remote.py workspace-seed` there: `lib/workspace_seed.mjs` inside the built app, as `sfweb`, with `web.env` as its environment,
   so every row goes through the app role under row-level security and the admin URL is never involved. It writes the application's
   own workspace from `application.workspace` (the org row with its hosted domain, the owner, members with roles, platform
-  administrators, the recipes and workflow library through the mold's `provisionWorkspace`, the people roster) and then every seed
+  administrators, whatever starter library the build's profile names (none by default) through the mold's `provisionWorkspace`, the people roster) and then every seed
   under `seed/orgs/`, each with the companies in `<org_id>/customers.json`. The workspaces travel on stdin (names, emails, roles);
   what comes back is one line of counts per workspace, searched for every value of `web.env` before it is shown. It refuses to create
   the application's own workspace on a database that already has other workspaces and not that one (`--new-workspace` overrides).
   What it applied is recorded in `seed/orgs/.applied.json`, which is what `mint.py`'s workspaces station reads.
+- **Leftovers of the starter library are listed and removed on the server.** `--library-cleanup` sends the factory's bundle, then
+  runs `vm_remote.py library-cleanup` there: the mold's own `scripts/operator/library-cleanup.mjs` inside the built app, as `sfweb`,
+  with `web.env` as its environment (the app role, row-level security in force; the script is the app's own, which `sfweb` reads
+  through the code group, so nothing is copied for it). Always a dry run first; `--apply` removes only after that dry run showed
+  the deployed code was built with the library state names. One `LIBRARY {json}` line comes back, searched for every value of
+  `web.env` before it is shown, and the factory prints it in plain words per workspace.
 - **The application's surface is written on the server too (mold_v1-163).** On Vercel, `clone.py configure` runs
   `lib/surface.mjs apply`, which writes eight tables from state: `orgs`, `org_members`, `platform_admins`, `people_roster`,
   `agent_profiles`, `agent_configs`, `workflow_definitions`, `workflows`. On a server the first four are the workspace seed's
-  (above, which also writes what `apply` never did: recipes, the workflow library, companies). The same `workspace-seed` command
+  (above, which also writes what `apply` never did: the starter library's recipes and workflows when the app has one, companies). The same `workspace-seed` command
   then runs the same `surface.mjs apply` for the other four, limited to them by `SURFACE_ONLY`: the workspace's default agent
   profile (persona, tone, instructions, default mode, model, web search and browser defaults), one config per subagent (paused,
   instructions), the workflow definitions, and the workflow scripts that are not file-backed. It runs as `sfweb` with `web.env`,

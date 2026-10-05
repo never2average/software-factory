@@ -676,7 +676,7 @@
                 },
                 "incident_workflow": {
                   "type": "string",
-                  "default": "route-incident"
+                  "description": "the workflow an incident is routed through; route-incident exists only with the account-delivery library (library.install all)"
                 },
                 "ticket_folders": {
                   "type": "array",
@@ -734,38 +734,17 @@
                 "install": {
                   "type": "string",
                   "enum": [
-                    "all",
                     "none",
-                    "listed"
+                    "all"
                   ],
-                  "default": "all"
-                },
-                "names": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "enum": [
-                      "assign-account",
-                      "data-migration-plan",
-                      "eval-regression-triage",
-                      "go-live-sprint",
-                      "incident-postmortem",
-                      "infosec-checklist",
-                      "infra-sizing",
-                      "integration-wiring",
-                      "onboard-account",
-                      "qbr-prep",
-                      "renewal-risk",
-                      "route-incident",
-                      "solution-engineering"
-                    ]
-                  }
+                  "default": "none",
+                  "description": "none: no starter library, a new workspace starts with no workflows or recipes of the mold's. all: the mold's account-delivery library (library/account-delivery/: 13 workflows, 5 onboarding recipes), named in the build's deployment profile at stamp time. There is no per-name subset: put individual workflows under scripts."
                 }
               },
               "required": [
                 "install"
               ],
-              "description": "The 13 default workflow scripts installed by provisionWorkspace; 'listed' keeps only names"
+              "description": "The starter library every NEW workspace of this application is provisioned with. The mold's base code carries none; the build opts into one through its deployment profile (library.sources), which packs.py apply / branding.py prepare write from this field (library.py). Changing it never changes a workspace that already exists: provision.py <app_id> --library-cleanup lists and, with --apply, removes untouched leftovers."
             },
             "scripts": {
               "type": "array",
@@ -795,7 +774,7 @@
                   },
                   "file": {
                     "type": "string",
-                    "description": "path to a *.workflow.js relative to the app state dir; required for createdBy=system scripts because seed-workflows prunes rows without a file"
+                    "description": "path to a *.workflow.js relative to the app state dir, for a script kept as a file. A script with a file is not written by the factory's surface step (lib/surface.mjs); nothing prunes a row without one any more (the mold's operator:seed-workflows never deletes)"
                   },
                   "customer_id": {
                     "type": "string"
@@ -824,7 +803,7 @@
                   "description"
                 ]
               },
-              "description": "Workflow scripts beyond the library (workflows table)"
+              "description": "This application's own workflow scripts (workflows table), beside whatever starter library it asks for"
             },
             "definitions": {
               "type": "array",
