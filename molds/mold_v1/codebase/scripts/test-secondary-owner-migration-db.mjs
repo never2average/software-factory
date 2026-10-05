@@ -146,7 +146,7 @@ const both = (row, v) => row?.ae_owner === v && row?.secondary_owner === v;
 const ownerBoth = (row, v) => row?.fde_owner === v && row?.account_owner === v;
 const touchesOurs = (x) => x.includes('"customers"') || x.includes(NEW_COLUMN);
 /** What a LATER journal entry adds (0030's cycle_member_goals table and its index; scripts/test-work-periods-db.mjs proves it): not this migration's to do. */
-const laterEntry = (x) => /"cycle_member_goals(_member_uidx)?"/.test(x);
+const laterEntry = (x) => /"cycle_member_goals(_member_uidx)?"/.test(x) || /"specialist_handbacks(_org_idx)?"/.test(x); // …and 0031's table (scripts/test-specialist-handback-db.mjs)
 
 /** The deploy's drift step after the journal: nothing to apply, nothing refused, and no DROP COLUMN / DROP INDEX at all. */
 function checkPlan(url, label, { oursOnly = false } = {}) {

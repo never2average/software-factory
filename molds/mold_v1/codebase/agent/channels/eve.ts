@@ -9,6 +9,7 @@ import { EMAIL_SESSION_KIND } from "../../lib/session-token-kinds.ts";
 import { queueDeliveryAuth } from "../lib/queue-delivery-auth.ts";
 import { webServiceAuth } from "../lib/web-service-auth.ts";
 import { sessionKeyServiceAuth } from "../../lib/service-auth-mode.ts";
+import { notifyInputRequested } from "../lib/turn-notify.ts";
 
 // Google sign-in (free). The web chat attaches the signed-in user's Google ID
 // token as a bearer; this verifier accepts it only when it was minted for our
@@ -161,6 +162,27 @@ export default guardSessionRoutes(eveChannel({
   // `workspace_scope` attribute ONLY on a service principal, and is stripped from everyone else
   // (agent/lib/service-scope.ts).
   onMessage: ({ eve }) => ({ auth: sessionAuthForRequest(eve.caller, eve.request.headers) }),
+  // A SPECIALIST'S QUESTION OR APPROVAL NOTIFIES THE PERSON. eve proxies a delegated specialist's `input.requested`
+  // onto this (the root's) stream through the channel's event handler and runs NO authored hook for it
+  // (execution/subagent-event-proxy-step.js), so agent/hooks/notifications.ts never saw one: with the tab closed a
+  // specialist waited on an approval for days and nobody was told. This handler sees both kinds; the notifier sends
+  // one notification per request whichever caller reports it first. Never throws (eve logs and swallows, but a
+  // notification is never worth a turn).
+  //
+  // THIS IS ROLL-FORWARD (docs/SPECIALIST_HANDBACK.md "Rolling back"). Declaring a handler here makes eve record a
+  // session's channel as this channel's own adapter kind, `channel:eve`, instead of the framework's plain `http`
+  // (eve/dist/src/public/definitions/channel.js `buildAdapter`, runtime/resolve-channel.js). Sessions started BEFORE
+  // this keep working: the framework kind is always registered. Sessions started AFTER it can only be stepped by a
+  // build that registers `channel:eve` — one whose `events` holds at least one handler. A build that drops the
+  // handler MUST keep a real no-op, `events: { "input.requested"() {} }`: an empty object, or no `events` at all,
+  // reverts the kind to `http` and every chat started since fails with "Unknown adapter kind".
+  events: {
+    async "input.requested"(data, channel, ctx) {
+      // The session comes from the turn's context, or from the channel's own handle where eve passes no context.
+      const session = (ctx as { session?: { id?: string } } | undefined)?.session ?? (channel as { session?: { id?: string } }).session;
+      if (session?.id) await notifyInputRequested(session.id, data, ctx ?? { session });
+    },
+  },
   // Let the web chat attach files (PDFs, spreadsheets, images, docs) up to 20MB.
   uploadPolicy: {
     maxBytes: 20 * 1024 * 1024,

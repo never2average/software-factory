@@ -59,6 +59,18 @@
  *                      tool is IN FLIGHT for that long with nothing streaming
  *                      (scripts/rig-end-of-answer.mjs).
  *
+ *   handback           DIRECTED by the message itself, so one process serves every hand-back shape
+ *                      (scripts/rig-specialist-handback.mjs). The person's message carries
+ *                      `[[hb <specialist>:<mode> …]]`; the root calls every named specialist IN ONE
+ *                      STEP, each with the message `HBMODE:<mode>`, and once all have handed back
+ *                      answers `PARENT-DONE: <their results>`. A specialist's mode is `fast` (answers
+ *                      at once), `slow=<ms>` (answers after that long), `ask` (asks a question first),
+ *                      `askslow=<ms>` (asks, then works that long after the answer)
+ *                      or `fail` (its model call is refused with a 500 every time, so the session
+ *                      fails). A root that receives the system's automatic hand-back (a stopped
+ *                      specialist, agent/lib/specialist-handback.ts) answers `PARENT-TOLD: …` naming
+ *                      who was stopped and who had finished. With no directive it answers PARENT-PLAIN.
+ *
  * `GET /__log` serves every decision with the time it was made (`at`, epoch ms), so a
  * rig can tell when the orchestrator was asked to continue — the moment a specialist's
  * result reached it.
@@ -139,7 +151,48 @@ function imagePartsIn(messages) {
     });
 }
 
+/* ---- the `handback` script: directed by the message ---------------------------------------------------------- */
+
+/** `You are the subagent "<name>".` — eve's wrapper names the specialist whatever it is. */
+const childNameOf = (messages) => {
+  for (const m of messages) {
+    const hit = /You are the subagent "([^"]+)"/.exec(textOf(m.content));
+    if (hit) return hit[1];
+  }
+  return null;
+};
+const HB_HEADING = "[Automatic hand-back";
+function decideHandback(messages) {
+  const child = childNameOf(messages);
+  if (child) {
+    const mode = /HBMODE:([a-z]+)(?:=(\d+))?/.exec(messages.map((m) => textOf(m.content)).join("\n"));
+    const kind = mode?.[1] ?? "fast";
+    if (kind === "fail") return { fail: true };
+    if ((kind === "ask" || kind === "askslow") && !childAlreadyAsked(messages)) {
+      return { tool: "ask_question", args: { prompt: "Which fiscal year should I use?", options: [{ id: "fy26", label: "FY26" }], allowFreeform: true } };
+    }
+    return { text: `CHILD-RESULT ${child}`, delayMs: kind === "slow" || kind === "askslow" ? Number(mode?.[2] ?? 0) : 0 };
+  }
+  const users = messages.filter((m) => m.role === "user");
+  const last = textOf(users[users.length - 1]?.content);
+  if (last.includes(HB_HEADING)) {
+    const names = (label) => [...last.matchAll(new RegExp(`^- ([^:\\n]+): ${label}`, "gm"))].map((m) => m[1]).join(",") || "none";
+    return { text: `PARENT-TOLD: stopped=${names("STOPPED")} finished=${names("FINISHED")} failed=${names("FAILED")}` };
+  }
+  const directive = /\[\[hb ([^\]]+)\]\]/.exec(last);
+  if (!directive) return { text: "PARENT-PLAIN" };
+  const calls = directive[1].trim().split(/\s+/).map((pair) => {
+    const [name, mode = "fast"] = pair.split(":");
+    return { tool: name, args: { message: `HBMODE:${mode}` } };
+  });
+  // Results that arrived after the directive: the tool messages that follow the last user message.
+  const since = messages.slice(messages.lastIndexOf(users[users.length - 1]) + 1).filter((m) => m.role === "tool");
+  if (since.length >= calls.length) return { text: `PARENT-DONE: ${since.map((m) => textOf(m.content).slice(0, 120)).join(" | ")}` };
+  return { tools: calls };
+}
+
 function decide(messages, payload = {}) {
+  if (SCRIPT === "handback") return decideHandback(messages);
   if (SCRIPT === "vision" || SCRIPT === "vision-empty" || SCRIPT === "vision-refuses-reasoning") {
     // `{ empty: true }` — the same shape `empty-always` returns, so `completion()`
     // and `sseChunks()` need no case of their own for this. The branch that used to
@@ -204,6 +257,14 @@ const emptyUsage = () => ({
   completion_tokens_details: { reasoning_tokens: EMPTY_COMPLETION_TOKENS },
 });
 
+/** One tool call (`tool`/`args`, every older script) or several in one step (`tools`, the `handback` script). */
+const toolCallsOf = (decision) => decision.tools ?? [{ tool: decision.tool, args: decision.args }];
+/** A lone call keeps the id every recorded fixture has; calls made together get the step's number and their index. */
+const callIdOf = (decision, index) =>
+  toolCallsOf(decision).length === 1
+    ? `call_${seq.toString(16).padStart(24, "0")}`
+    : `call_${seq.toString(16).padStart(22, "0")}${index.toString(16).padStart(2, "0")}`;
+
 let seq = 0;
 function completion(decision, model) {
   seq++;
@@ -241,13 +302,11 @@ function completion(decision, model) {
         message: {
           role: "assistant",
           content: null,
-          tool_calls: [
-            {
-              id: `call_${seq.toString(16).padStart(24, "0")}`,
-              type: "function",
-              function: { name: decision.tool, arguments: JSON.stringify(decision.args) },
-            },
-          ],
+          tool_calls: toolCallsOf(decision).map((call, index) => ({
+            id: callIdOf(decision, index),
+            type: "function",
+            function: { name: call.tool, arguments: JSON.stringify(call.args) },
+          })),
         },
         finish_reason: "tool_calls",
       },
@@ -284,14 +343,12 @@ function sseChunks(decision, model) {
           index: 0,
           delta: {
             role: "assistant",
-            tool_calls: [
-              {
-                index: 0,
-                id: `call_${seq.toString(16).padStart(24, "0")}`,
-                type: "function",
-                function: { name: decision.tool, arguments: JSON.stringify(decision.args) },
-              },
-            ],
+            tool_calls: toolCallsOf(decision).map((call, index) => ({
+              index,
+              id: callIdOf(decision, index),
+              type: "function",
+              function: { name: call.tool, arguments: JSON.stringify(call.args) },
+            })),
           },
           finish_reason: null,
         },
@@ -339,8 +396,18 @@ const server = createServer((req, res) => {
     const decision = decide(messages, payload);
     LOG.push({ at: Date.now(), child: isChild(messages), decision });
     console.error(
-      `[fake-model] ${isChild(messages) ? "CHILD " : "ROOT  "} -> ${decision.empty ? "EMPTY" : (decision.tool ?? "text")} (max_tokens=${payload.max_tokens ?? "unset"})`,
+      `[fake-model] ${isChild(messages) || childNameOf(messages) ? "CHILD " : "ROOT  "} -> ${decision.empty ? "EMPTY" : decision.fail ? "500" : (decision.tools?.map((t) => t.tool).join("+") ?? decision.tool ?? "text")} (max_tokens=${payload.max_tokens ?? "unset"})`,
     );
+    if (decision.fail) {
+      // A provider that refuses every call: the specialist's session fails, and eve hands the failure to its parent.
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "scripted provider failure (handback: fail)", type: "server_error" } }));
+      return;
+    }
+    if (decision.delayMs > 0) {
+      setTimeout(() => respond(payload, decision, res), decision.delayMs);
+      return;
+    }
     // The child's resumed work, when asked for: its answer comes CHILD_WORK_MS later.
     const work =
       (SCRIPT === "delegate-parks" && isChild(messages) && childAlreadyAsked(messages)) ||

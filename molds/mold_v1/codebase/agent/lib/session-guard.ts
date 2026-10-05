@@ -42,7 +42,7 @@
  *
  * Failures: a database the guard cannot read answers 503 (closed), never "let it through". Every refusal is 404.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { routeAuth, verifyJwtEcdsa, type AuthFn } from "eve/channels/auth";
 import type { Channel, HttpRouteDefinition, RouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
 import { DEFAULT_ORG, orgForSession, WorkspaceRefusedError } from "./org-context.ts";
@@ -81,6 +81,8 @@ import { withoutContinuationTokens } from "../../lib/chat-replay-stream.ts";
 import { noticeDelegations } from "./session-lineage-stream.ts";
 import { candidateParents, scanForChildren } from "./session-lineage-backfill.ts";
 import { DELEGATION_EVENT_TYPES, delegationRunRecorder } from "./session-delegation-runs.ts";
+import { handBackStopped, planStop, refusalMessage, retryOwed, type HandbackOutcome, type HandbackWorld, type StreamEvent } from "./specialist-handback.ts";
+import { handbackLedger } from "./handback-ledger.ts";
 
 type AuthContext = Exclude<Awaited<ReturnType<typeof routeAuth>>, Response>;
 type Handler = HttpRouteDefinition["handler"];
@@ -409,6 +411,115 @@ async function recoverChildLineage(
   }
   return false;
 }
+
+/**
+ * A session's COMPLETE history as of each ask, read incrementally: the first ask reads from the start, every later
+ * one only what is new (a Stop polls the same two or three sessions several times).
+ *
+ * "Complete" is explicit, not a guess from silence. A live session's stream never ends, so each ask first takes
+ * eve's LATEST event (`startIndex: -1`) and then reads forward from its cursor until it has read that very event:
+ * the history is then whole as of the moment the ask began. A stream that ends is whole by definition. Anything
+ * else — eve unreadable, the latest event not reached before `totalMs` — is `undefined`, and no caller decides on
+ * it. (The latest event is matched by its full content, timestamp included. Two text deltas can be identical to the
+ * millisecond; nothing here decides on a delta, and the boundary events it does decide on are unique.)
+ */
+function historyReader(args: RouteHandlerArgs, totalMs: number): (sessionId: string) => Promise<StreamEvent[] | undefined> {
+  const read = new Map<string, StreamEvent[]>();
+  return async (sessionId) => {
+    const events = read.get(sessionId) ?? [];
+    const deadline = Date.now() + totalMs;
+    const latest = await probeEvent(args, sessionId, -1, Math.min(3_000, totalMs));
+    if (!latest) return undefined;
+    const target = JSON.stringify(latest);
+    if (events.length > 0 && JSON.stringify(events[events.length - 1]) === target) return events;
+    let reader: ReadableStreamDefaultReader<unknown> | undefined;
+    try {
+      const stream = await withTimeout(args.getSession(sessionId).getEventStream({ startIndex: events.length }), totalMs);
+      if (!stream) return undefined;
+      reader = (stream as ReadableStream<unknown>).getReader();
+      for (;;) {
+        const left = deadline - Date.now();
+        if (left <= 0) return undefined;
+        const next = await withTimeout(reader.read(), left);
+        if (!next) return undefined;
+        if (next.done) break;
+        events.push(next.value as StreamEvent);
+        read.set(sessionId, events);
+        if (JSON.stringify(next.value) === target) break;
+      }
+      return events;
+    } catch {
+      return undefined;
+    } finally {
+      void reader?.cancel().catch(() => undefined);
+    }
+  };
+}
+
+/** What the Control Panel is told about the main thread, beside eve's own answer to the cancel. */
+const HANDBACK_FIELD: Partial<Record<HandbackOutcome, string>> = {
+  told: "main-thread-told",
+  "not-delivered": "not-delivered",
+  "finished-anyway": "finished-anyway",
+  "main-thread-moved-on": "main-thread-moved-on",
+};
+
+/**
+ * STOPPING A DELEGATED SPECIALIST (agent/lib/specialist-handback.ts has the why and the order). Returns the response
+ * when this request was a stop of a delegation of its root's current turn — refused because a sibling still works,
+ * or carried out — and null when it is any other cancel, which eve then handles as always.
+ */
+async function stopDelegatedSpecialist(
+  route: HttpRouteDefinition,
+  request: Request,
+  args: RouteHandlerArgs,
+  sessionId: string,
+  parentSessionId: string,
+  auth: AuthContext,
+  db: GateDb,
+  orgId: string,
+): Promise<Response | null> {
+  const world: HandbackWorld = {
+    history: historyReader(args, HANDBACK_READ_MS),
+    cancel: async (id, turnId) => String(((await args.getSession(id).cancel(turnId ? { turnId } : undefined)) as { status?: unknown } | undefined)?.status ?? ""),
+    send: async (message, continuationToken) => {
+      const session = await args.send({ message }, { auth: sessionAuthForRequest(auth, request.headers), continuationToken });
+      return { id: session.id, cancel: () => session.cancel() };
+    },
+    sleep: delay,
+    ledger: handbackLedger(db, orgId),
+    nonce: () => randomUUID(),
+  };
+  const plan = await planStop(world, parentSessionId, sessionId);
+  if (plan.kind === "refuse") {
+    return Response.json(
+      { ok: false, sessionId, status: "refused", error: refusalMessage(plan.name, plan.working, plan.asking) },
+      { status: 409, headers: noStore },
+    );
+  }
+  let answered: Response | undefined;
+  const forward = async () => {
+    answered = await route.handler(request, args);
+    if (!answered.ok) return "error";
+    const body = (await answered.clone().json().catch(() => null)) as { status?: unknown } | null;
+    return typeof body?.status === "string" ? body.status : "";
+  };
+  let outcome: HandbackOutcome;
+  if (plan.kind === "hand-back") {
+    outcome = await handBackStopped(world, { parentSessionId, plan, cancelChild: forward });
+  } else {
+    // Nothing of this specialist's to stop now — but an earlier Stop may have left a hand-back it could not deliver.
+    await forward();
+    outcome = await retryOwed(world, parentSessionId, sessionId);
+  }
+  if (!answered) return null;
+  const field = HANDBACK_FIELD[outcome];
+  if (!field) return answered; // nothing was owed, or another request is carrying it out: eve's answer as it is
+  const body = ((await answered.clone().json().catch(() => null)) as Record<string, unknown> | null) ?? { ok: true, sessionId };
+  return Response.json({ ...body, handback: field }, { status: answered.status, headers: answered.headers });
+}
+/** Reading a session's history whole before a specialist is stopped. Generous: a wrong plan is worse than a slow Stop. */
+const HANDBACK_READ_MS = 10_000;
 
 /** How long a stream opened from a cursor waits for the skipped history to be read before it is served anyway. */
 const LINEAGE_INLINE_MS = 400;
@@ -792,6 +903,16 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
         /* no request lifetime to extend (tests, local) */
       }
       if (startIndex !== undefined && startIndex > 0) await Promise.race([scan, delay(LINEAGE_INLINE_MS)]);
+    }
+    // A delegated specialist stopped on its own would leave its parent waiting in silence, for ever: end the waiting
+    // turn and tell the main agent, or refuse while a sibling still works (agent/lib/specialist-handback.ts).
+    const parentId = ownership?.rootSessionId;
+    if (key === CANCEL_ROUTE && parentId && parentId !== sessionId) {
+      const parent = await decide(caller, parentId, "write", args, deps, workspace).catch(() => null);
+      if (parent?.allow && db && ownership) {
+        const stopped = await stopDelegatedSpecialist(route, request, args, sessionId, parentId, auth, db, ownership.orgId);
+        if (stopped) return stopped;
+      }
     }
     const response = await route.handler(request, args);
     if (key !== STREAM_ROUTE || !response.ok || !response.body) return response;

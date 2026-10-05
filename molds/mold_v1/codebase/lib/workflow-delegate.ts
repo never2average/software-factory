@@ -22,6 +22,7 @@ import { SESSION_VISIBILITY_GRANT_HEADER } from "./session-token-kinds.ts";
 import { mintWorkspaceStepGrant } from "./auth-session.ts";
 import { bearerToken, isServiceSource, type ServiceBearer } from "./service-identity.ts";
 import { fill, speak, withCurrentToolNames } from "../agent/lib/agent-vocabulary.ts";
+import { createStepWatch, waitingOnPersonMessage } from "./step-handback.ts";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
 
@@ -306,6 +307,10 @@ export function makeDelegate(
     // pseudo-stream.
     let streamIndex = 0;
     let reconnects = 0;
+    // A turn that ends while a specialist is still out is eve PARKING on that specialist's question, not the end of
+    // the step (lib/step-handback.ts). A person's step keeps reading; the platform's own has nobody to answer.
+    const watch = createStepWatch();
+    const unattended = isServiceSource(bearer) || bearerEmail(bearer) === null;
     try {
       while (reconnects <= 3) {
         const stream = await fetch(
@@ -350,9 +355,16 @@ export function makeDelegate(
               if (event.type === "turn.cancelled") {
                 throw signal?.reason instanceof Error ? signal.reason : new Error("The agent step was cancelled.");
               }
-              if (event.type === "turn.completed" || event.type === "session.completed") {
+              const verdict = watch.see(event);
+              if (verdict.kind === "done") {
                 await reader.cancel();
                 return finish();
+              }
+              if (verdict.kind === "waiting-on-person" && unattended) {
+                await reader.cancel();
+                // Nobody will ever answer: stop the parked turn (and with it the specialist) and say why.
+                await cancelEveSession(sessionId, bearer, orgId);
+                throw new Error(waitingOnPersonMessage(verdict.ask, { unattended: true }));
               }
             }
           }
@@ -362,6 +374,12 @@ export function makeDelegate(
         reconnects++;
       }
       throw new Error("The agent stream disconnected repeatedly before the turn settled.");
+    } catch (error) {
+      // The budget ran out with a specialist parked on a request: say that, not "the operation was aborted".
+      const ask = watch.asked();
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") && !signal?.aborted;
+      if (timedOut && ask && watch.outstanding().length > 0) throw new Error(waitingOnPersonMessage(ask, { unattended }));
+      throw error;
     } finally {
       signal?.removeEventListener("abort", onAbort);
     }

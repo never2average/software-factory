@@ -232,8 +232,11 @@ console.log("\n6. Review of #63 — each of these failed on 2a1d80c:");
     delete globalThis[KEY];
   }
   check("off Vercel (no request context) nothing is registered", push.platformWaitUntil(Promise.resolve(), 10) === false);
-  const hook = readFileSync(new URL("../agent/hooks/notifications.ts", import.meta.url), "utf8");
-  check("…and the notification hook uses it (it never awaits a send)", /sends\.run\(/.test(hook) && !/await notify\(/.test(hook.replace(/sends\.run\(async \(\) => \{[\s\S]*?\}\);/, "")));
+  // The one notifier the hook AND the channel's handler feed (a specialist's question reaches no hook) is wired in
+  // agent/lib/turn-notify.ts; the hook only calls into it.
+  const hook = readFileSync(new URL("../agent/lib/turn-notify.ts", import.meta.url), "utf8");
+  check("the notification hook goes through that one notifier", /from "#lib\/turn-notify\.js"/.test(readFileSync(new URL("../agent/hooks/notifications.ts", import.meta.url), "utf8")));
+  check("…and the notifier uses it (it never awaits a send)", /sends\.run\(/.test(hook) && !/await notify\(/.test(hook.replace(/sends\.run\(async \(\) => \{[\s\S]*?\}\);/, "")));
 
   });
   await guarded(async () => {

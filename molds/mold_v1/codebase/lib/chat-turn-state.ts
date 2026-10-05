@@ -1868,14 +1868,76 @@ export function specialistDisplayName(name: string): string {
  * What the status line says while a specialist works and the main thread waits
  * for it — named, so a quiet stream reads as work in progress, not a stall.
  */
-export function specialistWorkingLine(names: readonly string[]): string {
+export function specialistWorkingLine(names: readonly string[], finished: readonly string[] = []): string {
   // `liveDelegations` says "specialist" when the event carried no name.
   const unique = [...new Set(names.map((n) => n.trim()).filter((n) => n && n !== "specialist"))];
+  const done = [...new Set(finished.map((n) => n.trim()).filter((n) => n && n !== "specialist"))];
+  if (done.length > 0 && unique.length > 0) {
+    // Specialists called together hand back together (see `handbackStates`): say who is done and who is not, so
+    // a finished specialist with nothing on the main thread reads as held, not lost.
+    const still = unique.map(specialistDisplayName).join(", ");
+    const ready = done.map(specialistDisplayName).join(", ");
+    return `${ready} ${done.length === 1 ? "has" : "have"} finished; ${still} ${unique.length === 1 ? "is" : "are"} still working. Specialists called together hand back together — the main thread continues here by itself when ${unique.length === 1 ? "it does" : "they do"}.`;
+  }
   if (unique.length === 0) return "Still working — a specialist is running. The rest of the reply will appear here when it finishes.";
   if (unique.length === 1) {
     return `The ${specialistDisplayName(unique[0])} specialist is working — the main thread continues here when it hands back.`;
   }
   return `${unique.length} specialists are working (${unique.map(specialistDisplayName).join(", ")}) — the main thread continues here when they hand back.`;
+}
+
+/** A delegation as the Control Panel knows it: the parent's view (`status`) and which child session it is. */
+export interface DelegationView {
+  readonly callId: string;
+  readonly name: string;
+  /** "running" until the parent's stream carries this delegation's result. */
+  readonly status: string;
+  readonly childSessionId?: string | null;
+}
+
+/** What a child's own stream says, as the Control Panel follows it. */
+export interface ChildFeedView {
+  /** The child's session ended (`session.completed`). */
+  readonly completed?: boolean;
+  /** The child's final assistant text. */
+  readonly result?: string;
+}
+
+/**
+ * A SPECIALIST THAT HAS FINISHED WHILE THE MAIN THREAD HAS NOT HEARD FROM IT: held, or lost?
+ *
+ * eve hands a parent the results of ONE STEP'S delegations TOGETHER: `resolvePendingRuntimeActions`
+ * (eve/dist/src/harness/runtime-actions.js) emits `subagent.completed` / `action.result` only when every delegation
+ * of the batch has returned ("eve runs the batch concurrently and returns every result", docs/subagents.mdx).
+ * Measured on a live deployment, 2026-10-05: two specialists called together, one finished in 4 s, the other was still
+ * working six minutes later — and the parent's stream had said nothing about the first. That is `held`: the result
+ * is safe inside the waiting turn and arrives by itself with its siblings'.
+ *
+ * The chat used to call exactly that a hand-off that "didn't reach the chat" and offer **Bring result into chat**,
+ * which CANCELS the waiting turn — and with it every sibling still working (39 minutes of a filing specialist's work,
+ * 2026-10-04) — and makes the main agent start again from a pasted message. So:
+ *
+ *   held   finished, and at least one other delegation the parent still waits for is NOT finished. Nothing to do.
+ *   lost   finished, and so is everything else the parent waits for, yet the parent has no result: eve's own
+ *          hand-back did not land. Only this is offered the manual rescue.
+ *
+ * A delegation whose child cannot be seen (no feed yet) counts as not finished: never call a wait a loss.
+ */
+export function handbackStates(
+  delegations: readonly DelegationView[],
+  feeds: Readonly<Record<string, ChildFeedView | undefined>>,
+): { lost: { callId: string; name: string; result: string }[]; held: { callId: string; name: string }[] } {
+  const waiting = delegations.filter((d) => d.status === "running");
+  const finished: { callId: string; name: string; result: string }[] = [];
+  let unfinished = 0;
+  for (const d of waiting) {
+    const feed = d.childSessionId ? feeds[d.childSessionId] : undefined;
+    const result = feed?.completed ? (feed.result ?? "").trim() : "";
+    if (feed?.completed && result) finished.push({ callId: d.callId, name: d.name, result });
+    else unfinished += 1;
+  }
+  if (unfinished > 0) return { lost: [], held: finished.map(({ callId, name }) => ({ callId, name })) };
+  return { lost: finished, held: [] };
 }
 
 /** The browser-only marker a Stop leaves in the transcript (persisted with it, like `client.input.responded`). */

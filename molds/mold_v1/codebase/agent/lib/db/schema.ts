@@ -1406,6 +1406,41 @@ export const agentSessionOwners = pgTable(
 );
 
 /**
+ * ONE HAND-BACK PER STOPPED SPECIALIST (agent/lib/specialist-handback.ts, agent/lib/handback-ledger.ts).
+ *
+ * When a delegated specialist is stopped on its own, the request that stopped it ends the turn waiting for it and
+ * tells the main agent. Two such requests can arrive at two processes (the agent is serverless: many instances), and
+ * a memory of "already doing this" holds in one of them only. So the right to send is this row: its primary key is
+ * (parent session, stopped child, the parent's turn), and the INSERT that creates it is the claim — the second one
+ * conflicts and stands down.
+ *
+ *   status    claimed      one request is carrying the hand-back out
+ *             delivered    the message is on the main thread's stream
+ *             undelivered  it could not be delivered; `message` is kept and the next Stop on that specialist retries
+ *   message   the hand-back's text, written BEFORE the waiting turn is ended: that turn holds the results of
+ *             specialists that had already finished, and ending it discards them from eve. Null until written.
+ *
+ * Written inside the workspace's row-level scope, like every tenant table; `org_id` is the session owner's.
+ */
+export const specialistHandbacks = pgTable(
+  "specialist_handbacks",
+  {
+    orgId: text("org_id").notNull(),
+    parentSessionId: text("parent_session_id").notNull(),
+    childSessionId: text("child_session_id").notNull(),
+    turnId: text("turn_id").notNull(),
+    status: text("status").notNull().default("claimed"),
+    message: text("message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: "specialist_handbacks_pk", columns: [t.parentSessionId, t.childSessionId, t.turnId] }),
+    index("specialist_handbacks_org_idx").on(t.orgId),
+  ],
+);
+
+/**
  * Token usage of ORDINARY chat turns — the main agent, not a workflow.
  *
  * `automation_runs` accounts for subagent (workflow) turns through each

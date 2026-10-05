@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { defaultMessageReducer } from "eve/react";
 import type { EveMessage } from "eve/react";
-import { withSessionEpochs } from "@/lib/chat-turn-state";
+import { handbackStates, withSessionEpochs } from "@/lib/chat-turn-state";
 import { AgentMessage } from "./agent-message";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { ChatComposer } from "./composer";
@@ -112,6 +112,7 @@ export function Cockpit({
   onDetailChange,
   onInputResponses,
   onStuckHandoffs,
+  onHeldHandoffs,
   onOpenArtifact,
   onOpenOps,
 }: {
@@ -130,6 +131,9 @@ export function Cockpit({
   readonly onStuckHandoffs?: (
     handoffs: readonly { callId: string; name: string; result: string }[],
   ) => void;
+  /** Report specialists that FINISHED while a sibling of the same step still works: held by design, the main
+   *  thread gets them together (lib/chat-turn-state.ts `handbackStates`) — the status line says so. */
+  readonly onHeldHandoffs?: (handoffs: readonly { callId: string; name: string }[]) => void;
   /** Open a PUBLISHED FILE in the chat's artifact preview (the rail swaps to
    *  it), so a file in this rail behaves exactly like an artifact link in the
    *  conversation. Scripts and cron definitions still open in a modal — the
@@ -297,30 +301,41 @@ export function Cockpit({
   // parent's delegation is still "running" (it never received the result — the
   // resumeHook handoff didn't land). Surface these to the chat so the user can
   // pull the result in manually. Result = the child's last assistant message.
-  const stuckHandoffs = useMemo(() => {
-    const out: { callId: string; name: string; result: string }[] = [];
+  // Held, not stuck: a specialist that finished while a sibling of the same step still works is waiting by design
+  // (eve hands a step's delegations back together) — `handbackStates` in lib/chat-turn-state.ts has the measurements.
+  const handbacks = useMemo(() => {
+    const views: Record<string, { completed?: boolean; result?: string }> = {};
     for (const s of insights.subagents) {
       if (s.status !== "running" || !s.childSessionId) continue;
       const f = feeds[s.childSessionId];
-      if (!f || f.turnActive !== false) continue;
-      // Only a GENUINELY completed child (session.completed) is a stuck handoff.
-      // A child parked on an approval also has turnActive false + status ended,
-      // but it isn't finished — it's waiting on the user, so never flag it.
-      if (!f.completed) continue;
+      // Only a GENUINELY completed child (session.completed) has handed anything back. A child parked on an
+      // approval also has turnActive false, but it isn't finished — it's waiting on the user.
+      if (!f || f.turnActive !== false || !f.completed) continue;
       const lastAssistant = [...f.messages].reverse().find((m) => m.role === "assistant");
-      if (!lastAssistant) continue;
-      const result = (lastAssistant.parts ?? [])
+      const result = (lastAssistant?.parts ?? [])
         .map((p) => {
           const part = p as { type?: string; text?: string };
           return part.type === "text" ? (part.text ?? "") : "";
         })
         .join("")
         .trim();
-      if (!result) continue;
-      out.push({ callId: s.callId, name: subagentDisplayName(s.name), result });
+      views[s.childSessionId] = { completed: true, result };
     }
-    return out;
+    const states = handbackStates(insights.subagents, views);
+    return {
+      lost: states.lost.map((h) => ({ ...h, name: subagentDisplayName(h.name) })),
+      held: states.held,
+    };
   }, [insights.subagents, feeds]);
+  const stuckHandoffs = handbacks.lost;
+  const heldSig = handbacks.held.map((h) => h.callId).join(",");
+  const onHeldRef = useRef(onHeldHandoffs);
+  onHeldRef.current = onHeldHandoffs;
+  const heldRef = useRef(handbacks.held);
+  heldRef.current = handbacks.held;
+  useEffect(() => {
+    onHeldRef.current?.(heldRef.current);
+  }, [heldSig]);
   const stuckSig = stuckHandoffs.map((h) => h.callId).join(",");
   const onStuckRef = useRef(onStuckHandoffs);
   onStuckRef.current = onStuckHandoffs;
@@ -337,14 +352,29 @@ export function Cockpit({
         method: "POST",
         headers: eveAuthHeaders(),
       });
-      const body = (await res.json().catch(() => null)) as { status?: string } | null;
+      const body = (await res.json().catch(() => null)) as { status?: string; error?: string; handback?: string } | null;
       appendLocal(
         sid,
-        !res.ok
-          ? `Cancel failed (${res.status})`
-          : body?.status === "no_active_turn"
-            ? "Nothing to cancel — the run has no active turn (it already finished or failed)."
-            : "Cancel requested",
+        // A refused stop says why (another specialist of the same turn still works — agent/lib/specialist-handback.ts).
+        res.status === 409 && body?.error
+          ? body.error
+          : !res.ok
+            ? `Cancel failed (${res.status})`
+            : body?.status === "no_active_turn"
+              ? body?.handback === "main-thread-told"
+                ? "The main thread has now been told that this specialist was stopped."
+                : body?.handback === "not-delivered"
+                  ? "This specialist is stopped, and the main thread still could not be told. Stop the main thread to continue."
+                  : "Nothing to cancel — the run has no active turn (it already finished or failed)."
+              : body?.handback === "main-thread-told"
+                ? "Stopped. The main thread has been told and is continuing without this specialist's result."
+                : body?.handback === "not-delivered"
+                  ? "Stopped, but the main thread has NOT been told yet. What it should be told is saved: press Stop on this specialist again to retry, or stop the main thread."
+                  : body?.handback === "finished-anyway"
+                    ? "It finished just as it was stopped: its result goes to the main thread as usual."
+                    : body?.handback === "main-thread-moved-on"
+                      ? "Stopped. The main thread had already moved on, so there was nothing to tell it."
+                      : "Cancel requested",
       );
       if (body?.status === "no_active_turn") markTurnIdle(sid);
     } catch {

@@ -581,12 +581,12 @@
   "work_periods": {
     "mode": "individual",
     "label": {
-      "singular": "week",
-      "plural": "weeks"
+      "singular": "coverage target",
+      "plural": "coverage targets"
     },
     "item_label": {
-      "singular": "target",
-      "plural": "targets"
+      "singular": "task",
+      "plural": "tasks"
     },
     "length_days": 7,
     "auto_rollover": true

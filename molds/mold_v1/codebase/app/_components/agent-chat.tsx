@@ -335,6 +335,8 @@ import {
 } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { AgentMessage, PendingApprovalCard, messageRendersContent } from "./agent-message";
+import { HandbackNote } from "./handback-note";
+import { isHandbackTranscriptMessage, messageText } from "@/lib/handback-text";
 import { GOAL_OUTCOME_SCHEMA, asGoalOutcome, goalPreamble, type GoalOutcome } from "./goal-mode";
 import type { ChatMeta } from "./chat-shell";
 import type { OpsSection } from "./ops-center";
@@ -2194,6 +2196,8 @@ export function AgentChat({
     readonly { callId: string; name: string; result: string }[]
   >([]);
   const [handledHandoffs, setHandledHandoffs] = useState<ReadonlySet<string>>(new Set());
+  // Specialists that finished while a sibling of the same step still works: held by design, never "stuck".
+  const [heldHandoffs, setHeldHandoffs] = useState<readonly { callId: string; name: string }[]>([]);
   // An office-artifact link the user clicked — shown in the in-app preview.
   const [previewArtifact, setPreviewArtifact] = useState<{ url: string; filename: string } | null>(
     null,
@@ -4085,6 +4089,11 @@ export function AgentChat({
               ) {
                 return null;
               }
+              // A stopped specialist's automatic hand-back is a user-role message the SYSTEM sent
+              // (lib/handback-text.ts): a note, never a bubble from the person.
+              if (isHandbackTranscriptMessage(message)) {
+                return <HandbackNote key={message.id} text={messageText(message)} />;
+              }
               // Auto-compaction divider: at the START of a turn eve compacted
               // before (its turnId is in `autoCompactedTurns`), the first time
               // that turn appears in the flow.
@@ -4198,8 +4207,8 @@ export function AgentChat({
                 className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2.5"
               >
                 <p className="text-sm">
-                  <span className="font-medium">{h.name} subagent</span> finished, but its result
-                  didn't reach the chat.
+                  <span className="font-medium">{h.name} subagent</span> finished and nothing else is
+                  running, but its result didn't reach the chat.
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
@@ -4477,7 +4486,10 @@ export function AgentChat({
                       ? "Your earlier message is queued and will be sent after this reply. Stop releases it after a minute."
                       : "Your earlier message is waiting its turn on the server — its reply will appear here."
                   : specialistRunning || workingSpecialists.length > 0
-                    ? specialistWorkingLine(workingSpecialists.map((d) => d.name))
+                    ? specialistWorkingLine(
+                        workingSpecialists.filter((d) => !heldHandoffs.some((h) => h.callId === d.callId)).map((d) => d.name),
+                        workingSpecialists.filter((d) => heldHandoffs.some((h) => h.callId === d.callId)).map((d) => d.name),
+                      )
                     : attachLive
                       ? // A reader IS on the live stream: the words have to match
                         // what the screen is doing, or the one state where the
@@ -4853,6 +4865,7 @@ export function AgentChat({
               onDetailChange={setCockpitWide}
               onInputResponses={respondToInput}
               onStuckHandoffs={setStuckHandoffs}
+              onHeldHandoffs={setHeldHandoffs}
               // A published file in the rail opens in the SAME artifact preview
               // an office link in the chat opens — the rail swaps to it, and
               // closing the preview brings the cockpit back.

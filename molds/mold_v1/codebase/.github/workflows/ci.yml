@@ -384,6 +384,24 @@ jobs:
         if: always()
         run: npm run test:subagent-handback
 
+      # "Subagents don't automatically message back the main agent" (2026-10-05).
+      # The server-side half of the same sentence: eve resumes a parent only when
+      # its WHOLE batch of delegations is back, so a specialist stopped on its
+      # own left the main thread waiting for ever, a finished specialist whose
+      # sibling still worked was offered a "Bring result" that cancelled the
+      # sibling, a specialist's approval notified nobody with the tab closed,
+      # and a program's step (an app refreshed from a specialist) took eve's
+      # park for the end. Runs the real modules — the session guard's stop
+      # planner, the notifier, the chat's hand-back states and the real
+      # workflow delegate — over streams recorded from the live runtime.
+      # Also: a hostile specialist's output cannot leave its quoted block,
+      # forge an entry or pass for the person; a Stop racing a natural
+      # finish, a new turn or an unsettled main thread sends nothing it
+      # should not and reports what happened.
+      - name: A specialist's result reaches the main agent (behavioural)
+        if: always()
+        run: npm run test:specialist-handback
+
       # A parked approval survives a reload on purpose; one whose run has ENDED
       # must not, or it comes back as a live prompt and wedges the composer on a
       # chat that is already finished. Runs eve's own reducer over persisted
@@ -953,6 +971,19 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:session-guard
+
+      # ONE HAND-BACK PER STOPPED SPECIALIST, ACROSS INSTANCES (mold_v1-181). The agent is serverless: two Stops on one
+      # specialist can land on two instances, where a memory of "already doing this" holds in one. The claim is a row in
+      # specialist_handbacks. Two separate node processes per round, released at the same instant against this
+      # Postgres as app_rw: exactly one wins, every round, for the claim and for taking over an undelivered hand-back.
+      # Also: the row is its workspace's (invisible and untouchable from another), and drizzle/0031 is additive, in
+      # step with schema.ts, with an empty drift plan after it.
+      - name: One hand-back per stopped specialist across processes, and its migration, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:specialist-handback-db
 
       # THE FIVE ROUTES THAT CALL THE AGENT AS THE WEB APP (resume-workflows, run-cron-workflows, refresh-apps, ops/run,
       # the run-cancel fan-out), on a deployment with no Vercel variable and SERVICE_AUTH=session-key: each real

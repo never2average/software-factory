@@ -144,7 +144,7 @@ const solBoth = (row, v) => row?.solution_fde_owner === v && row?.solution_owner
  * (scripts/test-secondary-owner-migration-db.mjs proves it) and 0030's cycle_member_goals table with its index
  * (scripts/test-work-periods-db.mjs proves that one).
  */
-const laterEntry = (x) => /ADD COLUMN "secondary_owner"/.test(x) || /"cycle_member_goals(_member_uidx)?"/.test(x);
+const laterEntry = (x) => /ADD COLUMN "secondary_owner"/.test(x) || /"cycle_member_goals(_member_uidx)?"/.test(x) || /"specialist_handbacks(_org_idx)?"/.test(x); // …and 0031's table (scripts/test-specialist-handback-db.mjs)
 const touchesOurs = (x) => TABLES.some((t) => x.includes(`"${t}"`)) || NEW_COLUMNS.some((c) => x.includes(c)) || /owner_idx/.test(x);
 
 /** The deploy's drift step after the journal: nothing to apply, nothing refused, and no DROP COLUMN / DROP INDEX at all. */
