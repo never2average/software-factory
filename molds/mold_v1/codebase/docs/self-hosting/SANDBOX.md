@@ -156,6 +156,54 @@ there again when it prewarms); it removes them when it exits.
 
 The host needs `/dev/kvm`, and the server's user must be in the `kvm` group.
 
+## Sessions, steps and the guard
+
+eve commits a session's sandbox at the end of every model step. Outside `eve dev` that commit **stops the VM and
+snapshots it**, and the next step reattaches: the stopped sandbox is restored from that snapshot. eve 0.25.1's
+microsandbox binding keeps an open handle per session in its process, and the commit does not clear it. So the next
+step was handed the stopped VM, and every bash, glob or file call in it failed:
+
+```
+runtime error: no agent socket found for sandbox "eve-sbx-ses-…"
+```
+
+Measured on the first self-hosted server (2026-10-05): every specialist that ran bash in two model steps failed on
+the second (9 of 9 in three parallel delegated turns). Sessions that share one sandbox (the built-in `agent` tool's
+children run in their parent's) were worse off: each concurrent open booted its own VM, and the first to finish a step
+stopped the one the others were handed next. Separately, when several 2-vCPU VMs booted at once on the 4-vCPU host, a
+guest kernel stalled and never reported ready (`BUG: scheduling while atomic` in the sandbox's `logs/kernel.log`).
+microsandbox waits 180 s for it before giving up, and one specialist started 3 minutes after it was called.
+
+The build's wrapper puts `guardSandboxBackend` (`agent/lib/sandbox-guard.ts`) in front of the microsandbox backend:
+
+| | |
+|---|---|
+| after a commit | the last session using a VM lets eve snapshot and stop it as before, then evicts eve's cached handle, so the next step reattaches instead of reusing a stopped VM |
+| a shared sandbox | one VM per sandbox key, however many sessions open it at once. A commit leaves it running while another session still uses it; the last one out stops it. A step that failed without committing is superseded by its session's next step, so it never pins the VM |
+| booting | at most `floor(host CPUs / SANDBOX_CPUS)` VMs boot at the same time (2 on a 4-vCPU host at the default 2). The rest queue in order, and the server log says `[sandbox] waiting for a sandbox (…): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 1 waiting` |
+| a boot that hangs | abandoned after 60 s and started once more (`[sandbox] a sandbox did not start within 60 s …; starting another`). After two, the step is told `No sandbox started within 60 s, 2 times in a row …` |
+| memory | a VM is not booted while the host's available memory is below one sandbox plus 512 MiB, for at most 60 s; after that it is booted anyway, with a log line. It never refuses, so a main agent waiting on its specialists cannot deadlock on it |
+
+It changes nothing about the VMs themselves: the same CPUs, memory, network policy, templates, snapshots and names.
+Under `eve dev` (`EVE_DEV=1`, where eve leaves VMs running between steps) it evicts nothing. With `SANDBOX_BACKEND`
+unset there is no wrapper and the guard is never loaded. Handed any backend that is not microsandbox (eve's `vercel()`
+included), it returns that backend untouched.
+
+### Checking a running server
+
+```
+RIG_BASE=https://app.example.com RIG_TOKEN=<a signed-in session token> RIG_ORG=<workspace id> \
+  node scripts/rig-sandbox-load.mjs --turns 3 --per-turn 3 --specialists <a>,<b>,<c>
+```
+
+The rig starts `--turns` delegated turns at once. Each delegates to `--per-turn` specialists in one step (default: the
+built-in `agent` tool), and every specialist runs bash in `--steps` (default 2) separate model steps. For each
+specialist it reports the start delay (from `subagent.called` to the specialist's own `session.started`, on eve's
+server clock) and each bash call. It passes when no specialist hit a sandbox failure (an error, a call that never
+returned, an `echo` slower than `--max-bash-s`, default 60) or a start slower than `--max-start-s` (default 60). A specialist whose model did not do as asked is reported as inconclusive, not as a
+failure. It starts test chats and real model calls, so run it where those are welcome. `--self-test` checks its
+verdicts on recorded event shapes, offline.
+
 ## Tests
 
 `npm run test:sandbox-backend` loads the real sandbox definitions and the research prompt under each setting, checks
@@ -165,6 +213,14 @@ handed under each setting with a stand-in for eve. `npm run test:sandbox-coverag
 CI job): a copy of the checkout with the pack-like fixture profile, a fixture specialist with no sandbox file and a
 pack-shaped one, built with and without the setting and read back with `--plan`. Neither creates a sandbox: CI has
 no KVM.
+
+`scripts/test-sandbox-guard.mjs` (part of `npm run test:sandbox-backend`) runs eve's real microsandbox binding with the
+`microsandbox` package replaced by a stand-in (`scripts/fixtures/microsandbox-standin.mjs`). In the stand-in a
+stopped VM has no agent socket and a snapshot is a copy of the disk, and a guest can be made to stall when it boots
+beside others. It drives the backend as eve does for each model step: open, run, commit. Without the guard it
+reproduces the server (a second step fails with `no agent socket found`, three VMs for one shared key, a stall when
+six boot at once). With the guard it checks every case in the table above, and that eve's `vercel()` backend comes
+back untouched.
 
 Not covered by a test, and to be checked on the real host:
 
@@ -179,4 +235,7 @@ Not covered by a test, and to be checked on the real host:
 - that `$HOME/fmt_xlsx.py` written at bootstrap is present in a later session and formats a workbook;
 - `npm run sandbox:prewarm` against real templates, including `--link-runtime`;
 - `dataroom_fetch_to_sandbox` from a microsandbox sandbox to the web app's public address (filesystem storage);
-- a soak test of 2-vCPU sandboxes on the target's KVM.
+- a soak test of 2-vCPU sandboxes on the target's KVM;
+- the guard against real VMs: `node scripts/rig-sandbox-load.mjs` on the server after a deploy (above). The stand-in's
+  stall is a model of what was seen (a guest booted beside others never reports ready); that the boot limit is
+  enough on a given host is what the rig measures.

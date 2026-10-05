@@ -115,14 +115,22 @@ export function wrapperSource({ node, authoredSha }) {
 import { defineSandbox } from "eve/sandbox";
 import { microsandbox } from "eve/sandbox/microsandbox";
 import { microsandboxSettings } from "#lib/sandbox-settings.js";
+import { guardSandboxBackend } from "#lib/sandbox-guard.js";
 ${authored}
 
 // Null unless SANDBOX_BACKEND=microsandbox where this runs: then the definition is passed through as authored.
 const settings = microsandboxSettings();
 
+// guardSandboxBackend (agent/lib/sandbox-guard.ts): a later model step never gets a VM an earlier one stopped, a
+// sandbox shared by several sessions is stopped only by the last, and VMs boot a few at a time with a deadline.
 export default defineSandbox(
   settings
-    ? { ...authored, backend: Object.assign(microsandbox(settings), { [Symbol.for(${JSON.stringify(SETTINGS_TAG)})]: settings }) }
+    ? {
+        ...authored,
+        backend: Object.assign(guardSandboxBackend(microsandbox(settings), { sandboxCpus: settings.cpus, sandboxMemoryMiB: settings.memoryMiB }), {
+          [Symbol.for(${JSON.stringify(SETTINGS_TAG)})]: settings,
+        }),
+      }
     : authored,
 );
 `;
@@ -293,8 +301,17 @@ function selfTest() {
     check("the root agent's definition is wrapped too", by.root.slot === "agent/sandbox.ts" && by.root.authored === "agent/sandbox.authored.ts");
     const wrapper = readFileSync(join(app, "agent/subagents/folder/sandbox/sandbox.ts"), "utf8");
     check(
-      "a wrapper spreads the authored definition and sets backend: microsandbox(microsandboxSettings()), tagged with the settings",
-      wrapper.includes('import authored from "./sandbox.authored.js"') && wrapper.includes("...authored, backend: Object.assign(microsandbox(settings)") && wrapper.includes(`Symbol.for("${SETTINGS_TAG}")`) && wrapper.includes('from "#lib/sandbox-settings.js"'),
+      "a wrapper spreads the authored definition and sets backend: microsandbox(microsandboxSettings()), guarded and tagged with the settings",
+      wrapper.includes('import authored from "./sandbox.authored.js"') &&
+        wrapper.includes("...authored,") &&
+        wrapper.includes("backend: Object.assign(guardSandboxBackend(microsandbox(settings), { sandboxCpus: settings.cpus, sandboxMemoryMiB: settings.memoryMiB })") &&
+        wrapper.includes(`Symbol.for("${SETTINGS_TAG}")`) &&
+        wrapper.includes('from "#lib/sandbox-settings.js"') &&
+        wrapper.includes('import { guardSandboxBackend } from "#lib/sandbox-guard.js"'),
+    );
+    check(
+      "the guard is reached only on the microsandbox branch: with the setting unset the definition is the authored one as it is",
+      /settings\n\s+\? \{\n\s+\.\.\.authored,\n\s+backend: Object\.assign\(guardSandboxBackend\(/.test(wrapper) && /\n\s+: authored,\n\);/.test(wrapper),
     );
     const sha = createHash("sha256").update(AUTH_A + "// folder\n").digest("hex");
     check("a wrapper names the authored file's hash, so an edited bootstrap rotates the template", wrapper.includes(`sha256: ${sha}`));
