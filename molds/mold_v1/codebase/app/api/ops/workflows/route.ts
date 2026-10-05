@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText, zodMessage } from "@/lib/ops-errors";
 import { withheldLibraryNote, workflowForList } from "@/lib/workflow-availability";
+import { workflowAppSource } from "@/lib/app-source";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { workflows } from "@/agent/lib/db/schema";
@@ -42,7 +43,10 @@ export async function GET(request: NextRequest) {
     // the profile's words and without naming the specialist, so a person can open it and adopt it. `libraryNote`
     // says in one sentence why the library is smaller here; computed on the server, so the client bundle never
     // carries the base library's text.
-    return NextResponse.json({ items: items.map((w) => workflowForList(w)), libraryNote: withheldLibraryNote() });
+    // `appSource`: whether the row can generate an APP's document, and as what (a script, or the row of one of this
+    // workspace's specialists), or why not (lib/app-source.ts). The apps picker reads it, so it never offers a row
+    // an app could only fail on.
+    return NextResponse.json({ items: items.map((w) => ({ ...workflowForList(w), appSource: workflowAppSource(w, w.name) })), libraryNote: withheldLibraryNote() });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }

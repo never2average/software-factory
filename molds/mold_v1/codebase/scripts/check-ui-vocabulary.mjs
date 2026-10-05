@@ -150,6 +150,10 @@ function makeCopy(name) {
     cpSync(join(PACK, "files"), dir, { recursive: true, filter: (src) => !src.includes("__pycache__") });
   } else {
     cpSync(FIXTURE, join(dir, "profiles", "50-relabelled.json"));
+    // Base code ships no workflow library; the copy opts into the one in this repository (its build regenerates
+    // agent/lib/workflow-library.generated.ts), so "the library's text never reaches the client bundle" is still
+    // checked against a build that has one.
+    cpSync(join(ROOT, "library", "account-delivery", "profile.json"), join(dir, "profiles", "40-library-account-delivery.json"));
   }
   return dir;
 }

@@ -658,6 +658,15 @@ jobs:
         if: always()
         run: npm run test:neutral-names && npm run check:neutral-names
 
+      # Base code used to write its own workflows (13) and onboarding recipes (5) into every workspace of every
+      # deployment, whatever the deployment was for. A workspace's library is the deployment profile's now
+      # (library.sources; none by default): this proves the default provisions nothing, that the one-line opt-in
+      # builds exactly the former built-ins (pinned before the move), that a bad source fails the build, and the
+      # rules of the operator's cleanup. check:neutral-names (above) holds the ratchet. Offline.
+      - name: Workflow library is the profile's (default empty, opt-in loses nothing, cleanup rules)
+        if: always()
+        run: npm run test:workflow-library
+
       # The operator tooling moved to scripts/operator/ (npm run operator:*) with every old name kept: each old npm
       # script runs the same file, both old lib import paths re-export the new modules, the four variables are read
       # neutral-first with the old name as a fallback, and the member-profile memory key is written neutral and read
@@ -692,6 +701,16 @@ jobs:
       - name: Task-workflow service tests
         if: always()
         run: npm --prefix services/task-workflow test
+
+      # An app (a document regenerated on a schedule) could be made from any row of the workflows table, but only a
+      # row with a script could refresh: an app made from a specialist's row, which is most rows in a pack's
+      # workspace, was saved and could only fail ("has no script"). lib/app-source.ts decides what can generate an
+      # app (a script, one of this workspace's specialists, a prompt) and every door asks it. Offline: the rules
+      # under the default and the relabelling profile, and that the routes, the agent's tools, the picker and the
+      # form all ask. The routes against a database are in the isolation job.
+      - name: App sources (a script, a specialist or a prompt; refused at the form when it cannot run)
+        if: always()
+        run: npm run test:app-source
 
       - name: Workflow args validation
         if: always()
@@ -946,6 +965,19 @@ jobs:
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:shared-company-id-db
 
+      # create → refresh → content through the real app routes (create, edit, refresh, the lists, the cron), in a
+      # copy of the tree stamped like a research pack's deployment: the relabelling fixture profile plus a fixture
+      # specialist the base product does not have. A source that cannot run is refused at create and nothing is
+      # saved; an app made from a specialist's row refreshes to that specialist's reply; an app saved before the
+      # fix, still carrying "has no script", refreshes without being recreated; changing an app's source clears the
+      # error about the one it no longer has. On the code before the fix 33 of its 38 checks fail.
+      - name: Apps from a script, a specialist or a prompt (create, refresh, content), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:app-source-db
+
       # THE RUN HISTORY, which is two database facts and nothing else. That a
       # parent writing a row for a child that never started cannot produce a
       # SECOND row is the unique index on run_key doing its job, and an index
@@ -972,6 +1004,17 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:account-custom-fields-db
+
+      # The real provisionWorkspace and the real cleanup command against the fail-closed database: a default
+      # deployment's workspace receives no recipe and no library workflow; one that opts in receives byte for byte
+      # what the old code stored; a specialist the profile excludes gets no row and a pack's gets its own; the
+      # cleanup's dry run changes nothing and --apply removes only rows nobody edited, ran or built on.
+      - name: Workspace provisioning and library cleanup, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:library-provisioning-db
 
       # The two record areas (deployments[], implementation) written by upsert_customer: only the rows and fields
       # a patch names change, each in SQL onto what is stored at write time; a row is deleted only by remove: true;

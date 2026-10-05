@@ -1,20 +1,23 @@
 /**
- * The workflow library as THIS deployment provisions it (agent/lib/provision-workspace.ts seeds every new
- * workspace from it).
+ * The workflow library and the recipe catalog as THIS deployment provisions them (agent/lib/provision-workspace.ts
+ * seeds every new workspace from here).
  *
- * The library (scripts/operator/workflows/*.workflow.js, compiled into workflow-library.generated.ts) was written for
- * the base product: its scripts delegate to base specialists and its step prompts name base tools ("Call
- * list_members…", "get_customer"). Under a profile:
+ * Base code carries neither. Both are the content of the directories the deployment profile names under
+ * `library.sources` (profiles/*.json; scripts/build-workflow-library.mjs compiles them into
+ * workflow-library.generated.ts): none in the default profile, so a deployment that adds nothing provisions an empty
+ * library. A library's scripts delegate to specialists and its prompts are written with the placeholders the profile
+ * fills. Under a profile:
  *   - a workflow that delegates to a specialist the profile EXCLUDES is not provisioned at all — it would fail
  *     at its first step, and offering it would tell the model about work this deployment does not do;
  *   - every other workflow's name-free text — its description, step names, and the string literals of its script
  *     (the prompts it sends) — is spoken in the profile's words, like any prompt. Code is not touched: the script
  *     still reads `args.customerId`, which trigger_workflow maps the model's `companyId` back to, and still names
- *     its specialists by directory.
+ *     its specialists by directory;
+ *   - a recipe's title and summary are spoken the same way.
  * Under the default profile only the role placeholders are filled.
  */
 import { hasRolePlaceholder, speakPromptWith, VOCABULARY, type Vocabulary } from "./agent-vocabulary.ts";
-import { WORKFLOW_LIBRARY, type LibraryWorkflow } from "./workflow-library.generated.ts";
+import { RECIPE_LIBRARY, WORKFLOW_LIBRARY, type LibraryRecipe, type LibraryWorkflow } from "./workflow-library.generated.ts";
 
 /** The specialists a script delegates to (`agent(…, { subagent: "key" })`). */
 export function delegatesTo(script: string): string[] {
@@ -56,4 +59,9 @@ export function deploymentWorkflowLibrary(v: Vocabulary = VOCABULARY, library: r
   return library
     .filter((w) => !delegatesTo(w.script).some((k) => v.excludedSpecialists.includes(k)))
     .map((w) => speakLibraryWorkflow(v, w));
+}
+
+/** The recipe catalog a new workspace receives, in checklist order, in the profile's words. Empty unless the profile names a library. */
+export function deploymentRecipes(v: Vocabulary = VOCABULARY, library: readonly LibraryRecipe[] = RECIPE_LIBRARY): LibraryRecipe[] {
+  return library.map((r) => ({ ...r, title: speakPromptWith(v, r.title), summary: r.summary === null ? null : speakPromptWith(v, r.summary) }));
 }

@@ -46,5 +46,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const [item] = await withOrgRls(ctx.orgId, (tx) =>
     tx.select().from(apps).where(eq(apps.id, id)).limit(1),
   );
-  return NextResponse.json({ item, ...outcome }, { status: outcome.ok ? 200 : 500 });
+  // A source that cannot run is the request's problem, said in a sentence the person can act on (409); a generation
+  // that was attempted and failed is ours (500). Either way the app row now carries the error.
+  return NextResponse.json({ item, ...outcome }, { status: outcome.ok ? 200 : outcome.cause === "source" ? 409 : 500 });
 }

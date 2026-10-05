@@ -95,7 +95,7 @@ export const MOCKS = () => ({
       // A base library row this deployment does not run: listed, adoptable, and its reason names no specialist.
       { id: "22222222-2222-4222-8222-222222222222", name: "assign-account", description: "Propose and set the owner for a new account.", trigger: "manual", steps: [], script: "", instructions: null, notifyEmail: null, notifyEmails: null, enabled: true, customerId: null, createdBy: "system", createdAt: now(), updatedAt: now(), availability: { available: false, reason: "Part of the base workflow library, which does not apply to this workspace: it delegates to a specialist this workspace does not use. Edit it to use this workspace's specialists and it becomes yours to run.", needsExcluded: ["customer-context"] } },
     ],
-    libraryNote: "4 of the 13 base library workflows are not part of this workspace: each delegates to a specialist it does not use. Add your own with “New workflow”.",
+    libraryNote: "4 of the 13 library workflows are not part of this workspace: each delegates to a specialist it does not use. Add your own with “New workflow”.",
   },
   // A project workflow governing the implementation record area: its entity is a CODE value the UI must name in the profile's words.
   "/api/ops/workflow-definitions": { items: [{ id: "d1", name: "Pipeline", entity: "implementation", stages: [{ id: "s1", name: "Scoping", description: "x", assign: { type: "customer_owner" }, transitions: [] }], createdBy: "reviewer@example.com" }], canEdit: true },

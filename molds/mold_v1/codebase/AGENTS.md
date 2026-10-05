@@ -70,6 +70,17 @@ deployment that already holds files pins the names it has and nothing moves; one
 exported through `modelFacing(...)`; the root prompt is `agent/prompt-*.md`, rendered by
 `agent/instructions.ts`, and a base specialist's is its `prompt.md`.
 
+Base code ships **no workflow and no recipe of its own**. What a new workspace is provisioned
+with (workflow scripts, the onboarding recipe catalog) is the content of the directories the
+profile names under `library.sources`: none by default, the first product's under
+[`library/account-delivery/`](library/account-delivery/README.md) for a deployment that opts in
+(`cp library/account-delivery/profile.json profiles/40-library-account-delivery.json`), a
+pack's own beside its specialists. A specialist the profile excludes gets no row. Existing
+workspaces are never changed by a build: `npm run operator:library-cleanup` lists what an
+earlier build left behind (a dry run) and removes only untouched rows, only with `--apply`.
+`npm run check:neutral-names` refuses a library in base code. See "library" in
+[`docs/DEPLOYMENT_PROFILE.md`](docs/DEPLOYMENT_PROFILE.md).
+
 Each deployment publishes **its own npm package for coding agents**, built from its build of
 this codebase by `npm run build:agent-cli` (address, product name, skills from
 `agent-kit/skills/`, data-room description; a safety gate keeps operator material and

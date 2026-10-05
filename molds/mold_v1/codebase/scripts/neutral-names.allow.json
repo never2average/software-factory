@@ -309,11 +309,13 @@
       "lib/**": "server and client libraries whose strings reach a page, an API answer or a seeded file",
       "skills/**": "the base skill a coding assistant installs",
       "setup/skills/**": "the base skill as the generic package ships it (filled from the default profile)",
-      "scripts/operator/**": "the library workflows and the operator tooling",
+      "scripts/operator/**": "the operator tooling",
       "scripts/seed*": "the seeders: what a new data room and a demo database are filled with",
       "profiles/00-default.json": "the default profile: the words every placeholder is filled with",
       "dm.md": "the data-room description served to coding assistants",
-      "proxy.ts": "the request gate's own messages"
+      "proxy.ts": "the request gate's own messages",
+      "library/**/workflows/**": "the library workflows: their prompts write the placeholders the profile fills",
+      "library/**/recipes.json": "the library recipes, the same"
     },
     "skip": {
       "$comment": "Globs left out of the scan, each for a reason.",
@@ -375,7 +377,8 @@
       "dm.md": "the data-room description served to coding assistants",
       "proxy.ts": "the request gate",
       ".claude/**": "the skills, agents and scripts a coding agent follows in this repository (the eve-* subagent skills a pack author copies paths from included): a path written there is copied into a pack's subagent.json or an operator run, so it is written {folder:<id>}",
-      "*.md": "the root instructions a coding agent reads first (AGENTS.md, CLAUDE.md)"
+      "*.md": "the root instructions a coding agent reads first (AGENTS.md, CLAUDE.md)",
+      "library/**/workflows/**": "the library workflows"
     },
     "values_in": {
       "$comment": "Globs, within the scan, of the files whose string literals are also read for a value that is exactly a folder name: the code that runs or ships. A test's or a check's strings are read for path heads only (a string that is exactly one of these words there is the word: a record area's label, a heading).",
@@ -385,11 +388,12 @@
       "lib/**": "server and client libraries",
       "services/**": "the task-workflow service",
       "setup/**": "the package a coding agent installs",
-      "scripts/operator/**": "the operator tooling and the library workflows",
+      "scripts/operator/**": "the operator tooling",
       "scripts/seed*": "the seeders",
       "scripts/migrate*": "the data-room migration",
       "scripts/validate*": "the fixture validators",
-      "proxy.ts": "the request gate"
+      "proxy.ts": "the request gate",
+      "library/**/workflows/**": "the library workflows"
     },
     "skip": {
       "$comment": "Globs left out of the scan, each for a reason.",
@@ -422,6 +426,25 @@
           "lib/roster-workbook.ts": 1
         }
       }
+    }
+  },
+  "builtin_library": {
+    "$comment": "Base code ships no workflow and no recipe of its own: what a workspace is provisioned with is the deployment profile's (library.sources; scripts/lib/builtin-library.mjs says what is checked). libraries: where a library's content may live. skip: tests and pinned fixtures, which never run in a deployment. writers: every source file that inserts into the workflows or recipes table, each with what decides its rows; a new one fails until it is listed here with its reason, and one that stops inserting fails until it is removed.",
+    "libraries": {
+      "library/**": "the library directories a deployment profile names under library.sources (workflows/*.workflow.js, recipes.json, history.json)"
+    },
+    "skip": {
+      "scripts/fixtures/**": "pinned before-images, among them the built-ins base code carried before the library became the profile's",
+      "scripts/test-*.mjs": "tests insert the rows they then assert on, in throwaway workspaces",
+      "scripts/lib/builtin-library.mjs": "this check, which has to describe what it matches",
+      "tests/**": "Playwright specs",
+      "services/**": "the task-workflow service: its own tables and tests, no workspace library"
+    },
+    "writers": {
+      "agent/lib/provision-workspace.ts": "a new workspace: the deployment profile's library (recipes and workflows, none by default) and one row per specialist of the generated registry, minus the ones the profile excludes",
+      "app/api/ops/workflows/route.ts": "POST /api/ops/workflows: one row a signed-in person asked for",
+      "scripts/operator/seed-workflows.mjs": "operator:seed-workflows: the deployment profile's library into a workspace an operator names; nothing when the profile names none",
+      "scripts/seed-ops.mjs": "a legacy local demo seeder in no npm script, kept for its --print test: its rows carry no org_id, which the NOT NULL column refuses, so it cannot write to a current database"
     }
   }
 }

@@ -1,0 +1,10 @@
+{
+  "$comment": "The onboarding recipe catalog of the account-delivery library: one row per recipe in every workspace a deployment that opts in creates (agent/lib/provision-workspace.ts), in this order. `satisfiesCheck` names the workspace health check the recipe turns green (app/api/ops/orgs/[id]/health). Text may write the role and record placeholders the deployment profile fills ({account}, {member}, {owner}, …).",
+  "recipes": [
+    { "slug": "onboard-self", "title": "Sign in & record yourself", "summary": "Get signed in, wired to the data room over MCP, and recorded as an operator.", "satisfiesCheck": "members" },
+    { "slug": "import-roster", "title": "Import the roster", "summary": "Pull people from Google Directory or a CSV into the roster.", "satisfiesCheck": "roster" },
+    { "slug": "connect-sources", "title": "Connect a source", "summary": "Wire one connector (GitHub, Slack, …) and store its secret.", "satisfiesCheck": "connector" },
+    { "slug": "seed-workflows", "title": "Seed the workflow library", "summary": "Install the starter workflow library, default apps, and crons.", "satisfiesCheck": "workflows" },
+    { "slug": "onboard-customer", "title": "Onboard the first {account}", "summary": "Create the first {account} and its data-room skeleton.", "satisfiesCheck": "customer" }
+  ]
+}

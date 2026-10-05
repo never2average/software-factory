@@ -325,6 +325,60 @@ cannot be cleared.*
 |---|---|---|
 | `specialists.exclude` | Base specialists (directory names under `agent/subagents/`) the deployment does not use. They leave the model's roster (eve makes every directory under `agent/subagents/` a tool the model can delegate to, and has no switch to hide one), the persona's roster and every prompt's list of names, the subagent registry, the UI lists and the workflow author's list. Nothing is moved: the directories stay tracked, so a git checkout of a stamped build regenerates the same tree. `scripts/gen-subagent-meta.mjs` leaves them out of the registry; the provisioned workflow library drops any workflow that delegates to one (`agent/lib/workflow-library-view.ts`); and `npm run build:eve` / `dev:eve` run eve through `scripts/eve-build.mjs`, which hides their directories from eve for the length of that one command and restores them however it ends (a run killed mid-build is restored by the next run, or by `node scripts/eve-build.mjs --restore`). Run `eve build` directly and they are back in the roster. A name that is not a subagent fails the build. | `[]` |
 
+### `library`
+
+What every **new** workspace of the deployment is provisioned with: workflow scripts and the
+onboarding recipe catalog. Base code ships neither. Both are content, in directories the
+profile names:
+
+| Key | Meaning | Default |
+|---|---|---|
+| `library.sources` | A map of source id to a directory in the repository. Each directory holds `workflows/*.workflow.js` (scripts: `export const meta = { name, description }` plus `phase()` / `agent()`) and/or `recipes.json` (`{ "recipes": [{ slug, title, summary, satisfiesCheck }] }`, in checklist order). `npm run build:workflow-library` compiles every named source into `agent/lib/workflow-library.generated.ts`, which `provisionWorkspace` writes into a new workspace and `GET /api/ops/recipes` falls back to. Objects merge, so a later profile ADDS a source under its own id and turns one off with `null`. Two sources shipping the same workflow name or recipe slug fail the build. | `{}`: no workflow and no recipe |
+
+The default is **empty, not "neutral"**. A starter workflow has to delegate to some specialist
+and ask for some piece of work, and a checklist has to name some first step: whatever was
+chosen would be one line of work's idea of a default, handed to every deployment. So the
+default deployment provisions only what is derived from the build itself (one "on delegation"
+row per specialist it has), and `npm run check:neutral-names` refuses a library in base code:
+a workflow script outside `library/`, a recipe written as a literal, a source named by the
+default profile, or a new file that inserts into the `workflows` or `recipes` table without
+being listed with what decides its rows.
+
+The workflows and recipes this product carried as built-ins before are
+[`library/account-delivery/`](../library/account-delivery/README.md), unchanged. A deployment
+that wants them opts in with one line, then builds:
+
+```bash
+cp library/account-delivery/profile.json profiles/40-library-account-delivery.json && npm run build:generated
+```
+
+A subagent pack ships its own library the same way: `library/<pack-id>/` beside its
+specialists, named in its `profiles/NN-pack-<id>.json`
+(`"library": { "sources": { "<pack-id>": "library/<pack-id>" } }`).
+
+What the profile does to a library it names is unchanged: a workflow that delegates to a
+specialist under `specialists.exclude` is not provisioned, and every other workflow's and
+recipe's text is written in the profile's words.
+
+**Workspaces that already exist are never changed by a build.** Nothing is deleted
+automatically:
+
+| To | Run |
+|---|---|
+| give an existing workspace the library the profile names | `npm run operator:seed-workflows -- --org <id>` (inserts and updates by name; removes nothing) |
+| give it the row of a specialist added since | `npm run operator:seed-subagent-rows -- --org <id>` |
+| see what an earlier build left behind that this deployment does not use | `npm run operator:library-cleanup` (a dry run: per workspace, what would go and what stays, with why) |
+| remove it | `npm run operator:library-cleanup -- --org <id> --apply` |
+
+The cleanup offers a row for removal only when it is a leftover AND nobody touched it: a
+workflow with the name and the code of one a library directory has shipped that this profile
+does not provision, the scriptless row of a specialist the profile excludes, or a recipe of
+such a library; never edited (no later update, no instructions, no saved version, no
+recipients, no account scope), never run, and with no app, schedule or system cron built on
+it. Everything else is kept and listed with the evidence. Until it is run, a leftover that
+delegates to an excluded specialist is shown as not part of the workspace and refused by every
+run path (`lib/workflow-availability.ts`).
+
 ### `account_fields`
 
 | Key | Meaning | Default |
@@ -867,7 +921,8 @@ neutral, and a deployment that pins a former name shows it only where it gives n
 npm run build:deployment-profile   # merge + validate + write both generated files
 npm run test:deployment-profile    # merge rules, domains (defaults exact, example validates, bad profiles fail), the briefing; offline
 npm run check:agent-vocabulary     # the model-facing surface under a relabelling fixture has no base word and carries the profile's; the default's is unchanged and reads no record word as prose; under the folder pin it is byte for byte what it was before folder names were a setting
-npm run check:neutral-names        # the role word only as a listed contract; the record words as prose only under a per-file ceiling; no data-room folder name spelled in base code
+npm run check:neutral-names        # the role word only as a listed contract; the record words as prose only under a per-file ceiling; no data-room folder name spelled in base code; no workflow or recipe library in base code
+npm run test:workflow-library      # the default profile provisions no library; the opt-in builds exactly the former built-ins; bad sources are refused; the cleanup's rules; offline
 npm run test:dataroom-folders      # the folder names are the profile's; a pinned deployment's stored paths, object keys, starter tree and seeders are byte for byte what they were; an unpinned one is refused
 npm run check:dataroom-folders     # the store this build is configured for holds no former folder its profile does not use (run by prebuild and prebuild:eve)
 npm run check:ui-vocabulary        # what a PERSON reads (source text, the built client bundle, prerendered pages) under the same fixture has no base word; the default's words are unchanged

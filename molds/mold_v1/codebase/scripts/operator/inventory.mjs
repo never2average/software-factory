@@ -12,7 +12,9 @@ import { fill } from "../../agent/lib/agent-vocabulary.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const subagentsDir = join(root, "agent", "subagents");
-const workflowsDir = join(root, "scripts", "operator", "workflows");
+// Workflow scripts are library content, not base code: every library directory in the repository is listed, whether
+// or not this build's profile names it under library.sources (docs/DEPLOYMENT_PROFILE.md, "library").
+const libraryDir = join(root, "library");
 
 // The workspace slots every subagent gets (tools/ + connections/ are eve-native
 // and already present; these four standardize the rest).
@@ -67,7 +69,7 @@ for (const id of readdirSync(subagentsDir).filter((f) => statSync(join(subagents
 
 // ---- Workflow inventory ---------------------------------------------------
 const workflows = [];
-for (const f of listDir(workflowsDir).filter((f) => f.endsWith(".workflow.js")).sort()) {
+for (const [workflowsDir, f] of listDir(libraryDir).sort().flatMap((id) => listDir(join(libraryDir, id, "workflows")).filter((f) => f.endsWith(".workflow.js")).sort().map((f) => [join(libraryDir, id, "workflows"), f]))) {
   const src = readFileSync(join(workflowsDir, f), "utf8");
   const name = first(/name:\s*"([^"]+)"/, src);
   // In this deployment's words: the library writes role placeholders ({owner}, {member}) the profile fills.
@@ -100,6 +102,8 @@ Every subagent has a standard workspace: \`tools/\` + \`connections/\` (eve-nati
 ${agentRows.join("\n")}
 
 ## Workflow inventory (${workflows.length} workflows)
+
+The scripts under `library/*/workflows/`. A workspace is provisioned with the ones its build's profile names (`library.sources`); the default profile names none.
 
 | Workflow | Purpose | Phases | Subagents used |
 | --- | --- | --- | --- |

@@ -34,6 +34,7 @@ import {
   useOpsList,
   type ApiApp,
   type ApiAppVersion,
+  type ApiWorkflow,
 } from "./lib";
 import {
   Banners,
@@ -75,7 +76,7 @@ const SOURCE_OPTIONS: RadioOption<SourceKind>[] = [
     value: "workflow",
     title: "Workflow",
     icon: WorkflowIcon,
-    description: "Run a workflow script and render what it returns. Structured and multi-step.",
+    description: "Run a workflow script, or hand the work to one of this workspace's specialists, and render what comes back.",
   },
 ];
 
@@ -174,15 +175,22 @@ export function AppsPanel({
   );
   const openItem = items?.find((a) => a.id === selectedId) ?? null;
 
+  // A create the API refused: said IN the form, where the person is looking, not in the list's banner.
+  const [createError, setCreateError] = useState<string | null>(null);
+
   const run = async (id: string | null, fn: () => Promise<unknown>) => {
     setBusyId(id ?? "new");
     setActionError(null);
+    setCreateError(null);
     try {
       await fn();
-      await refetch();
     } catch (e) {
-      setActionError(errMessage(e));
+      if (id === null) setCreateError(errMessage(e));
+      else setActionError(errMessage(e));
     } finally {
+      // Refetch after a failure too: a refresh that failed has written its error on the app, and the row and the
+      // open document must show it (they kept showing the state from before the attempt).
+      await refetch().catch(() => {});
       setBusyId(null);
     }
   };
@@ -210,12 +218,14 @@ export function AppsPanel({
   const closePanel = () => {
     setSelectedId(null);
     setCreating(false);
+    setCreateError(null);
   };
 
   const panelBody = creating ? (
     <AppCreateForm
       authorEmail={authorEmail}
       busy={busyId === "new"}
+      error={createError}
       onCancel={closePanel}
       onCreate={async (body) => {
         await run(null, async () => {
@@ -233,6 +243,7 @@ export function AppsPanel({
       app={openItem}
       busy={busyId === openItem.id}
       settingsOpen={settingsOpen}
+      onOpenSettings={() => setSettingsOpen(true)}
       onPatch={(body) => patch(openItem.id, body)}
       onRefresh={() => refreshNow(openItem.id)}
     />
@@ -273,6 +284,7 @@ export function AppsPanel({
             noun="App"
             onAdd={() => {
               setSelectedId(null);
+              setCreateError(null);
               setCreating(true);
             }}
           />
@@ -352,6 +364,16 @@ export function AppsPanel({
                             </span>
                           </SourceTooltip>
                           <span className="min-w-0 truncate font-medium">{a.name}</span>
+                          {/* Failed, or cannot refresh as it is set: said on the row itself, at any width. */}
+                          {a.lastError || a.source?.ok === false ? (
+                            <span
+                              data-app-problem
+                              title={a.source?.ok === false ? `${a.source.reason} ${a.source.fix}` : `The last refresh failed: ${a.lastError}`}
+                              className={cn("shrink-0 text-red-400", TYPE.micro)}
+                            >
+                              {a.source?.ok === false ? "cannot refresh" : "failed"}
+                            </span>
+                          ) : null}
                           {a.enabled ? null : (
                             <span className={cn("shrink-0 text-muted-foreground/60", TYPE.micro)}>
                               paused
@@ -518,6 +540,7 @@ function AppDetail({
   app,
   busy,
   settingsOpen,
+  onOpenSettings,
   onPatch,
   onRefresh,
 }: {
@@ -525,6 +548,7 @@ function AppDetail({
   readonly busy: boolean;
   /** Owned by the panel, so the toggle can live in SidePanel's action cluster. */
   readonly settingsOpen: boolean;
+  readonly onOpenSettings: () => void;
   readonly onPatch: (body: Record<string, unknown>) => void;
   readonly onRefresh: () => Promise<unknown> | void;
 }) {
@@ -593,15 +617,50 @@ function AppDetail({
                 </span>
               </div>
             ) : null}
-            {shownError ? (
-              <p
-                className={cn(
-                  "mb-6 rounded-md border border-red-500/30 bg-red-500/5 p-3 text-red-400",
-                  TYPE.meta,
-                )}
+            {/* What generates this app cannot run as it is set (lib/app-source.ts): say so before anyone refreshes,
+                with what to do. An app saved before the form checked this, or whose workflow changed under it. */}
+            {!viewing && app.source?.ok === false ? (
+              <div
+                data-app-source-problem
+                className={cn("mb-6 flex flex-col gap-2 rounded-md border border-red-500/30 bg-red-500/5 p-3 text-red-400", TYPE.meta)}
               >
-                Refresh failed: {shownError}
-              </p>
+                <p>
+                  <span className="font-medium">This app cannot refresh as it is set.</span> {app.source.reason}
+                </p>
+                <p className="text-foreground/80">{app.source.fix}</p>
+                <div>
+                  <OpsButton intent="secondary" size="sm" onClick={onOpenSettings}>
+                    Change what generates it
+                  </OpsButton>
+                </div>
+              </div>
+            ) : shownError ? (
+              <div
+                data-app-refresh-error
+                className={cn("mb-6 flex flex-col gap-2 rounded-md border border-red-500/30 bg-red-500/5 p-3 text-red-400", TYPE.meta)}
+              >
+                <p>
+                  <span className="font-medium">{viewing ? "This refresh failed." : "The last refresh failed."}</span> {shownError}
+                </p>
+                {viewing ? null : (
+                  <>
+                    <p className="text-foreground/80">
+                      {app.contentMd
+                        ? "The document below is the last one that worked. Try again; if it fails the same way, change what generates this app."
+                        : "Nothing has been generated yet. Try again; if it fails the same way, change what generates this app."}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <OpsButton intent="primary" size="sm" disabled={busy} onClick={() => void doRefresh()}>
+                        {busy ? <Spinner className="size-3" /> : null}
+                        Try again
+                      </OpsButton>
+                      <OpsButton intent="secondary" size="sm" disabled={busy} onClick={onOpenSettings}>
+                        Change what generates it
+                      </OpsButton>
+                    </div>
+                  </>
+                )}
+              </div>
             ) : null}
             {spec ? (
               <Dashboard
@@ -636,9 +695,13 @@ function AppDetail({
               <Field label={app.sourceKind === "workflow" ? "Workflow" : "Prompt"}>
                 {app.sourceKind === "workflow" ? (
                   <WorkflowSelect
+                    forApp
+                    noneLabel="Pick a workflow or a specialist"
                     value={app.workflow}
                     disabled={busy}
-                    onChange={(next) => onPatch({ workflow: next })}
+                    onChange={(next) => {
+                      if (next && next !== app.workflow) onPatch({ workflow: next });
+                    }}
                   />
                 ) : (
                   <OpsTextarea
@@ -652,6 +715,21 @@ function AppDetail({
                   />
                 )}
               </Field>
+
+              {/* A specialist's row has no script: the brief below is what the specialist is asked for. */}
+              {app.sourceKind === "workflow" && app.source?.ok && app.source.kind === "specialist" ? (
+                <Field label="What should it produce?">
+                  <OpsTextarea
+                    rows={5}
+                    defaultValue={app.prompt ?? ""}
+                    placeholder="Left empty, the specialist is given this app's name and description."
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      if (v !== (app.prompt ?? "")) onPatch({ prompt: v || null });
+                    }}
+                  />
+                </Field>
+              ) : null}
 
               <Field label="Refresh">
                 <OpsSelect
@@ -815,11 +893,14 @@ function VersionList({
 function AppCreateForm({
   authorEmail,
   busy,
+  error,
   onCancel,
   onCreate,
 }: {
   readonly authorEmail?: string;
   readonly busy: boolean;
+  /** Why the API refused the last create, when it did. */
+  readonly error: string | null;
   readonly onCancel: () => void;
   readonly onCreate: (body: Record<string, unknown>) => Promise<void>;
 }) {
@@ -831,9 +912,17 @@ function AppCreateForm({
   const [refreshCron, setRefreshCron] = useState("");
   const [customerId, setCustomerId] = useState<string | null>(null);
 
+  // What the picked workflow IS, as the API decided it (lib/app-source.ts): a script, one of this workspace's
+  // specialists, or something that cannot generate a document. The picker will not let the last be picked; this
+  // also covers a list that changed while the form was open.
+  const { items: workflowRows } = useOpsList<ApiWorkflow>("/api/ops/workflows");
+  const picked = sourceKind === "workflow" && workflow ? (workflowRows ?? []).find((w) => w.name === workflow) : undefined;
+  const pickedSource = picked?.appSource;
+  const [brief, setBrief] = useState("");
+
   const valid =
     name.trim().length > 0 &&
-    (sourceKind === "workflow" ? Boolean(workflow) : prompt.trim().length > 0);
+    (sourceKind === "workflow" ? Boolean(workflow) && pickedSource?.ok !== false : prompt.trim().length > 0);
 
   return (
     // Fields scroll; the actions stay pinned to the bottom of the card.
@@ -877,9 +966,25 @@ function AppCreateForm({
       />
 
       {sourceKind === "workflow" ? (
-        <Field label="Workflow">
-          <WorkflowSelect value={workflow} onChange={setWorkflow} />
-        </Field>
+        <>
+          <Field label="Workflow or specialist">
+            <WorkflowSelect forApp noneLabel="Pick a workflow or a specialist" value={workflow} onChange={setWorkflow} />
+          </Field>
+          {pickedSource?.ok === false ? (
+            <p data-app-source-refused className={cn("rounded-md border border-red-500/30 bg-red-500/5 p-3 text-red-400", TYPE.meta)}>
+              {pickedSource.reason} {pickedSource.fix}
+            </p>
+          ) : pickedSource?.kind === "specialist" ? (
+            <Field label="What should it produce?">
+              <OpsTextarea
+                className="min-h-24"
+                value={brief}
+                onChange={(e) => setBrief(e.target.value)}
+                placeholder="What this specialist should write each refresh. Left empty, it is given the name and description above."
+              />
+            </Field>
+          ) : null}
+        </>
       ) : (
         <Field label="Prompt">
           <OpsTextarea
@@ -892,6 +997,11 @@ function AppCreateForm({
       )}
       </div>
 
+      {error ? (
+        <p data-app-create-error className={cn("mx-5 mb-3 shrink-0 rounded-md border border-red-500/30 bg-red-500/5 p-3 text-red-400", TYPE.meta)}>
+          The app was not created. {error}
+        </p>
+      ) : null}
       <div className="flex shrink-0 items-center justify-end gap-2 border-border border-t px-5 py-4">
         <OpsButton
           intent="primary"
@@ -903,7 +1013,8 @@ function AppCreateForm({
               description: description.trim() || null,
               sourceKind,
               workflow: sourceKind === "workflow" ? workflow : null,
-              prompt: sourceKind === "prompt" ? prompt.trim() : null,
+              // A specialist's brief travels in `prompt` too: it is what that specialist is asked for.
+              prompt: sourceKind === "prompt" ? prompt.trim() : pickedSource?.kind === "specialist" ? brief.trim() || null : null,
               refreshCron: refreshCron.trim() || null,
               customerId,
               createdBy: authorEmail,

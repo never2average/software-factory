@@ -19,6 +19,8 @@ Every subagent has a standard workspace: `tools/` + `connections/` (eve-native) 
 
 ## Workflow inventory (13 workflows)
 
+The scripts under `library/*/workflows/`. A workspace is provisioned with the ones its build's profile names (`library.sources`); the default profile names none.
+
 | Workflow | Purpose | Phases | Subagents used |
 | --- | --- | --- | --- |
 | `assign-account` | Propose and (on confirmation) set the durable account owner for a new or unowned… | Propose | customer-context |

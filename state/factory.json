@@ -39,8 +39,8 @@
       "path": "molds/mold_v1",
       "source": {
         "repo": "github.com/never2average/fde-agent",
-        "commit": "05428f4e88842ed0e19c289015d99129e85ba80e",
-        "snapshot_date": "2026-10-04"
+        "commit": "e2837063bd35f10c2d920e89f389ade95d6ac0f0",
+        "snapshot_date": "2026-10-05"
       }
     },
     {

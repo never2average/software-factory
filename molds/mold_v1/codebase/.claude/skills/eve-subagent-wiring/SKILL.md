@@ -171,8 +171,8 @@ doors: the self-serve wizard (`POST /api/ops/orgs`, `app/api/ops/orgs/route.ts:2
 `(name, org_id)`.
 
 **An existing workspace does not**, until someone adds it. `npm run operator:seed-workflows`
-does **not** do this: it installs only the scripted library from
-`scripts/operator/workflows/*.workflow.js` and never calls `provisionWorkspace`. The real options
+does **not** do this: it installs only the scripted library the profile names
+(`library.sources`; none by default) and never calls `provisionWorkspace`. The real options
 (the first is the supported one):
 
 | How | Command or clicks | Notes |
@@ -190,6 +190,16 @@ set with `PATCH /api/ops/workflows/<id>` (`instructions`, `instructionsEnabled`)
 named `<key>` with any other trigger is listed, and the editor then labels its override as
 reaching `agent/subagents/<key>/instructions.md` (`workflows-panel.tsx:203`, `:373`); the
 override loader matches by name only, whatever the trigger.
+
+The same row is what lets the subagent **generate an app** (a document the platform
+regenerates on a schedule). The Apps form and a cron's routing both pick from the workflows
+table, and a scriptless row named after one of the deployment's specialists is a valid pick:
+the app's brief (its "What should it produce?" text, or its name and description) is
+delegated to the subagent and its reply is the document (`lib/app-source.ts`,
+`lib/app-refresh.ts`). So a subagent that should power apps must reply with a finished
+Markdown document when asked for one. A scriptless row that is NOT one of the deployment's
+specialists (a draft, or the row of a specialist the profile excludes) cannot be picked, and
+the form says why.
 
 The id lookup is cached for the life of the process, so a row added after the subagent's
 first turn starts counting on the next cold start.
@@ -221,7 +231,7 @@ None of these is required for a subagent to work, show up and be accounted for.
 | File:line | What | When to touch it |
 |---|---|---|
 | `agent/lib/customer-schema.ts:30` | `TICKET_CATEGORY_ROUTING` | only if a ticket category should triage to the new subagent (the categories are a closed enum) |
-| `scripts/operator/workflows/*.workflow.js` | library workflows naming `{ subagent: "..." }` | when shipping a scripted workflow that uses it; then `npm run build:workflow-library` |
+| `library/<id>/workflows/*.workflow.js` | library workflows naming `{ subagent: "..." }` (provisioned only when the profile names the library under `library.sources`) | when shipping a scripted workflow that uses it; then `npm run build:workflow-library` |
 | `scripts/gen-subagent-meta.mjs:37-43` | lib files searched for a re-exported tool's description | when a tool comes from a new `agent/lib/*-tools.ts`; cosmetic (the Control Panel shows the tool with no description) |
 | `scripts/subagent-shared/<family>/targets.json` | which subagents carry a shared helper family | if its scripts import one (eve-sandbox-workspace) |
 | `AGENTS.md` "Capability flags" | the named `web_search` sites | if a subagent shipped **in the base app** declares `web_search`; a pack documents its own |

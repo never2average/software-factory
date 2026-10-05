@@ -1,49 +1,44 @@
-// operator:seed-workflows — install the workflow library into the `workflows`
-// table from scripts/operator/workflows/*.workflow.js. Each file is a workflow SCRIPT
-// (export const meta + phase()/agent()/parallel()/pipeline()); we read it as
-// text and store it. Idempotent: upserts by workflow name.
+// operator:seed-workflows — install this deployment's workflow library into the `workflows`
+// table of a workspace that already exists. Idempotent: upserts by workflow name.
 //
 //   npm run operator:seed-workflows -- --org <id>   # install/update for one workspace
 //   npm run operator:seed-workflows -- --list       # just print what would be seeded
+//
+// WHICH workflows is the deployment profile's business (`library.sources` in profiles/*.json), not a folder this
+// script reads: it installs exactly what a new workspace is provisioned with (agent/lib/workflow-library-view.ts),
+// so a workflow that delegates to a specialist the profile excludes is left out here too. A deployment whose
+// profile names no library has nothing to seed, and this says so and changes nothing.
+//
+// It never deletes. It used to prune every system-created row whose file had gone; a row this deployment no longer
+// ships is now listed, and removed only when told to, by `npm run operator:library-cleanup`.
 //
 // The library is PER-WORKSPACE. Every row carries an org_id, because the
 // workflows table is org-scoped and RLS keys on `org_id = current_setting(...)`:
 // a NULL org_id matches no workspace at all, so an unscoped seed writes rows
 // that are invisible to every reader while reporting success.
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { getDb, closeDb } from "../../agent/lib/db/index.ts";
 import { orgs, workflows } from "../../agent/lib/db/schema.ts";
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { flag, glyph, hasFlag } from "./lib/operator.mjs";
-import { VOCABULARY } from "../../agent/lib/agent-vocabulary.ts";
-import { speakLibraryWorkflow } from "../../agent/lib/workflow-library-view.ts";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const dir = join(here, "workflows");
-
-function parse(script) {
-  const name = /name:\s*"([^"]+)"/.exec(script)?.[1];
-  const description = /description:\s*"([^"]+)"/.exec(script)?.[1];
-  const steps = [...script.matchAll(/phase\("([^"]+)"\)/g)].map((m) => m[1]);
-  return { name, description, steps };
-}
+import { deploymentWorkflowLibrary } from "../../agent/lib/workflow-library-view.ts";
+import { LIBRARY_SOURCES, WORKFLOW_LIBRARY } from "../../agent/lib/workflow-library.generated.ts";
 
 async function main() {
-  const files = readdirSync(dir).filter((f) => f.endsWith(".workflow.js")).sort();
-  const items = files.map((f) => {
-    const script = readFileSync(join(dir, f), "utf8");
-    const { name, description, steps } = parse(script);
-    if (!name || !description) throw new Error(`${f}: missing name/description in meta`);
-    // In this deployment's words: the library writes role placeholders ({owner}, {member}) that the profile fills,
-    // exactly as a new workspace is provisioned (agent/lib/workflow-library-view.ts).
-    return speakLibraryWorkflow(VOCABULARY, { name, description, steps, script });
-  });
+  // In this deployment's words, and without what it cannot run: exactly as a new workspace is provisioned.
+  const items = deploymentWorkflowLibrary();
+  const withheld = WORKFLOW_LIBRARY.length - items.length;
 
   if (hasFlag("list")) {
     for (const it of items) console.log(`${glyph.info} ${it.name} — ${it.description}  [${it.steps.join(" → ")}]`);
-    console.log(`\n${items.length} workflow(s).`);
+    console.log(`\n${items.length} workflow(s) from ${LIBRARY_SOURCES.length ? LIBRARY_SOURCES.join(", ") : "no library source"}${withheld ? ` (${withheld} more delegate to a specialist the profile excludes, and are left out)` : ""}.`);
+    return;
+  }
+  if (!items.length) {
+    console.log(
+      LIBRARY_SOURCES.length
+        ? `${glyph.info} Every workflow of ${LIBRARY_SOURCES.join(", ")} delegates to a specialist the profile excludes: nothing to seed.`
+        : `${glyph.info} The profile of this build names no library source (library.sources is empty), so there is nothing to seed. See docs/DEPLOYMENT_PROFILE.md, "library".`,
+    );
     return;
   }
 
@@ -113,26 +108,8 @@ async function main() {
       console.log(`${glyph.ok} created ${it.name}`);
     }
   }
-  // Prune system-seeded workflows whose file was removed (keeps the library in
-  // sync with scripts/operator/workflows/ — a removed .workflow.js drops its row).
-  const names = items.map((it) => it.name);
-  const orphans = await db
-    .delete(workflows)
-    .where(
-      and(
-        eq(workflows.createdBy, "system"),
-        // Confine the prune to THIS workspace. Unscoped, it deleted every
-        // system-seeded workflow in every workspace — so seeding one tenant
-        // wiped the library of all the others.
-        eq(workflows.orgId, orgId),
-        notInArray(workflows.name, names),
-      ),
-    )
-    .returning({ name: workflows.name });
-  for (const o of orphans) console.log(`${glyph.warn} removed ${o.name} (no file)`);
-
   await closeDb();
-  console.log(`\n${glyph.ok} seeded ${items.length} workflow(s) into ${orgId} (${created} new, ${updated} updated, ${orphans.length} removed).`);
+  console.log(`\n${glyph.ok} seeded ${items.length} workflow(s) into ${orgId} (${created} new, ${updated} updated; nothing removed).`);
 }
 
 main().catch(async (e) => {

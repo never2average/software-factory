@@ -4,8 +4,8 @@
 //     [--domain onfinance.in] [--owner priyesh@onfinance.in]
 //
 // Writes ONE `orgs` row (idempotent by id), the owner into `org_members`, adds
-// the owner to `platform_admins`, seeds the built-in recipe catalog into the
-// workspace and installs its workflow library. This is the operator-assisted door of
+// the owner to `platform_admins`, and provisions the workspace with what the deployment
+// profile names (`library.sources`: recipes and workflows; none by default) and one row per specialist. This is the operator-assisted door of
 // §6 — a thin client of the same tables the self-serve wizard and the
 // provisioning API write. See the Org Onboarding plan.
 //
@@ -13,7 +13,8 @@
 import { getDb, closeDb, slugify, nowIso } from "./lib/customer.mjs";
 import { withOrgDb } from "../../agent/lib/db/index.ts";
 import { orgs, orgMembers, platformAdmins } from "../../agent/lib/db/schema.ts";
-import { BUILTIN_RECIPES, provisionWorkspace } from "../../agent/lib/provision-workspace.ts";
+import { provisionWorkspace } from "../../agent/lib/provision-workspace.ts";
+import { LIBRARY_SOURCES } from "../../agent/lib/workflow-library.generated.ts";
 import { eq } from "drizzle-orm";
 import { glyph, flag, hasFlag, resolveIdentity } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
@@ -82,11 +83,12 @@ async function main() {
   // script already knows. What gets seeded — the recipe catalog and the
   // workflow library — lives in provisionWorkspace, shared with the self-serve
   // wizard (POST /api/ops/orgs), so the two doors cannot drift apart.
-  const { recipesCreated, workflowsCreated, workflowsSkipped } = await withOrgDb(id, (tx) =>
+  const { recipesCreated, recipesSkipped, workflowsCreated, workflowsSkipped } = await withOrgDb(id, (tx) =>
     provisionWorkspace(tx, id, owner),
   );
-  console.log(`${glyph.ok} Recipe catalog: ${recipesCreated} new, ${BUILTIN_RECIPES.length - recipesCreated} already present.`);
-  console.log(`${glyph.ok} Workflow library: ${workflowsCreated} installed, ${workflowsSkipped} already present.`);
+  console.log(`${glyph.info} Library: ${LIBRARY_SOURCES.length ? LIBRARY_SOURCES.join(", ") : "none (the profile of this build names no library source; see docs/DEPLOYMENT_PROFILE.md, \"library\")"}.`);
+  console.log(`${glyph.ok} Recipe catalog: ${recipesCreated} new, ${recipesSkipped} already present.`);
+  console.log(`${glyph.ok} Workflows (the library's, and one row per specialist): ${workflowsCreated} installed, ${workflowsSkipped} already present.`);
 
   console.log(`\n${glyph.ok} Workspace "${id}" provisioned at ${nowIso()}.`);
   console.log(`   Next: invite operators, connect a source, onboard the first ${W.account}.`);

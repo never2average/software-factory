@@ -1,17 +1,20 @@
 /**
  * Seed a newly-created workspace so it is usable on arrival.
  *
- * Creating an org used to write four things — the org row, the owner's
- * membership, a platform-admin row, and the global recipe catalog — and stop.
- * The workspace that came out had no workflows at all, so the first thing a new
- * customer saw was an empty product, and the only fix was an operator remembering to
- * run `operator:seed-workflows` by hand against the right `--org`.
+ * WHAT is seeded is not decided here. Base code carries no workflow and no recipe of its own:
+ *
+ *   - the recipe catalog and the workflow library are the deployment profile's (`library.sources` in
+ *     profiles/*.json, compiled into workflow-library.generated.ts and read through workflow-library-view.ts).
+ *     The default profile names none, so a deployment that adds nothing provisions neither;
+ *   - one "on delegation" row per specialist THIS deployment has: the generated registry (base specialists and any
+ *     pack's), minus the ones the profile excludes.
+ *
+ * This file used to hold a recipe list of its own (and the library was every script under one base directory), so
+ * every deployment's workspaces received the first product's onboarding checklist and its thirteen workflows
+ * whatever the deployment was for. `npm run check:neutral-names` now refuses a library in base code.
  *
  * Both creation paths (the `operator:new-org` CLI and the self-serve wizard's
- * POST /api/ops/orgs) call this, so they cannot drift apart. That is also why
- * the recipe catalog lives HERE and not in the CLI: for a while the CLI seeded
- * recipes and the wizard did not, so a self-serve workspace had an onboarding
- * checklist with nothing in it.
+ * POST /api/ops/orgs) call this, so they cannot drift apart.
  *
  * MUST RUN INSIDE THE WORKSPACE'S SCOPE — `withOrgRls(orgId, …)` on the Next
  * side, `withOrgDb(orgId, …)` on the agent side. `recipes` and `workflows` carry
@@ -24,31 +27,16 @@
  *
  * Idempotent: safe to re-run on an existing workspace. It only inserts what is
  * missing and never overwrites a workflow or recipe someone has since edited —
- * a re-provision must not silently discard a customer's changes.
- *
- * Scope note: the recipe catalog also advertises "default apps and crons";
- * nothing in the codebase defines either, so nothing is invented here. When
- * they exist, they belong in this function.
+ * a re-provision must not silently discard a person's changes. It never deletes:
+ * a row an earlier build seeded and this one would not is left where it is
+ * (`npm run operator:library-cleanup` lists those, and removes them only when told to).
  */
 import { and, eq, sql } from "drizzle-orm";
 import { recipes, workflows } from "./db/schema.ts";
 import { SUBAGENT_KEYS, SUBAGENT_SUMMARIES } from "./subagent-registry.generated.ts";
-import { deploymentWorkflowLibrary } from "./workflow-library-view.ts";
-import { fill } from "./agent-vocabulary.ts";
-
-/**
- * The built-in recipe catalog, seeded PER WORKSPACE (`recipes.org_id` is NOT
- * NULL and the policy scopes reads to one org, so a "global" row has nowhere to
- * live). Order is the checklist order. `satisfiesCheck` names the org-health
- * check the recipe turns green.
- */
-export const BUILTIN_RECIPES = [
-  { slug: "onboard-self", title: "Sign in & record yourself", summary: "Get signed in, wired to the data room over MCP, and recorded as an operator.", satisfiesCheck: "members" },
-  { slug: "import-roster", title: "Import the roster", summary: "Pull people from Google Directory or a CSV into the roster.", satisfiesCheck: "roster" },
-  { slug: "connect-sources", title: "Connect a source", summary: "Wire one connector (GitHub, Slack, …) and store its secret.", satisfiesCheck: "connector" },
-  { slug: "seed-workflows", title: "Seed the workflow library", summary: "Install the starter workflow library, default apps, and crons.", satisfiesCheck: "workflows" },
-  { slug: "onboard-customer", title: fill("Onboard the first {account}"), summary: fill("Create the first {account} and its data-room skeleton."), satisfiesCheck: "customer" },
-] as const;
+import { deploymentRecipes, deploymentWorkflowLibrary } from "./workflow-library-view.ts";
+import { VOCABULARY } from "./agent-vocabulary.ts";
+import type { LibraryRecipe, LibraryWorkflow } from "./workflow-library.generated.ts";
 
 /** Minimal shape of the Drizzle transaction handle both callers hold. */
 type AnyDb = {
@@ -56,6 +44,26 @@ type AnyDb = {
   insert: (...args: never[]) => any;
   execute: (...args: never[]) => any;
 };
+
+/**
+ * What to provision, when it is not this build's own: a test hands in a library and a specialist list so it can
+ * prove each rule against a database without rebuilding the tree. Every caller in the product passes nothing.
+ */
+export interface ProvisionSource {
+  readonly workflows?: readonly LibraryWorkflow[];
+  readonly recipes?: readonly LibraryRecipe[];
+  /** The specialists that get a row: already without the excluded ones. */
+  readonly specialists?: readonly { key: string; summary: string }[];
+}
+
+/** The specialists this deployment has: the generated registry, never one the profile excludes. */
+export function deploymentSpecialists(
+  keys: readonly string[] = SUBAGENT_KEYS,
+  excluded: readonly string[] = VOCABULARY.excludedSpecialists,
+  summaries: Record<string, string> = SUBAGENT_SUMMARIES,
+): { key: string; summary: string }[] {
+  return keys.filter((k) => !excluded.includes(k)).map((key) => ({ key, summary: summaries[key] ?? "" }));
+}
 
 export interface ProvisionResult {
   readonly recipesCreated: number;
@@ -68,6 +76,7 @@ export async function provisionWorkspace(
   db: AnyDb,
   orgId: string,
   actor = "system",
+  source: ProvisionSource = {},
 ): Promise<ProvisionResult> {
   if (!orgId) throw new Error("provisionWorkspace: orgId is required");
 
@@ -87,8 +96,10 @@ export async function provisionWorkspace(
 
   let recipesCreated = 0;
   let recipesSkipped = 0;
-  for (let i = 0; i < BUILTIN_RECIPES.length; i++) {
-    const r = BUILTIN_RECIPES[i];
+  // The deployment profile's catalog, in its words. None by default.
+  const catalog = source.recipes ?? deploymentRecipes();
+  for (let i = 0; i < catalog.length; i++) {
+    const r = catalog[i];
     // Idempotent by slug within the org: an org can add or override its own.
     const have = await (db as any)
       .select({ id: recipes.id })
@@ -114,9 +125,9 @@ export async function provisionWorkspace(
   let created = 0;
   let skipped = 0;
 
-  // The library as this deployment's profile has it: no workflow that needs an excluded specialist, and every
-  // prompt in the profile's words (agent/lib/workflow-library-view.ts). The whole library by default.
-  for (const wf of deploymentWorkflowLibrary()) {
+  // The library this deployment's profile names: no workflow that needs an excluded specialist, and every
+  // prompt in the profile's words (agent/lib/workflow-library-view.ts). None by default.
+  for (const wf of source.workflows ?? deploymentWorkflowLibrary()) {
     // Scoped by org: the same workflow name legitimately exists in every
     // workspace, so an unscoped existence check would seed only the first one.
     const existing = await (db as any)
@@ -146,7 +157,7 @@ export async function provisionWorkspace(
   }
 
   // One "on delegation" row per declared subagent (see seedSubagentWorkflowRows).
-  const sub = await seedSubagentWorkflowRows(db, orgId, actor);
+  const sub = await seedSubagentWorkflowRows(db, orgId, actor, source.specialists);
   created += sub.created;
   skipped += sub.skipped;
 
@@ -159,7 +170,8 @@ export async function provisionWorkspace(
  * The row's NAME is what a subagent's hooks/usage.ts files its runs under (workflow-usage.ts resolves by name)
  * and what its operator override is read from, so a subagent without one runs unrecorded and cannot be tuned.
  * Discovered from the generated registry, not listed: a subagent added as a directory, or by a pack, gets its
- * row the next time this runs. provisionWorkspace calls it for a new workspace; for an EXISTING workspace run
+ * row the next time this runs. A specialist the profile EXCLUDES gets none: the registry is generated without
+ * them, and the list is filtered here as well, so a registry generated before the exclusion cannot seed one. provisionWorkspace calls it for a new workspace; for an EXISTING workspace run
  * `npm run operator:seed-subagent-rows -- --org <id>`, which touches nothing else.
  *
  * `db` must already be scoped to `orgId` (withOrgDb / withOrgRls), as for provisionWorkspace.
@@ -168,11 +180,12 @@ export async function seedSubagentWorkflowRows(
   db: AnyDb,
   orgId: string,
   actor = "system",
+  specialists: readonly { key: string; summary: string }[] = deploymentSpecialists(),
 ): Promise<{ created: number; skipped: number }> {
   if (!orgId) throw new Error("seedSubagentWorkflowRows: orgId is required");
   let created = 0;
   let skipped = 0;
-  for (const key of SUBAGENT_KEYS) {
+  for (const { key, summary } of specialists) {
     const existing = await (db as any)
       .select({ id: workflows.id })
       .from(workflows)
@@ -185,7 +198,7 @@ export async function seedSubagentWorkflowRows(
     await (db as any).insert(workflows).values({
       orgId,
       name: key,
-      description: SUBAGENT_SUMMARIES[key] ?? "",
+      description: summary,
       trigger: "on delegation",
       steps: [],
       script: null,

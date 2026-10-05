@@ -7,6 +7,7 @@
 // a branding step may add another). See docs/DEPLOYMENT_PROFILE.md.   npm run build:deployment-profile
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { validateSource } from "./lib/profile-library.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 // PROFILES_DIR + --check let a test validate another set of profiles without touching the generated files.
@@ -26,7 +27,8 @@ function merge(base, over, path, shape) {
 }
 // "$comment" is documentation at any depth, never data.
 const uncomment = (v) => (Array.isArray(v) ? v.map(uncomment) : isObj(v) ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== "$comment").map(([k, x]) => [k, uncomment(x)])) : v);
-const FREE = ["dataroom.domains"];
+// library.sources is a map of the deployment's own source ids (scripts/lib/profile-library.mjs validates each).
+const FREE = ["dataroom.domains", "library.sources"];
 // domains.<area>.fields is a map keyed by real field keys; its entries are validated against the schemas below.
 const FIELD_MAP = /^domains\.(deployments|implementations)\.fields(\.|$)/;
 let current = "";
@@ -324,6 +326,17 @@ for (const [i, key] of profile.specialists.exclude.entries()) {
 }
 if (new Set(profile.specialists.exclude).size !== profile.specialists.exclude.length) fail("specialists.exclude lists a subagent twice");
 
+// --- the library a new workspace is provisioned with: named here, never listed in base code -----------------------
+// Each source is a directory in the repository (workflows/*.workflow.js, recipes.json). A later profile adds one
+// under its own id, and turns one off by setting its id to null. The default names none.
+if (!isObj(profile.library?.sources)) fail("library.sources must be a map of source id to a directory in the repository (empty for no library)");
+for (const [id, value] of Object.entries(profile.library.sources)) {
+  if (value === null || value === false) { delete profile.library.sources[id]; continue; }
+  const problem = validateSource(ROOT, id, value);
+  if (problem) fail(`library.sources.${id}: ${problem}`);
+}
+if (Object.keys(defaults.library.sources).length) fail("library.sources: the default profile names no library source. A deployment opts into one by ADDING a profile file (docs/DEPLOYMENT_PROFILE.md, \"library\")");
+
 // --- the data-room folders the MODEL reads: a relabelled domain's label as a folder name (agent/lib/agent-vocabulary.ts)
 // "Coverage reports" is read and written as `Coverage-reports/` and stored under the domain's own folder. Two
 // domains must not meet on one folder name, and none may take a stored name another domain already has.
@@ -397,6 +410,11 @@ export interface DeploymentProfile {
   persona: { base: boolean };
   /** Base specialists the deployment does not use: moved out of agent/subagents/ at generation time. */
   specialists: { exclude: string[] };
+  /**
+   * sources: the directories (by id) whose workflows and recipes every new workspace is provisioned with
+   * (scripts/build-workflow-library.mjs compiles them into agent/lib/workflow-library.generated.ts). Empty by default.
+   */
+  library: { sources: Record<string, string> };
   /**
    * hidden: fields of the account record the model never reads or writes (its tools' parameters and results).
    * custom_fields: the deployment's OWN fields on the account record, by key in the customers table's \`custom\` column.

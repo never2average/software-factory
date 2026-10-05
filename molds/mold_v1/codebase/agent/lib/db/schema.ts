@@ -2189,10 +2189,10 @@ export const platformAdmins = pgTable("platform_admins", {
 /**
  * Recipe registry — the versioned, per-org catalog the onboarding handoff hands
  * to a customer's coding agents (`--recipes a,b,c`). "Extensibility = a row,
- * not a code change": mirrors the seed-pack seam. The built-in recipes
- * (onboard-self, import-roster, connect-sources, seed-workflows,
- * onboard-customer) are seeded INTO EACH WORKSPACE by provisionWorkspace when
- * it is created; there are no global rows (org_id is NOT NULL and the
+ * not a code change": mirrors the seed-pack seam. The recipes the deployment
+ * profile names (library.sources; none by default) are seeded INTO EACH
+ * WORKSPACE by provisionWorkspace when it is created; base code holds no list
+ * of its own, and there are no global rows (org_id is NOT NULL and the
  * fail-closed policy scopes reads to one org). An org can add/override its own.
  */
 export const recipes = pgTable(
@@ -2200,7 +2200,7 @@ export const recipes = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
-    slug: text("slug").notNull(), // onboard-self | import-roster | ...
+    slug: text("slug").notNull(), // the library's, or the workspace's own
     version: text("version").notNull().default("1"),
     title: text("title").notNull(),
     summary: text("summary"),

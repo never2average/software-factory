@@ -17,7 +17,8 @@ import { once } from "eve/tools/approval";
 import { z } from "zod";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
-import { apps } from "./db/schema.ts";
+import { apps, workflows } from "./db/schema.ts";
+import { appSource, sourceProblem, type SourceOfApp } from "../../lib/app-source.ts";
 import { orgForSession } from "./org-context.ts";
 import { cronMatches } from "./cron-match.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
@@ -54,6 +55,26 @@ function requireDb() {
   const db = getDb();
   if (!db) throw new Error("Apps need a database — DATABASE_URL is not configured.");
   return db;
+}
+
+/**
+ * Refuse a source that cannot produce a document (lib/app-source.ts), exactly as the Apps form does: a workflow with
+ * no script that is not one of this workspace's specialists, a workflow that does not exist, a prompt pinned to a
+ * specialist this workspace does not have. The error is the reason and what to do; nothing is saved.
+ */
+async function assertSource(orgId: string, app: SourceOfApp): Promise<void> {
+  const source = await withOrgDb(orgId, (tx) =>
+    appSource(app, async (name) => {
+      const [row] = await tx
+        .select({ name: workflows.name, script: workflows.script, trigger: workflows.trigger })
+        .from(workflows)
+        .where(and(eq(workflows.orgId, orgId), eq(workflows.name, name)))
+        .limit(1);
+      return row;
+    }),
+  );
+  const problem = sourceProblem(source);
+  if (problem) throw new Error(problem);
 }
 
 /** Refuse an unparseable cadence up front; it would silently never fire. */
@@ -111,6 +132,7 @@ export const createAppTool = modelFacing("create_app", defineTool({
     }
     const refreshCron = assertCron(input.refreshCron);
     const orgId = await orgForSession(ctx);
+    await assertSource(orgId, input);
     const [app] = await withOrgDb(orgId, (tx) =>
       tx
         .insert(apps)
@@ -120,7 +142,9 @@ export const createAppTool = modelFacing("create_app", defineTool({
           name: input.name,
           description: input.description ?? null,
           sourceKind: input.sourceKind,
-          prompt: input.sourceKind === "prompt" ? (input.prompt ?? null) : null,
+          // A workflow app keeps a prompt too: when its workflow is a specialist's row, the prompt is the brief
+          // that specialist is given (lib/app-source.ts).
+          prompt: input.prompt?.trim() ? input.prompt : null,
           workflow: input.sourceKind === "workflow" ? (input.workflow ?? null) : null,
           subagent: input.subagent ?? null,
           refreshCron,
@@ -196,6 +220,17 @@ export const updateAppTool = modelFacing("update_app", defineTool({
       fields.refreshCron = assertCron(patch.refreshCron);
     }
     const updateOrg = await orgForSession(ctx);
+    // A change of what generates the app is checked like a create, and takes the last refresh's error with it
+    // (that error was about the source the app no longer has).
+    if (patch.prompt !== undefined || patch.workflow !== undefined) {
+      const [before] = await withOrgDb(updateOrg, (tx) => tx.select().from(apps).where(and(eq(apps.id, id), isNull(apps.deletedAt))).limit(1));
+      if (!before) throw new Error(`No app with id "${id}".`);
+      const after = { ...before, ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {}), ...(patch.workflow !== undefined ? { workflow: patch.workflow } : {}) };
+      if ((after.prompt ?? null) !== (before.prompt ?? null) || (after.workflow ?? null) !== (before.workflow ?? null)) {
+        await assertSource(updateOrg, after);
+        fields.lastError = null;
+      }
+    }
     const [app] = await withOrgDb(updateOrg, (tx) =>
       tx
         .update(apps)

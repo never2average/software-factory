@@ -65,12 +65,12 @@ product subagents to them; write a `subagent.json` instead.
 |---|---|---|
 | `agent/instructions.md:11` | "What you own": the root's delegation paragraphs for the built-ins | never for a new subagent; add `agent/instructions/NN-<topic>.md` instead |
 | `agent/lib/customer-schema.ts:30` | `TICKET_CATEGORY_ROUTING` (closed category enum to subagent key) | a ticket category should triage to a new subagent |
-| `scripts/operator/workflows/*.workflow.js` | scripted workflows that name `{ subagent }` | shipping a library workflow; then `npm run build:workflow-library` |
+| `library/<id>/workflows/*.workflow.js` | scripted workflows that name `{ subagent }` | shipping a library workflow; then `npm run build:workflow-library` |
 | `agent/lib/workflow-override.ts`, `agent/lib/db/schema.ts` | comments that list subagent ids in prose | never required; keep truthful when convenient |
 
 ## Generated, never hand-edited
 
 - `app/_components/subagent-meta.generated.ts` and `agent/lib/subagent-registry.generated.ts` from `npm run build:subagent-meta`
-- `agent/lib/workflow-library.generated.ts` from `npm run build:workflow-library` (source: `scripts/operator/workflows/*.workflow.js`)
+- `agent/lib/workflow-library.generated.ts` from `npm run build:workflow-library` (source: the directories the profile names under `library.sources`, e.g. `library/account-delivery/workflows/*.workflow.js`)
 - `setup/skills/` from `npm run build:skill-library`
 - `agent/subagents/<key>/sandbox/workspace/scripts/<family>/` from `npm run sync:subagent-shared` (source: `scripts/subagent-shared/<family>/`)

@@ -311,9 +311,11 @@ async function phaseUnits() {
   });
   await check("C every run path refuses an unavailable workflow (run routes, cron, app refresh) and the list reports it", () => {
     for (const f of ["app/api/ops/run/route.ts", "app/api/ops/workflows/[id]/run/route.ts", "app/api/cron/run-cron-workflows/route.ts", "lib/app-refresh.ts", "app/api/ops/workflows/route.ts"]) {
-      // The list route derives it per row through workflowForList (lib/workflow-availability.ts), which calls it.
-      assert.match(readFileSync(join(ROOT, f), "utf8"), /workflowAvailability\(|workflowForList\(/, f);
+      // The list route derives it per row through workflowForList (lib/workflow-availability.ts), which calls it; the
+      // app refresh through workflowAppSource (lib/app-source.ts), which calls it for every row that has a script.
+      assert.match(readFileSync(join(ROOT, f), "utf8"), /workflowAvailability\(|workflowForList\(|workflowAppSource\(/, f);
     }
+    assert.match(readFileSync(join(ROOT, "lib/app-source.ts"), "utf8"), /workflowAvailability\(row, v\)/);
   });
   await check("C/B no build config runs a bare `eve build` (it would put the excluded specialists back)", () => {
     const bare = /(^|&&|;|\|\|)\s*(npx\s+)?eve\s+(build|dev)\b/;
@@ -648,10 +650,22 @@ async function phaseStamped() {
     assert.match(a.reason, /delegates to a specialist this workspace does not use/);
     assert.doesNotMatch(a.reason, /customer-context/);
   });
-  await check("C a library row a person EDITED is left runnable, and reported", () => {
+  await check("C a library row a person EDITED to still use an excluded specialist cannot run either, and says why", () => {
     const a = availMod.workflowAvailability({ name: assign.name, script: assign.script + "\n// edited" });
-    assert.equal(a.available, true);
+    assert.equal(a.available, false);
     assert.deepEqual(a.needsExcluded, ["customer-context"]);
+    assert.match(a.reason, /delegates to a specialist this workspace does not use, so it cannot run here/);
+    assert.doesNotMatch(a.reason, /customer-context/);
+  });
+  await check("C …and edited to use this workspace's specialists it is available", () => {
+    assert.deepEqual(availMod.workflowAvailability({ name: assign.name, script: assign.script.replace(/customer-context/g, "research-notes") }), { available: true });
+  });
+  await check("C the row of an excluded specialist is unavailable; a kept specialist's row, and a scripted row of the same name, are not", () => {
+    const a = availMod.workflowAvailability({ name: "customer-context", script: null, trigger: "on delegation" });
+    assert.equal(a.available, false);
+    assert.doesNotMatch(a.reason, /customer-context/);
+    assert.equal(availMod.workflowAvailability({ name: "research", script: null, trigger: "on delegation" }).available, true);
+    assert.equal(availMod.workflowAvailability({ name: "customer-context", script: 'return await agent("x");', trigger: "manual" }).available, true);
   });
   await check("C reversible: under the default profile the same row is available (nothing was written)", async () => {
     const { DEFAULT_DOMAINS } = await imp("agent/lib/deployment-profile.generated.ts");
@@ -660,9 +674,9 @@ async function phaseStamped() {
     const dv = v.createVocabulary({ ...base, vocabulary: defaults.vocabulary, dataroom: { ...base.dataroom, domains: defaults.dataroom.domains }, domains: DEFAULT_DOMAINS, specialists: { exclude: [] } }, []);
     assert.equal(availMod.workflowAvailability({ name: assign.name, script: assign.script }, dv).available, true);
   });
-  await check("C the workflows view says why base library workflows are missing", () => {
+  await check("C the workflows view says why library workflows are missing", () => {
     const note = availMod.withheldLibraryNote();
-    assert.match(note ?? "", /of the 13 base library workflows are not part of this workspace/);
+    assert.match(note ?? "", /of the 13 library workflows are not part of this workspace/);
   });
   // D: validation errors speak the model's words — paths and the values they list.
   const bad = await upsert.upsert_company.execute({ id: "acme-bad", portfolioEntry: { portfolioEntryStage: "Kickoff", portfolioEntryProgressPct: 1, portfolioEntryRiskLevel: "Green", blockerOwner: "Nobody" } }, ctx).catch((e) => ({ thrown: e.message }));
@@ -698,7 +712,7 @@ async function phaseExclusion(copy) {
   // A "git clone" of the stamped copy: the tracked tree only (.profile-excluded/ was gitignored), regenerated.
   const clone = mkdtempSync(join(tmpdir(), "vocab-clone-"));
   try {
-    for (const e of ["agent", "lib", "data", "scripts", "dm.md", "package.json", "profiles", "app"]) if (existsSync(join(copy, e))) cpSync(join(copy, e), join(clone, e), { recursive: true });
+    for (const e of ["agent", "lib", "data", "scripts", "library", "dm.md", "package.json", "profiles", "app"]) if (existsSync(join(copy, e))) cpSync(join(copy, e), join(clone, e), { recursive: true });
     symlinkSync(join(ROOT, "node_modules"), join(clone, "node_modules"), "dir");
     const again = spawnSync(process.execPath, ["scripts/gen-subagent-meta.mjs"], { cwd: clone, encoding: "utf8" });
     const gen2 = spawnSync(process.execPath, ["scripts/gen-deployment-profile.mjs"], { cwd: clone, encoding: "utf8" });
@@ -736,7 +750,7 @@ async function phaseConcurrency(stamped) {
   const EXCLUDED = ["configuration", "customer-context", "data-migration", "deployment"];
   const dir = mkdtempSync(join(tmpdir(), "vocab-concurrent-"));
   try {
-    for (const e of ["agent", "lib", "data", "scripts", "dm.md", "package.json", "profiles", "app"]) if (existsSync(join(stamped, e))) cpSync(join(stamped, e), join(dir, e), { recursive: true });
+    for (const e of ["agent", "lib", "data", "scripts", "library", "dm.md", "package.json", "profiles", "app"]) if (existsSync(join(stamped, e))) cpSync(join(stamped, e), join(dir, e), { recursive: true });
     cpSync(FIXTURE, join(dir, "profiles/50-relabelled.json"));
     mkdirSync(join(dir, "node_modules/.bin"), { recursive: true });
     for (const dep of ["zod", "drizzle-orm", "postgres", "eve"]) if (existsSync(join(ROOT, "node_modules", dep))) symlinkSync(join(ROOT, "node_modules", dep), join(dir, "node_modules", dep), "dir");
@@ -818,8 +832,11 @@ if (process.argv.includes("--phase") && process.argv[process.argv.indexOf("--pha
   await phaseUnits();
   const copy = mkdtempSync(join(tmpdir(), "vocab-stamped-"));
   try {
-    for (const e of ["agent", "lib", "data", "scripts", "dm.md", "package.json"]) cpSync(join(ROOT, e), join(copy, e), { recursive: true });
+    for (const e of ["agent", "lib", "data", "scripts", "library", "dm.md", "package.json"]) cpSync(join(ROOT, e), join(copy, e), { recursive: true });
     mkdirSync(join(copy, "profiles"));
+    // The stamped deployment opts into a workflow library (base code ships none): its text must reach the model in
+    // the profile's words, and what it provisions must leave out what the profile excludes.
+    cpSync(join(ROOT, "library/account-delivery/profile.json"), join(copy, "profiles/40-library-account-delivery.json"));
     cpSync(join(ROOT, "app/_components"), join(copy, "app/_components"), { recursive: true });
     cpSync(join(ROOT, "profiles/00-default.json"), join(copy, "profiles/00-default.json"));
     cpSync(FIXTURE, join(copy, "profiles/50-relabelled.json"));
@@ -828,6 +845,8 @@ if (process.argv.includes("--phase") && process.argv[process.argv.indexOf("--pha
     assert.equal(meta.status, 0, meta.stderr);
     const gen = spawnSync(process.execPath, ["scripts/gen-deployment-profile.mjs"], { cwd: copy, encoding: "utf8" });
     assert.equal(gen.status, 0, gen.stderr);
+    const lib = spawnSync(process.execPath, ["scripts/build-workflow-library.mjs"], { cwd: copy, encoding: "utf8" });
+    assert.equal(lib.status, 0, lib.stderr);
     const env = { ...process.env, DATAROOM_DIR: join(copy, ".dataroom") };
     for (const k of Object.keys(env)) if (/^(DATABASE_URL|POSTGRES_URL|BLOB_READ_WRITE_TOKEN)$/.test(k)) delete env[k];
     const r = spawnSync(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "scripts/test-agent-vocabulary.mjs", "--phase", "stamped"], { cwd: copy, env, encoding: "utf8" });

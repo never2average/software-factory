@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { workflowAvailability } from "./workflow-availability.ts";
+import { AppSourceError, promptAppSource, sourceProblem, specialistBrief, workflowAppSource } from "./app-source.ts";
 import { appVersions, apps, workflows } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "./ops-db";
 import { makeDelegate } from "./workflow-delegate";
@@ -18,11 +18,16 @@ import { stripTypes } from "./workflow-ts";
 import { cleanDashboardSpec } from "./dashboard-spec";
 
 /**
- * Regenerating an APP's document. One engine, two sources:
+ * Regenerating an APP's document. One engine, three sources (lib/app-source.ts
+ * decides which an app has, and whether it can run at all):
  *
- *  • workflow — run the named workflow DURABLY (same machinery the Ops Center
- *    and run-cron-workflows use), and take its return value as the document.
- *    The run id is stored so the refresh can be opened as a chat.
+ *  • workflow, a script — run the named workflow DURABLY (same machinery the
+ *    Ops Center and run-cron-workflows use), and take its return value as the
+ *    document. The run id is stored so the refresh can be opened as a chat.
+ *  • workflow, a specialist's row — the row has no script: it is the row of one
+ *    of this deployment's specialists. The app's brief is delegated to that
+ *    specialist and its reply IS the document. This used to fail with "has no
+ *    script" although the picker offered the row.
  *  • prompt   — one agent call whose reply IS the document. The eve session id
  *    is stored for the same reason.
  *
@@ -105,7 +110,7 @@ export async function refreshApp(
   bearer: ServiceBearer,
   /** Who asked — an operator's email, or "cron" for the scheduled refresh. */
   actor = "cron",
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; cause?: "source" }> {
   let workflowLease: WorkflowRunLease | null = null;
   // Mark the app as refreshing NOW, so EVERY path (cron already claims it, but
   // the on-demand /api/ops/run trigger and the Apps-tab button did not) gives
@@ -130,10 +135,25 @@ export async function refreshApp(
           .where(and(eq(workflows.orgId, orgId), eq(workflows.name, name)))
           .limit(1),
       );
-      if (!wf?.script) throw new Error(`Workflow "${name}" has no script.`);
-      const availability = workflowAvailability(wf);
-      if (!availability.available) throw new Error(availability.reason);
-      const { js, error } = stripTypes(wf.script);
+      // The same decision the create form and the picker made (lib/app-source.ts), asked again now: the workflow
+      // may have been edited, removed, or its specialist left out of the profile since the app was saved.
+      const source = workflowAppSource(wf, name);
+      if (!source.ok) throw new AppSourceError(sourceProblem(source) ?? source.reason);
+
+      if (source.kind === "specialist") {
+        // A specialist's row: no script to run. Its specialist writes the document from the app's brief.
+        const stepContext = { workflow: `app refresh: ${app.name}`, customerId: app.customerId ?? undefined };
+        const delegate = makeDelegate(bearer, 250_000, undefined, stepContext, app.orgId, "step");
+        let sessionId: string | null = null;
+        const text = await delegate(specialistBrief(app), source.specialist, (info) => {
+          sessionId = info.sessionId;
+        });
+        if (!text.trim()) throw new Error(`The "${source.specialist}" specialist finished without a reply, so there is no document. Refresh again; if it stays empty, say what it should produce in the app's settings.`);
+        await storeContent(db, app, actor, { contentMd: text, lastSessionId: sessionId });
+        return { ok: true };
+      }
+
+      const { js, error } = stripTypes(wf.script ?? "");
       if (error) throw new Error(error);
 
 
@@ -197,11 +217,13 @@ export async function refreshApp(
     // under the 300s route maxDuration.
     const prompt = app.prompt?.trim();
     if (!prompt) throw new Error("No prompt is set for this app.");
+    const runsAs = promptAppSource(app.subagent);
+    if (!runsAs.ok) throw new AppSourceError(sourceProblem(runsAs) ?? runsAs.reason);
     const delegate = makeDelegate(bearer, 250_000, undefined, undefined, app.orgId, "step");
     let sessionId: string | null = null;
     const text = await delegate(
       `${prompt}\n\n${DASHBOARD_CONTRACT}`,
-      app.subagent ?? "app-author",
+      runsAs.specialist,
       (info) => {
         sessionId = info.sessionId;
       },
@@ -231,6 +253,8 @@ export async function refreshApp(
         })
         .where(eq(apps.id, app.id)),
     );
-    return { ok: false, error: message };
+    // "source": the app's source cannot run as it is set (lib/app-source.ts). Not a failed generation: nothing was
+    // attempted, and trying again changes nothing until the source does.
+    return { ok: false, error: message, ...(e instanceof AppSourceError ? { cause: "source" as const } : {}) };
   }
 }

@@ -125,12 +125,17 @@ const baseAllow = () => ({
     skip: { "src/**/*.generated.ts": "derived", "scripts/lib/legacy-dataroom-folders.json": "the one legacy definition" },
     ceilings: {},
   },
+  builtin_library: {
+    libraries: { "library/**": "the library directories a profile names" },
+    skip: { "tests/**": "tests insert the rows they assert on" },
+    writers: {},
+  },
 });
 const clean = {
   // The planted tree's own folder names: a former one and the default profile's. Made up, so that no real one is
   // written in this file.
   "scripts/lib/legacy-dataroom-folders.json": '{"$comment": "the former names", "accounts": "Oldbooks", "uploads": "Inbox"}\n',
-  "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}}\n',
+  "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}, "library": {"sources": {}}}\n',
   "src/a.ts": `select ${w}_owner from customers; // the contract, anywhere\nconst owner = 1;\n`,
   "prompt.md": `You help an ${U} and their ${U} owner.\n`,
   "history/0001.json": `{"${w}Thing": "${U}_OLD"}\n`,
@@ -210,6 +215,19 @@ const cases = [
   ["a ceiling group with no reason is refused", {}, (a) => ({ ...a, stored_folders: { ...a.stored_folders, ceilings: { later: { files: { "src/b.ts": 1 } } } } }), 1, /stored_folders\.ceilings\["later"\] needs a "why" and "files"/],
   ["an allow-list with no stored_folders section is refused, not treated as nothing to check", {}, (a) => ({ ...a, stored_folders: undefined }), 1, /has no "stored_folders" section/],
   ["an empty scan list is refused", {}, (a) => ({ ...a, stored_folders: { ...a.stored_folders, scan: {} } }), 1, /stored_folders\.scan parsed as empty/],
+  // The built-in library (scripts/lib/builtin-library.mjs): base code ships no workflow and no recipe of its own.
+  ["a workflow script outside a library directory fails", { "scripts/operator/workflows/qbr.workflow.js": 'export const meta = { name: "qbr", description: "d" };\n' }, null, 1, /scripts\/operator\/workflows\/qbr\.workflow\.js: a workflow script outside a library directory/],
+  ["…and passes inside one", { "library/ops/workflows/qbr.workflow.js": 'export const meta = { name: "qbr", description: "d" };\n' }, null, 0, /no workflow or recipe library in base code/],
+  ["the default profile naming a library source fails", { "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}, "library": {"sources": {"ops": "library/ops"}}}\n' }, null, 1, /profiles\/00-default\.json: library\.sources names ops/],
+  ["the default profile with no library key fails", { "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}}\n' }, null, 1, /profiles\/00-default\.json: library\.sources is missing/],
+  ["a recipe written as a literal in base code fails", { "src/b.ts": 'export const BUILTIN = [{ slug: "onboard-self", title: "Sign in", satisfiesCheck: "members" }];\n' }, null, 1, /src\/b\.ts: a recipe written as a literal/],
+  ["…and passes as a row of a library's recipes.json", { "library/ops/recipes.json": '{"recipes": [{"slug": "onboard-self", "title": "Sign in", "satisfiesCheck": "members"}]}\n' }, null, 0, /no recipe literal/],
+  ["a new file that inserts into workflows fails until it is listed", { "src/b.ts": "await db.insert(workflows).values(rows);\n" }, null, 1, /src\/b\.ts: inserts into the workflows or recipes table and is not a listed writer/],
+  ["…in SQL too, and into recipes", { "src/b.mjs": "await sql`INSERT INTO recipes (org_id, slug) VALUES (${o}, ${s})`;\n" }, null, 1, /src\/b\.mjs: inserts into the workflows or recipes table/],
+  ["a listed writer passes", { "src/b.ts": "await db.insert(workflows).values(rows);\n" }, (a) => ({ ...a, builtin_library: { ...a.builtin_library, writers: { "src/b.ts": "one row a person asked for" } } }), 0, /1 listed writer\(s\)/],
+  ["a listed writer that no longer inserts fails", {}, (a) => ({ ...a, builtin_library: { ...a.builtin_library, writers: { "src/b.ts": "one row a person asked for" } } }), 1, /src\/b\.ts: listed in builtin_library\.writers but no longer inserts/],
+  ["a test may insert the rows it asserts on", { "tests/a.ts": "await db.insert(workflows).values(rows);\n" }, null, 0, /0 listed writer\(s\)/],
+  ["an allow-list with no builtin_library section is refused, not treated as nothing to check", {}, (a) => ({ ...a, builtin_library: undefined }), 1, /builtin_library\.libraries parsed as empty/],
 ];
 for (const [name, plant, editAllow, status, pattern] of cases) {
   const allow = editAllow ? editAllow(baseAllow()) : baseAllow();
@@ -227,4 +245,4 @@ const real = spawnSync(process.execPath, [CHECK], { cwd: ROOT, encoding: "utf8" 
 check("this repository passes its own list", real.status === 0, `${real.stdout}${real.stderr}`.trim().split("\n").slice(0, 6).join(" | "));
 
 assert.equal(failures, 0, `${failures} neutral-names check(s) failed`);
-console.log("\ntest-neutral-names: every kind of new occurrence is caught (the role word, the record words as prose, a data-room folder name); every declared allowance holds");
+console.log("\ntest-neutral-names: every kind of new occurrence is caught (the role word, the record words as prose, a data-room folder name, a workflow or recipe library in base code); every declared allowance holds");

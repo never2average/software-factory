@@ -42,7 +42,9 @@ npm run operator:new-org -- --name "OnFinance" [--id onfinance] [--domain onfina
 ```
 
 This writes the `orgs` row, the owner into `org_members`, adds the owner to
-`platform_admins`, and seeds the built-in recipe catalog.
+`platform_admins`, and provisions the workspace with what the deployment profile names
+under `library.sources` (the recipe catalog and the workflow library; none by default) and
+one row per specialist.
 
 **5. Invite operators.** Add the people who'll run it — owner + at least one
 admin — via the Workspace › Members surface (or `POST /api/ops/orgs/{id}/invites`

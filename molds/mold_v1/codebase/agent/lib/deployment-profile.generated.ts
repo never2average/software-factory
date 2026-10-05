@@ -51,6 +51,11 @@ export interface DeploymentProfile {
   /** Base specialists the deployment does not use: moved out of agent/subagents/ at generation time. */
   specialists: { exclude: string[] };
   /**
+   * sources: the directories (by id) whose workflows and recipes every new workspace is provisioned with
+   * (scripts/build-workflow-library.mjs compiles them into agent/lib/workflow-library.generated.ts). Empty by default.
+   */
+  library: { sources: Record<string, string> };
+  /**
    * hidden: fields of the account record the model never reads or writes (its tools' parameters and results).
    * custom_fields: the deployment's OWN fields on the account record, by key in the customers table's `custom` column.
    */
@@ -321,6 +326,9 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
   },
   "specialists": {
     "exclude": []
+  },
+  "library": {
+    "sources": {}
   },
   "account_fields": {
     "hidden": [],

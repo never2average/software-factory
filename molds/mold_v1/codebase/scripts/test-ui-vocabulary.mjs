@@ -143,9 +143,22 @@ async function relabelled() {
   await check("7 …and a row a person edited is returned exactly as stored", () => {
     const edited = { id: "w", name: assign.name, description: "mine: customer notes", steps: ["x"], script: assign.script + "\n// edited" };
     const row = avail.workflowForList(edited);
-    assert.equal(row.availability.available, true);
     assert.equal(row.description, edited.description);
     assert.equal(row.script, edited.script);
+    // It still delegates to a specialist this workspace does not use, so it cannot run, and says so without naming
+    // the specialist; edited to use the workspace's own, it can.
+    assert.equal(row.availability.available, false);
+    assert.match(row.availability.reason, /so it cannot run here\. Edit it to use this workspace's specialists/);
+    assert.deepEqual(baseWords(row.availability.reason), [], row.availability.reason);
+    const ours = avail.workflowForList({ ...edited, script: 'return await agent("x", { subagent: "research" });' });
+    assert.equal(ours.availability.available, true);
+    assert.equal(ours.script, 'return await agent("x", { subagent: "research" });');
+  });
+  await check("7 the row of a specialist this workspace does not use is listed as not part of it, naming no specialist", () => {
+    const row = avail.workflowForList({ id: "s", name: "customer-context", description: "d", steps: [], script: null, trigger: "on delegation" });
+    assert.equal(row.availability.available, false);
+    assert.deepEqual(baseWords(row.availability.reason), [], row.availability.reason);
+    assert.doesNotMatch(row.availability.reason, /customer-context/);
   });
 
   const exp = await imp("lib/record-export.ts");
@@ -305,18 +318,26 @@ async function defaults() {
     assert.equal(errs.errorText(e), String(e));
   });
   const avail = await imp("lib/workflow-availability.ts");
-  const lib = (await imp("agent/lib/workflow-library.generated.ts")).WORKFLOW_LIBRARY;
+  // The default profile names no library (base code ships none): the rows are those of a deployment that opted into
+  // the one in this repository, read as its build reads them.
+  const { readLibrary } = await imp("scripts/lib/profile-library.mjs");
+  const lib = readLibrary(ROOT, { "account-delivery": "library/account-delivery" }).workflows;
+  await check("D the default profile itself provisions no library", async () => {
+    const generated = await imp("agent/lib/workflow-library.generated.ts");
+    assert.deepEqual([generated.WORKFLOW_LIBRARY.length, generated.RECIPE_LIBRARY.length, generated.LIBRARY_SOURCES.length], [0, 0, 0]);
+  });
   await check("D every library row is available and returned as stored, its role placeholders in the profile's words", async () => {
     const { fill } = await imp("agent/lib/agent-vocabulary.ts");
+    assert.equal(lib.length, 13);
     for (const w of lib) {
-      const row = avail.workflowForList({ ...w });
+      const row = avail.workflowForList({ ...w }, undefined, lib);
       assert.equal(row.availability.available, true);
       assert.equal(row.description, fill(w.description));
       assert.doesNotMatch(row.description, /\{(member|members|owner)\}/i, w.name);
     }
     const assign = lib.find((w) => w.name === "assign-account");
     assert.match(assign.description, /\{owner\}/, "the library writes a placeholder, never a role word");
-    assert.match(avail.workflowForList({ ...assign }).description, /durable account owner/);
+    assert.match(avail.workflowForList({ ...assign }, undefined, lib).description, /durable account owner/);
   });
 
   const exp = await imp("lib/record-export.ts");
@@ -334,7 +355,7 @@ async function defaults() {
   });
   await check("D errorMessage is e.message, as before", () => assert.equal(errs.errorMessage(new Error("No customer_id")), "No customer_id"));
   await check("D saving a script is storing it", () => {
-    for (const w of lib) assert.equal(avail.scriptToStore(w.script), w.script);
+    for (const w of lib) assert.equal(avail.scriptToStore(w.script, undefined, lib), w.script);
   });
   await check("4 no ops route answers `e instanceof Error ? e.message : String(e)` unspoken", () => {
     const hits = spawnSync("grep", ["-rnE", "(\\w+) instanceof Error \\? \\1\\.message : String\\(\\1\\)", "app/api"], { cwd: ROOT, encoding: "utf8" }).stdout.trim();
@@ -665,11 +686,14 @@ if (STAMPED) {
   for (const [fixture, flags] of [[FIXTURE, []], [NEUTRAL_FIXTURE, ["--records-only"]]]) {
     const dir = mkdtempSync(join(tmpdir(), "ui-vocab-stamped-"));
     try {
-      for (const e of ["agent", "lib", "data", "scripts", "profiles", "package.json", "dm.md", "docs"]) if (existsSync(join(ROOT, e))) cpSync(join(ROOT, e), join(dir, e), { recursive: true, filter: (s) => !s.includes("__pycache__") });
+      for (const e of ["agent", "lib", "data", "scripts", "library", "profiles", "package.json", "dm.md", "docs"]) if (existsSync(join(ROOT, e))) cpSync(join(ROOT, e), join(dir, e), { recursive: true, filter: (s) => !s.includes("__pycache__") });
       mkdirSync(join(dir, "app/_components"), { recursive: true });
       cpSync(fixture, join(dir, "profiles/50-relabelled.json"));
+      // The stamped deployment opts into a workflow library (base code ships none), so the rows a person is shown
+      // for one are still checked in the profile's words.
+      cpSync(join(ROOT, "library/account-delivery/profile.json"), join(dir, "profiles/40-library-account-delivery.json"));
       symlinkSync(join(ROOT, "node_modules"), join(dir, "node_modules"), "dir");
-      for (const s of ["scripts/gen-subagent-meta.mjs", "scripts/gen-deployment-profile.mjs"]) {
+      for (const s of ["scripts/gen-subagent-meta.mjs", "scripts/gen-deployment-profile.mjs", "scripts/build-workflow-library.mjs"]) {
         const r = spawnSync(process.execPath, [s], { cwd: dir, encoding: "utf8" });
         if (r.status !== 0) throw new Error(`${s}: ${r.stderr}`);
       }

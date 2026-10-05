@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
       .limit(1),
     );
     if (!wf?.script) continue;
-    // A base-library workflow that needs a specialist this deployment excludes (lib/workflow-availability.ts).
+    // A workflow that needs a specialist this deployment excludes (lib/workflow-availability.ts).
     const availability = workflowAvailability(wf);
     if (!availability.available) {
       outcomes.push({ cron: fire.automationId, status: "unavailable" });

@@ -143,7 +143,7 @@ for (const table of ORG_SCOPED) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* 3. Seed org #1 + its owner + the built-in recipe catalog                    */
+/* 3. Seed org #1 + its owner                                                  */
 /* -------------------------------------------------------------------------- */
 
 await sql`
@@ -170,21 +170,9 @@ await sql`
   VALUES (${OPERATOR}, 'system')
   ON CONFLICT (email) DO NOTHING`;
 
-const RECIPES = [
-  ["onboard-self", "Sign in & record yourself", "Get signed in, wired to the data room over MCP, and recorded as an operator.", "members"],
-  ["import-roster", "Import the roster", "Pull people from Google Directory or a CSV into the roster.", "roster"],
-  ["connect-sources", "Connect a source", "Wire one connector (GitHub, Slack, …) and store its secret.", "connector"],
-  ["seed-workflows", "Seed the workflow library", "Install the starter workflow library, default apps, and crons.", "workflows"],
-  ["onboard-customer", "Onboard the first customer", "Create the first customer account and its data-room skeleton.", "customer"],
-];
-let order = 0;
-for (const [slug, title, summary, check] of RECIPES) {
-  await sql`
-    INSERT INTO recipes (org_id, slug, version, title, summary, satisfies_check, sort_order)
-    VALUES (NULL, ${slug}, '1', ${title}, ${summary}, ${check}, ${order})
-    ON CONFLICT DO NOTHING`;
-  order += 1;
-}
+// The recipe catalog is no longer seeded here. It was a list written into this script, inserted with a NULL org_id
+// that `recipes.org_id` (NOT NULL since) refuses and no workspace could read. What a workspace receives is the
+// deployment profile's library (`library.sources`), written by provisionWorkspace when the workspace is created.
 
 /* -------------------------------------------------------------------------- */
 /* 4. Verify                                                                  */

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorMessage, errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { apps } from "@/agent/lib/db/schema";
+import { apps, workflows } from "@/agent/lib/db/schema";
+import { appSource, sourceProblem } from "@/lib/app-source";
 import { cronMatches } from "@/agent/lib/cron-match";
 import { describePatch, recordOpsAudit } from "@/lib/ops-audit";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -19,6 +20,12 @@ interface RouteContext {
  * PATCH  /api/ops/apps/:id — edit the app. Content/provenance columns are
  * refresh-owned and deliberately NOT patchable; strictObject rejects them.
  * DELETE /api/ops/apps/:id — soft delete (the row survives for its history).
+ *
+ * A change to WHAT generates the app (source kind, workflow, prompt, specialist) is checked like a create
+ * (lib/app-source.ts): a source that cannot produce a document is refused with the reason and nothing is changed.
+ * When the source does change, the last refresh's error is cleared with it: that error was about the source the app
+ * no longer has (it used to stay, naming a workflow the app was no longer set to). The failed attempt itself stays in
+ * the version history.
  */
 const patchAppSchema = z.strictObject({
   name: z.string().min(1).optional(),
@@ -82,10 +89,28 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       tx.select().from(apps).where(and(eq(apps.id, id), eq(apps.orgId, ctx.orgId))).limit(1),
     );
     if (!before) return NextResponse.json({ error: "App not found" }, { status: 404 });
+    const SOURCE_FIELDS = ["sourceKind", "workflow", "prompt", "subagent"] as const;
+    const after = { ...before, ...patch };
+    const sourceChanged = SOURCE_FIELDS.some((k) => patch[k] !== undefined && (patch[k] ?? null) !== (before[k] ?? null));
+    const source = await withOrgRls(ctx.orgId, (tx) =>
+      appSource(after, async (name) => {
+        const [row] = await tx
+          .select({ name: workflows.name, script: workflows.script, trigger: workflows.trigger })
+          .from(workflows)
+          .where(and(eq(workflows.orgId, ctx.orgId), eq(workflows.name, name)))
+          .limit(1);
+        return row;
+      }),
+    );
+    // Only a change of source is refused: pausing, renaming or rescheduling an app whose source is already broken
+    // must still work (that is how a person stops it while they fix it).
+    if (sourceChanged && !source.ok) {
+      return NextResponse.json({ error: sourceProblem(source), source }, { status: 400 });
+    }
     const [item] = await withOrgRls(ctx.orgId, (tx) =>
       tx
         .update(apps)
-        .set({ ...patch, updatedAt: new Date() })
+        .set({ ...patch, ...(sourceChanged ? { lastError: null } : {}), updatedAt: new Date() })
         .where(and(eq(apps.id, id), eq(apps.orgId, ctx.orgId)))
         .returning(),
     );
@@ -97,7 +122,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       event: describePatch(before, patch),
       orgId: ctx.orgId,
     });
-    return NextResponse.json({ item });
+    return NextResponse.json({ item: { ...item, source } });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }

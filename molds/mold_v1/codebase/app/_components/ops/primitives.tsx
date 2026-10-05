@@ -725,15 +725,28 @@ export function WorkflowSelect({
   onChange,
   disabled,
   noneLabel = "None — the orchestrator runs it",
+  forApp = false,
 }: {
   readonly value: string | null;
   readonly onChange: (next: string | null) => void;
   readonly disabled?: boolean;
   readonly noneLabel?: string;
+  /**
+   * Picking what generates an APP: there is no "none", a row is marked as a specialist's when it is one, and a row
+   * that cannot produce a document (no script, and not one of this workspace's specialists) is shown but cannot be
+   * picked, with the reason in its place. Decided by the API (`appSource`, lib/app-source.ts).
+   */
+  readonly forApp?: boolean;
 }) {
-  const { items } = useOpsList<{ id: string; name: string; description: string }>(
-    "/api/ops/workflows",
-  );
+  const { items } = useOpsList<{
+    id: string;
+    name: string;
+    description: string;
+    appSource?: { ok: boolean; kind?: string; reason?: string; fix?: string };
+    availability?: { available: boolean };
+  }>("/api/ops/workflows");
+  // For an app, a row this workspace cannot use at all (lib/workflow-availability.ts) is not offered.
+  const offered = forApp ? (items ?? []).filter((w) => w.availability?.available !== false) : (items ?? []);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -758,29 +771,45 @@ export function WorkflowSelect({
         align="start"
         className="max-h-72 w-[26rem] max-w-[calc(100vw-2rem)] overflow-y-auto"
       >
-        <DropdownMenuCheckboxItem
-          checked={value === null}
-          onSelect={() => onChange(null)}
-          className={cn("text-muted-foreground", TYPE.body)}
-        >
-          {noneLabel}
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuSeparator />
+        {forApp ? null : (
+          <>
+            <DropdownMenuCheckboxItem
+              checked={value === null}
+              onSelect={() => onChange(null)}
+              className={cn("text-muted-foreground", TYPE.body)}
+            >
+              {noneLabel}
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         {items === null ? (
           <DropdownMenuItem disabled className={cn("gap-2", TYPE.body)}>
             <Spinner className="size-3" />
             Loading workflows…
           </DropdownMenuItem>
         ) : (
-          (items ?? []).map((w) => (
+          offered.map((w) => (
             <DropdownMenuCheckboxItem
               key={w.id}
               checked={value === w.name}
+              disabled={forApp && w.appSource?.ok === false}
               onSelect={() => onChange(w.name)}
               className={cn("flex-col items-start gap-0", TYPE.body)}
             >
-              <span className="w-full truncate font-medium">{w.name}</span>
-              {w.description ? (
+              <span className="flex w-full items-center gap-1.5">
+                <span className="min-w-0 truncate font-medium">{w.name}</span>
+                {forApp && w.appSource?.ok && w.appSource.kind === "specialist" ? (
+                  <span className={cn("shrink-0 rounded border border-border px-1 text-muted-foreground", TYPE.micro)}>
+                    specialist
+                  </span>
+                ) : null}
+              </span>
+              {forApp && w.appSource?.ok === false ? (
+                <span className={cn("line-clamp-2 w-full whitespace-normal text-muted-foreground", TYPE.micro)}>
+                  Cannot generate an app: {w.appSource.reason}
+                </span>
+              ) : w.description ? (
                 // Two lines, then stop. These descriptions are paragraphs — one
                 // of them is 300 characters — and a menu is not where you read
                 // them.

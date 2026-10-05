@@ -149,7 +149,7 @@ function hits(text) {
 
 function copyCheckout(extraProfiles, pack = null) {
   const dir = mkdtempSync(join(tmpdir(), "agent-vocabulary-"));
-  for (const entry of ["agent", "lib", "data", "scripts", "dm.md", "package.json", "docs"]) {
+  for (const entry of ["agent", "lib", "data", "scripts", "library", "dm.md", "package.json", "docs"]) {
     if (existsSync(join(ROOT, entry))) cpSync(join(ROOT, entry), join(dir, entry), { recursive: true, filter: (src) => !src.includes("__pycache__") });
   }
   mkdirSync(join(dir, "profiles"), { recursive: true });
@@ -157,6 +157,10 @@ function copyCheckout(extraProfiles, pack = null) {
   mkdirSync(join(dir, "app", "_components"), { recursive: true });
   cpSync(join(ROOT, "profiles", "00-default.json"), join(dir, "profiles", "00-default.json"));
   for (const [name, file] of extraProfiles) cpSync(file, join(dir, "profiles", name));
+  // Base code ships no workflow library: a deployment opts into one through its profile. The copy opts into the one
+  // in this repository, so the text a library sends to a model is still checked under the relabelling profile. A
+  // pack names its own (or none) in its own profile.
+  if (!pack) cpSync(join(ROOT, "library", "account-delivery", "profile.json"), join(dir, "profiles", "40-library-account-delivery.json"));
   // A pack is applied the way .claude/scripts/packs.py applies one: its files/** copied over the tree.
   if (pack) cpSync(join(pack, "files"), dir, { recursive: true, filter: (src) => !src.includes("__pycache__") });
   symlinkSync(join(ROOT, "node_modules"), join(dir, "node_modules"), "dir");
@@ -181,6 +185,7 @@ function render(extraProfiles, flags, pack = null) {
     run(dir, ["scripts/gen-subagent-meta.mjs"], "npm run build:subagent-meta");
     run(dir, ["scripts/gen-deployment-profile.mjs"], "npm run build:deployment-profile");
     run(dir, ["scripts/gen-prompts.mjs"], "npm run build:prompts");
+    if (existsSync(join(dir, "scripts/build-workflow-library.mjs"))) run(dir, ["scripts/build-workflow-library.mjs"], "npm run build:workflow-library");
     return run(dir, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "scripts/lib/model-surface.mjs", ...flags], "rendering the model-facing surface");
   } finally {
     rmSync(dir, { recursive: true, force: true });

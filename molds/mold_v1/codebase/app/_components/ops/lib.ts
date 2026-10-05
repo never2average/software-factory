@@ -158,6 +158,8 @@ export interface ApiWorkflow {
    * or authored one that needs one is runnable and reported.
    */
   availability?: { available: boolean; reason?: string; needsExcluded?: string[] };
+  /** Whether this row can generate an APP's document, and as what, or why not (lib/app-source.ts). Derived. */
+  appSource?: ApiAppSource;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -294,10 +296,20 @@ export interface ApiApp {
   lastError: string | null;
   lastRefreshAt: string | null;
   enabled: boolean;
+  /** Whether what generates this app can run as it is set now. Absent from an older API. */
+  source?: ApiAppSource;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * Whether a source can produce an app's document (lib/app-source.ts), derived by the API on every read: a workflow
+ * script, the row of one of the workspace's specialists, or a prompt; or the reason it cannot run and what to do.
+ */
+export type ApiAppSource =
+  | { ok: true; kind: "script" | "specialist" | "prompt"; specialist?: string }
+  | { ok: false; kind: "script" | "specialist" | "prompt" | "none"; reason: string; fix: string };
 
 /** One archived refresh of an app — the document as it stood, and its run. */
 export interface ApiAppVersion {
