@@ -1,19 +1,22 @@
 /**
- * A CONNECTOR'S CREDENTIALS FOR ONE WORKSPACE, WITHOUT VERCEL CONNECT (CONNECTIONS_PROVIDER=env).
+ * A CONNECTOR'S CREDENTIALS FOR ONE WORKSPACE.
  *
- * On Vercel the Slack connector's token is issued by Vercel Connect. A server that is not on Vercel has no Connect,
- * so the credentials have to live somewhere the server can read. The application already has that place: the Ops
- * Center stores a connector's secrets per workspace (`connector_secrets`), encrypted with OPS_SECRETS_KEY under a key
- * derived from the workspace id (HKDF, salt = workspace id) and behind a strict row-level-security policy, so a read
- * outside the workspace's database scope returns nothing and another workspace's key cannot open the row. It is what
- * a bring-your-own connector and the workspace mailbox (agent/lib/workspace-mailbox.ts) already read at call time.
- * This is the same rule as the mailbox, for the built-in Slack and GitHub connectors:
+ * Used for GitHub (and every version-control connector, lib/connections-provider.ts VCS_CONNECTOR_KINDS) on EVERY
+ * target, and for Slack on a server without Vercel Connect (CONNECTIONS_PROVIDER=env).
+ *
+ * The application already has a per-workspace place for credentials: the Ops Center stores a connector's secrets per
+ * workspace (`connector_secrets`), encrypted with OPS_SECRETS_KEY under a key derived from the workspace id (HKDF,
+ * salt = workspace id) and behind a strict row-level-security policy, so a read outside the workspace's database
+ * scope returns nothing and another workspace's key cannot open the row. It is what a bring-your-own connector and
+ * the workspace mailbox (agent/lib/workspace-mailbox.ts) already read at call time. The rule, keyed by connector kind:
  *
  *   1. the workspace's OWN credentials: its enabled, workspace-level connector of that kind, when the secrets stored
  *      on it are enough to authenticate. Read and decrypted inside that workspace's scope;
- *   2. otherwise the SERVER's environment values, ONLY for the one workspace they are bound to by
- *      CONNECTIONS_WORKSPACE (a workspace id, not a secret). Unbound, they are nobody's: on a server with several
- *      workspaces, one company's Slack bot or GitHub App is not every company's;
+ *   2. otherwise the SERVER's environment values, ONLY for the one workspace CONNECTIONS_WORKSPACE names (a
+ *      workspace id, not a secret; serverCredentialsAreFor). Unbound, they are nobody's: on a server with several
+ *      workspaces, one company's Slack bot or GitHub App is not every company's, and nothing here counts or lists
+ *      the server's workspaces to find out. A server with one workspace names it once. A version-control
+ *      credential ignored this way is said once in the log;
  *   3. otherwise not connected, with the reason.
  *
  * With no database at all (local development: one workspace) the environment values are that workspace's.
@@ -24,13 +27,13 @@
  * not a workspace credential and is never used here.
  *
  * Values never leave this module except as the token handed to eve, which sends it as a bearer and never shows it
- * to the model. Reasons name settings, never values.
+ * to the model. Reasons and the warning name settings, never values.
  *
  * Relative `.ts` imports, so this also runs under plain `node --experimental-strip-types`.
  */
 import { createSign } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
-import { connectionsWorkspace, CONNECTIONS_WORKSPACE_ENV, type ProvidedConnectorKind } from "../../lib/connections-provider.ts";
+import { connectionsWorkspace, CONNECTIONS_WORKSPACE_ENV, isVcsConnectorKind, serverCredentialsAreFor, type ProvidedConnectorKind } from "../../lib/connections-provider.ts";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { connectorSecrets, connectors } from "./db/schema.ts";
 import { decryptSecret, hasSecretsKey } from "./secret-crypto.ts";
@@ -62,6 +65,8 @@ export interface CredentialDeps {
   hasDatabase(): boolean;
   /** The secrets stored on workspace `orgId`'s enabled, workspace-level connector of `kind`; null when it has none. */
   readStored(orgId: string, kind: ProvidedConnectorKind): Promise<Record<string, string> | null>;
+  /** Where the one warning goes. */
+  warn?(message: string): void;
 }
 
 /** The workspace's own stored secrets for `kind`, read and decrypted inside its scope. */
@@ -99,6 +104,14 @@ const liveDeps: CredentialDeps = {
   readStored: readStoredSecrets,
 };
 
+/** Kinds whose ignored server-wide credential has been said already: once per process, not once per tool call. */
+const warnedIgnored = new Set<ProvidedConnectorKind>();
+
+/** For tests. */
+export function resetIgnoredCredentialWarnings(): void {
+  warnedIgnored.clear();
+}
+
 const LABEL: Record<ProvidedConnectorKind, string> = { slack: "Slack", github: "GitHub" };
 const NEEDS: Record<ProvidedConnectorKind, string> = {
   slack: "SLACK_BOT_TOKEN",
@@ -127,13 +140,22 @@ export async function connectorCredentialsFor(
 
   const server = pick(kind, deps.env);
   if (credentialsUsable(kind, server)) {
+    if (!deps.hasDatabase()) return { connected: true, source: "server", values: server };
     const bound = connectionsWorkspace(deps.env);
-    if (!deps.hasDatabase() || bound === orgId) return { connected: true, source: "server", values: server };
+    if (serverCredentialsAreFor(orgId, deps.env)) return { connected: true, source: "server", values: server };
+    const own = `it has no ${LABEL[kind]} credentials of its own (a '${kind}' connector with ${NEEDS[kind]} stored)`;
+    if (bound) {
+      return { connected: false, reason: `${LABEL[kind]} is not connected for this workspace: ${own}, and this server's ${LABEL[kind]} credentials are another workspace's.` };
+    }
+    if (isVcsConnectorKind(kind) && !warnedIgnored.has(kind)) {
+      warnedIgnored.add(kind);
+      (deps.warn ?? console.warn)(
+        `[connections] This server's ${LABEL[kind]} credentials (${NEEDS[kind]} in its environment) are not being used: ${CONNECTIONS_WORKSPACE_ENV} does not name the workspace they belong to. Set ${CONNECTIONS_WORKSPACE_ENV} to that workspace's id (also on a server with a single workspace), or have each workspace connect ${LABEL[kind]} with its own credentials (Ops Center, Connectors, ${LABEL[kind]}, Secrets).`,
+      );
+    }
     return {
       connected: false,
-      reason: bound
-        ? `${LABEL[kind]} is not connected for this workspace: it has no ${LABEL[kind]} credentials of its own (a '${kind}' connector with ${NEEDS[kind]} stored), and this server's ${LABEL[kind]} credentials are another workspace's.`
-        : `${LABEL[kind]} is not connected for this workspace: it has no ${LABEL[kind]} credentials of its own (a '${kind}' connector with ${NEEDS[kind]} stored). This server's ${LABEL[kind]} credentials are not bound to a workspace (${CONNECTIONS_WORKSPACE_ENV}), so no workspace uses them.`,
+      reason: `${LABEL[kind]} is not connected for this workspace: ${own}. This server's ${LABEL[kind]} credentials are not bound to a workspace (${CONNECTIONS_WORKSPACE_ENV}), so no workspace uses them.`,
     };
   }
   return {
@@ -144,7 +166,7 @@ export async function connectorCredentialsFor(
 
 /* ---- GitHub: a token from a set of credentials ------------------------------------------------------------------ */
 
-/** A ≤10-minute App JWT (RS256), signed with the App private key. The same construction as agent/lib/connections.ts. */
+/** A ≤10-minute App JWT (RS256), signed with the App private key. iat is backdated 60s for clock skew. */
 function githubAppJwt(appId: string, privateKey: string): string {
   const seg = (s: string) => Buffer.from(s).toString("base64url");
   const now = Math.floor(Date.now() / 1000);

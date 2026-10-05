@@ -7,9 +7,36 @@
           "url": "https://api.githubcopilot.com/mcp/",
           "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
           "auth": {
-            "getToken": {
-              "function": true
-            }
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
           }
         }
       },
@@ -60,9 +87,36 @@
         "url": "https://api.githubcopilot.com/mcp/",
         "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
         "auth": {
-          "getToken": {
-            "function": true
-          }
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
         }
       },
       "slackConnection": {
@@ -92,19 +146,16 @@
     },
     "tokens": [
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       },
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       },
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       }
     ],
     "requests": []
@@ -117,9 +168,36 @@
           "url": "https://api.githubcopilot.com/mcp/",
           "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
           "auth": {
-            "getToken": {
-              "function": true
-            }
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
           }
         }
       },
@@ -168,9 +246,36 @@
         "url": "https://api.githubcopilot.com/mcp/",
         "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
         "auth": {
-          "getToken": {
-            "function": true
-          }
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
         }
       },
       "slackConnection": {
@@ -198,19 +303,16 @@
     },
     "tokens": [
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       },
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       },
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       }
     ],
     "requests": []
@@ -223,9 +325,36 @@
           "url": "https://github-mcp.internal.test/mcp/",
           "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
           "auth": {
-            "getToken": {
-              "function": true
-            }
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
           }
         }
       },
@@ -276,9 +405,36 @@
         "url": "https://github-mcp.internal.test/mcp/",
         "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
         "auth": {
-          "getToken": {
-            "function": true
-          }
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
         }
       },
       "slackConnection": {
@@ -308,19 +464,16 @@
     },
     "tokens": [
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       },
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       },
       {
-        "value": {
-          "token": ""
-        }
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
       }
     ],
     "requests": []
@@ -333,9 +486,36 @@
           "url": "https://api.githubcopilot.com/mcp/",
           "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
           "auth": {
-            "getToken": {
-              "function": true
-            }
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
           }
         }
       },
@@ -386,9 +566,36 @@
         "url": "https://api.githubcopilot.com/mcp/",
         "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
         "auth": {
-          "getToken": {
-            "function": true
-          }
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
         }
       },
       "slackConnection": {
@@ -443,9 +650,36 @@
           "url": "https://api.githubcopilot.com/mcp/",
           "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
           "auth": {
-            "getToken": {
-              "function": true
-            }
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
           }
         }
       },
@@ -496,9 +730,36 @@
         "url": "https://api.githubcopilot.com/mcp/",
         "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
         "auth": {
-          "getToken": {
-            "function": true
-          }
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
         }
       },
       "slackConnection": {
@@ -529,17 +790,20 @@
     "tokens": [
       {
         "value": {
-          "token": "ghs_minted_1"
+          "token": "ghs_minted_1",
+          "expiresAt": 1768482000000
         }
       },
       {
         "value": {
-          "token": "ghs_minted_1"
+          "token": "ghs_minted_1",
+          "expiresAt": 1768482000000
         }
       },
       {
         "value": {
-          "token": "ghs_minted_2"
+          "token": "ghs_minted_2",
+          "expiresAt": 1768482000000
         }
       }
     ],
@@ -596,9 +860,36 @@
           "url": "https://api.githubcopilot.com/mcp/",
           "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
           "auth": {
-            "getToken": {
-              "function": true
-            }
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
           }
         }
       },
@@ -649,9 +940,36 @@
         "url": "https://api.githubcopilot.com/mcp/",
         "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
         "auth": {
-          "getToken": {
-            "function": true
-          }
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
         }
       },
       "slackConnection": {

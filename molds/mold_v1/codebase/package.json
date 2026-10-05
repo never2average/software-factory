@@ -168,6 +168,7 @@
     "test:chat-share-invites-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-chat-share-invites-db.mjs",
     "test:guest-signin-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-guest-signin-db.mjs",
     "test:connections-default": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-connections-default-unchanged.mjs",
+    "test:github-mcp-readonly": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-github-mcp-readonly.mjs",
     "test:connections-provider": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-connections-provider.mjs",
     "test:connector-credentials-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-connector-credentials-db.mjs",
     "test:workspace-mailbox-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-workspace-mailbox-db.mjs",

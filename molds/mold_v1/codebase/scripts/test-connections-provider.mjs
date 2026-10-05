@@ -1,24 +1,29 @@
 /**
- * CONNECTOR CREDENTIALS WITHOUT VERCEL CONNECT (CONNECTIONS_PROVIDER=env) — the setting, the rules, the real pieces.
+ * CONNECTOR CREDENTIALS PER WORKSPACE — the setting, the rules, the real pieces.
  *
- * On a server that is not on Vercel, Slack's and GitHub's credentials cannot come from Vercel Connect. With
- * CONNECTIONS_PROVIDER=env each workspace's come from its own stored connector secrets, or from the server's
- * environment values when those are bound to that workspace (agent/lib/connector-credentials.ts). No database here
+ * GitHub's credentials are per workspace on EVERY target (version-control connectors: lib/connections-provider.ts
+ * VCS_CONNECTOR_KINDS). Slack's are per workspace on a server that is not on Vercel (CONNECTIONS_PROVIDER=env),
+ * where Vercel Connect cannot issue them. Per workspace means: its own stored connector secrets, or the server's
+ * environment values when those belong to that workspace (agent/lib/connector-credentials.ts). No database here
  * (scripts/test-connector-credentials-db.mjs has the stored secrets against a real Postgres), no network, and no real
  * Slack or GitHub call: fetch is replaced and any request but the stubbed one fails the run.
  *
- *   1. the setting: only `env` turns it on; unset, empty and `vercel-connect` are today's behaviour; a typing mistake
- *      is today's behaviour too, said once;
+ *   1. the setting: only `env` turns it on; unset, empty and `vercel-connect` are Vercel Connect for Slack; a typing
+ *      mistake is that too, said once; GitHub is per workspace whatever it says;
  *   2. the rules, with the two sources stood in: a workspace's own credentials first; the server's only for the one
  *      workspace CONNECTIONS_WORKSPACE names; never another workspace's; never a mix of the two; reasons name
  *      settings and never values;
+ *   2b. the server-wide GitHub credential: ignored without CONNECTIONS_WORKSPACE (one warning), however many
+ *      workspaces the server has, and the named workspace's with it. Nothing counts workspaces to decide;
  *   3. GitHub: a token from a workspace's credentials. One mint per workspace, cached per workspace, never shared;
  *   4. the REAL eve pieces with the setting on and NOTHING configured, in a process with none of Vercel's variables:
  *      the agent's connection and channel modules load (the app starts), Vercel Connect is never called, a tool call
  *      gets eve's own "not authorized" error (the one an uninstalled Connect connector raises) instead of a crash,
  *      and the Slack route refuses an inbound request;
  *   5. the same, configured from the server's environment: the bearer is the server's, and the real Slack route
- *      answers a correctly signed request and refuses a forged one.
+ *      answers a correctly signed request and refuses a forged one;
+ *   6. the same real pieces with the setting UNSET (Vercel): GitHub is resolved per caller there too, an unconnected
+ *      workspace gets the same error, and Slack is still Vercel Connect's.
  *
  *   npm run test:connections-provider
  */
@@ -173,7 +178,11 @@ const provider = await import("../lib/connections-provider.ts");
   check("…said once per value, naming the setting", warnings.length === 2 && warnings[0].includes("CONNECTIONS_PROVIDER") && warnings[0].includes("envv"), warnings);
   console.warn = realWarn;
   check("CONNECTIONS_WORKSPACE: a workspace id, or none", provider.connectionsWorkspace({}) === null && provider.connectionsWorkspace({ CONNECTIONS_WORKSPACE: "  " }) === null && provider.connectionsWorkspace({ CONNECTIONS_WORKSPACE: " acme " }) === "acme");
-  check("the setting decides Slack and GitHub, and no other kind", provider.isProvidedConnectorKind("slack") && provider.isProvidedConnectorKind("GitHub") && !provider.isProvidedConnectorKind("gmail") && !provider.isProvidedConnectorKind("mcp"));
+  check("GitHub is per workspace on every target; Slack only with `env`; no other kind ever", provider.credentialsPerWorkspace("github", {}) && provider.credentialsPerWorkspace("GitHub", { CONNECTIONS_PROVIDER: "vercel-connect" }) && provider.credentialsPerWorkspace("github", { CONNECTIONS_PROVIDER: "env" }) && !provider.credentialsPerWorkspace("slack", {}) && provider.credentialsPerWorkspace("slack", { CONNECTIONS_PROVIDER: "env" }) && !provider.credentialsPerWorkspace("gmail", { CONNECTIONS_PROVIDER: "env" }) && !provider.credentialsPerWorkspace("mcp", {}));
+  check("the server's credentials belong to the ONE workspace CONNECTIONS_WORKSPACE names, and to nobody without it, for every kind", provider.serverCredentialsAreFor("named", { CONNECTIONS_WORKSPACE: "named" }) && !provider.serverCredentialsAreFor("other", { CONNECTIONS_WORKSPACE: "named" }) && !provider.serverCredentialsAreFor("w", {}) && !provider.serverCredentialsAreFor("", {}) && !provider.serverCredentialsAreFor("w", { CONNECTIONS_WORKSPACE: "  " }));
+  check("…decided from the caller's workspace and the setting alone: the function takes nothing else", provider.serverCredentialsAreFor.length <= 2);
+  check("the version-control kinds are a list keyed by provider id (GitLab joins it later)", JSON.stringify(provider.VCS_CONNECTOR_KINDS) === '["github"]' && provider.isVcsConnectorKind("GitHub") && !provider.isVcsConnectorKind("slack"));
+  check("the per-workspace kinds are Slack and GitHub, and no other kind", provider.isProvidedConnectorKind("slack") && provider.isProvidedConnectorKind("GitHub") && !provider.isProvidedConnectorKind("gmail") && !provider.isProvidedConnectorKind("mcp"));
 }
 
 /* ---- 2. the rules ---------------------------------------------------------------------------------------------- */
@@ -186,8 +195,10 @@ const C = "workspace-c";
 /** Two sources stood in: what each workspace stored, and the server's environment. Every read is logged. */
 function world({ stored = {}, env = {}, database = true } = {}) {
   const reads = [];
+  const warnings = [];
   return {
     reads,
+    warnings,
     deps: {
       env,
       hasDatabase: () => database,
@@ -195,6 +206,7 @@ function world({ stored = {}, env = {}, database = true } = {}) {
         reads.push(`${orgId}:${kind}`);
         return stored[orgId]?.[kind] ?? null;
       },
+      warn: (message) => warnings.push(message),
     },
   };
 }
@@ -245,6 +257,50 @@ function world({ stored = {}, env = {}, database = true } = {}) {
   check("with no database at all (local development: one workspace) the server's values are that workspace's", local.connected && local.source === "server", local);
   const personal = world({ stored: { [A]: { slack: null } }, env: {} });
   check("a failed tool call is the typed error, not a crash", (await attempt(() => creds.connectorTokenFor(A, "slack", personal.deps))).name === "NotConnectedError");
+}
+
+/* ---- 2b. the server-wide GitHub credential ------------------------------------------------------------------------ */
+console.log("\n2b. The server-wide GitHub credential: ignored without CONNECTIONS_WORKSPACE, the named workspace's with it");
+{
+  creds.resetIgnoredCredentialWarnings();
+  // Two workspaces: A stored its own, B stored nothing. The server holds a GitHub token and names nobody.
+  const two = world({ stored: { [A]: { github: { GITHUB_TOKEN: "ghp-A-own" } } }, env: { GITHUB_TOKEN: "ghp-server" } });
+  const a = await creds.connectorCredentialsFor(A, "github", two.deps);
+  check("the workspace with stored credentials gets its own, and nothing is warned", a.connected && a.source === "workspace" && a.values.GITHUB_TOKEN === "ghp-A-own" && two.warnings.length === 0, a);
+  const b = await creds.connectorCredentialsFor(B, "github", two.deps);
+  check("the workspace without is NOT connected: the server-wide credential is ignored without CONNECTIONS_WORKSPACE", b.connected === false && /not connected/.test(b.reason) && b.reason.includes("CONNECTIONS_WORKSPACE") && /no workspace uses them/.test(b.reason), b);
+  const bToken = await attempt(() => creds.connectorTokenFor(B, "github", two.deps));
+  check("…and a tool call there gets the same typed error an unconnected connector gives", bToken.threw && bToken.name === "NotConnectedError", bToken);
+  await creds.connectorCredentialsFor(B, "github", two.deps);
+  await creds.connectorCredentialsFor(C, "github", two.deps);
+  check("…said ONCE, in plain words naming the setting and what to do", two.warnings.length === 1 && /not being used/.test(two.warnings[0]) && two.warnings[0].includes("CONNECTIONS_WORKSPACE") && /single workspace/.test(two.warnings[0]) && /Ops Center/.test(two.warnings[0]), two.warnings);
+  check("no reason or warning carries a value", [b.reason, ...two.warnings].every((t) => !/ghp/.test(t)), [b.reason, ...two.warnings]);
+  check("the only things read were each caller's OWN stored secrets: nothing lists, counts or looks at another workspace", JSON.stringify(Object.keys(two.deps).sort()) === '["env","hasDatabase","readStored","warn"]' && two.reads.every((r, i) => r === [`${A}:github`, `${B}:github`, `${B}:github`, `${B}:github`, `${C}:github`][i]) && two.reads.length === 5, two.reads);
+
+  creds.resetIgnoredCredentialWarnings();
+  // A server with a single workspace is treated no differently: the resolver has no way to know, and does not ask.
+  const single = world({ env: { GITHUB_TOKEN: "ghp-server" } });
+  const lone = await creds.connectorCredentialsFor(A, "github", single.deps);
+  check("a server with one workspace and no CONNECTIONS_WORKSPACE: ignored too (it names its workspace once)", lone.connected === false && lone.reason.includes("CONNECTIONS_WORKSPACE") && single.warnings.length === 1, lone);
+  const singleNamed = world({ env: { GITHUB_TOKEN: "ghp-server", CONNECTIONS_WORKSPACE: A } });
+  const loneNamed = await creds.connectorCredentialsFor(A, "github", singleNamed.deps);
+  check("…and with CONNECTIONS_WORKSPACE set to it, connected from the server's credential, with nothing warned", loneNamed.connected && loneNamed.source === "server" && loneNamed.values.GITHUB_TOKEN === "ghp-server" && singleNamed.warnings.length === 0, loneNamed);
+
+  creds.resetIgnoredCredentialWarnings();
+  const named = world({ stored: { [A]: { github: { GITHUB_TOKEN: "ghp-A-own" } } }, env: { GITHUB_TOKEN: "ghp-server", CONNECTIONS_WORKSPACE: B } });
+  const nb = await creds.connectorCredentialsFor(B, "github", named.deps);
+  const nc = await creds.connectorCredentialsFor(C, "github", named.deps);
+  const na = await creds.connectorCredentialsFor(A, "github", named.deps);
+  check("CONNECTIONS_WORKSPACE: the server-wide credential is the named workspace's", nb.connected && nb.source === "server" && nb.values.GITHUB_TOKEN === "ghp-server", nb);
+  check("…not another workspace's, and a workspace with its own keeps its own", nc.connected === false && /another workspace's/.test(nc.reason) && !nc.reason.includes(B) && na.connected && na.source === "workspace", { nc, na });
+  check("…and nothing is warned: the binding is deliberate", named.warnings.length === 0, named.warnings);
+
+  creds.resetIgnoredCredentialWarnings();
+  const slack = world({ env: { SLACK_BOT_TOKEN: "xoxb-server" } });
+  const s1 = await creds.connectorCredentialsFor(A, "slack", slack.deps);
+  check("Slack follows the same binding rule as before, and its unbound token is not warned about (only version control is)", s1.connected === false && s1.reason.includes("CONNECTIONS_WORKSPACE") && slack.warnings.length === 0, s1);
+  const local = await creds.connectorCredentialsFor(A, "github", world({ env: { GITHUB_TOKEN: "ghp-server" }, database: false }).deps);
+  check("with no database at all (local development: no workspace table to name one from) the server's GitHub credential is used, as before", local.connected && local.source === "server", local);
 }
 
 /* ---- 3. GitHub tokens, per workspace ---------------------------------------------------------------------------- */
@@ -326,6 +382,16 @@ console.log("\n5. CONNECTIONS_PROVIDER=env, configured from the server's environ
   const rec = child("recorded", env);
   check("Vercel Connect is still never called", rec.status === 0 && (rec.result?.calls ?? []).every((c) => c.call !== "connect" && c.call !== "connectSlackCredentials"), rec.result?.calls?.map((c) => c.call));
   check("the channel verifies with the signing secret, and posts with the server's bot token", JSON.stringify(rec.result?.credentialKeys) === '["botToken","signingSecret"]' && rec.result.signingSecret === "signing-secret-for-this-test" && rec.result.botToken === "xoxb-server-token", rec.result);
+}
+console.log("\n6. CONNECTIONS_PROVIDER unset (Vercel): GitHub is per workspace there too; Slack is still Vercel Connect's");
+for (const [label, setting] of [["unset", {}], ["vercel-connect", { CONNECTIONS_PROVIDER: "vercel-connect" }]]) {
+  const bare = child("real", setting);
+  check(`${label}: the modules load; GitHub's auth is resolved per caller, Slack's is the object Vercel Connect returned`, bare.status === 0 && bare.result?.authIsResolver?.github === true && bare.result.authIsResolver.slack === false, bare.status === 0 ? bare.result?.authIsResolver : bare.stderr.slice(-600));
+  const g = bare.result?.github;
+  check(`${label}: with nothing configured a GitHub tool call gets eve's authorization-failed error, exactly as with \`env\``, g?.threw === "ConnectionAuthorizationFailedError" && g.eveFailed === true && g.reason === "app_not_installed" && g.retryable === false && g.connectionName === "github" && /not connected/.test(g.message), g);
+  const withToken = child("real", { ...setting, GITHUB_TOKEN: "ghp-server-token" });
+  check(`${label}: with no database (one workspace) the server's GitHub token is the bearer`, withToken.result?.github?.token === "ghp-server-token" && withToken.result.github.principalType === "app", withToken.result?.github);
+  check(`${label}: no request was made to GitHub`, (bare.result?.requests ?? []).every((u) => !/github/.test(u)) && (withToken.result?.requests ?? []).every((u) => !/github/.test(u)), { bare: bare.result?.requests, withToken: withToken.result?.requests });
 }
 {
   const unset = child("recorded", {});

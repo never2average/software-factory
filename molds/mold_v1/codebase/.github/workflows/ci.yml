@@ -306,24 +306,37 @@ jobs:
         if: always()
         run: npm run test:service-identity
 
-      # CONNECTOR CREDENTIALS WITHOUT VERCEL CONNECT (CONNECTIONS_PROVIDER=env), for a server that is not on Vercel.
+      # CONNECTOR CREDENTIALS PER WORKSPACE. GitHub's on every target; Slack's with CONNECTIONS_PROVIDER=env, for a
+      # server that is not on Vercel.
       #
       #   1. The default: with the setting unset (and again with vercel-connect) the two files that import
-      #      @vercel/connect make the SAME calls into it with the same arguments, hand eve the same definitions, and
-      #      the GitHub token path sends the same request, as the code before the setting (recorded at 4ad0c2c by
-      #      this same script: scripts/fixtures/connections/default-provider.golden.json).
-      #   2. The setting on: a workspace's credentials are its own stored connector secrets, or the server's
-      #      environment values for the one workspace they are bound to; never another workspace's. With nothing
-      #      configured the real eve modules still load, Vercel Connect is never called, a tool call gets eve's own
-      #      authorization-failed error (what an uninstalled Connect connector raises), and the real Slack route
-      #      refuses an inbound request. No request is made to Slack or GitHub.
-      - name: Connectors with CONNECTIONS_PROVIDER unset make today's exact Vercel Connect calls (recorded before the setting)
+      #      @vercel/connect make the SAME calls into it with the same arguments and hand eve the same Slack
+      #      definitions as the code before the setting (recorded at 4ad0c2c by this same script:
+      #      scripts/fixtures/connections/default-provider.golden.json). The recording's GitHub lines were changed
+      #      on purpose: the read-only tool list, and the credential resolved per workspace (a per-caller resolver;
+      #      nothing configured is "not connected", not an empty bearer). The token and the mint request are the same.
+      #   2. A workspace's credentials are its own stored connector secrets, or the server's environment values for
+      #      the one workspace CONNECTIONS_WORKSPACE names; never another workspace's. A server-wide GitHub
+      #      credential is ignored without it (one warning), however many workspaces there are. With nothing configured the real eve modules still load, a tool call gets eve's
+      #      own authorization-failed error (what an uninstalled Connect connector raises), and with the setting on
+      #      Vercel Connect is never called and the real Slack route refuses an inbound request. No request is made
+      #      to Slack or GitHub.
+      - name: Connectors with CONNECTIONS_PROVIDER unset make exactly the recorded calls (Slack as before the setting; GitHub per workspace)
         if: always()
         run: npm run test:connections-default
 
-      - name: Connector credentials off Vercel (workspace's own, or the server's bound one; nothing configured is "not connected")
+      - name: Connector credentials per workspace (its own, or the server's for the workspace CONNECTIONS_WORKSPACE names; nothing configured is "not connected")
         if: always()
         run: npm run test:connections-provider
+
+      # The GitHub connection is GitHub's hosted MCP server, which advertises write tools beside the read ones.
+      # "Read-only" used to rest on the token's permissions alone. The connection now carries an allow-list of read
+      # tools (agent/lib/github-mcp-tools.ts): eve's real MCP client, against a stand-in server that advertises what
+      # GitHub's advertised on 2026-10-04 and would carry out any call, shows the model no write tool and refuses
+      # one called by name before any request is sent; the read tools the specialists use are still listed.
+      - name: The GitHub connection exposes read tools only, whatever the server advertises (eve's real MCP client, a stand-in server)
+        if: always()
+        run: npm run test:github-mcp-readonly
 
       # The other BEHAVIOURAL chat test — it executes the real module rather than
       # grepping source, which is how every other chat regression got past CI.
@@ -1147,8 +1160,11 @@ jobs:
       # outside guest following the chat's link (read-only, nothing else of the workspace), and an uninvited person.
       # connector_secrets is RLS-strict and each row is sealed under a key derived from its workspace: this holds the
       # real read to both. A's stored Slack token is A's; B gets B's or "not connected"; a disabled or personal
-      # connector is never used; A's ciphertext copied onto another workspace's connector does not decrypt.
-      - name: Connector credentials off Vercel are per workspace (stored secrets, strict RLS, per-workspace key), against a real Postgres
+      # connector is never used; A's ciphertext copied onto another workspace's connector does not decrypt. GitHub
+      # through the real connection with CONNECTIONS_PROVIDER unset and with `env`: A's member gets A's token, B's
+      # gets "not connected", a server-wide GITHUB_TOKEN connects nobody unless CONNECTIONS_WORKSPACE names one;
+      # and with the orgs table made unreadable to app_rw every answer is the same (nothing counts workspaces).
+      - name: Connector credentials are per workspace (stored secrets, strict RLS, per-workspace key; GitHub on both provider settings), against a real Postgres
         if: always()
         run: |
           ADMIN_URL="$ADMIN_URL" \

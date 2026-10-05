@@ -1,17 +1,17 @@
 /**
- * IS A BUILT-IN CONNECTOR CONNECTED FOR THIS WORKSPACE, when its credentials are the server's own
- * (CONNECTIONS_PROVIDER=env, lib/connections-provider.ts)?
+ * IS A BUILT-IN CONNECTOR CONNECTED FOR THIS WORKSPACE, when the agent reads its credentials per workspace
+ * (lib/connections-provider.ts credentialsPerWorkspace: GitHub on every target, Slack with CONNECTIONS_PROVIDER=env)?
  *
- * On Vercel a built-in connector's health is what the running agent holds in its environment, the same for every
- * workspace, and a secret stored in the Ops Center does not make it live. Off Vercel the agent reads Slack's and
- * GitHub's credentials PER WORKSPACE at call time (agent/lib/connector-credentials.ts), so the report has to follow
- * the same two sources or it would lie in both directions:
+ * For any other built-in connector, health is what the running agent holds in its environment, the same for every
+ * workspace, and a secret stored in the Ops Center does not make it live. For these the agent reads the credentials
+ * PER WORKSPACE at call time (agent/lib/connector-credentials.ts), so the report has to follow the same two sources
+ * or it would lie in both directions:
  *
  *   - a secret stored on this workspace's connector IS live (the agent reads it);
  *   - the server's environment counts ONLY for the one workspace it is bound to (CONNECTIONS_WORKSPACE). Another
  *     workspace's connector is never shown as connected because the server holds somebody else's token.
  *
- * Pure: the routes pass in what they already read. Nothing here runs with the setting unset.
+ * Pure: the routes pass in what they already read. Nothing here runs for a connector read the old way.
  */
 export interface SecretNeed {
   readonly name: string;

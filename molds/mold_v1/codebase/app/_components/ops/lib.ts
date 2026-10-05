@@ -444,7 +444,7 @@ export interface ApiConnectorSecret {
   hint: string | null;
   updatedBy: string | null;
   updatedAt: string | null;
-  /** Only on a server with CONNECTIONS_PROVIDER=env: the agent reads this stored secret itself, at call time. */
+  /** Only for a connector read per workspace (GitHub; Slack with CONNECTIONS_PROVIDER=env): the agent reads this stored secret itself, at call time. */
   storedIsLive?: true;
 }
 

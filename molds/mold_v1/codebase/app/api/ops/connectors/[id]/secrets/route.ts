@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorText, zodMessage } from "@/lib/ops-errors";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { connectionsFromEnv, connectionsWorkspace, isProvidedConnectorKind } from "@/lib/connections-provider";
+import { credentialsPerWorkspace, serverCredentialsAreFor } from "@/lib/connections-provider";
 import { workspaceSecretLive } from "@/lib/connector-health";
 import { connectorSecrets, connectors, runtimeEnvPresence } from "@/agent/lib/db/schema";
 import { secretsForConnector } from "@/lib/connector-secrets-manifest";
@@ -122,11 +122,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
         )
       : [];
 
-    // CONNECTIONS_PROVIDER=env (lib/connections-provider.ts): for Slack and GitHub the agent reads the workspace's
-    // stored secret at call time, so stored IS live; the server's environment counts only for the workspace it is
-    // bound to. False with the setting unset, and then `live` is computed exactly as before.
-    const perWorkspace = connectionsFromEnv() && isProvidedConnectorKind(connector.kind);
-    const serverIsThisWorkspace = perWorkspace && connectionsWorkspace() === octx.orgId;
+    // A kind whose credentials are per workspace (lib/connections-provider.ts: GitHub on every target, Slack with
+    // CONNECTIONS_PROVIDER=env): the agent reads the workspace's stored secret at call time, so stored IS live; the
+    // server's environment counts only for the workspace CONNECTIONS_WORKSPACE names. False for every other connector, and
+    // then `live` is computed exactly as before.
+    const perWorkspace = credentialsPerWorkspace(connector.kind);
+    const serverIsThisWorkspace = perWorkspace && serverCredentialsAreFor(octx.orgId);
     // A personal connector is never a workspace's credential: what is stored on one is not read for Slack or GitHub.
     const storedCounts = perWorkspace && !connector.ownerEmail;
     const storedNames = new Set(stored.map((x) => x.name));
@@ -147,7 +148,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         hint: s?.hint ?? null,
         updatedBy: s?.updatedBy ?? null,
         updatedAt: s?.updatedAt ?? null,
-        // Present only with CONNECTIONS_PROVIDER=env: the panel then says a stored secret is read at call time,
+        // Present only for a kind read per workspace: the panel then says a stored secret is read at call time,
         // instead of telling the operator to promote it into the agent's environment. Absent otherwise, so the
         // response is exactly what it was.
         ...(storedCounts ? { storedIsLive: true } : {}),

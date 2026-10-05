@@ -1,19 +1,18 @@
 /**
- * WITH CONNECTIONS_PROVIDER UNSET, THE CONNECTORS MAKE TODAY'S EXACT CALLS.
+ * WITH CONNECTIONS_PROVIDER UNSET, THE CONNECTORS MAKE EXACTLY THE RECORDED CALLS.
  *
- * The live app's Slack credentials come from Vercel Connect, and its GitHub token from the agent's own environment.
- * Adding a second source of credentials for a server that is not on Vercel (CONNECTIONS_PROVIDER=env) must change
- * nothing there: not which Connect calls are made, not their arguments, not what is handed to eve, not one request to
- * GitHub.
+ * The live app's Slack credentials come from Vercel Connect. Adding a second source of credentials for a server that
+ * is not on Vercel (CONNECTIONS_PROVIDER=env) must change nothing there: not which Connect calls are made, not their
+ * arguments, not what is handed to eve.
  *
  * This script loads the two files that import `@vercel/connect` (agent/lib/connections.ts, agent/channels/slack.ts)
  * with stand-ins that record every call into `@vercel/connect/eve`, `eve/connections` and `eve/channels/slack`
  * (scripts/lib/connect-call-recorder.mjs), then drives the GitHub token path, and records:
  *
  *   calls      connect(...) and connectSlackCredentials(...) with their arguments, in order;
- *   handed     the definitions given to defineMcpClientConnection (url, description, and WHICH object is `auth`: the
- *              one Connect returned, or the app's own token function) and the options given to slackChannel (which
- *              bot token, which webhook verifier, the thread-context setting);
+ *   handed     the definitions given to defineMcpClientConnection (url, description, the tool filter, and WHICH
+ *              object is `auth`: the one Connect returned, or the app's own resolver) and the options given to
+ *              slackChannel (which bot token, which webhook verifier, the thread-context setting);
  *   tokens     what the GitHub connection's getToken() returns, call after call;
  *   requests   every fetch the token path made: method, URL, headers. The App JWT is recorded as its decoded header
  *              and claims and "signature valid for the App key" (the key is made per run, so the raw signature is
@@ -21,17 +20,22 @@
  *
  * for six deployments' worth of environment (nothing set; the Slack bot-token override; the MCP URLs; a GitHub PAT;
  * a GitHub App; a GitHub App whose mint is refused), each in its own process because these modules read the
- * environment when they are loaded. Time is pinned.
+ * environment when they are loaded. Time is pinned. There is no database in any of them, which is one workspace.
  *
- * The recording made on the code BEFORE the setting existed (commit 4ad0c2c) is committed at
- * scripts/fixtures/connections/default-provider.golden.json. It was written by running THIS file, unmodified, in a
- * checkout of 4ad0c2c with only this script and its recorder added:
+ * THE RECORDING (scripts/fixtures/connections/default-provider.golden.json) was first made on the code BEFORE the
+ * setting existed (commit 4ad0c2c), by running this file in a checkout of it with `--record`. Its GITHUB lines have
+ * been changed on purpose twice since, each time by `--record` on the changed code, and only those lines:
  *
- *     node --experimental-strip-types scripts/test-connections-default-unchanged.mjs --record
+ *   - the GitHub connection is handed a tool allow-list (`tools`), so only read tools reach the model;
+ *   - GitHub's credential is resolved PER WORKSPACE on every target: `auth` is a resolver given the caller's
+ *     session, not one process-wide token function. So with nothing configured a call is refused with eve's
+ *     "not connected" error instead of being sent with an empty bearer; and a minted installation token carries
+ *     its expiry. The token itself and the request that mints it are the same.
  *
- * and this test asserts the current code produces the identical recording with CONNECTIONS_PROVIDER unset, and again
- * with CONNECTIONS_PROVIDER=vercel-connect (`npm run test:connections-default`). No request leaves the process: fetch
- * is replaced, and a call to anything but the stub fails the run.
+ * EVERY SLACK LINE IS STILL THE ONE RECORDED AT 4ad0c2c, and the checks at the end hold the recording to that.
+ * This test asserts the current code produces the identical recording with CONNECTIONS_PROVIDER unset, and again
+ * with CONNECTIONS_PROVIDER=vercel-connect and empty (`npm run test:connections-default`). No request leaves the
+ * process: fetch is replaced, and a call to anything but the stub fails the run.
  */
 import { spawnSync } from "node:child_process";
 import { createVerify, generateKeyPairSync } from "node:crypto";
@@ -125,13 +129,18 @@ async function runScenario(name) {
   };
   const auth = connections.githubConnection.auth;
   const tokens = [];
-  // Only a static `{ getToken }` is today's shape: a resolver function here is itself a difference, and is recorded as one.
-  if (auth && typeof auth === "object" && typeof auth.getToken === "function") {
-    tokens.push(await attempt(() => auth.getToken({ connection: { url: connections.githubConnection.url }, principal: { type: "app" } })));
-    tokens.push(await attempt(() => auth.getToken({ connection: { url: connections.githubConnection.url }, principal: { type: "app" } })));
+  // The auth eve is handed is a resolver: eve calls it with the active session and uses what it returns. The session
+  // here is a signed-in person on a server with no database, which is one workspace. (A static `{ getToken }`, the
+  // shape before GitHub was per workspace, is driven the same way so a recording of older code stays comparable.)
+  const session = { session: { id: "recorded-session", auth: { current: { attributes: { email: "reader@onfinance.in", hd: "onfinance.in" }, subject: "reader@onfinance.in", principalType: "user" } } } };
+  const spec = typeof auth === "function" ? await auth(session) : auth;
+  if (spec && typeof spec.getToken === "function") {
+    const call = () => attempt(() => spec.getToken({ connection: { url: connections.githubConnection.url }, principal: { type: "app" } }));
+    tokens.push(await call());
+    tokens.push(await call());
     // 56 minutes later the cached installation token has under five minutes left: it is minted again.
     Date.now = () => NOW + 56 * 60 * 1000;
-    tokens.push(await attempt(() => auth.getToken({ connection: { url: connections.githubConnection.url }, principal: { type: "app" } })));
+    tokens.push(await call());
   }
   Date.now = realNow;
 
@@ -211,7 +220,7 @@ for (const [label, extra] of [
     for (const part of ["calls", "exports", "tokens", "requests"]) {
       const diff = firstDifference(g?.[part], n?.[part]);
       const count = Array.isArray(g?.[part]) ? `${g[part].length} ` : "";
-      check(`${name}: ${count}${part} identical to the recording made before the setting`, diff === null, diff ?? undefined);
+      check(`${name}: ${count}${part} identical to the recording`, diff === null, diff ?? undefined);
     }
   }
 }
@@ -222,7 +231,10 @@ for (const [label, extra] of [
   check("…the Slack connection's auth is the object Connect returned, and the channel's verifier is Connect's", all.every((s) => s.exports.slackConnection.auth?.tagged === "connect#1" && s.exports.slackChannel.credentials.webhookVerifier?.tagged === "connectSlackCredentials#1.webhookVerifier"));
   check("…the bot-token override replaces only the token", golden["slack bot-token override"].exports.slackChannel.credentials.botToken === "xoxb-test-override" && golden["nothing set"].exports.slackChannel.credentials.botToken?.tagged === "connectSlackCredentials#1.botToken");
   check("…a GitHub App mints once, reuses the token, and mints again near expiry (2 requests for 3 calls)", golden["github app"].requests.length === 2 && golden["github app"].tokens.length === 3 && golden["github app"].requests[0].headers.authorization.signature === "valid for the App key");
-  check("…and with nothing set the GitHub token is empty and no request is made", golden["nothing set"].tokens[0].value.token === "" && golden["nothing set"].requests.length === 0);
+  check("…and with nothing set a GitHub call is refused as not connected (never sent with an empty bearer), and no request is made", golden["nothing set"].tokens.length === 3 && golden["nothing set"].tokens.every((t) => t.threw === "ConnectionAuthorizationFailedError" && /GitHub is not connected/.test(t.message)) && golden["nothing set"].requests.length === 0);
+  check("…a stored-nowhere PAT in the environment of a one-workspace server is the bearer, with no request", golden["github pat"].tokens.every((t) => t.value?.token === "ghp_test_pat") && golden["github pat"].requests.length === 0);
+  check("…GitHub's auth is a per-caller resolver in every scenario, and the connection carries the read-only tool list", all.every((s) => s.exports.githubConnection.auth?.function === true && Array.isArray(s.exports.githubConnection.tools?.allow) && s.exports.githubConnection.tools.allow.includes("get_file_contents") && !s.exports.githubConnection.tools.allow.includes("push_files")));
+  check("…and Slack's connection carries no tool filter, as before", all.every((s) => !("tools" in s.exports.slackConnection)));
 }
 
 console.log(failed ? `\n${failed} failed` : "\nall identical");
