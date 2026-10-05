@@ -1094,6 +1094,12 @@ done
 install -d -m 750 -o @API@ -g @API@ @APP@/.eve-build-hidden
 chown -hR @API@:@API@ @APP@/.eve-build-hidden
 if [ -d @APP@/agent ]; then chown -hR @API@:@GROUP@ @APP@/agent; fi
+# eve bundles each agent node's authored modules into node_modules/.cache/eve when the prewarm and the API load
+# them, and writes a NEW file there whenever the source changed. Sealed read-only with the rest of node_modules,
+# the first start after a new mold version failed: "EACCES ... node_modules/.cache/eve/authored-modules" (first
+# real server, 2026-10-05). The agent's user owns that one cache; the group still reads it.
+install -d -m 750 -o @API@ -g @GROUP@ @APP@/node_modules/.cache/eve
+chown -hR @API@:@GROUP@ @APP@/node_modules/.cache/eve
 if [ -d @APP@/services/task-workflow/.next ]; then chown -hR @WORK@:@WORK@ @APP@/services/task-workflow/.next; fi
 echo "seal: the code is @BUILD@'s and read-only to the services; .next is @WEB@'s, .output .eve agent/ are @API@'s, services/task-workflow/.next is @WORK@'s"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), APP=A, BUILD=BUILD_USER, GROUP=CODE_GROUP, WEB=web, API=api, WORK=work)
