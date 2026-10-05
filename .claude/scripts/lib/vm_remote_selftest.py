@@ -10,7 +10,7 @@ a test that reached for the network fails instead of connecting. Generated scrip
 commands with every path moved under a temp directory. Files are written only under temp directories that are
 removed afterwards. vm_users_selftest.py says what its two private-namespace checks do and why they change nothing.
 """
-import contextlib, hashlib, importlib.util, io, json, os, re, shutil, socket, stat, subprocess, sys, tempfile
+import contextlib, hashlib, importlib.util, io, json, os, re, shutil, socket, stat, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -25,6 +25,7 @@ import lane_url
 
 FX = os.path.dirname(V.FIXTURE)
 CP = subprocess.CompletedProcess
+MOLD_TOKEN = "MOLD_V1_SESSION_TOKEN"
 MOLD = os.path.join(ROOT, "molds", "mold_v1", "codebase")
 SECRET = "s3cr3t-VALUE-9f2b7c"          # a stand-in for an operator value; it must never surface anywhere but one stdin
 
@@ -91,6 +92,7 @@ def run():
             _host_chain(check, tmp)
             _records(check, tmp)
             _operator_commands(check, tmp)
+            _sandbox_load(check, tmp)
             _lanes(check)
             _brief_to_plan(check, tmp)
             import vm_tunnel_selftest as more
@@ -790,6 +792,80 @@ def _records(check, tmp):
     check("  ...and when the server cannot be reached, without recording anything new", rc == 1 and "could not be proven" in printed)
 
 # ---- the operator's own commands ---------------------------------------------------------------------------------
+def _sandbox_load(check, tmp):
+    """mold_v1-183: `--sandbox-load` runs the mold's rig against the app, then READS what the server logged meanwhile."""
+    S = _settings(); app = fixture_docs()["application"]; org = app["workspace"]["org"]["org_id"]
+    TOKEN = "eyJ-SESSION-TOKEN-THAT-MUST-NOT-SURFACE"
+    src = os.path.join(tmp, "sbx-load-src"); os.makedirs(os.path.join(src, "scripts"))
+    said = []; rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--dry-run", "--turns", "4"], src, say=said.append, env={})
+    check("sandbox-load: --dry-run prints the rig's command (address, workspace, never a token) and the read, and contacts nothing",
+          rc == 0 and f"RIG_BASE={S['url']}" in said[1] and f"RIG_ORG={org}" in said[1] and "--turns 4 --per-turn 3 --steps 2" in said[1] and "ssh" in said[2], said)
+    try: V.sandbox_load_remote(S, app, ["--sandbox-load"], src, env={MOLD_TOKEN: TOKEN}, say=lambda *_: None); why = ""
+    except V.Stop as e: why = str(e)
+    check("sandbox-load: a source without the rig is refused with what to do (refresh the mold, redeploy)", "refresh the mold" in why and "Nothing was started" in why, why)
+    open(os.path.join(src, V.SANDBOX_RIG), "w").write("// stand-in\n")
+    try: V.sandbox_load_remote(S, app, ["--sandbox-load"], src, env={}, say=lambda *_: None); why = ""
+    except V.Stop as e: why = str(e)
+    check("sandbox-load: no token is refused, naming --token-file and the mold's variable", "--token-file" in why and MOLD_TOKEN in why, why)
+    try: V.sandbox_load_remote(S, app, ["--sandbox-load", "--turns", "0"], src, env={MOLD_TOKEN: TOKEN}, say=lambda *_: None); why = ""
+    except V.Stop as e: why = str(e)
+    check("sandbox-load: --turns 0 is refused", "--turns must be a whole number from 1 to 20" in why, why)
+    tf = os.path.join(tmp, "sbx-token.json"); open(tf, "w").write(json.dumps({"token": TOKEN, "email": "x@example.com"}))
+    rigs, reads = [], []
+    def rig(rc):
+        def run(argv, env, timeout): rigs.append((argv, env)); return rc
+        return run
+    def server(text):
+        def run(step): reads.append(step); return CP(step["argv"], 0, text, "")
+        return run
+    clean = "SOCKET_ERRORS=0\nGUARD_WAITS=3\nGUARD_RETRIES=0\nGUARD_GAVE_UP=0\nSESSION_VMS=9\nBOOT_STALLS=0\nKERNEL_WARNINGS=1\n"
+    orig = V.key_path
+    try:
+        V.key_path = lambda S_: __file__
+        said = []
+        rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--token-file", tf, "--specialists", "a,b"], src, runner=server(clean), rig_runner=rig(0),
+                                   env={MOLD_TOKEN: "an-ambient-one", "PATH": "/usr/bin"}, clock=lambda: 1_800_000_000, say=said.append)
+        argv, env = rigs[-1]
+        check("sandbox-load: the rig gets the app's address and workspace, and the token ONLY in its environment, from --token-file",
+              env.get("RIG_BASE") == S["url"] and env.get("RIG_ORG") == org and env.get("RIG_TOKEN") == TOKEN and TOKEN not in " ".join(argv)
+              and MOLD_TOKEN not in env and argv[-2:] == ["--specialists", "a,b"], (argv, sorted(env)))
+        check("sandbox-load: then the server is READ for the run's window (from 5 s before it), as root over ssh",
+              reads and reads[-1]["argv"][0] == "ssh" and "since=1799999995" in reads[-1]["argv"][-1] and "journalctl -u sf-" in reads[-1]["argv"][-1], reads[-1:] and reads[-1]["argv"][-1][:200])
+        check("sandbox-load: a clean run passes and says what the server saw", rc == 0 and said[-1].endswith("PASS") and any("9 sandbox VM(s) started, 3 waited for a boot slot" in l for l in said), said)
+        check("sandbox-load: the token is printed nowhere", not any(TOKEN in l for l in said), said)
+        said = []
+        rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--token-file", tf], src, runner=server(clean.replace("SOCKET_ERRORS=0", "SOCKET_ERRORS=9")), rig_runner=rig(0), env={}, say=said.append)
+        check("sandbox-load: 'no agent socket found' in the server's log fails it even when the rig passed", rc == 1 and said[-1].endswith("FAIL") and any("9 sandbox call(s) failed on the server with 'no agent socket found'" in l for l in said), said)
+        said = []
+        rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--token-file", tf], src, runner=server(clean.replace("BOOT_STALLS=0", "BOOT_STALLS=1")), rig_runner=rig(0), env={}, say=said.append)
+        check("sandbox-load: a VM that never reported ready fails it", rc == 1 and any("1 of 9 sandbox VM(s) started during the run never reported ready" in l for l in said), said)
+        said = []
+        rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--token-file", tf], src, runner=server(clean), rig_runner=rig(1), env={}, say=said.append)
+        check("sandbox-load: the rig's own failure fails it", rc == 1 and any("the rig itself failed" in l for l in said), said)
+        said = []
+        rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--token-file", tf], src, runner=lambda step: CP(step["argv"], 255, "", "ssh: connect"), rig_runner=rig(0), env={}, say=said.append)
+        check("sandbox-load: a server that cannot be read leaves the rig's result standing, and says so", rc == 0 and any("could not be read" in l for l in said), said)
+    finally: V.key_path = orig
+    # The read itself, run for real with bash against a fixture sandbox store and a stand-in journalctl.
+    home = os.path.join(tmp, "sbx-home"); boxes = os.path.join(home, ".microsandbox", "sandboxes"); bin_ = os.path.join(tmp, "sbx-bin")
+    os.makedirs(bin_)
+    for name, runtime, kernel, age in (("eve-sbx-ses-good", "INFO sandbox starting\nINFO agent relay: received core.ready from agentd\nINFO Vmm is stopping.\n", "", 0),
+                                       ("eve-sbx-ses-stalled", "INFO sandbox starting\nINFO entering VM\nINFO Vmm is stopping.\n", "[1.3] BUG: scheduling while atomic: kworker/1:2\n", 0),
+                                       ("eve-sbx-ses-old", "INFO sandbox starting\nINFO Vmm is stopping.\n", "", 86400)):
+        os.makedirs(os.path.join(boxes, name, "logs"))
+        open(os.path.join(boxes, name, "logs", "runtime.log"), "w").write(runtime); open(os.path.join(boxes, name, "logs", "kernel.log"), "w").write(kernel)
+        t = time.time() - age; os.utime(os.path.join(boxes, name, "logs", "runtime.log"), (t, t))
+    open(os.path.join(bin_, "journalctl"), "w").write("#!/bin/sh\ncat <<'LOG'\n[eve:harness.tool-loop] tool execution failed {\n    message: 'RuntimeError: runtime error: no agent socket found for sandbox \"eve-sbx-ses-x\"',\n"
+                                                       "    detail: 'RuntimeError: runtime error: no agent socket found for sandbox \"eve-sbx-ses-x\"\\n' +\n"
+                                                       "[sandbox] waiting for a sandbox (k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 1 waiting\nLOG\n")
+    os.chmod(os.path.join(bin_, "journalctl"), 0o755)
+    script = V.sandbox_facts_sh(S, time.time() - 3600, home=home)
+    check("sandbox-load: the server-side read only reads (journalctl, grep, stat, date)", not re.search(r"\b(rm|kill|systemctl|msb|mv|chmod|chown|tee)\b|>\s*[^&/]", script.replace("2>/dev/null", "")), script)
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env={"PATH": f"{bin_}:/usr/bin:/bin"}, timeout=60)
+    got = V.parse_kv(r.stdout)
+    check("sandbox-load: run on a fixture store, the read counts each failed call once, the waits, the VMs of the window, the stall and the kernel warning",
+          r.returncode == 0 and got == {"SOCKET_ERRORS": "1", "GUARD_WAITS": "1", "GUARD_RETRIES": "0", "GUARD_GAVE_UP": "0", "SESSION_VMS": "2", "BOOT_STALLS": "1", "KERNEL_WARNINGS": "1"}, (got, r.stderr[-300:]))
+
 def _operator_commands(check, tmp):
     d = os.path.join(tmp, "set", "vm_remote_fixture"); shutil.copytree(V.FIXTURE, d)
     out, printed = quiet(V.set_remote, "vm_remote_fixture", d, ["host=198.51.100.20", "domain=Research.Example.com", "ssh_port=2222"])
