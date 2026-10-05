@@ -2417,6 +2417,8 @@ done
 echo "SESSION_VMS=$vms"
 echo "BOOT_STALLS=$stalls"
 echo "KERNEL_WARNINGS=$kernel"
+# Session VMs running now, and those that have kept a host CPU busy for their whole life (a hung guest spins at ~100%).
+ps -eo pcpu=,args= 2>/dev/null | awk '/msb sandbox --name eve-sbx-ses-/ { n++; if ($1 + 0 >= 90) hot++ } END { printf "RUNNING_VMS=%d\\nHOT_VMS=%d\\n", n, hot }'
 """, SINCE=str(int(since)), UNIT=S["unit"], HOME=home)
 
 def sandbox_facts_argv(S, since, shown=False):
@@ -2442,8 +2444,11 @@ def sandbox_load_verdict(rig_rc, facts):
     if n("GUARD_GAVE_UP"):
         ok = False
         lines.append(f"{n('GUARD_GAVE_UP')} step(s) were told no sandbox started at all")
+    if n("HOT_VMS"):
+        lines.append(f"WARNING: {n('HOT_VMS')} of {n('RUNNING_VMS')} running sandbox VM(s) have kept a host CPU busy for their whole life, which is "
+                     f"what a hung guest does (seen 2026-10-05 under 12 concurrent specialists). Not counted as a failure: a real user's job can be busy too")
     lines.append(f"server: {n('SESSION_VMS')} sandbox VM(s) started, {n('GUARD_WAITS')} waited for a boot slot, {n('GUARD_RETRIES')} boot(s) "
-                 f"abandoned and retried, {n('KERNEL_WARNINGS')} with a guest kernel warning")
+                 f"abandoned and retried, {n('KERNEL_WARNINGS')} with a guest kernel warning, {n('RUNNING_VMS')} running now")
     return ok, lines
 
 def _rig_token(a, mold_id, env):
