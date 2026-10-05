@@ -1,7 +1,7 @@
 /**
  * Where the eve agent lives — resolved in ONE place, defensively.
  *
- * The agent runs as a separate Vercel project (`fde-agent-api`). Seven call
+ * The agent runs as a separate service (on Vercel, its own project). Seven call
  * sites read its address out of the environment, each with its own fallback:
  * some defaulted to the production hostname, some to `""`, and one threw. So
  * the same misconfiguration produced three different symptoms depending on
@@ -33,22 +33,25 @@
  * works, and neither has to be Sensitive for a build to succeed.
  */
 
-/** The production agent ON VERCEL, used there when the environment says nothing usable. */
-export const DEFAULT_AGENT_URL = "https://fde-agent-api.vercel.app";
+/**
+ * The stand-in for development and test builds only: an agent on this machine (`eve dev`). Never a deployment's
+ * address — no deployment's agent is written into base code.
+ */
+export const DEFAULT_AGENT_URL = "http://127.0.0.1:3001";
 
 /**
- * OFF VERCEL THE DEFAULT IS A TRAP
- * --------------------------------
- * The fallback above is the Vercel deployment's own agent. A web app built somewhere else without the agent's
- * address did not fail: it built, started, and proxied every chat to that Vercel deployment. Nothing said so.
+ * A DEFAULT DEPLOYMENT ADDRESS IS A TRAP
+ * --------------------------------------
+ * The fallback used to be one Vercel deployment's own agent. A web app built anywhere else without the agent's
+ * address did not fail: it built, started, and proxied every chat to that deployment. Nothing said so. On Vercel it
+ * was the same trap for every other project: a web app missing the setting talked to someone else's agent.
  *
- * So off Vercel a PRODUCTION build or server (`next build`, `next start`) must be told where its agent is, and
- * refuses to build or start otherwise, with {@link AgentUrlNotConfiguredError}'s message. Three cases keep the
- * fallback, each of them what happens today:
+ * So a PRODUCTION build or server (`next build`, `next start`), and anything running on Vercel, must be told where its
+ * agent is, and refuses to build or start otherwise, with {@link AgentUrlNotConfiguredError}'s message. Two cases keep
+ * the local stand-in above:
  *
- *   - on Vercel (`VERCEL` is set, at build and at run time): unchanged;
- *   - development and plain-node tests (`NODE_ENV` is not "production"): unchanged;
- *   - an automated test build that talks to no agent: `CI` is set (every CI system sets it), or
+ *   - development and plain-node tests (`NODE_ENV` is not "production"), off Vercel;
+ *   - an automated test build that talks to no agent, off Vercel: `CI` is set (every CI system sets it), or
  *     `EVE_API_URL_OPTIONAL=1` says so for a build made by hand.
  */
 const truthy = (value: string | undefined): boolean => {
@@ -58,7 +61,7 @@ const truthy = (value: string | undefined): boolean => {
 
 /** Must this process be TOLD its agent's address (no falling back to the Vercel deployment)? */
 export function agentUrlRequired(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.VERCEL) return false;
+  if (env.VERCEL) return true;
   if (env.NODE_ENV !== "production") return false;
   if (truthy(env.CI) || truthy(env.EVE_API_URL_OPTIONAL)) return false;
   return true;
@@ -68,8 +71,7 @@ export class AgentUrlNotConfiguredError extends Error {
   constructor(detail: string) {
     super(
       `${detail}\n` +
-        "  This web app is not running on Vercel, so it will not fall back to the agent that runs on Vercel\n" +
-        "  (DEFAULT_AGENT_URL in lib/agent-url.ts): chat would silently go there.\n" +
+        "  This web app will not fall back to any default agent address: chat would silently go somewhere else.\n" +
         "  Set this to the address of YOUR agent API (for example http://127.0.0.1:18210), in the environment\n" +
         "  of the build AND of the running server:\n" +
         "      NEXT_PUBLIC_EVE_API_URL=<agent address>\n" +
@@ -81,8 +83,8 @@ export class AgentUrlNotConfiguredError extends Error {
 }
 
 /**
- * What stands in for a missing address: the Vercel deployment's agent where that is still right, an error where it
- * is not ({@link agentUrlRequired}).
+ * What stands in for a missing address: the local development agent where that is right, an error where it is not
+ * ({@link agentUrlRequired}).
  */
 function fallbackAgentUrl(env: NodeJS.ProcessEnv): string {
   if (agentUrlRequired(env)) {
@@ -114,13 +116,13 @@ export function normalizeAgentUrl(raw: string | undefined | null): string | null
 }
 
 /**
- * The agent's base URL, or the production default.
+ * The agent's base URL, or the local development stand-in.
  *
  * Never returns "" — a caller that concatenates onto an empty base builds a
  * request against its own origin and gets a confusing 404 from itself rather
  * than a clear "the agent is not configured".
  *
- * Off Vercel, in a production build or server, there is no default: it throws
+ * On Vercel, and in a production build or server, there is no default: it throws
  * (see {@link agentUrlRequired}). next.config.ts calls this when the build
  * starts and again when the server starts, so that is where it stops.
  *
@@ -146,12 +148,12 @@ export function agentBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * The fallback for a module that reads `NEXT_PUBLIC_EVE_API_URL` itself and used to write the Vercel deployment's
- * address after `??` (the session proxy, app/eve/v1/session/[...segments]/route.ts). On Vercel it is that address,
- * as it always was. Anywhere else it is {@link agentBaseUrl}: the configured agent, or the error.
+ * The fallback for a module that reads `NEXT_PUBLIC_EVE_API_URL` itself and used to write one deployment's address
+ * after `??` (the session proxy, app/eve/v1/session/[...segments]/route.ts). It is {@link agentBaseUrl}: the
+ * configured agent, the local development stand-in, or the error.
  */
 export function agentUrlFallback(env: NodeJS.ProcessEnv = process.env): string {
-  return env.VERCEL ? DEFAULT_AGENT_URL : agentBaseUrl(env);
+  return agentBaseUrl(env);
 }
 
 /**

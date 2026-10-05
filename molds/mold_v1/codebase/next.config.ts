@@ -3,7 +3,7 @@ import { agentBaseUrl } from "./lib/agent-url.ts";
 import { bundleBudgetDist } from "./lib/bundle-budget-dist.ts";
 
 // This app is the web front-end only. The eve agent runs as a separate Vercel
-// project (fde-agent-api), so we proxy the eve API routes to it server-side.
+// project (the agent's own), so we proxy the eve API routes to it server-side.
 // The browser talks same-origin to this app (no CORS), and the Authorization
 // header (the signed-in user's Google ID token) is forwarded to the agent.
 //

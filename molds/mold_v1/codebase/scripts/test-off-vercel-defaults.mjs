@@ -1,10 +1,11 @@
 /**
  * TWO DEFAULTS THAT WERE ONLY RIGHT ON VERCEL, and the rule for both: on Vercel nothing changes.
  *
- *  1. THE AGENT'S ADDRESS (lib/agent-url.ts). With none configured the web app fell back to the Vercel deployment's
- *     agent. Off Vercel that was a web app that built, started and proxied every chat to someone else's agent. Now a
- *     production build or server off Vercel refuses, with a message that says what to set. On Vercel, in development
- *     and in an automated test build, the fallback is what it was.
+ *  1. THE AGENT'S ADDRESS (lib/agent-url.ts). With none configured the web app fell back to one Vercel deployment's
+ *     agent. Off Vercel that was a web app that built, started and proxied every chat to someone else's agent; on
+ *     Vercel it was the same for every other project. Now a production build or server, and anything on Vercel,
+ *     refuses, with a message that says what to set. In development and in an automated test build off Vercel the
+ *     fallback is a local agent (`eve dev`), never a deployment's address.
  *
  *  2. TLS FOR THE MIGRATION SCRIPTS (scripts/lib/migration-ssl.mjs). `ssl: "require"` was hard-coded; a Postgres on
  *     the same machine has no TLS. `DATABASE_SSL=disable` turns it off for a local database only. Unset is "require".
@@ -39,7 +40,10 @@ const section = (title, before) => (count) => console.log(`${title}: ${passed - 
 
 /* ---- 1. the agent's address ------------------------------------------------------------------------------------ */
 
-const VERCEL_AGENT = "https://fde-agent-api.vercel.app";
+/** The stand-in for development and test builds: a local agent, never a deployment (lib/agent-url.ts). */
+const LOCAL_AGENT = agentUrl.DEFAULT_AGENT_URL;
+/** Any deployment's agent address, which must never be the fallback. */
+const DEPLOYED = /\.vercel\.app\b/;
 /** agentBaseUrl exactly as it was before this change. */
 const normalizeWas = (raw) => {
   const value = (raw ?? "").trim();
@@ -52,9 +56,7 @@ const normalizeWas = (raw) => {
     return null;
   }
 };
-const baseWas = (env) => normalizeWas(env.EVE_API_URL) ?? normalizeWas(env.NEXT_PUBLIC_EVE_API_URL) ?? VERCEL_AGENT;
-/** The session proxy's fallback as it was: the literal after `??`. */
-const fallbackWas = () => VERCEL_AGENT;
+const baseWas = (env) => normalizeWas(env.EVE_API_URL) ?? normalizeWas(env.NEXT_PUBLIC_EVE_API_URL) ?? LOCAL_AGENT;
 
 const VALUES = [undefined, "", "  ", "[SENSITIVE]", "not a url", "ftp://agent.example", "http://127.0.0.1:18210", "https://agent.example.test/", "https://other.example.test"];
 const outcome = (fn) => {
@@ -67,11 +69,9 @@ const outcome = (fn) => {
 const envOf = (base, a, b) => ({ ...base, ...(a === undefined ? {} : { EVE_API_URL: a }), ...(b === undefined ? {} : { NEXT_PUBLIC_EVE_API_URL: b }) });
 
 let before = passed;
-// Every place the fallback must be exactly what it was.
+check("the stand-in is a local agent, not a deployment's address", /^http:\/\/127\.0\.0\.1:\d+$/.test(LOCAL_AGENT) && !DEPLOYED.test(LOCAL_AGENT), LOCAL_AGENT);
+// Every place the fallback is the local stand-in when nothing usable is set, and the configured agent otherwise.
 const UNCHANGED = [
-  ["on Vercel, build or function (VERCEL=1, production)", { VERCEL: "1", NODE_ENV: "production" }],
-  ["on Vercel with CI set too (the Vercel builder)", { VERCEL: "1", CI: "1", NODE_ENV: "production" }],
-  ["on Vercel, a preview", { VERCEL: "1", VERCEL_ENV: "preview", NODE_ENV: "production" }],
   ["development (next dev)", { NODE_ENV: "development" }],
   ["a plain-node test (NODE_ENV unset)", {}],
   ["NODE_ENV=test", { NODE_ENV: "test" }],
@@ -92,12 +92,20 @@ for (const [label, base] of UNCHANGED) {
   check(`${label}: agentBaseUrl is what it was for all ${VALUES.length ** 2} combinations of the two variables`, differ.length === 0 && same === VALUES.length ** 2, differ.slice(0, 3));
   check(`${label}: it is not "required"`, agentUrl.agentUrlRequired(base) === false);
 }
-for (const [label, base] of UNCHANGED.filter(([, b]) => b.VERCEL)) {
-  const differ = VALUES.flatMap((a) => VALUES.map((b) => envOf(base, a, b))).filter((env) => outcome(() => agentUrl.agentUrlFallback(env)).value !== fallbackWas());
-  check(`${label}: the session proxy's fallback is still the Vercel deployment's agent, whatever else is set`, differ.length === 0, differ.slice(0, 2));
+// ON VERCEL the address is required, whatever else is set: no deployment's agent stands in for a missing one.
+for (const [label, base] of [
+  ["on Vercel, build or function (VERCEL=1, production)", { VERCEL: "1", NODE_ENV: "production" }],
+  ["on Vercel with CI set too (the Vercel builder)", { VERCEL: "1", CI: "1", NODE_ENV: "production" }],
+  ["on Vercel, a preview", { VERCEL: "1", VERCEL_ENV: "preview", NODE_ENV: "production" }],
+  ["on Vercel, development", { VERCEL: "1", VERCEL_ENV: "development", NODE_ENV: "development" }],
+]) {
+  check(`${label}: the address is required`, agentUrl.agentUrlRequired(base) === true);
+  const unset = outcome(() => agentUrl.agentUrlFallback(envOf(base, undefined, undefined)));
+  check(`${label}: nothing set → REFUSED (the session proxy's fallback too), never a deployment's agent`, unset.error?.name === "AgentUrlNotConfiguredError" && outcome(() => agentUrl.agentBaseUrl(envOf(base, undefined, "[SENSITIVE]"))).error?.name === "AgentUrlNotConfiguredError", unset.value);
+  check(`${label}: NEXT_PUBLIC_EVE_API_URL set → that agent`, agentUrl.agentUrlFallback(envOf(base, undefined, "https://agent.example.test/")) === "https://agent.example.test");
 }
 check("a 0 / false / empty CI or EVE_API_URL_OPTIONAL does not count as set", ["0", "false", "", "no", "off"].every((v) => agentUrl.agentUrlRequired({ NODE_ENV: "production", CI: v, EVE_API_URL_OPTIONAL: v }) === true));
-section("\nThe agent's address, where nothing may change", before)();
+section("\nThe agent's address in development, tests and on Vercel", before)();
 
 before = passed;
 const OFF = { NODE_ENV: "production" }; // off Vercel, a production build or server, nobody said it is a test
@@ -113,7 +121,7 @@ for (const [label, a, b] of [
   check(`${label}: REFUSED (no falling back to the Vercel agent)`, got.error?.name === "AgentUrlNotConfiguredError", got.value);
   check(
     `${label}: the message says what is wrong, why, and exactly what to set`,
-    /is not configured/.test(message) && !message.includes(VERCEL_AGENT) && /DEFAULT_AGENT_URL in lib\/agent-url\.ts\): chat would silently go there/.test(message) && /NEXT_PUBLIC_EVE_API_URL=<agent address>/.test(message) && /build AND of the running server/.test(message),
+    /is not configured/.test(message) && !DEPLOYED.test(message) && /will not fall back to any default agent address: chat would silently go somewhere else/.test(message) && /NEXT_PUBLIC_EVE_API_URL=<agent address>/.test(message) && /build AND of the running server/.test(message),
     message,
   );
   check(`${label}: the session proxy's fallback is refused the same way`, outcome(() => agentUrl.agentUrlFallback(envOf(OFF, a, b))).error?.name === "AgentUrlNotConfiguredError");
@@ -125,7 +133,7 @@ const onlyNew = outcome(() => agentUrl.agentBaseUrl(envOf(OFF, MINE, undefined))
 check("EVE_API_URL alone is REFUSED: most of the server reads the other name and would have no agent", onlyNew.error?.name === "AgentUrlNotConfiguredError" && /EVE_API_URL is set but NEXT_PUBLIC_EVE_API_URL is not/.test(onlyNew.error.message), onlyNew.value);
 const two = outcome(() => agentUrl.agentBaseUrl(envOf(OFF, MINE, "https://other.example.test")));
 check("two different addresses are REFUSED, naming both", two.error?.name === "AgentUrlNotConfiguredError" && two.error.message.includes(MINE) && two.error.message.includes("https://other.example.test"), two.value);
-check("the Vercel deployment's address is never returned off Vercel in production unless someone set it", VALUES.flatMap((a) => VALUES.map((b) => outcome(() => agentUrl.agentBaseUrl(envOf(OFF, a, b))).value)).every((v) => v !== VERCEL_AGENT));
+check("no deployment's address is ever returned unless someone set it", [OFF, { VERCEL: "1" }, {}, { NODE_ENV: "development" }].every((base) => VALUES.flatMap((a) => VALUES.map((b) => outcome(() => agentUrl.agentBaseUrl(envOf(base, a, b))).value)).every((v) => v === undefined || !DEPLOYED.test(v) || VALUES.includes(v))));
 section("The agent's address, off Vercel in production", before)();
 
 /* ---- next.config.ts, as `next build` and `next start` load it ---------------------------------------------------- */
@@ -142,13 +150,14 @@ check("next.config.ts off Vercel in production with no address: loading it fails
 check("…with the plain message, not a rewrite error", /AgentUrlNotConfiguredError/.test(cfgRefused.stderr) && /NEXT_PUBLIC_EVE_API_URL=<agent address>/.test(cfgRefused.stderr) && !/Invalid rewrites/.test(cfgRefused.stderr), cfgRefused.stderr.slice(-400));
 const cfgMine = loadConfig({ NODE_ENV: "production", NEXT_PUBLIC_EVE_API_URL: MINE });
 check("…with the address: /eve/v1 and the workflow well-known path are rewritten to THAT agent", cfgMine.status === 0 && JSON.stringify(cfgMine.destinations) === JSON.stringify([`${MINE}/eve/v1/:path*`, `${MINE}/.well-known/workflow/:path*`]), cfgMine);
+const cfgVercel = loadConfig({ NODE_ENV: "production", VERCEL: "1" });
+check("next.config.ts ON VERCEL with no address: loading it fails with the plain message (no deployment's agent stands in)", cfgVercel.status !== 0 && cfgVercel.destinations === null && /NEXT_PUBLIC_EVE_API_URL=<agent address>/.test(cfgVercel.stderr), cfgVercel.stderr.slice(-300));
 for (const [label, env] of [
-  ["on Vercel", { NODE_ENV: "production", VERCEL: "1" }],
   ["in development", { NODE_ENV: "development" }],
   ["in an automated test build (CI)", { NODE_ENV: "production", CI: "true" }],
 ]) {
   const cfg = loadConfig(env);
-  check(`next.config.ts ${label} with no address: the rewrites go where they always went`, cfg.status === 0 && JSON.stringify(cfg.destinations) === JSON.stringify([`${VERCEL_AGENT}/eve/v1/:path*`, `${VERCEL_AGENT}/.well-known/workflow/:path*`]), cfg);
+  check(`next.config.ts ${label} with no address: the rewrites go to the local agent`, cfg.status === 0 && JSON.stringify(cfg.destinations) === JSON.stringify([`${LOCAL_AGENT}/eve/v1/:path*`, `${LOCAL_AGENT}/.well-known/workflow/:path*`]), cfg);
 }
 
 // One real `next build`: a throwaway app that has only this repo's next.config.ts and what it imports.

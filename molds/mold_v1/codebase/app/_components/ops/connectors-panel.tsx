@@ -514,7 +514,7 @@ function SecretsSection({
             ) : (
               <>
                 A secret goes live only once it is in the agent&apos;s environment —{" "}
-                <code className="font-mono">vercel env add</code> on fde-agent-api.
+                <code className="font-mono">vercel env add</code>, run for the agent.
               </>
             )}
           </p>

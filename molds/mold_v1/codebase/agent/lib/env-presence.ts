@@ -1,8 +1,8 @@
 /**
  * What the RUNNING agent actually has in its environment.
  *
- * The Ops Center runs in a different Vercel project (fde-agent) from the agent
- * (fde-agent-api), so its own `process.env` says nothing about whether the agent
+ * The Ops Center runs in a different Vercel project (the web app's) from the agent
+ * (the agent's own project), so its own `process.env` says nothing about whether the agent
  * holds a working GITHUB_TOKEN. The only process that can answer that is the
  * agent itself — so the every-minute dispatcher reports it here, and the Ops
  * Center reads the report.

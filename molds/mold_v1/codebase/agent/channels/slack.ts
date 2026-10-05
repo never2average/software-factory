@@ -2,14 +2,14 @@ import { connectSlackCredentials } from "@vercel/connect/eve";
 import { slackChannel, type SlackChannelCredentials } from "eve/channels/slack";
 import { connectionsFromEnv } from "../../lib/connections-provider.ts";
 
-// Credentials run through Vercel Connect: the client `slack/fde-agent`
-// (scl_gCLgLYLGkUd4lS4NDCVaNw) is attached to the fde-agent-api project, with
+// Credentials run through Vercel Connect: the client `slack/fde-agent` is
+// attached to the agent's Vercel project, with
 // its trigger destination registered at eve's Slack route `/eve/v1/slack`
 // (prod/preview/dev). Inbound app_mention + message.im events route there.
 // FF_CONNECT_ENABLED=1 is only needed locally to run the `vercel connect …`
 // CLI commands; it is not a runtime env. To re-point the trigger:
 //   FF_CONNECT_ENABLED=1 vercel connect attach slack/fde-agent \
-//     --triggers --trigger-path /eve/v1/slack --yes   (link fde-agent-api first)
+//     --triggers --trigger-path /eve/v1/slack --yes   (link the agent's project first)
 //
 // OUTBOUND TOKEN OVERRIDE: when SLACK_BOT_TOKEN (xoxb-…) is set, it takes over
 // posting — thread replies and `receive(slack, …)` from the schedules — while

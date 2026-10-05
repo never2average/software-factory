@@ -35,6 +35,12 @@ import path from "node:path";
 import postgres from "postgres";
 import { FOLDER } from "../agent/lib/dataroom-folders.ts";
 import { readJsonFixture } from "./lib/read-fixture.mjs";
+// Which Vercel project is the web app is the deployment's setting (lib/service-frontend-subject.ts); name the probe's.
+process.env.VERCEL_FRONTEND_TEAM_SLUG = "probe-team";
+process.env.VERCEL_FRONTEND_PROJECT = "probe-web";
+delete process.env.VERCEL_FRONTEND_ENVIRONMENT;
+delete process.env.SERVICE_FRONTEND_SUBJECT;
+
 
 const adminUrl = process.env.ADMIN_URL;
 const appUrl = process.env.DATABASE_URL;
@@ -275,7 +281,7 @@ try {
   // here, as eve hands them over, so this fails on a build that does not honour the attribute.
   const { orgForSession } = await import("../agent/lib/org-context.ts");
   const { recordSessionScope } = await import("../agent/lib/session-scope.ts");
-  const FE_SUBJECT = "owner:f20170061g-3183s-projects:project:fde-agent:environment:production";
+  const FE_SUBJECT = "owner:probe-team:project:probe-web:environment:production";
   const scheduleCtx = (org) => ({
     session: { id: `sess-sched-${org}-${PID}`, auth: { current: { authenticator: "app", principalId: "eve:app", principalType: "runtime", attributes: { workspace_scope: org } } } },
   });
@@ -286,8 +292,8 @@ try {
         current: {
           // The front-end's PRODUCTION token, as eve's vercelOidc hands it over.
           authenticator: "oidc",
-          issuer: "https://oidc.vercel.com/f20170061g-3183s-projects",
-          principalId: `https://oidc.vercel.com/f20170061g-3183s-projects:${FE_SUBJECT}`,
+          issuer: "https://oidc.vercel.com/probe-team",
+          principalId: `https://oidc.vercel.com/probe-team:${FE_SUBJECT}`,
           principalType: "service",
           subject: FE_SUBJECT,
           attributes: { environment: "production", ...(org ? { workspace_scope: org } : {}) },
@@ -329,7 +335,7 @@ try {
   const continued = await orgForSession({ session: { ...bare.session, id: contId } }).catch((e) => messageOf(e));
   check("a front-end continuation without the attribute acts in the workspace its session recorded", continued === Y, continued);
   const previewCont = await orgForSession({
-    session: { id: contId, auth: { current: { authenticator: "oidc", issuer: "https://oidc.vercel.com/f20170061g-3183s-projects", principalType: "service", subject: "owner:f20170061g-3183s-projects:project:fde-agent-api:environment:preview", attributes: { environment: "preview", workspace_scope: Y } } } },
+    session: { id: contId, auth: { current: { authenticator: "oidc", issuer: "https://oidc.vercel.com/probe-team", principalType: "service", subject: "owner:probe-team:project:probe-web-api:environment:preview", attributes: { environment: "preview", workspace_scope: Y } } } },
   }).catch((e) => messageOf(e));
   check("…while the agent project's PREVIEW token gets neither the attribute nor the recorded scope", previewCont !== Y, previewCont);
 

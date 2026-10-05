@@ -1,7 +1,9 @@
 import { eveChannel } from "eve/channels/eve";
 import { jwtEcdsa, oidc, vercelOidc, vercelSubject } from "eve/channels/auth";
 import { compatEnv } from "../lib/compat-env.ts";
-import { FRONTEND_SUBJECT as SERVICE_FRONTEND_SUBJECT, sessionAuthForRequest } from "../lib/service-scope.ts";
+import { sessionAuthForRequest } from "../lib/service-scope.ts";
+import { frontendSubjectSetting } from "../../lib/service-frontend-subject.ts";
+import { webOriginSetting } from "../../lib/web-origin.ts";
 import { guardSessionRoutes } from "../lib/session-guard.ts";
 import { guardedLocalDev } from "../lib/local-dev.ts";
 import { sessionPublicKeyPem } from "../lib/session-public-key.ts";
@@ -102,22 +104,24 @@ const emailSessionAuth = sessionPublicKey
 // that door admits, the session guard below treats any principal carrying a `sid` claim or the queue-delivery kind
 // as bound to that one session and its owner (lib/session-token-kinds.ts) — so the door can only ever narrow.
 
-// The front-end (fde-agent) as a first-class SERVICE identity. The autonomous
-// workflow-resume cron has no human token, so it presents the front-end's own
-// Vercel-minted OIDC token (rotated per invocation, nothing stored) — this trusts
-// that specific project+env, nothing else. Meant for machine-to-machine calls
-// like resume; human chat still comes through googleAuth above.
-const FRONTEND_SUBJECT = vercelSubject({
-  teamSlug: "f20170061g-3183s-projects",
-  projectName: "fde-agent",
-  environment: "production",
-});
-// The one subject allowed to NAME a workspace (agent/lib/service-scope.ts) must be exactly the one admitted here.
-if (FRONTEND_SUBJECT !== SERVICE_FRONTEND_SUBJECT) throw new Error("eve.ts FRONTEND_SUBJECT and service-scope.ts disagree.");
+// The front-end (the web app's own Vercel project) as a first-class SERVICE identity. The autonomous
+// workflow-resume cron, app refresh and the scheduled workflows have no human token, so they present the web app's
+// own Vercel-minted OIDC token (rotated per invocation, nothing stored) — this trusts that one project+env, nothing
+// else. WHICH project is the deployment's setting (lib/service-frontend-subject.ts: VERCEL_FRONTEND_TEAM_SLUG +
+// VERCEL_FRONTEND_PROJECT, or SERVICE_FRONTEND_SUBJECT), never a name in this code, and the SAME reading
+// agent/lib/service-scope.ts uses to decide which principal may name a workspace. Unset: no OIDC service is admitted
+// (the agent's own project still is, as eve always does), and one log line names the settings.
+const FRONTEND = frontendSubjectSetting();
+const FRONTEND_SUBJECT = FRONTEND
+  ? vercelSubject({ teamSlug: FRONTEND.teamSlug, projectName: FRONTEND.projectName, environment: FRONTEND.environment })
+  : null;
+// eve's own builder must spell the subject exactly as the shared reading does, or the door and the scope rule differ.
+if (FRONTEND && FRONTEND_SUBJECT !== FRONTEND.subject) throw new Error("eve.ts FRONTEND_SUBJECT and lib/service-frontend-subject.ts disagree.");
 
 // The web chat is deployed as a separate project (a Next.js app) that calls this
-// agent's API cross-origin, so browsers need CORS. WEB_ORIGIN is that app's URL.
-const webOrigin = process.env.WEB_ORIGIN ?? "https://fde-agent.vercel.app";
+// agent's API cross-origin, so browsers need CORS. WEB_ORIGIN is that app's URL — the deployment's setting, never a
+// default address (lib/web-origin.ts). Unset: no cross-origin browser is allowed but local development.
+const webOrigin = webOriginSetting();
 
 const auth = [
   // Signed-in humans via the web chat: a Google account…
@@ -130,7 +134,7 @@ const auth = [
   ...(sessionPublicKey ? [queueDeliveryAuth(sessionPublicKey)] : []),
   // Vercel-internal + runtime callers (subagents, etc.) plus the front-end
   // project acting as a service (autonomous workflow resume).
-  vercelOidc({ subjects: [FRONTEND_SUBJECT] }),
+  vercelOidc({ subjects: FRONTEND_SUBJECT ? [FRONTEND_SUBJECT] : [] }),
   // OFF VERCEL ONLY, and only when SERVICE_AUTH=session-key is set here: the front-end's own two-minute service token,
   // signed with the session key pair (this project holds the public half only), for the same machine-to-machine
   // calls. Absent from the list when the setting is unset, which is every Vercel deployment: the line above is then
@@ -151,7 +155,7 @@ const auth = [
 export default guardSessionRoutes(eveChannel({
   auth,
   cors: {
-    origin: [webOrigin, "http://localhost:3000"],
+    origin: [...(webOrigin ? [webOrigin] : []), "http://localhost:3000"],
     allowedHeaders: ["authorization", "content-type"],
     methods: ["GET", "POST"],
     credentials: false,

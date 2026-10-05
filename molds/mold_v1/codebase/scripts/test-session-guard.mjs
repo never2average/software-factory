@@ -42,6 +42,12 @@ register(
 );
 import { SignJWT, exportJWK, exportSPKI, generateKeyPair } from "jose";
 import postgres from "postgres";
+// Which Vercel project is the web app is the deployment's setting (lib/service-frontend-subject.ts); name the probe's.
+process.env.VERCEL_FRONTEND_TEAM_SLUG = "probe-team";
+process.env.VERCEL_FRONTEND_PROJECT = "probe-web";
+delete process.env.VERCEL_FRONTEND_ENVIRONMENT;
+delete process.env.SERVICE_FRONTEND_SUBJECT;
+
 
 const adminUrl = process.env.ADMIN_URL;
 const appUrl = process.env.DATABASE_URL;
@@ -59,9 +65,9 @@ delete process.env.GOOGLE_CLIENT_ID;
 
 // The front-end's production Vercel OIDC token — the trusted service — signed here, its discovery and JWKS answered
 // from a patched fetch exactly as scripts/test-service-scope-oidc.mjs does.
-const TEAM = "f20170061g-3183s-projects";
+const TEAM = "probe-team";
 const ISSUER = `https://oidc.vercel.com/${TEAM}`;
-const FRONTEND = `owner:${TEAM}:project:fde-agent:environment:production`;
+const FRONTEND = `owner:${TEAM}:project:probe-web:environment:production`;
 process.env.VERCEL_PROJECT_ID = "prj_agent_probe";
 const { privateKey: rsPriv, publicKey: rsPub } = await generateKeyPair("RS256");
 const jwk = { ...(await exportJWK(rsPub)), kid: "probe", alg: "RS256", use: "sig" };
@@ -76,7 +82,7 @@ globalThis.fetch = async (input, init) => {
 };
 const now = () => Math.floor(Date.now() / 1000);
 const serviceToken = () =>
-  new SignJWT({ sub: FRONTEND, project: "fde-agent", project_id: "prj_frontend_probe", environment: "production", owner: TEAM })
+  new SignJWT({ sub: FRONTEND, project: "probe-web", project_id: "prj_frontend_probe", environment: "production", owner: TEAM })
     .setProtectedHeader({ alg: "RS256", kid: "probe" }).setIssuer(ISSUER).setAudience(`https://vercel.com/${TEAM}`)
     .setIssuedAt(now() - 5).setExpirationTime(now() + 600).sign(rsPriv);
 const emailToken = (email, extra = {}, audience = "delivered-app") =>

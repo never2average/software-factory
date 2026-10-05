@@ -15,11 +15,6 @@
     "why": "The base starter workflow script, used only when this deployment keeps the customer-context and follow-ups specialists (STARTER_SCRIPT); a specialist is delegated to by its directory name, which never moves. A deployment that excludes either starts from a one-step script naming a specialist it has."
   },
   {
-    "source": "^app/_components/ops/connectors-panel\\.tsx$",
-    "literal": "^\\s*on fde-agent-api\\.$",
-    "why": "The agent API's Vercel project name in a `vercel env add` instruction: a person must type the name the project really has."
-  },
-  {
     "source": "^app/api/ops/(deployments|implementations)/route\\.ts$",
     "literal": "^ first \\(POST /api/ops/customers, or customer_create from the CLI\\)\\.$",
     "why": "The real API route and CLI command that create the record the error is about: renaming them in the message would send the caller to an endpoint that does not exist. The sentence around them is in the profile's words."

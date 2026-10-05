@@ -20,6 +20,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
+// Which Vercel project is the web app is the deployment's setting (lib/service-frontend-subject.ts); name the probe's.
+process.env.VERCEL_FRONTEND_TEAM_SLUG = "probe-team";
+process.env.VERCEL_FRONTEND_PROJECT = "probe-web";
+delete process.env.VERCEL_FRONTEND_ENVIRONMENT;
+delete process.env.SERVICE_FRONTEND_SUBJECT;
+
 
 let failures = 0;
 const check = (what, ok, detail) => {
@@ -196,9 +202,9 @@ console.log("\n2b. A service-started turn carries the workspace it acts for");
     const app = { authenticator: "app", principalId: "eve:app", principalType: "runtime", attributes: {} };
     // The front-end's production token as vercelOidc hands it over (the full token matrix, through the real verifier,
     // is scripts/test-service-scope-oidc.mjs).
-    const FE = "owner:f20170061g-3183s-projects:project:fde-agent:environment:production";
-    const vercel = { authenticator: "oidc", issuer: "https://oidc.vercel.com/f20170061g-3183s-projects", principalId: `https://oidc.vercel.com/f20170061g-3183s-projects:${FE}`, principalType: "service", subject: FE, attributes: { environment: "production" } };
-    const agentPreview = { ...vercel, subject: "owner:f20170061g-3183s-projects:project:fde-agent-api:environment:preview", attributes: { environment: "preview" } };
+    const FE = "owner:probe-team:project:probe-web:environment:production";
+    const vercel = { authenticator: "oidc", issuer: "https://oidc.vercel.com/probe-team", principalId: `https://oidc.vercel.com/probe-team:${FE}`, principalType: "service", subject: FE, attributes: { environment: "production" } };
+    const agentPreview = { ...vercel, subject: "owner:probe-team:project:probe-web-api:environment:preview", attributes: { environment: "preview" } };
     const google = { authenticator: "oidc", issuer: "https://accounts.google.com", principalId: "a@b.test", principalType: "user", attributes: { email: "a@b.test", workspace_scope: "org-a" } };
     const emailed = { authenticator: "jwt-ecdsa", issuer: "delivered", principalId: "a@b.test", principalType: "service", attributes: { email: "a@b.test", workspace_scope: "org-a" } };
     check("the schedule's app principal names the rule's workspace", scope.serviceScopeOf(scope.withServiceScope(app, "org-a")) === "org-a");

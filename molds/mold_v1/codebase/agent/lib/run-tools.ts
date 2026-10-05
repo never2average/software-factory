@@ -19,9 +19,10 @@ import { z } from "zod";
 import { orgForSession, type SessionCtxLike } from "./org-context.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { fill } from "./agent-vocabulary.ts";
+import { webOriginSetting } from "../../lib/web-origin.ts";
 
-/** The front-end that owns the run routes + the sandbox runtime. */
-const WEB_ORIGIN = process.env.WEB_ORIGIN?.trim() || "https://fde-agent.vercel.app";
+/** The front-end that owns the run routes + the sandbox runtime: the deployment's WEB_ORIGIN, never a default. */
+const WEB_ORIGIN = webOriginSetting();
 const CRON_SECRET = process.env.CRON_SECRET?.trim();
 /** Cap a bit under the route's maxDuration (300s) so we surface a clean error. */
 const RUN_TIMEOUT_MS = 285_000;
@@ -45,6 +46,9 @@ async function triggerRun(
 ): Promise<Record<string, unknown>> {
   if (!CRON_SECRET) {
     throw new Error("CRON_SECRET is not set on the agent, so it cannot trigger a run. Add it to the agent's env.");
+  }
+  if (!WEB_ORIGIN) {
+    throw new Error("WEB_ORIGIN is not set on the agent, so it does not know the web app's address to start a run. Add it to the agent's env.");
   }
   const res = await fetch(`${WEB_ORIGIN}/api/ops/run`, {
     method: "POST",

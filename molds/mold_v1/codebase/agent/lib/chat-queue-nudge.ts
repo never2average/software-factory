@@ -15,6 +15,7 @@
 import { sql } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { NUDGE_HEADER, signNudge } from "../../lib/secret-compare.ts";
+import { webOriginSetting } from "../../lib/web-origin.ts";
 
 export interface NudgeDeps {
   /** Does this session hold a queued message in this workspace? */
@@ -74,7 +75,7 @@ export const nudgeDeps: NudgeDeps = {
     return process.env.CRON_SECRET?.trim() || null;
   },
   webOrigin() {
-    // The web app's address, as agent/channels/eve.ts reads it for CORS.
-    return process.env.WEB_ORIGIN?.trim() || "https://fde-agent.vercel.app";
+    // The web app's address, as agent/channels/eve.ts reads it for CORS. Unset: no nudge (the sweep still sends).
+    return webOriginSetting();
   },
 };

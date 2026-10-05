@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
  *
  * A stored secret does NOT make a connector live: eve's connection modules read
  * process.env at import time, so it has to be promoted to the agent's
- * environment (`vercel env add <NAME>` on fde-agent-api). The UI says so rather
+ * environment (`vercel env add <NAME>` on the agent's project). The UI says so rather
  * than implying a green light.
  *
  * NO ROUTE HERE EVER RETURNS A SECRET VALUE — only whether one exists and its

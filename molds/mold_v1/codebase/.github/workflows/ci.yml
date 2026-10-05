@@ -689,6 +689,15 @@ jobs:
         if: always()
         run: npm run test:neutral-names && npm run check:neutral-names
 
+      # RUNTIME CODE NAMES NO DEPLOYMENT. The agent admitted the web app's Vercel OIDC token only for one product's own
+      # team and project, written into eve.ts and service-scope.ts, and defaulted the web app's and the agent's
+      # addresses to that product's URLs: every other deployment had each service call refused. Which team, project
+      # and address are the deployment's settings now. This fails on a Vercel team/project/Connect id, a *.vercel.app
+      # address, an OIDC subject or issuer, or a literal teamSlug/projectName anywhere in runtime code.
+      - name: Deployment identifiers (no Vercel team, project or address in runtime code)
+        if: always()
+        run: npm run check:deployment-ids
+
       # Base code used to write its own workflows (13) and onboarding recipes (5) into every workspace of every
       # deployment, whatever the deployment was for. A workspace's library is the deployment profile's now
       # (library.sources; none by default): this proves the default provisions nothing, that the one-line opt-in

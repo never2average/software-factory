@@ -16,8 +16,9 @@
  * principals, and on nothing else:
  *
  *   · eve's schedule app principal — built inside the agent's own schedule handler, never presented over HTTP;
- *   · the FRONT-END's production Vercel OIDC token: subject exactly {@link FRONTEND_SUBJECT} and `environment`
- *     claim `production`;
+ *   · the FRONT-END's Vercel OIDC token: subject exactly the one this deployment's settings name
+ *     (lib/service-frontend-subject.ts, the same reading agent/channels/eve.ts admits by) and the `environment` claim
+ *     those settings name (production unless set). With the settings unset, no OIDC token is a service here;
  *   · ONLY WHEN `SERVICE_AUTH=session-key` IS SET ON THIS AGENT (a deployment that is not on Vercel, where there is no
  *     OIDC token): the front-end's own short-lived service token, signed with the session key pair and admitted by
  *     agent/lib/web-service-auth.ts. It is the SAME service as the one above by another proof, and gets the same
@@ -36,6 +37,7 @@
 
 import { WEB_SERVICE_TOKEN_KIND, WEB_SERVICE_TOKEN_SUBJECT } from "../../lib/session-token-kinds.ts";
 import { sessionKeyServiceAuth } from "../../lib/service-auth-mode.ts";
+import { frontendSubjectSetting } from "../../lib/service-frontend-subject.ts";
 
 /** The auth attribute that carries a service session's workspace. */
 export const SERVICE_SCOPE_ATTR = "workspace_scope";
@@ -43,11 +45,11 @@ export const SERVICE_SCOPE_ATTR = "workspace_scope";
 export const SERVICE_SCOPE_HEADER = "x-workspace-scope";
 
 /**
- * The front-end project's PRODUCTION Vercel OIDC subject — the one service allowed to name a workspace, and the one
- * agent/channels/eve.ts admits from outside the agent's own project (`vercelSubject({ teamSlug, projectName:
- * "fde-agent", environment: "production" })`, spelled out so this module imports nothing of eve's).
+ * The front-end project's Vercel OIDC subject this deployment trusts, or null (none trusted). Read from the deployment's
+ * settings by lib/service-frontend-subject.ts — the ONE reading agent/channels/eve.ts admits by too, so the subject
+ * that may name a workspace is the subject admitted at the door, by construction. Never a constant in code.
  */
-export const FRONTEND_SUBJECT = "owner:f20170061g-3183s-projects:project:fde-agent:environment:production";
+export { frontendSubject } from "../../lib/service-frontend-subject.ts";
 
 export interface AuthLike {
   readonly attributes?: Readonly<Record<string, string | readonly string[]>>;
@@ -76,14 +78,18 @@ function attrOf(auth: AuthLike, key: string): string | undefined {
  * `service` for a preview, or as `user` for a dev env pull), the exact front-end subject, and the production
  * environment claim. Every condition is required.
  */
+function trustedFrontEnd(subject: string | undefined, environment: string | undefined): boolean {
+  const trusted = frontendSubjectSetting();
+  return trusted !== null && subject === trusted.subject && environment === trusted.environment;
+}
+
 function isFrontEndProduction(auth: AuthLike): boolean {
   return (
     auth.authenticator === "oidc" &&
     typeof auth.issuer === "string" &&
     auth.issuer.startsWith("https://oidc.vercel.com/") &&
     auth.principalType === "service" &&
-    auth.subject === FRONTEND_SUBJECT &&
-    attrOf(auth, "environment") === "production"
+    trustedFrontEnd(auth.subject, attrOf(auth, "environment"))
   );
 }
 

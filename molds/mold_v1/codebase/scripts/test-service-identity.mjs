@@ -218,10 +218,15 @@ if (door) {
     check("the session guard takes it for a SERVICE, with no email", caller?.kind === "service" && caller.email === null && caller.serviceScope === VICTIM, caller);
     check("…never for a person, and the tab's workspace header gives it no `org`", caller?.kind !== "person" && session?.attributes?.org === undefined, { caller, session });
     // The same shape the OIDC front-end produces, so every rule written for `kind: "service"` applies unchanged.
+    // (On Vercel, with the settings naming the web project; this off-Vercel run has none, so set them for this one call.)
+    process.env.VERCEL_FRONTEND_TEAM_SLUG = "probe-team";
+    process.env.VERCEL_FRONTEND_PROJECT = "probe-web";
     const oidcShape = guard.callerOf(
-      { authenticator: "oidc", issuer: "https://oidc.vercel.com/f20170061g-3183s-projects", principalId: "p", principalType: "service", subject: scope.FRONTEND_SUBJECT, attributes: { environment: "production" } },
+      { authenticator: "oidc", issuer: "https://oidc.vercel.com/probe-team", principalId: "p", principalType: "service", subject: scope.frontendSubject(), attributes: { environment: "production" } },
       scopeHeaders,
     );
+    delete process.env.VERCEL_FRONTEND_TEAM_SLUG;
+    delete process.env.VERCEL_FRONTEND_PROJECT;
     check("it reaches the gate in the same terms as the Vercel OIDC service (kind, email, workspace)", caller?.kind === oidcShape.kind && caller.email === oidcShape.email && caller.serviceScope === oidcShape.serviceScope, { caller, oidcShape });
   } else {
     check("with the setting unset a door-verified token is NOT a service principal", scope.isServicePrincipal(auth) === false);
