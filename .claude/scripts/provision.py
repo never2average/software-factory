@@ -10,6 +10,7 @@
                         [--workspace-remote [seed.json] [--new-workspace] [--dry-run]]
                                                                        target=vm_remote only; lib/vm_remote.py and lib/vm_tunnel.py
   provision.py <app_id> --library-cleanup [--apply] [--org <id>]       a deployed app, on Vercel or on its own server; see below
+  provision.py <app_id> --library-apply [--apply] [--org <id>]         the same; see below
 
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
   projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare
@@ -40,6 +41,11 @@
   removable: ones nobody edited, ran or built on. --org <id> looks at one workspace. It reads and writes through the
   app role (row-level security in force); the database address is read from the app's own production environment
   for the length of the run (Vercel), or never leaves the server (an app on its own server), and is never printed.
+--library-apply: its twin (the mold's own `operator:library-apply`, fde-agent #115). Per workspace that ALREADY
+  exists, list the starter apps of the running build's library it does not have yet ("would add: app ... (written by
+  <specialist> the first time someone opens it)") and the ones left alone and why. A DRY RUN; with --apply it adds
+  exactly what that dry run listed, one workspace at a time; nothing is generated until someone opens the app.
+  --org <id> looks at one workspace. Same app role, same secrecy. An app deployed before #115 is refused plainly.
 --verify-rls: prove tenant isolation on whatever this app is running RIGHT NOW, and record the
   result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only
   measure). No build, no deploy, no password rotation. Run it after any restore or migration.
@@ -2667,6 +2673,9 @@ def main(a):
     if "--library-cleanup" in a:
         # A dry run unless --apply; through the app role, from the app's own build copy (library.py).
         sys.exit(_library().cleanup_local(app_id, app, infra, a))
+    if "--library-apply" in a:
+        # Its twin: a dry run unless --apply; the same app role, the same build copy (library.py).
+        sys.exit(_library().apply_local(app_id, app, infra, a))
     if target == "vercel":
         _refuse_live_or_shared_project(app_id, infra)   # ahead of --set-secret: it writes env into the project
     if "--set-secret" in a:
