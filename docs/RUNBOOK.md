@@ -334,10 +334,12 @@ For the Google sign-in button, add `https://research.yourcompany.com` under **Au
 | run the five lanes against the server | `python3 .claude/scripts/lanes.py <app_id>` (they grade `https://<your domain>`; the functional lane adds `tool.python`, which asks the agent to really run Python in its sandbox) |
 | know what the server costs | `docs/COST_MODEL.md` §7 |
 | see what old sandboxes are taking up | `python3 .claude/scripts/provision.py <app_id> --prune-sandboxes` (only lists; see "The disk" below) |
+| see the starter workflows and recipes an older version of the app left in a workspace | `python3 .claude/scripts/provision.py <app_id> --library-cleanup` (only lists, per workspace, what would go and what stays and why; add `--apply` to remove the ones nobody edited, ran or built on) |
 | close the login port to the internet | step H below |
 
 **The workspace.** A freshly deployed app has no workspace and nobody in it. This one command creates the workspace the brief
-describes, with its owner, its members and their roles, and the built-in library of recipes and workflows; then it sets up the
+describes, with its owner, its members and their roles, and the starter library of recipes and workflows if the app asked for one
+(most do not: the default is none); then it sets up the
 assistant the way the brief describes it (its name and tone, its standing instructions, its model, each specialist's settings,
 and any workflows the brief defines). If you keep extra workspaces under `state/application/<app_id>/seed/orgs/`, it writes
 those too:
