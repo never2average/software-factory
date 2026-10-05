@@ -9,12 +9,18 @@ section, shared sandbox helpers). An application names its packs in application.
   show <pack>      the manifest and the files it adds
   check <pack>     the pack on its own: manifest valid, only allowed paths, every subagent declared
   apply <app>      copy the app's packs into build/<app_id>/ (created from the mold if it is not there yet),
-                   then run the mold's own generators there; refuses if a pack file would REPLACE a mold file
+                   then run the mold's own generators there; refuses if a pack file would REPLACE a mold file.
+                   The same step gives the copy the starter library state asks for (library.py): with
+                   library.install "all" the mold's account-delivery library is named in the copy's profile before
+                   the profile is generated, with "none" it is left out and a stale copy is removed. An app with no
+                   packs that asks for the library gets a build copy for that alone.
   verify <app>     the mold's own subagent checks inside build/<app_id>/
   lane-copy <app>  the two copies the test lanes grade, both rebuilt from scratch and unbranded:
                      build/<app_id>.lane/          mold + packs (the app's code AND its profile's words)
                      build/<app_id>.lane-default/  mold + packs WITHOUT the packs' profiles/: the default profile,
                                                    which is what the mold's own offline tests are written against
+                   The first follows library.install as apply does; the second never carries the library, because
+                   it must stay the mold's default profile.
 
 Molds stay general-purpose checkpoints: nothing here ever writes under molds/. A mold supports packs when its
 codebase discovers subagents (scripts/gen-subagent-meta.mjs writes agent/lib/subagent-registry.generated.ts);
@@ -85,7 +91,13 @@ def conflicts(files, codebase):
     return [f for f in files if os.path.lexists(os.path.join(codebase, f))]
 
 PACK_PROFILE = re.compile(r"^profiles/")
-GENERATED_PROFILE = ("lib/deployment-profile.generated.ts", "agent/lib/deployment-profile.generated.ts")
+GENERATED_PROFILE = ("lib/deployment-profile.generated.ts", "agent/lib/deployment-profile.generated.ts", "agent/lib/workflow-library.generated.ts")
+
+def _library():
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path: sys.path.insert(0, here)
+    import library
+    return library
 
 def apply(app_id, lane=False, default_profile=False, build=None):
     """lane=True builds build/<app_id>.lane/ instead: the mold plus the packs and NO brand, always from scratch.
@@ -110,9 +122,15 @@ def apply(app_id, lane=False, default_profile=False, build=None):
     # directory, never under build/); the packs go into it exactly as they go into a deploy's copy.
     build = build or os.path.join(ROOT, "build", app_id + ((".lane-default" if default_profile else ".lane") if lane else ""))
     if lane and os.path.isdir(build): shutil.rmtree(build)
-    if not packs: print(f"{app_id}: no packs; nothing to apply"); return 0
+    # The starter library state asks for (library.py): "all" names the mold's account-delivery library in this copy's
+    # profile, "none" leaves it out. The default-profile lane copy never carries it.
+    library = _library(); wants_library = library.install(app) == "all" and not default_profile
+    if not packs and not wants_library:
+        note = ""
+        if not lane and os.path.isdir(build) and library.apply(build, app, mold_dir).endswith("removed)"): note = "; the starter library it no longer asks for was taken out of its build copy"
+        print(f"{app_id}: no packs; nothing to apply{note}"); return 0
     errs = [e for p in packs for e in check_pack(p)]
-    if not supports_packs(mold_dir):
+    if packs and not supports_packs(mold_dir):
         errs.append(f"{app['mold_id']} does not discover subagents (its scripts/gen-subagent-meta.mjs writes no "
                     f"agent/lib/subagent-registry.generated.ts), so a pack's subagents would exist and be registered nowhere. "
                     f"Refresh the mold from an upstream that has subagent packs (docs/SUBAGENT_PACKS.md).")
@@ -136,7 +154,11 @@ def apply(app_id, lane=False, default_profile=False, build=None):
     for f, p in sorted(seen.items()):
         dest = os.path.join(build, f); os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copyfile(os.path.join(PACKS, p, "files", f), dest)
-    cmds = [["node", "scripts/sync-subagent-shared.mjs"], ["node", "scripts/gen-subagent-meta.mjs"]]
+    # Before the generators below: the profile generator must read the library's profile file, and the workflow
+    # library is compiled from the same profiles (always, so a pack's own profile is honoured too).
+    lib_note = library.apply(build, app, mold_dir, default_profile, regenerate=False)
+    cmds = [["node", "scripts/sync-subagent-shared.mjs"], ["node", "scripts/gen-subagent-meta.mjs"]] if packs else []
+    if os.path.exists(os.path.join(build, library.PROFILE_AWARE)) and os.path.exists(os.path.join(build, library.GENERATORS[0])): cmds.append(["node", library.GENERATORS[0]])
     if os.path.exists(os.path.join(build, "scripts", "gen-deployment-profile.mjs")): cmds.append(["node", "scripts/gen-deployment-profile.mjs"])
     elif any(f.startswith("profiles/") for f in seen): sys.exit(f"{app['mold_id']} has no deployment profile (scripts/gen-deployment-profile.mjs), so a pack's profile would change nothing. Refresh the mold.")
     for cmd in cmds:
@@ -149,9 +171,10 @@ def apply(app_id, lane=False, default_profile=False, build=None):
         if drift: sys.exit(f"{os.path.relpath(build, ROOT)}/ was built without the packs' profiles, yet {', '.join(drift)} differs from "
                            f"{app['mold_id']}'s: a pack changed the deployment profile some other way, so this copy is not the default profile "
                            f"and the mold's own tests cannot be graded in it.")
+    if not packs: print(f"no packs; {os.path.relpath(build, ROOT)}/ is the mold with its {lib_note}; the profile and the starter library regenerated"); return 0
     print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)"
           + ("; its profiles/ left out, so it reads in the default profile" if default_profile else "")
-          + "); shared helpers synced, subagent registry regenerated")
+          + f"); shared helpers synced, subagent registry regenerated; {lib_note}")
     return 0
 
 def lane_copies(app_id):

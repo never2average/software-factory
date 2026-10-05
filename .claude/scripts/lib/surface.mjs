@@ -44,7 +44,11 @@ const SURFACE = {
 };
 // Rows in these tables change with every request; they are counted but never diffed.
 const VOLATILE = new Set(["runtime_env_presence","login_codes","subagent_runs","chat_presence","room_presence","chat_sessions","system_cron_overrides","account_summaries","task_workflow_transition_events","inbox_items"]);
+// The workflow names of the mold's account-delivery starter library (library/account-delivery/workflows/). The mold's
+// base code carries no library of its own: a build has these only when its profile names that library, which is what
+// state's library.install "all" asks for (library.py). There is no subset by name.
 const LIBRARY = new Set(["assign-account","data-migration-plan","eval-regression-triage","go-live-sprint","incident-postmortem","infosec-checklist","infra-sizing","integration-wiring","onboard-account","qbr-prep","renewal-risk","route-incident","solution-engineering"]);
+const hasLibrary = (workflows) => { const have = new Set((workflows ?? []).map(w => w.name)); return [...LIBRARY].every(n => have.has(n)); };
 const KEY_SEP = "|";
 
 async function tableCols(sql, t) { return (await sql`select column_name from information_schema.columns where table_schema='public' and table_name=${t}`).map(r => r.column_name); }
@@ -107,8 +111,10 @@ async function extract(url) {
       escalation: { path: hasEsc ? "roster_escalations" : "none", incident_workflow: names.has("route-incident") ? "route-incident" : undefined },
     },
     custom_workflow_builder: {
-      library: (() => { const have = (out.workflows ?? []).filter(w => LIBRARY.has(w.name)).map(w => w.name); return have.length === LIBRARY.size ? { install: "all" } : have.length ? { install: "listed", names: have } : { install: "none" }; })(),
-      scripts: (out.workflows ?? []).filter(w => !LIBRARY.has(w.name)).map(w => ({ ...pick({ name: w.name, description: w.description ?? "", trigger: w.trigger ?? "manual", customer_id: w.customer_id, instructions: w.instructions }), steps: w.steps ?? [], enabled: w.enabled !== false, instructions_enabled: !!w.instructions_enabled })),
+      // "all" only when the workspace holds the WHOLE library; a workspace with some of its workflows has them as its
+      // own scripts (below), because a rebuilt app could not be given a part of the library.
+      library: { install: hasLibrary(out.workflows) ? "all" : "none" },
+      scripts: (out.workflows ?? []).filter(w => !(hasLibrary(out.workflows) && LIBRARY.has(w.name))).map(w => ({ ...pick({ name: w.name, description: w.description ?? "", trigger: w.trigger ?? "manual", customer_id: w.customer_id, instructions: w.instructions }), steps: w.steps ?? [], enabled: w.enabled !== false, instructions_enabled: !!w.instructions_enabled })),
       definitions: defs.filter(d => !d.archived_at).map(d => ({ id: d.id, name: d.name, entity: d.entity, is_default: !!d.is_default, stages: d.stages ?? [] })),
     },
   };
@@ -176,7 +182,7 @@ async function apply(url, state, only = null) {
       on conflict (org_id, email) do update set persona_name = excluded.persona_name, tone = excluded.tone, instructions = excluded.instructions, default_mode = excluded.default_mode, web_search_default = excluded.web_search_default, browser_default = excluded.browser_default, model = excluded.model`.then(() => 1));
     await up("agent_configs", async () => { let n = 0; for (const c of s.primary_context.instructions?.subagents ?? []) { await sql`insert into agent_configs (org_id, agent_key, paused, instructions) values (${ws.org_id}, ${c.agent_key}, ${!!c.paused}, ${c.instructions ?? null}) on conflict (${sql(pk.agent_configs)}) do update set paused = excluded.paused, instructions = excluded.instructions`; n++; } return n; });
     await up("workflow_definitions", async () => { let n = 0; for (const d of s.custom_workflow_builder.definitions ?? []) { await sql`insert into workflow_definitions (id, org_id, name, entity, stages, current_version, is_default, created_by) values (${d.id}, ${ws.org_id}, ${d.name}, ${d.entity}, ${sql.json(d.stages)}, 1, ${!!d.is_default}, ${me}) on conflict (${sql(pk.workflow_definitions)}) do update set name = excluded.name, stages = excluded.stages, is_default = excluded.is_default`; n++; } return n; });
-    await up("workflows", async () => { let n = 0; for (const w of s.custom_workflow_builder.scripts ?? []) { if (w.file) continue; /* file-backed scripts go through operator:seed-workflows */
+    await up("workflows", async () => { let n = 0; for (const w of s.custom_workflow_builder.scripts ?? []) { if (w.file) continue; /* a script kept as a file is not written here. Nothing else writes it either: the mold's operator:seed-workflows installs only the library the build's profile names, and no longer prunes anything */
       // `workflows` has no unique constraint on (org_id, name) — its PK is a random uuid — so an
       // ON CONFLICT clause has no index to arbitrate. Check first instead of relying on the database.
       const [dup] = await sql`select 1 as x from workflows where org_id = ${ws.org_id} and name = ${w.name} limit 1`;
