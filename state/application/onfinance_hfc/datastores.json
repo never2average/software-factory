@@ -12,23 +12,23 @@
     "admin_url_ref": "DATABASE_URL_UNPOOLED",
     "pooling": "transaction",
     "rls_verified": {
-      "at": "2026-10-05T09:47:39+00:00",
+      "at": "2026-10-05T14:07:24+00:00",
       "backend": "neon",
       "mode": "fail_closed",
       "source": "provision.py bring_up_schema",
       "role": "app_rw",
       "superuser": false,
       "bypassrls": false,
-      "org_scoped_tables": 58,
-      "protected": 58,
+      "org_scoped_tables": 60,
+      "protected": 60,
       "unprotected": [],
       "open_policies": [],
       "leaking_policies": [],
-      "policies_executed": 58,
+      "policies_executed": 60,
       "policies_unverified": [],
       "unmeasured": [],
       "probe_table": "account_summaries",
-      "probe_tables": 45,
+      "probe_tables": 47,
       "probe_skipped": [
         "customer_stakeholders:foreign keys",
         "customers:user triggers",
@@ -50,8 +50,8 @@
       "cross_org_writable": [],
       "unset_org_rows": 0,
       "open_with_no_org": [],
-      "running_app": "enforced",
-      "running_app_detail": "SELECT 1 ok \u00b7 role app_rw (RLS enforced)"
+      "running_app": "unmeasured",
+      "running_app_detail": "nothing read the app in front of traffic in this step"
     }
   },
   "blob": {
