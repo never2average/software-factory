@@ -102,7 +102,7 @@
     },
     "custom_workflow_builder": {
       "library": {
-        "install": "all"
+        "install": "none"
       }
     }
   },

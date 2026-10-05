@@ -2,7 +2,9 @@
 // DATABASE_URL (the app role, app_rw) in the environment. Creates or updates ONE workspace on a live app and
 // fills it, every org-scoped write inside that workspace's scope (set_config('app.org_id')), exactly as the
 // app's own code does. Uses the application's own modules from its build copy, so a pack's subagents get their
-// "on delegation" rows too. Prints one JSON line. Never prints a connection string.
+// "on delegation" rows too, and the starter library is whatever that build's profile names (none by default; the
+// account-delivery library when state says library.install "all"): provisionWorkspace reads it from the build, this
+// file assumes nothing about it and only reports the counts. Prints one JSON line. Never prints a connection string.
 //
 // The same file runs ON a vm_remote application's own server (provision.py <app> --workspace-remote, mold_v1-152):
 // there cwd is the built app, the user is the web app's and the environment is the web service's own env file.

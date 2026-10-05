@@ -9,6 +9,7 @@
                         [--prune-sandboxes [--apply]] [--tunnel-remote [--dry-run] [--factory-apply] [--off]] [--tunnel-factory [--apply]]
                         [--workspace-remote [seed.json] [--new-workspace] [--dry-run]]
                                                                        target=vm_remote only; lib/vm_remote.py and lib/vm_tunnel.py
+  provision.py <app_id> --library-cleanup [--apply] [--org <id>]       a deployed app, on Vercel or on its own server; see below
 
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
   projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare
@@ -33,6 +34,12 @@
   the whole mold chain against it — push, migrate, RLS + app_rw bootstrap, task-workflow — then
   cover every org-scoped table and PROVE the resulting URL cannot read another workspace's rows.
   Touches nothing remote. Rotates the app_rw password, so it is not a read-only check.
+--library-cleanup: per workspace, list the starter workflows and recipes an EARLIER version of the app put there that
+  this app does not use (library.py; the mold's own `operator:library-cleanup`). A DRY RUN: it says what would be
+  removed and what is kept and why, and changes nothing. With --apply it removes exactly the rows listed as
+  removable: ones nobody edited, ran or built on. --org <id> looks at one workspace. It reads and writes through the
+  app role (row-level security in force); the database address is read from the app's own production environment
+  for the length of the run (Vercel), or never leaves the server (an app on its own server), and is never printed.
 --verify-rls: prove tenant isolation on whatever this app is running RIGHT NOW, and record the
   result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only
   measure). No build, no deploy, no password rotation. Run it after any restore or migration.
@@ -819,6 +826,8 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
     create = []
     if mode == "deploy" and app.get("surface", {}).get("branding"):
         create.append(f"build/{app_id}/: a branded copy of the mold to build from (local files only; the snapshot is never edited)")
+    elif mode == "deploy" and _wants_library(app):
+        create.append(f"build/{app_id}/: a copy of the mold with the account-delivery starter library named in its profile (local files only; the snapshot is never edited)")
     missing = [p for p, ok in projects.items() if not ok]
     if missing: create.append(f"Vercel project(s) {', '.join(missing)} — empty, free, no deployment, git integration disconnected (also created by --set-secret, which needs them)")
     if pg.get("scope") == "fresh" and prov in DB_SENTINEL and DB_SENTINEL[prov] not in present:
@@ -872,7 +881,7 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
             # deploy_vercel writes this file into the directory it BUILDS from, which for a branded app is
             # build/<app_id>/ (main() swaps mold_dir after this plan is printed), so name that directory here
             # rather than the snapshot the run never touches.
-            bdir = f"build/{app_id}" if app.get("surface", {}).get("branding") else os.path.relpath(mold_dir, ROOT)
+            bdir = f"build/{app_id}" if app.get("surface", {}).get("branding") or _wants_library(app) else os.path.relpath(mold_dir, ROOT)
             create.append(f"{bdir}/vercel.nocron.json: vercel.json with its crons stripped "
                           f"(shared_with_live: the crons stay with the live app); no schema, no app_rw, no isolation proof")
         origin = infra.get("vercel", {}).get("production_url") or f"https://{proj}.vercel.app"
@@ -2613,6 +2622,13 @@ def repo_auto(app_id, adir, reason):
     if isinstance(rec, dict) and rec.get("auto_push") is True:
         subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/repo.py"), app_id, "auto", "--reason", reason])
 
+def _library():
+    s = os.path.join(ROOT, ".claude/scripts")
+    if s not in sys.path: sys.path.insert(0, s)
+    import library
+    return library
+def _wants_library(app): return _library().install(app) == "all"
+
 def main(a):
     if a and a[0] == "--self-test": return self_test()
     if a and a[0] == "--self-test-remote":
@@ -2648,6 +2664,9 @@ def main(a):
         sys.exit(f"{app_id}: status is {app.get('status')!r} but target is \"vm\", which never serves traffic and "
                  f"never reaches that status. Set \"status\": \"planned\" in state/application/{app_id}/"
                  f"application.json and rerun, or set \"target\": \"vercel\" to deploy it for real.")
+    if "--library-cleanup" in a:
+        # A dry run unless --apply; through the app role, from the app's own build copy (library.py).
+        sys.exit(_library().cleanup_local(app_id, app, infra, a))
     if target == "vercel":
         _refuse_live_or_shared_project(app_id, infra)   # ahead of --set-secret: it writes env into the project
     if "--set-secret" in a:
@@ -2728,15 +2747,18 @@ def main(a):
             print((r.stdout + r.stderr).strip().splitlines()[-1] if (r.stdout + r.stderr).strip() else "")
             if r.returncode: sys.exit("branding failed; not deploying")
             mold_dir = os.path.join(ROOT, "build", app_id)
-        if deploy and app.get("packs"):
+        if deploy and (app.get("packs") or _wants_library(app)):
             # The application's own code (subagent packs) goes into the same build copy, after the brand. The mold
             # is a general-purpose checkpoint and is never edited or forked for an application (packs.py).
+            # The same step names the starter library state asks for in the copy's profile (library.install "all";
+            # library.py), so an app with no packs that asks for the library goes through it too.
             r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/packs.py"), "apply", app_id], capture_output=True, text=True)
             print((r.stdout + r.stderr).strip())
             if r.returncode: sys.exit("packs failed; not deploying")
-            r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/packs.py"), "verify", app_id], capture_output=True, text=True)
-            print("\n".join((r.stdout + r.stderr).strip().splitlines()[-3:]))
-            if r.returncode: sys.exit("a pack's subagents do not pass the mold's own checks; not deploying")
+            if app.get("packs"):
+                r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/packs.py"), "verify", app_id], capture_output=True, text=True)
+                print("\n".join((r.stdout + r.stderr).strip().splitlines()[-3:]))
+                if r.returncode: sys.exit("a pack's subagents do not pass the mold's own checks; not deploying")
             mold_dir = os.path.join(ROOT, "build", app_id)
         if writer:
             # Refuse BEFORE creating, for BOTH writers: a database and a Blob store bought for an app the
