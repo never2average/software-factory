@@ -855,11 +855,17 @@ def _sandbox_load(check, tmp):
         os.makedirs(os.path.join(boxes, name, "logs"))
         open(os.path.join(boxes, name, "logs", "runtime.log"), "w").write(runtime); open(os.path.join(boxes, name, "logs", "kernel.log"), "w").write(kernel)
         t = time.time() - age; os.utime(os.path.join(boxes, name, "logs", "runtime.log"), (t, t))
-    open(os.path.join(bin_, "ps"), "w").write("#!/bin/sh\nprintf '%s\\n' ' 99.5 /x/bin/msb sandbox --name eve-sbx-ses-5256 --x' '  0.3 /x/bin/msb sandbox --name eve-sbx-ses-0001 --x' '  0.1 node .output/server/index.mjs'\n")
+    # the last line is the read's own awk, whose command line holds the pattern: it must not count as a VM
+    open(os.path.join(bin_, "ps"), "w").write("#!/bin/sh\nprintf '%s\\n' ' 99.5 /x/bin/msb sandbox --name eve-sbx-ses-5256 --x' '  0.3 /x/bin/msb sandbox --name eve-sbx-ses-0001 --x' '  0.1 node .output/server/index.mjs' '  0.0 awk /[m]sb sandbox --name eve-sbx-ses-/ { n++ }'\n")
     os.chmod(os.path.join(bin_, "ps"), 0o755)
     open(os.path.join(bin_, "journalctl"), "w").write("#!/bin/sh\ncat <<'LOG'\n[eve:harness.tool-loop] tool execution failed {\n    message: 'RuntimeError: runtime error: no agent socket found for sandbox \"eve-sbx-ses-x\"',\n"
                                                        "    detail: 'RuntimeError: runtime error: no agent socket found for sandbox \"eve-sbx-ses-x\"\\n' +\n"
-                                                       "[sandbox] waiting for a sandbox (k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 1 waiting\nLOG\n")
+                                                       "[sandbox] waiting for a sandbox (k): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 1 waiting\n"
+                                                       "[sandbox] waiting for a free sandbox (k): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 1 waiting\n"
+                                                       "[sandbox] waiting for a free sandbox (j): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 2 waiting\n"
+                                                       "[sandbox] stopping an idle sandbox (p, no command for 12 s) to free its place for one that is waiting; its next command restores it\n"
+                                                       "[sandbox] no sandbox came free within 180 s (j); answered plainly\n"
+                                                       "[sandbox] a sandbox stopped responding (h): no answer for 60 s during a command; stopping it, the next command gets a fresh one\nLOG\n")
     os.chmod(os.path.join(bin_, "journalctl"), 0o755)
     script = V.sandbox_facts_sh(S, time.time() - 3600, home=home)
     check("sandbox-load: the server-side read only reads (journalctl, grep, stat, date, ps)",
@@ -868,9 +874,12 @@ def _sandbox_load(check, tmp):
     got = V.parse_kv(r.stdout)
     check("sandbox-load: run on a fixture store, the read counts each failed call once, the waits, the VMs of the window, the stall and the kernel warning",
           r.returncode == 0 and got == {"SOCKET_ERRORS": "1", "GUARD_WAITS": "1", "GUARD_RETRIES": "0", "GUARD_GAVE_UP": "0", "SESSION_VMS": "2", "BOOT_STALLS": "1", "KERNEL_WARNINGS": "1",
-                                        "RUNNING_VMS": "2", "HOT_VMS": "1"}, (got, r.stderr[-300:]))
+                                        "RUN_WAITS": "2", "NO_FREE": "1", "WATCHDOG": "1", "IDLE_STOPS": "1", "RUNNING_VMS": "2", "HOT_VMS": "1"}, (got, r.stderr[-300:]))
     ok, lines = V.sandbox_load_verdict(0, got | {"SOCKET_ERRORS": "0", "BOOT_STALLS": "0"})
     check("sandbox-load: a VM spinning at ~100% CPU is a warning, not a failure", ok and any(l.startswith("WARNING: 1 of 2 running sandbox VM(s)") for l in lines), lines)
+    check("sandbox-load: the guard's watchdog, the running cap's waits and its plain answers are said (mold_v1-190)",
+          any(l.startswith("1 command(s) ran into a guest that stopped responding") for l in lines) and any(l.startswith("1 call(s) found no free sandbox") for l in lines)
+          and any(l == "running cap: 2 sandbox(es) waited for a free one, 1 idle VM(s) stopped to free a place" for l in lines), lines)
 
 def _operator_commands(check, tmp):
     d = os.path.join(tmp, "set", "vm_remote_fixture"); shutil.copytree(V.FIXTURE, d)

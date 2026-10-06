@@ -2402,11 +2402,16 @@ def sandbox_facts_sh(S, since, home=SERVICE_HOME):
 since=@SINCE@
 iso="$(date -u -d "@$since" '+%Y-%m-%d %H:%M:%S UTC')"
 log="$(journalctl -u @UNIT@-api.service --since "$iso" --no-pager -o cat 2>/dev/null || true)"
-count() { printf '%s\\n' "$log" | grep -c -e "$1" || true; }
+count() { if [ "$1" = -e ]; then printf '%s\\n' "$log" | grep -c "$@" || true; else printf '%s\\n' "$log" | grep -c -e "$1" || true; fi; }
 echo "SOCKET_ERRORS=$(count "message: 'RuntimeError: runtime error: no agent socket found")"
 echo "GUARD_WAITS=$(count '\\[sandbox\\] waiting for a sandbox')"
 echo "GUARD_RETRIES=$(count '\\[sandbox\\] a sandbox did not start within')"
 echo "GUARD_GAVE_UP=$(count 'No sandbox started within')"
+# mold_v1-190: the running cap and the watchdog (agent/lib/sandbox-guard.ts)
+echo "RUN_WAITS=$(count '\\[sandbox\\] waiting for a free sandbox')"
+echo "NO_FREE=$(count -e '\\[sandbox\\] no sandbox came free within' -e '\\[sandbox\\] no free sandbox')"
+echo "WATCHDOG=$(count '\\[sandbox\\] a sandbox stopped responding')"
+echo "IDLE_STOPS=$(count '\\[sandbox\\] stopping an idle sandbox')"
 vms=0; stalls=0; kernel=0
 for d in @HOME@/.microsandbox/sandboxes/eve-sbx-ses-*; do
   f="$d/logs/runtime.log"; [ -f "$f" ] || continue
@@ -2419,7 +2424,8 @@ echo "SESSION_VMS=$vms"
 echo "BOOT_STALLS=$stalls"
 echo "KERNEL_WARNINGS=$kernel"
 # Session VMs running now, and those that have kept a host CPU busy for their whole life (a hung guest spins at ~100%).
-ps -eo pcpu=,args= 2>/dev/null | awk '/msb sandbox --name eve-sbx-ses-/ { n++; if ($1 + 0 >= 90) hot++ } END { printf "RUNNING_VMS=%d\\nHOT_VMS=%d\\n", n, hot }'
+# `[m]sb`: the awk's own command line holds the pattern and must not count as a VM.
+ps -eo pcpu=,args= 2>/dev/null | awk '/[m]sb sandbox --name eve-sbx-ses-/ { n++; if ($1 + 0 >= 90) hot++ } END { printf "RUNNING_VMS=%d\\nHOT_VMS=%d\\n", n, hot }'
 """, SINCE=str(int(since)), UNIT=S["unit"], HOME=home)
 
 def sandbox_facts_argv(S, since, shown=False):
@@ -2448,6 +2454,14 @@ def sandbox_load_verdict(rig_rc, facts):
     if n("HOT_VMS"):
         lines.append(f"WARNING: {n('HOT_VMS')} of {n('RUNNING_VMS')} running sandbox VM(s) have kept a host CPU busy for their whole life, which is "
                      f"what a hung guest does (seen 2026-10-05 under 12 concurrent specialists). Not counted as a failure: a real user's job can be busy too")
+    if n("WATCHDOG"):
+        lines.append(f"{n('WATCHDOG')} command(s) ran into a guest that stopped responding and were answered by the guard's watchdog within SANDBOX_STALL_S "
+                     f"(the VM was stopped and replaced). Before mold_v1-190 each would have held its turn until the guest came back, or for good")
+    if n("NO_FREE"):
+        lines.append(f"{n('NO_FREE')} call(s) found no free sandbox within SANDBOX_WAIT_S (or SANDBOX_QUEUE_MAX were already waiting) and were "
+                     f"answered 'Waiting for a free sandbox'")
+    if n("RUN_WAITS") or n("IDLE_STOPS"):
+        lines.append(f"running cap: {n('RUN_WAITS')} sandbox(es) waited for a free one, {n('IDLE_STOPS')} idle VM(s) stopped to free a place")
     lines.append(f"server: {n('SESSION_VMS')} sandbox VM(s) started, {n('GUARD_WAITS')} waited for a boot slot, {n('GUARD_RETRIES')} boot(s) "
                  f"abandoned and retried, {n('KERNEL_WARNINGS')} with a guest kernel warning, {n('RUNNING_VMS')} running now")
     return ok, lines
