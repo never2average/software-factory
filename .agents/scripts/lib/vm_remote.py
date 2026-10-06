@@ -1193,7 +1193,8 @@ chown -hR @USER@:@GROUP@ @APPDIR@
 RUN_API="@RUN_API@"
 RUN_WEB="@RUN_WEB@"
 RUN_WF="@RUN_WF@"
-lock_now="$(sha256sum @APPDIR@/package-lock.json | cut -d' ' -f1)"
+# patches/ too: the app patches a dependency at install (patch-package, fde-agent #122), so a patch-only change must reinstall
+lock_now="$(cat @APPDIR@/package-lock.json @APPDIR@/patches/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)"
 if [ ! -d @APPDIR@/node_modules ] || [ "$(cat @DATA@/build-stamps/app.lock 2>/dev/null || true)" != "$lock_now" ]; then
   # devDependencies included: the sandbox runtime (microsandbox) is one of them.
   $RUN_API @APPDIR@ -- npm ci --include=dev --no-audit --no-fund
