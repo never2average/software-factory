@@ -26,7 +26,12 @@
  *                                       its run against --max-run-s (90: SANDBOX_STALL_S 60 + the 20 s before the
  *                                       watchdog's first check + 10 s), and a late start less the time its sandbox
  *                                       waited to open. `slow-wait` is a call that waited longer than its bound.
+ *                                       A sandbox that opened DURING a call (eve's built-in `agent` subagent, on the root's
+ *                                       sandbox, opens it at its first command) counts toward that call's wait.
  * `provision.py <app> --sandbox-load` does both: the run, then the judgement with the server's lines.
+ * A guest that hung, was stopped by the watchdog, and whose session then worked on is a WARNING, once per session (the
+ * operator's decision, 2026-10-06). Still failures: a hang nothing worked after, a second hang in one session, and any
+ * other call over its bounds.
  *
  *   inconclusive  the model did not do what it was asked (fewer bash calls, no delegation): says nothing about sandboxes
  *
@@ -215,7 +220,12 @@ export function verdictOf(events, calledAt, { steps = STEPS, maxStartS = MAX_STA
       const marker = /SBX-\S+/.exec(r?.command ?? "")?.[0];
       const failure = e.data.error?.message ?? (typeof out === "string" ? out : null);
       const t = timings ? nearest(timings.commands, at(e)) : null;
-      bash.push({ ok: !failure && (!marker || stdout.includes(marker)), ms: r ? at(e) - r.at : NaN, error: failure, ...(t ? { waitedMs: t.waitedMs, ranMs: t.ranMs } : {}) });
+      // A sandbox opened FOR this call (eve's built-in `agent` subagent shares the root's sandbox and opens it at its
+      // first command, not before its session starts): the open's wait is this call's wait too.
+      const o = timings && r ? (timings.opens ?? []).find((x) => x.at >= r.at - 1_000 && x.at <= at(e) + 2_000 && x.at - x.waitedMs >= r.at - 3_000) : null;
+      const ms = r ? at(e) - r.at : NaN;
+      const timed = t || o ? { waitedMs: (o?.waitedMs ?? 0) + (t?.waitedMs ?? 0), ranMs: t ? t.ranMs : Math.max(0, ms - (o?.waitedMs ?? 0)) } : {};
+      bash.push({ ok: !failure && (!marker || stdout.includes(marker)), ms, error: failure, ...timed });
     }
   }
   const startMs = started ? at(started) - calledAt : NaN;
@@ -223,7 +233,14 @@ export function verdictOf(events, calledAt, { steps = STEPS, maxStartS = MAX_STA
   const opened = started && timings ? nearest(timings.opens, at(started), at(started) - calledAt + 1_000, 3_000) : null;
   const startOwnMs = opened ? Math.max(0, startMs - opened.waitedMs) : startMs;
   const last = events[events.length - 1];
-  const failed = bash.find((b) => !b.ok);
+  // A guest that hung, was stopped by the guard's watchdog, and whose session then worked on: a WARNING, not a failure
+  // (operator's decision, 2026-10-06, as for a boot stall the guard recovered from). Once per session only: a second
+  // hang in the same session fails it. The recovered call is then left out of the timing checks below.
+  const isHang = (b) => !b.ok && /The sandbox stopped responding/.test(b.error ?? "");
+  const hangs = bash.filter(isHang);
+  const recovered = hangs.length === 1 && bash.slice(bash.indexOf(hangs[0]) + 1).some((b) => b.ok) ? hangs[0] : null;
+  const judged = recovered ? bash.filter((b) => b !== recovered) : bash;
+  const failed = judged.find((b) => !b.ok);
   // A bash call that was asked for and never answered: the sandbox hung under it (seen live: a guest at 100% CPU).
   const answered = new Set(events.filter((e) => e.type === "action.result").map((e) => e.data?.result?.callId));
   const hung = [...requested.entries()].find(([id]) => !answered.has(id));
@@ -237,29 +254,33 @@ export function verdictOf(events, calledAt, { steps = STEPS, maxStartS = MAX_STA
     const text = failed.error ?? "bash did not print its marker";
     const retried = bash.slice(bash.indexOf(failed) + 1).some((b) => b.ok) ? " (a later call worked)" : "";
     if (/^Waiting for a free sandbox/.test(text)) [kind, verdict] = ["no-free-sandbox", `${text.slice(0, 160)}${retried}`];
-    else if (/The sandbox stopped responding/.test(text)) [kind, verdict] = ["watchdog", `a guest hung and the guard answered after ${secs(failed.ms)} s and replaced it${retried}`];
+    else if (/The sandbox stopped responding/.test(text))
+      [kind, verdict] = ["watchdog", hangs.length > 1 ? `${hangs.length} guests hung in one session (the watchdog replaced each)${retried}` : `a guest hung and the guard answered after ${secs(failed.ms)} s and replaced it${retried}`];
     else [kind, verdict] = ["sandbox", text];
   }
   else if (hung) [kind, verdict] = ["sandbox", `a bash call never returned: the sandbox hung under \`${hung[1].command.slice(0, 40)}\` (reading stopped: ${why})`];
   else if (startOwnMs > maxStartS * 1000) [kind, verdict] = ["slow-start", `started ${secs(startMs)} s after it was called (limit ${maxStartS} s${opened ? `, of which ${secs(opened.waitedMs)} s waiting for a sandbox` : ""})`];
-  else if (bash.some((b) => b.ranMs !== undefined && b.ranMs > maxRunS * 1000)) {
-    const b = bash.find((x) => x.ranMs !== undefined && x.ranMs > maxRunS * 1000);
+  else if (judged.some((b) => b.ranMs !== undefined && b.ranMs > maxRunS * 1000)) {
+    const b = judged.find((x) => x.ranMs !== undefined && x.ranMs > maxRunS * 1000);
     [kind, verdict] = ["slow-bash", `a bash \`echo\` RAN ${secs(b.ranMs)} s in its sandbox (limit ${maxRunS} s, after ${secs(b.waitedMs)} s waiting): the sandbox was stuck under it`];
-  } else if (bash.some((b) => b.waitedMs !== undefined && b.waitedMs > maxWaitS * 1000)) {
-    const b = bash.find((x) => x.waitedMs !== undefined && x.waitedMs > maxWaitS * 1000);
+  } else if (judged.some((b) => b.waitedMs !== undefined && b.waitedMs > maxWaitS * 1000)) {
+    const b = judged.find((x) => x.waitedMs !== undefined && x.waitedMs > maxWaitS * 1000);
     [kind, verdict] = ["slow-wait", `a bash call waited ${secs(b.waitedMs)} s for a sandbox (limit ${maxWaitS} s)`];
-  } else if (bash.some((b) => b.ranMs === undefined && b.ms > maxBashS * 1000))
-    [kind, verdict] = ["slow-bash", `a bash \`echo\` took ${secs(Math.max(...bash.filter((b) => b.ranMs === undefined).map((b) => b.ms)))} s (limit ${maxBashS} s)${timings ? " and the server said nothing of where the time went" : ": the sandbox was stuck under it, or it waited for a place (run with the server's lines: --judge)"}`];
-  else if (bash.length < steps) [kind, verdict] = ["inconclusive", `the model made ${bash.length} of ${steps} bash call(s) (${last?.type ?? why})`];
+  } else if (judged.some((b) => b.ranMs === undefined && b.ms > maxBashS * 1000))
+    [kind, verdict] = ["slow-bash", `a bash \`echo\` took ${secs(Math.max(...judged.filter((b) => b.ranMs === undefined).map((b) => b.ms)))} s (limit ${maxBashS} s)${timings ? " and the server said nothing of where the time went" : ": the sandbox was stuck under it, or it waited for a place (run with the server's lines: --judge)"}`];
+  else if (judged.length < steps) [kind, verdict] = ["inconclusive", `the model made ${bash.length} of ${steps} bash call(s) (${last?.type ?? why})`];
   if (kind === "ok") {
     const queued = bash.filter((b) => b.waitedMs >= 1_000).map((b) => secs(b.waitedMs));
     if (queued.length || opened) verdict = `ok (waited for a sandbox: ${[...(opened ? [`${secs(opened.waitedMs)} s to open`] : []), ...queued.map((q) => `${q} s`)].join(", ")})`;
   }
+  const warning = kind === "ok" && recovered ? `a guest hung; the watchdog stopped it after ${secs(recovered.ms)} s and a later call in the session worked` : null;
+  if (warning) verdict = `${verdict} WARNING: ${warning}`;
   return {
     startS: secs(startMs),
     bash: bash.map((b) => ({ ok: b.ok, s: secs(b.ms), ...(b.waitedMs !== undefined ? { waitedS: secs(b.waitedMs), ranS: secs(b.ranMs) } : {}), ...(b.error ? { error: b.error.slice(0, 200) } : {}) })),
     kind,
     verdict,
+    ...(warning ? { warning } : {}),
   };
 }
 
@@ -305,6 +326,7 @@ function selfTest() {
   const ok = (s, id, stdout) => ev(s, "action.result", { result: { callId: id, toolName: "bash", output: { exitCode: 0, stdout, stderr: "" } } });
   const fail = (s, id, message) => ev(s, "action.result", { error: { code: "ACTION_RESULT_FAILED", message }, result: { callId: id, toolName: "bash", output: message } });
   const dead = (s, id) => ev(s, "action.result", { error: { code: "ACTION_RESULT_FAILED", message: 'runtime error: no agent socket found for sandbox "eve-sbx-ses-e148"' }, result: { callId: id, toolName: "bash", output: 'runtime error: no agent socket found for sandbox "eve-sbx-ses-e148"' } });
+  const HANG = "The sandbox stopped responding (nothing came back from it for 60 s), so this command was stopped and the sandbox is being restarted. Run the command again. Files from earlier steps are kept.";
   const cases = [
     ["two steps, both work", [ev(2, "session.started"), req(6, "a", "echo SBX-T0K0-1"), ok(6.1, "a", "SBX-T0K0-1\n"), req(20, "b", "echo SBX-T0K0-2"), ok(20.1, "b", "SBX-T0K0-2\n"), ev(25, "session.completed")], "ok"],
     // recorded on the first self-hosted server, 2026-10-05 19:30, timings kept
@@ -316,7 +338,10 @@ function selfTest() {
     ["an echo that took 304 s (a guest stuck, then back)", [ev(9, "session.started"), req(44, "a", "echo SBX-T2K1-1"), ok(348, "a", "SBX-T2K1-1\n"), req(360, "b", "echo SBX-T2K1-2"), ok(360.1, "b", "SBX-T2K1-2\n")], "slow-bash"],
     ["a bash call that never returns (a hung guest)", [ev(12, "session.started"), ev(14, "step.started"), req(48, "a", "echo SBX-T0K1-1")], "sandbox"],
     // mold_v1-190, the guard's plain answers
-    ["a hung guest answered by the watchdog, the model's retry works", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(87, "a", "The sandbox stopped responding (nothing came back from it for 60 s), so this command was stopped and the sandbox is being restarted. Run the command again. Files from earlier steps are kept."), req(95, "c", "echo SBX-T0K0-1"), ok(99, "c", "SBX-T0K0-1\n"), req(110, "b", "echo SBX-T0K0-2"), ok(110.1, "b", "SBX-T0K0-2\n")], "watchdog"],
+    ["a hung guest answered by the watchdog, the model's retry works", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(87, "a", "The sandbox stopped responding (nothing came back from it for 60 s), so this command was stopped and the sandbox is being restarted. Run the command again. Files from earlier steps are kept."), req(95, "c", "echo SBX-T0K0-1"), ok(99, "c", "SBX-T0K0-1\n"), req(110, "b", "echo SBX-T0K0-2"), ok(110.1, "b", "SBX-T0K0-2\n")], "ok+warning"],
+    ["a hung guest answered by the watchdog and nothing worked after it: watchdog (a failure)", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), ok(6.1, "a", "SBX-T0K0-1\n"), req(10, "b", "echo SBX-T0K0-2"), fail(91, "b", HANG)], "watchdog"],
+    ["two guests hung in one session, each recovered: watchdog (a failure)", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(87, "a", HANG), req(95, "c", "echo SBX-T0K0-1"), ok(99, "c", "SBX-T0K0-1\n"), req(110, "b", "echo SBX-T0K0-2"), fail(191, "b", HANG), req(195, "d", "echo SBX-T0K0-2"), ok(196, "d", "SBX-T0K0-2\n")], "watchdog"],
+    ["a recovered hang, then another call that took 70 s: still slow-bash", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(87, "a", HANG), req(95, "c", "echo SBX-T0K0-1"), ok(99, "c", "SBX-T0K0-1\n"), req(110, "b", "echo SBX-T0K0-2"), ok(180, "b", "SBX-T0K0-2\n")], "slow-bash"],
     ["no free sandbox within the bounded wait", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(186, "a", "Waiting for a free sandbox: all 2 sandboxes this server runs at once are in use, and none came free within 180 s. Nothing was run. Try again in a minute or two.")], "no-free-sandbox"],
   ];
   // mold_v1-190 follow-up: the same calls judged with the guard's timing lines (recorded 2026-10-06, 12:00-12:05)
@@ -330,6 +355,24 @@ function selfTest() {
     ["an echo that RAN 92 s in its sandbox: slow-bash", queued85, [line(104, "timing: a command (session S1, …k) waited 0.0 s for its sandbox and ran 92.0 s")], "slow-bash"],
     ["a call that waited 250 s for a place: slow-wait", queued85, [line(104, "timing: a command (session S1, …k) waited 250.0 s for its sandbox and ran 0.1 s")], "slow-wait"],
     ["started 65 s late, of which 62 s opening its sandbox: ok", [ev(65, "session.started"), req(70, "a", "echo SBX-1"), ok(70.1, "a", "SBX-1\n"), req(80, "b", "echo SBX-2"), ok(80.1, "b", "SBX-2\n")], [line(64, "timing: a sandbox (session S1, …k) opened after 61.7 s")], "ok"],
+    ["eve's own `agent` subagent on the root's sandbox: a 100 s echo whose sandbox opened FOR it after 100.5 s: ok (2026-10-06 17:01)",
+      [ev(0.8, "session.started"), req(20.5, "a", "echo SBX-1"), ok(120.6, "a", "SBX-1\n"), req(130, "b", "echo SBX-2"), ok(185, "b", "SBX-2\n")],
+      [line(120, "timing: a sandbox (session S1, …k-wrun_ROOT-__root__) opened after 100.5 s"), line(184, "timing: a sandbox (session S1, …k-wrun_ROOT-__root__) opened after 54.8 s")], "ok"],
+    ["the same calls with their opens on ANOTHER session's line: still slow-bash",
+      [ev(0.8, "session.started"), req(20.5, "a", "echo SBX-1"), ok(120.6, "a", "SBX-1\n"), req(130, "b", "echo SBX-2"), ok(185, "b", "SBX-2\n")],
+      [line(120, "timing: a sandbox (session S2, …k-wrun_ROOT-__root__) opened after 100.5 s")], "slow-bash"],
+    ["an open that began long before the call (a step-start open) is not that call's wait",
+      [ev(0.8, "session.started"), req(100, "a", "echo SBX-1"), ok(170, "a", "SBX-1\n"), req(175, "b", "echo SBX-2"), ok(175.1, "b", "SBX-2\n")],
+      [line(100, "timing: a sandbox (session S1, …k) opened after 60 s")], "slow-bash"],
+    ["a recovered hang, then a call that RAN 92 s (no watchdog): slow-bash",
+      [ev(1, "session.started"), req(5, "a", "echo SBX-1"), fail(85, "a", HANG), req(90, "c", "echo SBX-1"), ok(90.1, "c", "SBX-1\n"), req(100, "b", "echo SBX-2"), ok(192, "b", "SBX-2\n")],
+      [line(85, "timing: a command (session S1, …k) waited 0 s for its sandbox and ran 80 s"), line(192, "timing: a command (session S1, …k) waited 0 s for its sandbox and ran 92 s")], "slow-bash"],
+    ["a recovered hang, then a call that waited 250 s: slow-wait",
+      [ev(1, "session.started"), req(5, "a", "echo SBX-1"), fail(85, "a", HANG), req(90, "c", "echo SBX-1"), ok(90.1, "c", "SBX-1\n"), req(100, "b", "echo SBX-2"), ok(350.2, "b", "SBX-2\n")],
+      [line(85, "timing: a command (session S1, …k) waited 0 s for its sandbox and ran 80 s"), line(350, "timing: a command (session S1, …k) waited 250 s for its sandbox and ran 0.1 s")], "slow-wait"],
+    ["the 17:15 run (lodr-filings, turn 2): hang recovered, retry waited 98 s: ok with a WARNING",
+      [ev(3.5, "session.started"), req(9, "a", "echo SBX-1"), fail(89, "a", HANG), req(95, "c", "echo SBX-1"), ok(193.4, "c", "SBX-1\n"), req(200, "b", "echo SBX-2"), ok(208.4, "b", "SBX-2\n")],
+      [line(89, "timing: a command (session S1, …k) waited 0 s for its sandbox and ran 80 s"), line(193, "timing: a command (session S1, …k) waited 98.3 s for its sandbox and ran 0.1 s"), line(208, "timing: a command (session S1, …k) waited 8.3 s for its sandbox and ran 0.1 s")], "ok+warning"],
     ["started 65 s late with no sandbox wait to explain it: slow-start", [ev(65, "session.started"), req(70, "a", "echo SBX-1"), ok(70.1, "a", "SBX-1\n"), req(80, "b", "echo SBX-2"), ok(80.1, "b", "SBX-2\n")], [], "slow-start"],
   ];
   for (const [what, events, lines, want] of judged) {
@@ -337,16 +380,18 @@ function selfTest() {
     const got = verdictOf(events, T0, { steps: 2, maxStartS: 60, maxBashS: 60, maxWaitS: 240, maxRunS: 90, why: "until", timings });
     cases.push([`judged: ${what}`, null, want, got]);
   }
+  // "ok+warning": ok, with a warning; plain "ok": ok and no warning.
+  const matches = (got, want) => (want === "ok+warning" ? got.kind === "ok" && Boolean(got.warning) : got.kind === want && (want !== "ok" || !got.warning));
   let failed = 0;
   for (const [what, events, want, pre] of cases) {
     if (pre) {
-      const pass = pre.kind === want;
+      const pass = matches(pre, want);
       if (!pass) failed += 1;
       console.log(`  ${pass ? "ok  " : "FAIL"} ${what}: ${pre.kind}${pass ? "" : ` (expected ${want}; ${pre.verdict})`}`);
       continue;
     }
     const got = verdictOf(events, Date.parse("2026-10-05T19:30:00Z"), { steps: 2, maxStartS: 60, why: "timeout" });
-    const pass = got.kind === want;
+    const pass = matches(got, want);
     if (!pass) failed += 1;
     console.log(`  ${pass ? "ok  " : "FAIL"} ${what}: ${got.kind}${pass ? "" : ` (expected ${want}; ${got.verdict})`}`);
   }
@@ -406,6 +451,8 @@ else {
       `start delay s: min ${summary.startSeconds.min} p50 ${summary.startSeconds.p50} p90 ${summary.startSeconds.p90} max ${summary.startSeconds.max}; wall ${summary.wallSeconds}s`,
   );
   for (const [why, n] of Object.entries(reasons)) console.log(`  ${n} × ${why}`);
+  const warned = rows.filter((r) => r.warning);
+  if (warned.length) console.log(`  WARNING: ${warned.length} session(s) with a guest that hung and was recovered by the watchdog (not counted as a failure)`);
 }
 const pass = bad.length === 0 && ok.length > 0;
 console.log(`sandbox-load: ${pass ? "pass" : "fail"}`);

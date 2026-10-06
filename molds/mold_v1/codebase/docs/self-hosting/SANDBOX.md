@@ -250,7 +250,8 @@ failure. It starts test chats and real model calls, so run it where those are we
 verdicts on recorded event shapes, offline. Under the running cap, judge the run with the server's timing lines:
 `--rows-out rows.json` on the run, then `--judge rows.json --server-log <the agent API's journal lines>` judges each
 call's wait against `--max-wait-s` (240) and its run against `--max-run-s` (90), and a late start less the time its
-sandbox waited to open. `provision.py <app> --sandbox-load` does both.
+sandbox waited to open. `provision.py <app> --sandbox-load` does both. A guest that hung and was replaced by the watchdog is a warning when a later
+call in the same session worked; a hang with no recovery, or a second one in the same session, is a failure.
 
 ## Tests
 
