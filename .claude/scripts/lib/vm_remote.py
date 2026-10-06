@@ -2428,6 +2428,13 @@ echo "KERNEL_WARNINGS=$kernel"
 ps -eo pcpu=,args= 2>/dev/null | awk '/[m]sb sandbox --name eve-sbx-ses-/ { n++; if ($1 + 0 >= 90) hot++ } END { printf "RUNNING_VMS=%d\\nHOT_VMS=%d\\n", n, hot }'
 """, SINCE=str(int(since)), UNIT=S["unit"], HOME=home)
 
+def sandbox_timings_sh(S, since):
+    """READ-ONLY, as root on the server: the guard's own timing lines since `since` (where each slow call's time went)."""
+    return fill("""set -u
+iso="$(date -u -d "@@SINCE@" '+%Y-%m-%d %H:%M:%S UTC')"
+journalctl -u @UNIT@-api.service --since "$iso" --no-pager -o short-iso 2>/dev/null | grep -F '[sandbox] timing:' || true
+""", SINCE=str(int(since)), UNIT=S["unit"])
+
 def sandbox_facts_argv(S, since, shown=False):
     return ssh_argv(S, f"{S['sudo']}bash -c {shlex.quote(sandbox_facts_sh(S, since))}", shown)
 
@@ -2445,7 +2452,12 @@ def sandbox_load_verdict(rig_rc, facts):
         ok = False
         lines.append(f"{n('SOCKET_ERRORS')} sandbox call(s) failed on the server with 'no agent socket found' during the run: the deployed agent "
                      f"lacks the sandbox guard (agent/lib/sandbox-guard.ts in the mold), or the guard did not hold")
-    if n("BOOT_STALLS"):
+    if n("BOOT_STALLS") and n("BOOT_STALLS") <= n("GUARD_RETRIES") and not n("GUARD_GAVE_UP"):
+        # mold_v1-190 follow-up: the guard abandoned each at its boot deadline and started another, which worked. What
+        # it cost the call (about a minute) is inside that call's judged wait, so it is a warning here, not a failure.
+        lines.append(f"WARNING: {n('BOOT_STALLS')} of {n('SESSION_VMS')} sandbox VM(s) never reported ready (a guest stalled at boot); the guard "
+                     f"abandoned each at its deadline and started another that worked")
+    elif n("BOOT_STALLS"):
         ok = False
         lines.append(f"{n('BOOT_STALLS')} of {n('SESSION_VMS')} sandbox VM(s) started during the run never reported ready (a stalled boot)")
     if n("GUARD_GAVE_UP"):
@@ -2502,7 +2514,9 @@ def sandbox_load_remote(S, app, a, source, runner=real_runner, rig_runner=_run_r
         if not v.isdigit() or not 1 <= int(v) <= 20: raise Stop(f"{k} must be a whole number from 1 to 20, not {v!r}. Nothing was started.")
     rig = os.path.join(source, SANDBOX_RIG)
     org = ((app.get("workspace") or {}).get("org") or {}).get("org_id") or ""
-    argv = ["node", rig, "--turns", turns, "--per-turn", per, "--steps", steps]
+    rows_dir = tempfile.mkdtemp(prefix="sandbox-load-")
+    rows_file = os.path.join(rows_dir, "rows.json")
+    argv = ["node", rig, "--turns", turns, "--per-turn", per, "--steps", steps, "--rows-out", rows_file]
     if opt("--specialists", ""): argv += ["--specialists", opt("--specialists", "")]
     since = int(clock()) - 5
     if "--dry-run" in a:
@@ -2525,6 +2539,19 @@ def sandbox_load_remote(S, app, a, source, runner=real_runner, rig_runner=_run_r
             r = runner({"id": "sandbox-facts", "argv": sandbox_facts_argv(S, since), "timeout": 120})
             if r.returncode == 0: facts = parse_kv(r.stdout)
         except Stop: facts = {}
+    # mold_v1-190 follow-up: under the running cap a call's time is mostly time in line. The rig judges the recorded
+    # run again with the guard's own timing lines (`[sandbox] timing: ...`): each call's wait and its run, apart.
+    if os.path.isfile(rows_file) and S["host"] and os.path.isfile(key_path(S)):
+        try:
+            r = runner({"id": "sandbox-timings", "argv": ssh_argv(S, f"{S['sudo']}bash -c {shlex.quote(sandbox_timings_sh(S, since))}"), "timeout": 120})
+            if r.returncode == 0:
+                log_file = os.path.join(rows_dir, "server.log"); open(log_file, "w").write(r.stdout)
+                say(f"{S['app_id']}: the same run judged with the server's timing lines ({len([l for l in r.stdout.splitlines() if l.strip()])}): "
+                    f"each call's wait for a sandbox and its run, apart")
+                judged = rig_runner(["node", rig, "--judge", rows_file, "--server-log", log_file], child, 120)
+                if judged in (0, 1): rc = judged
+        except Stop: pass
+    shutil.rmtree(rows_dir, ignore_errors=True)
     ok, lines = sandbox_load_verdict(rc, facts)
     for l in lines: say(f"  {l}")
     say(f"sandbox-load {S['app_id']}: {'PASS' if ok else 'FAIL'}")

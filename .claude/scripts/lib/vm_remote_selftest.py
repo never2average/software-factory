@@ -845,6 +845,32 @@ def _sandbox_load(check, tmp):
         said = []
         rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--token-file", tf], src, runner=lambda step: CP(step["argv"], 255, "", "ssh: connect"), rig_runner=rig(0), env={}, say=said.append)
         check("sandbox-load: a server that cannot be read leaves the rig's result standing, and says so", rc == 0 and any("could not be read" in l for l in said), said)
+        # mold_v1-190 follow-up: the rig writes the run's rows, the server's own timing lines are read, and the rig judges
+        # the run again with them: an echo that waited 81 s in line and ran 3 s is not a stuck sandbox.
+        TIMING = "2026-10-06T12:02:30+00:00 h node[1]: [sandbox] timing: a command (session wrun_A, …k) waited 81.0 s for its sandbox and ran 3.1 s\n"
+        judged = []
+        def rig_then_judge(argv, env, timeout):
+            if "--judge" in argv:
+                judged.append((argv, open(argv[argv.index("--server-log") + 1]).read())); return 0
+            open(argv[argv.index("--rows-out") + 1], "w").write("{}"); return 1
+        def server2(step):
+            reads.append(step)
+            return CP(step["argv"], 0, TIMING if step["id"] == "sandbox-timings" else clean, "")
+        said = []
+        rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--token-file", tf], src, runner=server2, rig_runner=rig_then_judge, env={}, say=said.append)
+        tread = [x for x in reads if x["id"] == "sandbox-timings"]
+        check("sandbox-load: the run's rows are judged again with the server's timing lines; a call that only waited in line passes",
+              rc == 0 and said[-1].endswith("PASS") and judged and judged[-1][1] == TIMING and judged[-1][0][2:4] == ["--judge", judged[-1][0][3]]
+              and any("judged with the server's timing lines (1)" in l for l in said), (said, judged))
+        tsh = V.sandbox_timings_sh(S, 1_800_000_000)
+        check("sandbox-load: the timing read only reads (journalctl and grep), over ssh as the run's other reads",
+              tread and tread[-1]["argv"][0] == "ssh" and not re.search(r"\b(rm|kill|systemctl|mv|chmod|chown|tee)\b", tsh)
+              and "grep -F '[sandbox] timing:'" in tsh and "journalctl -u sf-" in tsh and "@1800000000" in tsh, tsh)
+        said = []
+        rc = V.sandbox_load_remote(S, app, ["--sandbox-load", "--token-file", tf], src, runner=server(clean.replace("BOOT_STALLS=0", "BOOT_STALLS=1").replace("GUARD_RETRIES=0", "GUARD_RETRIES=1")),
+                                   rig_runner=rig(0), env={}, say=said.append)
+        check("sandbox-load: a stalled boot the guard abandoned and retried is a warning, not a failure",
+              rc == 0 and any(l.strip().startswith("WARNING: 1 of 9 sandbox VM(s) never reported ready") for l in said), said)
     finally: V.key_path = orig
     # The read itself, run for real with bash against a fixture sandbox store and a stand-in journalctl.
     home = os.path.join(tmp, "sbx-home"); boxes = os.path.join(home, ".microsandbox", "sandboxes"); bin_ = os.path.join(tmp, "sbx-bin")
