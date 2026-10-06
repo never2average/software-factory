@@ -21,8 +21,13 @@
  *   - nobody can (the step runs on the platform's own identity — a scheduled refresh, a cron): fail at once, with
  *     the specialist's name and what it asked for, so the app says why instead of waiting out its budget.
  *
+ * A delegation handed over as "reports later" (the root's `subagents: { batch: "detach" }`, lib/detached-delegation.ts)
+ * is still out: its stand-in `action.result` settles nothing, and a turn that ends with one still out is not the end of
+ * the step either — its result comes back as a turn of its own, and that turn's reply is the step's value.
+ *
  * Pure: no fetch, no clock. scripts/test-specialist-handback.mjs feeds it the recorded streams.
  */
+import { isDetachedResult } from "./detached-delegation.ts";
 
 interface StepEvent {
   type?: string;
@@ -49,6 +54,7 @@ export type StepVerdict =
 
 export function createStepWatch() {
   const out = new Map<string, string>(); // callId → specialist
+  const later = new Set<string>(); // callIds handed over as "reports later", still out
   let ask: StepAsk | null = null;
   return {
     /** Specialists called and not handed back. */
@@ -63,6 +69,11 @@ export function createStepWatch() {
           return { kind: "open" };
         case "action.result": {
           const result = data.result as { callId?: unknown } | undefined;
+          if (typeof result?.callId === "string" && isDetachedResult(result)) {
+            if (out.has(result.callId)) later.add(result.callId);
+            return { kind: "open" };
+          }
+          if (typeof result?.callId === "string") later.delete(result.callId);
           if (typeof result?.callId === "string" && out.delete(result.callId) && out.size === 0) ask = null;
           return { kind: "open" };
         }
@@ -80,8 +91,9 @@ export function createStepWatch() {
           return { kind: "done" };
         case "turn.completed":
           // Only the PARK is not the end: a request is open and the specialist that made it has not handed back.
+          // Nor is a turn that ends with a delegation still out as "reports later": its result is still to come.
           // Any other completed turn ends the step, as it always has.
-          return ask && out.size > 0 ? { kind: "waiting-on-person", ask } : { kind: "done" };
+          return ask && out.size > 0 ? { kind: "waiting-on-person", ask } : later.size > 0 ? { kind: "open" } : { kind: "done" };
         default:
           return { kind: "open" };
       }

@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { displayText, extractAttachmentRefs, visibleText, type AttachmentRef } from "@/lib/chat-attachments";
 import { partStillWriting } from "@/lib/chat-turn-state";
+import { DETACHED_LABEL, DETACHED_NOTE, isDetachedOutput, isStoppedDelegation } from "@/lib/detached-delegation";
 import { isPreviewablePdfPath } from "@/lib/pdf-preview";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { ErrorBoundary } from "./error-boundary";
@@ -664,8 +665,14 @@ function AgentMessagePart({
         // A Stop discarded this delegation (eve emits nothing for it): settle the
         // tile instead of leaving it "Running" for ever.
         const stoppedAs = stoppedDelegations?.get(part.toolCallId);
+        // Handed over to the main agent as "reports later" (lib/detached-delegation.ts): its output is a stand-in, not a
+        // result. The real result (or "stopped") is written over it on this same card when it comes.
+        const reportsLater = part.state === "output-available" && isDetachedOutput(part.output);
+        const stoppedResult = part.state === "output-error" && isStoppedDelegation(part.errorText);
         const delegationStatus: { label: string; className: string } =
-          stoppedAs !== undefined && part.state !== "output-available" && part.state !== "output-error"
+          reportsLater
+            ? { label: DETACHED_LABEL, className: "bg-primary/10 text-primary" }
+            : stoppedResult || (stoppedAs !== undefined && part.state !== "output-available" && part.state !== "output-error")
             ? { label: "Stopped", className: "bg-muted text-muted-foreground" }
             : part.state === "output-available"
             ? { label: "Completed", className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" }
@@ -675,7 +682,7 @@ function AgentMessagePart({
                 ? { label: "Needs approval", className: "bg-amber-500/10 text-amber-600 dark:text-amber-400" }
                 : { label: "Running", className: "bg-primary/10 text-primary" };
         const delegationRunning =
-          stoppedAs === undefined && part.state !== "output-available" && part.state !== "output-error";
+          reportsLater || (stoppedAs === undefined && part.state !== "output-available" && part.state !== "output-error");
         return (
           <div className="not-prose mb-4 w-full overflow-hidden rounded-md border">
             <button
@@ -716,7 +723,7 @@ function AgentMessagePart({
             ) : null}
             {delegationRunning && !hasInputRequest ? (
               <p className="border-border/60 border-t px-3 py-1.5 text-2xs text-muted-foreground">
-                Working in the Control Panel — the main agent continues once it hands back.
+                {reportsLater ? DETACHED_NOTE : "Working in the Control Panel — the main agent continues once it hands back."}
               </p>
             ) : null}
             {hasInputRequest ? (
@@ -731,7 +738,7 @@ function AgentMessagePart({
                 />
               </div>
             ) : null}
-            {part.errorText ? (
+            {part.errorText && !stoppedResult ? (
               <p className="mx-3 mb-2 border-destructive/50 border-l-2 pl-2 text-destructive text-xs">
                 {part.errorText.length > 200 ? `${part.errorText.slice(0, 200)}…` : part.errorText}
               </p>

@@ -17,6 +17,8 @@
  *     <sessionId>:turn-control:<n>            the driver's control channel (other kinds are dropped today)
  *     <sessionId>:auth                        queued as an authorization callback for the next sign-in wait
  *     eve:<uuid>                              the continuation token (not resumable this way in 0.25.1: measured)
+ *     <childSessionId>:stop-parked            the eve patch (mold_v1-184): takes only { kind: "stop-parked" }
+ *     <inbox token>:detach-timer:<n>          the eve patch (mold_v1-184): takes only { kind: "detach-timer" }
  *
  * WHO LEGITIMATELY CALLS THEM. Nobody, in this app:
  *
@@ -47,6 +49,7 @@ export function callbackTokenKind(token: string | undefined): string {
   if (token.startsWith("eve:")) return "continuation";
   if (/:turn-control:\d+:inbox$/.test(token)) return "turn-inbox";
   if (/:turn-control:\d+$/.test(token)) return "turn-control";
+  if (/:detach-timer:\d+$/.test(token)) return "detach-timer";
   const suffix = /:([a-z][a-z-]*)$/.exec(token)?.[1];
   return suffix ? `:${suffix}` : "other";
 }

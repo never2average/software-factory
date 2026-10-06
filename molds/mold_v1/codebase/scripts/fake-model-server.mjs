@@ -72,6 +72,9 @@
  *                      fails). A root that receives the system's automatic hand-back (a stopped
  *                      specialist, agent/lib/specialist-handback.ts) answers `PARENT-TOLD: …` naming
  *                      who was stopped and who had finished. With no directive it answers PARENT-PLAIN.
+ *                      A root whose conversation ends in a detached delegation's late result (eve patch,
+ *                      `subagents: { batch: "detach" }`: the tool result of a synthetic `<call id>_result` call)
+ *                      answers `PARENT-LATE: <those results>`.
  *
  * `GET /__log` serves every decision with the time it was made (`at`, epoch ms), so a
  * rig can tell when the orchestrator was asked to continue — the moment a specialist's
@@ -178,6 +181,33 @@ function decideHandback(messages) {
     }
     return { text: `CHILD-RESULT ${child}`, delayMs: kind === "slow" || kind === "askslow" ? Number(mode?.[2] ?? 0) : 0 };
   }
+  // `[[hbq]]` / `[[hbq then=<specialist>:<mode>]]` (mold_v1-184 review): the root asks the person ITS OWN question
+  // (ask_question); once answered it calls `then` (if named) and, when that is back, answers
+  // `PARENT-AFTER-Q: <every tool result since the message>` — late results included.
+  const usersQ = messages.filter((m) => m.role === "user");
+  const lastUserQ = usersQ[usersQ.length - 1];
+  const q = /\[\[hbq(?: then=([a-z-]+)(?::([a-z]+(?:=\d+)?))?)?\]\]/.exec(textOf(lastUserQ?.content));
+  if (q) {
+    const after = messages.slice(messages.lastIndexOf(lastUserQ) + 1);
+    const calls = after.flatMap((m) => (m.role === "assistant" ? (m.tool_calls ?? []) : []));
+    const results = new Set(after.filter((m) => m.role === "tool").map((m) => m.tool_call_id));
+    const asked = calls.find((c) => c.function?.name === "ask_question");
+    if (!asked) return { tool: "ask_question", args: { prompt: "Which region should I use?", options: [{ id: "emea", label: "EMEA" }], allowFreeform: true } };
+    if (!results.has(asked.id)) return { text: "PARENT-WAITING" };
+    const then = q[1];
+    const thenCall = then ? calls.find((c) => c.function?.name === then) : undefined;
+    if (then && !thenCall) return { tool: then, args: { message: `HBMODE:${q[2] ?? "fast"}` } };
+    if (thenCall && !results.has(thenCall.id)) return { text: "PARENT-WAITING" };
+    return { text: `PARENT-AFTER-Q: ${after.filter((m) => m.role === "tool").map((m) => textOf(m.content).slice(0, 120)).join(" | ")}` };
+  }
+  // A detached delegation's late result (eve patch, mold_v1-184): the conversation ends in the tool result of the
+  // synthetic `<call id>_result` call. Answer `PARENT-LATE: <those results>`.
+  const isLate = (m) => m?.role === "tool" && /_result$/.test(String(m.tool_call_id ?? ""));
+  if (isLate(messages[messages.length - 1])) {
+    const late = [];
+    for (let i = messages.length - 1; i >= 0 && isLate(messages[i]); i--) late.unshift(textOf(messages[i].content).slice(0, 160));
+    return { text: `PARENT-LATE: ${late.join(" | ")}` };
+  }
   const users = messages.filter((m) => m.role === "user");
   const last = textOf(users[users.length - 1]?.content);
   if (last.includes(HB_HEADING)) {
@@ -186,13 +216,16 @@ function decideHandback(messages) {
   }
   const directive = /\[\[hb ([^\]]+)\]\]/.exec(last);
   if (!directive) return { text: "PARENT-PLAIN" };
-  const calls = directive[1].trim().split(/\s+/).map((pair) => {
+  // `parentdelay=<ms>`: the root's final reply takes that long (a model call still running when something else lands).
+  const tokens = directive[1].trim().split(/\s+/);
+  const parentDelay = Number(/^parentdelay=(\d+)$/.exec(tokens.find((t) => t.startsWith("parentdelay=")) ?? "")?.[1] ?? 0);
+  const calls = tokens.filter((t) => !t.startsWith("parentdelay=")).map((pair) => {
     const [name, mode = "fast"] = pair.split(":");
     return { tool: name, args: { message: `HBMODE:${mode}` } };
   });
   // Results that arrived after the directive: the tool messages that follow the last user message.
   const since = messages.slice(messages.lastIndexOf(users[users.length - 1]) + 1).filter((m) => m.role === "tool");
-  if (since.length >= calls.length) return { text: `PARENT-DONE: ${since.map((m) => textOf(m.content).slice(0, 120)).join(" | ")}` };
+  if (since.length >= calls.length) return { text: `PARENT-DONE: ${since.map((m) => textOf(m.content).slice(0, 120)).join(" | ")}`, delayMs: parentDelay };
   return { tools: calls };
 }
 

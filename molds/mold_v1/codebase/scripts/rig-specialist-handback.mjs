@@ -21,17 +21,23 @@
  * SHAPES (default: single,question,two,stopped,answered,apart,resume)
  *   single    one specialist, awaited. It answers; the main agent must continue.
  *   question  one specialist that asks the person a question; this script answers it; then as `single`.
- *   two       two specialists called in ONE step, one of which asks a question. While that one waits, the other's
- *             result is HELD — eve hands a step's delegations back together — which is reported, not failed. Once
- *             the question is answered both must reach the main agent together, once each.
+ *   two       two specialists called in ONE step, one of which asks a question. Without the eve patch the other's
+ *             result is HELD while that one waits — eve hands a step's delegations back together — which is reported,
+ *             not failed; with it (`subagents: { batch: "detach" }`) the other's result is handed over at once and the
+ *             asker reports later. Either way, once the question is answered both must have reached the main agent,
+ *             once each.
  *   stopped   one specialist, stopped on its own (`POST /eve/v1/session/<child>/cancel`, what the Control Panel's
- *             Stop does) while it works. The main agent must be TOLD and continue. On a build without the fix the
- *             specialist stops and the main thread waits for ever: this shape is the one that fails there.
+ *             Stop does) while it works. The main agent must be TOLD and continue: by the system's hand-back message
+ *             (#114), or — a `detachable` delegation, the eve patch — by eve itself, as the delegation's
+ *             SUBAGENT_STOPPED result, once and with no message. On a build with neither the specialist stops and the
+ *             main thread waits for ever: this shape is the one that fails there.
  *   answered  one specialist asks the person a question, the person answers, and the specialist is stopped while it
  *             works on. The main thread is in a different state here — eve parked it on the question, and its stream
  *             already says `turn.completed` — and it must be told and continue all the same.
- *   sibling   two specialists; one is stopped while the other still works. The stop must be REFUSED (409) with the
- *             reason, and the working one left alone. (Then the main thread is stopped, to leave nothing running.)
+ *   sibling   two specialists; one is stopped while the other still works. Without the eve patch the stop must be
+ *             REFUSED (409) with the reason, and the working one left alone. With it the stop is accepted and reported
+ *             into the batch, the other goes on as "reports later", untouched, and stopping the then idle main thread
+ *             stops it too, reported once. (Either way the main thread is stopped at the end: nothing left running.)
  *   failed    one specialist whose model call fails every time (scripted model only): the main agent must receive
  *             the failure as that delegation's result and continue.
  *   apart     (mold_v1-184) two independent pieces of work, one of which needs the PERSON's choice. eve hands a step's
@@ -41,7 +47,8 @@
  *             This script plays a person who takes a while: a specialist's question is answered only after
  *             --max-ms + 5 s (the main agent's own question at once). Pass when every specialist's result reached
  *             the main agent within --max-ms of that specialist finishing, and the main agent finished a reply.
- *             Scripted: the second specialist returns its question as its result instead of asking (`returns`).
+ *             Scripted: the second specialist ASKS, called in the same step as the first — the shape that failed on
+ *             the live server ("held behind a question"); with the eve patch the first's result is not held.
  *   resume    (mold_v1-184) as `stopped`, then the Control Panel's old "Resume": a message posted to the stopped
  *             specialist's own session on its own token. eve would start an unrelated conversation with it; the
  *             agent must refuse it (409, code specialist-session-not-addressable), start nothing, and send the main
@@ -207,7 +214,7 @@ async function untilCalled(sessionId, count) {
     timeoutMs: 180_000,
     until: (_e, all) => all.filter((e) => e.type === "subagent.called").length >= count || all.some((e) => e.type === "turn.failed" || (e.type === "turn.completed" && !all.some((x) => x.type === "subagent.called"))),
   });
-  const called = events.filter((e) => e.type === "subagent.called").map((e) => ({ callId: e.data.callId, name: e.data.name, child: e.data.childSessionId }));
+  const called = events.filter((e) => e.type === "subagent.called").map((e) => ({ callId: e.data.callId, name: e.data.name, child: e.data.childSessionId, detachable: e.data.detachable === true }));
   if (called.length < count) {
     const said = events.filter((e) => e.type === "message.completed").map((e) => String(e.data?.message ?? "")).pop() ?? "";
     fail(`the main agent delegated to ${called.length} specialist(s), not ${count} (${why}); it said: ${JSON.stringify(said.slice(0, 200))}`);
@@ -240,7 +247,14 @@ async function settle(sessionId, ok, ms) {
   }
 }
 
-const subagentResults = (events) => events.filter((e) => e.type === "action.result" && e.data?.result?.kind === "subagent-result");
+/**
+ * A delegation's "reports later" stand-in (the eve patch, `subagents: { batch: "detach" }`, mold_v1-184): an
+ * `action.result` whose output is `{ status: "running", childSessionId }`. It is not the delegation's result.
+ */
+const isStandIn = (e) => e?.data?.result?.output?.status === "running" && typeof e?.data?.result?.output?.childSessionId === "string" && e?.data?.result?.isError !== true;
+/** A delegation's RESULTS on the main thread (its stand-in is not one). */
+const subagentResults = (events) => events.filter((e) => e.type === "action.result" && e.data?.result?.kind === "subagent-result" && !isStandIn(e));
+const standIns = (events) => events.filter((e) => e.type === "action.result" && e.data?.result?.kind === "subagent-result" && isStandIn(e));
 /** A reply of the main agent's own that finished after index `from`. */
 function replyAfter(events, from) {
   let text = null;
@@ -281,7 +295,7 @@ const directed = {
   answered: `[[hb ${S1}:askslow=120000]]`,
   sibling: `[[hb ${S1}:slow=120000 ${S2}:slow=120000]]`,
   failed: `[[hb ${S1}:fail]]`,
-  apart: `[[hb ${S1}:fast ${S2}:returns]]`,
+  apart: `[[hb ${S1}:fast ${S2}:ask]]`,
   resume: `[[hb ${S1}:slow=120000]]`,
 };
 words.resume = words.stopped;
@@ -318,6 +332,47 @@ async function expectContinuation(shape, parent, called, restAt, extra = "") {
 
 const toldMessages = (events) => events.filter((e) => e.type === "message.received" && String(e.data?.message ?? "").startsWith(HEADING));
 
+/**
+ * Stop one specialist on its own and expect the main agent to hear of it: from eve itself when the delegation is
+ * detachable (the eve patch: its `SUBAGENT_STOPPED` result, as that delegation's tool result, once), from the system's
+ * hand-back message otherwise (#114, a deployment without the patch).
+ */
+const stopAndExpect = (shape, parent, child) => (child.detachable ? stopAndExpectReported(shape, parent, child) : stopAndExpectTold(shape, parent, child));
+
+/** A detachable delegation stopped on its own: eve reports it as the delegation's result, once; nobody sends a message. */
+async function stopAndExpectReported(shape, parent, child) {
+  const stopAt = Date.now();
+  const stop = await request("POST", `/eve/v1/session/${child.child}/cancel`, {});
+  if (stop.json?.status !== "accepted") fail(`${shape}: the specialist was not stopped (${stop.status} ${JSON.stringify(stop.json).slice(0, 160)})`);
+  const isStop = (e) => e.type === "action.result" && e.data?.result?.callId === child.callId && e.data?.result?.isError === true && /SUBAGENT_STOPPED/.test(JSON.stringify(e.data.result.output ?? ""));
+  const { events, verdict } = await settle(
+    parent.sessionId,
+    (all) => {
+      const at = all.findIndex(isStop);
+      return at >= 0 ? replyAfter(all, at) : null;
+    },
+    MAX_MS + 20_000,
+  );
+  const reported = events.filter(isStop);
+  if (reported.length === 0) {
+    const tail = events.slice(-3).map((e) => e.type).join(" → ");
+    fail(`${shape}: the specialist stopped and the main agent was told NOTHING — ${MAX_MS + 20_000} ms later its stream still ends ${tail}`);
+  }
+  if (!verdict) fail(`${shape}: the main agent was told the specialist stopped but did not finish a reply of its own`);
+  if (toldMessages(events).length) fail(`${shape}: a hand-back MESSAGE was sent as well as eve's own report (told twice)`);
+  if (stop.json?.handback !== undefined) fail(`${shape}: the stop answered handback=${JSON.stringify(stop.json.handback)} for a delegation eve reports itself`);
+  // Once: wait, count again; stop again, count again.
+  await sleep(4_000);
+  if ((await history(parent.sessionId)).filter(isStop).length !== 1) fail(`${shape}: the main agent was told more than once`);
+  const second = await request("POST", `/eve/v1/session/${child.child}/cancel`, {});
+  await sleep(3_000);
+  const after = await history(parent.sessionId);
+  if (after.filter(isStop).length !== 1 || toldMessages(after).length) fail(`${shape}: a second Stop told the main agent again`);
+  const lag = at(reported[0]) - stopAt;
+  if (lag > MAX_MS) fail(`${shape}: the main agent was told ${lag} ms after the stop (limit ${MAX_MS} ms)`);
+  return `eve reported the stop as the delegation's result ${lag} ms after it, once (a second Stop answered ${second.json?.status}); the main agent replied ${JSON.stringify(verdict.text.slice(0, 70))}`;
+}
+
 /** Stop one specialist on its own; the main agent must be told once, by the system, and finish a reply of its own. */
 async function stopAndExpectTold(shape, parent, child) {
   const stopAt = Date.now();
@@ -352,6 +407,32 @@ async function stopAndExpectTold(shape, parent, child) {
   const lag = at(told[0]) - stopAt;
   if (lag > MAX_MS) fail(`${shape}: the main agent was told ${lag} ms after the stop (limit ${MAX_MS} ms)`);
   return `told ${lag} ms after the stop, once (a second Stop answered ${second.json?.status}); the main agent replied ${JSON.stringify(verdict.text.slice(0, 70))}`;
+}
+
+/**
+ * `sibling` under per-result delegation (the eve patch): a lone stop is NOT refused — eve reports the stopped one into
+ * its batch, the other goes on as "reports later" (after the 10 s bound), untouched. Then the main thread, idle, is
+ * stopped: the specialist it handed over as "reports later" is stopped with it and reports that itself, once.
+ */
+async function siblingDetachable(parent, called) {
+  const [first, other] = called;
+  const stop = await request("POST", `/eve/v1/session/${first.child}/cancel`, {});
+  if (stop.json?.status !== "accepted") fail(`sibling: stopping one specialist while the other works answered ${stop.status} ${JSON.stringify(stop.json).slice(0, 160)}`);
+  const stopped = (callId) => (e) => e.type === "action.result" && e.data?.result?.callId === callId && /SUBAGENT_STOPPED/.test(JSON.stringify(e.data?.result?.output ?? ""));
+  const handed = await settle(parent.sessionId, (all) => (all.some(stopped(first.callId)) && standIns(all).some((e) => e.data.result.callId === other.callId) ? replyAfter(all, all.findIndex(stopped(first.callId))) : null), MAX_MS + 30_000);
+  if (!handed.verdict) fail(`sibling: the main agent did not get the stopped one's report and the other's "reports later" and reply (stream ends ${handed.events.slice(-3).map((e) => e.type).join(" → ")})`);
+  const otherRun = (await read(other.child, { quietMs: 1_500, timeoutMs: 20_000 })).events;
+  if (otherRun.some((e) => e.type === "turn.cancelled")) fail("sibling: the other specialist was cancelled by the lone stop");
+  // The main thread is idle now; stopping it must stop the "reports later" specialist too.
+  const mainStop = await request("POST", `/eve/v1/session/${parent.sessionId}/cancel`, {});
+  const otherStopped = await read(other.child, { timeoutMs: 30_000, until: (e) => e.type === "turn.cancelled" });
+  if (otherStopped.why !== "until") fail(`sibling: stopping the idle main thread (${JSON.stringify(mainStop.json)}) did not stop the specialist it handed over as "reports later"`);
+  const told = await settle(parent.sessionId, (all) => all.filter(stopped(other.callId)).length === 1 && replyAfter(all, all.findIndex(stopped(other.callId))), MAX_MS + 20_000);
+  if (!told.verdict) fail("sibling: the stopped \"reports later\" specialist's stop never reached the main agent");
+  await sleep(3_000);
+  const end = await history(parent.sessionId);
+  if (end.filter(stopped(first.callId)).length !== 1 || end.filter(stopped(other.callId)).length !== 1 || toldMessages(end).length) fail("sibling: a stop was reported more than once, or by a message");
+  return `a lone stop is accepted and reported into the batch; the other went on as "reports later", untouched; stopping the idle main thread (${mainStop.json?.status}, ${mainStop.json?.reportsLaterStopped ?? 0} stopped) stopped it, reported once`;
 }
 
 const shapes = {
@@ -395,6 +476,7 @@ const shapes = {
     await sleep(3_000);
     const before = await history(parent.sessionId);
     const held = subagentResults(before).length === 0;
+    const reportsLater = standIns(before).length > 0 && subagentResults(before).length > 0;
     const parked = before.filter((e) => e.type === "session.waiting").pop();
     const requests = rests[asker].last.data?.requests ?? [];
     const answered = await request("POST", `/eve/v1/session/${parent.sessionId}`, {
@@ -405,7 +487,17 @@ const shapes = {
     const rest = await read(called[asker].child, { timeoutMs: WORK_S * 1000, until: (e) => e.type === "session.completed" || e.type === "session.failed" });
     const done = rest.events[rest.events.length - 1];
     if (done?.type !== "session.completed") fail(`two: the asking specialist did not finish after its answer (${done?.type ?? rest.why})`);
-    return expectContinuation("two", parent, called, at(done), held ? "; while one waited on its question the other's result was held, as eve hands a step's delegations back together" : "");
+    return expectContinuation(
+      "two",
+      parent,
+      called,
+      at(done),
+      reportsLater
+        ? "; while one waited on its question the other's result was handed over at once, the asker as \"reports later\" (per-result delegation)"
+        : held
+          ? "; while one waited on its question the other's result was held, as eve hands a step's delegations back together"
+          : "",
+    );
   },
 
   async stopped() {
@@ -414,7 +506,7 @@ const shapes = {
     // Let it get to work, then stop the SPECIALIST alone — what the Control Panel's Stop on a specialist does.
     await read(called[0].child, { timeoutMs: 120_000, until: (e) => e.type === "step.started" || e.type === "reasoning.appended" || e.type === "message.appended" });
     await sleep(1_500);
-    return stopAndExpectTold("stopped", parent, called[0]);
+    return stopAndExpect("stopped", parent, called[0]);
   },
 
   async answered() {
@@ -435,7 +527,7 @@ const shapes = {
     if (resumed.events.some((e) => e.type === "session.completed")) fail("answered: the specialist finished before it could be stopped (make its work longer)");
     if (resumed.why !== "until") fail(`answered: the specialist did not resume after its answer (${resumed.why})`);
     await sleep(1_500);
-    return stopAndExpectTold("answered", parent, called[0]);
+    return stopAndExpect("answered", parent, called[0]);
   },
 
   async sibling() {
@@ -443,6 +535,7 @@ const shapes = {
     const called = await untilCalled(parent.sessionId, 2);
     await Promise.all(called.map((c) => read(c.child, { timeoutMs: 120_000, until: (e) => e.type === "turn.started" })));
     await sleep(1_500);
+    if (called[0].detachable) return siblingDetachable(parent, called);
     const stop = await request("POST", `/eve/v1/session/${called[0].child}/cancel`, {});
     try {
       if (stop.status !== 409) fail(`sibling: stopping one specialist while the other works answered ${stop.status} ${JSON.stringify(stop.json).slice(0, 120)}, not a refusal — the main thread would now wait for ever`);
@@ -525,7 +618,7 @@ const shapes = {
     const called = await untilCalled(parent.sessionId, 1);
     await read(called[0].child, { timeoutMs: 120_000, until: (e) => e.type === "step.started" || e.type === "reasoning.appended" || e.type === "message.appended" });
     await sleep(1_500);
-    const told = await stopAndExpectTold("resume", parent, called[0]);
+    const told = await stopAndExpect("resume", parent, called[0]);
     // What the old Resume sent: a message on the token the stopped specialist's session parks on.
     const own = await history(called[0].child, 1_500);
     const token = own.filter((e) => e.type === "session.waiting").pop()?.data?.continuationToken;

@@ -18,6 +18,11 @@ export default defineAgent({
   // Stream extended-thinking (reasoning) tokens on the gateway Claude models.
   // On Workers AI only when CLOUDFLARE_REASONING_EFFORT names a level. See model.ts.
   reasoning: agentReasoning(),
+  // Specialists called in one step report one at a time (mold_v1-184; patches/eve+0.25.1.patch, the readable source
+  // in scripts/eve-patch/): once one is back and another waits on the person's answer, or after 10 s, the main agent
+  // gets what is in and each one still out as "reports later"; that one's result arrives as its own tool result, in a
+  // turn of its own, when it finishes. docs/SPECIALIST_HANDBACK.md "Per-result delegation".
+  subagents: { batch: "detach" },
   // NOTE: eve 0.25 dropped limits.maxSubagentDepth (0.20 had it as
   // orchestrator -> specialist -> one more fan-out); depth is framework-managed
   // now. Token budgets via limits.* remain available if we want caps later.

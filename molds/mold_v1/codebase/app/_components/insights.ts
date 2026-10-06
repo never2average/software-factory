@@ -10,6 +10,7 @@ import { SUBAGENT_KEYS } from "./subagent-meta.generated.ts";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 // Under a profile that relabels the domains the agent's tools are called in its words (`get_company`) and their
 // results carry its keys (`companies`, `analystOwner`): recognise both, by the BASE name (agent-vocabulary.ts).
+import { isDetachedOutput, isDetachedResult } from "../../lib/detached-delegation.ts";
 import { baseNameAmong, fieldOf } from "../../agent/lib/agent-vocabulary.ts";
 
 const RECORD_TOOLS = ["list_customers", "get_customer", "list_followups", "trigger_workflow", "run_app"] as const;
@@ -18,6 +19,8 @@ export interface SubagentRun {
   name: string;
   childSessionId?: string;
   status: "running" | "done";
+  /** Handed over to the main agent as "reports later" (lib/detached-delegation.ts): still running, reports by itself. */
+  detached?: boolean;
   output?: string;
   activity: string[];
   /** The delegation tool part itself — carries a proxied approval/question
@@ -394,7 +397,9 @@ export function deriveInsights(messages: readonly { parts?: readonly unknown[] }
         state?: string;
       };
       if (part.type !== "dynamic-tool" || !part.toolName) continue;
-      const done = part.state === "output-available" || part.output != null || !!part.errorText;
+      // A delegation's "reports later" stand-in is output, not a result: that specialist is still working.
+      const reportsLater = part.state === "output-available" && isDetachedOutput(part.output);
+      const done = !reportsLater && (part.state === "output-available" || part.output != null || !!part.errorText);
 
       // Browser tool FAILURE → record WHY so the Control Panel can say what went
       // wrong (a failed browser_open otherwise just yields no live-view card and
@@ -448,7 +453,8 @@ export function deriveInsights(messages: readonly { parts?: readonly unknown[] }
               name: subagentName,
               childSessionId: childSessionIdOf(part as Record<string, unknown>),
               status: done ? "done" : "running",
-              output,
+              ...(reportsLater ? { detached: true } : {}),
+              output: reportsLater ? undefined : output,
               activity: brief ? [brief] : [],
               delegationPart: part,
             },
@@ -624,9 +630,21 @@ export function insightsReducer(state: Insights, ev: StreamEvent): Insights {
     }
     case "action.result": {
       const res = (d.result ?? {}) as Record<string, unknown>;
+      // A delegation's result (or its "reports later" stand-in, lib/detached-delegation.ts): the run's status.
+      let next = state;
+      if (res.kind === "subagent-result" && typeof res.callId === "string" && state.subagents.some((s) => s.callId === res.callId)) {
+        const reportsLater = isDetachedResult(res);
+        next = {
+          ...state,
+          subagents: state.subagents.map((s) =>
+            // Only a detached run is settled here; any other keeps eve's own signal (`subagent.completed`), as before.
+            s.callId !== res.callId ? s : reportsLater ? { ...s, detached: true } : s.detached ? { ...s, status: "done", detached: false } : s,
+          ),
+        };
+      }
       const tool = toolNameOf(res);
-      if (!tool) return state;
-      return applyToolResult(state, tool, (res.output ?? {}) as Record<string, unknown>);
+      if (!tool) return next;
+      return applyToolResult(next, tool, (res.output ?? {}) as Record<string, unknown>);
     }
     default:
       return state;

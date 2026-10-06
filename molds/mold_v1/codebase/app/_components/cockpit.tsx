@@ -38,6 +38,7 @@ import {
 import { defaultMessageReducer } from "eve/react";
 import type { EveMessage } from "eve/react";
 import { handbackStates, withSessionEpochs } from "@/lib/chat-turn-state";
+import { DETACHED_LABEL } from "@/lib/detached-delegation";
 import { SESSION_DELEGATION_HEADER, canMessageSession, delegationFromHeader, refusalText, runControl } from "@/lib/specialist-run-actions";
 import { AgentMessage } from "./agent-message";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -697,7 +698,8 @@ export function Cockpit({
             {selectedRun.status === "running" ? (
               <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 font-medium text-2xs text-emerald-600 dark:text-emerald-400">
                 <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                Running
+                {/* Handed over as "reports later" (lib/detached-delegation.ts): the main agent went on without it. */}
+                {selectedRun.detached ? DETACHED_LABEL : "Running"}
               </span>
             ) : (
               <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 font-medium text-2xs text-muted-foreground">

@@ -35,6 +35,16 @@ reader of a chat stream: `?chatSession=` links, shared threads, a guest's read-o
    are dropped by the receiver today. Any future control kind would not be.
 5. The continuation token (`eve:<uuid>`) was not resumable this way in 0.25.1 (measured: "not pending").
 
+The eve patch for per-result delegation (docs/EVE_PATCH.md, mold_v1-184) adds two more hooks. Both are closed here
+like the rest, and each also ignores every payload but its own, so neither callback route's payload can move it even
+where the routes are open (`npm run test:specialist-detach`, scenario `forgery`, against eve's open routes in a scratch
+app):
+
+6. **Stop a specialist waiting on its question** (`<childSessionId>:stop-parked`, only for a "reports later"
+   specialist). It accepts only `{ kind: "stop-parked" }`, which eve's own Stop sends.
+7. **The hand-over bound** (`<inbox token>:detach-timer:<n>`, one per wait). It accepts only `{ kind: "detach-timer" }`,
+   which the patch's own timer sends.
+
 ### Who legitimately calls them
 
 Nobody, in this app. The connection callback is the redirect target of an interactive connection's sign-in (auth

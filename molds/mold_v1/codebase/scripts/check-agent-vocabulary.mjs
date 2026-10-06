@@ -315,7 +315,10 @@ if (PACK) {
 // (mold_v1-184), on root-prompt wording only: the "Fan out" bullet in delegate-rules says specialists called in one
 // step return together, and five passages of prompt-core.md were tightened to keep the stable prompt under its word
 // budget (the publish rules, the missing-library rule, memory, browsers, "ask before expanding"). The same line edits
-// are in default-surface.txt, applied as one diff to both; no path, folder or any other line moved.
+// are in default-surface.txt, applied as one diff to both; no path, folder or any other line moved. And once more
+// (mold_v1-184, per-result delegation): that sentence keeps #121's advice (specialists called together MAY return
+// together; get the person's answer first or run that one alone) and adds how a "reports later" result arrives; the
+// same lines in both files.
 if (!PACK) {
   const pinned = render([["50-legacy-folders.json", LEGACY_FOLDERS_PIN]], ["--snapshot", "--no-results"]);
   const before = readFileSync(SURFACE_BEFORE, "utf8");

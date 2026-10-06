@@ -2,6 +2,7 @@ import { eveChannel } from "eve/channels/eve";
 import { jwtEcdsa, oidc, vercelOidc, vercelSubject } from "eve/channels/auth";
 import { compatEnv } from "../lib/compat-env.ts";
 import { sessionAuthForRequest } from "../lib/service-scope.ts";
+import { withSubagentBatch } from "../lib/subagent-batch-auth.ts";
 import { frontendSubjectSetting } from "../../lib/service-frontend-subject.ts";
 import { webOriginSetting } from "../../lib/web-origin.ts";
 import { guardSessionRoutes } from "../lib/session-guard.ts";
@@ -165,7 +166,8 @@ export default guardSessionRoutes(eveChannel({
   // workspace. The front-end names it in a header (lib/workflow-delegate.ts); it becomes the session's
   // `workspace_scope` attribute ONLY on a service principal, and is stripped from everyone else
   // (agent/lib/service-scope.ts).
-  onMessage: ({ eve }) => ({ auth: sessionAuthForRequest(eve.caller, eve.request.headers) }),
+  // A session a program opens (a workflow step, an app refresh) keeps eve's own batch: lib/subagent-batch.ts.
+  onMessage: ({ eve }) => ({ auth: withSubagentBatch(sessionAuthForRequest(eve.caller, eve.request.headers), eve.request.headers) }),
   // A SPECIALIST'S QUESTION OR APPROVAL NOTIFIES THE PERSON. eve proxies a delegated specialist's `input.requested`
   // onto this (the root's) stream through the channel's event handler and runs NO authored hook for it
   // (execution/subagent-event-proxy-step.js), so agent/hooks/notifications.ts never saw one: with the tab closed a

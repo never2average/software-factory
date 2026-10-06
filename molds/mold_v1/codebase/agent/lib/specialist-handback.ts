@@ -50,8 +50,19 @@
  *
  * Pure over an injected world (no eve import, no database): scripts/test-specialist-handback.mjs drives it with the
  * streams recorded from the real runtime, and the session guard (agent/lib/session-guard.ts) supplies the real one.
+ *
+ * DETACHABLE DELEGATIONS (mold_v1-184). Under the root's `subagents: { batch: "detach" }` (the patched eve, agent/agent.ts)
+ * a delegation's `subagent.called` says `detachable: true`: such a specialist reports home ITSELF, also when it is
+ * stopped — eve hands the main agent its `SUBAGENT_STOPPED` result as that delegation's tool result, into the waiting
+ * batch or, if the batch already went on without it ("reports later"), as a turn of its own, once. So stopping one is a
+ * plain cancel here: no turn is ended, no message is sent, no ledger row is written, and it is never refused. What this
+ * module does is only for delegations eve does not report (a session started before the patch, a remote agent, the
+ * experimental Workflow tool). And ending a waiting turn for one of those now also stops the main thread's
+ * "reports later" specialists (eve's cancel of a turn reaches them), so while any is still out such a lone stop is
+ * refused like a sibling at work.
  */
 import { buildHandbackMessage, handbackNonce, isHandbackMessage, type HandbackEntry } from "../../lib/handback-text.ts";
+import { detachedOutstanding } from "../../lib/detached-delegation.ts";
 
 export { HANDBACK_HEADING } from "../../lib/handback-text.ts";
 
@@ -200,6 +211,8 @@ export type StopPlan =
 export async function planStop(world: Pick<HandbackWorld, "history">, parentSessionId: string, childSessionId: string): Promise<StopPlan> {
   const parent = await world.history(parentSessionId);
   if (!parent) return { kind: "plain" };
+  // A detachable delegation reports its own stop (see the header): eve's cancel is all there is to do.
+  if (parent.some((e) => e?.type === "subagent.called" && e.data?.childSessionId === childSessionId && e.data?.detachable === true)) return { kind: "plain" };
   const out = outstandingDelegations(parent);
   const stopped = out.find((d) => d.childSessionId === childSessionId);
   const turnId = currentTurnId(parent);
@@ -218,6 +231,8 @@ export async function planStop(world: Pick<HandbackWorld, "history">, parentSess
   }
   const working = others.filter((o) => o.state.kind === "live").map((o) => o.delegation.name);
   const asking = others.filter((o) => o.state.kind === "asking").map((o) => o.delegation.name);
+  // "Reports later" specialists of any turn: ending this turn would stop them too.
+  for (const d of detachedOutstanding(parent)) if (d.childSessionId !== childSessionId) working.push(d.name);
   if (working.length + asking.length > 0) return { kind: "refuse", name: stopped.name, working, asking };
   return { kind: "hand-back", stopped, turnId, others };
 }

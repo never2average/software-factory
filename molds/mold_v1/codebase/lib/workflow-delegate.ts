@@ -22,6 +22,7 @@ import { SESSION_VISIBILITY_GRANT_HEADER } from "./session-token-kinds.ts";
 import { mintWorkspaceStepGrant } from "./auth-session.ts";
 import { bearerToken, isServiceSource, type ServiceBearer } from "./service-identity.ts";
 import { fill, speak, withCurrentToolNames } from "../agent/lib/agent-vocabulary.ts";
+import { SUBAGENT_BATCH_HEADER } from "./subagent-batch.ts";
 import { createStepWatch, waitingOnPersonMessage } from "./step-handback.ts";
 
 const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
@@ -258,6 +259,9 @@ export async function openStepSession(input: {
       "content-type": "application/json",
       authorization: `Bearer ${await bearerToken(input.bearer)}`,
       ...(input.orgId ? { [SERVICE_SCOPE_HEADER]: input.orgId } : {}),
+      // A program reads the main agent's LAST reply as the step's value: keep eve's own batch, so that reply is the
+      // whole answer, never a "reports later" addendum (lib/subagent-batch.ts).
+      [SUBAGENT_BATCH_HEADER]: "all",
       // A step belongs to its run, and a run is the workspace's: the run timeline opens every step's session for
       // whoever in the workspace is looking at it (to READ — lib/chat-gate.ts). The agent honours that only with a
       // grant signed here, server-side, for the person whose token creates the step (lib/session-token-kinds.ts).

@@ -308,6 +308,7 @@ import {
   type IndexedEvent,
   type TurnEvent,
 } from "@/lib/chat-turn-state";
+import { detachedOutstanding } from "@/lib/detached-delegation";
 import {
   deliveryId,
   isOwedKeyOf,
@@ -3439,6 +3440,17 @@ export function AgentChat({
     collectedRef.current = [];
     onReattach(cursor as AgentSession, [...merged, ...clientMarkers()] as AgentEvents);
   };
+  /**
+   * A specialist handed over as "reports later" (lib/detached-delegation.ts) brings its result back as a turn nobody in
+   * this tab started. Until it has, the server still owes this transcript that turn: keep a reader on the stream (its
+   * quiet is expected, `workingSpecialists`), so the result appears when it lands, not at the next send or reload.
+   * Only the READER counts it — the composer is not held for it.
+   */
+  const reportsLaterOwed = useMemo(
+    () => detachedOutstanding(mergedEvents as readonly TurnEvent[]).length > 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventCount],
+  );
   const attachVerdict = attachDecision({
     sessionId: attachId,
     storeBusy: isBusy,
@@ -3448,7 +3460,7 @@ export function AgentChat({
     maxFailures: ATTACH_BUDGET,
     // A Stop leaves a reader lingering briefly (see stopTurn): anything eve was
     // holding behind the stopped turn runs next and has to be read.
-    outstanding: outstanding.length + (lingering ? 1 : 0),
+    outstanding: outstanding.length + (lingering ? 1 : 0) + (reportsLaterOwed ? 1 : 0),
   });
   const shouldAttach = attachVerdict.attach;
   /**
@@ -3463,7 +3475,7 @@ export function AgentChat({
    * return or a new sign-in re-arms them already.
    */
   const stillOwed =
-    turnUnfinished(mergedEvents as readonly TurnEvent[]) || outstanding.length > 0;
+    turnUnfinished(mergedEvents as readonly TurnEvent[]) || outstanding.length > 0 || reportsLaterOwed;
   const rearmable =
     attachVerdict.reason === "open-failed" && stillOwed && !authExpired && !attachRevoked.has(attachKey);
   /**
@@ -4487,8 +4499,9 @@ export function AgentChat({
                       : "Your earlier message is waiting its turn on the server — its reply will appear here."
                   : specialistRunning || workingSpecialists.length > 0
                     ? specialistWorkingLine(
-                        workingSpecialists.filter((d) => !heldHandoffs.some((h) => h.callId === d.callId)).map((d) => d.name),
-                        workingSpecialists.filter((d) => heldHandoffs.some((h) => h.callId === d.callId)).map((d) => d.name),
+                        workingSpecialists.filter((d) => !d.detached && !heldHandoffs.some((h) => h.callId === d.callId)).map((d) => d.name),
+                        workingSpecialists.filter((d) => !d.detached && heldHandoffs.some((h) => h.callId === d.callId)).map((d) => d.name),
+                        workingSpecialists.filter((d) => d.detached).map((d) => d.name),
                       )
                     : attachLive
                       ? // A reader IS on the live stream: the words have to match

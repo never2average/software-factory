@@ -47,6 +47,7 @@ import {
   type SubagentCalledData,
 } from "./delegation-failures.ts";
 import { clearDelegationPark, markDelegationParked, recordFailedDelegation } from "./workflow-usage.ts";
+import { isDetachedResult } from "../../lib/detached-delegation.ts";
 
 /** The database writes a settled or parked delegation turns into (agent/lib/workflow-usage.ts). */
 export interface DelegationRunWriters {
@@ -90,6 +91,10 @@ export function delegationRunRecorder(
   const tracker = createDelegationTracker();
   const inTurn = (data: Record<string, unknown>) =>
     `${parentSessionId}\u0000${typeof data.turnId === "string" ? data.turnId : ""}`;
+  // A delegation handed over as "reports later" (lib/detached-delegation.ts) is not settled by its stand-in: it is
+  // still working, or parked on a question. Its real result comes in a LATER turn, so it is settled under the turn
+  // that called it.
+  const detached = new Map<string, string>();
   return async (event) => {
     const type = typeof event?.type === "string" ? event.type : "";
     if (!parentSessionId || !DELEGATION_EVENT_TYPES.has(type)) return;
@@ -102,7 +107,14 @@ export function delegationRunRecorder(
           await write.markDelegationParked(parked.name, parked.childSessionId, orgId);
         }
       } else if (type === "action.result") {
-        const settled = tracker.settled(inTurn(data), data as ActionResultData);
+        const callId = (data.result as { callId?: unknown } | undefined)?.callId;
+        if (isDetachedResult(data.result)) {
+          if (typeof callId === "string") detached.set(callId, inTurn(data));
+          return;
+        }
+        const calledIn = typeof callId === "string" ? detached.get(callId) : undefined;
+        if (typeof callId === "string") detached.delete(callId);
+        const settled = tracker.settled(calledIn ?? inTurn(data), data as ActionResultData);
         if (!settled) return;
         if (settled.failed) {
           // Filed at eve's own time for it: a replay of an old conversation must not date an old failure today.

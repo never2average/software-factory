@@ -13,9 +13,10 @@
  *   1. eve gives the main agent a step's specialists TOGETHER, and nothing the app can send reaches the main agent
  *      while it waits: a message posted to the main thread during the wait is accepted (200), emits nothing, and runs
  *      as a turn of its own only AFTER eve has delivered the batch. So an "early" hand-back of a finished result would
- *      arrive after eve's own delivery of the same result: a duplicate, and no sooner. The app therefore sends none;
- *      what it changes is the shape of the step (the root's delegation rule: get the person's answer or approval
- *      first, or run that specialist on its own), and this shows that a batch in which nobody asks holds nothing.
+ *      arrive after eve's own delivery of the same result: a duplicate, and no sooner. The app therefore sends none.
+ *      This app runs eve's own batch ("all"); the root agent runs `subagents: { batch: "detach" }` (the eve patch,
+ *      mold_v1-184), under which a finished result no longer waits behind a question — scripts/test-specialist-detach.mjs.
+ *      A batch in which nobody asks holds nothing either way.
  *   2. The Control Panel's "Resume" on a stopped specialist posted a message to the specialist's own session with its
  *      token. eve answered 200 and started a NEW, unrelated session; the specialist and the main thread got nothing.
  *      Shown here first, then the fix: the panel no longer offers it (lib/specialist-run-actions.ts) and the agent
@@ -218,9 +219,11 @@ try {
 
   const { renderRootInstructions } = await import("../agent/lib/root-instructions.ts");
   const prompt = renderRootInstructions();
+  // The root runs with `subagents: { batch: "detach" }` (mold_v1-184), but a chat started before that deploy (on Vercel)
+  // and every session a program opens keep eve's batch: the rule must be true under both.
   check(
-    "the root agent is told the rule: still fan out independent work, but get the person's answer or approval first, or run that specialist on its own",
-    /Fan out \*\*independent\*\* work in parallel/.test(prompt) && /Specialists called in one step return\s+together, so if one will need the person's answer or an approval, get that\s+first or run that specialist on its own\./.test(prompt),
+    "the root agent is told the rule, true under either batch: may return together (get the answer first or run it alone); one 'reports later' sends its result by itself",
+    /Fan out \*\*independent\*\* work in parallel/.test(prompt) && /Specialists called in one step may return\s+together, so if one will need the person's answer or an approval, get that\s+first or run it on its own\. One marked "reports later" sends its result to\s+you by itself: answer with what you have and do not call it again\./.test(prompt),
     prompt.slice(prompt.indexOf("## How to delegate"), prompt.indexOf("## How to delegate") + 1200),
   );
   const words = prompt.trim().split(/\s+/).length;
@@ -228,7 +231,7 @@ try {
   for (const file of ["agent/prompt-neutral.md", "agent/prompt-persona.md"]) {
     const text = readFileSync(join(ROOT, file), "utf8");
     const section = text.slice(text.indexOf("<!-- section: delegate-rules -->"), text.indexOf("<!-- section: memory-save -->"));
-    check(`…in both prompt variants (${file})`, /Specialists called in one step return\s+together/.test(section) && /run that specialist on its own/.test(section) && /pull context for three/.test(section));
+    check(`…in both prompt variants (${file})`, /may return\s+together/.test(section) && /run it on its own/.test(section) && /marked "reports later"/.test(section) && /pull context for three/.test(section));
   }
 
   /* ---- 2. "Resume" on a stopped specialist ----------------------------------------------------------------- */

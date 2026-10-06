@@ -7,6 +7,7 @@
     "#evals/*": "./evals/*"
   },
   "scripts": {
+    "postinstall": "patch-package --error-on-fail",
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
@@ -84,7 +85,7 @@
     "db:migrate:task-workflows": "node .migrate-task-workflow-service.mjs",
     "db:bootstrap": "node scripts/bootstrap-test-db.mjs --production",
     "build:eve": "node scripts/eve-build.mjs build",
-    "prebuild:eve": "npm run check:dataroom-folders",
+    "prebuild:eve": "npm run check:eve-patch && npm run check:dataroom-folders",
     "dev:eve": "node scripts/eve-build.mjs dev",
     "start:eve": "eve start",
     "test:cards": "playwright test",
@@ -95,7 +96,7 @@
     "db:push": "drizzle-kit push",
     "build:workflow-library": "node scripts/build-workflow-library.mjs",
     "build:skill-library": "node scripts/build-skill-library.mjs",
-    "prebuild": "npm run build:generated && npm run check:dataroom-folders && npm run build:pdfjs-assets",
+    "prebuild": "npm run check:eve-patch && npm run build:generated && npm run check:dataroom-folders && npm run build:pdfjs-assets",
     "predev": "npm run build:pdfjs-assets",
     "build:pdfjs-assets": "node scripts/copy-pdfjs-assets.mjs",
     "build:subagent-meta": "node scripts/gen-subagent-meta.mjs",
@@ -165,6 +166,9 @@
     "test:callback-routes": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-callback-routes.mjs",
     "check:callback-routes": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/check-callback-routes.mjs --self-test && node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/check-callback-routes.mjs",
     "test:specialist-batch": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-specialist-batch.mjs",
+    "test:specialist-detach": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-specialist-detach.mjs",
+    "test:detached-delegation": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-detached-delegation.mjs",
+    "test:eve-local-world-inline": "node scripts/test-eve-local-world-inline.mjs",
     "test:specialist-handback-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-specialist-handback-db.mjs",
     "rig:specialist-handback": "node scripts/rig-specialist-handback.mjs",
     "test:workspace-attention-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-workspace-attention-db.mjs",
@@ -232,7 +236,8 @@
     "test:empty-model-response": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-empty-model-response.mjs",
     "test:recovery-honesty": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-recovery-honesty.mjs",
     "test:model-output-budget": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-model-output-budget.mjs",
-    "test:vision": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-vision-tool.mjs"
+    "test:vision": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-vision-tool.mjs",
+    "check:eve-patch": "node scripts/check-eve-patch.mjs --self-test && node scripts/check-eve-patch.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",
@@ -258,7 +263,7 @@
     "docx-preview": "^0.3.7",
     "drizzle-orm": "^0.45.2",
     "drizzle-zod": "^0.8.3",
-    "eve": "^0.25.1",
+    "eve": "0.25.1",
     "exceljs": "^4.4.0",
     "imapflow": "^1.4.6",
     "jose": "^6.2.3",
@@ -290,6 +295,7 @@
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
     "drizzle-kit": "^0.31.10",
+    "patch-package": "8.0.1",
     "playwright": "^1.61.1",
     "typescript": "6.0.3"
   },

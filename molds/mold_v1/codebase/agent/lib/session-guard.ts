@@ -85,6 +85,7 @@ import { noticeDelegations } from "./session-lineage-stream.ts";
 import { candidateParents, scanForChildren } from "./session-lineage-backfill.ts";
 import { DELEGATION_EVENT_TYPES, delegationRunRecorder } from "./session-delegation-runs.ts";
 import { handBackStopped, planStop, refusalMessage, retryOwed, type HandbackOutcome, type HandbackWorld, type StreamEvent } from "./specialist-handback.ts";
+import { detachedOutstanding } from "../../lib/detached-delegation.ts";
 import { SESSION_DELEGATION_HEADER, SPECIALIST_MESSAGE_REFUSAL, SPECIALIST_MESSAGE_REFUSAL_CODE } from "../../lib/specialist-run-actions.ts";
 import { handbackLedger } from "./handback-ledger.ts";
 
@@ -522,6 +523,29 @@ async function stopDelegatedSpecialist(
   const body = ((await answered.clone().json().catch(() => null)) as Record<string, unknown> | null) ?? { ok: true, sessionId };
   return Response.json({ ...body, handback: field }, { status: answered.status, headers: answered.headers });
 }
+/**
+ * A Stop on a main thread with no turn running (eve answered `no_active_turn`) while specialists it handed over as
+ * "reports later" still work: stop those. Answers eve's response as it was, plus how many were stopped. Never throws.
+ */
+async function stopDetachedWhenIdle(response: Response, args: RouteHandlerArgs, sessionId: string): Promise<Response> {
+  try {
+    const body = (await response.clone().json().catch(() => null)) as Record<string, unknown> | null;
+    if (body?.status !== "no_active_turn") return response;
+    const events = await historyReader(args, HANDBACK_READ_MS)(sessionId);
+    const out = events ? detachedOutstanding(events) : [];
+    if (out.length === 0) return response;
+    let stopped = 0;
+    for (const d of out) {
+      const status = (await args.getSession(d.childSessionId).cancel().catch(() => undefined)) as { status?: unknown } | undefined;
+      if (status?.status === "accepted") stopped++;
+    }
+    return Response.json({ ...body, reportsLaterStopped: stopped }, { status: response.status, headers: response.headers });
+  } catch (error) {
+    console.error("[session-guard] could not stop the main thread's reports-later specialists", { sessionId, error: error instanceof Error ? error.message : String(error) });
+    return response;
+  }
+}
+
 /** Reading a session's history whole before a specialist is stopped. Generous: a wrong plan is worse than a slow Stop. */
 const HANDBACK_READ_MS = 10_000;
 
@@ -930,6 +954,12 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
       }
     }
     const response = await route.handler(request, args);
+    // Stopping the main thread stops the specialists it handed over as "reports later" (mold_v1-184). With a turn
+    // running eve does it (its cancel reaches them); with none, nothing in eve would — so they are stopped here, and
+    // each reports "stopped" to the main agent itself (lib/detached-delegation.ts).
+    if (key === CANCEL_ROUTE && (!parentId || parentId === sessionId) && response.ok) {
+      return await stopDetachedWhenIdle(response, args, sessionId);
+    }
     if (key !== STREAM_ROUTE || !response.ok || !response.body) return response;
     let body = response.body as ReadableStream<Uint8Array>;
     // Every delegation this stream announces gets its child's owner on record before the announcement goes out.

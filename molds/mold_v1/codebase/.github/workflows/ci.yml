@@ -22,7 +22,8 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 13.5 minutes measured before test:specialist-detach grew to ~6 (mold_v1-184 review scenarios).
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +34,12 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      # eve 0.25.1 is patched (patches/eve+0.25.1.patch, applied by patch-package in postinstall; the readable source
+      # is scripts/eve-patch/). The build fails unless eve is pinned exactly, installed at that version, and carries
+      # exactly the recorded patch (mold_v1-184).
+      - name: eve is the version the patch is for, with the patch on it
+        run: npm run check:eve-patch
 
       # A checkout another job (or a local run) stamped with another deployment profile fails here, by name, before
       # anything builds from it (mold_v1-188). Every job also runs this last.
@@ -434,6 +441,21 @@ jobs:
         if: always()
         run: npm run check:callback-routes && npm run test:callback-routes
 
+      # "Reports later" as every reader of a main thread sees it (mold_v1-184), over streams recorded from the real
+      # runtime with the eve patch: a detached specialist's question stays answerable, it is never "lost", a program's
+      # step is not over until its late result, a Stop is not handed back twice, the run history is not cleared early;
+      # and the patch's own pure helpers deliver a late result exactly once.
+      - name: Specialists that report later (behavioural, recorded streams)
+        if: always()
+        run: npm run test:detached-delegation
+
+      # eve's local world (patched, mold_v1-191) refuses a second, queued start of a step another invocation runs inline,
+      # and accepts the runtime's backstop exactly at the inline-ownership lease boundary (counted from the inline start
+      # event's createdAt), a step's retry, and the lease setting clamped as the core clamps it. Controlled clock.
+      - name: The local world never starts a step twice, and never refuses the backstop
+        if: always()
+        run: npm run test:eve-local-world-inline
+
       # On the REAL eve runtime (`eve dev` of a two-specialist app written to a temp dir, a scripted model, eve's
       # in-process just-bash sandbox; no provider, no VM, about 30 s): eve hands a step's specialists back together,
       # a message sent to the main thread meanwhile runs only after that (so an early hand-back would be a duplicate),
@@ -442,6 +464,16 @@ jobs:
       - name: Specialists called together, and Resume on a stopped one (real eve runtime)
         if: always()
         run: npm run test:specialist-batch
+
+      # PER-RESULT DELEGATION (mold_v1-184), on the REAL eve runtime WITH patches/eve+0.25.1.patch (same setup, about
+      # 6 minutes): with `subagents: { batch: "detach" }` a finished specialist's result reaches the main agent while
+      # another waits on the person (at once) or is merely slow (after the bound); the other reports later as its own
+      # tool result, once, also when it is stopped (working or waiting on its question), also when it lands mid-turn or
+      # while the main agent waits on its own question, also when a second copy is sent; stopping the main thread stops
+      # it; a program's session keeps eve's batch; and an app without the setting is event for event unpatched eve.
+      - name: Specialists report one at a time (eve patch, real eve runtime)
+        if: always()
+        run: npm run test:specialist-detach
 
       # A parked approval survives a reload on purpose; one whose run has ENDED
       # must not, or it comes back as a live prompt and wedges the composer on a

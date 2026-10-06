@@ -9,6 +9,7 @@
  * functions decide when a user is told their reply is dead, so they are the
  * ones worth executing in a test.
  */
+import { isDetachedResult } from "./detached-delegation.ts";
 
 /** Only the shape we read. Events carry much more. */
 export interface TurnEvent {
@@ -1184,7 +1185,9 @@ export function deadInputRequestIds(events: readonly TurnEvent[]): ReadonlySet<s
         // own `action.result` names a different call. Without this, a child that
         // died or was answered elsewhere left a question that looked live for
         // ever, and (since these now hold the send gate) the composer with it.
-        if (data?.result?.kind === "subagent-result") {
+        // A "reports later" stand-in (lib/detached-delegation.ts) settles nothing: that specialist still works, and
+        // its question — proxied here, answered between turns — must stay answerable until its real result comes.
+        if (data?.result?.kind === "subagent-result" && !isDetachedResult(data.result)) {
           liveDelegations = Math.max(0, liveDelegations - 1);
           if (liveDelegations === 0) {
             for (const [requestId, req] of [...open]) if (req.proxied) kill(requestId);
@@ -1818,18 +1821,26 @@ export function stopTarget(events: readonly TurnEvent[]): {
   return {};
 }
 
-/** Delegations dispatched and not settled: `subagent.called` with no subagent-result for its call. */
-export function liveDelegations(events: readonly TurnEvent[]): { callId: string; name: string }[] {
-  const live = new Map<string, string>();
+/**
+ * Delegations dispatched and not settled: `subagent.called` with no subagent-result for its call. A delegation handed
+ * over as "reports later" (lib/detached-delegation.ts) is still live, marked `detached`: it works on while the main
+ * thread goes on, and reports by itself.
+ */
+export function liveDelegations(events: readonly TurnEvent[]): { callId: string; name: string; detached?: true }[] {
+  const live = new Map<string, { name: string; detached?: true }>();
   for (const raw of events) {
     const e = raw as { type?: string; data?: { callId?: unknown; name?: unknown; result?: { callId?: unknown; kind?: unknown } } };
     if (e?.type === "subagent.called" && typeof e.data?.callId === "string") {
-      live.set(e.data.callId, typeof e.data.name === "string" ? e.data.name : "specialist");
+      live.set(e.data.callId, { name: typeof e.data.name === "string" ? e.data.name : "specialist" });
     } else if (e?.type === "action.result" && typeof e.data?.result?.callId === "string") {
-      live.delete(e.data.result.callId);
+      const callId = e.data.result.callId;
+      const held = live.get(callId);
+      if (isDetachedResult(e.data.result)) {
+        if (held) live.set(callId, { name: held.name, detached: true });
+      } else live.delete(callId);
     }
   }
-  return [...live].map(([callId, name]) => ({ callId, name }));
+  return [...live].map(([callId, d]) => ({ callId, name: d.name, ...(d.detached ? { detached: true as const } : {}) }));
 }
 
 /**
@@ -1852,7 +1863,7 @@ export function awaitingSpecialists(input: {
   readonly events: readonly TurnEvent[];
   /** Questions/approvals on screen that nobody has answered yet. */
   readonly openRequests: number;
-}): { callId: string; name: string }[] {
+}): { callId: string; name: string; detached?: true }[] {
   if (input.openRequests > 0) return [];
   return liveDelegations(input.events);
 }
@@ -1868,10 +1879,15 @@ export function specialistDisplayName(name: string): string {
  * What the status line says while a specialist works and the main thread waits
  * for it — named, so a quiet stream reads as work in progress, not a stall.
  */
-export function specialistWorkingLine(names: readonly string[], finished: readonly string[] = []): string {
+export function specialistWorkingLine(names: readonly string[], finished: readonly string[] = [], reportsLater: readonly string[] = []): string {
   // `liveDelegations` says "specialist" when the event carried no name.
   const unique = [...new Set(names.map((n) => n.trim()).filter((n) => n && n !== "specialist"))];
   const done = [...new Set(finished.map((n) => n.trim()).filter((n) => n && n !== "specialist"))];
+  const later = [...new Set(reportsLater.map((n) => n.trim()).filter((n) => n && n !== "specialist"))];
+  // Handed over as "reports later" (lib/detached-delegation.ts): the main thread is not waiting on these.
+  if (later.length > 0 && unique.length === 0 && done.length === 0) {
+    return `${later.map(specialistDisplayName).join(", ")} ${later.length === 1 ? "is" : "are"} still working — ${later.length === 1 ? "its result comes" : "their results come"} back to the main agent by itself.`;
+  }
   if (done.length > 0 && unique.length > 0) {
     // Specialists called together hand back together (see `handbackStates`): say who is done and who is not, so
     // a finished specialist with nothing on the main thread reads as held, not lost.
@@ -1893,6 +1909,8 @@ export interface DelegationView {
   /** "running" until the parent's stream carries this delegation's result. */
   readonly status: string;
   readonly childSessionId?: string | null;
+  /** Handed over as "reports later" (lib/detached-delegation.ts): its result comes back by itself, never held, never lost. */
+  readonly detached?: boolean;
 }
 
 /** What a child's own stream says, as the Control Panel follows it. */
@@ -1922,12 +1940,23 @@ export interface ChildFeedView {
  *          hand-back did not land. Only this is offered the manual rescue.
  *
  * A delegation whose child cannot be seen (no feed yet) counts as not finished: never call a wait a loss.
+ *
+ * With the root's `subagents: { batch: "detach" }` (mold_v1-184) eve no longer holds a finished result behind a sibling
+ * for long: it hands the batch over once one result is in and another waits on the person (or after 10 s), each one
+ * still out as "reports later", and brings that one's result back as a turn of its own when it finishes. Such a
+ * delegation (`detached`) is neither held nor lost: it is `reportsLater`, and never offered the rescue.
  */
 export function handbackStates(
   delegations: readonly DelegationView[],
   feeds: Readonly<Record<string, ChildFeedView | undefined>>,
-): { lost: { callId: string; name: string; result: string }[]; held: { callId: string; name: string }[] } {
-  const waiting = delegations.filter((d) => d.status === "running");
+): {
+  lost: { callId: string; name: string; result: string }[];
+  held: { callId: string; name: string }[];
+  /** Handed over as "reports later": eve brings the result back as a turn of its own. Never offered the rescue. */
+  reportsLater: { callId: string; name: string }[];
+} {
+  const reportsLater = delegations.filter((d) => d.status === "running" && d.detached).map(({ callId, name }) => ({ callId, name }));
+  const waiting = delegations.filter((d) => d.status === "running" && !d.detached);
   const finished: { callId: string; name: string; result: string }[] = [];
   let unfinished = 0;
   for (const d of waiting) {
@@ -1936,8 +1965,8 @@ export function handbackStates(
     if (feed?.completed && result) finished.push({ callId: d.callId, name: d.name, result });
     else unfinished += 1;
   }
-  if (unfinished > 0) return { lost: [], held: finished.map(({ callId, name }) => ({ callId, name })) };
-  return { lost: finished, held: [] };
+  if (unfinished > 0) return { lost: [], held: finished.map(({ callId, name }) => ({ callId, name })), reportsLater };
+  return { lost: finished, held: [], reportsLater };
 }
 
 /** The browser-only marker a Stop leaves in the transcript (persisted with it, like `client.input.responded`). */

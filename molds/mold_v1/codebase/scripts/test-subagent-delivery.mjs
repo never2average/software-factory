@@ -605,7 +605,8 @@ console.log("\n10. eve 0.25.1 never hands `subagent.called` to an authored hook"
   check(`(eve ${version})`, typeof version === "string");
   check(
     "`subagent.called` is written by the action-dispatch step, through the channel adapter",
-    /callAdapterEventHandler\([^,]+,createSubagentCalledEvent\(/.test(dispatch),
+    // (fde-agent's eve patch wraps the event to mark a detachable delegation: `withDetachableFlag(<flag>,…)`, mold_v1-184)
+    /callAdapterEventHandler\([^,]+,(?:withDetachableFlag\([^,]+,)?createSubagentCalledEvent\(/.test(dispatch),
   );
   check("…which never dispatches authored hooks", !dispatch.includes("dispatchStreamEventHooks"));
   check("authored hooks are dispatched by the turn step's own events", steps.includes("dispatchStreamEventHooks"));
