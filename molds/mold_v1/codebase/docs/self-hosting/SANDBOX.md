@@ -16,6 +16,10 @@ both: the research prompt is rendered at build time and names the formatter's pa
 | `SANDBOX_CPUS` | `2` | Virtual CPUs per sandbox. `microsandbox` only. |
 | `SANDBOX_MEMORY_MIB` | `1024` | Memory per sandbox, in MiB. `microsandbox` only. |
 | `SANDBOX_DENY_SUBNETS` | none | Extra addresses or CIDR blocks to block, separated by commas or spaces. Added to the built-in list. |
+| `SANDBOX_MAX_RUNNING` | from the host | Sandboxes running at the same time. Unset (or `auto`): the smaller of host CPUs / `SANDBOX_CPUS` and (host memory - 2 GiB) / (`SANDBOX_MEMORY_MIB` + 256 MiB), at least 1: **2** on a 4-CPU, 8 GB server at the defaults. Further sandboxes wait for one to come free. `microsandbox` only. |
+| `SANDBOX_WAIT_S` | `180` | The longest a sandbox waits for a free one, in seconds. Past it the call is answered `Waiting for a free sandbox: …` and nothing runs. `microsandbox` only. |
+| `SANDBOX_QUEUE_MAX` | `32` | The most sandboxes waiting at once. One more is answered the same way at once. `microsandbox` only. |
+| `SANDBOX_STALL_S` | `60` | A command whose sandbox answers nothing for this many seconds is stopped with a plain error, and the sandbox is restarted for the next command. `0` turns this off. `microsandbox` only. |
 
 A value that is set and wrong (an unknown backend, `SANDBOX_CPUS=0`, a deny entry that is not a CIDR) stops the
 build with a message naming the setting. It never falls back to another backend.
@@ -183,11 +187,32 @@ The build's wrapper puts `guardSandboxBackend` (`agent/lib/sandbox-guard.ts`) in
 | booting | at most `floor(host CPUs / SANDBOX_CPUS)` VMs boot at the same time (2 on a 4-vCPU host at the default 2). The rest queue in order, and the server log says `[sandbox] waiting for a sandbox (…): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 1 waiting` |
 | a boot that hangs | abandoned after 60 s and started once more (`[sandbox] a sandbox did not start within 60 s …; starting another`). After two, the step is told `No sandbox started within 60 s, 2 times in a row …` |
 | memory | a VM is not booted while the host's available memory is below one sandbox plus 512 MiB, for at most 60 s; after that it is booted anyway, with a log line. It never refuses, so a main agent waiting on its specialists cannot deadlock on it |
+| running (mold_v1-190) | at most `SANDBOX_MAX_RUNNING` VMs run at the same time, counted from the start of a boot until the VM is stopped. One more waits in line (`[sandbox] waiting for a free sandbox (…): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 3 waiting`) for at most `SANDBOX_WAIT_S`, with at most `SANDBOX_QUEUE_MAX` waiting. Past either bound the call is answered `Waiting for a free sandbox: all 2 sandboxes this server runs at once are in use, and none came free within 180 s. Nothing was run. Try again in a minute or two.` That is the step's result, so the chat shows it under the specialist's bash call, and the model reads it too |
+| an idle VM (mold_v1-190) | while something waits, a VM with no command for 10 s (a main agent waiting on its specialists, a step that will never commit) is snapshotted and stopped to free its place, exactly as a commit would (`[sandbox] stopping an idle sandbox …`); its session's next command restores it with its files. A VM with no command for 10 minutes is stopped the same way even when nothing waits |
+| a command that never comes back (mold_v1-190) | after 20 s of a command, the guard asks its VM a trivial question (`true`) and keeps asking while the command runs. A VM that answers nothing for `SANDBOX_STALL_S` is hung: the command is answered at once with `The sandbox stopped responding (nothing came back from it for 60 s), so this command was stopped and the sandbox is being restarted. Run the command again. Files from earlier steps are kept.`, and the VM is snapshotted and stopped (eve's own stop, which force-kills after 10 s; if that does not end it within 30 s, microsandbox's kill by the labels eve gave the VM). The session's next command, in the same step or the next, gets a fresh VM. A long command on a VM that still answers is left alone |
 
 It changes nothing about the VMs themselves: the same CPUs, memory, network policy, templates, snapshots and names.
-Under `eve dev` (`EVE_DEV=1`, where eve leaves VMs running between steps) it evicts nothing. With `SANDBOX_BACKEND`
+Under `eve dev` (`EVE_DEV=1`, where eve leaves VMs running between steps) it evicts nothing and does not cap running
+VMs (they all stay up there by design); the watchdog still applies. With `SANDBOX_BACKEND`
 unset there is no wrapper and the guard is never loaded. Handed any backend that is not microsandbox (eve's `vercel()`
 included), it returns that backend untouched.
+
+### The host: nested KVM on a shared-CPU droplet (mold_v1-190)
+
+Measured on the first self-hosted server (DigitalOcean Basic, 4 shared vCPUs, 8 GB, nested KVM; 2 vCPUs and 1024 MiB
+per sandbox; eve 0.25.1; before the running cap), with `provision.py <app> --sandbox-load` (this rig) at rising
+concurrency. Up to 6 specialists at once (6 VMs) every sandbox worked. At 9 (3 x 3) and 12 (4 x 3), 3 to 4 guests hung
+each time: booted, ran eve's bootstrap, took the bash request and never ran it, for 5 to 14+ minutes. Steal time
+stayed low (mean 1 to 2 %) and more than 5.6 GB stayed free; the hangs began 10 to 20 s after nine VMs booted within
+10 s, with the host only 50 to 70 % busy, and each hung VM then spun one host CPU (the guest's vCPU 1, `fc_vcpu 1`,
+never halting; vCPU 0 idle). Every guest kernel warning on record (19) is on CPU 1 (`BUG: scheduling while atomic:
+kworker/1` or `swapper/1`; once `NETDEV WATCHDOG: CPU: 1: transmit queue 0 timed out`).
+
+So it is the host: a guest vCPU on nested KVM stops making progress when more vCPU threads contend than the host has
+CPUs. The cap keeps the vCPUs of running sandboxes within the host's CPUs; the watchdog bounds what is left. A host
+where KVM is not nested (bare metal) removes the layer the hang lives in; that was not measured here. A dedicated-CPU
+droplet removes the neighbours' share of the CPU (steal peaked at 40 % here) but is still nested. With `SANDBOX_CPUS=1` the default cap doubles, but the
+mold_v1-072 spike saw a 1-vCPU guest freeze the same way (5 of 12 runs), so 2 stays the default.
 
 ### Checking a running server
 
@@ -220,7 +245,10 @@ stopped VM has no agent socket and a snapshot is a copy of the disk, and a guest
 beside others. It drives the backend as eve does for each model step: open, run, commit. Without the guard it
 reproduces the server (a second step fails with `no agent socket found`, three VMs for one shared key, a stall when
 six boot at once). With the guard it checks every case in the table above, and that eve's `vercel()` backend comes
-back untouched.
+back untouched. The stand-in can also hang a guest after it has booted (`control.hangNext`: the command is taken and
+never answered, and the VM answers nothing after it, as eve-sbx-ses-5256b07f did): without the watchdog the command
+never returns; with it the command is answered within the bound and the same step's next command works on a fresh VM.
+Twelve sessions at once never have more than `SANDBOX_MAX_RUNNING` VMs up, and without the cap they do.
 
 Not covered by a test, and to be checked on the real host:
 

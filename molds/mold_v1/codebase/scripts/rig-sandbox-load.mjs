@@ -13,7 +13,9 @@
  *   bash      for each of its bash calls: ok, or the error text; and how long the call itself took
  *   verdict   ok when every bash call printed its marker; else the first failure ("no agent socket found" is the
  *             defect mold_v1-183: a later step reusing a sandbox that the end of the previous step had stopped; a call
- *             that never returned, or an `echo` slower than --max-bash-s, is a sandbox stuck under it)
+ *             that never returned, or an `echo` slower than --max-bash-s, is a sandbox stuck under it). The guard's own
+ *             plain answers (mold_v1-190) are named apart: `watchdog` (a guest hung, the call was answered within
+ *             SANDBOX_STALL_S and the VM replaced) and `no-free-sandbox` (the running cap's wait ran out)
  *
  *   inconclusive  the model did not do what it was asked (fewer bash calls, no delegation): says nothing about sandboxes
  *
@@ -179,7 +181,16 @@ export function verdictOf(events, calledAt, { steps = STEPS, maxStartS = MAX_STA
   let kind = "ok";
   let verdict = "ok";
   if (!started) [kind, verdict] = ["never-started", `never started (${why})`];
-  else if (failed) [kind, verdict] = ["sandbox", failed.error ?? "bash did not print its marker"];
+  else if (failed) {
+    // mold_v1-190: the guard's two plain answers are named apart. Both are failures of that call, but bounded ones:
+    // `watchdog` is a guest that hung and was replaced (before the guard, a call that never returned); `no-free-sandbox`
+    // is the running cap's bounded wait running out (the host was full for SANDBOX_WAIT_S).
+    const text = failed.error ?? "bash did not print its marker";
+    const retried = bash.slice(bash.indexOf(failed) + 1).some((b) => b.ok) ? " (a later call worked)" : "";
+    if (/^Waiting for a free sandbox/.test(text)) [kind, verdict] = ["no-free-sandbox", `${text.slice(0, 160)}${retried}`];
+    else if (/The sandbox stopped responding/.test(text)) [kind, verdict] = ["watchdog", `a guest hung and the guard answered after ${secs(failed.ms)} s and replaced it${retried}`];
+    else [kind, verdict] = ["sandbox", text];
+  }
   else if (hung) [kind, verdict] = ["sandbox", `a bash call never returned: the sandbox hung under \`${hung[1].command.slice(0, 40)}\` (reading stopped: ${why})`];
   else if (startMs > maxStartS * 1000) [kind, verdict] = ["slow-start", `started ${secs(startMs)} s after it was called (limit ${maxStartS} s)`];
   else if (bash.some((b) => b.ms > maxBashS * 1000)) [kind, verdict] = ["slow-bash", `a bash \`echo\` took ${secs(Math.max(...bash.map((b) => b.ms)))} s (limit ${maxBashS} s): the sandbox was stuck under it`];
@@ -213,6 +224,7 @@ function selfTest() {
   const ev = (s, type, data = {}) => ({ ...t(s), type, data });
   const req = (s, id, command) => ev(s, "actions.requested", { actions: [{ callId: id, toolName: "bash", input: { command } }] });
   const ok = (s, id, stdout) => ev(s, "action.result", { result: { callId: id, toolName: "bash", output: { exitCode: 0, stdout, stderr: "" } } });
+  const fail = (s, id, message) => ev(s, "action.result", { error: { code: "ACTION_RESULT_FAILED", message }, result: { callId: id, toolName: "bash", output: message } });
   const dead = (s, id) => ev(s, "action.result", { error: { code: "ACTION_RESULT_FAILED", message: 'runtime error: no agent socket found for sandbox "eve-sbx-ses-e148"' }, result: { callId: id, toolName: "bash", output: 'runtime error: no agent socket found for sandbox "eve-sbx-ses-e148"' } });
   const cases = [
     ["two steps, both work", [ev(2, "session.started"), req(6, "a", "echo SBX-T0K0-1"), ok(6.1, "a", "SBX-T0K0-1\n"), req(20, "b", "echo SBX-T0K0-2"), ok(20.1, "b", "SBX-T0K0-2\n"), ev(25, "session.completed")], "ok"],
@@ -224,6 +236,9 @@ function selfTest() {
     // recorded on the first self-hosted server, 2026-10-05 19:58: the guest took the request and spun at 100% CPU
     ["an echo that took 304 s (a guest stuck, then back)", [ev(9, "session.started"), req(44, "a", "echo SBX-T2K1-1"), ok(348, "a", "SBX-T2K1-1\n"), req(360, "b", "echo SBX-T2K1-2"), ok(360.1, "b", "SBX-T2K1-2\n")], "slow-bash"],
     ["a bash call that never returns (a hung guest)", [ev(12, "session.started"), ev(14, "step.started"), req(48, "a", "echo SBX-T0K1-1")], "sandbox"],
+    // mold_v1-190, the guard's plain answers
+    ["a hung guest answered by the watchdog, the model's retry works", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(87, "a", "The sandbox stopped responding (nothing came back from it for 60 s), so this command was stopped and the sandbox is being restarted. Run the command again. Files from earlier steps are kept."), req(95, "c", "echo SBX-T0K0-1"), ok(99, "c", "SBX-T0K0-1\n"), req(110, "b", "echo SBX-T0K0-2"), ok(110.1, "b", "SBX-T0K0-2\n")], "watchdog"],
+    ["no free sandbox within the bounded wait", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(186, "a", "Waiting for a free sandbox: all 2 sandboxes this server runs at once are in use, and none came free within 180 s. Nothing was run. Try again in a minute or two.")], "no-free-sandbox"],
   ];
   let failed = 0;
   for (const [what, events, want] of cases) {

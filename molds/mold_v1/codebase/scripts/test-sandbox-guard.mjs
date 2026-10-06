@@ -20,6 +20,12 @@
  *   - a boot that hangs is abandoned at the deadline and started again (seconds, not microsandbox's 180 s);
  *   - a bounded wait for memory, never a refusal;
  *   - under `eve dev` (EVE_DEV=1, eve keeps VMs running) the guard evicts nothing;
+ *   - (mold_v1-190) WITHOUT the watchdog a command sent to a guest that hung after booting never comes back; with it
+ *     the command is answered plainly within the bound, the VM is stopped (killed by its labels if it will not stop)
+ *     and the same step's next command gets a fresh VM with the step's files; a long command on a live VM is left
+ *     alone; twelve specialists at once never run more VMs than SANDBOX_MAX_RUNNING, and without the cap they do;
+ *     past SANDBOX_WAIT_S or SANDBOX_QUEUE_MAX a call is answered "Waiting for a free sandbox: ..." and nothing runs;
+ *     an idle VM is stopped to free its place for one that waits and comes back with its files;
  *   - SANDBOX_BACKEND=vercel: eve's vercel() backend (and any non-microsandbox one) is returned untouched, the same
  *     object.
  *
@@ -57,7 +63,8 @@ const { vercel } = await import("eve/sandbox/vercel");
 const lifecycle = await import(pathToFileURL(join(ROOT, "node_modules/eve/dist/src/execution/sandbox/bindings/microsandbox-lifecycle.js")).href);
 const { control } = await import(STANDIN);
 const { guardSandboxBackend, createSandboxPool, maxStartingFor } = await import(pathToFileURL(join(ROOT, "agent/lib/sandbox-guard.ts")).href);
-const { microsandboxSettings } = await import(pathToFileURL(join(ROOT, "agent/lib/sandbox-settings.ts")).href);
+const { microsandboxSettings, sandboxGuardSettings, maxRunningFor } = await import(pathToFileURL(join(ROOT, "agent/lib/sandbox-settings.ts")).href);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SETTINGS = microsandboxSettings({ SANDBOX_BACKEND: "microsandbox" });
 const TEMPLATE = "eve-sbx-tpl-test-root";
@@ -215,7 +222,7 @@ try {
     control.stallAbove = 2; // a guest started beside two booting ones never comes up
     control.relayTimeoutMs = 1_500;
     control.bootMs = 40;
-    const { backend, lines } = guarded(raw);
+    const { backend, lines } = guarded(raw, { maxRunning: 6 }); // the boot gate on its own: the running cap is tested below
     const sessions = Array.from({ length: 6 }, () => session());
     const outs = await Promise.all(sessions.map((s, i) => step(backend, appRoot, s, [`echo ok${i}`])));
     assert.deepEqual(outs, sessions.map((_, i) => [`ok${i}`]));
@@ -275,6 +282,191 @@ try {
     } finally {
       delete process.env.EVE_DEV;
     }
+  });
+
+  /* ---- mold_v1-190: the running cap, the bounded wait, the watchdog ------------------------------------------- */
+
+  const FAST = { checkAfterMs: 100, stallMs: 400, stopWaitMs: 300, housekeepMs: 25, parkIdleMs: 60 };
+  const hungAnswer = /^ERROR The sandbox stopped responding \(nothing came back from it for 0 s\), so this command was stopped and the sandbox is being restarted\. Run the command again\./;
+
+  await check("WITHOUT the watchdog (eve's binding as it ships) a command sent to a guest that hung after booting never comes back (eve-sbx-ses-5256b07f)", async () => {
+    const { appRoot, raw } = await world();
+    const s = session();
+    const h = await raw.create({ runtimeContext: { appRoot }, sessionKey: s.key, tags: { sessionId: s.id }, templateKey: TEMPLATE });
+    assert.equal((await h.session.run({ command: "echo booted" })).stdout.trim(), "booted");
+    control.hangNext = 1;
+    const outcome = await Promise.race([h.session.run({ command: "echo SBX-T0K0-1" }).then(() => "answered", () => "failed"), sleep(1_500).then(() => "still waiting")]);
+    assert.equal(outcome, "still waiting");
+    assert.equal(control.running().length, 1, "and the hung VM keeps running");
+  });
+
+  await check("the watchdog: a command whose VM answers nothing is answered plainly within the bound, the VM is stopped, and the SAME step's next command gets a fresh VM with the step's files", async () => {
+    const { appRoot, raw } = await world();
+    const { backend, lines } = guarded(raw, FAST);
+    const s = session();
+    const h = await backend.create({ runtimeContext: { appRoot }, sessionKey: s.key, tags: { sessionId: s.id }, templateKey: TEMPLATE });
+    assert.equal((await h.session.run({ command: "echo before >> notes.txt" })).exitCode, 0);
+    control.hangNext = 1;
+    const started = Date.now();
+    const answer = await h.session.run({ command: "echo SBX-T0K0-1" }).then((r) => r.stdout, (e) => `ERROR ${e.message}`);
+    const took = Date.now() - started;
+    assert.match(answer, hungAnswer);
+    assert.ok(took < 4_000, `answered after ${took} ms (bound: 100 ms before the check + 400 ms of silence; without the watchdog: never)`);
+    assert.equal(control.hung.length, 1);
+    for (let i = 0; i < 120 && control.running().includes(control.hung[0]); i++) await sleep(25);
+    assert.ok(!control.running().includes(control.hung[0]), "the hung VM was stopped");
+    assert.deepEqual((await h.session.run({ command: "cat notes.txt" })).stdout.trim(), "before", "the same step goes on, on a fresh VM, with its files");
+    s.state = await h.captureState();
+    assert.deepEqual(await step(backend, appRoot, s, ["echo next-step", "cat notes.txt"]), ["next-step", "before"]);
+    assert.ok(lines.some((l) => /^a sandbox stopped responding .*no answer for 0\.4 s during a command; stopping it/.test(l)), lines.join("\n"));
+  });
+
+  await check("the watchdog, through spawn(): the process's wait() is answered plainly too", async () => {
+    const { appRoot, raw } = await world();
+    const { backend } = guarded(raw, FAST);
+    const s = session();
+    const h = await backend.create({ runtimeContext: { appRoot }, sessionKey: s.key, tags: { sessionId: s.id }, templateKey: TEMPLATE });
+    await h.session.run({ command: "echo up" });
+    control.hangNext = 1;
+    // The real package hands back the stream at once and the wait hangs; the stand-in's exec hangs before it: either
+    // way the caller is answered plainly.
+    await assert.rejects(
+      h.session.spawn({ command: "echo spawned" }).then((proc) => proc.wait()),
+      /The sandbox stopped responding/,
+    );
+  });
+
+  await check("a hung VM whose runtime will not stop it politely is killed by the labels eve gave it", async () => {
+    const { appRoot, raw } = await world();
+    control.stopOfHungHangs = true;
+    const { backend, lines } = guarded(raw, FAST);
+    const s = session();
+    const h = await backend.create({ runtimeContext: { appRoot }, sessionKey: s.key, tags: { agent: "lodr-filings", channel: "eve", sessionId: s.id }, templateKey: TEMPLATE });
+    await h.session.run({ command: "echo up" });
+    control.hangNext = 1;
+    assert.match(await h.session.run({ command: "echo stuck" }).then(() => "", (e) => `ERROR ${e.message}`), hungAnswer);
+    for (let i = 0; i < 120 && control.running().includes(control.hung[0]); i++) await sleep(50);
+    assert.ok(!control.running().includes(control.hung[0]), "killed");
+    assert.ok(lines.some((l) => /did not stop on request: 1 VM\(s\) killed/.test(l)), lines.join("\n"));
+    assert.equal((await h.session.run({ command: "echo again" })).stdout.trim(), "again");
+  });
+
+  await check("a long command on a live VM is left alone: the VM answers the check, the command finishes", async () => {
+    const { appRoot, raw } = await world();
+    const pool = createSandboxPool();
+    const { backend } = guarded(raw, { ...FAST, pool });
+    assert.deepEqual(await step(backend, appRoot, session(), ["sleep 1.2", "echo done"]), ["", "done"]);
+    assert.equal(pool.hung, 0);
+  });
+
+  await check("SANDBOX_STALL_S=0 turns the watchdog off (a hung command then waits, as before)", async () => {
+    const { appRoot, raw } = await world();
+    const { backend } = guarded(raw, { ...FAST, stallMs: 0 });
+    const s = session();
+    const h = await backend.create({ runtimeContext: { appRoot }, sessionKey: s.key, tags: { sessionId: s.id }, templateKey: TEMPLATE });
+    await h.session.run({ command: "echo up" });
+    control.hangNext = 1;
+    const outcome = await Promise.race([h.session.run({ command: "echo x" }).then(() => "answered", () => "failed"), sleep(1_000).then(() => "still waiting")]);
+    assert.equal(outcome, "still waiting");
+  });
+
+  await check("the running cap: twelve specialists at once never have more than SANDBOX_MAX_RUNNING VMs up; all twelve get a working sandbox; the rest wait and say so", async () => {
+    const { appRoot, raw } = await world();
+    control.bootMs = 20;
+    const pool = createSandboxPool();
+    const { backend, lines } = guarded(raw, { ...FAST, pool });
+    const sessions = Array.from({ length: 12 }, () => session());
+    const outs = await Promise.all(sessions.map((s, i) => step(backend, appRoot, s, ["sleep 0.15", `echo SBX-${i}-1`]).then(async (first) => [...first, ...(await step(backend, appRoot, s, [`echo SBX-${i}-2`]))])));
+    assert.deepEqual(outs, sessions.map((_, i) => ["", `SBX-${i}-1`, `SBX-${i}-2`]));
+    assert.ok(control.peakRunning <= 2, `peak running VMs ${control.peakRunning}`);
+    assert.equal(pool.peakRunning, 2);
+    assert.ok(lines.some((l) => /^waiting for a free sandbox \(.*\): 2 of 2 running on this host \(4 CPUs, 2 per sandbox\); \d+ waiting$/.test(l)), lines.join("\n"));
+    assert.equal(pool.running, 0, "every place was handed back");
+  });
+
+  await check("WITHOUT the cap (SANDBOX_MAX_RUNNING as high as the sessions) the same twelve run more VMs at once than the host has CPUs for", async () => {
+    const { appRoot, raw } = await world();
+    control.bootMs = 20;
+    const { backend } = guarded(raw, { ...FAST, maxRunning: 12 });
+    await Promise.all(Array.from({ length: 12 }, () => step(backend, appRoot, session(), ["sleep 0.3"])));
+    assert.ok(control.peakRunning > 2, `peak running VMs ${control.peakRunning}`);
+  });
+
+  await check("the bounded wait: when no sandbox comes free in SANDBOX_WAIT_S the call is answered 'Waiting for a free sandbox: ...' and nothing runs", async () => {
+    const { appRoot, raw } = await world();
+    const { backend, lines } = guarded(raw, { ...FAST, maxRunning: 1, runWaitMs: 1_000 });
+    const busyStep = step(backend, appRoot, session(), ["sleep 2.5"]);
+    await sleep(100);
+    const s = session();
+    const started = Date.now();
+    await assert.rejects(
+      step(backend, appRoot, s, ["echo never-ran"]),
+      /^Error: Waiting for a free sandbox: all 1 sandboxes this server runs at once are in use, and none came free within 1 s\. Nothing was run\. Try again in a minute or two\.$/,
+    );
+    assert.ok(Date.now() - started < 4_000, `answered after ${Date.now() - started} ms (SANDBOX_WAIT_S here: 1 s)`);
+    assert.ok(!control.ran.some((r) => r.command === "echo never-ran"));
+    assert.ok(lines.some((l) => /no sandbox came free within 1 s/.test(l)), lines.join("\n"));
+    await busyStep;
+  });
+
+  await check("the bounded queue: past SANDBOX_QUEUE_MAX waiting, one more is answered at once", async () => {
+    const { appRoot, raw } = await world();
+    const pool = createSandboxPool();
+    const { backend } = guarded(raw, { ...FAST, pool, maxRunning: 1, maxWaiting: 1, runWaitMs: 5_000 });
+    const first = step(backend, appRoot, session(), ["sleep 0.8"]);
+    await sleep(80);
+    const second = step(backend, appRoot, session(), ["echo second"]);
+    await sleep(50);
+    const started = Date.now();
+    await assert.rejects(step(backend, appRoot, session(), ["echo third"]), /^Error: Waiting for a free sandbox: all 1 sandboxes this server runs at once are in use, and 1 more is already waiting\./);
+    assert.ok(Date.now() - started < 1_000, `at once, not after the 5 s wait (${Date.now() - started} ms)`);
+    assert.deepEqual(await second, ["second"], "the one in line still gets its turn");
+    await first;
+  });
+
+  await check("a VM idle while others wait (a parent waiting on its specialists) is stopped to free its place, and its next command restores it with its files", async () => {
+    const { appRoot, raw } = await world();
+    const pool = createSandboxPool();
+    const { backend, lines } = guarded(raw, { ...FAST, pool, maxRunning: 1, runWaitMs: 5_000 });
+    const parent = session();
+    const h = await backend.create({ runtimeContext: { appRoot }, sessionKey: parent.key, tags: { sessionId: parent.id }, templateKey: TEMPLATE });
+    assert.equal((await h.session.run({ command: "echo parent >> notes.txt" })).exitCode, 0);
+    // The parent's step is still open (it delegated and waits): its specialist needs the only place.
+    assert.deepEqual(await step(backend, appRoot, session(), ["echo specialist"]), ["specialist"]);
+    assert.ok(lines.some((l) => /^stopping an idle sandbox .* to free its place for one that is waiting/.test(l)), lines.join("\n"));
+    assert.equal((await h.session.run({ command: "cat notes.txt" })).stdout.trim(), "parent", "the parent's VM came back with its files");
+    parent.state = await h.captureState();
+    assert.deepEqual(await step(backend, appRoot, parent, ["cat notes.txt"]), ["parent"]);
+    assert.ok(pool.peakRunning <= 1);
+  });
+
+  await check("a VM no step has used for the idle time (a step that never committed) is stopped even when nothing waits", async () => {
+    const { appRoot, raw } = await world();
+    const pool = createSandboxPool();
+    const { backend } = guarded(raw, { ...FAST, pool, idleStopMs: 150 });
+    const s = session();
+    const h = await backend.create({ runtimeContext: { appRoot }, sessionKey: s.key, tags: { sessionId: s.id }, templateKey: TEMPLATE });
+    await h.session.run({ command: "echo kept >> notes.txt" });
+    // the VM stops first; its snapshot is then taken and its place handed back
+    for (let i = 0; i < 80 && (control.running().length > 0 || pool.running > 0); i++) await sleep(25);
+    assert.equal(control.running().length, 0, "stopped while idle");
+    assert.equal(pool.running, 0);
+    assert.equal((await h.session.run({ command: "cat notes.txt" })).stdout.trim(), "kept");
+  });
+
+  await check("the settings: SANDBOX_MAX_RUNNING, SANDBOX_WAIT_S, SANDBOX_QUEUE_MAX, SANDBOX_STALL_S; defaults; wrong values said plainly; the derived cap", async () => {
+    assert.deepEqual(sandboxGuardSettings({}), { maxRunning: null, runWaitMs: 180_000, maxWaiting: 32, stallMs: 60_000 });
+    assert.deepEqual(sandboxGuardSettings({ SANDBOX_MAX_RUNNING: "3", SANDBOX_WAIT_S: "60", SANDBOX_QUEUE_MAX: "0", SANDBOX_STALL_S: "0" }), { maxRunning: 3, runWaitMs: 60_000, maxWaiting: 0, stallMs: 0 });
+    assert.equal(sandboxGuardSettings({ SANDBOX_MAX_RUNNING: "auto" }).maxRunning, null);
+    assert.throws(() => sandboxGuardSettings({ SANDBOX_MAX_RUNNING: "0" }), /SANDBOX_MAX_RUNNING="0" is not valid\. Use a whole number from 1 to 256, or leave it unset/);
+    assert.throws(() => sandboxGuardSettings({ SANDBOX_STALL_S: "5" }), /SANDBOX_STALL_S="5" is too short/);
+    assert.throws(() => sandboxGuardSettings({ SANDBOX_WAIT_S: "soon" }), /SANDBOX_WAIT_S="soon" is not valid/);
+    // the first server: 4 CPUs, 7941 MiB; 2 CPUs and 1024 MiB per sandbox
+    assert.equal(maxRunningFor(4, 2, 7941, 1024), 2);
+    assert.equal(maxRunningFor(4, 1, 7941, 1024), 4);
+    assert.equal(maxRunningFor(8, 2, 16_000, 1024), 4);
+    assert.equal(maxRunningFor(32, 2, 7941, 1024), 4, "memory bounds it too");
+    assert.equal(maxRunningFor(2, 4, 2048, 1024), 1, "never below one");
   });
 
   await check("SANDBOX_BACKEND=vercel: eve's vercel() backend, and any backend that is not microsandbox, is returned as it is", async () => {

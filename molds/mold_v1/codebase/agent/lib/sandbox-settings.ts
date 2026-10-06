@@ -18,6 +18,18 @@
  *                         public address can go here, EXCEPT when the data room uses the filesystem storage driver:
  *                         sandboxes then download its file links from the web app ({@link sandboxStorageOrigin}).
  *
+ * HOW MANY RUN AT ONCE, AND WHEN ONE HAS HUNG (microsandbox only; read by agent/lib/sandbox-guard.ts, {@link
+ * sandboxGuardSettings}). Measured on the first self-hosted server (mold_v1-190): guests hang after booting when
+ * more busy vCPUs run than the host has, so the number running is capped and a command is watched.
+ *   SANDBOX_MAX_RUNNING   sandboxes running at the same time on this host. Default: from the host, the smaller of
+ *                         its CPUs / SANDBOX_CPUS and (its memory - 2 GiB) / (SANDBOX_MEMORY_MIB + 256 MiB): 2 on a
+ *                         4-CPU, 8 GB server at 2 CPUs each. Further sandboxes wait for one to come free.
+ *   SANDBOX_WAIT_S        the longest a sandbox waits for a free one, in seconds. Default 180. Past it the call is
+ *                         answered "Waiting for a free sandbox: ..." and nothing runs.
+ *   SANDBOX_QUEUE_MAX     the most sandboxes waiting at once. Default 32; one more is answered at once, the same way.
+ *   SANDBOX_STALL_S       a command whose sandbox answers nothing for this many seconds is stopped with a plain error
+ *                         and the sandbox is restarted for the next command. Default 60. 0 turns the watchdog off.
+ *
  * THE NETWORK DENY LIST (microsandbox only). eve's default policy for a local backend is "allow-all": measured, a
  * sandbox reached the cloud metadata address 169.254.169.254 and the host's Docker bridge. So the microsandbox
  * backend is always created with eve's own `networkPolicy` option: everything allowed (pip, the public internet)
@@ -207,6 +219,61 @@ export function microsandboxSettings(env: Env = process.env): MicrosandboxSettin
     networkPolicy: { allow: ["*"], subnets: { deny: sandboxDenySubnets(env) } },
     setup: { autoInstall: false },
   };
+}
+
+/* ---- how many run at once, and when one has hung (mold_v1-190) ------------------------------------------------- */
+
+/** What agent/lib/sandbox-guard.ts takes from the environment. `maxRunning` null: derived from the host. */
+export interface SandboxGuardSettings {
+  readonly maxRunning: number | null;
+  readonly runWaitMs: number;
+  readonly maxWaiting: number;
+  /** 0: the watchdog is off. */
+  readonly stallMs: number;
+}
+
+export const SANDBOX_DEFAULT_WAIT_S = 180;
+export const SANDBOX_DEFAULT_QUEUE_MAX = 32;
+export const SANDBOX_DEFAULT_STALL_S = 60;
+
+/**
+ * The guard's settings, or an error naming the one that is wrong. `SANDBOX_MAX_RUNNING` empty or `auto` is derived
+ * from the host ({@link maxRunningFor}).
+ */
+export function sandboxGuardSettings(env: Env = process.env): SandboxGuardSettings {
+  const running = set(env, "SANDBOX_MAX_RUNNING").toLowerCase();
+  const stall = wholeNumber(env, "SANDBOX_STALL_S", SANDBOX_DEFAULT_STALL_S, 0, 3_600);
+  if (stall !== 0 && stall < 10) {
+    throw new Error(`SANDBOX_STALL_S=${JSON.stringify(set(env, "SANDBOX_STALL_S"))} is too short to tell a hung sandbox from a busy one. Use 0 (off) or a whole number from 10 to 3600 (default ${SANDBOX_DEFAULT_STALL_S}).`);
+  }
+  let maxRunning: number | null = null;
+  if (running !== "" && running !== "auto") {
+    maxRunning = Number(running);
+    if (!/^\d+$/.test(running) || maxRunning < 1 || maxRunning > 256) {
+      throw new Error(`SANDBOX_MAX_RUNNING=${JSON.stringify(set(env, "SANDBOX_MAX_RUNNING"))} is not valid. Use a whole number from 1 to 256, or leave it unset (or "auto") to derive it from this host's CPUs and memory.`);
+    }
+  }
+  return {
+    maxRunning,
+    runWaitMs: wholeNumber(env, "SANDBOX_WAIT_S", SANDBOX_DEFAULT_WAIT_S, 5, 3_600) * 1000,
+    maxWaiting: wholeNumber(env, "SANDBOX_QUEUE_MAX", SANDBOX_DEFAULT_QUEUE_MAX, 0, 10_000),
+    stallMs: stall * 1000,
+  };
+}
+
+/** Memory kept for the host itself (the agent API, the web app, Postgres) when sandboxes are counted against it. */
+export const HOST_RESERVED_MIB = 2048;
+/** What a running sandbox costs on top of its own memory (the VMM, the relay, page cache for its disk). */
+export const SANDBOX_OVERHEAD_MIB = 256;
+
+/**
+ * Sandboxes allowed to run at once on a host with `hostCpus` CPUs and `hostMemoryMiB` of memory: no more vCPUs than
+ * the host has, and no more memory than it can spare. At least 1.
+ */
+export function maxRunningFor(hostCpus: number, sandboxCpus: number, hostMemoryMiB: number, sandboxMemoryMiB: number): number {
+  const byCpu = Math.floor(hostCpus / Math.max(1, sandboxCpus));
+  const byMemory = Math.floor((hostMemoryMiB - HOST_RESERVED_MIB) / (Math.max(1, sandboxMemoryMiB) + SANDBOX_OVERHEAD_MIB));
+  return Math.max(1, Math.min(byCpu, byMemory));
 }
 
 /** The placeholder agent/subagents/research/prompt.md writes where the formatter's path goes. */

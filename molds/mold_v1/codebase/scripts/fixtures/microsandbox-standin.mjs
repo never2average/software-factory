@@ -12,7 +12,14 @@
  *     that starts booting while n or more others are booting never becomes ready (the guest stalls, as "BUG: scheduling
  *     while atomic" did on a 4-vCPU host); the create then fails after `control.relayTimeoutMs`, as microsandbox's own
  *     "timed out waiting for agent relay" does (180 s for real).
- * The "shell" understands `echo WORDS`, `echo WORDS >> FILE`, `cat FILE`, `pwd`; anything else succeeds silently.
+ *   - a guest can hang AFTER booting (mold_v1-190, eve-sbx-ses-5256b07f on 2026-10-05: the bash request was taken and
+ *     never ran, msb at 100% CPU for 14 minutes): with `control.hangNext = n` the next n commands sent to a running VM
+ *     are taken and never answered, and that VM answers nothing after them either, until it is stopped; a command
+ *     still waiting then fails as the real package does when the VM goes. `control.stopOfHungHangs` makes the
+ *     polite `stop()` of a hung VM never answer (only `kill()` and `stopWithTimeout(0)` end it);
+ *   - VMs carry the labels eve gives them, and `Sandbox.listWith({ labels })` finds them, as the real package does.
+ * The "shell" understands `echo WORDS`, `echo WORDS >> FILE`, `cat FILE`, `pwd`, `sleep SECONDS` (a long command that
+ * is alive: the guest still answers other commands meanwhile); anything else succeeds silently.
  */
 const encoder = new TextEncoder();
 
@@ -34,6 +41,14 @@ export const control = {
   stalled: [],
   /** Every command a VM ran: { vm, command } */
   ran: [],
+  /** The next n commands hang their VM (taken, never answered). */
+  hangNext: 0,
+  /** When true, the polite `stop()` of a hung VM never answers. */
+  stopOfHungHangs: false,
+  /** Names of VMs that hung. */
+  hung: [],
+  /** Most VMs ever running at the same time. */
+  peakRunning: 0,
   reset() {
     this.vms.clear();
     this.snapshots.clear();
@@ -46,6 +61,10 @@ export const control = {
     this.relayTimeoutMs = 2_000;
     this.stalled = [];
     this.ran = [];
+    this.hangNext = 0;
+    this.stopOfHungHangs = false;
+    this.hung = [];
+    this.peakRunning = 0;
   },
   running() {
     return [...this.vms.values()].filter((vm) => vm.status === "running").map((vm) => vm.name);
@@ -72,7 +91,9 @@ async function boot(vm) {
     }
     await sleep(control.bootMs);
     vm.status = "running";
+    vm.hung = false;
     vm.boots += 1;
+    control.peakRunning = Math.max(control.peakRunning, control.running().length);
   } finally {
     control.booting -= 1;
   }
@@ -84,9 +105,33 @@ function socketOf(name) {
   return vm;
 }
 
-function shell(vm, command) {
+/** The VM is no longer running: everything it was asked and never answered fails, as the real package does. */
+function halt(vm) {
+  vm.status = "stopped";
+  for (const fail of vm.waiting ?? []) fail(new MicrosandboxError(`runtime error: sandbox "${vm.name}" stopped while a command was running`));
+  vm.waiting = [];
+}
+
+/** Wait on a hung VM: settles only by failing when the VM stops. */
+function never(vm) {
+  return new Promise((_, reject) => (vm.waiting ??= []).push(reject));
+}
+
+async function shell(vm, command) {
+  if (vm.hung) return await never(vm);
+  if (control.hangNext > 0) {
+    control.hangNext -= 1;
+    vm.hung = true;
+    control.hung.push(vm.name);
+    control.ran.push({ vm: vm.name, command, hung: true });
+    return await never(vm);
+  }
   control.ran.push({ vm: vm.name, command });
   let m;
+  if ((m = /^sleep ([\d.]+)$/.exec(command))) {
+    await Promise.race([sleep(Number(m[1]) * 1000), never(vm)]);
+    return { code: 0, stdout: "" };
+  }
   if ((m = /^echo (.*?) >> (\S+)$/.exec(command))) {
     vm.disk.set(m[2], (vm.disk.get(m[2]) ?? "") + `${m[1]}\n`);
     return { code: 0, stdout: "" };
@@ -129,13 +174,14 @@ function liveHandle(name) {
     name,
     async stop() {
       const vm = control.vms.get(name);
-      if (vm && vm.status === "running") vm.status = "stopped";
+      if (vm && vm.status === "running" && vm.hung && control.stopOfHungHangs) await new Promise(() => {});
+      if (vm && vm.status === "running") halt(vm);
       else if (control.stopOfStoppedHangs) await new Promise(() => {});
     },
     async detach() {},
     async kill() {
       const vm = control.vms.get(name);
-      if (vm) vm.status = "stopped";
+      if (vm) halt(vm);
     },
     async setNetworkPolicy() {},
     fs() {
@@ -146,11 +192,11 @@ function liveHandle(name) {
       };
     },
     async execWith(_cmd, fn) {
-      const out = shell(socketOf(name), commandOf(fn));
+      const out = await shell(socketOf(name), commandOf(fn));
       return { code: out.code, stdout: () => out.stdout, stderr: () => out.stderr ?? "" };
     },
     async execStreamWith(_cmd, fn) {
-      const out = shell(socketOf(name), commandOf(fn));
+      const out = await shell(socketOf(name), commandOf(fn));
       const events = [];
       if (out.stdout) events.push({ kind: "stdout", data: encoder.encode(out.stdout) });
       if (out.stderr) events.push({ kind: "stderr", data: encoder.encode(out.stderr) });
@@ -172,6 +218,7 @@ function storedHandle(name) {
   return {
     name,
     status: vm.status,
+    labels: { ...(vm.labels ?? {}) },
     async connectWithTimeout() {
       socketOf(name);
       return liveHandle(name);
@@ -180,14 +227,16 @@ function storedHandle(name) {
       await boot(vm);
       return liveHandle(name);
     },
-    async stopWithTimeout() {
-      if (vm.status !== "stopped") vm.status = "stopped";
+    async stopWithTimeout(timeoutMs) {
+      if (vm.status === "running" && vm.hung && control.stopOfHungHangs && timeoutMs !== 0) await new Promise(() => {});
+      if (vm.status !== "stopped") halt(vm);
     },
     async stop() {
-      if (vm.status !== "stopped") vm.status = "stopped";
+      if (vm.status === "running" && vm.hung && control.stopOfHungHangs) await new Promise(() => {});
+      if (vm.status !== "stopped") halt(vm);
     },
     async kill() {
-      vm.status = "stopped";
+      halt(vm);
     },
     async snapshot(snapshotName) {
       if (vm.status !== "stopped") throw new MicrosandboxError(`snapshot source sandbox ${name} is not stopped`);
@@ -203,11 +252,12 @@ function storedHandle(name) {
 export const Sandbox = {
   builder(name) {
     let fromSnapshot;
+    let labels = {};
     const create = async () => {
       if (fromSnapshot !== undefined && !control.snapshots.has(fromSnapshot)) throw notFound("snapshot", fromSnapshot);
       const previous = control.vms.get(name);
-      if (previous && previous.status !== "stopped") previous.status = "stopped"; // .replace()
-      const vm = { name, status: "booting", disk: new Map(fromSnapshot === undefined ? [] : control.snapshots.get(fromSnapshot)), boots: 0 };
+      if (previous && previous.status !== "stopped") halt(previous); // .replace()
+      const vm = { name, status: "booting", disk: new Map(fromSnapshot === undefined ? [] : control.snapshots.get(fromSnapshot)), boots: 0, labels };
       control.vms.set(name, vm);
       const ready = boot(vm);
       ready.catch(() => {});
@@ -229,6 +279,7 @@ export const Sandbox = {
           if (prop === "createWithPullProgress") return create;
           return (...args) => {
             if (prop === "fromSnapshot") fromSnapshot = args[0];
+            if (prop === "labels") labels = { ...(args[0] ?? {}) };
             if (prop === "network") args[0]?.(recorder(() => {}));
             return builder;
           };
@@ -240,6 +291,13 @@ export const Sandbox = {
   async get(name) {
     if (!control.vms.has(name)) throw notFound("sandbox", name);
     return storedHandle(name);
+  },
+  async list() {
+    return [...control.vms.keys()].map(storedHandle);
+  },
+  async listWith(filter) {
+    const want = Object.entries(filter?.labels ?? {});
+    return [...control.vms.values()].filter((vm) => want.every(([k, v]) => vm.labels?.[k] === v)).map((vm) => storedHandle(vm.name));
   },
 };
 
