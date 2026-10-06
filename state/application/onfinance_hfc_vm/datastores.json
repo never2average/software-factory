@@ -15,7 +15,7 @@
     "admin_url_ref": "POSTGRES_ADMIN_URL",
     "exposure": "remote_loopback",
     "rls_verified": {
-      "at": "2026-10-06T12:34:38+00:00",
+      "at": "2026-10-06T12:44:51+00:00",
       "backend": "self_hosted",
       "mode": "fail_closed",
       "source": "provision.py --deploy-remote (on the server)",
