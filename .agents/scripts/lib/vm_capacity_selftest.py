@@ -64,8 +64,13 @@ def checks(check, tmp):
             check(f"threshold {k}: 'bigger box' is past 'watch'", (b >= w) if d == ">=" else (b <= w), (w, b))
     check("the guest kernel warning alone never asks for a bigger box", C.THRESHOLDS["kernel_warn_pct"][3] is None)
     check("every plan in the table has a price and a disk", all(p["price"] > 0 and p["disk_gb"] > 0 for p in C.plans()))
-    check("the operator's two quoted prices are the table's: Basic 8/16 $96, CPU-Optimized 4/8 $84",
-          {(p["slug"], p["price"]) for p in C.plans()} >= {("s-8vcpu-16gb", 96), ("c-4", 84)})
+    check("the price table is dated and its source named", re.fullmatch(r"\d{4}-\d{2}-\d{2}", C.PRICES_CHECKED) and C.PRICES_SOURCE.startswith("https://"))
+    check("every price reaches the operator as 'about'", "about $" in C.plan_label(C.plans()[0]))
+    fake = {"droplets": {"basic": {"regular": [{"slug": p["slug"], "cpus": p["vcpu"], "memory": p["mem_gb"], "disk": {"boot": p["disk_gb"]},
+                                                "price": {"monthly": p["price"] + (16 if p["slug"] == "s-8vcpu-16gb" else 0)}} for p in C.plans()]}}}
+    said = []
+    check("--check-prices names a row whose price moved", C.check_prices(fetch=lambda url: fake, say=said.append) == 1
+          and any("DIFFERS s-8vcpu-16gb" in l for l in said), said)
 
     # ---- the read is read-only and well-formed ----
     sh = C.probe_sh(S, 999000)
@@ -106,7 +111,7 @@ def checks(check, tmp):
                                         tasks_dir=tmp, limits_runner=_limits(2))
     check("the report on that day prints WATCH, the box and its 2 sandboxes, and asks the operator nothing",
           verdict2 == C.WATCH and text is None and tid is None and "verdict: WATCH" in out and "sandboxes at once: 2" in out
-          and "Basic 4 vCPUs / 8 GB memory / 160 GB disk ($48 a month)" in out, out[-1500:])
+          and "Basic 4 vCPUs / 8 GB memory / 160 GB disk (about $48 a month)" in out, out[-1500:])
 
     # ---- windows left out ----
     now = 1_000_000.0; since = now - 86400
@@ -156,7 +161,8 @@ def checks(check, tmp):
     check("the report asks the operator, and files one task", v == C.BIGGER and text and tid == f"{app['mold_id']}-008"
           and [c[0] for c in calls] == ["add", "set", "set"], (v, tid, calls))
     check("  ...the request names the plan, its monthly price, today's price and what it gives",
-          "Basic 8 vCPUs / 16 GB memory / 320 GB disk ($96 a month)" in text and "today it is $48 a month" in text
+          "Basic 8 vCPUs / 16 GB memory / 320 GB disk (about $96 a month)" in text and "today it is $48 a month" in text
+          and "The Resize page shows the exact price before you confirm" in text
           and "runs 4 sandboxes at once instead of 2" in text, text)
     check("  ...says why in one sentence, then numbered clicks from the web address, one action each",
           "waiting in line" in text and "1. Open https://cloud.digitalocean.com/droplets" in text
@@ -185,7 +191,7 @@ def checks(check, tmp):
     p, ok, cheaper = pick(["contention"])
     check("guests starved on shared CPUs: dedicated CPUs reachable by a resize (CPU-Optimized 8/16, 200 GB, $188)",
           p["slug"] == "c2-8vcpu-16gb" and ok and p["dedicated"], p)
-    check("  ...and the cheaper dedicated plan that needs a new server is named in the task, not asked for (CPU-Optimized 4/8 $84, 50 GB disk)",
+    check("  ...and the cheaper dedicated plan with a smaller disk is named in the task, not asked for (CPU-Optimized 4/8 about $84, 50 GB disk)",
           cheaper and cheaper["slug"] == "c-4" and cheaper["price"] == 84, cheaper)
     p, ok, _ = pick(["memory"])
     check("short of memory: Basic 8/16 ($96)", p["slug"] == "s-8vcpu-16gb" and ok, p)
