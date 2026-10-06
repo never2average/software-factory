@@ -28,6 +28,7 @@ Every threshold is in THRESHOLDS below, and nowhere else. The verdict is the wor
 Exit 0 for ok and watch, 1 for needs a bigger box, 2 when the server could not be read.
 
   vm_capacity.py --self-test     offline: judge, plan choice, request text and task filing on recorded data
+  vm_capacity.py --check-prices  read DigitalOcean's product data and compare it with the price table (DO_PLANS)
 """
 import datetime, json, os, re, shlex, subprocess, sys, time
 
@@ -77,8 +78,17 @@ DEFAULT_HOURS, MAX_HOURS = 24, 168
 DEPLOY_PAD_BEFORE_S, DEPLOY_PAD_AFTER_S = 600, 300
 LOAD_CHECKS_KEPT = 20
 
-# ---- DigitalOcean plans (list prices per month, USD, as of 2026-10-06; the resize screen shows the price before
-# anything is confirmed). (slug, family as the console names it, kind, vCPUs, memory GB, disk GB, $/month, dedicated)
+# ---- DigitalOcean plans: THE ONE PRICE TABLE ----------------------------------------------------------------------
+# Prices are APPROXIMATE and dated: every row was checked on PRICES_CHECKED against PRICES_SOURCE (DigitalOcean's own
+# product data behind its pricing pages; read without a token, but not a documented API, so nothing here reads it at
+# run time). The documented sizes API (api.digitalocean.com/v2/sizes) needs a token, so it is not used. The operator is
+# always told "about $X a month" and that the Resize page shows the exact price before they confirm. Re-check the
+# table with `vm_capacity.py --check-prices` (reads that page, changes nothing) and update the date.
+# Note the neighbours: Basic 8/16 is $96 on "Regular" and $112 on "Premium Intel"/"Premium AMD"; CPU-Optimized 8/16 is
+# $168 with a 100 GB disk (c-8) and $188 with 200 GB (c2-8vcpu-16gb). Only the Regular rows are listed.
+# (slug, family as the console names it, kind, vCPUs, memory GB, disk GB, about $/month, dedicated)
+PRICES_CHECKED = "2026-10-06"
+PRICES_SOURCE = "https://www.digitalocean.com/api/static-content/v1/products?product_name=droplets"
 DO_PLANS = (
     ("s-4vcpu-8gb", "Basic", "Regular", 4, 8, 160, 48, False),
     ("s-8vcpu-16gb", "Basic", "Regular", 8, 16, 320, 96, False),
@@ -99,7 +109,26 @@ DO_PLANS = (
 )
 PLAN_KEYS = ("slug", "family", "kind", "vcpu", "mem_gb", "disk_gb", "price", "dedicated")
 def plans(): return [dict(zip(PLAN_KEYS, p)) for p in DO_PLANS]
-def plan_label(p): return f"{p['family']} {p['vcpu']} vCPUs / {p['mem_gb']} GB memory / {p['disk_gb']} GB disk (${p['price']} a month)"
+def plan_label(p): return f"{p['family']} {p['vcpu']} vCPUs / {p['mem_gb']} GB memory / {p['disk_gb']} GB disk (about ${p['price']} a month)"
+
+def check_prices(fetch=None, say=print):
+    """Compare DO_PLANS with PRICES_SOURCE. Read-only; returns the number of rows that differ or are missing."""
+    if fetch is None:
+        import urllib.request
+        fetch = lambda url: json.load(urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "software-factory"}), timeout=30))
+    doc = fetch(PRICES_SOURCE).get("droplets") or {}
+    live = {}
+    for kinds in doc.values():
+        for rows in (kinds.values() if isinstance(kinds, dict) else []):
+            for o in (rows if isinstance(rows, list) else []):
+                if isinstance(o, dict) and o.get("slug"):
+                    live[o["slug"]] = (o.get("cpus"), o.get("memory"), (o.get("disk") or {}).get("boot"), (o.get("price") or {}).get("monthly"))
+    bad = 0
+    for p in plans():
+        want = (p["vcpu"], p["mem_gb"], p["disk_gb"], p["price"]); got = live.get(p["slug"])
+        if got != want: bad += 1; say(f"  DIFFERS {p['slug']}: table {want}, DigitalOcean {got} (vCPUs, GB, disk GB, $/month)")
+    say(f"prices: {len(DO_PLANS) - bad} of {len(DO_PLANS)} rows match DigitalOcean today" + ("" if not bad else f"; update DO_PLANS and PRICES_CHECKED (now {PRICES_CHECKED})"))
+    return bad
 
 # ---------------------------------------------------------------------------------------------------------
 # the read (one SSH command, read-only)
@@ -354,9 +383,11 @@ def current_plan(box):
 
 def choose(box, short):
     """(plan, resizable, cheaper plan that needs a new server or None). The cheapest plan with what is short doubled
-    and nothing else smaller; dedicated CPUs when guests are starved (contention). DigitalOcean resizes a server only
-    to a plan whose disk is at least its current disk, so the plan asked for is the cheapest one reachable that way;
-    when none is, the cheapest at all comes back with resizable False (a new server and a move)."""
+    and nothing else smaller; dedicated CPUs when guests are starved (contention). The plan asked for has a disk at
+    least the server's current one. UNVERIFIED: that DigitalOcean will not resize a server onto a plan with a smaller
+    disk (CPU-Optimized 4/8 has 50 GB; this server has 160). It is assumed, so the request only names plans that a
+    resize certainly reaches; a cheaper plan with a smaller disk is named in the task as "may need a new server", and
+    when no plan has a large enough disk the cheapest comes back with resizable False."""
     cur = box.get("plan")
     vcpu, mem = box.get("vcpu") or 4, (cur["mem_gb"] if cur else round((box.get("mem_mb") or 8192) / 1024))
     disk = cur["disk_gb"] if cur else (box.get("disk_gb") or 0)
@@ -413,8 +444,8 @@ def request_text(S, box, plan, resizable, short, cap_now, cap_new):
     why = why_sentence(short, cap_now)
     if not resizable:
         return (f"I need your go-ahead to move the app to a bigger server, because {why[0].lower() + why[1:]}\n\n"
-                f"The size that fits is {plan_label(plan)}{now_price}. DigitalOcean cannot simply resize this server to it, because that "
-                f"plan's disk ({plan['disk_gb']} GB) is smaller than this server's ({cur['disk_gb'] if cur else box.get('disk_gb')} GB), so it "
+                f"The size that fits is {plan_label(plan)}{now_price}. Its disk ({plan['disk_gb']} GB) is smaller than this server's "
+                f"({cur['disk_gb'] if cur else box.get('disk_gb')} GB), so DigitalOcean may not offer it as a resize, and then it "
                 f"means a new server and moving the app and its data across. That is a longer job I would plan with you first.\n\n"
                 f"If you would like that, write this in the chat:\n\n```\nplan a move\n```\n\n"
                 f"Nothing changes until you say so; the app keeps running as it is meanwhile.")
@@ -425,7 +456,7 @@ def request_text(S, box, plan, resizable, short, cap_now, cap_new):
     return "\n".join([
         f"I need you to move the app's server to a bigger size on DigitalOcean. {why}",
         "",
-        f"The size: {plan_label(plan)}{now_price}.{gain}",
+        f"The size: {plan_label(plan)}{now_price}. The Resize page shows the exact price before you confirm.{gain}",
         "It takes about 10 minutes, and the app is offline for about 5 of them, so pick a quiet moment.",
         "",
         "1. Open https://cloud.digitalocean.com/droplets and sign in.",
@@ -434,7 +465,8 @@ def request_text(S, box, plan, resizable, short, cap_now, cap_new):
         "4. In the menu on the left, click \"Resize\".",
         f"5. Choose \"{option}\".",
         f"6. Under the plans, click \"{plan['family']}\"" + (f", then \"{plan['kind']}\"" if plan["kind"] else "") +
-        f", then click the box that shows {plan['vcpu']} CPUs, {plan['mem_gb']} GB memory, {plan['disk_gb']} GB disk and ${plan['price']}/mo.",
+        f", then click the box that shows {plan['vcpu']} CPUs, {plan['mem_gb']} GB memory and a {plan['disk_gb']} GB disk "
+        f"(about ${plan['price']} a month; check the price it shows before the next step).",
         "7. Click the \"Resize Droplet\" button at the bottom and wait until it finishes (a few minutes).",
         "8. Click the switch at the top right again so it says \"ON\".",
         "9. Write this in the chat:",
@@ -527,11 +559,11 @@ def report(S, app, infra, data, since, now, run_task=None, tasks_dir=None, limit
     if file:
         signals = "; ".join(f"{k}={_fmt(v)}" for k, v, lv in rows if lv != OK)
         title = (f"Capacity: {S['app_id']} needs a bigger server: {plan['family']} {plan['vcpu']}/{plan['mem_gb']} "
-                 f"${plan['price']}/mo{' (a new server: not reachable by resize)' if not resizable else ''}")
+                 f"${plan['price']}/mo{' (may need a new server)' if not resizable else ''}")
         detail = (f"{task_marker(S['app_id'])} {stamp(now)}: provision.py {S['app_id']} --capacity says NEEDS A BIGGER BOX "
-                  f"({', '.join(short)}). Box {box['vcpu']} CPUs/{box['mem_mb']} MiB" + (f" ({cur['slug']}, ${cur['price']}/mo)" if cur else "") +
+                  f"({', '.join(short)}). Prices are approximate, checked {PRICES_CHECKED}. Box {box['vcpu']} CPUs/{box['mem_mb']} MiB" + (f" ({cur['slug']}, ${cur['price']}/mo)" if cur else "") +
                   f", {cap_now} sandbox(es) at once. Signals: {signals}. Ask: {plan['slug']} ({plan_label(plan)}), {cap_new} at once. "
-                  + (f"A cheaper fit, {cheaper['slug']} ({plan_label(cheaper)}), needs a new server (its disk is smaller than this one's). " if cheaper else "") + f"After the operator resizes: provision.py {S['app_id']} --deploy-remote, then --capacity again; close this with that output.")
+                  + (f"A cheaper fit, {cheaper['slug']} ({plan_label(cheaper)}), may need a new server: its disk is smaller than this one's, and whether DigitalOcean resizes onto a smaller disk is unverified. " if cheaper else "") + f"After the operator resizes: provision.py {S['app_id']} --deploy-remote, then --capacity again; close this with that output.")
         tid = file_task({"mold_id": app["mold_id"], "app_id": S["app_id"]}, title, detail, run=run_task, tasks_dir=tasks_dir, say=say)
     return verdict, text, tid
 
@@ -566,6 +598,8 @@ def record_load_check(infra, started, finished):
     return vr["load_checks"]
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--check-prices"]:
+        sys.exit(1 if check_prices() else 0)
     if sys.argv[1:2] == ["--self-test"]:
         import vm_capacity_selftest
         sys.exit(vm_capacity_selftest.run())
