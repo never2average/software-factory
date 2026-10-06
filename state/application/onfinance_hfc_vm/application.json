@@ -2,7 +2,7 @@
   "$schema": "../app_id/application.schema.json",
   "app_id": "onfinance_hfc_vm",
   "mold_id": "mold_v1",
-  "mold_commit": "917c598d8964c653bafd703d1fd59ea896e3c130",
+  "mold_commit": "fa46fa326811c2734dff68b8b798fc46f3d1fa9e",
   "status": "stamped",
   "brief": "briefs/onfinance_hfc_vm.md",
   "product_id": "onfinance_hfc_research",
