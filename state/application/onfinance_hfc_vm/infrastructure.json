@@ -92,16 +92,16 @@
       "web": "200",
       "kvm": "ok",
       "push": "on",
-      "disk_percent": 36,
-      "sandbox_store_mb": 48974,
+      "disk_percent": 42,
+      "sandbox_store_mb": 57993,
       "users": "separate",
       "egress_ssh": "blocked",
-      "qualified_at": "2026-10-06T11:39:39+00:00"
+      "qualified_at": "2026-10-06T12:34:38+00:00"
     },
     "production_url": "https://hfc.useimmaculate.com",
     "ssh_host": "157.245.241.138",
     "ssh_allow_from": "69.55.59.169"
   },
-  "deployed_at": "2026-10-06T11:39:39+00:00",
+  "deployed_at": "2026-10-06T12:34:38+00:00",
   "configured_at": "2026-10-04T15:56:38+00:00"
 }
