@@ -425,6 +425,15 @@ jobs:
         if: always()
         run: npm run test:specialist-handback
 
+      # eve's two callback routes resume any workflow hook by token with no sign-in: `<sessionId>:cancel` cancelled a
+      # person's running turn and `<sessionId>:turn-control:0:inbox` handed it a forged specialist result. On the REAL
+      # eve runtime (`eve dev` of a scratch app, a scripted model): both attacks work on eve as shipped, and with this
+      # app's guard every hook token is refused (404) and changes nothing (docs/SECURITY.md). The check holds the rest:
+      # eve's callback channels are all replaced, nothing here needs them open, the web app forwards neither.
+      - name: Callback routes closed (unauthenticated hook resume; real eve runtime)
+        if: always()
+        run: npm run check:callback-routes && npm run test:callback-routes
+
       # On the REAL eve runtime (`eve dev` of a two-specialist app written to a temp dir, a scripted model, eve's
       # in-process just-bash sandbox; no provider, no VM, about 30 s): eve hands a step's specialists back together,
       # a message sent to the main thread meanwhile runs only after that (so an early hand-back would be a duplicate),
