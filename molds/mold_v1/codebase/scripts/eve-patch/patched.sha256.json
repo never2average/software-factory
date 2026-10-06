@@ -1,7 +1,7 @@
 {
   "eve": "0.25.1",
   "patch": "patches/eve+0.25.1.patch",
-  "patchSha256": "811305fa894ad0e452613abfd7767d01183536366259eff16c74996bb469ec02",
+  "patchSha256": "12fa15697e2353991778c88681855e6bab8786cf96cf4fd78ec16c39f15c11a7",
   "files": {
     "dist/src/compiled/@workflow/world-local/index.js": "28056b4d06f00e34d9cd5d2a4b42c84148bc7ffb380a5e626d46af7e9941757c",
     "dist/src/compiler/manifest.js": "316b39224d46709e5845803aeb7346bdbed5074f82f6b5e0f84c1c5b5a759f70",
@@ -22,10 +22,10 @@
     "dist/src/execution/workflow-entry.js": "ed2b0c9dee86281bfc648d03e9e9ad36a6a944594c9bfbae16c72f6228c3fa9a",
     "dist/src/execution/workflow-runtime.js": "8b6af770c95c2f2f8388c367714266f45861e26b03b84bd596be8a525ab59dc1",
     "dist/src/execution/workflow-steps.js": "5ef2acf97657096bb75011acf70c856cd0d0cbbeabde438d5eba5fe01c6f0775",
-    "dist/src/harness/detached-delegations.js": "21129f22d3ff8ea8476001b21eead2171e92fee0ef23780ed15e77d30f68a4cc",
+    "dist/src/harness/detached-delegations.js": "97e1fd0a8620755e214cf47e6f71be70a3c91dde22e531f3d61ecea9301b7913",
     "dist/src/harness/input-requests.js": "b33fa1aa4f254b821924930f01c9a84737063997fd5272640634cf2ca44fd9ae",
     "dist/src/harness/messages.js": "b3d10b2a932ce70a5610740541ac0a6219dd563f014fe638a801100caccfec8b",
-    "dist/src/harness/runtime-actions.js": "58a67b50ee70f0ee14948ea1c431bdd94994633ad5b0f680da7d74586a9a8579",
+    "dist/src/harness/runtime-actions.js": "a8b277a3d760e62326561d42c141ff89015d5d7118bf66e8848a5c6d52d3ab0d",
     "dist/src/harness/tool-loop.js": "40bbfba3a828552d1121adc4050adcf2332fb76c516da2c2e517a38bbad97548",
     "dist/src/internal/authored-definition/core.js": "469a70299f52ce03e749f2eaee7c78790189bc6249c05714d565a4e7ac928522",
     "dist/src/runtime/resolve-agent.js": "168eafe55f189b763c8a2cc35b268d4263552b7988e2b08dd868587d005e3edd",

@@ -203,6 +203,19 @@ console.log("\n6. the eve patch's pure helpers (as installed)");
   check("a session whose creator carries eve_subagent_batch: \"all\" keeps eve's own batch, and nothing turns detach on", Object.keys(H.subagentBatchStepFields({ subagents: { batch: "detach" } }, { state: { "eve.runtime.pendingActionBatch": {} } }, { attributes: { eve_subagent_batch: "all" } })).length === 0 && H.subagentBatchStepFields({ subagents: { batch: "detach" } }, { state: { "eve.runtime.pendingActionBatch": {} } }, { attributes: {} }).subagentBatch?.mode === "detach" && Object.keys(H.subagentBatchStepFields({}, { state: { "eve.runtime.pendingActionBatch": {} } }, { attributes: { eve_subagent_batch: "detach" } })).length === 0);
   const coalesced = H.mergeDelegationFields({}, { runtimeActionResults: [alphaResult], delegationResults: [late] }, { runtimeActionResults: [late] });
   check("a deferred input merged into a batch's results keeps the batch's results and the late ones (nothing dropped)", coalesced.runtimeActionResults.length === 2 && coalesced.delegationResults.length === 1);
+  {
+    // A question (and an approval-gated call) made in the same step as a specialist call: eve dropped it, unanswered.
+    const response = [
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "alpha", input: {} }, { type: "tool-call", toolCallId: "q1", toolName: "ask_question", input: {} }, { type: "tool-call", toolCallId: "w1", toolName: "write_file", input: {} }, { type: "tool-call", toolCallId: "p1", toolName: "web_search", input: {}, providerExecuted: true }, { type: "tool-call", toolCallId: "r1", toolName: "read", input: {} }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "r1", toolName: "read", output: { type: "text", value: "ok" } }] },
+    ];
+    const extra = H.answerUnrunToolCalls(response, [{ type: "tool-result", toolCallId: "c1", toolName: "alpha", output: { type: "text", value: "A" } }]);
+    check(
+      "a call left with no result beside a batch's results is answered (question: 'not asked'; approval: 'not run'), once; answered, provider-run and specialist calls are left alone",
+      extra.length === 2 && extra[0].toolCallId === "q1" && /^Not asked:/.test(extra[0].output.value) && extra[0].output.type === "error-text" && extra[1].toolCallId === "w1" && /^Not run:/.test(extra[1].output.value) && H.answerUnrunToolCalls(response, [{ toolCallId: "c1" }, ...extra]).length === 0,
+      extra,
+    );
+  }
   check("only an agent that opted in detaches; the default is eve's own batch", H.resolveSubagentBatch({}) === undefined && H.resolveSubagentBatch({ subagents: { batch: "all" } }) === undefined && H.resolveSubagentBatch({ subagents: { batch: "detach" } })?.detachAfterMs === 10_000 && H.resolveSubagentBatch({ subagents: { batch: "detach", detachAfterMs: 2500 } })?.detachAfterMs === 2500);
 }
 

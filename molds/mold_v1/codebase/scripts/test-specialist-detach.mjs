@@ -40,6 +40,10 @@
  *   lone      a lone delegation (no session copy) is stopped, working and waiting on its question: reported once.
  *   unattended  a session a PROGRAM opens (creator auth `eve_subagent_batch: "all"`, lib/subagent-batch.ts) keeps eve's
  *             batch: nothing "reports later", and its last reply — a step's value — is the full answer.
+ *   samestep  the main agent calls a specialist AND asks the person its own question in ONE step (seen live
+ *             2026-10-06). eve 0.25.1 dropped the question and left its call with no result, so the next model call
+ *             failed (AI_MissingToolResultsError). Now the question is answered "not asked, ask again on its own",
+ *             and the turn goes on: alone, with a "reports later" sibling, and (in `all`) under eve's own batch.
  *   all       an app WITHOUT the setting behaves as eve always has: the finished result is held while the other asks,
  *             both arrive together once the question is answered, and nothing is "reports later".
  *
@@ -305,7 +309,7 @@ const dump = (label, h) => {
 
 try {
   // The app with the setting, unless only the "all" scenario runs (unpatched eve refuses the setting).
-  const app = ["asks", "slow", "together", "stopped", "main", "midturn", "twice", "ownq", "ownqthen", "stopasking", "stopaskingbatch", "mainasking", "forgery", "lone", "unattended"].some(shouldRun) ? await startApp({ detach: true }) : null;
+  const app = ["asks", "slow", "together", "stopped", "main", "midturn", "twice", "ownq", "ownqthen", "stopasking", "stopaskingbatch", "mainasking", "forgery", "lone", "unattended", "samestep"].some(shouldRun) ? await startApp({ detach: true }) : null;
   const { post, history, until } = app ?? {};
 
   await scenario("asks", async () => {
@@ -640,6 +644,21 @@ try {
     check("the step's value (the last reply, as lib/workflow-delegate.ts reads it) is the FULL answer: both results", /CHILD-RESULT alpha/.test(value) && /CHILD-RESULT beta/.test(value), value);
   });
 
+  await scenario("samestep", async () => {
+    console.log("\nthe main agent calls a specialist and asks its own question in the same step:");
+    const notAsked = (h) => replies(h, /PARENT-DONE/).filter((e) => /Not asked: this question was sent in the same step as a specialist call/.test(e.data.message));
+    const P1 = (await post("/eve/v1/session", { message: "[[hb alpha:fast +ask]]" })).body.sessionId;
+    let h = await until(P1, (x) => replies(x, /PARENT-DONE/).length > 0 || types(x).includes("turn.failed"), "the reply", 30_000);
+    const c1 = callsOf(h);
+    check("alone: the turn does not fail (no AI_MissingToolResultsError)", !types(h).includes("turn.failed") && !types(h).includes("step.failed"), h.filter((e) => /failed/.test(e.type)).map((e) => e.data?.details?.message ?? e.data?.code));
+    check("…alpha's result reached the main agent once, and the question came back to it as not asked (it may ask again on its own)", realResultsFor(h, c1.alpha?.callId).length === 1 && notAsked(h).length === 1, replies(h, /PARENT/).map((e) => e.data.message));
+    check("…the person was never shown that question", !types(h).includes("input.requested"));
+    const P2 = (await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=6000 +ask]]" })).body.sessionId;
+    h = await until(P2, (x) => replies(x, /PARENT-LATE/).length > 0 || types(x).includes("turn.failed"), "beta's late result", 40_000);
+    const c2 = callsOf(h);
+    check("with a 'reports later' sibling: handed over (alpha, beta 'running', the question not asked), no failure, then beta's late result once", !types(h).includes("turn.failed") && notAsked(h).length === 1 && h.some(isPlaceholder) && realResultsFor(h, c2.alpha.callId).length === 1 && realResultsFor(h, c2.beta.callId).length === 1 && replies(h, /PARENT-LATE/).length === 1, types(h));
+  });
+
   await scenario("all", async () => {
     console.log("\nan app WITHOUT the setting behaves as eve always has:");
     const plain = await startApp({ detach: false });
@@ -662,6 +681,10 @@ try {
     if (process.env.EVE_DETACH_RECORD) writeFileSync(process.env.EVE_DETACH_RECORD, `${JSON.stringify(shape, null, 2)}\n`);
     const recorded = JSON.parse(readFileSync(join(ROOT, "scripts/fixtures/specialist-detach/all-mode-unpatched.json"), "utf8"));
     check("…event for event the same main thread as unpatched eve 0.25.1 (scripts/fixtures/specialist-detach/all-mode-unpatched.json)", JSON.stringify(shape) === JSON.stringify(recorded), { now: shape, recorded });
+    // eve's own batch had the same fault: a question asked in the step that called a specialist was left unanswered.
+    const S = (await plain.post("/eve/v1/session", { message: "[[hb alpha:fast +ask]]" })).body.sessionId;
+    h = await plain.until(S, (x) => replies(x, /PARENT-DONE/).length > 0 || types(x).includes("turn.failed"), "the reply", 30_000);
+    check("…and a question asked in the same step as a specialist call no longer fails the turn under eve's batch either (answered 'not asked')", !types(h).includes("turn.failed") && replies(h, /PARENT-DONE/).some((e) => /Not asked:/.test(e.data.message)), h.filter((e) => /failed/.test(e.type)).map((e) => e.data?.details?.message ?? e.data?.code));
   });
 } catch (error) {
   failures.push(String(error?.message ?? error));

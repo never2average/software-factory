@@ -74,7 +74,8 @@
  *                      who was stopped and who had finished. With no directive it answers PARENT-PLAIN.
  *                      A root whose conversation ends in a detached delegation's late result (eve patch,
  *                      `subagents: { batch: "detach" }`: the tool result of a synthetic `<call id>_result` call)
- *                      answers `PARENT-LATE: <those results>`.
+ *                      answers `PARENT-LATE: <those results>`. A `+ask` token in the directive makes the root
+ *                      also call ask_question in that same step.
  *
  * `GET /__log` serves every decision with the time it was made (`at`, epoch ms), so a
  * rig can tell when the orchestrator was asked to continue — the moment a specialist's
@@ -219,7 +220,10 @@ function decideHandback(messages) {
   // `parentdelay=<ms>`: the root's final reply takes that long (a model call still running when something else lands).
   const tokens = directive[1].trim().split(/\s+/);
   const parentDelay = Number(/^parentdelay=(\d+)$/.exec(tokens.find((t) => t.startsWith("parentdelay=")) ?? "")?.[1] ?? 0);
+  // `+ask`: in the SAME step the root also asks the person its own question (ask_question) — a live model did this
+  // (2026-10-06), and eve 0.25.1 dropped the question and left it with no tool result.
   const calls = tokens.filter((t) => !t.startsWith("parentdelay=")).map((pair) => {
+    if (pair === "+ask") return { tool: "ask_question", args: { prompt: "Which tone, formal or casual?", options: [{ id: "casual", label: "Casual" }], allowFreeform: true } };
     const [name, mode = "fast"] = pair.split(":");
     return { tool: name, args: { message: `HBMODE:${mode}` } };
   });

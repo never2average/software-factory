@@ -222,8 +222,8 @@ try {
   // The root runs with `subagents: { batch: "detach" }` (mold_v1-184), but a chat started before that deploy (on Vercel)
   // and every session a program opens keep eve's batch: the rule must be true under both.
   check(
-    "the root agent is told the rule, true under either batch: may return together (get the answer first or run it alone); one 'reports later' sends its result by itself",
-    /Fan out \*\*independent\*\* work in parallel/.test(prompt) && /Specialists called in one step may return\s+together, so if one will need the person's answer or an approval, get that\s+first or run it on its own\. One marked "reports later" sends its result to\s+you by itself: answer with what you have and do not call it again\./.test(prompt),
+    "the root agent is told the rule, true under either batch: may return together (ask first, in a step of its own, or run it alone); one 'reports later' sends its result by itself",
+    /Fan out \*\*independent\*\* work in parallel/.test(prompt) && /Specialists called in one step may return\s+together, so if one will need the person's answer or an approval, ask for\s+that first, in a step of its own, or run that specialist alone\. One marked\s+"reports later" sends its result to\s+you by itself: answer with what you\s+have and do not call it again\./.test(prompt),
     prompt.slice(prompt.indexOf("## How to delegate"), prompt.indexOf("## How to delegate") + 1200),
   );
   const words = prompt.trim().split(/\s+/).length;
@@ -231,7 +231,7 @@ try {
   for (const file of ["agent/prompt-neutral.md", "agent/prompt-persona.md"]) {
     const text = readFileSync(join(ROOT, file), "utf8");
     const section = text.slice(text.indexOf("<!-- section: delegate-rules -->"), text.indexOf("<!-- section: memory-save -->"));
-    check(`…in both prompt variants (${file})`, /may return\s+together/.test(section) && /run it on its own/.test(section) && /marked "reports later"/.test(section) && /pull context for three/.test(section));
+    check(`…in both prompt variants (${file})`, /may return\s+together/.test(section) && /in a step of its own, or run that specialist alone/.test(section) && /marked\s+"reports later"/.test(section) && /pull context for three/.test(section));
   }
 
   /* ---- 2. "Resume" on a stopped specialist ----------------------------------------------------------------- */

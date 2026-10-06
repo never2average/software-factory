@@ -13,7 +13,9 @@ const PROXY_INPUT_REQUESTS_KEY = `eve.runtime.proxyInputRequests`;
 const DEFAULT_DETACH_AFTER_MS = 10_000;
 /** The tool-call id of the synthetic call a late result answers: `<the delegation's call id>_result`. */
 const LATE_RESULT_CALL_ID_SUFFIX = `_result`;
-const DETACHED_NOTE = `Still working. Its result will be delivered to you automatically, as this tool's result, when it finishes. Do not call it again and do not wait for it; continue with what you have.`;
+// Worded so a model told by the person to "reply when all are back" is not left choosing between the two (seen live,
+// 2026-10-06: Kimi K2.6 spent three minutes reasoning over the older "do not wait for it; continue with what you have").
+const DETACHED_NOTE = `Still working. Its result will reach you by itself, as this tool's result, in a turn of its own when it finishes, and you will reply again then. Reply now with what you have and say this one is still working. Do not call it again.`;
 const STOPPED_CODE = `SUBAGENT_STOPPED`;
 const STOPPED_MESSAGE = `This specialist was stopped before it finished. It returned no result.`;
 
@@ -245,6 +247,38 @@ function isDetachableDelegationContext(serializedContext) {
   return channel?.kind === `subagent` && typeof channel.state?.parentSessionContinuationToken === `string` && channel.state.parentSessionContinuationToken !== ``;
 }
 
+/**
+ * eve 0.25.1 sends a step's runtime actions (specialists, skills) and DROPS a question (`ask_question`) or an approval
+ * request the same step made (harness/tool-loop.js returns the runtime action batch before it looks at them). That call
+ * is then left with no tool result, and the next model call of the turn fails with AI_MissingToolResultsError. Seen
+ * live 2026-10-06: the main agent called a specialist and asked the person its own question in one step. In both batch
+ * modes, every such call is answered here, with the batch's results, by a plain tool error that says it did not happen
+ * and how to get it: on its own, in a step of its own. The person never saw it, so nothing else needs undoing.
+ */
+const UNRUN_TOOL_CALL_NOTE = (toolName) =>
+  toolName === `ask_question`
+    ? `Not asked: this question was sent in the same step as a specialist call, so the person never saw it. If you still need the answer, ask it again now, on its own.`
+    : `Not run: this call needed the person's approval and was sent in the same step as a specialist call, so it was never shown to them. If it is still needed, call it again now, on its own.`;
+
+/** Tool results for every tool call in `responseMessages` that has none there or in `results` (see above). */
+function answerUnrunToolCalls(responseMessages, results) {
+  const answered = new Set((results ?? []).map((r) => r?.toolCallId));
+  for (const m of responseMessages ?? []) {
+    if (m?.role !== `tool` || !Array.isArray(m.content)) continue;
+    for (const p of m.content) if (p?.type === `tool-result`) answered.add(p.toolCallId);
+  }
+  const out = [];
+  for (const m of responseMessages ?? []) {
+    if (m?.role !== `assistant` || !Array.isArray(m.content)) continue;
+    for (const p of m.content) {
+      if (p?.type !== `tool-call` || p.providerExecuted === true || answered.has(p.toolCallId)) continue;
+      answered.add(p.toolCallId);
+      out.push({ output: { type: `error-text`, value: UNRUN_TOOL_CALL_NOTE(p.toolName) }, toolCallId: p.toolCallId, toolName: p.toolName, type: `tool-result` });
+    }
+  }
+  return out;
+}
+
 export {
   SUBAGENT_BATCH_AUTH_ATTRIBUTE,
   DETACHED_DELEGATIONS_KEY,
@@ -252,6 +286,7 @@ export {
   STOPPED_CODE,
   STOPPED_MESSAGE,
   anyResultIn,
+  answerUnrunToolCalls,
   buildLateResultMessages,
   clearDetachedDelegations,
   createDetachedPlaceholderResult,

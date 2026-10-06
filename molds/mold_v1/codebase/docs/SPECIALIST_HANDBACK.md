@@ -68,10 +68,12 @@ before the root continues"; the experimental `Workflow` tool is the same barrier
 
 **What this repo did first (#121): it avoided the shape.** The root agent's delegation rule (`delegate-rules` in
 `agent/prompt-neutral.md` and `agent/prompt-persona.md`) said: "Specialists called in one step return together, so if
-one will need the person's answer or an approval, get that first or run that specialist on its own." With the patch
-that is no longer needed, and the sentence now says how a late result reaches the main agent: "A specialist still
-working when the others are back is marked "reports later": its result reaches you by itself, so answer with what you
-have and do not call it again." A specialist told in its brief to return a question instead of asking holds
+one will need the person's answer or an approval, get that first or run that specialist on its own." The sentence
+must be true in both batch modes (a program's session keeps eve's batch), so it keeps that advice and adds how a late
+result reaches the main agent: "Specialists called in one step may return together, so if one will need the person's
+answer or an approval, ask for that first, in a step of its own, or run that specialist alone. One marked "reports
+later" sends its result to you by itself: answer with what you have and do not call it again." ("in a step of its
+own" was added after the live rig of 2026-10-06, below: a model read "get that first" as asking in the same step.) A specialist told in its brief to return a question instead of asking holds
 nothing either; on the real runtime such a batch handed a finished result to the main agent 0.8 s after its
 specialist finished. To make room, five passages of `agent/prompt-core.md` were reworded without dropping a rule, and
 the stable prompt is at 1,311 of its 1,400 words (`test:prompt-context`; `test:specialist-batch` holds it at 1,350 or
@@ -193,6 +195,30 @@ and `forwardSubagentAuthorizationEventStep`; `runDriverLoop`; `runProxySubagentE
 (the parked stop); and in eve's local workflow world, `events.create` for `step_started` / `step_completed` /
 `step_failed` / `step_retrying` (mold_v1-191, below). New modules:
 `harness/detached-delegations.js`, `execution/parent-session-delivery.js`.
+
+### Found by the live rig (2026-10-06, self-hosted, Kimi K2.6)
+
+Two of seven shapes failed on the first deploy. Neither was a lost or doubled result.
+
+- **`apart`: a question asked in the same step as a specialist call failed the turn.** The main agent called one
+  specialist and, in the same step, asked the person its own question (`ask_question`) instead of delegating the
+  other piece of work. eve 0.25.1 (`harness/tool-loop.js`) sends a step's runtime actions and drops a question or an
+  approval request made in that step: nothing is shown to the person, and the call is left with no tool result. When
+  the specialist's result came back, the next model call failed with `AI_MissingToolResultsError` (`step.failed`
+  `MODEL_CALL_FAILED`, then `turn.failed`). This is eve's own batch code, so it fails the same way with `batch: "all"`.
+  It is not the sandbox guard, the bound's timer or the local world's refusal (none of them logged anything for this
+  session). Fixed in the patch (`resolvePendingRuntimeActions`, both modes): each such call is answered, with the batch's
+  results, by a tool error saying it was not asked and to ask again on its own. The prompt sentence now says "in a step
+  of its own". `test:specialist-detach` scenario `samestep` (and a check in `all`) reproduces the exact error without
+  the fix.
+- **`two`: resumed, but slowly, and the rig read the wait as "not resumed".** One specialist asked, so the batch was
+  handed over at once, and the main agent's next model call began. It reasoned for three minutes (about 47,000
+  characters) over "reply when both are back" versus the placeholder's "do not wait for it". The asking specialist
+  finished 10 s into that, and its late result waited for that turn to end, as designed: one turn at a time. It was
+  then delivered once, as its own turn, and the main agent replied with both. Two changes:
+  - The placeholder's note now settles the choice: "Reply now with what you have and say this one is still working".
+  - The rig counts a late result's lag from when the main thread is free again, and says "mid-turn" rather than "not
+    resumed" when it is still in a turn.
 
 ### With the sandbox guard (agent/lib/sandbox-guard.ts)
 

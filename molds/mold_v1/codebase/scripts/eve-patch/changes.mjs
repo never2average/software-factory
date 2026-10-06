@@ -231,7 +231,7 @@ export const CHANGES = [
     file: "harness/runtime-actions.js",
     why: "import the helpers",
     find: 'import{getRuntimeActionRequestKey,getRuntimeActionResultKey}from"#runtime/actions/keys.js";',
-    replace: 'import{getRuntimeActionRequestKey,getRuntimeActionResultKey}from"#runtime/actions/keys.js";import{recordDetachedDelegations}from"#harness/detached-delegations.js";',
+    replace: 'import{getRuntimeActionRequestKey,getRuntimeActionResultKey}from"#runtime/actions/keys.js";import{answerUnrunToolCalls,recordDetachedDelegations}from"#harness/detached-delegations.js";',
   },
   {
     file: "harness/runtime-actions.js",
@@ -256,6 +256,13 @@ export const CHANGES = [
     why: "resolvePendingRuntimeActions: record the detached delegations in the session's durable state",
     find: "(s=setTurnUsageState(s,accumulateSessionUsage({previous:getTurnUsageState(s.state),usage:e.usage})));let l=a.map(",
     replace: "(s=setTurnUsageState(s,accumulateSessionUsage({previous:getTurnUsageState(s.state),usage:e.usage})));detachedIds.size>0&&(s=recordDetachedDelegations(s,t.stepInput.detachedDelegations));let l=a.map(",
+  },
+
+  {
+    file: "harness/runtime-actions.js",
+    why: "resolvePendingRuntimeActions (both batch modes): a question or approval request made in the same step as the runtime actions was dropped by eve and left with no tool result, so the next model call failed (AI_MissingToolResultsError); answer it as not asked",
+    find: "u=[...s.history,...i.responseMessages];return l.length>0&&u.push({content:l,role:`tool`})",
+    replace: "u=[...s.history,...i.responseMessages];l.push(...answerUnrunToolCalls(i.responseMessages,l));return l.length>0&&u.push({content:l,role:`tool`})",
   },
 
   /* ---- the late result: tool-role, once ---------------------------------------------------------------------- */

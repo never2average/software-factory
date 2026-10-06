@@ -318,6 +318,8 @@ if (PACK) {
 // are in default-surface.txt, applied as one diff to both; no path, folder or any other line moved. And once more
 // (mold_v1-184, per-result delegation): that sentence keeps #121's advice (specialists called together MAY return
 // together; get the person's answer first or run that one alone) and adds how a "reports later" result arrives; the
+// same lines in both files. And once more (mold_v1-184, live rig 2026-10-06): "get that first" became "ask for that
+// first, in a step of its own", because a model read it as asking in the same step as the other specialist call; the
 // same lines in both files.
 if (!PACK) {
   const pinned = render([["50-legacy-folders.json", LEGACY_FOLDERS_PIN]], ["--snapshot", "--no-results"]);

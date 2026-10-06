@@ -303,8 +303,26 @@ const ask = (shape) => (SCRIPTED ? `rig ${shape} ${directed[shape]}` : words[sha
 
 /* ---- the shapes ------------------------------------------------------------------------------------------------ */
 
+/**
+ * When the main thread is next free at or after `t`: `t` itself if no turn of its own was running then, else the end of
+ * that turn. A result that lands while the main agent is mid-turn waits for that turn to end (eve runs one turn at a
+ * time; with the eve patch the late result is then delivered as a turn of its own), so its lag is counted from there.
+ */
+function mainFreeAt(events, t) {
+  const busy = (e) => e.type === "turn.started" || e.type === "step.started";
+  const idle = (e) => e.type === "turn.completed" || e.type === "turn.failed" || e.type === "session.waiting" || e.type === "turn.cancelled";
+  const before = events.filter((e) => at(e) <= t);
+  const lastBusy = before.findLastIndex(busy);
+  const lastIdle = before.findLastIndex(idle);
+  if (lastBusy < 0 || lastIdle > lastBusy) return { at: t, busySince: null };
+  const end = events.find((e) => at(e) > t && idle(e));
+  return { at: end ? at(end) : NaN, busySince: at(before[lastBusy]) };
+}
+
 /** After the specialists are at rest at `restAt`: the main agent has their results and a reply of its own. */
 async function expectContinuation(shape, parent, called, restAt, extra = "") {
+  // A main agent still in a turn of its own when the specialist came to rest is given until that turn ends (bounded by
+  // --work-s), then --max-ms + 20 s as before.
   const { events, verdict } = await settle(
     parent.sessionId,
     (all) => {
@@ -313,21 +331,29 @@ async function expectContinuation(shape, parent, called, restAt, extra = "") {
       const lastResult = all.lastIndexOf(got[got.length - 1]);
       return replyAfter(all, lastResult);
     },
-    MAX_MS + 20_000,
+    WORK_S * 1000 + MAX_MS + 20_000,
   );
   const got = subagentResults(events);
+  const free = mainFreeAt(events, restAt);
   if (got.length < called.length) {
     const tail = events.slice(-3).map((e) => e.type).join(" → ");
-    fail(`${shape}: ${MAX_MS + 20_000} ms after the specialist came to rest the main agent has ${got.length} of ${called.length} result(s) and was not resumed; its stream ends ${tail}`);
+    const midTurn = free.busySince !== null && !Number.isFinite(free.at);
+    fail(
+      midTurn
+        ? `${shape}: the main agent has ${got.length} of ${called.length} result(s): it has been in a turn of its own since ${Math.round((Date.now() - free.busySince) / 1000)} s ago (the late result waits for that turn to end); its stream ends ${tail}`
+        : `${shape}: after the specialist came to rest the main agent has ${got.length} of ${called.length} result(s) and was not resumed; its stream ends ${tail}`,
+    );
   }
   if (!verdict) fail(`${shape}: the main agent received the result but did not finish a reply of its own`);
   assertOnce(events, called, shape);
-  const lag = Math.max(...got.map(at)) - restAt;
-  if (Number.isFinite(lag) && lag > MAX_MS) fail(`${shape}: the result reached the main agent ${lag} ms after the specialist came to rest (limit ${MAX_MS} ms)`);
+  const from = Number.isFinite(free.at) ? Math.max(restAt, free.at) : restAt;
+  const lag = Math.max(...got.map(at)) - from;
+  const busyNote = free.busySince !== null && Number.isFinite(free.at) ? `; the main agent was mid-turn when it came to rest, for ${free.at - restAt} ms more, and the result followed that turn` : "";
+  if (Number.isFinite(lag) && lag > MAX_MS) fail(`${shape}: the result reached the main agent ${lag} ms after the specialist came to rest${busyNote ? " and the main thread was free" : ""} (limit ${MAX_MS} ms)`);
   // Nothing typed by anyone: every message the main thread received after the first is the system's own.
   const typed = events.filter((e) => e.type === "message.received").slice(1).filter((e) => !String(e.data?.message ?? "").startsWith(HEADING));
   if (typed.length) fail(`${shape}: the main thread received ${typed.length} message(s) nobody should have sent`);
-  return `result ${Number.isFinite(lag) ? `${lag} ms` : "?"} after the specialist came to rest; the main agent replied ${JSON.stringify(verdict.text.slice(0, 70))}${extra}`;
+  return `result ${Number.isFinite(lag) ? `${lag} ms` : "?"} after the specialist came to rest${busyNote ? " and the main thread was free" : ""}; the main agent replied ${JSON.stringify(verdict.text.slice(0, 70))}${busyNote}${extra}`;
 }
 
 const toldMessages = (events) => events.filter((e) => e.type === "message.received" && String(e.data?.message ?? "").startsWith(HEADING));

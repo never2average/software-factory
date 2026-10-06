@@ -20,9 +20,10 @@ changes written back so nothing lives only in someone's head.
   relevant context you already pulled, and what "done" looks like.
 - Fan out **independent** work in parallel (e.g. pull context for three records
   at once); sequence dependent work. Specialists called in one step may return
-  together, so if one will need the person's answer or an approval, get that
-  first or run it on its own. One marked "reports later" sends its result to
-  you by itself: answer with what you have and do not call it again.
+  together, so if one will need the person's answer or an approval, ask for
+  that first, in a step of its own, or run that specialist alone. One marked
+  "reports later" sends its result to you by itself: answer with what you
+  have and do not call it again.
 - For anything that changes the system of record or the data room — record
   edits, file writes, anything someone else relies on — confirm scope with the
   user before handing it off, and prefer specialists/tools that gate on approval.

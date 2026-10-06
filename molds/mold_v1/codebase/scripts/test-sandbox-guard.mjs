@@ -454,6 +454,32 @@ try {
     assert.equal((await h.session.run({ command: "cat notes.txt" })).stdout.trim(), "kept");
   });
 
+  await check("where a call's time went: a command that queued says how long it waited and how long it ran, with its session (what the load check reads)", async () => {
+    const { appRoot, raw } = await world();
+    const { backend, lines } = guarded(raw, { ...FAST, maxRunning: 1, runWaitMs: 5_000, timingFromMs: 300 });
+    const first = step(backend, appRoot, session(), ["sleep 0.8"]);
+    await sleep(80);
+    const s = session();
+    assert.deepEqual(await step(backend, appRoot, s, ["echo queued"]), ["queued"]);
+    await first;
+    const mine = lines.filter((l) => l.includes(`session ${s.id},`));
+    const opened = mine.find((l) => /^timing: a sandbox \(session wrun_\d+, .*\) opened after ([\d.]+) s$/.test(l));
+    assert.ok(opened && Number(/after ([\d.]+) s/.exec(opened)[1]) >= 0.5, `the open waited for the first step's place:\n${lines.join("\n")}`);
+    assert.ok(lines.some((l) => /^timing: a command \(session wrun_\d+, .*\) waited [\d.]+ s for its sandbox and ran [\d.]+ s$/.test(l) && l.includes("ran 0.8 s")), lines.join("\n"));
+  });
+
+  await check("a boot that stalls is KILLED at the deadline, not left booting until microsandbox's own relay timeout (outside the cap, spinning a CPU)", async () => {
+    const { appRoot, raw } = await world();
+    control.stallNext = 1;
+    control.relayTimeoutMs = 4_000;
+    const { backend, lines } = guarded(raw, { ...FAST, bootDeadlineMs: 200 });
+    const s = session();
+    assert.deepEqual(await step(backend, appRoot, s, ["echo after-stall"]), ["after-stall"]);
+    const stalled = control.vms.get(control.stalled[0]);
+    assert.equal(stalled?.status, "stopped", `the stalled VM is ${stalled?.status} (microsandbox would only give up on it after ${control.relayTimeoutMs} ms)`);
+    assert.ok(lines.some((l) => /the sandbox that did not start .* was stopped: 1 VM\(s\) killed/.test(l)), lines.join("\n"));
+  });
+
   await check("the settings: SANDBOX_MAX_RUNNING, SANDBOX_WAIT_S, SANDBOX_QUEUE_MAX, SANDBOX_STALL_S; defaults; wrong values said plainly; the derived cap", async () => {
     assert.deepEqual(sandboxGuardSettings({}), { maxRunning: null, runWaitMs: 180_000, maxWaiting: 32, stallMs: 60_000 });
     assert.deepEqual(sandboxGuardSettings({ SANDBOX_MAX_RUNNING: "3", SANDBOX_WAIT_S: "60", SANDBOX_QUEUE_MAX: "0", SANDBOX_STALL_S: "0" }), { maxRunning: 3, runWaitMs: 60_000, maxWaiting: 0, stallMs: 0 });

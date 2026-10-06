@@ -142,6 +142,8 @@ export interface SandboxGuardOptions {
   readonly checkAfterMs?: number;
   /** How long a hung VM's snapshot-and-stop may take before it is killed by its labels. Default 30 s. */
   readonly stopWaitMs?: number;
+  /** A call that took this long logs where its time went (waited / ran). Default 5 s. */
+  readonly timingFromMs?: number;
   /** How a VM that would not stop is killed. Default: microsandbox's own, by the labels eve gave it. */
   readonly forceStop?: ForceStop;
   /**
@@ -313,7 +315,7 @@ const microsandboxForceStop: ForceStop = async (labels) => {
   const mod = (await import("microsandbox")) as unknown as { Sandbox: { listWith(filter: { labels: Record<string, string> }): Promise<StoppableSandbox[]> } };
   let stopped = 0;
   for (const vm of await mod.Sandbox.listWith({ labels: { ...labels } })) {
-    if (vm.status !== "running" && vm.status !== "draining") continue;
+    if (vm.status === "stopped" || vm.status === "crashed") continue; // a guest stalled at boot is not "running" yet
     await vm.stopWithTimeout(0).catch(() => vm.kill());
     stopped += 1;
   }
@@ -323,6 +325,7 @@ const microsandboxForceStop: ForceStop = async (labels) => {
 /* ---- the guard ------------------------------------------------------------------------------------------------ */
 
 const TIMED_OUT = Symbol("timed out");
+
 let anonymous = 0;
 
 /** The methods of eve's SandboxSession (shared/sandbox-session) that talk to the VM. `spawn` is watched apart. */
@@ -352,6 +355,7 @@ export function guardSandboxBackend<B extends GuardedBackend>(backend: B, option
   const checkAfterMs = options.checkAfterMs ?? 20_000;
   const stopWaitMs = options.stopWaitMs ?? 30_000;
   const forceStop = options.forceStop ?? microsandboxForceStop;
+  const timingFromMs = options.timingFromMs ?? 5_000;
   const bootDeadlineMs = options.bootDeadlineMs ?? 60_000;
   const bootAttempts = Math.max(1, options.bootAttempts ?? 2);
   const headroomMiB = options.memoryHeadroomMiB ?? 512;
@@ -502,6 +506,14 @@ export function guardSandboxBackend<B extends GuardedBackend>(backend: B, option
               },
               () => {},
             );
+            // And do not leave it running meanwhile. A guest that stalled at boot ("BUG: scheduling while atomic" on CPU
+            // 1, seen under the cap on 2026-10-06) is left by microsandbox until its own 180 s relay timeout, outside
+            // the cap, spinning a CPU, while the next attempt boots beside it. Kill it by the labels eve gave it.
+            const labels = labelsOf(input.tags);
+            if (labels) {
+              const killed = await within(forceStop(labels), 15_000, -1);
+              if (killed > 0) log(`the sandbox that did not start (${label}) was stopped: ${killed} VM(s) killed`);
+            }
             if (attempt >= bootAttempts) {
               throw new Error(
                 `No sandbox started within ${Math.round(bootDeadlineMs / 1000)} s, ${bootAttempts} times in a row. The host may be ` +
@@ -666,16 +678,37 @@ export function guardSandboxBackend<B extends GuardedBackend>(backend: B, option
     }
   }
 
+  /**
+   * WHERE A CALL'S TIME WENT (mold_v1-190 follow-up). A call that took `timingFromMs` (5 s) or more says, for its session,
+   * how long it waited for its sandbox (a free place, the boot gate and the boot itself, or a restore) and how long it
+   * then ran. From outside, a call answered after 80 s looks the same whether it queued for 79 s or ran for 79 s; the
+   * load check (scripts/rig-sandbox-load.mjs --judge) reads these lines to tell the two apart. One fixed shape:
+   *   timing: a command (session <id>, <key>) waited 81.0 s for its sandbox and ran 0.3 s
+   *   timing: a sandbox (session <id>, <key>) opened after 61.7 s
+   */
+  function timing(what: "command" | "open", entry: Entry, holder: string, waitedMs: number, ranMs = 0) {
+    if (waitedMs + ranMs < timingFromMs) return;
+    const who = `session ${holder}, ${shortKey(entry.key)}`;
+    log(
+      what === "open"
+        ? `timing: a sandbox (${who}) opened after ${secs(waitedMs)} s`
+        : `timing: a command (${who}) waited ${secs(waitedMs)} s for its sandbox and ran ${secs(ranMs)} s`,
+    );
+  }
+
   /** One call on the key's current VM, counted as in flight and watched. */
-  async function onVm<T>(entry: Entry, input: GuardedCreateInput, what: string, call: (handle: GuardedHandle) => Promise<T>): Promise<T> {
+  async function onVm<T>(entry: Entry, input: GuardedCreateInput, holder: string, what: string, call: (handle: GuardedHandle) => Promise<T>): Promise<T> {
+    const asked = Date.now();
     const handle = await live(entry, input);
+    const ready = Date.now();
     entry.inflight += 1;
-    entry.lastActive = Date.now();
+    entry.lastActive = ready;
     try {
       return await watch(entry, handle, Promise.resolve().then(() => call(handle)), what);
     } finally {
       entry.inflight -= 1;
       entry.lastActive = Date.now();
+      if (what === "a command") timing("command", entry, holder, ready - asked, entry.lastActive - ready);
     }
   }
 
@@ -683,16 +716,18 @@ export function guardSandboxBackend<B extends GuardedBackend>(backend: B, option
    * eve's session object, on whichever VM the key has NOW: every call that talks to the VM goes through `onVm`. Pure
    * helpers (`resolvePath`) and plain values (`id`) are the first VM's, which are the same for every VM of a key.
    */
-  function sessionOn(entry: Entry, first: GuardedHandle, input: GuardedCreateInput): AnySession {
+  function sessionOn(entry: Entry, first: GuardedHandle, input: GuardedCreateInput, holder: string): AnySession {
     const base = first.session as AnySession;
     const out: AnySession = {};
     for (const name of Object.keys(base)) {
       const value = base[name];
       if (name === "spawn" && typeof value === "function") {
         out.spawn = async (...args: unknown[]) => {
+          const asked = Date.now();
           const handle = await live(entry, input);
+          const ready = Date.now();
           entry.inflight += 1;
-          entry.lastActive = Date.now();
+          entry.lastActive = ready;
           let proc: SpawnedProcess;
           try {
             proc = await watch(entry, handle, Promise.resolve().then(() => ((handle.session as AnySession).spawn as (...a: unknown[]) => Promise<SpawnedProcess>)(...args)), "spawn");
@@ -707,12 +742,13 @@ export function guardSandboxBackend<B extends GuardedBackend>(backend: B, option
           ).finally(() => {
             entry.inflight -= 1;
             entry.lastActive = Date.now();
+            timing("command", entry, holder, ready - asked, entry.lastActive - ready);
           });
           return { ...proc, wait: () => watch(entry, handle, done, "a command") };
         };
       } else if (VM_METHODS.has(name) && typeof value === "function") {
         out[name] = (...args: unknown[]) =>
-          onVm(entry, input, name === "run" ? "a command" : name, (handle) => ((handle.session as AnySession)[name] as (...a: unknown[]) => Promise<unknown>)(...args));
+          onVm(entry, input, holder, name === "run" ? "a command" : name, (handle) => ((handle.session as AnySession)[name] as (...a: unknown[]) => Promise<unknown>)(...args));
       } else out[name] = typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(base) : value;
     }
     return out;
@@ -728,11 +764,11 @@ export function guardSandboxBackend<B extends GuardedBackend>(backend: B, option
       return true;
     };
     const quiet = (): GuardedState => ({ backendName: backend.name, sessionKey: input.sessionKey });
-    const session = sessionOn(entry, first, input);
+    const session = sessionOn(entry, first, input, holder);
     return {
       session,
       useSessionFn: async (...args: never[]) => {
-        await onVm(entry, input, "a network change", (handle) => handle.useSessionFn(...args));
+        await onVm(entry, input, holder, "a network change", (handle) => handle.useSessionFn(...args));
         return session;
       },
       async captureState(): Promise<GuardedState> {
@@ -813,8 +849,10 @@ export function guardSandboxBackend<B extends GuardedBackend>(backend: B, option
     const token = Symbol(holder);
     entry.holders.set(holder, token); // supersedes this session's previous step, committed or not
     try {
+      const asked = Date.now();
       const handle = await live(entry, input);
       entry.lastActive = Date.now();
+      timing("open", entry, holder, entry.lastActive - asked);
       return lease(entry, handle, input, holder, token);
     } catch (error) {
       if (entry.holders.get(holder) === token) entry.holders.delete(holder);

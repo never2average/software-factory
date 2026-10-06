@@ -17,6 +17,17 @@
  *             plain answers (mold_v1-190) are named apart: `watchdog` (a guest hung, the call was answered within
  *             SANDBOX_STALL_S and the VM replaced) and `no-free-sandbox` (the running cap's wait ran out)
  *
+ * TIME IN LINE IS NOT A STUCK SANDBOX (mold_v1-190 follow-up). Under the running cap a call's time from outside is
+ * its wait for a sandbox plus its run; measured on 2026-10-06, an 85 s echo had waited 81 s and run 3 s. The guard
+ * logs where a slow call's time went (`[sandbox] timing: ...`, agent/lib/sandbox-guard.ts). So:
+ *   --rows-out FILE                     also write each specialist's recorded events (for a later --judge)
+ *   --judge FILE --server-log LOG       judge a recorded run again with the agent API's journal lines: each call's
+ *                                       wait against --max-wait-s (240: SANDBOX_WAIT_S 180 + one abandoned 60 s boot),
+ *                                       its run against --max-run-s (90: SANDBOX_STALL_S 60 + the 20 s before the
+ *                                       watchdog's first check + 10 s), and a late start less the time its sandbox
+ *                                       waited to open. `slow-wait` is a call that waited longer than its bound.
+ * `provision.py <app> --sandbox-load` does both: the run, then the judgement with the server's lines.
+ *
  *   inconclusive  the model did not do what it was asked (fewer bash calls, no delegation): says nothing about sandboxes
  *
  * Exit 0 `sandbox-load: pass` when no specialist hit a sandbox failure or a start slower than --max-start-s and at
@@ -35,8 +46,10 @@ const opt = (name, fallback) => {
   return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : fallback;
 };
 const SELF_TEST = argv.includes("--self-test");
-const BASE = SELF_TEST ? "http://self-test.invalid" : (process.env.RIG_BASE ?? "").replace(/\/$/, "");
-const TOKEN = SELF_TEST ? "self-test" : (process.env.RIG_TOKEN ?? process.env.MOLD_V1_SESSION_TOKEN ?? "").trim();
+const JUDGE = opt("judge", "");
+const OFFLINE = SELF_TEST || Boolean(JUDGE);
+const BASE = SELF_TEST ? "http://self-test.invalid" : JUDGE ? "http://judge.invalid" : (process.env.RIG_BASE ?? "").replace(/\/$/, "");
+const TOKEN = OFFLINE ? "offline" : (process.env.RIG_TOKEN ?? process.env.MOLD_V1_SESSION_TOKEN ?? "").trim();
 if (!BASE || !TOKEN) {
   console.log("sandbox-load: skipped — set RIG_BASE (the app's address) and RIG_TOKEN (a signed-in session token). See the header.");
   process.exit(3);
@@ -50,6 +63,13 @@ const MAX_START_S = Number(opt("max-start-s", "60"));
 const MAX_BASH_S = Number(opt("max-bash-s", "60")); // each call is an `echo`: anything near this is a sandbox stuck under it
 const TIMEOUT_S = Number(opt("timeout-s", "420"));
 const JSON_OUT = argv.includes("--json");
+// mold_v1-190 follow-up: under the running cap a call's time is mostly time in line. Judged apart, with the guard's
+// own timing lines (agent/lib/sandbox-guard.ts `timing`): the wait against SANDBOX_WAIT_S plus one abandoned boot, the
+// run against SANDBOX_STALL_S plus the 20 s before the watchdog's first check and a margin.
+const MAX_WAIT_S = Number(opt("max-wait-s", "240"));
+const MAX_RUN_S = Number(opt("max-run-s", "90"));
+const ROWS_OUT = opt("rows-out", "");
+const SERVER_LOG = opt("server-log", "");
 
 const target = new URL(BASE);
 const lib = target.protocol === "https:" ? https : http;
@@ -157,7 +177,32 @@ function turnMessage(turn) {
 }
 
 /** What one specialist's own events say about its sandbox. Pure: the self-test feeds it recorded shapes. */
-export function verdictOf(events, calledAt, { steps = STEPS, maxStartS = MAX_START_S, maxBashS = MAX_BASH_S, why = "until" } = {}) {
+/**
+ * The guard's timing lines for one session, from the agent API's journal (`journalctl -o short-iso`, or the same lines
+ * without the host prefix). Returns { opens: [{ at, waitedMs }], commands: [{ at, waitedMs, ranMs }] } per session id.
+ */
+export function parseServerTimings(text) {
+  const bySession = new Map();
+  const of = (id) => bySession.get(id) ?? (bySession.set(id, { opens: [], commands: [] }), bySession.get(id));
+  for (const line of String(text).split("\n")) {
+    const at = Date.parse(line.split(" ")[0]);
+    if (!Number.isFinite(at)) continue;
+    let m;
+    if ((m = /\[sandbox\] timing: a command \(session (\S+), .*\) waited ([\d.]+) s for its sandbox and ran ([\d.]+) s/.exec(line)))
+      of(m[1]).commands.push({ at, waitedMs: Number(m[2]) * 1000, ranMs: Number(m[3]) * 1000 });
+    else if ((m = /\[sandbox\] timing: a sandbox \(session (\S+), .*\) opened after ([\d.]+) s/.exec(line))) of(m[1]).opens.push({ at, waitedMs: Number(m[2]) * 1000 });
+  }
+  return bySession;
+}
+
+/** The timing line closest to `at` within [at - before, at + after] (journal times are whole seconds). */
+function nearest(list, at, before = 3_000, after = 2_000) {
+  let best = null;
+  for (const t of list ?? []) if (t.at >= at - before && t.at <= at + after && (!best || Math.abs(t.at - at) < Math.abs(best.at - at))) best = t;
+  return best;
+}
+
+export function verdictOf(events, calledAt, { steps = STEPS, maxStartS = MAX_START_S, maxBashS = MAX_BASH_S, maxWaitS = MAX_WAIT_S, maxRunS = MAX_RUN_S, why = "until", timings = null } = {}) {
   const started = events.find((e) => e.type === "session.started");
   const requested = new Map();
   const bash = [];
@@ -169,10 +214,14 @@ export function verdictOf(events, calledAt, { steps = STEPS, maxStartS = MAX_STA
       const stdout = typeof out === "object" && out ? String(out.stdout ?? "") : "";
       const marker = /SBX-\S+/.exec(r?.command ?? "")?.[0];
       const failure = e.data.error?.message ?? (typeof out === "string" ? out : null);
-      bash.push({ ok: !failure && (!marker || stdout.includes(marker)), ms: r ? at(e) - r.at : NaN, error: failure });
+      const t = timings ? nearest(timings.commands, at(e)) : null;
+      bash.push({ ok: !failure && (!marker || stdout.includes(marker)), ms: r ? at(e) - r.at : NaN, error: failure, ...(t ? { waitedMs: t.waitedMs, ranMs: t.ranMs } : {}) });
     }
   }
   const startMs = started ? at(started) - calledAt : NaN;
+  // The sandbox a specialist opens before its session starts may have waited for a place: that is not a slow start.
+  const opened = started && timings ? nearest(timings.opens, at(started), at(started) - calledAt + 1_000, 3_000) : null;
+  const startOwnMs = opened ? Math.max(0, startMs - opened.waitedMs) : startMs;
   const last = events[events.length - 1];
   const failed = bash.find((b) => !b.ok);
   // A bash call that was asked for and never answered: the sandbox hung under it (seen live: a guest at 100% CPU).
@@ -192,15 +241,45 @@ export function verdictOf(events, calledAt, { steps = STEPS, maxStartS = MAX_STA
     else [kind, verdict] = ["sandbox", text];
   }
   else if (hung) [kind, verdict] = ["sandbox", `a bash call never returned: the sandbox hung under \`${hung[1].command.slice(0, 40)}\` (reading stopped: ${why})`];
-  else if (startMs > maxStartS * 1000) [kind, verdict] = ["slow-start", `started ${secs(startMs)} s after it was called (limit ${maxStartS} s)`];
-  else if (bash.some((b) => b.ms > maxBashS * 1000)) [kind, verdict] = ["slow-bash", `a bash \`echo\` took ${secs(Math.max(...bash.map((b) => b.ms)))} s (limit ${maxBashS} s): the sandbox was stuck under it`];
+  else if (startOwnMs > maxStartS * 1000) [kind, verdict] = ["slow-start", `started ${secs(startMs)} s after it was called (limit ${maxStartS} s${opened ? `, of which ${secs(opened.waitedMs)} s waiting for a sandbox` : ""})`];
+  else if (bash.some((b) => b.ranMs !== undefined && b.ranMs > maxRunS * 1000)) {
+    const b = bash.find((x) => x.ranMs !== undefined && x.ranMs > maxRunS * 1000);
+    [kind, verdict] = ["slow-bash", `a bash \`echo\` RAN ${secs(b.ranMs)} s in its sandbox (limit ${maxRunS} s, after ${secs(b.waitedMs)} s waiting): the sandbox was stuck under it`];
+  } else if (bash.some((b) => b.waitedMs !== undefined && b.waitedMs > maxWaitS * 1000)) {
+    const b = bash.find((x) => x.waitedMs !== undefined && x.waitedMs > maxWaitS * 1000);
+    [kind, verdict] = ["slow-wait", `a bash call waited ${secs(b.waitedMs)} s for a sandbox (limit ${maxWaitS} s)`];
+  } else if (bash.some((b) => b.ranMs === undefined && b.ms > maxBashS * 1000))
+    [kind, verdict] = ["slow-bash", `a bash \`echo\` took ${secs(Math.max(...bash.filter((b) => b.ranMs === undefined).map((b) => b.ms)))} s (limit ${maxBashS} s)${timings ? " and the server said nothing of where the time went" : ": the sandbox was stuck under it, or it waited for a place (run with the server's lines: --judge)"}`];
   else if (bash.length < steps) [kind, verdict] = ["inconclusive", `the model made ${bash.length} of ${steps} bash call(s) (${last?.type ?? why})`];
-  return { startS: secs(startMs), bash: bash.map((b) => ({ ok: b.ok, s: secs(b.ms), ...(b.error ? { error: b.error.slice(0, 200) } : {}) })), kind, verdict };
+  if (kind === "ok") {
+    const queued = bash.filter((b) => b.waitedMs >= 1_000).map((b) => secs(b.waitedMs));
+    if (queued.length || opened) verdict = `ok (waited for a sandbox: ${[...(opened ? [`${secs(opened.waitedMs)} s to open`] : []), ...queued.map((q) => `${q} s`)].join(", ")})`;
+  }
+  return {
+    startS: secs(startMs),
+    bash: bash.map((b) => ({ ok: b.ok, s: secs(b.ms), ...(b.waitedMs !== undefined ? { waitedS: secs(b.waitedMs), ranS: secs(b.ranMs) } : {}), ...(b.error ? { error: b.error.slice(0, 200) } : {}) })),
+    kind,
+    verdict,
+  };
 }
 
 async function runChild(turn, call) {
   const { events, why } = await read(call.child, { timeoutMs: TIMEOUT_S * 1000, until: (e) => ["session.completed", "session.failed", "session.waiting", "input.requested"].includes(e.type) });
-  return { turn, name: call.name, child: call.child, ...verdictOf(events, call.calledAt, { why }) };
+  return { turn, name: call.name, child: call.child, ...verdictOf(events, call.calledAt, { why }), recorded: { events: events.map(slim), calledAt: call.calledAt, why } };
+}
+
+/** What the verdict reads of an event, and nothing else (what --rows-out keeps for --judge). */
+function slim(e) {
+  const d = e.data ?? {};
+  return {
+    type: e.type,
+    meta: { at: e.meta?.at },
+    data: {
+      ...(d.actions ? { actions: d.actions.map((a) => ({ callId: a.callId, toolName: a.toolName, input: { command: a.input?.command } })) } : {}),
+      ...(d.result ? { result: { callId: d.result.callId, toolName: d.result.toolName, output: d.result.output } } : {}),
+      ...(d.error ? { error: { message: d.error.message } } : {}),
+    },
+  };
 }
 
 async function runTurn(turn) {
@@ -240,8 +319,32 @@ function selfTest() {
     ["a hung guest answered by the watchdog, the model's retry works", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(87, "a", "The sandbox stopped responding (nothing came back from it for 60 s), so this command was stopped and the sandbox is being restarted. Run the command again. Files from earlier steps are kept."), req(95, "c", "echo SBX-T0K0-1"), ok(99, "c", "SBX-T0K0-1\n"), req(110, "b", "echo SBX-T0K0-2"), ok(110.1, "b", "SBX-T0K0-2\n")], "watchdog"],
     ["no free sandbox within the bounded wait", [ev(3, "session.started"), req(6, "a", "echo SBX-T0K0-1"), fail(186, "a", "Waiting for a free sandbox: all 2 sandboxes this server runs at once are in use, and none came free within 180 s. Nothing was run. Try again in a minute or two.")], "no-free-sandbox"],
   ];
+  // mold_v1-190 follow-up: the same calls judged with the guard's timing lines (recorded 2026-10-06, 12:00-12:05)
+  const T0 = Date.parse("2026-10-05T19:30:00Z");
+  const iso = (sec) => new Date(T0 + sec * 1000).toISOString().replace(/\.\d+Z$/, "+00:00");
+  const line = (sec, text) => `${iso(sec)} ubuntu node[1]: [sandbox] ${text}`;
+  const queued85 = [ev(1, "session.started"), req(19, "a", "echo SBX-T3K2-1"), ok(104, "a", "SBX-T3K2-1\n"), req(170, "b", "echo SBX-T3K2-2"), ok(170.1, "b", "SBX-T3K2-2\n")];
+  const judged = [
+    ["an 85 s echo that waited 81 s in line and ran 3 s: ok", queued85, [line(104, "timing: a command (session S1, …k) waited 81.0 s for its sandbox and ran 3.1 s")], "ok"],
+    ["the same echo with no server line: still slow-bash", queued85, [], "slow-bash"],
+    ["an echo that RAN 92 s in its sandbox: slow-bash", queued85, [line(104, "timing: a command (session S1, …k) waited 0.0 s for its sandbox and ran 92.0 s")], "slow-bash"],
+    ["a call that waited 250 s for a place: slow-wait", queued85, [line(104, "timing: a command (session S1, …k) waited 250.0 s for its sandbox and ran 0.1 s")], "slow-wait"],
+    ["started 65 s late, of which 62 s opening its sandbox: ok", [ev(65, "session.started"), req(70, "a", "echo SBX-1"), ok(70.1, "a", "SBX-1\n"), req(80, "b", "echo SBX-2"), ok(80.1, "b", "SBX-2\n")], [line(64, "timing: a sandbox (session S1, …k) opened after 61.7 s")], "ok"],
+    ["started 65 s late with no sandbox wait to explain it: slow-start", [ev(65, "session.started"), req(70, "a", "echo SBX-1"), ok(70.1, "a", "SBX-1\n"), req(80, "b", "echo SBX-2"), ok(80.1, "b", "SBX-2\n")], [], "slow-start"],
+  ];
+  for (const [what, events, lines, want] of judged) {
+    const timings = parseServerTimings(lines.join("\n")).get("S1") ?? { opens: [], commands: [] };
+    const got = verdictOf(events, T0, { steps: 2, maxStartS: 60, maxBashS: 60, maxWaitS: 240, maxRunS: 90, why: "until", timings });
+    cases.push([`judged: ${what}`, null, want, got]);
+  }
   let failed = 0;
-  for (const [what, events, want] of cases) {
+  for (const [what, events, want, pre] of cases) {
+    if (pre) {
+      const pass = pre.kind === want;
+      if (!pass) failed += 1;
+      console.log(`  ${pass ? "ok  " : "FAIL"} ${what}: ${pre.kind}${pass ? "" : ` (expected ${want}; ${pre.verdict})`}`);
+      continue;
+    }
     const got = verdictOf(events, Date.parse("2026-10-05T19:30:00Z"), { steps: 2, maxStartS: 60, why: "timeout" });
     const pass = got.kind === want;
     if (!pass) failed += 1;
@@ -253,7 +356,22 @@ function selfTest() {
 if (SELF_TEST) selfTest();
 
 const t0 = Date.now();
-const rows = (await Promise.all(Array.from({ length: TURNS }, (_, i) => runTurn(i)))).flat();
+let rows;
+if (JUDGE) {
+  // Judge a recorded run again, with what the server logged meanwhile (scripts' caller: provision.py --sandbox-load).
+  const { readFileSync } = await import("node:fs");
+  const recorded = JSON.parse(readFileSync(JUDGE, "utf8"));
+  const timings = SERVER_LOG ? parseServerTimings(readFileSync(SERVER_LOG, "utf8")) : new Map();
+  rows = recorded.rows.map((r) =>
+    r.recorded
+      ? { ...r, ...verdictOf(r.recorded.events, r.recorded.calledAt, { why: r.recorded.why, timings: timings.get(r.child) ?? { opens: [], commands: [] } }) }
+      : r,
+  );
+} else rows = (await Promise.all(Array.from({ length: TURNS }, (_, i) => runTurn(i)))).flat();
+if (ROWS_OUT && !JUDGE) {
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(ROWS_OUT, JSON.stringify({ rows }));
+}
 const conclusive = rows.filter((r) => r.kind !== "inconclusive");
 const ok = rows.filter((r) => r.kind === "ok");
 const bad = rows.filter((r) => r.kind !== "ok" && r.kind !== "inconclusive");
@@ -278,9 +396,11 @@ const summary = {
   failures: reasons,
   wallSeconds: secs(Date.now() - t0),
 };
-if (JSON_OUT) console.log(JSON.stringify({ summary, rows }, null, 2));
+if (JSON_OUT) console.log(JSON.stringify({ summary, rows: rows.map(({ recorded, ...r }) => r) }, null, 2));
 else {
-  for (const r of rows) console.log(`turn ${r.turn}  ${r.name.padEnd(24)} start ${r.startS === null ? "-" : `${r.startS}s`.padStart(6)}  bash ${r.bash.map((b) => (b.ok ? `ok(${b.s}s)` : "FAIL")).join(",") || "-"}  ${r.verdict}`);
+  if (JUDGE) console.log(`judged with ${SERVER_LOG ? "the server's timing lines" : "no server lines"}: a call's wait against ${MAX_WAIT_S} s, its run against ${MAX_RUN_S} s`);
+  const shown = (b) => (b.ok ? (b.waitedS !== undefined ? `ok(${b.s}s = wait ${b.waitedS} + run ${b.ranS})` : `ok(${b.s}s)`) : "FAIL");
+  for (const r of rows) console.log(`turn ${r.turn}  ${r.name.padEnd(24)} start ${r.startS === null ? "-" : `${r.startS}s`.padStart(6)}  bash ${r.bash.map(shown).join(",") || "-"}  ${r.verdict}`);
   console.log(
     `\n${ok.length} of ${conclusive.length} conclusive specialist session(s) got a working sandbox in every step (${rows.length - conclusive.length} inconclusive); ` +
       `start delay s: min ${summary.startSeconds.min} p50 ${summary.startSeconds.p50} p90 ${summary.startSeconds.p90} max ${summary.startSeconds.max}; wall ${summary.wallSeconds}s`,

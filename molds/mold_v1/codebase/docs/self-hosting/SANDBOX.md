@@ -185,7 +185,7 @@ The build's wrapper puts `guardSandboxBackend` (`agent/lib/sandbox-guard.ts`) in
 | after a commit | the last session using a VM lets eve snapshot and stop it as before, then evicts eve's cached handle, so the next step reattaches instead of reusing a stopped VM |
 | a shared sandbox | one VM per sandbox key, however many sessions open it at once. A commit leaves it running while another session still uses it; the last one out stops it. A step that failed without committing is superseded by its session's next step, so it never pins the VM |
 | booting | at most `floor(host CPUs / SANDBOX_CPUS)` VMs boot at the same time (2 on a 4-vCPU host at the default 2). The rest queue in order, and the server log says `[sandbox] waiting for a sandbox (…): 2 already starting, at most 2 at once on this host (4 CPUs, 2 per sandbox); 1 waiting` |
-| a boot that hangs | abandoned after 60 s and started once more (`[sandbox] a sandbox did not start within 60 s …; starting another`). After two, the step is told `No sandbox started within 60 s, 2 times in a row …` |
+| a boot that hangs | abandoned after 60 s, its VM killed (microsandbox would leave it up to its own 180 s, outside the cap), and started once more (`[sandbox] a sandbox did not start within 60 s …; starting another`). After two, the step is told `No sandbox started within 60 s, 2 times in a row …` |
 | memory | a VM is not booted while the host's available memory is below one sandbox plus 512 MiB, for at most 60 s; after that it is booted anyway, with a log line. It never refuses, so a main agent waiting on its specialists cannot deadlock on it |
 | running (mold_v1-190) | at most `SANDBOX_MAX_RUNNING` VMs run at the same time, counted from the start of a boot until the VM is stopped. One more waits in line (`[sandbox] waiting for a free sandbox (…): 2 of 2 running on this host (4 CPUs, 2 per sandbox); 3 waiting`) for at most `SANDBOX_WAIT_S`, with at most `SANDBOX_QUEUE_MAX` waiting. Past either bound the call is answered `Waiting for a free sandbox: all 2 sandboxes this server runs at once are in use, and none came free within 180 s. Nothing was run. Try again in a minute or two.` That is the step's result, so the chat shows it under the specialist's bash call, and the model reads it too |
 | an idle VM (mold_v1-190) | while something waits, a VM with no command for 10 s (a main agent waiting on its specialists, a step that will never commit) is snapshotted and stopped to free its place, exactly as a commit would (`[sandbox] stopping an idle sandbox …`); its session's next command restores it with its files. A VM with no command for 10 minutes is stopped the same way even when nothing waits |
@@ -214,6 +214,26 @@ where KVM is not nested (bare metal) removes the layer the hang lives in; that w
 droplet removes the neighbours' share of the CPU (steal peaked at 40 % here) but is still nested. With `SANDBOX_CPUS=1` the default cap doubles, but the
 mold_v1-072 spike saw a 1-vCPU guest freeze the same way (5 of 12 runs), so 2 stays the default.
 
+### How long a call can take under the cap
+
+From outside, a call's time is its wait for a sandbox plus its run. On a 4-CPU server at the defaults:
+
+| part | bound | what holds it |
+|---|---|---|
+| waiting for a place | `SANDBOX_WAIT_S` (180 s), then the call is answered `Waiting for a free sandbox: …` | the running cap |
+| the boot (or restore) | normally 2 to 5 s; a guest that stalls at boot is abandoned and killed at 60 s and another started (`[sandbox] the sandbox that did not start (…) was stopped`) | the boot deadline |
+| the run | as long as the command needs while its VM answers; a VM that answers nothing is found within about 80 s of the command starting (20 s before the first check, then `SANDBOX_STALL_S`) | the watchdog |
+
+So a 90 s `echo` is not by itself a stuck sandbox: on 2026-10-06 an 85 s echo had waited 81 s in line and run 3 s.
+Every call that takes 5 s or more says where its time went, in one fixed shape the load check reads:
+
+```
+[sandbox] timing: a command (session wrun_…, …key) waited 81.0 s for its sandbox and ran 3.1 s
+[sandbox] timing: a sandbox (session wrun_…, …key) opened after 61.7 s
+```
+
+The second is a specialist whose session started late because its sandbox waited for a place before the session began.
+
 ### Checking a running server
 
 ```
@@ -227,7 +247,10 @@ specialist it reports the start delay (from `subagent.called` to the specialist'
 server clock) and each bash call. It passes when no specialist hit a sandbox failure (an error, a call that never
 returned, an `echo` slower than `--max-bash-s`, default 60) or a start slower than `--max-start-s` (default 60). A specialist whose model did not do as asked is reported as inconclusive, not as a
 failure. It starts test chats and real model calls, so run it where those are welcome. `--self-test` checks its
-verdicts on recorded event shapes, offline.
+verdicts on recorded event shapes, offline. Under the running cap, judge the run with the server's timing lines:
+`--rows-out rows.json` on the run, then `--judge rows.json --server-log <the agent API's journal lines>` judges each
+call's wait against `--max-wait-s` (240) and its run against `--max-run-s` (90), and a late start less the time its
+sandbox waited to open. `provision.py <app> --sandbox-load` does both.
 
 ## Tests
 
