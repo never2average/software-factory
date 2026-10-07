@@ -335,7 +335,7 @@
         "health": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The deploy's own verdict, written by --deploy-remote and never by hand. workflow/api/web are HTTP statuses as strings (\"200\") or \"no answer\", as under `vercel.health`; kvm is what the server said about /dev/kvm and the API process's groups. push, tunnel, disk_percent and sandbox_store_mb are the same read's verdict on desktop notifications (names only), the private tunnel, and the disk (mold_v1-153).",
+          "description": "The deploy's own verdict, written by --deploy-remote and never by hand. workflow/api/web are HTTP statuses as strings (\"200\") or \"no answer\", as under `vercel.health`; kvm is what the server said about /dev/kvm and the API process's groups. push, tunnel, disk_percent and sandbox_store_mb are the same read's verdict on desktop notifications (names only), the private tunnel, and the disk (mold_v1-153). box is the server's size as the same read saw it, and the limits that size gets (mold_v1-195).",
           "properties": {
             "workflow": {
               "type": "string"
@@ -400,6 +400,84 @@
             "sandbox_store_mb": {
               "type": "integer",
               "description": "What the service user's ~/.microsandbox held (templates, session sandboxes, snapshots), in MB."
+            },
+            "box": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The server's size as the deploy saw it, and what that size gets (mold_v1-195). Every limit is derived from the server when it starts or is deployed, so a resize needs a redeploy and no edit; this records which size the last deploy ran on. Written by --deploy-remote, never by hand.",
+              "properties": {
+                "vcpu": {
+                  "type": "integer",
+                  "description": "CPUs the server reports (nproc)."
+                },
+                "mem_mb": {
+                  "type": "integer",
+                  "description": "Memory the server reports (MemTotal), in MiB."
+                },
+                "disk_gb": {
+                  "type": "integer",
+                  "description": "Size of the disk holding the sandbox store, in GiB."
+                },
+                "hostname": {
+                  "type": "string"
+                },
+                "plan": {
+                  "type": "string",
+                  "description": "The provider plan this size matches (e.g. s-4vcpu-8gb), or \"unrecognised\"."
+                },
+                "sandbox_max_running": {
+                  "type": "integer",
+                  "description": "Sandboxes running at once, as the mold's own sandbox-limits script derives it on the server."
+                },
+                "sandbox_max_running_from": {
+                  "type": "string",
+                  "enum": [
+                    "host",
+                    "setting"
+                  ],
+                  "description": "host: derived from the server's CPUs and memory (SANDBOX_MAX_RUNNING unset or auto); setting: a fixed SANDBOX_MAX_RUNNING."
+                },
+                "sandbox_boot_slots": {
+                  "type": "integer"
+                },
+                "sandbox_memory_headroom_mib": {
+                  "type": "integer"
+                },
+                "host_reserved_mib": {
+                  "type": "integer"
+                },
+                "pg_shared_buffers": {
+                  "type": "string",
+                  "description": "Postgres shared_buffers as the running cluster reports it (sized from the server's memory at deploy)."
+                },
+                "pg_work_mem": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "load_checks": {
+          "type": "array",
+          "description": "When provision.py --sandbox-load ran against this server (the last 20), written by it. provision.py --capacity leaves these windows out: a load check fills the sandbox line on purpose.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to"
+            ],
+            "properties": {
+              "from": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+              },
+              "to": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+              }
             }
           }
         },
@@ -720,15 +798,49 @@
       "type": "object",
       "description": "OPTIONAL, and absent unless the operator asked for one: the application's own PRIVATE repository on GitHub or GitLab, written only by .claude/scripts/repo.py (publish / push / auto-push / unlink). It records where the repository is and what was last pushed, never a credential: the one shared sign-in per provider lives in the gh or glab command, or in the environment under the name GITLAB_TOKEN. Nothing in mint.py, provision.py or lanes.py creates one.",
       "additionalProperties": false,
-      "required": ["provider", "host", "owner", "name", "url"],
+      "required": [
+        "provider",
+        "host",
+        "owner",
+        "name",
+        "url"
+      ],
       "properties": {
-        "provider": { "enum": ["github", "gitlab"] },
-        "host": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$", "description": "github.com, gitlab.com, or a company's own GitLab server. The name alone, no https:// and no path." },
-        "owner": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$", "description": "The account, organisation or group the repository sits under (a GitLab subgroup is group/subgroup)." },
-        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$", "description": "The repository's name; by default the app id with dashes. One repository per application." },
-        "url": { "type": "string", "pattern": "^https://[^@\\s]+$", "description": "https://<host>/<owner>/<name>, with no user name or password in it." },
-        "last_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The commit repo.py last pushed (or found already in place)." },
-        "auto_push": { "type": "boolean", "description": "Default false. Only when true may a finished deploy and a recorded lane run push one commit by themselves (repo.py <app_id> auto-push on|off)." }
+        "provider": {
+          "enum": [
+            "github",
+            "gitlab"
+          ]
+        },
+        "host": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$",
+          "description": "github.com, gitlab.com, or a company's own GitLab server. The name alone, no https:// and no path."
+        },
+        "owner": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$",
+          "description": "The account, organisation or group the repository sits under (a GitLab subgroup is group/subgroup)."
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$",
+          "description": "The repository's name; by default the app id with dashes. One repository per application."
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^@\\s]+$",
+          "description": "https://<host>/<owner>/<name>, with no user name or password in it."
+        },
+        "last_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The commit repo.py last pushed (or found already in place)."
+        },
+        "auto_push": {
+          "type": "boolean",
+          "description": "Default false. Only when true may a finished deploy and a recorded lane run push one commit by themselves (repo.py <app_id> auto-push on|off)."
+        }
       }
     }
   }

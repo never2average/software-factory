@@ -101,6 +101,8 @@ def run():
             later.users(check, tmp); later.workspace(check, tmp)
             import library_selftest
             library_selftest.remote(check, tmp)
+            import vm_capacity_selftest
+            vm_capacity_selftest.checks(check, tmp)
             check("the whole self-test opened no socket and started no ssh/rsync/curl", not net.tripped, net.tripped)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -113,7 +115,8 @@ def run():
           f"sandbox pruning on a fixture tree with a stand-in msb, the private tunnel and its lockout guard run against stand-in commands, "
           f"one user per service with the move of a single-user server run against stand-in commands, the egress rule for the server's own SSH port, "
           f"the brief's workspace and the application's surface written on the server through a stand-in for the remote runner, "
-          f"the starter-library cleanup on the server and through that stand-in); "
+          f"the starter-library cleanup on the server and through that stand-in, the capacity check on the first server's recorded day "
+          f"with Postgres and the sandbox limits sized from the server); "
           f"offline, nothing contacted, nothing on this machine changed")
     import vm_users_selftest as later
     print("  also run here: " + ("; ".join(later.RAN) if later.RAN else "none of the optional checks (they need root, unshare, nft and node)"))
