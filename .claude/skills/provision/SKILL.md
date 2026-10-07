@@ -139,6 +139,29 @@ State is the source: a default profile or a subagent's instructions edited in th
 `--dry-run` list first when people already use the workspace.
 `--prune-sandboxes` lists what the server's nightly sandbox prune would remove and the space (read-only; `--apply` removes it now).
 
+## Is the server big enough? (`--capacity`, mold_v1-195)
+
+The operator's decision (2026-10-06): the self-hosted server is scalable by default, and the factory asks for a bigger one when
+it is reaching its limits. Every limit follows the server's own size, so a resize needs only a redeploy and no edit: the sandbox
+guard reads the server's CPUs and memory every time the agent starts (sandboxes at once, boots at once, memory headroom; the
+mold's `npm run sandbox:limits` prints them), and the deploy sizes Postgres from the server (`conf.d/software-factory-size.conf`)
+and records what it saw in `vm_remote.health.box`. Run this after a busy day, after a load check, and whenever someone says the
+agent was slow; there is no scheduler on the factory machine, so it runs when asked or when you run it:
+
+```
+python3 .claude/scripts/provision.py <app_id> --capacity             # the last 24 h; --hours 1..168; --no-task; --dry-run
+```
+
+It only reads the server (the guard's own lines, out-of-memory kills, sysstat's load and memory history, each sandbox's guest
+kernel log, the disk), leaves out each deploy and each recorded `--sandbox-load`, and judges against `THRESHOLDS` in
+`lib/vm_capacity.py`. `ok` and `watch` ask nothing. `needs a bigger box` prints the request for the operator (one DigitalOcean
+plan with its monthly price, why in one sentence, the resize clicks) and files one factory task, or refreshes the open one. Send
+the request as printed. When they write "resized": `--deploy-remote`, then `--capacity` again, and close the task with that output.
+Prices are approximate: `DO_PLANS` in `lib/vm_capacity.py` is the one table, dated `PRICES_CHECKED`, and the operator is told
+"about $X a month" and that the Resize page shows the exact price. Re-check it with `python3 .claude/scripts/lib/vm_capacity.py
+--check-prices` (it reads DigitalOcean's product data and changes nothing). UNVERIFIED: that DigitalOcean will not resize a
+server onto a plan with a smaller disk. The check assumes so, and only asks for plans with at least the current disk.
+
 ## The starter library, and what an older version left behind
 
 New workspaces get no starter workflows or recipes unless state says `surface.custom_workflow_builder.library.install: "all"`
