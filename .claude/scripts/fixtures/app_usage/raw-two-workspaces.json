@@ -43,7 +43,70 @@
     "Closed": 1
    },
    "workflow_input_tokens": 41000,
-   "workflow_output_tokens": 900
+   "workflow_output_tokens": 900,
+   "berr": {},
+   "user_runs_unattributed": 1,
+   "by_agent": [
+    {
+     "agent": "main agent",
+     "kind": "main",
+     "turns": 5,
+     "runs": null,
+     "input_tokens": 120000,
+     "output_tokens": 3000,
+     "cost_usd": 0.18132,
+     "unpriced_turns": 0,
+     "last_active": "2026-10-08T09:00:00.000Z"
+    },
+    {
+     "agent": "research",
+     "kind": "specialist",
+     "turns": null,
+     "runs": 2,
+     "input_tokens": 40000,
+     "output_tokens": 800,
+     "cost_usd": 0.0421,
+     "uncosted": 0,
+     "last_active": "2026-10-08T08:00:00.000Z"
+    },
+    {
+     "agent": "lodr-filings",
+     "kind": "specialist",
+     "turns": null,
+     "runs": 1,
+     "input_tokens": 1000,
+     "output_tokens": 100,
+     "cost_usd": 0,
+     "uncosted": 1,
+     "last_active": "2026-10-07T10:00:00.000Z"
+    }
+   ],
+   "by_user": [
+    {
+     "user": "Alice Rao",
+     "unnamed": false,
+     "chats": 1,
+     "chat_turns": 3,
+     "input_tokens": 90000,
+     "output_tokens": 2000,
+     "cost_usd": 0.1302,
+     "unpriced_turns": 0,
+     "workflow_runs": 2,
+     "last_active": "2026-10-08T09:00:00.000Z"
+    },
+    {
+     "user": "Member 1",
+     "unnamed": true,
+     "chats": 1,
+     "chat_turns": 1,
+     "input_tokens": 30000,
+     "output_tokens": 1000,
+     "cost_usd": 0.0464,
+     "unpriced_turns": 0,
+     "workflow_runs": 0,
+     "last_active": "2026-10-07T12:00:00.000Z"
+    }
+   ]
   },
   {
    "org_id": "beta",
@@ -68,7 +131,37 @@
    "workflow_uncosted": 0,
    "tickets_by_status": {},
    "workflow_input_tokens": 0,
-   "workflow_output_tokens": 0
+   "workflow_output_tokens": 0,
+   "berr": {
+    "user_runs": "42P01 relation \"agent_session_owners\" does not exist"
+   },
+   "by_agent": [
+    {
+     "agent": "main agent",
+     "kind": "main",
+     "turns": 1,
+     "runs": null,
+     "input_tokens": 1000,
+     "output_tokens": 100,
+     "cost_usd": 0.00184,
+     "unpriced_turns": 0,
+     "last_active": "2026-10-07T11:00:00.000Z"
+    }
+   ],
+   "by_user": [
+    {
+     "user": "Alice Rao",
+     "unnamed": false,
+     "chats": 1,
+     "chat_turns": 1,
+     "input_tokens": 1000,
+     "output_tokens": 100,
+     "cost_usd": 0.00184,
+     "unpriced_turns": 0,
+     "workflow_runs": null,
+     "last_active": "2026-10-07T11:00:00.000Z"
+    }
+   ]
   }
  ]
 }

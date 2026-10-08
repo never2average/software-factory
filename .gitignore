@@ -22,3 +22,6 @@ plugins/*/.claude-plugin/types/
 
 # per-app usage reports (app_usage.py): regenerated on demand, counts only
 reports/usage/
+# app_usage.py --self-test: a stand-in `postgres` package (fixture code, not an install)
+!.claude/scripts/fixtures/app_usage/fake-app/node_modules/
+!.agents/scripts/fixtures/app_usage/fake-app/node_modules/
