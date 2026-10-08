@@ -65,11 +65,12 @@ recorded commit. Only mold_v1 can be stamped today.
 
 ## Factory board
 
-Every app the factory built, in one Claude Code pane with four tabs:
+Every app the factory built, in one Claude Code pane with five tabs:
 
+- **Products:** each product's stage path and what's left before the next stage.
 - **Apps:** live health, last deploy, and the base-code version each app runs.
-- **Molds:** the molds, with v2 and v3 marked coming soon, and each product's stage.
-- **Open tickets:** clickable, each opening its details and a "Work on this" button.
+- **Molds:** the molds and their tickets, with v2 and v3 marked coming soon.
+- **Tickets:** filterable and clickable, each opening its details and a "Work on this" button.
 - **Analytics:** each app's rough usage, and the tickets people raised inside it.
 
 It ships with the factory (`plugins/factory-board`, turned on by `.claude/settings.json`). Type `/factory` in a Claude Code session started here. What each part means: `plugins/factory-board/README.md`.

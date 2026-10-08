@@ -104,6 +104,7 @@ export function productRows(products: Json): ProductRow[] {
     stage: String(p.stage ?? ''),
     apps: Array.isArray(p.app_ids) ? p.app_ids.length : 0,
     moldId: String(p.mold_id ?? ''),
+    appIds: Array.isArray(p.app_ids) ? p.app_ids.map(String) : [],
   }))
 }
 
@@ -197,3 +198,48 @@ export function money(n: number | null): string {
 
 /** a + b, null when either is not measured. */
 export const plus = (a: number | null, b: number | null): number | null => (a === null || b === null ? null : a + b)
+
+/** A product's stages, in order (state/products.json, docs/PRODUCTS.md). */
+export const STAGES = ['defined', 'stamped', 'lanes_passing', 'deployed', 'released'] as const
+
+/** The words the board shows for each stage. */
+export const STAGE_WORDS: Record<string, string> = {
+  defined: 'defined',
+  stamped: 'built',
+  lanes_passing: 'tested',
+  deployed: 'deployed',
+  released: 'released',
+}
+
+/** The stage after this one, or undefined at the last (or an unknown) stage. */
+export function nextStage(stage: string): string | undefined {
+  const at = STAGES.indexOf(stage as (typeof STAGES)[number])
+  return at < 0 ? undefined : STAGES[at + 1]
+}
+
+/** The open tickets that stand between a product and the given stage. */
+export function stageTickets(tickets: readonly Ticket[], productId: string, stage: string): Ticket[] {
+  return tickets.filter(t => t.product === productId && t.advancesStage === stage)
+}
+
+/** Cuts text to `width` cells with an ellipsis. */
+export function fit(text: string, width: number): string {
+  const room = Math.max(4, Math.floor(width))
+  return text.length <= room ? text : `${text.slice(0, room - 1)}…`
+}
+
+/** Whether a ticket passes the tickets tab's filter: "all", "p1", "p2", "p3" or "app:<id>". */
+export function ticketMatches(ticket: Ticket, filter: string): boolean {
+  if (filter === 'all' || filter === '') return true
+  if (/^p\d$/.test(filter)) return ticket.priority === Number(filter.slice(1))
+  if (filter.startsWith('app:')) return ticketsForApp([ticket], filter.slice(4)).length > 0
+  return true
+}
+
+/** A product-gate ticket's title without the "<product> <stage> gate: " lead the board already shows. */
+export function plainTitle(t: Ticket): string {
+  if (!t.product) return t.title
+  const lead = new RegExp(`^${t.product.replace(/[^a-z0-9_]/gi, '')}\\s+[a-z_]+\\s+gate:\\s*`, 'i')
+  const cut = t.title.replace(lead, '')
+  return cut ? cut.charAt(0).toUpperCase() + cut.slice(1) : t.title
+}

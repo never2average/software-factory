@@ -58,7 +58,7 @@ test('health verdicts, products, coming soon and ages', async () => {
   expect(verdict([{ name: 'web', url: '', status: 200 }, { name: 'api', url: '', status: 'down' }])).toBe('down')
   expect(verdict([{ name: 'web', url: '', status: 503 }])).toBe('down')
   expect(productRows({ products: [{ product_id: 'p', name: 'P', stage: 'released', app_ids: ['a'], mold_id: 'mold_v2' }] })).toEqual([
-    { id: 'p', name: 'P', stage: 'released', apps: 1, moldId: 'mold_v2' },
+    { id: 'p', name: 'P', stage: 'released', apps: 1, moldId: 'mold_v2', appIds: ['a'] },
   ])
   expect(isComingSoon('coming_soon')).toBe(true)
   expect(isComingSoon('active')).toBe(false)
@@ -103,4 +103,29 @@ test('analytics helpers: sparkline, usage report, tickets per app, short numbers
   expect(money(0)).toBe('$0.00')
   expect(plus(1, null)).toBe(null)
   expect(sparkline([1, null, 2])).toBe('▅ █')
+})
+
+import { fit, nextStage, stageTickets, ticketMatches } from './board'
+
+test('stages, the tickets standing before the next one, filters and fitting', async () => {
+  expect(nextStage('stamped')).toBe('lanes_passing')
+  expect(nextStage('released')).toBe(undefined)
+  const t = [
+    { id: 'a', mold: 'm', title: 'on demo_app', status: 'todo', priority: 1, product: 'p', advancesStage: 'deployed' },
+    { id: 'b', mold: 'm', title: 'other', status: 'todo', priority: 2, product: 'p', advancesStage: 'released' },
+  ]
+  expect(stageTickets(t, 'p', 'deployed').map(x => x.id)).toEqual(['a'])
+  expect(t.filter(x => ticketMatches(x, 'p2')).map(x => x.id)).toEqual(['b'])
+  expect(t.filter(x => ticketMatches(x, 'app:demo_app')).map(x => x.id)).toEqual(['a'])
+  expect(t.filter(x => ticketMatches(x, 'all')).length).toBe(2)
+  expect(fit('abcdefghij', 6)).toBe('abcde…')
+  expect(fit('abc', 6)).toBe('abc')
+})
+
+import { plainTitle } from './board'
+
+test('a gate ticket drops its product and stage lead', async () => {
+  const t = { id: 'x', mold: 'm', title: 'onfinance_hfc_research released gate: docs + pricing decided', status: 'todo', priority: 2, product: 'onfinance_hfc_research' }
+  expect(plainTitle(t)).toBe('Docs + pricing decided')
+  expect(plainTitle({ ...t, product: undefined })).toBe(t.title)
 })

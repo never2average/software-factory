@@ -14,7 +14,7 @@ export type AppRow = {
   checks: Check[]
 }
 
-export type ProductRow = { id: string; name: string; stage: string; apps: number; moldId: string }
+export type ProductRow = { id: string; name: string; stage: string; apps: number; moldId: string; appIds: string[] }
 
 export type MoldRow = { id: string; status: string; snapshot: string; open: number; inProgress: number; done: number }
 
@@ -76,7 +76,7 @@ export type Usage = {
   error?: string
 }
 
-export type Tab = 'apps' | 'molds' | 'tickets' | 'analytics'
+export type Tab = 'products' | 'apps' | 'molds' | 'tickets' | 'analytics'
 
 declare module 'claude-code' {
   interface PluginState {
@@ -89,6 +89,7 @@ declare module 'claude-code' {
       isCollecting: boolean
       collectError: string
       openTicket: string
+      ticketFilter: string
     }
   }
 }

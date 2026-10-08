@@ -3,7 +3,14 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { AppRow, Board, Check, Tab, Ticket, Usage } from '../types'
 import {
+  STAGES,
+  STAGE_WORDS,
   ago,
+  fit,
+  nextStage,
+  plainTitle,
+  stageTickets,
+  ticketMatches,
   appRow,
   isComingSoon,
   money,
@@ -28,12 +35,13 @@ const COLLECT_MS = 5 * 60_000
 
 const board = atom({ plugin: 'factory-board', key: 'board' } as const, null)
 const isRefreshing = atom({ plugin: 'factory-board', key: 'isRefreshing' } as const, false)
-const tab = atom({ plugin: 'factory-board', key: 'tab' } as const, 'apps')
+const tab = atom({ plugin: 'factory-board', key: 'tab' } as const, 'products')
 const selectedApp = atom({ plugin: 'factory-board', key: 'selectedApp' } as const, '')
 const usage = atom({ plugin: 'factory-board', key: 'usage' } as const, {})
 const isCollecting = atom({ plugin: 'factory-board', key: 'isCollecting' } as const, false)
 const collectError = atom({ plugin: 'factory-board', key: 'collectError' } as const, '')
 const openTicket = atom({ plugin: 'factory-board', key: 'openTicket' } as const, '')
+const ticketFilter = atom({ plugin: 'factory-board', key: 'ticketFilter' } as const, 'all')
 
 type $ = EngineInterface
 
@@ -175,9 +183,10 @@ function stageColor(status: string): string {
 }
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'products', label: 'Products' },
   { id: 'apps', label: 'Apps' },
   { id: 'molds', label: 'Molds' },
-  { id: 'tickets', label: 'Open tickets' },
+  { id: 'tickets', label: 'Tickets' },
   { id: 'analytics', label: 'Analytics' },
 ]
 
@@ -188,7 +197,7 @@ export const register: Register = on => {
     if (e.cwd && (await $.fs.exists(`${e.cwd}/state/factory.json`))) root = e.cwd
     await $.command.register({
       name: 'factory',
-      description: 'Factory board: apps, molds, open tickets, analytics (/factory apps|molds|tickets|analytics [app]|refresh|<ticket id>)',
+      description: 'Factory board: products, apps, molds, tickets, analytics (/factory products|apps|molds|tickets|analytics [app]|refresh|<ticket id>)',
     })
     void refresh($)
     $.clock.every(EVERY_MS, () => void refresh($))
@@ -200,7 +209,7 @@ export const register: Register = on => {
     const [word = '', target = ''] = e.args.trim().split(/\s+/)
     const arg = word
     if (word === 'analytics' && target) await update($, selectedApp, () => target)
-    if (arg === 'apps' || arg === 'molds' || arg === 'tickets' || arg === 'analytics') await update($, tab, () => arg)
+    if (arg === 'products' || arg === 'apps' || arg === 'molds' || arg === 'tickets' || arg === 'analytics') await update($, tab, () => arg)
     else if (/^[a-z0-9_]+-\d+$/i.test(arg)) {
       await update($, openTicket, () => arg)
       await update($, tab, () => 'tickets')
@@ -274,56 +283,125 @@ export const register: Register = on => {
       </Box>
     )
 
-    /* -- Molds ---------------------------------------------------------------------------------------------------- */
-    const moldsTab = (
-      <Box flexDirection="column" gap={1}>
-        <Box flexDirection="column">
-          <Text bold>Molds</Text>
-          {current.molds.map(m =>
-            isComingSoon(m.status) ? (
-              <Text key={m.id}>
-                {m.id} <Text color="claude">coming soon</Text> <Text dimColor>({m.open + m.inProgress} planned tickets)</Text>
-              </Text>
-            ) : (
-              <Text key={m.id}>
-                {m.id} <Text dimColor>@{m.snapshot}</Text>{' '}
-                <Text color={m.open + m.inProgress ? 'warning' : 'success'}>
-                  {m.open} open, {m.inProgress} in progress
-                </Text>{' '}
-                <Text dimColor>{m.done} done</Text>
-              </Text>
-            ),
-          )}
-        </Box>
-        <Box flexDirection="column">
-          <Text bold>Products</Text>
-          {current.products.map(p => {
-            const soon = isComingSoon(current.molds.find(m => m.id === p.moldId)?.status ?? '')
-            return (
-              <Text key={p.id}>
-                {p.name}{' '}
-                {soon ? <Text color="claude">coming soon</Text> : <Text color="suggestion">{p.stage}</Text>}{' '}
-                <Text dimColor>
-                  {p.moldId} · {p.apps} app{p.apps === 1 ? '' : 's'}
-                </Text>
-              </Text>
-            )
-          })}
-        </Box>
-      </Box>
-    )
-
+    /* -- shared --------------------------------------------------------------------------------------------------- */
+    const width = Math.max(40, (e.props as { bodyColumns?: number } | undefined)?.bodyColumns ?? 100)
+    const priorityColor = (p: number) => (p <= 1 ? 'error' : p === 2 ? 'warning' : 'subtle')
+    const appOf = (t: Ticket) => current.apps.find(a => ticketsForApp([t], a.id).length > 0)?.id
+    const shortId = (id: string) => id.replace(/^mold_v\d+-/, '#')
     const showTicket = async (id: string) => {
       await update($, openTicket, () => id)
       await update($, tab, () => 'tickets')
     }
+    const showApps = () => void update($, tab, () => 'apps')
+
+    /* One ticket as one line: priority, number, app, then the title as the thing to click. */
+    const ticketRow = (t: Ticket, keyPrefix = 'ticket') => {
+      const app = appOf(t)
+      const used = 4 + 6 + (app ? app.length + 2 : 0) + (t.status === 'in_progress' ? 13 : 0) + 4
+      return (
+        <Box key={`${keyPrefix}-row-${t.id}`} flexDirection="row" gap={1}>
+          <Text bold color={priorityColor(t.priority)}>
+            P{t.priority}
+          </Text>
+          <Text dimColor>{shortId(t.id).padEnd(5)}</Text>
+          {t.status === 'in_progress' && <Text color="suggestion">in progress</Text>}
+          {t.status === 'blocked' && <Text color="error">blocked</Text>}
+          {app && <Text color="claude">{app}</Text>}
+          <Button key={`${keyPrefix}-${t.id}`} plain label={fit(plainTitle(t), width - used)} onPress={() => void showTicket(t.id)} />
+        </Box>
+      )
+    }
+
+    /* -- Products ------------------------------------------------------------------------------------------------- */
+    const productsTab = (
+      <Box flexDirection="column" gap={1}>
+        {current.products.map(p => {
+          const soon = isComingSoon(current.molds.find(m => m.id === p.moldId)?.status ?? '')
+          const next = nextStage(p.stage)
+          const left = next ? stageTickets(current.tickets, p.id, next) : []
+          const apps = current.apps.filter(a => p.appIds.includes(a.id))
+          return (
+            <Box key={`product-${p.id}`} flexDirection="column">
+              <Box flexDirection="row" gap={1}>
+                <Text bold>{p.name}</Text>
+                {soon && <Text color="claude">coming soon</Text>}
+                <Text dimColor>{p.moldId}</Text>
+              </Box>
+              {!soon && (
+                <Box flexDirection="row">
+                  {STAGES.map((s, i) => {
+                    const at = STAGES.indexOf(p.stage as (typeof STAGES)[number])
+                    const done = i <= at
+                    return (
+                      <Text key={`stage-${p.id}-${s}`} color={i === at ? 'success' : done ? 'text' : 'inactive'} bold={i === at}>
+                        {i > 0 ? ' → ' : ''}
+                        {i === at ? '● ' : done ? '✓ ' : '○ '}
+                        {STAGE_WORDS[s]}
+                      </Text>
+                    )
+                  })}
+                </Box>
+              )}
+              {apps.length > 0 && (
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>apps</Text>
+                  {apps.map(a => {
+                    const health = verdict(a.checks)
+                    const mark = health === 'healthy' ? '●' : health === 'down' ? '✕' : '○'
+                    return (
+                      <Button key={`papp-${p.id}-${a.id}`} plain label={`${mark} ${a.id} ${health}`} onPress={showApps} />
+                    )
+                  })}
+                </Box>
+              )}
+              {!soon && next && (
+                <Box flexDirection="column">
+                  <Text dimColor>
+                    {left.length === 0
+                      ? `nothing open for ${STAGE_WORDS[next]}`
+                      : `${left.length} left for ${STAGE_WORDS[next]}:`}
+                  </Text>
+                  {left.map(t => ticketRow(t, `pticket-${p.id}`))}
+                </Box>
+              )}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+
+    /* -- Molds ---------------------------------------------------------------------------------------------------- */
+    const moldsTab = (
+      <Box flexDirection="column">
+        {current.molds.map(m =>
+          isComingSoon(m.status) ? (
+            <Box key={`mold-${m.id}`} flexDirection="row" gap={1}>
+              <Text bold>{m.id}</Text>
+              <Text color="claude">coming soon</Text>
+              <Text dimColor>{m.open + m.inProgress} planned tickets</Text>
+            </Box>
+          ) : (
+            <Box key={`mold-${m.id}`} flexDirection="row" gap={1}>
+              <Text bold>{m.id}</Text>
+              <Text dimColor>@{m.snapshot}</Text>
+              <Text color={m.open + m.inProgress ? 'warning' : 'success'}>{m.open} open</Text>
+              <Text>{m.inProgress} in progress</Text>
+              <Text dimColor>{m.done} done</Text>
+            </Box>
+          ),
+        )}
+      </Box>
+    )
+
+    /* -- One ticket ----------------------------------------------------------------------------------------------- */
     const openId = await read($, openTicket)
     const opened: Ticket | undefined = current.tickets.find(t => t.id === openId)
+    const rule = '─'.repeat(Math.min(width - 2, 72))
 
     const detail = opened && (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" gap={1}>
-          <Button key="ticket-back" label="← All tickets" onPress={() => void update($, openTicket, () => '')} />
+          <Button key="ticket-back" label="← Back" onPress={() => void update($, openTicket, () => '')} />
           <Button
             key="ticket-work"
             label="Work on this"
@@ -336,26 +414,47 @@ export const register: Register = on => {
             }
           />
         </Box>
-        <Text bold>{opened.title}</Text>
-        <Text>
-          <Text dimColor>{opened.id}</Text> ·{' '}
-          <Text color={opened.priority <= 1 ? 'error' : opened.priority === 2 ? 'warning' : 'subtle'}>P{opened.priority}</Text> ·{' '}
-          {opened.status.replace('_', ' ')}
-          {opened.type ? ` · ${opened.type}` : ''}
-          {opened.owner ? ` · owner ${opened.owner}` : ''}
-          {opened.lane ? ` · ${opened.lane} lane` : ''}
-        </Text>
-        <Text dimColor>
-          {opened.mold}
-          {opened.product ? ` · product ${opened.product}` : ''}
-          {opened.advancesStage ? ` · moves the product to ${opened.advancesStage}` : ''}
-          {opened.created ? ` · filed ${opened.created}` : ''}
-          {opened.updated && opened.updated !== opened.created ? ` · updated ${opened.updated}` : ''}
-        </Text>
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Text bold color={priorityColor(opened.priority)}>
+              P{opened.priority}
+            </Text>
+            <Text>{opened.status.replace('_', ' ')}</Text>
+            {appOf(opened) && <Text color="claude">{appOf(opened)}</Text>}
+            <Text dimColor>{opened.id}</Text>
+          </Box>
+          <Text bold wrap="wrap">
+            {opened.title}
+          </Text>
+          <Text dimColor>{rule}</Text>
+          <Text dimColor wrap="wrap">
+            {[
+              opened.type,
+              opened.lane ? `${opened.lane} lane` : '',
+              opened.product ? `product ${opened.product}` : '',
+              opened.advancesStage ? `moves it to ${STAGE_WORDS[opened.advancesStage] ?? opened.advancesStage}` : '',
+              opened.owner ? `owner ${opened.owner}` : '',
+              opened.created ? `filed ${opened.created}` : '',
+              opened.updated && opened.updated !== opened.created ? `updated ${opened.updated}` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </Text>
+        </Box>
         {opened.detail && (
           <Box flexDirection="column">
-            <Text bold>Details</Text>
+            <Text bold>What happened</Text>
             <Text wrap="wrap">{opened.detail}</Text>
+          </Box>
+        )}
+        {opened.acceptance && opened.acceptance.length > 0 && (
+          <Box flexDirection="column">
+            <Text bold>Done when</Text>
+            {opened.acceptance.map((a, i) => (
+              <Text key={`acc-${i}`} wrap="wrap">
+                ☐ {a}
+              </Text>
+            ))}
           </Box>
         )}
         {opened.dependsOn && opened.dependsOn.length > 0 && (
@@ -364,29 +463,21 @@ export const register: Register = on => {
             {opened.dependsOn.map(d => {
               const other = current.tickets.find(t => t.id === d)
               return other ? (
-                <Button key={`dep-${d}`} plain label={`${d}  ${other.title}`} onPress={() => void showTicket(d)} />
+                ticketRow(other, 'dep')
               ) : (
-                <Text key={`dep-${d}`} dimColor>
-                  {d} (done)
+                <Text key={`dep-done-${d}`} color="success">
+                  ✓ {d} done
                 </Text>
               )
             })}
-          </Box>
-        )}
-        {opened.acceptance && opened.acceptance.length > 0 && (
-          <Box flexDirection="column">
-            <Text bold>Done when</Text>
-            {opened.acceptance.map((a, i) => (
-              <Text key={`acc-${i}`}>• {a}</Text>
-            ))}
           </Box>
         )}
         {opened.evidence && opened.evidence.length > 0 && (
           <Box flexDirection="column">
             <Text bold>Evidence so far</Text>
             {opened.evidence.map((a, i) => (
-              <Text key={`ev-${i}`} dimColor>
-                • {a}
+              <Text key={`ev-${i}`} dimColor wrap="wrap">
+                · {a}
               </Text>
             ))}
           </Box>
@@ -395,38 +486,42 @@ export const register: Register = on => {
     )
 
     /* -- Open tickets --------------------------------------------------------------------------------------------- */
+    const filter = (await read($, ticketFilter)) || 'all'
+    const shownTickets = current.tickets.filter(t => ticketMatches(t, filter))
+    const priorities = [...new Set(current.tickets.map(t => t.priority))].sort()
+    const ticketApps = current.apps.filter(a => ticketsForApp(current.tickets, a.id).length > 0)
+    const chip = (id: string, label: string) => (
+      <Button
+        key={`filter-${id}`}
+        label={label}
+        variant={filter === id ? 'primary' : 'secondary'}
+        onPress={() => void update($, ticketFilter, () => id)}
+      />
+    )
     const activeMolds = current.molds.filter(m => !isComingSoon(m.status))
     const ticketsTab = (
       <Box flexDirection="column" gap={1}>
-        {current.tickets.length === 0 && <Text color="success">No open tickets.</Text>}
+        <Box flexDirection="row" gap={1} flexWrap="wrap">
+          {chip('all', `All ${current.tickets.length}`)}
+          {priorities.map(p => chip(`p${p}`, `P${p} ${current.tickets.filter(t => t.priority === p).length}`))}
+          {ticketApps.map(a => chip(`app:${a.id}`, `${a.id} ${ticketsForApp(current.tickets, a.id).length}`))}
+        </Box>
+        {shownTickets.length === 0 && <Text color="success">Nothing open{filter === 'all' ? '' : ' for this filter'}.</Text>}
         {activeMolds.map(m => {
-          const mine = current.tickets.filter(t => t.mold === m.id)
+          const mine = shownTickets.filter(t => t.mold === m.id)
           if (mine.length === 0) return null
           return (
             <Box flexDirection="column" key={`tickets-${m.id}`}>
-              <Text bold>
-                {m.id} <Text dimColor>· {mine.length} open</Text>
+              <Text dimColor>
+                {m.id} · {mine.length} open
               </Text>
-              {mine.map(t => {
-                const app = current.apps.find(a => ticketsForApp([t], a.id).length > 0)
-                const flags = [t.status === 'in_progress' ? 'in progress' : '', t.status === 'blocked' ? 'blocked' : '', app?.id ?? '']
-                  .filter(Boolean)
-                  .join(' · ')
-                return (
-                  <Button
-                    key={`ticket-${t.id}`}
-                    plain
-                    label={`P${t.priority}  ${t.id}  ${flags ? `[${flags}]  ` : ''}${t.title}`}
-                    onPress={() => void showTicket(t.id)}
-                  />
-                )
-              })}
+              {mine.map(t => ticketRow(t))}
             </Box>
           )
         })}
         {current.molds.some(m => isComingSoon(m.status)) && (
           <Text dimColor>
-            Not shown: planned tickets of coming-soon molds (
+            Coming-soon molds' planned tickets are not listed (
             {current.molds
               .filter(m => isComingSoon(m.status))
               .map(m => `${m.id} ${m.open + m.inProgress}`)
@@ -536,9 +631,7 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Text bold>Factory tickets for this app</Text>
           {factoryTickets.length === 0 && <Text color="success">None open.</Text>}
-          {factoryTickets.map(t => (
-            <Button key={`aticket-${t.id}`} plain label={`P${t.priority}  ${t.id}  ${t.title}`} onPress={() => void showTicket(t.id)} />
-          ))}
+          {factoryTickets.map(t => ticketRow(t, 'aticket'))}
         </Box>
 
         {collectProblem && <Text color="error">{collectProblem}</Text>}
@@ -549,6 +642,7 @@ export const register: Register = on => {
       <Box flexDirection="column" gap={1}>
         {tabs}
         {current.error && <Text color="error">Could not read {current.root}/state: {current.error}</Text>}
+        {shown === 'products' && productsTab}
         {shown === 'apps' && appsTab}
         {shown === 'molds' && moldsTab}
         {shown === 'tickets' && (detail || ticketsTab)}
