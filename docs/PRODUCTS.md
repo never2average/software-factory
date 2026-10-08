@@ -9,11 +9,12 @@ gates. An **application** is one stamped, deployable instance of a product. `sta
 | Field | Meaning |
 |---|---|
 | `product_id`, `name`, `tagline` | identity. `tagline` is the line under the sign-in wordmark |
-| `mold_id` | the codebase it is stamped from. Several products may share one mold (`delivered` and `dover` both sit on mold_v1) and they share that mold's backlog `state/tasks/<mold_id>.jsonl` |
+| `mold_id` | the codebase it is stamped from. Several products may share one mold (`delivered`, `dover` and `onfinance_hfc_research` all sit on mold_v1) and they share that mold's backlog `state/tasks/<mold_id>.jsonl`; a gate task names its product (`factory.py add ... --product <id> --advances <stage>`) and only moves that product |
 | `stage` | `defined` → `stamped` → `lanes_passing` → `deployed` → `released`. Written only by `factory.py close` when every task carrying that `advances_stage` is done; never by hand |
 | `gates` | the plain-English conditions for each stage, the checklist the `productize` skill turns into tasks |
 | `app_ids` | the applications stamped from it (intake appends; a retired or reverted app stays listed with its status in its own state) |
-| `deploy_targets` | `vercel` (the one target proven in production), `vm` (local verification only) and/or `vm_remote` (a server of the customer's own over SSH: built and tested offline, not yet proven on a real server; `docs/RUNBOOK.md` §9) |
+| `deploy_targets` | `vercel`, `vm` (local verification only) and/or `vm_remote` (a server of the customer's own over SSH, `docs/RUNBOOK.md` §9; in production since 2026-10-04 as `onfinance_hfc_vm` on a DigitalOcean `s-4vcpu-8gb`, mold_v1-150) |
+| `target_model` | the model the product's apps actually run, in words (each app's exact ids are in its `application.model`) |
 | `vercel_project` | project name for the product's first app; later apps get `<project>-<suffix>` |
 | `brand` | the visual identity. Set it from three inputs and let the rest derive: `python3 .claude/scripts/branding.py --product <id> set --name "Acme Ops" --color #1F6F5C --logo brands/acme/logo.png` (optional `--tagline`). The stored block also carries the derived fields (`description`, `neutral_chroma`, `radius`, `icon_bg`/`icon_fg`, the inlined `icon_svg`, optional `tokens` pins) for a designer who wants an exact value |
 
@@ -43,28 +44,39 @@ codes) carry the product name too.
 Three Vercel deployments per application — the web dashboard (Next.js), the eve agent API, the task-workflow
 service — on the projects `<project>`, `<project>-api`, `<project>-workflow`; one free Neon Postgres with an
 `app_rw` role and row-level security proven before `DATABASE_URL` is written; one private Vercel Blob store;
-four crons; and one inference provider chosen at intake (`infrastructure.inference.provider`):
+six crons (`vercel.json`); and one inference provider chosen at intake (`infrastructure.inference.provider`):
 
 | `inference_provider` | model the app runs (`application.model`) | credential the customer brings | `MODEL_PROVIDER` |
 |---|---|---|---|
 | `cloudflare_workers_ai` (default) | `@cf/zai-org/glm-5.2` (GLM 5.2), context window 262144; `factory.defaults.inference_model` can override the id | `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | `cloudflare` |
 | `vercel_ai_gateway` | `anthropic/claude-sonnet-5` (Claude Sonnet 5, the mold's free-tier-safe default; the gateway's free tier refuses Opus); no context window recorded, the gateway looks it up | `AI_GATEWAY_API_KEY` | `gateway` |
 
-Everything else — projects, database, Blob, crons, RLS gate, branding — is the same for both. The customer also
-brings `RESEND_API_KEY` and `PLATFORM_NOTIFY_FROM` (and `EXA_API_KEY` / `BROWSERBASE_API_KEY` when web search /
-the browser are on): four credentials on Cloudflare, three on the gateway (`docs/RUNBOOK.md` §0). Inference cost
+Everything else — projects, database, Blob, crons, RLS gate, branding — is the same for both. On `vm_remote` the same
+three services run as systemd units on the customer's server instead, with Postgres and file storage on its own disk,
+six scheduled jobs, and microVM sandboxes (`docs/RUNBOOK.md` §9). The customer also
+brings `RESEND_API_KEY`, `PLATFORM_NOTIFY_FROM` and the Google OAuth client id `GOOGLE_CLIENT_ID` (one
+`--set-secret` writes it under both names the app reads), and `EXA_API_KEY` / `BROWSERBASE_API_KEY` when web search /
+the browser are on: five credentials on Cloudflare, four on the gateway (`docs/RUNBOOK.md` §0, `intake.py`
+`secrets_user`). Per role, a Cloudflare app may name its own models in `application.model.roles`; the deploy writes
+them as `CLOUDFLARE_MODEL_ORCHESTRATOR` / `CLOUDFLARE_MODEL_SPECIALIST`. Inference cost
 per workspace: `docs/COST_MODEL.md` (Cloudflare path only; the gateway path is not costed yet).
 
-## Stage gates for mold_v1 products (`delivered`, `dover`)
+## Where each product stands
 
-| Stage | Gate | True today? |
-|---|---|---|
-| stamped | state filled against all four schemas; mold builds on the VM | both apps of `delivered` were stamped; `dover` has none |
-| lanes_passing | all five lanes pass; every lane has a harness | all five harnesses exist (load's `stress.py` landed with mold_v1-024); no app has all five passing — the replica is `reverted` on the accessibility lane |
-| deployed | production URL on Vercel; secrets by name only; the app's inference provider (GLM 5.2 on Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway) configured and smoke-tested | the replica is deployed at `claudecode-web-opal.vercel.app` but predates the RLS gate (mold_v1-026) |
-| released | onboarding path works end to end (`operator:onboard-self`, `operator:new-org`, `operator:new-customer`); docs + pricing/packaging decided; inference budget per workspace known | docs exist as of this file; the onboarding path has not been executed end to end on a stamped app; pricing is a placeholder in the cost model |
+`stage` in `state/products.json`, moved only by `factory.py close`. The gate text per stage is in the same file;
+`factory.py tasks mold_v1 --all` lists the task per gate with its evidence.
 
-Both products are at `defined`: a stage only moves when the tasks that carry it close, and no task has.
+| Product | Mold | Stage | Apps | Deploy targets |
+|---|---|---|---|---|
+| `delivered` | mold_v1 | released | claudecode_web_internal, claudecode_web_replica, sf_gateway_probe | vercel |
+| `dover` | mold_v1 | released | none | vercel |
+| `onfinance_hfc_research` | mold_v1 | stamped (gate tasks mold_v1-200..213) | onfinance_hfc (Vercel), onfinance_hfc_vm (own server) | vercel, vm_remote |
+| `claudecode_web_governed` | mold_v2 | defined | none | vercel, vm |
+| `claudecode_web_research` | mold_v3 | defined | none | vercel, vm |
+
+`onfinance_hfc_research` runs on Cloudflare Workers AI with a model per role: GLM 5.3 for both roles on
+`onfinance_hfc`; Kimi K2.6 orchestrating and GLM 5.3 as specialist on `onfinance_hfc_vm`. Its pricing and
+packaging are not decided yet (a `released` gate); what it costs to run is in `docs/COST_MODEL.md` §2b and §7.
 
 ## What a product is not
 

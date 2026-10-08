@@ -319,7 +319,8 @@ Then it copies the app's source, builds it on the server, prepares the database 
 jobs, and gets the security certificate for your domain. The last line is `deployed: https://research.yourcompany.com`.
 
 If it stops, the last lines say in one sentence what to do. Fix that and run the same command again; every step is
-safe to repeat. A redeploy takes the app offline for about ten minutes while it rebuilds, so run one outside
+safe to repeat. A redeploy takes the app offline while it rebuilds: each redeploy of the first such server took about
+six minutes from start to finish, and the app is down for part of that (`docs/COST_MODEL.md` §7), so run one outside
 working hours.
 
 For the Google sign-in button, add `https://research.yourcompany.com` under **Authorized JavaScript origins** and

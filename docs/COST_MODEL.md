@@ -1,4 +1,4 @@
-# Per-workspace inference cost model (mold_v1, GLM 5.2 on Cloudflare Workers AI)
+# Per-workspace inference cost model (mold_v1 on Cloudflare Workers AI)
 
 This costs the default provider only. An app stamped with `inference_provider: vercel_ai_gateway` runs
 `anthropic/claude-sonnet-5` through the Vercel AI Gateway on `AI_GATEWAY_API_KEY` (`docs/INTAKE.md`, Inference
@@ -11,16 +11,23 @@ invented; if a value is a placeholder the formula still works, the result is jus
 
 ## 1. Prices (fetched)
 
-Source: https://developers.cloudflare.com/workers-ai/platform/pricing/ — fetched 2026-09-09. The model the
-mold uses is `@cf/zai-org/glm-5.2` (`agent/lib/model.ts`, overridable with `CLOUDFLARE_MODEL`).
+Source: https://developers.cloudflare.com/workers-ai/platform/pricing/ — fetched 2026-10-08 (first read 2026-09-09;
+the GLM 5.2 row is unchanged). The mold's default is `@cf/zai-org/glm-5.2` (`agent/lib/model.ts`); an application
+may name a model per role in `application.model.roles`, which the deploy writes as `CLOUDFLARE_MODEL_ORCHESTRATOR` /
+`CLOUDFLARE_MODEL_SPECIALIST`, and the `read_image` tool uses `CLOUDFLARE_MODEL_VISION` (default
+`@cf/zai-org/glm-5.3-flash`). Section 2b names what each app of `onfinance_hfc_research` runs.
 
-| Symbol | Value | Kind |
-|---|---|---|
-| `P_in` | $1.400 per M input tokens (127,273 neurons / M) | fetched |
-| `P_cached` | $0.260 per M cached input tokens (23,636 neurons / M) | fetched |
-| `P_out` | $4.400 per M output tokens (400,000 neurons / M) | fetched |
-| neuron price | $0.011 per 1,000 neurons; 10,000 neurons/day free on the account | fetched |
-| billing | GLM 5.2 requires a paid billing method (same page) | fetched |
+| Model | `P_in` per M input | `P_cached` per M cached input | `P_out` per M output | Neurons per M (in / cached / out) | Kind |
+|---|---|---|---|---|---|
+| `@cf/zai-org/glm-5.2` | $1.400 | $0.260 | $4.400 | 127,273 / 23,636 / 400,000 | fetched 2026-10-08 |
+| `@cf/zai-org/glm-5.3` | $1.400 | $0.260 | $4.400 | 127,273 / 23,636 / 400,000 | fetched 2026-10-08 |
+| `@cf/zai-org/glm-5.3-flash` | $0.150 | $0.030 | $0.500 | 13,636 / 2,727 / 45,455 | fetched 2026-10-08 |
+| `@cf/moonshotai/kimi-k2.6` | $0.950 | $0.160 | $4.000 | 86,364 / 14,545 / 363,636 | fetched 2026-10-08 |
+
+Neuron price: $0.011 per 1,000 neurons, 10,000 neurons per day free on the account (same page, 2026-10-08). On
+2026-09-09 the same page said GLM 5.2 requires a paid billing method. The app's own price table
+(`lib/inference-pricing.ts`, which `GET /api/ops/usage` applies) carries the same four rows; it counts cached input
+as part of input, priced at `P_cached`.
 
 Re-fetch before quoting: vendor pages change and this file records one reading.
 
@@ -37,7 +44,7 @@ thinking model: it streams `reasoning_content`, and reasoning tokens are **outpu
 | `S` | model calls (steps) per turn — one per tool round-trip | 1 on the one-word turn. **The app now records this itself**: since fde-agent PR #12 (2026-09-14) every chat turn writes `chat_turn_usage` (steps, tokens, model) and `GET /api/ops/usage?days=N` sums it per workspace with the price applied; the first recorded turn matched Cloudflare's meter exactly (32,400 in, 4 out, $0.0454). Read `steps / turns` from that endpoint once people have used the workspace | measured (trivial); measured by the app going forward |
 | `H` | conversation history re-sent per step (grows through a thread until compaction) | read `input_tokens / steps − 32,400` from `GET /api/ops/usage` once the workspace has real turns; until then the account-wide mean of 41,800 input tokens per GLM 5.3 call (Sep 5-14) against the 32,400 first-turn floor suggests ~9,400 per step | measured by the app going forward (bounded until then) |
 | `O_step` | output tokens per step, reasoning included | **4 tokens** on the one-word turn (no reasoning streamed); across every GLM 5.2 call on this account 2026-08-15..09-14 the mean is 56 output per call, and on GLM 5.3 (not this mold's model, but the same app shape) 2,028 | measured (one-word) / observed (account means) |
-| `r_cache` | fraction of input served as cached input (Workers AI prices it separately; whether the OpenAI-compatible endpoint the mold uses reports cache hits is not measured) | PLACEHOLDER, use 0 for a conservative bound | placeholder |
+| `r_cache` | fraction of input served as cached input (Workers AI prices it separately) | the endpoint does report cache hits: **37.5% on GLM 5.3 (`onfinance_hfc`), 81.4% on Kimi K2.6 (`onfinance_hfc_vm`)**, main-agent turns over 30 days to 2026-10-08 (section 2b). For another app or model, use 0 for a conservative bound until its own `GET /api/ops/usage` reads it | measured (these two apps) |
 
 Input tokens per turn:
 
@@ -73,13 +80,50 @@ days**, 41,800 input tokens per call. If the live app was moved to GLM 5.3, that
 To refresh: the Cloudflare connector's `execute` tool, `POST /graphql`, dataset `aiInferenceAdaptiveGroups`
 with `sum { totalInputTokens totalOutputTokens totalNeurons }` and `dimensions { date modelId }`.
 
+## 2b. Measured on `onfinance_hfc_research` (2026-10-08)
+
+What the two apps run (from `application.model.roles` and the env names on each deployment, never values):
+`onfinance_hfc` (Vercel) runs `@cf/zai-org/glm-5.3` as orchestrator and specialist; `onfinance_hfc_vm` (its own
+server) runs `@cf/moonshotai/kimi-k2.6` as orchestrator and `@cf/zai-org/glm-5.3` as specialist. Neither sets
+`CLOUDFLARE_MODEL` or `CLOUDFLARE_MODEL_VISION`, so image reading is `@cf/zai-org/glm-5.3-flash` on both.
+
+Main-agent chat turns, workspace `onfinance-ai`, 30 days to 2026-10-08T13:25Z, read from each app's
+`GET /api/ops/usage?days=30` (the `chat_turn_usage` table, priced with the section 1 rows):
+
+| App | Model | Turns | Steps | Steps / turn | Input / step | Output / step | Cached share of input | Cost | Cost / turn | Kind |
+|---|---|---|---|---|---|---|---|---|---|---|
+| onfinance_hfc | all | 158 | 332 | 2.10 | 44,300 | 572 | 44.8% | $13.46 | $0.085 | measured |
+| onfinance_hfc | glm-5.3 | 115 | 225 | 1.96 | 42,207 | 549 | 37.5% | $9.78 | $0.085 | measured |
+| onfinance_hfc | kimi-k2.6 | 31 | 44 | 1.42 | 42,298 | 424 | 59.3% | $0.97 | $0.031 | measured |
+| onfinance_hfc | glm-5.2 | 12 | 63 | 5.25 | 53,174 | 756 | 57.3% | $2.71 | $0.226 | measured |
+| onfinance_hfc_vm | kimi-k2.6 | 345 | 567 | 1.64 | 21,540 | 201 | 81.4% | $4.20 | $0.012 | measured |
+
+Read these with three cautions:
+
+- **Most of this traffic is the factory's own testing**, not people: lane runs, the hand-back rig and the
+  sandbox load checks all sign in to `onfinance-ai` (194 of the server's 345 turns fell on 2026-10-06, the day of
+  the load checks). They measure what a turn costs, not how many turns a customer makes. `U` and `T_user` stay
+  placeholders until real people use a workspace.
+- **Specialist calls are not in these numbers.** `chat_turn_usage` holds the main agent only
+  (`agent/hooks/chat-usage.ts`); specialists record into `automation_runs` through their own
+  `agent/subagents/<id>/hooks/usage.ts`. `GET /api/ops/orgs/onfinance-ai/usage` returned **0 runs** in the same
+  30 days on both apps, although specialists ran in that workspace in that window (mold_v1-199's evidence names one).
+  Whether nothing was recorded or that route does not see what was recorded is not established, so the
+  specialist share of the bill is `PLACEHOLDER`. On the server copy that is every GLM 5.3 call.
+- The model mix on `onfinance_hfc` changed during the window (GLM 5.2, then Kimi K2.6, then GLM 5.3), so the
+  per-model rows, not the total, describe the app as it runs now.
+
+From these, for the main agent on the models deployed today: **about $0.085 per turn on `onfinance_hfc` and
+$0.012 per turn on `onfinance_hfc_vm`** (measured), plus the specialists' calls (`PLACEHOLDER`). The cached share
+is what separates them: Kimi on the server reused 81% of its input from cache, GLM 5.3 on Vercel 38%.
+
 ## 3. Volume per workspace (placeholders)
 
 | Symbol | Meaning | Value | Kind |
 |---|---|---|---|
 | `U` | active people per workspace | **5 members in the main workspace (org-onfinance-ai), 2 of whom touched a chat in the last 30 days**; the other three workspaces have 2, 1 and 1 members and no chats. Replica database (a copy of live), `org_members` × `chat_sessions`, read 2026-09-14 | measured |
 | `T_user` | agent turns per active person per working day | **≈ 0 recorded**: the database holds 5 chats in total, all created 2026-08-09..13, none in the last 30 days; mean 6.0 messages per chat (p50 5, p90 10.4), i.e. about 3 user turns per chat. Live usage is either not persisted here (chats sync from the browser) or genuinely this low — the Cloudflare side shows far more inference than this table explains, so treat the table as a floor, not the truth | measured (floor) |
-| `T_auto` | automated turns per workspace per day: four crons in `vercel.json`, schedules, connector-driven workflows (`automation_runs.automation_type`) | **0.17 per day** (5 `schedule` runs in the last 30 days, 7 all time since 2026-08-12); `automation_runs` token columns are NULL on every run (workflow subagents fill them only for workflow turns); chat turns are in `chat_turn_usage` since PR #12 | measured |
+| `T_auto` | automated turns per workspace per day: six crons in `vercel.json`, schedules, connector-driven workflows (`automation_runs.automation_type`) | **0.17 per day** (5 `schedule` runs in the last 30 days, 7 all time since 2026-08-12); `automation_runs` token columns are NULL on every run (workflow subagents fill them only for workflow turns); chat turns are in `chat_turn_usage` since PR #12 | measured |
 | `D` | working days per month | 22 | assumption, edit |
 
 ```
@@ -127,14 +171,15 @@ Blob. Inference is unchanged: sections 1-5 apply as they are.
 
 | Line | Value | Kind |
 |---|---|---|
-| **the server: 8 GB / 4 vCPU with KVM, Ubuntu 24.04** | **$48.00 per month** ($0.07143 per hour): DigitalOcean Basic Droplet, 8 GiB / 4 vCPUs / 160 GiB SSD / 5,000 GiB transfer. Source: https://www.digitalocean.com/pricing/droplets, fetched 2026-10-02 | fetched |
+| **the server: 8 GB / 4 vCPU with KVM, Ubuntu 24.04** | **$48.00 per month** ($0.07143 per hour): DigitalOcean Basic Droplet `s-4vcpu-8gb`, 8 GiB / 4 vCPUs / 160 GiB SSD / 5,000 GiB transfer. Source: https://www.digitalocean.com/api/static-content/v1/products?product_name=droplets, fetched 2026-10-08 (also 2026-10-06, `.claude/scripts/lib/vm_capacity.py` `PRICES_CHECKED`; and https://www.digitalocean.com/pricing/droplets, 2026-10-02). This is the plan `onfinance_hfc_vm` runs on: `infrastructure.vm_remote.health.box.plan` = `s-4vcpu-8gb` | fetched |
 | why that size | the host check refuses anything under 8 GB / 4 vCPU / 20 GB free or without `/dev/kvm` (`.claude/scripts/lib/vm_remote.py` `HOST_MIN`). The eve build peaks at 2.9 GB, the prewarm at 2.5 GB, the three services rest at about 0.7 GB plus Postgres, and each agent sandbox is capped at 2 vCPU / 1024 MiB (`reports/vm-spike-mold_v1-072.md`, Memory and CPU) | measured (spike, stub model) |
 | KVM on that plan | the factory's own VM is this plan and exposes `/dev/kvm` (nested). Whether a NEW droplet of the same plan does is checked per server by `provision.py <app> --qualify-remote` before anything is installed; many small VPS plans elsewhere do not | measured on one host; checked per server |
-| concurrent sandboxes the server can hold, `N_sbx` | PLACEHOLDER. Upper bound from memory alone: (8 GB - 0.7 GB services - Postgres) / 1 GiB is about 6; from CPU, 4 vCPU / 2 is 2 busy at once. Not soak-tested: more than one sandbox at a time was never run | placeholder |
-| disk growth | stopped session sandboxes stay on disk: 0.76 GB with nine templates, 2.3 GB after five sessions; no prune job exists yet | measured (spike) |
+| concurrent sandboxes the server can hold, `N_sbx` | **2 running at once** on `onfinance_hfc_vm` (`infrastructure.vm_remote.health.box.sandbox_max_running`, derived from the box by `provision.py --capacity`, mold_v1-195: 2 vCPU / 1024 MiB each, 2048 MiB kept for the host); further sandboxes wait in line. The sandbox load checks of 2026-10-07 (`infrastructure.vm_remote.load_checks`) ran against that cap | measured |
+| disk growth | stopped session sandboxes stay on disk until the nightly prune (mold_v1-153) removes them: 0.76 GB with nine templates, 2.3 GB after five sessions in the spike; on 2026-10-07 the server read 58% of its disk used, 81,778 MB of it sandbox store (`infrastructure.vm_remote.health`) | measured |
 | database, file storage, TLS certificate | $0: Postgres and the files are on the server's own disk, the certificate is Let's Encrypt through Caddy | by construction |
 | backups | PLACEHOLDER: DigitalOcean's backup add-on is priced as a percentage of the Droplet on the same page; nothing in this factory takes a backup of a vm_remote server yet | placeholder |
 | the domain | whatever the operator already pays their registrar; one A record, no extra service | not priced |
+| what a redeploy costs in downtime | **at most about 6 minutes**: the three redeploys of `onfinance_hfc_vm` on 2026-10-07 each ran 5 min 53 s to 6 min 4 s from start (`deployed_at`, stamped as the run starts) to the last line of the run's log, and the services are down only from the `[build]` step (services stopped, build in place) to `[units]`, so the outage is shorter than the run. Not timed step by step | measured (upper bound) |
 
 ```
 cost_month(vm_remote) = server_month + cost_month(inference, sections 1-5)
