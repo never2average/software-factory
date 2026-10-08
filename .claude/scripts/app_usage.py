@@ -21,6 +21,13 @@ or, if that cannot be read, from state (application.json workspace.org and seed/
               node from the app's directory AS THE API'S USER with DATABASE_URL alone in its environment. Only the
               counts come back; any value of that file is scrubbed from whatever is printed.
 
+by_agent: one row per workspace for the main agent (chat_turn_usage: turns) and one per specialist (automation_runs of
+type workflow, named by the app's workflows.name: runs). by_user: one row per signed-in person per workspace, named by
+the app's people_roster name, else `Member N` numbered by when they joined (org_members); never an address. A
+person's workflow runs are those whose run_key session (<workflow>:<session>:<turn>) has that person as its owner in
+agent_session_owners (a child session inherits its parent's owner). Both: sorted by turns/runs or chat turns,
+descending, at most 50 rows; each row names its workspace.
+
 Only counts leave the database: email addresses are held in the query process's memory to count distinct people
 and never printed. Field meanings (and how ticket statuses are folded) are in FIELD_NOTES and TICKET_FOLD below; a
 field that cannot be measured is null and named in `not_measured`, never a guess. 0 is a measured zero.
@@ -52,6 +59,7 @@ SCOPE_NOTES = [
     "cost_usd: not stored by the app; estimated from the turns' tokens at the app's own price table (lib/inference-pricing.ts), the same way its usage page does",
     "workflow_runs: automation_runs rows of type workflow (subagent runs) started in the window; schedules, system crons, connector syncs and browser runs are not counted",
 ]
+ROW_CAP = 50
 NUM = ("people_active", "chats", "chat_turns", "input_tokens", "output_tokens", "cost_usd", "workflow_runs", "workflow_cost_usd")
 
 # ---------------------------------------------------------------------------------------------------------
@@ -120,6 +128,58 @@ try {
       w.workflow_input_tokens = Number(wf[0].inp); w.workflow_output_tokens = Number(wf[0].outp); }
     const tk = await q('tickets', (t) => t`select ticket_status as s, count(*)::int as n from tickets where org_id = ${org} group by 1`);
     if (tk) { w.tickets_by_status = {}; for (const r of tk) w.tickets_by_status[r.s] = r.n; }
+    // ---- by agent and by user (aggregates only; emails stay in this process and are replaced by display names) ----
+    w.berr = {};
+    const b = async (field, fn) => { try { return await ro(org, fn); } catch (e) { w.berr[field] = why(e); return null; } };
+    const iso = (v) => (v ? new Date(v).toISOString() : null);
+    const lastChat = await b('main', (t) => t`select max(started_at) as last from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz`);
+    w.by_agent = [];
+    if (byModel && chats && days && lastChat && w.chat_turns > 0) {
+      w.by_agent.push({ agent: 'main agent', kind: 'main', turns: w.chat_turns, runs: null, input_tokens: w.input_tokens, output_tokens: w.output_tokens,
+        cost_usd: w.unpriced_turns || !price ? null : w.cost_usd, unpriced_turns: w.unpriced_turns, last_active: iso(lastChat[0].last) });
+    } else if (!(byModel && chats && days && lastChat)) w.berr.main ||= w.errors.chat || 'the chat usage table could not be read';
+    const spec = await b('specialists', (t) => t`select coalesce(f.name, 'workflow ' || left(r.automation_id, 8)) as name, count(*)::int as runs,
+        coalesce(sum(r.cost_usd),0)::float8 as cost, coalesce(sum(r.input_tokens),0)::text as inp, coalesce(sum(r.output_tokens),0)::text as outp,
+        count(*) filter (where coalesce(r.cost_usd,0) = 0 and coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0)::int as uncosted, max(r.started_at) as last
+        from automation_runs r left join workflows f on f.id::text = r.automation_id and f.org_id = r.org_id
+        where r.org_id = ${org} and r.automation_type = 'workflow' and r.started_at >= ${since}::timestamptz group by 1`);
+    for (const r of spec || []) w.by_agent.push({ agent: r.name, kind: 'specialist', turns: null, runs: r.runs, input_tokens: Number(r.inp),
+      output_tokens: Number(r.outp), cost_usd: r.cost, uncosted: r.uncosted, last_active: iso(r.last) });
+    // per person: chat turns by model (to price them), chats, and the workflow runs their sessions started
+    const uModel = await b('users', (t) => t`select lower(actor_email) as e, model, count(*)::int as turns, coalesce(sum(input_tokens),0)::text as inp,
+        coalesce(sum(output_tokens),0)::text as outp, coalesce(sum(cache_read_tokens),0)::text as cr, coalesce(sum(cache_write_tokens),0)::text as cw, max(started_at) as last
+        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and actor_email is not null group by 1, 2`);
+    const uChats = await b('users', (t) => t`select lower(actor_email) as e, count(distinct eve_session_id)::int as n
+        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and actor_email is not null group by 1`);
+    // run_key = <workflow>:<child session>:<turn>; a child session's owner row carries its parent's (the person's) owner.
+    const uRuns = await b('user_runs', (t) => t`select case when o.owner_kind = 'person' then lower(o.owner_email) end as e, count(*)::int as n, max(r.started_at) as last
+        from automation_runs r left join agent_session_owners o on r.run_key like '%:%:%' and o.session_id = split_part(r.run_key, ':', 2) and o.org_id = r.org_id
+        where r.org_id = ${org} and r.automation_type = 'workflow' and r.started_at >= ${since}::timestamptz group by 1`);
+    const roster = await b('names', (t) => t`select lower(email) as e, name from people_roster where org_id = ${org}`);
+    const members = await b('names', (t) => t`select lower(email) as e from org_members where org_id = ${org} order by created_at, lower(email)`);
+    w.by_user = [];
+    if (uModel && uChats) {
+      const P = new Map();
+      const get = (e) => P.get(e) || P.set(e, { chats: 0, chat_turns: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0, unpriced_turns: 0, workflow_runs: uRuns ? 0 : null, last: null }).get(e);
+      const later = (a, c) => (!a || (c && new Date(c) > new Date(a)) ? c : a);
+      for (const r of uModel) {
+        const p = get(r.e); const tk = { inputTokens: Number(r.inp), outputTokens: Number(r.outp), cacheReadTokens: Number(r.cr), cacheWriteTokens: Number(r.cw) };
+        p.chat_turns += r.turns; p.input_tokens += tk.inputTokens; p.output_tokens += tk.outputTokens; p.last = later(p.last, r.last);
+        const c = price ? price(r.model, tk) : null;
+        if (c === null || c === undefined) p.unpriced_turns += r.turns; else p.cost_usd += c;
+      }
+      for (const r of uChats) get(r.e).chats = r.n;
+      w.user_runs_unattributed = 0;
+      for (const r of uRuns || []) { if (!r.e) { w.user_runs_unattributed += r.n; continue; } const p = get(r.e); p.workflow_runs = r.n; p.last = later(p.last, r.last); }
+      // display names: the roster's name; never an address. Without one: Member N, by when they joined the workspace.
+      const named = new Map(); for (const r of roster || []) if (r.name && r.name.trim() && !r.name.includes('@')) named.set(r.e, r.name.trim());
+      const order = (members || []).map((r) => r.e).filter((e) => !named.has(e));
+      const guests = [...P.keys()].filter((e) => !named.has(e) && !order.includes(e)).sort();
+      const num = new Map([...order, ...guests].map((e, i) => [e, i + 1]));
+      for (const [e, p] of P) w.by_user.push({ user: named.get(e) || `Member ${num.get(e)}`, unnamed: !named.has(e), chats: p.chats, chat_turns: p.chat_turns,
+        input_tokens: p.input_tokens, output_tokens: p.output_tokens, cost_usd: p.unpriced_turns || !price ? null : p.cost_usd, unpriced_turns: p.unpriced_turns,
+        workflow_runs: p.workflow_runs, last_active: iso(p.last) });
+    }
     out.workspaces.push(w);
   }
   out.people_active = all.size;
@@ -196,7 +256,58 @@ def empty_fields():
 
 def error_report(app_id, days, target, why):
     return {"app_id": app_id, "generated_at": now_iso(), "days": days, "target": target, "totals": empty_fields(),
-            "workspaces": [], "daily": [], "not_measured": [f"every field: {why}"], "error": why}
+            "workspaces": [], "daily": [], "by_agent": [], "by_user": [], "not_measured": [f"every field: {why}"], "error": why}
+
+def _usd(v): return None if v is None else round(float(v), 4)
+
+def breakdowns(raw_workspaces):
+    """by_agent and by_user across workspaces: rows named by agent or by display name (never an address), each with its
+    workspace, sorted by turns (runs for a specialist) or chat turns, descending, at most ROW_CAP each. -> (agents, users, notes)"""
+    agents, users, nm = [], [], []
+    BERR = {"main": "by_agent main agent", "specialists": "by_agent specialists", "users": "by_user",
+            "user_runs": "by_user workflow_runs", "names": "by_user names"}
+    for w in raw_workspaces:
+        ws, org = w.get("name") or w.get("org_id"), w.get("org_id")
+        for field, msg in sorted((w.get("berr") or {}).items()):
+            if field == "user_runs": continue          # said once below, and only where someone's row carries the null
+            nm.append(f"{BERR.get(field, field)} ({org}): could not be read: {msg}" + (" (everyone without a name in a readable record is shown as Member N)" if field == "names" else ""))
+        for a in w.get("by_agent") or []:
+            row = {"agent": a.get("agent"), "kind": a.get("kind"), "workspace": ws, "turns": a.get("turns"), "runs": a.get("runs"),
+                   "input_tokens": a.get("input_tokens"), "output_tokens": a.get("output_tokens"), "cost_usd": _usd(a.get("cost_usd")), "last_active": a.get("last_active")}
+            if a.get("kind") == "main" and row["cost_usd"] is None:
+                nm.append(f"by_agent main agent cost_usd ({org}): " + (f"{a.get('unpriced_turns')} turn(s) on a model the app's price table does not price" if a.get("unpriced_turns") else "the app's price table could not be loaded"))
+            if a.get("kind") == "specialist" and a.get("uncosted"):
+                if not float(a.get("cost_usd") or 0):
+                    row["cost_usd"] = None
+                    nm.append(f"by_agent {a.get('agent')} cost_usd ({org}): {a['uncosted']} of {a.get('runs')} run(s) used the model and none recorded a cost")
+                else:
+                    nm.append(f"by_agent {a.get('agent')} cost_usd ({org}): {a['uncosted']} of {a.get('runs')} run(s) used the model but recorded no cost; the figure is the recorded cost only")
+            agents.append(row)
+        unnamed = 0
+        for u in w.get("by_user") or []:
+            unnamed += bool(u.get("unnamed"))
+            if u.get("cost_usd") is None:
+                nm.append(f"by_user {u.get('user')} cost_usd ({org}): " + (f"{u.get('unpriced_turns')} turn(s) on a model the app's price table does not price" if u.get("unpriced_turns") else "the app's price table could not be loaded"))
+            users.append({"user": u.get("user"), "workspace": ws, "chats": u.get("chats"), "chat_turns": u.get("chat_turns"), "input_tokens": u.get("input_tokens"),
+                          "output_tokens": u.get("output_tokens"), "cost_usd": _usd(u.get("cost_usd")), "workflow_runs": u.get("workflow_runs"), "last_active": u.get("last_active")})
+        if unnamed: nm.append(f"by_user ({org}): {unnamed} person(s) have no display name in the app's people records and are shown as Member N, numbered by when they joined the workspace")
+        if w.get("user_runs_unattributed"):
+            nm.append(f"by_user workflow_runs ({org}): {w['user_runs_unattributed']} workflow run(s) could not be traced to a signed-in person (no session owner recorded, or started by a service) and are in no one's count")
+        if w.get("by_user") and "user_runs" in (w.get("berr") or {}):
+            nm.append(f"by_user workflow_runs ({org}): null, because the session owners table that ties a run to the person who started it could not be read ({w['berr']['user_runs']})")
+    def order(rows, n):
+        """n(row) descending; ties by most recently active, then by name. Stable sorts, last key first."""
+        rows.sort(key=lambda r: str(r.get("agent") or r.get("user")))
+        rows.sort(key=lambda r: r.get("last_active") or "", reverse=True)
+        rows.sort(key=lambda r: n(r) if n(r) is not None else -1, reverse=True)
+    order(agents, lambda r: r["turns"] if r["turns"] is not None else r["runs"])
+    order(users, lambda r: r["chat_turns"])
+    for name, rows in (("by_agent", agents), ("by_user", users)):
+        if len(rows) > ROW_CAP: nm.append(f"{name}: {len(rows)} rows; only the first {ROW_CAP} are shown")
+    if agents or users:
+        nm.append("by_agent: turns is the main agent's measure (chat turns) and runs a specialist's (workflow runs); the other is null, not applicable. Specialist names are the app's workflow names")
+        nm.append("by_user: people who sent a chat turn or started a workflow run in the window, named from the app's people roster; email addresses are never shown")
+    return agents[:ROW_CAP], users[:ROW_CAP], nm
 
 def assemble(app_id, days, target, raw, dates, generated_at=None):
     """The raw counts the query printed -> the report the plugin reads."""
@@ -250,9 +361,11 @@ def assemble(app_id, days, target, raw, dates, generated_at=None):
     daily = [{"date": d, "chat_turns": sum((w["_daily"].get(d) or {}).get("turns", 0) for w in ws) if chat_ok else None,
               "people_active": int(dp.get(d, 0)) if chat_ok else None} for d in dates]
     for w in ws: w.pop("_daily")
-    nm = [TICKET_NOTE] + SCOPE_NOTES + nm
+    by_agent, by_user, bnm = breakdowns(raw.get("workspaces") or [])
+    nm = [TICKET_NOTE] + SCOPE_NOTES + nm + bnm
     return {"app_id": app_id, "generated_at": generated_at or now_iso(), "days": days, "target": target, "totals": tot,
-            "workspaces": [{"org_id": w.pop("org_id"), "name": w.pop("name"), **w} for w in ws], "daily": daily, "not_measured": nm}
+            "workspaces": [{"org_id": w.pop("org_id"), "name": w.pop("name"), **w} for w in ws], "daily": daily,
+            "by_agent": by_agent, "by_user": by_user, "not_measured": nm}
 
 # ---------------------------------------------------------------------------------------------------------
 # running the query
@@ -512,6 +625,30 @@ def self_test():
     ok(QUERY_JS.count("sql.begin('read only'") == 1 and "set_config('app.org_id'" in QUERY_JS and "rolbypassrls" in QUERY_JS, "query is read-only and scoped")
     ok(not re.search(r"\b(insert|update|delete|truncate|alter|drop|create)\b", QUERY_JS, re.I), "query writes nothing")
     ok("actor_email" in QUERY_JS and not re.search(r"out\.[a-z_]+ = .*\.e\b", QUERY_JS), "emails stay in the query process")
+    # ---- by_agent / by_user (assembled from the fixture's raw rows) ----
+    akeys = {"agent", "kind", "workspace", "turns", "runs", "input_tokens", "output_tokens", "cost_usd", "last_active"}
+    ukeys = {"user", "workspace", "chats", "chat_turns", "input_tokens", "output_tokens", "cost_usd", "workflow_runs", "last_active"}
+    ok(all(set(r) == akeys for r in rep["by_agent"]) and all(set(r) == ukeys for r in rep["by_user"]), "row field sets")
+    ok([(r["agent"], r["workspace"]) for r in rep["by_agent"]] == [("main agent", "Alpha"), ("research", "Alpha"), ("main agent", "Beta Co"), ("lodr-filings", "Alpha")], "by_agent order")
+    ok(next(r for r in rep["by_agent"] if r["agent"] == "lodr-filings")["cost_usd"] is None, "specialist with tokens and no recorded cost -> null")
+    ok(all((r["turns"] is None) == (r["kind"] == "specialist") and (r["runs"] is None) == (r["kind"] == "main") for r in rep["by_agent"]), "turns for main, runs for specialists")
+    ok([r["user"] for r in rep["by_user"]] == ["Alice Rao", "Member 1", "Alice Rao"] and [r["chat_turns"] for r in rep["by_user"]] == [3, 1, 1], "by_user order and the unnamed person")
+    ok(rep["by_user"][2]["workflow_runs"] is None and sum("by_user workflow_runs (beta)" in x for x in rep["not_measured"]) == 1 and any("by_user workflow_runs (beta): null" in x and "42P01" in x for x in rep["not_measured"]), "unattributable runs -> null, named")
+    ok(any("shown as Member N" in x for x in rep["not_measured"]) and any("could not be traced" in x for x in rep["not_measured"]), "unnamed and unattributed named")
+    big = json.loads(json.dumps(raw)); big["workspaces"][0]["by_user"] = [dict(raw["workspaces"][0]["by_user"][0], user=f"P{i}", chat_turns=i) for i in range(60)]
+    rb = assemble("demo", 3, "vercel", big, dates)
+    ok(len(rb["by_user"]) == ROW_CAP and rb["by_user"][0]["chat_turns"] == 59 and any("only the first 50" in x for x in rb["not_measured"]), "cap at 50, highest first")
+    ok(e["by_agent"] == [] and e["by_user"] == [], "error report carries empty arrays")
+    # ---- the real query against a stand-in `postgres` (fixtures/app_usage/fake-app): naming, no addresses, read-only ----
+    fake = os.path.join(FIX, "fake-app")
+    rr = run_node(fake, {"PATH": os.environ.get("PATH", PATH), "HOME": "/tmp", "DATABASE_URL": "postgres://u:p@h/db",
+                         "SF_USAGE_ARGS": json.dumps({"orgs": [], "since": "2026-10-06T00:00:00+00:00", "days": 3})}, [])
+    ok("error" not in rr and not rr["workspaces"][0]["errors"] and not rr["workspaces"][0]["berr"], "fake query ran: " + json.dumps(rr)[:400])
+    fr = assemble("fake", 3, "vercel", rr, dates)
+    ok("@" not in json.dumps(fr["by_user"]) and "@" not in json.dumps(rr), "no email address leaves the query, not even one stored as a name")
+    ok([(r["user"], r["chat_turns"], r["workflow_runs"], r["cost_usd"]) for r in fr["by_user"]] == [("Neha Shah", 3, 0, 2.1), ("Member 1", 2, 2, 0.98), ("Member 2", 1, 0, 0.12)], "names, stable Member N, runs and cost per person")
+    ok([(r["agent"], r["turns"], r["runs"], r["cost_usd"]) for r in fr["by_agent"]] == [("main agent", 6, None, 3.2), ("research", None, 2, None)], "main agent and specialist rows")
+    ok(fr["totals"]["people_active"] == 3 and fr["totals"]["tickets"]["open"] == 1, "existing fields unchanged by the breakdowns")
     print(f"app_usage: {n} checks passed"); return 0
 
 if __name__ == "__main__": sys.exit(main(sys.argv[1:]))
