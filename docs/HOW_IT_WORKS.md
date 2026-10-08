@@ -290,6 +290,6 @@ another project's, and Vercel would not reveal it anyway. Consequences (task mol
 | RLS gate | built and proven on new databases (mold_v1-016). The replica's *deployed* build still connects as `postgres` with BYPASSRLS — it predates the gate and its `datastores.postgres` still says `supabase` with no `rls_verified` (mold_v1-026) |
 | Lanes | all five declared and runnable; run on the replica 2026-09-08: responsiveness **pass**, accessibility **fail** (1 of 2 checks), functional **fail** (15/20 pass, 4 fail — three are known mold defects 017/018/019, the fourth is the BYPASSRLS row), context **fail** (clone regression), load **skipped** at the time (stress harness landed afterwards, mold_v1-024) |
 | Harnesses | accessibility (`a11y.mjs`, axe-core 4.13.0) and responsiveness (`responsive.mjs`) exist and run — mold_v1-007/008 closed. `testing/load/stress.py` exists (mold_v1-024); `lanes.py <app> --list` shows `load  yes  1  all met` |
-| mold_v2, mold_v3 | backlog only — `MOLD.md` and a roadmap, no codebase, nothing stamped |
+| mold_v2, mold_v3 | coming soon: backlog only — `MOLD.md` and a roadmap, no codebase, nothing stamped |
 
 Run `python3 .claude/scripts/factory.py status` and `python3 .claude/scripts/lanes.py <app_id> --list` for the live view.
