@@ -1,0 +1,74 @@
+{
+ "pricing": true,
+ "role": "app_rw",
+ "orgs_from": "orgs table",
+ "state_orgs_missing": [],
+ "people_active": 2,
+ "daily_people": {
+  "2026-10-07": 2,
+  "2026-10-08": 1
+ },
+ "workspaces": [
+  {
+   "org_id": "alpha",
+   "name": "Alpha",
+   "errors": {},
+   "chat_turns": 5,
+   "input_tokens": 120000,
+   "output_tokens": 3000,
+   "cost_usd": 0.18132,
+   "unpriced_turns": 0,
+   "chats": 2,
+   "turns_no_person": 1,
+   "people_active": 2,
+   "daily": {
+    "2026-10-07": {
+     "turns": 3,
+     "people": 2
+    },
+    "2026-10-08": {
+     "turns": 2,
+     "people": 1
+    }
+   },
+   "workflow_runs": 3,
+   "workflow_cost_usd": 0.0421,
+   "workflow_uncosted": 1,
+   "tickets_by_status": {
+    "Open": 2,
+    "Needs Triage": 1,
+    "In Progress": 1,
+    "Waiting on Customer": 1,
+    "Resolved": 3,
+    "Closed": 1
+   },
+   "workflow_input_tokens": 41000,
+   "workflow_output_tokens": 900
+  },
+  {
+   "org_id": "beta",
+   "name": "Beta Co",
+   "errors": {},
+   "chat_turns": 1,
+   "input_tokens": 1000,
+   "output_tokens": 100,
+   "cost_usd": 0.00184,
+   "unpriced_turns": 0,
+   "chats": 1,
+   "turns_no_person": 0,
+   "people_active": 1,
+   "daily": {
+    "2026-10-07": {
+     "turns": 1,
+     "people": 1
+    }
+   },
+   "workflow_runs": 0,
+   "workflow_cost_usd": 0,
+   "workflow_uncosted": 0,
+   "tickets_by_status": {},
+   "workflow_input_tokens": 0,
+   "workflow_output_tokens": 0
+  }
+ ]
+}
