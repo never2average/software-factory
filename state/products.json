@@ -167,7 +167,7 @@
       "name": "OnFinance AI",
       "tagline": "Research workspace for listed Indian housing finance companies.",
       "stage": "stamped",
-      "target_model": "GLM 5.2",
+      "target_model": "GLM 5.3 on Cloudflare Workers AI (onfinance_hfc: orchestrator and specialist; onfinance_hfc_vm: Kimi K2.6 orchestrator, GLM 5.3 specialist; image reading GLM 5.3 Flash on both)",
       "gates": {
         "stamped": [
           "state/application/<app_id>/ filled against all four schemas",
@@ -179,14 +179,14 @@
           "for an app on its own server (target vm_remote, mold_v1-078): the lanes grade infrastructure.vm_remote.production_url, and the functional lane's tool.python row passes (the deployed agent really ran python3 in its sandbox; a tool result carried the computed line)"
         ],
         "deployed": [
-          "production URL on Vercel \u2014 the one committed deploy target; target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
+          "production URL on Vercel (target: vercel); target: vm verifies an app's database locally and does not serve it (mold_v1-020, infra/vm/README.md)",
           "secrets present by name only in state",
-          "the app's inference provider configured and smoke-tested (GLM 5.2 on Cloudflare Workers AI, or Claude Sonnet 5 on the Vercel AI Gateway)",
+          "the app's inference provider configured and smoke-tested (Cloudflare Workers AI running the models in application.model.roles, or Claude Sonnet 5 on the Vercel AI Gateway)",
           "or, on a server of the customer's own (target vm_remote, docs/RUNBOOK.md \u00a79): provision.py <app> --qualify-remote accepted the host (/dev/kvm, 8 GB / 4 vCPU, 20 GB free, Ubuntu 24.04, no Docker), provision.py <app> --deploy-remote ended `deployed: https://<domain>`, and infrastructure.vm_remote.health reads workflow/api/web 200 with kvm ok (API as a non-root user in group kvm, only ports 22/80/443 listening, six cron timers, env file mode 600)",
-          "vm_remote only: the mold carries the three off-Vercel switches (mold_v1-073 storage driver, mold_v1-074 service identity, the upstream sandbox change); until then --deploy-remote refuses and this gate cannot be met"
+          "vm_remote only: the mold carries the three off-Vercel switches (mold_v1-073 storage driver, mold_v1-074 service identity, mold_v1-151 the upstream sandbox setting); --deploy-remote refuses a source that lacks any of them (.claude/scripts/lib/vm_remote.py MOLD_SWITCHES)"
         ],
         "released": [
-          "onboarding path works end to end on a stamped app (docs/RUNBOOK.md: intake, provision, the customer credentials (four on Cloudflare Workers AI, three on the Vercel AI Gateway), deploy, clone.py configure, emailed-code sign-in, then the mold's operator:onboard-self / operator:new-org / operator:new-customer)",
+          "onboarding path works end to end on a stamped app (docs/RUNBOOK.md: intake, provision, the customer credentials (five on Cloudflare Workers AI, four on the Vercel AI Gateway, the Google client id counted once; plus EXA_API_KEY / BROWSERBASE_API_KEY when web search / the browser are on), deploy, clone.py configure, emailed-code sign-in, then the mold's operator:onboard-self / operator:new-org / operator:new-customer)",
           "docs + pricing/packaging decided (docs/PRODUCTS.md; pricing still a placeholder)",
           "budget of inference cost per workspace known (docs/COST_MODEL.md: prices fetched, volumes measured from automation_runs rather than placeholders)",
           "vm_remote only: the server's monthly price is in docs/COST_MODEL.md \u00a77 for the plan actually used, and what a redeploy costs in downtime (the build is in place) has been told to the customer"
@@ -197,7 +197,8 @@
         "onfinance_hfc_vm"
       ],
       "deploy_targets": [
-        "vercel"
+        "vercel",
+        "vm_remote"
       ],
       "vercel_project": "onfinance-hfc",
       "brand": {
