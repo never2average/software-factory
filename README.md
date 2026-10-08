@@ -65,10 +65,9 @@ recorded commit. Only mold_v1 can be stamped today.
 
 ## Factory board
 
-Every app the factory built, in one Claude Code pane with five tabs:
+Every app the factory built, in one Claude Code pane with four tabs:
 
-- **Products:** each product's stage path and what's left before the next stage.
-- **Apps:** live health, last deploy, and the base-code version each app runs.
+- **Products & apps:** each product's stage path and what's left before the next stage, with its apps underneath: live health, last deploy, and the base-code version each runs.
 - **Molds:** the molds and their tickets, with v2 and v3 marked coming soon.
 - **Tickets:** filterable and clickable, each opening its details and a "Work on this" button.
 - **Analytics:** each app's rough usage, and the tickets people raised inside it.
