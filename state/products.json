@@ -166,7 +166,7 @@
       "mold_id": "mold_v1",
       "name": "OnFinance AI",
       "tagline": "Research workspace for listed Indian housing finance companies.",
-      "stage": "defined",
+      "stage": "stamped",
       "target_model": "GLM 5.2",
       "gates": {
         "stamped": [
