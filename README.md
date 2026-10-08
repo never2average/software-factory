@@ -7,14 +7,14 @@ Factory 1: an operator (Fable + sol) services molds through a fixed surface and 
 ```
 Fable + sol --service--> [dm.md, browser(o/o), web search(o/o), primary_context,
     ^                     multiplayer_context, custom workflow builder] --> mold 1 (has a codebase)
-    |                                                                  --> mold 2 (planned)
-    +------------------------- revert ------------------------------+  --> mold 3 (planned)
+    |                                                                  --> mold 2 (coming soon)
+    +------------------------- revert ------------------------------+  --> mold 3 (coming soon)
 ```
 
 ## Layout
 
 - `state/` — `factory.schema.json` + `factory.json` (Factory 1 instance); per-application schemas under `state/application/<app_id>/`
-- `molds/` — `mold_v1` (the only one with a codebase: a snapshot of fde-agent). `mold_v2`, `mold_v3` are a `MOLD.md` and a roadmap, nothing more. `mold_v1/testing/` holds the five test lanes and their declarations; `mold_v1/branding/rules.json` says where each branded surface lives
+- `molds/` — `mold_v1` (the only one with a codebase: a snapshot of fde-agent). `mold_v2`, `mold_v3` are coming soon: a `MOLD.md` and a roadmap, nothing more. `mold_v1/testing/` holds the five test lanes and their declarations; `mold_v1/branding/rules.json` says where each branded surface lives
 - `infra/` — `vercel/` (the deploy target: app + eve functions + task-workflow), `vm/` (the DigitalOcean droplet, a local verification target — it holds each app's private Postgres artifact, it does not serve the app)
 - `build/` — per-app branded copies of the mold, written by `branding.py prepare`; the snapshot itself is never edited
 - `.claude/`, `.agents/` — agents, skills, scripts, workflows, sandboxes for Claude Code and other agent runtimes
@@ -49,16 +49,28 @@ Skills: `task`, `stamp`, `run-lanes`, `productize`. Agents: `mold-engineer`, `la
 A mold is a codebase snapshot plus its test lanes. A product is a mold under a brand, with stage gates.
 Several products can share one mold, and they share that mold's backlog.
 
-| Mold | Codebase | Products (`state/products.json`) | Stage |
+| Mold | Status | Codebase | Products (`state/products.json`) |
 |---|---|---|---|
-| mold_v1 | snapshot of fde-agent + the five testing lanes | `delivered` (2 apps stamped), `dover` (0 apps, positioning still a TODO in its brand block) | both `defined` |
-| mold_v2 | **none yet** — `MOLD.md` + `roadmap.md` only | `claudecode_web_governed` | `defined` |
-| mold_v3 | **none yet** — `MOLD.md` + `roadmap.md` only | `claudecode_web_research` | `defined` |
+| mold_v1 | active | snapshot of fde-agent + the five testing lanes | `delivered`, `dover`, `onfinance_hfc_research` |
+| mold_v2 | **coming soon** | none yet: `MOLD.md` + `roadmap.md` only | `claudecode_web_governed` |
+| mold_v3 | **coming soon** | none yet: `MOLD.md` + `roadmap.md` only | `claudecode_web_research` |
+
+Each product's current stage is in `state/products.json` and on the factory board (below); `python3 .claude/scripts/factory.py status` prints it too.
 
 mold_v2 (agent governance, pipeline-level data isolation, budget management, performance governor) and
-mold_v3 (autoresearch and SAI, multi-context + multi-role isolation per workflow) are **scope, not status**:
-neither folder contains a line of application code, nothing has been stamped from either, and their first
-backlog task in both cases is to fork mold_v1 at a recorded commit. Only mold_v1 can be stamped today.
+mold_v3 (autoresearch and SAI, multi-context + multi-role isolation per workflow) are **coming soon**
+(`"status": "coming_soon"` in `state/factory.json`): neither folder contains a line of application code,
+nothing has been stamped from either, and their first backlog task in both cases is to fork mold_v1 at a
+recorded commit. Only mold_v1 can be stamped today.
+
+## Factory board
+
+Every app the factory built, in one Claude Code pane: live health, last deploy, the base-code version it runs,
+product stages and open tickets. It ships with the factory (`plugins/factory-board`, turned on by
+`.claude/settings.json`); type `/factory` in a Claude Code session started here. What each part means:
+`plugins/factory-board/README.md`.
+
+![The factory board, numbered](plugins/factory-board/docs/board-annotated.png)
 
 ## Branding
 

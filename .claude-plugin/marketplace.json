@@ -1,0 +1,14 @@
+{
+  "name": "software-factory",
+  "owner": {
+    "name": "OnFinance"
+  },
+  "plugins": [
+    {
+      "name": "factory-board",
+      "source": "./plugins/factory-board",
+      "description": "A pane tracking every app the factory built: live health, deploys, product stages, open tickets"
+    }
+  ],
+  "description": "Plugins that ship with the software factory"
+}

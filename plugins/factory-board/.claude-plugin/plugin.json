@@ -1,0 +1,9 @@
+{
+  "name": "factory-board",
+  "version": "0.1.0",
+  "description": "A pane tracking every app the software factory built: live health, deploy status, product stage and open tickets",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "OnFinance"
+  }
+}

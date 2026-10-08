@@ -18,3 +18,4 @@ infra/vm/apps/*/pg/
 
 # dry-run lane reports: scratch by construction — the header of each says nothing was recorded
 molds/**/testing/*/reports/dry/
+plugins/*/.claude-plugin/types/

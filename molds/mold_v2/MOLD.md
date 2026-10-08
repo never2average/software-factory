@@ -1,6 +1,6 @@
-# mold_v2 (WIP)
+# mold_v2 (coming soon)
 
-**Status:** wip
+**Status:** coming soon
 **Base:** mold_v1
 **Definition (Factory 1 diagram):** mold_v1 plus full agent governance, pipeline-level data isolation, budget management, and a performance governor.
 

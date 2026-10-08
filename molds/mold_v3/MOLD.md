@@ -1,6 +1,6 @@
-# mold_v3 (WIP)
+# mold_v3 (coming soon)
 
-**Status:** wip
+**Status:** coming soon
 **Base:** mold_v1
 **Definition (Factory 1 diagram):** mold_v1 plus autoresearch and SAI, along with multi-context and multi-role isolation per workflow.
 

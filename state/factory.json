@@ -45,7 +45,7 @@
     },
     {
       "mold_id": "mold_v2",
-      "status": "wip",
+      "status": "coming_soon",
       "base": "mold_v1",
       "definition": "mold_v1 with full agent governance, pipeline level data isolation, budget management, and performance governor",
       "target_model": "GLM 5.2",
@@ -59,7 +59,7 @@
     },
     {
       "mold_id": "mold_v3",
-      "status": "wip",
+      "status": "coming_soon",
       "base": "mold_v1",
       "definition": "mold_v1 with autoresearch and SAI along with multi-context + multi-role isolation per workflow",
       "target_model": "GLM 5.2",
