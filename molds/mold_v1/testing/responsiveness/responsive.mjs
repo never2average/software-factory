@@ -244,8 +244,14 @@ const INIT = () => {
     new PerformanceObserver((l) => {
       for (const e of l.getEntries()) if (!e.hadRecentInput) window.__cls += e.value;
     }).observe({ type: "layout-shift", buffered: true });
+    // INP is over INTERACTIONS only: the entries a key, a tap or a click produce carry an interactionId > 0
+    // (keydown/keyup, pointerdown/pointerup, click). Every other event entry has interactionId 0 and is not one.
+    // This took the slowest event of ANY kind, and the slowest was always a `pointerover` Chromium fires 60-300 ms
+    // into the load because the reused context's cursor sits where the new document appears: before hydration, on
+    // a busy main thread, nothing a person did. So `interaction / keyboard` graded that load-time hover (median
+    // 232 ms, samples 128-304 ms, onfinance_hfc 2026-10-08T161911Z) while the six Tab presses it names took 32-56 ms.
     new PerformanceObserver((l) => {
-      for (const e of l.getEntries()) if (e.duration > window.__inp) window.__inp = e.duration;
+      for (const e of l.getEntries()) if (e.interactionId > 0 && e.duration > window.__inp) window.__inp = e.duration;
     }).observe({ type: "event", buffered: true, durationThreshold: 0 });
   } catch { /* a browser without these entry types leaves the metrics at 0; the row says so. */ }
 };
