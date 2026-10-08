@@ -7,6 +7,8 @@ const TASKS = [
     task_id: 'mold_v1-9',
     mold_id: 'mold_v1',
     title: 'Fix the card test on demo_app',
+    product_id: 'demo',
+    advances_stage: 'lanes_passing',
     status: 'todo',
     priority: 1,
     acceptance: ['test:cards passes'],
@@ -26,7 +28,9 @@ const FILES: Record<string, string> = {
       { mold_id: 'mold_v2', status: 'coming_soon', source: {} },
     ],
   }),
-  [`${ROOT}/state/products.json`]: JSON.stringify({ products: [] }),
+  [`${ROOT}/state/products.json`]: JSON.stringify({
+    products: [{ product_id: 'demo', name: 'Demo', stage: 'stamped', mold_id: 'mold_v1', app_ids: ['demo_app'] }],
+  }),
   [`${ROOT}/state/tasks/mold_v1.jsonl`]: TASKS,
   [`${ROOT}/state/application/demo_app/application.json`]: JSON.stringify({ mold_id: 'mold_v1', status: 'stamped' }),
   [`${ROOT}/state/application/demo_app/infrastructure.json`]: JSON.stringify({ target: 'vercel', vercel: {} }),
@@ -55,7 +59,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     await ui.press({ key: 'ticket-mold_v1-9' })
     expect(await ui.find({ key: 'ticket-work' })).toBeDefined()
-    expect(await ui.find({ text: '• test:cards passes' })).toBeDefined()
+    expect(await ui.find({ text: '☐ test:cards passes' })).toBeDefined()
     expect(await ui.find({ text: 'Two specs assume the default profile.' })).toBeDefined()
 
     await ui.press({ key: 'dep-mold_v1-8' })
@@ -64,5 +68,21 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.press({ key: 'ticket-back' })
     expect(await ui.find({ key: 'ticket-work' })).toBeUndefined()
     expect(await ui.find({ key: 'ticket-mold_v1-8' })).toBeDefined()
+
+    // filters: P1 hides the P2 ticket, the app chip keeps only tickets naming that app
+    await ui.press({ key: 'filter-p1' })
+    expect(await ui.find({ key: 'ticket-mold_v1-9' })).toBeDefined()
+    expect(await ui.find({ key: 'ticket-mold_v1-8' })).toBeUndefined()
+    await ui.press({ key: 'filter-app:demo_app' })
+    expect(await ui.find({ key: 'ticket-mold_v1-9' })).toBeDefined()
+    expect(await ui.find({ key: 'ticket-mold_v1-8' })).toBeUndefined()
+    await ui.press({ key: 'filter-all' })
+    expect(await ui.find({ key: 'ticket-mold_v1-8' })).toBeDefined()
+
+    // the products tab shows the stage path and what is left for the next stage, clickable
+    await ui.press({ key: 'tab-products' })
+    expect(await ui.find({ text: '● built' })).toBeDefined()
+    await ui.press({ key: 'pticket-demo-mold_v1-9' })
+    expect(await ui.find({ key: 'ticket-work' })).toBeDefined()
   })
 }
