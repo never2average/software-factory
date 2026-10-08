@@ -82,6 +82,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     // the products tab shows the stage path and what is left for the next stage, clickable
     await ui.press({ key: 'tab-products' })
     expect(await ui.find({ text: '● built' })).toBeDefined()
+    expect(await ui.find({ text: 'demo_app' })).toBeDefined()
     await ui.press({ key: 'pticket-demo-mold_v1-9' })
     expect(await ui.find({ key: 'ticket-work' })).toBeDefined()
   })

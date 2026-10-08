@@ -183,8 +183,7 @@ function stageColor(status: string): string {
 }
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'products', label: 'Products' },
-  { id: 'apps', label: 'Apps' },
+  { id: 'products', label: 'Products & apps' },
   { id: 'molds', label: 'Molds' },
   { id: 'tickets', label: 'Tickets' },
   { id: 'analytics', label: 'Analytics' },
@@ -197,7 +196,7 @@ export const register: Register = on => {
     if (e.cwd && (await $.fs.exists(`${e.cwd}/state/factory.json`))) root = e.cwd
     await $.command.register({
       name: 'factory',
-      description: 'Factory board: products, apps, molds, tickets, analytics (/factory products|apps|molds|tickets|analytics [app]|refresh|<ticket id>)',
+      description: 'Factory board: products and apps, molds, tickets, analytics (/factory products|molds|tickets|analytics [app]|refresh|<ticket id>)',
     })
     void refresh($)
     $.clock.every(EVERY_MS, () => void refresh($))
@@ -209,7 +208,8 @@ export const register: Register = on => {
     const [word = '', target = ''] = e.args.trim().split(/\s+/)
     const arg = word
     if (word === 'analytics' && target) await update($, selectedApp, () => target)
-    if (arg === 'products' || arg === 'apps' || arg === 'molds' || arg === 'tickets' || arg === 'analytics') await update($, tab, () => arg)
+    if (arg === 'apps') await update($, tab, () => 'products')
+    else if (arg === 'products' || arg === 'molds' || arg === 'tickets' || arg === 'analytics') await update($, tab, () => arg)
     else if (/^[a-z0-9_]+-\d+$/i.test(arg)) {
       await update($, openTicket, () => arg)
       await update($, tab, () => 'tickets')
@@ -244,44 +244,42 @@ export const register: Register = on => {
       </Box>
     )
 
-    /* -- Apps ----------------------------------------------------------------------------------------------------- */
-    const appsTab = (
-      <Box flexDirection="column">
-        {current.apps.length === 0 && <Text dimColor>No apps in state/application.</Text>}
-        {current.apps.map(app => {
-          const health = verdict(app.checks)
-          return (
-            <Box flexDirection="column" key={app.id} marginBottom={1}>
-              <Box flexDirection="row" gap={1}>
-                <Text bold>{app.id}</Text>
-                <Text color={COLOR[health]}>{health}</Text>
-                <Text color={stageColor(app.status)}>{app.status}</Text>
-                <Text dimColor>{app.target}</Text>
-              </Box>
-              <Box flexDirection="row" gap={1} paddingLeft={2}>
-                {app.checks.map(c => (
-                  <Text
-                    key={c.name}
-                    color={typeof c.status === 'number' && c.status < 300 ? 'success' : c.status === 'pending' ? 'subtle' : 'error'}
-                  >
-                    {c.name} {String(c.status)}
-                  </Text>
-                ))}
-                {app.rls && <Text dimColor>RLS {app.rls}</Text>}
-              </Box>
-              <Box flexDirection="row" gap={1} paddingLeft={2}>
-                <Text dimColor>deployed {ago(app.deployedAt, now)}</Text>
-                <Text color={app.isCurrent ? 'success' : 'warning'}>
-                  {app.moldId}@{app.moldCommit || '?'} {app.isCurrent ? 'current' : 'behind snapshot'}
-                </Text>
-                <Text dimColor>{app.product}</Text>
-              </Box>
-              {app.url && <Text dimColor wrap="truncate">  {app.url}</Text>}
-            </Box>
-          )
-        })}
-      </Box>
-    )
+    /* -- One app: its health checks, deploy, base code and address ------------------------------------------------ */
+    const appCard = (app: AppRow) => {
+      const health = verdict(app.checks)
+      return (
+        <Box flexDirection="column" key={`app-${app.id}`} paddingLeft={2}>
+          <Box flexDirection="row" gap={1}>
+            <Text color={COLOR[health]}>{health === 'healthy' ? '●' : health === 'down' ? '✕' : '○'}</Text>
+            <Text bold>{app.id}</Text>
+            <Text color={COLOR[health]}>{health}</Text>
+            {app.status !== 'stamped' && <Text color={stageColor(app.status)}>{app.status}</Text>}
+            <Text dimColor>{app.target === 'vm_remote' ? 'own server' : app.target}</Text>
+          </Box>
+          <Box flexDirection="row" gap={1} paddingLeft={2}>
+            {app.checks.map(c => (
+              <Text
+                key={c.name}
+                color={typeof c.status === 'number' && c.status < 300 ? 'success' : c.status === 'pending' ? 'subtle' : 'error'}
+              >
+                {c.name} {String(c.status)}
+              </Text>
+            ))}
+            {app.rls && <Text dimColor>RLS {app.rls}</Text>}
+            <Text dimColor>· deployed {ago(app.deployedAt, now)}</Text>
+            <Text color={app.isCurrent ? 'success' : 'warning'}>
+              {app.moldId}@{app.moldCommit || '?'} {app.isCurrent ? 'current' : 'behind'}
+            </Text>
+          </Box>
+          {app.url && (
+            <Text dimColor wrap="truncate">
+              {'  '}
+              {app.url}
+            </Text>
+          )}
+        </Box>
+      )
+    }
 
     /* -- shared --------------------------------------------------------------------------------------------------- */
     const width = Math.max(40, (e.props as { bodyColumns?: number } | undefined)?.bodyColumns ?? 100)
@@ -292,8 +290,7 @@ export const register: Register = on => {
       await update($, openTicket, () => id)
       await update($, tab, () => 'tickets')
     }
-    const showApps = () => void update($, tab, () => 'apps')
-
+    
     /* One ticket as one line: priority, number, app, then the title as the thing to click. */
     const ticketRow = (t: Ticket, keyPrefix = 'ticket') => {
       const app = appOf(t)
@@ -313,8 +310,10 @@ export const register: Register = on => {
     }
 
     /* -- Products ------------------------------------------------------------------------------------------------- */
+    const unowned = current.apps.filter(a => !current.products.some(p => p.appIds.includes(a.id)))
     const productsTab = (
       <Box flexDirection="column" gap={1}>
+        {current.apps.length === 0 && <Text dimColor>No apps in state/application.</Text>}
         {current.products.map(p => {
           const soon = isComingSoon(current.molds.find(m => m.id === p.moldId)?.status ?? '')
           const next = nextStage(p.stage)
@@ -342,18 +341,7 @@ export const register: Register = on => {
                   })}
                 </Box>
               )}
-              {apps.length > 0 && (
-                <Box flexDirection="row" gap={1}>
-                  <Text dimColor>apps</Text>
-                  {apps.map(a => {
-                    const health = verdict(a.checks)
-                    const mark = health === 'healthy' ? '●' : health === 'down' ? '✕' : '○'
-                    return (
-                      <Button key={`papp-${p.id}-${a.id}`} plain label={`${mark} ${a.id} ${health}`} onPress={showApps} />
-                    )
-                  })}
-                </Box>
-              )}
+              {apps.map(a => appCard(a))}
               {!soon && next && (
                 <Box flexDirection="column">
                   <Text dimColor>
@@ -367,6 +355,12 @@ export const register: Register = on => {
             </Box>
           )
         })}
+        {unowned.length > 0 && (
+          <Box flexDirection="column">
+            <Text bold>Other apps</Text>
+            {unowned.map(a => appCard(a))}
+          </Box>
+        )}
       </Box>
     )
 
@@ -643,7 +637,6 @@ export const register: Register = on => {
         {tabs}
         {current.error && <Text color="error">Could not read {current.root}/state: {current.error}</Text>}
         {shown === 'products' && productsTab}
-        {shown === 'apps' && appsTab}
         {shown === 'molds' && moldsTab}
         {shown === 'tickets' && (detail || ticketsTab)}
         {shown === 'analytics' && analyticsTab}

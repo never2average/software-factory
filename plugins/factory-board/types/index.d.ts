@@ -76,7 +76,7 @@ export type Usage = {
   error?: string
 }
 
-export type Tab = 'products' | 'apps' | 'molds' | 'tickets' | 'analytics'
+export type Tab = 'products' | 'molds' | 'tickets' | 'analytics'
 
 declare module 'claude-code' {
   interface PluginState {

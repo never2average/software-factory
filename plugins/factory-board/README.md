@@ -1,9 +1,8 @@
 # factory-board
 
-A Claude Code plugin that ships with the software factory. One pane, five tabs, covering every app the factory has built:
+A Claude Code plugin that ships with the software factory. One pane, four tabs, covering every app the factory has built:
 
-- **Products:** where each product stands and what's left before its next stage.
-- **Apps:** whether each app is up right now, and where and when it was deployed.
+- **Products & apps:** where each product stands and what's left before its next stage, with its apps underneath: whether each is up right now, and where and when it was deployed.
 - **Molds:** the base codebases and their tickets.
 - **Tickets:** every open ticket, filterable, each one clickable.
 - **Analytics:** each app's rough usage, and the tickets people raised inside it.
@@ -18,40 +17,28 @@ The tab buttons sit at the top of the pane. You can also jump straight to a tab:
 
 | Type | Opens |
 |---|---|
-| `/factory products` | Products (the board opens here) |
-| `/factory apps` | Apps |
+| `/factory products` | Products & apps (the board opens here) |
 | `/factory molds` | Molds |
 | `/factory tickets` | Tickets |
 | `/factory analytics onfinance_hfc_vm` | Analytics, with that app picked |
 | `/factory mold_v1-215` | that ticket's details |
 | `/factory refresh` | the board, after a fresh health check |
 
-### Products
+### Products & apps
 
-![Products tab](docs/tab-products.png)
+![Products & apps tab](docs/tab-products.png)
 
 Each product in `state/products.json` gets:
 
 - **Its stage path:** `defined → built → tested → deployed → released`. Done stages are ticked and the current one is green. A product of a coming-soon mold shows **coming soon** instead.
-- **Its apps:** one line each with live health. Clicking one goes to the Apps tab, which has the detail.
+- **Each of its apps:**
+  - **Health:** live health (`healthy`, `down`, `pending`, or `n/a` for a retired app), shown only when it isn't plain `stamped`. Its record status shows beside it, as `reverted` or `retired`. Where it runs: `vercel`, or `own server`.
+  - **Checks:** the answer from each health page the board loads itself (web, api, and on Vercel the workflow service). Also the workspace-isolation proof from the last deploy: `RLS 62/62` means all 62 workspace tables are locked to their workspace.
+  - **Deploy:** when it was last deployed, and the base-code (mold) version it runs. `current` is the factory's latest snapshot; `behind` means a redeploy would update it.
+  - **Address:** its web address.
 - **What's left for the next stage:** the open tickets that move it there, each clickable.
 
-### Apps
-
-![Apps tab](docs/tab-apps.png)
-
-Each app under `state/application/` gets four lines:
-
-1. **Name and state:**
-   - Live health: `healthy`, `down`, `pending`, or `n/a` for a retired app.
-   - Its record status: `stamped`, `reverted` or `retired`.
-   - Where it runs: `vercel`, or `vm_remote` for its own server.
-2. **Health checks:** the answer from each health page the board loads itself (web, api, and on Vercel the workflow service), plus the workspace-isolation proof from the last deploy. `RLS 62/62` means all 62 workspace tables are locked to their workspace.
-3. **Deploy:**
-   - When it was last deployed.
-   - The base-code (mold) version it runs: `current` is the factory's latest snapshot; `behind snapshot` means a redeploy would update it.
-   - Its product.
-4. **Address:** the app's web address.
+Apps that belong to no product are listed under **Other apps**.
 
 ### Molds
 
@@ -129,7 +116,7 @@ The board reads the factory's records from the folder Claude Code was started in
 The tests are:
 
 - `hooks/board.test.ts` for the readers;
-- `hooks/tickets-ui.test.tsx`, which clicks through the tickets, the filters and the Products tab on the terminal and desktop surfaces against a small fake factory.
+- `hooks/tickets-ui.test.tsx`, which clicks through the tickets, the filters and the Products & apps tab on the terminal and desktop surfaces against a small fake factory.
 
 ```
 claude plugin validate plugins/factory-board
