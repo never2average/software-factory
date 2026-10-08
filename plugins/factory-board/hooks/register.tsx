@@ -7,9 +7,7 @@ import {
   STAGE_WORDS,
   ago,
   fit,
-  nextStage,
   plainTitle,
-  stageTickets,
   ticketMatches,
   appRow,
   isComingSoon,
@@ -316,8 +314,6 @@ export const register: Register = on => {
         {current.apps.length === 0 && <Text dimColor>No apps in state/application.</Text>}
         {current.products.map(p => {
           const soon = isComingSoon(current.molds.find(m => m.id === p.moldId)?.status ?? '')
-          const next = nextStage(p.stage)
-          const left = next ? stageTickets(current.tickets, p.id, next) : []
           const apps = current.apps.filter(a => p.appIds.includes(a.id))
           return (
             <Box key={`product-${p.id}`} flexDirection="column">
@@ -342,16 +338,6 @@ export const register: Register = on => {
                 </Box>
               )}
               {apps.map(a => appCard(a))}
-              {!soon && next && (
-                <Box flexDirection="column">
-                  <Text dimColor>
-                    {left.length === 0
-                      ? `nothing open for ${STAGE_WORDS[next]}`
-                      : `${left.length} left for ${STAGE_WORDS[next]}:`}
-                  </Text>
-                  {left.map(t => ticketRow(t, `pticket-${p.id}`))}
-                </Box>
-              )}
             </Box>
           )
         })}
@@ -609,16 +595,40 @@ export const register: Register = on => {
               </Box>
             )}
 
-            {chosen.not_measured.length > 0 && (
-              <Box flexDirection="column">
-                <Text bold>About these numbers</Text>
-                {chosen.not_measured.map(n => (
-                  <Text key={n} dimColor wrap="truncate">
-                    • {n}
+            <Box flexDirection="column">
+              <Text bold>By agent</Text>
+              {chosen.by_agent.length === 0 && <Text dimColor>Not collected yet: press Collect usage.</Text>}
+              {chosen.by_agent.slice(0, 12).map(a => (
+                <Box key={`agent-${a.workspace}-${a.agent}`} flexDirection="row" gap={1}>
+                  <Text bold={a.kind === 'main'} color={a.kind === 'main' ? 'suggestion' : 'text'}>
+                    {fit(a.agent, 26).padEnd(26)}
                   </Text>
-                ))}
-              </Box>
-            )}
+                  <Text>{a.kind === 'main' ? `${short(a.turns)} turns` : `${short(a.runs)} runs`}</Text>
+                  <Text dimColor>
+                    {short(a.input_tokens)} in · {short(a.output_tokens)} out · {money(a.cost_usd)}
+                  </Text>
+                  {chosen.workspaces.length > 1 && <Text dimColor>· {a.workspace}</Text>}
+                </Box>
+              ))}
+            </Box>
+
+            <Box flexDirection="column">
+              <Text bold>By user</Text>
+              {chosen.by_user.length === 0 && <Text dimColor>Not collected yet: press Collect usage.</Text>}
+              {chosen.by_user.slice(0, 12).map(u => (
+                <Box key={`user-${u.workspace}-${u.user}`} flexDirection="row" gap={1}>
+                  <Text bold>{fit(u.user, 22).padEnd(22)}</Text>
+                  <Text>
+                    {short(u.chats)} chats · {short(u.chat_turns)} turns
+                  </Text>
+                  <Text dimColor>
+                    · {money(u.cost_usd)}
+                    {u.last_active ? ` · last ${ago(u.last_active, now)}` : ''}
+                  </Text>
+                  {chosen.workspaces.length > 1 && <Text dimColor>· {u.workspace}</Text>}
+                </Box>
+              ))}
+            </Box>
           </Box>
         )}
 

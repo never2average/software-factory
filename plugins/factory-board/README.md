@@ -2,7 +2,7 @@
 
 A Claude Code plugin that ships with the software factory. One pane, four tabs, covering every app the factory has built:
 
-- **Products & apps:** where each product stands and what's left before its next stage, with its apps underneath: whether each is up right now, and where and when it was deployed.
+- **Products & apps:** where each product stands, with its apps underneath: whether each is up right now, and where and when it was deployed.
 - **Molds:** the base codebases and their tickets.
 - **Tickets:** every open ticket, filterable, each one clickable.
 - **Analytics:** each app's rough usage, and the tickets people raised inside it.
@@ -36,7 +36,6 @@ Each product in `state/products.json` gets:
   - **Checks:** the answer from each health page the board loads itself (web, api, and on Vercel the workflow service). Also the workspace-isolation proof from the last deploy: `RLS 62/62` means all 62 workspace tables are locked to their workspace.
   - **Deploy:** when it was last deployed, and the base-code (mold) version it runs. `current` is the factory's latest snapshot; `behind` means a redeploy would update it.
   - **Address:** its web address.
-- **What's left for the next stage:** the open tickets that move it there, each clickable.
 
 Apps that belong to no product are listed under **Other apps**.
 
@@ -83,7 +82,7 @@ There are two buttons:
 5. **Chat turns per day:** one bar per day, scaled to the busiest day.
 6. **Tickets in the app:** the tickets people raised inside the app itself (open, in progress, done). These are not the factory's tickets.
 7. **By workspace:** the same numbers for each workspace in the app.
-8. **About these numbers:** how each figure was counted, and anything that couldn't be measured. A figure that can't be measured says **not measured**, never `$0`. For example, Cloudflare Workers AI doesn't report the cost of helper runs.
+8. **By agent and By user:** the main agent's turns and each specialist's runs, with tokens and cost, and then each person's chats, turns, cost and when they were last active. People are shown by display name, never by email address. A figure that can't be measured says **not measured**, never `$0`. For example, Cloudflare Workers AI doesn't report the cost of helper runs.
 9. **Factory tickets for this app:** open factory tickets that name this app. Each one is clickable.
 10. **Buttons:** **Refresh** checks health again. **Collect usage** pulls fresh numbers.
 

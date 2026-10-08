@@ -67,10 +67,10 @@ recorded commit. Only mold_v1 can be stamped today.
 
 Every app the factory built, in one Claude Code pane with four tabs:
 
-- **Products & apps:** each product's stage path and what's left before the next stage, with its apps underneath: live health, last deploy, and the base-code version each runs.
+- **Products & apps:** each product's stage path, with its apps underneath: live health, last deploy, and the base-code version each runs.
 - **Molds:** the molds and their tickets, with v2 and v3 marked coming soon.
 - **Tickets:** filterable and clickable, each opening its details and a "Work on this" button.
-- **Analytics:** each app's rough usage, and the tickets people raised inside it.
+- **Analytics:** each app's rough usage by agent and by user, and the tickets people raised inside it.
 
 It ships with the factory (`plugins/factory-board`, turned on by `.claude/settings.json`). Type `/factory` in a Claude Code session started here. What each part means: `plugins/factory-board/README.md`.
 
