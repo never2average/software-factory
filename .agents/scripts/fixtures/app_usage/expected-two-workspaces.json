@@ -11,7 +11,8 @@
     "output_tokens": 3100,
     "cost_usd": 0.1831,
     "workflow_runs": 3,
-    "workflow_cost_usd": 0.0421,
+    "workflow_cost_usd": 0.0439,
+    "workflow_cost_basis": "mixed",
     "tickets": {
       "open": 3,
       "in_progress": 2,
@@ -30,7 +31,8 @@
       "output_tokens": 3000,
       "cost_usd": 0.1813,
       "workflow_runs": 3,
-      "workflow_cost_usd": 0.0421,
+      "workflow_cost_usd": 0.0439,
+      "workflow_cost_basis": "mixed",
       "tickets": {
         "open": 3,
         "in_progress": 2,
@@ -49,6 +51,7 @@
       "cost_usd": 0.0018,
       "workflow_runs": 0,
       "workflow_cost_usd": 0.0,
+      "workflow_cost_basis": "recorded",
       "tickets": {
         "open": 0,
         "in_progress": 0,
@@ -84,6 +87,8 @@
       "input_tokens": 120000,
       "output_tokens": 3000,
       "cost_usd": 0.1813,
+      "cost_basis": "recorded",
+      "estimated_from": null,
       "last_active": "2026-10-08T09:00:00.000Z"
     },
     {
@@ -95,6 +100,8 @@
       "input_tokens": 40000,
       "output_tokens": 800,
       "cost_usd": 0.0421,
+      "cost_basis": "recorded",
+      "estimated_from": null,
       "last_active": "2026-10-08T08:00:00.000Z"
     },
     {
@@ -106,6 +113,8 @@
       "input_tokens": 1000,
       "output_tokens": 100,
       "cost_usd": 0.0018,
+      "cost_basis": "recorded",
+      "estimated_from": null,
       "last_active": "2026-10-07T11:00:00.000Z"
     },
     {
@@ -116,7 +125,9 @@
       "runs": 1,
       "input_tokens": 1000,
       "output_tokens": 100,
-      "cost_usd": null,
+      "cost_usd": 0.0018,
+      "cost_basis": "estimated",
+      "estimated_from": "@cf/zai-org/glm-5.3",
       "last_active": "2026-10-07T10:00:00.000Z"
     }
   ],
@@ -160,9 +171,9 @@
     "input_tokens, output_tokens, cost_usd: chat turns only (chat_turn_usage); workflow (subagent) tokens are not in them, workflow money is workflow_cost_usd",
     "cost_usd: not stored by the app; estimated from the turns' tokens at the app's own price table (lib/inference-pricing.ts), the same way its usage page does",
     "workflow_runs: automation_runs rows of type workflow (subagent runs) started in the window; schedules, system crons, connector syncs and browser runs are not counted",
+    "cost_basis / workflow_cost_basis: recorded = the cost the app recorded for those tokens, priced at the model it recorded for them (or the provider's own figure); estimated = runs that recorded tokens but no cost and no model (before the app recorded models), priced at the specialist's configured model (estimated_from) as configured now, with the app's own price table; mixed = both. An estimate is never shown as measured",
     "people_active (alpha): 1 chat turn(s) recorded no signed-in person and are not attributed to anyone",
-    "workflow_cost_usd (alpha): 1 of 3 workflow run(s) used the model but recorded no cost; the figure is the recorded cost only; they used 41,000 input and 900 output tokens (the run table records no model, so they are not priced here)",
-    "by_agent lodr-filings cost_usd (alpha): 1 of 1 run(s) used the model and none recorded a cost",
+    "by_agent lodr-filings cost_usd (alpha): estimated for 1 of 1 run(s) that recorded 1,100 tokens but no cost and no model: priced at its configured model @cf/zai-org/glm-5.3 (application.json model.roles.specialist) as configured now, at the app's own prices; runs before a model change are priced at the current one",
     "by_user (alpha): 1 person(s) have no display name in the app's people records and are shown as Member N, numbered by when they joined the workspace",
     "by_user workflow_runs (alpha): 1 workflow run(s) could not be traced to a signed-in person (no session owner recorded, or started by a service) and are in no one's count",
     "by_user workflow_runs (beta): null, because the session owners table that ties a run to the person who started it could not be read (42P01 relation \"agent_session_owners\" does not exist)",

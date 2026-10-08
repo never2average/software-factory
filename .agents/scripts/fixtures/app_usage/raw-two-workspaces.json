@@ -65,9 +65,15 @@
      "runs": 2,
      "input_tokens": 40000,
      "output_tokens": 800,
-     "cost_usd": 0.0421,
-     "uncosted": 0,
-     "last_active": "2026-10-08T08:00:00.000Z"
+     "last_active": "2026-10-08T08:00:00.000Z",
+     "rec_runs": 2,
+     "rec_cost": 0.0421,
+     "unpriced_runs": 0,
+     "est_runs": 0,
+     "est_cost": 0,
+     "est_model": null,
+     "est_from": null,
+     "est_tokens": 0
     },
     {
      "agent": "lodr-filings",
@@ -76,9 +82,15 @@
      "runs": 1,
      "input_tokens": 1000,
      "output_tokens": 100,
-     "cost_usd": 0,
-     "uncosted": 1,
-     "last_active": "2026-10-07T10:00:00.000Z"
+     "last_active": "2026-10-07T10:00:00.000Z",
+     "rec_runs": 0,
+     "rec_cost": 0,
+     "unpriced_runs": 0,
+     "est_runs": 1,
+     "est_cost": 0.00184,
+     "est_model": "@cf/zai-org/glm-5.3",
+     "est_from": "application.json model.roles.specialist",
+     "est_tokens": 1100
     }
    ],
    "by_user": [
@@ -106,7 +118,8 @@
      "workflow_runs": 0,
      "last_active": "2026-10-07T12:00:00.000Z"
     }
-   ]
+   ],
+   "model_usage_column": true
   },
   {
    "org_id": "beta",
@@ -161,7 +174,8 @@
      "workflow_runs": null,
      "last_active": "2026-10-07T11:00:00.000Z"
     }
-   ]
+   ],
+   "model_usage_column": true
   }
  ]
 }

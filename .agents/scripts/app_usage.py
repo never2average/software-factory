@@ -28,6 +28,14 @@ person's workflow runs are those whose run_key session (<workflow>:<session>:<tu
 agent_session_owners (a child session inherits its parent's owner). Both: sorted by turns/runs or chat turns,
 descending, at most 50 rows; each row names its workspace.
 
+Money carries its basis (`cost_basis` on a by_agent row, `workflow_cost_basis` beside workflow_cost_usd): `recorded` is
+what the app recorded (a specialist run's cost and model per step, fde-agent drizzle/0036; a chat turn's model, priced
+at the app's own price table as its usage page does); `estimated` is a specialist's runs that recorded tokens but no
+cost and no model, priced at the model that specialist is configured with NOW (`estimated_from`): its role from its
+agent.ts (build/<app_id>, the app's packs, its mold), the model from the deployment's per-role model variables when
+they are read (CLOUDFLARE_MODEL_<ROLE>, CLOUDFLARE_MODEL; model ids only, every other value stays unread or scrubbed),
+else application.json model.roles / model.model; `mixed` is both. A run that cannot be priced makes the figure null.
+
 Only counts leave the database: email addresses are held in the query process's memory to count distinct people
 and never printed. Field meanings (and how ticket statuses are folded) are in FIELD_NOTES and TICKET_FOLD below; a
 field that cannot be measured is null and named in `not_measured`, never a guess. 0 is a measured zero.
@@ -58,7 +66,14 @@ SCOPE_NOTES = [
     "input_tokens, output_tokens, cost_usd: chat turns only (chat_turn_usage); workflow (subagent) tokens are not in them, workflow money is workflow_cost_usd",
     "cost_usd: not stored by the app; estimated from the turns' tokens at the app's own price table (lib/inference-pricing.ts), the same way its usage page does",
     "workflow_runs: automation_runs rows of type workflow (subagent runs) started in the window; schedules, system crons, connector syncs and browser runs are not counted",
+    "cost_basis / workflow_cost_basis: recorded = the cost the app recorded for those tokens, priced at the model it recorded for them (or the provider's own figure); "
+    "estimated = runs that recorded tokens but no cost and no model (before the app recorded models), priced at the specialist's configured model "
+    "(estimated_from) as configured now, with the app's own price table; mixed = both. An estimate is never shown as measured",
 ]
+MODEL_ENV_NAMES = ("MODEL_PROVIDER", "CLOUDFLARE_MODEL", "CLOUDFLARE_MODEL_ORCHESTRATOR", "CLOUDFLARE_MODEL_SPECIALIST",
+                   "GATEWAY_MODEL_ORCHESTRATOR", "GATEWAY_MODEL_SPECIALIST")   # model ids, not secrets: the only env values read for this
+MODEL_ID = re.compile(r"^[@A-Za-z0-9][A-Za-z0-9@/._:-]{1,120}$")
+ROLE_CALL = re.compile(r"""\bagentModel\(\s*["'](\w+)["']\s*\)""")
 ROW_CAP = 50
 NUM = ("people_active", "chats", "chat_turns", "input_tokens", "output_tokens", "cost_usd", "workflow_runs", "workflow_cost_usd")
 
@@ -138,13 +153,49 @@ try {
       w.by_agent.push({ agent: 'main agent', kind: 'main', turns: w.chat_turns, runs: null, input_tokens: w.input_tokens, output_tokens: w.output_tokens,
         cost_usd: w.unpriced_turns || !price ? null : w.cost_usd, unpriced_turns: w.unpriced_turns, last_active: iso(lastChat[0].last) });
     } else if (!(byModel && chats && days && lastChat)) w.berr.main ||= w.errors.chat || 'the chat usage table could not be read';
-    const spec = await b('specialists', (t) => t`select coalesce(f.name, 'workflow ' || left(r.automation_id, 8)) as name, count(*)::int as runs,
-        coalesce(sum(r.cost_usd),0)::float8 as cost, coalesce(sum(r.input_tokens),0)::text as inp, coalesce(sum(r.output_tokens),0)::text as outp,
-        count(*) filter (where coalesce(r.cost_usd,0) = 0 and coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0)::int as uncosted, max(r.started_at) as last
+    // Per specialist, its runs in three kinds (tok = the run used tokens):
+    //   recorded   the app recorded a cost (and, since fde-agent drizzle/0036, the model per step) — summed as is;
+    //   unpriced   the app recorded the model but no cost: a model its price table does not price — unknown;
+    //   estimate   tokens but no cost and no model (recorded before the app recorded models) — priced here at the
+    //              specialist's configured model (A.agent_models), with the app's own price table.
+    const hasMU = await b('specialists', (t) => t`select count(*)::int as n from information_schema.columns where table_name = 'automation_runs' and column_name = 'model_usage'`);
+    const mu = !!(hasMU && hasMU[0].n > 0);
+    const spec = !hasMU ? null : mu
+      ? await b('specialists', (t) => t`select coalesce(f.name, 'workflow ' || left(r.automation_id, 8)) as name, count(*)::int as runs, max(r.started_at) as last,
+        coalesce(sum(r.input_tokens),0)::text as inp, coalesce(sum(r.output_tokens),0)::text as outp,
+        count(*) filter (where coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0 and r.cost_usd is not null and (r.model_usage is not null or r.cost_usd > 0))::int as rec_runs,
+        coalesce(sum(r.cost_usd) filter (where coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0 and r.cost_usd is not null and (r.model_usage is not null or r.cost_usd > 0)),0)::float8 as rec_cost,
+        count(*) filter (where coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0 and r.cost_usd is null and r.model_usage is not null)::int as unpriced_runs,
+        count(*) filter (where coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0 and r.model_usage is null and coalesce(r.cost_usd,0) = 0)::int as est_runs,
+        coalesce(sum(r.input_tokens) filter (where r.model_usage is null and coalesce(r.cost_usd,0) = 0),0)::text as e_inp,
+        coalesce(sum(r.output_tokens) filter (where r.model_usage is null and coalesce(r.cost_usd,0) = 0),0)::text as e_outp,
+        coalesce(sum(r.cache_read_tokens) filter (where r.model_usage is null and coalesce(r.cost_usd,0) = 0),0)::text as e_cr,
+        coalesce(sum(r.cache_write_tokens) filter (where r.model_usage is null and coalesce(r.cost_usd,0) = 0),0)::text as e_cw
+        from automation_runs r left join workflows f on f.id::text = r.automation_id and f.org_id = r.org_id
+        where r.org_id = ${org} and r.automation_type = 'workflow' and r.started_at >= ${since}::timestamptz group by 1`)
+      : await b('specialists', (t) => t`select coalesce(f.name, 'workflow ' || left(r.automation_id, 8)) as name, count(*)::int as runs, max(r.started_at) as last,
+        coalesce(sum(r.input_tokens),0)::text as inp, coalesce(sum(r.output_tokens),0)::text as outp,
+        count(*) filter (where coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0 and r.cost_usd > 0)::int as rec_runs,
+        coalesce(sum(r.cost_usd) filter (where coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0 and r.cost_usd > 0),0)::float8 as rec_cost,
+        0 as unpriced_runs,
+        count(*) filter (where coalesce(r.input_tokens,0) + coalesce(r.output_tokens,0) > 0 and coalesce(r.cost_usd,0) = 0)::int as est_runs,
+        coalesce(sum(r.input_tokens) filter (where coalesce(r.cost_usd,0) = 0),0)::text as e_inp,
+        coalesce(sum(r.output_tokens) filter (where coalesce(r.cost_usd,0) = 0),0)::text as e_outp,
+        coalesce(sum(r.cache_read_tokens) filter (where coalesce(r.cost_usd,0) = 0),0)::text as e_cr,
+        coalesce(sum(r.cache_write_tokens) filter (where coalesce(r.cost_usd,0) = 0),0)::text as e_cw
         from automation_runs r left join workflows f on f.id::text = r.automation_id and f.org_id = r.org_id
         where r.org_id = ${org} and r.automation_type = 'workflow' and r.started_at >= ${since}::timestamptz group by 1`);
-    for (const r of spec || []) w.by_agent.push({ agent: r.name, kind: 'specialist', turns: null, runs: r.runs, input_tokens: Number(r.inp),
-      output_tokens: Number(r.outp), cost_usd: r.cost, uncosted: r.uncosted, last_active: iso(r.last) });
+    w.model_usage_column = mu;
+    for (const r of spec || []) {
+      const am = (A.agent_models || {})[r.name] || null;
+      const em = am && am.model ? am.model : null;
+      const etk = { inputTokens: Number(r.e_inp), outputTokens: Number(r.e_outp), cacheReadTokens: Number(r.e_cr), cacheWriteTokens: Number(r.e_cw) };
+      const ec = !r.est_runs ? 0 : (price && em ? price(em, etk) : null);
+      w.by_agent.push({ agent: r.name, kind: 'specialist', turns: null, runs: r.runs, input_tokens: Number(r.inp), output_tokens: Number(r.outp),
+        rec_runs: Number(r.rec_runs), rec_cost: Number(r.rec_cost), unpriced_runs: Number(r.unpriced_runs), est_runs: Number(r.est_runs),
+        est_cost: ec === undefined ? null : ec, est_model: r.est_runs ? em : null, est_from: r.est_runs && am ? am.from : null,
+        est_tokens: r.est_runs ? etk.inputTokens + etk.outputTokens : 0, last_active: iso(r.last) });
+    }
     // per person: chat turns by model (to price them), chats, and the workflow runs their sessions started
     const uModel = await b('users', (t) => t`select lower(actor_email) as e, model, count(*)::int as turns, coalesce(sum(input_tokens),0)::text as inp,
         coalesce(sum(output_tokens),0)::text as outp, coalesce(sum(cache_read_tokens),0)::text as cr, coalesce(sum(cache_write_tokens),0)::text as cw, max(started_at) as last
@@ -229,6 +280,52 @@ def state_orgs(adir):
         if oid: seen.setdefault(oid, d.get("name") or oid)
     return [{"org_id": k, "name": v} for k, v in seen.items()]
 
+def agent_roles(app_id, app, root=ROOT):
+    """{workflow name: role} for every specialist whose agent.ts names its model by role (agentModel("<role>")).
+    Looked up in the applied tree build/<app_id>, then the app's packs, then its mold: the specialist id is the
+    directory name, which is the app's workflows.name."""
+    dirs = [os.path.join(root, "build", app_id, "agent", "subagents")]
+    dirs += [os.path.join(root, "packs", p, "files", "agent", "subagents") for p in (app.get("packs") or [])]
+    if app.get("mold"): dirs.append(os.path.join(root, "molds", app["mold"], "codebase", "agent", "subagents"))
+    out = {}
+    for d in dirs:
+        for f in sorted(glob.glob(os.path.join(d, "*", "agent.ts"))):
+            name = os.path.basename(os.path.dirname(f))
+            if name in out: continue
+            try: m = ROLE_CALL.search(open(f).read())
+            except OSError: m = None
+            if m: out[name] = m.group(1)
+    return out
+
+def env_models(vals):
+    """Only the model names out of an environment (a dict of every value): {name: model id}. Anything else is left
+    where it is; a value that does not look like a model id (empty, a Vercel [SENSITIVE] marker) is dropped."""
+    return {k: vals[k].strip() for k in MODEL_ENV_NAMES if isinstance(vals.get(k), str) and MODEL_ID.match(vals[k].strip())}
+
+def resolve_models(args, env=None):
+    """{workflow name: {"model", "from"}}: the model each specialist is configured to run on NOW, by its role.
+    The deployment's own per-role variable when the environment was read (the mold's chain: CLOUDFLARE_MODEL_<ROLE>,
+    then CLOUDFLARE_MODEL), else application.json model.roles.<role>, then model.model (provision writes both from it)."""
+    st = args.get("state_models") or {}
+    env = env or {}
+    provider = (env.get("MODEL_PROVIDER") or st.get("provider") or "cloudflare").lower()
+    out = {}
+    for name, role in (args.get("agent_roles") or {}).items():
+        model, frm = None, None
+        if provider == "cloudflare":
+            for k in (f"CLOUDFLARE_MODEL_{role.upper()}", "CLOUDFLARE_MODEL"):
+                if env.get(k): model, frm = env[k], f"the deployment's {k}"; break
+        elif env.get(f"GATEWAY_MODEL_{role.upper()}"):
+            model, frm = env[f"GATEWAY_MODEL_{role.upper()}"], f"the deployment's GATEWAY_MODEL_{role.upper()}"
+        if not model and (st.get("roles") or {}).get(role): model, frm = st["roles"][role], f"application.json model.roles.{role}"
+        if not model and st.get("model"): model, frm = st["model"], "application.json model.model"
+        out[name] = {"role": role, "model": model, "from": frm}
+    return out
+
+def state_models(app):
+    m = app.get("model") or {}
+    return {"provider": m.get("provider"), "model": m.get("model"), "roles": m.get("roles") or {}}
+
 def apps_to_run(state_dir):
     """Every application in state whose status is not retired (the template directory has no application.json)."""
     out = []
@@ -252,13 +349,38 @@ def fold_tickets(by_status):
     return t, unknown
 
 def empty_fields():
-    return {**{k: None for k in NUM}, "tickets": {"open": None, "in_progress": None, "done": None, "total": None}}
+    return {**{k: None for k in NUM}, "workflow_cost_basis": None, "tickets": {"open": None, "in_progress": None, "done": None, "total": None}}
 
 def error_report(app_id, days, target, why):
     return {"app_id": app_id, "generated_at": now_iso(), "days": days, "target": target, "totals": empty_fields(),
             "workspaces": [], "daily": [], "by_agent": [], "by_user": [], "not_measured": [f"every field: {why}"], "error": why}
 
 def _usd(v): return None if v is None else round(float(v), 4)
+
+def basis_of(kinds):
+    """recorded / estimated / mixed from the kinds of runs priced; nothing to price is a measured zero (recorded)."""
+    return "mixed" if len(kinds) > 1 else (next(iter(kinds)) if kinds else "recorded")
+
+def specialist_cost(a, org):
+    """One specialist row's money: (cost_usd, kinds, estimated_from, notes). cost_usd is None (never a partial
+    figure, never 0) when any run that used tokens cannot be priced: a recorded model the price table does not price,
+    or a run with no recorded cost or model whose specialist's configured model is unknown or unpriced."""
+    rr, uc, er = int(a.get("rec_runs") or 0), int(a.get("unpriced_runs") or 0), int(a.get("est_runs") or 0)
+    ec, em, who, runs = a.get("est_cost"), a.get("est_model"), a.get("agent"), a.get("runs")
+    notes, kinds = [], set()
+    if rr: kinds.add("recorded")
+    if er and ec is not None: kinds.add("estimated")
+    if uc: notes.append(f"by_agent {who} cost_usd ({org}): {uc} of {runs} run(s) ran on a model the app recorded but its price table does not price, so no figure is given")
+    if er and ec is None:
+        why = (f"its configured model {em} ({a.get('est_from')}) is not in the app's price table" if em
+               else "its configured model could not be found (no agent.ts naming its role in the app's tree, pack or mold)")
+        notes.append(f"by_agent {who} cost_usd ({org}): {er} of {runs} run(s) recorded tokens but no cost and no model, and {why}, so no figure is given")
+    elif er:
+        notes.append(f"by_agent {who} cost_usd ({org}): estimated for {er} of {runs} run(s) that recorded {int(a.get('est_tokens') or 0):,} tokens but no cost and no model: "
+                     f"priced at its configured model {em} ({a.get('est_from')}) as configured now, at the app's own prices; runs before a model change are priced at the current one")
+    unknown = uc or (er and ec is None)
+    cost = None if unknown else _usd(float(a.get("rec_cost") or 0) + float(ec or 0))
+    return cost, kinds, (em if er and ec is not None else None), notes
 
 def breakdowns(raw_workspaces):
     """by_agent and by_user across workspaces: rows named by agent or by display name (never an address), each with its
@@ -273,15 +395,16 @@ def breakdowns(raw_workspaces):
             nm.append(f"{BERR.get(field, field)} ({org}): could not be read: {msg}" + (" (everyone without a name in a readable record is shown as Member N)" if field == "names" else ""))
         for a in w.get("by_agent") or []:
             row = {"agent": a.get("agent"), "kind": a.get("kind"), "workspace": ws, "turns": a.get("turns"), "runs": a.get("runs"),
-                   "input_tokens": a.get("input_tokens"), "output_tokens": a.get("output_tokens"), "cost_usd": _usd(a.get("cost_usd")), "last_active": a.get("last_active")}
-            if a.get("kind") == "main" and row["cost_usd"] is None:
-                nm.append(f"by_agent main agent cost_usd ({org}): " + (f"{a.get('unpriced_turns')} turn(s) on a model the app's price table does not price" if a.get("unpriced_turns") else "the app's price table could not be loaded"))
-            if a.get("kind") == "specialist" and a.get("uncosted"):
-                if not float(a.get("cost_usd") or 0):
-                    row["cost_usd"] = None
-                    nm.append(f"by_agent {a.get('agent')} cost_usd ({org}): {a['uncosted']} of {a.get('runs')} run(s) used the model and none recorded a cost")
-                else:
-                    nm.append(f"by_agent {a.get('agent')} cost_usd ({org}): {a['uncosted']} of {a.get('runs')} run(s) used the model but recorded no cost; the figure is the recorded cost only")
+                   "input_tokens": a.get("input_tokens"), "output_tokens": a.get("output_tokens"), "cost_usd": _usd(a.get("cost_usd")),
+                   "cost_basis": None, "estimated_from": None, "last_active": a.get("last_active")}
+            if a.get("kind") == "main":
+                # chat turns: each turn records its model, priced here at the app's own prices, as its usage page does
+                if row["cost_usd"] is not None: row["cost_basis"] = "recorded"
+                else: nm.append(f"by_agent main agent cost_usd ({org}): " + (f"{a.get('unpriced_turns')} turn(s) on a model the app's price table does not price" if a.get("unpriced_turns") else "the app's price table could not be loaded"))
+            if a.get("kind") == "specialist":
+                cost, kinds, est_from, notes = specialist_cost(a, org)
+                row.update(cost_usd=cost, cost_basis=None if cost is None else basis_of(kinds), estimated_from=est_from)
+                nm.extend(notes)
             agents.append(row)
         unnamed = 0
         for u in w.get("by_user") or []:
@@ -321,13 +444,23 @@ def assemble(app_id, days, target, raw, dates, generated_at=None):
         if "chat" not in e:
             for k in ("people_active", "chats", "chat_turns", "input_tokens", "output_tokens"): f[k] = int(w.get(k) or 0)
             f["cost_usd"] = round(float(w.get("cost_usd") or 0), 4) if pricing and not w.get("unpriced_turns") else None
+        specs = [a for a in (w.get("by_agent") or []) if a.get("kind") == "specialist"]
+        by_spec = "workflow" not in e and "specialists" not in (w.get("berr") or {}) and (specs or not int(w.get("workflow_runs") or 0))
         if "workflow" not in e:
             f["workflow_runs"] = int(w.get("workflow_runs") or 0)
-            # A run that used tokens but recorded $0 is not a free run: the app opens every row at 0 and adds the
-            # provider's cost only when the provider reports one (agent/lib/workflow-usage.ts), and Workers AI does not.
-            # Runs with no tokens and $0 made no model call, so their $0 is real.
-            none_costed = int(w.get("workflow_uncosted") or 0) > 0 and not float(w.get("workflow_cost_usd") or 0)
-            f["workflow_cost_usd"] = None if none_costed else round(float(w.get("workflow_cost_usd") or 0), 4)
+            if by_spec:
+                # Per specialist (specialist_cost): recorded costs as recorded, runs from before the app recorded models
+                # estimated at the specialist's configured model, and any run that cannot be priced makes it unknown.
+                costs = [specialist_cost(a, w.get("org_id")) for a in specs]
+                f["workflow_cost_usd"] = None if any(c[0] is None for c in costs) else round(float(sum(c[0] for c in costs)), 4)
+                f["_kinds"] = set().union(*[c[1] for c in costs]) if costs else set()
+            else:
+                # The per-specialist rows could not be read: the recorded cost only. A run that used tokens but recorded
+                # $0 is not a free run (the app added a cost only when the provider reported one, and Workers AI does not).
+                none_costed = int(w.get("workflow_uncosted") or 0) > 0 and not float(w.get("workflow_cost_usd") or 0)
+                f["workflow_cost_usd"] = None if none_costed else round(float(w.get("workflow_cost_usd") or 0), 4)
+                f["_kinds"] = {"recorded"}
+            f["workflow_cost_basis"] = None if f["workflow_cost_usd"] is None else basis_of(f["_kinds"])
         if "tickets" not in e:
             f["tickets"], unknown = fold_tickets(w.get("tickets_by_status"))
             if unknown: nm.append(f"tickets ({w.get('org_id')}): " + ", ".join(f"{n} with status '{s}'" for s, n in sorted(unknown.items())) + " are not one of the app's statuses and are counted as open")
@@ -338,7 +471,7 @@ def assemble(app_id, days, target, raw, dates, generated_at=None):
             nm.append(f"cost_usd ({w.get('org_id')}): " + (f"{w.get('unpriced_turns')} chat turn(s) ran on a model the app's price table does not price (or recorded none), so no total is given" if pricing else "the app's price table (lib/inference-pricing.ts) could not be loaded"))
         if "chat" not in e and w.get("turns_no_person"):
             nm.append(f"people_active ({w.get('org_id')}): {w['turns_no_person']} chat turn(s) recorded no signed-in person and are not attributed to anyone")
-        if "workflow" not in e and w.get("workflow_uncosted"):
+        if "workflow" not in e and not by_spec and w.get("workflow_uncosted"):
             tok = f"; they used {int(w.get('workflow_input_tokens') or 0):,} input and {int(w.get('workflow_output_tokens') or 0):,} output tokens (the run table records no model, so they are not priced here)"
             if f["workflow_cost_usd"] is None:
                 nm.append(f"workflow_cost_usd ({w.get('org_id')}): {w['workflow_uncosted']} of {f['workflow_runs']} workflow run(s) used the model and none recorded a cost (the app adds a cost only when the model provider reports one, and it did not){tok}")
@@ -354,6 +487,9 @@ def assemble(app_id, days, target, raw, dates, generated_at=None):
         vals = [w[k] for w in ws]
         if k == "people_active": tot[k] = int(raw.get("people_active") or 0) if all(v is not None for v in vals) else None
         elif all(v is not None for v in vals): tot[k] = round(sum(vals), 4) if k.endswith("_usd") else sum(vals)
+    if tot["workflow_cost_usd"] is not None:
+        tot["workflow_cost_basis"] = basis_of(set().union(*[w.get("_kinds") or set() for w in ws]) if ws else set())
+    for w in ws: w.pop("_kinds", None)
     if all(w["tickets"]["total"] is not None for w in ws):
         tot["tickets"] = {k: sum(w["tickets"][k] for w in ws) for k in ("open", "in_progress", "done", "total")}
     chat_ok = all(w["_daily"] is not None for w in ws)
@@ -398,10 +534,12 @@ def query_vercel(app_id, infra, args):
         return {"error": f"build/{app_id} with its node_modules is not on this machine, so there is nothing to run the query with"}
     project = (infra.get("vercel") or {}).get("project")
     if not project: return {"error": "state names no Vercel project for this app"}
-    try: url = clone.pull_env(project, build).get("DATABASE_URL")
-    except SystemExit: url = None
+    try: vals = clone.pull_env(project, build); url = vals.get("DATABASE_URL")
+    except SystemExit: vals, url = {}, None
     except Exception as e: return {"error": f"the production settings could not be pulled from Vercel ({type(e).__name__})"}
     if not url: return {"error": f"the Vercel project {project} has no DATABASE_URL in production"}
+    # The per-role model names, read out of the same pull (model ids, not secrets): the deployment's own models win.
+    args = dict(args, agent_models=resolve_models(args, env_models(vals)))
     env = {"PATH": os.environ.get("PATH", PATH), "HOME": os.environ.get("HOME", "/root"), "DATABASE_URL": url, "SF_USAGE_ARGS": json.dumps(args)}
     return run_node(build, env, url_secrets(url))
 
@@ -445,11 +583,16 @@ def remote_main(b64):
     try: pw = pwd.getpwnam(spec["user"])
     except KeyError: print(json.dumps({"error": f"the server has no user {spec['user']}"})); return 0
     kw = dict(user=pw.pw_uid, group=pw.pw_gid, extra_groups=os.getgrouplist(spec["user"], pw.pw_gid)) if os.getuid() == 0 else {}
+    # The per-role model names are read out of the same file (model ids, not secrets) so a specialist's configured
+    # model is the one the deployment runs; they are the only values not scrubbed, so the report can name the model.
+    models = env_models(vals)
+    args = dict(spec["args"], agent_models=resolve_models(spec["args"], models))
     env = {"PATH": PATH, "HOME": spec["home"], "LANG": "C.UTF-8", "NODE_ENV": "production", "DATABASE_URL": vals["DATABASE_URL"],
-           "SF_USAGE_ARGS": json.dumps(spec["args"])}
+           "SF_USAGE_ARGS": json.dumps(args)}
     if vals.get("DATABASE_SSL"): env["DATABASE_SSL"] = vals["DATABASE_SSL"]
-    doc = run_node(spec["app_dir"], env, list(vals.values()) + url_secrets(vals["DATABASE_URL"]), timeout=78, user_kw=kw)
-    print(scrub(json.dumps(doc), list(vals.values()))); return 0
+    secret = [v for k, v in vals.items() if k not in models]
+    doc = run_node(spec["app_dir"], env, secret + url_secrets(vals["DATABASE_URL"]), timeout=78, user_kw=kw)
+    print(scrub(json.dumps(doc), secret)); return 0
 
 # ---------------------------------------------------------------------------------------------------------
 # one app, all apps
@@ -465,7 +608,8 @@ def collect(app_id, days):
     target = infra.get("target")
     if not infra.get("deployed_at"): return error_report(app_id, days, target, "the app is not deployed, so it has no database to read")
     dates, since = window(days)
-    args = {"orgs": state_orgs(adir), "since": since, "days": days}
+    args = {"orgs": state_orgs(adir), "since": since, "days": days, "agent_roles": agent_roles(app_id, app), "state_models": state_models(app)}
+    args["agent_models"] = resolve_models(args)   # from state; the deployment's own model names replace it where they are read
     def on_alarm(*_): raise TimeUp()
     old = signal.signal(signal.SIGALRM, on_alarm); signal.alarm(TIMEOUT - 5)
     try:
@@ -550,7 +694,7 @@ def self_test():
     # contract shape
     keys = {"app_id", "generated_at", "days", "target", "totals", "workspaces", "daily", "not_measured"}
     ok(keys <= set(rep) and "error" not in rep, "top-level keys")
-    tkeys = set(NUM) | {"tickets"}
+    tkeys = set(NUM) | {"tickets", "workflow_cost_basis"}
     ok(set(rep["totals"]) == tkeys and all(set(w) == tkeys | {"org_id", "name"} for w in rep["workspaces"]), "field sets")
     ok(set(rep["totals"]["tickets"]) == {"open", "in_progress", "done", "total"}, "ticket keys")
     ok([d["date"] for d in rep["daily"]] == dates, "daily covers the window")
@@ -566,11 +710,55 @@ def self_test():
     r2 = assemble("demo", 3, "vercel", bad, dates)
     ok(r2["workspaces"][1]["workflow_runs"] is None and r2["totals"]["workflow_runs"] is None and r2["totals"]["chat_turns"] is not None, "unreadable -> null")
     ok(any(x.startswith("workflow_runs, workflow_cost_usd (beta)") for x in r2["not_measured"]), "unreadable named")
-    # workflow runs that recorded no cost at all: null and named, never $0
-    nc = json.loads(json.dumps(raw)); nc["workspaces"][0].update(workflow_uncosted=3, workflow_cost_usd=0, workflow_input_tokens=5000, workflow_output_tokens=70)
-    r4 = assemble("demo", 3, "vercel", nc, dates)
-    ok(r4["workspaces"][0]["workflow_cost_usd"] is None and r4["totals"]["workflow_cost_usd"] is None and r4["workspaces"][1]["workflow_cost_usd"] == 0.0, "uncosted -> null")
-    ok(any("3 of 3 workflow run(s) used the model and none" in x and "5,000 input" in x for x in r4["not_measured"]), "uncosted named with tokens")
+    # workflow cost: recorded runs as recorded, runs from before the app recorded models estimated at the configured
+    # model (and said so), anything that cannot be priced null and named, never $0 and never a partial figure
+    ok(rep["workspaces"][0]["workflow_cost_usd"] == 0.0439 and rep["workspaces"][0]["workflow_cost_basis"] == "mixed", "workspace: recorded + estimated = mixed")
+    ok(rep["workspaces"][1]["workflow_cost_usd"] == 0.0 and rep["workspaces"][1]["workflow_cost_basis"] == "recorded", "no runs: a measured $0")
+    ok(rep["totals"]["workflow_cost_usd"] == 0.0439 and rep["totals"]["workflow_cost_basis"] == "mixed", "totals: mixed")
+    lodr = next(r for r in rep["by_agent"] if r["agent"] == "lodr-filings"); res = next(r for r in rep["by_agent"] if r["agent"] == "research")
+    ok((lodr["cost_usd"], lodr["cost_basis"], lodr["estimated_from"]) == (0.0018, "estimated", "@cf/zai-org/glm-5.3"), "specialist with tokens and no recorded cost -> estimated at its configured model")
+    ok((res["cost_usd"], res["cost_basis"], res["estimated_from"]) == (0.0421, "recorded", None), "specialist with a recorded cost -> recorded")
+    ok(any("lodr-filings cost_usd (alpha): estimated for 1 of 1 run(s)" in x and "@cf/zai-org/glm-5.3 (application.json model.roles.specialist)" in x for x in rep["not_measured"]), "estimate named with its model and source")
+    def variant(**kw):
+        v = json.loads(json.dumps(raw)); a = next(x for x in v["workspaces"][0]["by_agent"] if x["agent"] == "lodr-filings"); a.update(kw)
+        return assemble("demo", 3, "vercel", v, dates)
+    r4 = variant(est_cost=None)
+    ok(next(r for r in r4["by_agent"] if r["agent"] == "lodr-filings")["cost_usd"] is None and r4["workspaces"][0]["workflow_cost_usd"] is None
+       and r4["totals"]["workflow_cost_usd"] is None and r4["totals"]["workflow_cost_basis"] is None, "configured model unpriced -> null all the way up")
+    ok(any("its configured model @cf/zai-org/glm-5.3" in x and "not in the app's price table" in x for x in r4["not_measured"]), "unpriced configured model named")
+    r5 = variant(est_cost=None, est_model=None, est_from=None)
+    ok(any("could not be found" in x for x in r5["not_measured"]), "unknown configured model named")
+    r6 = variant(unpriced_runs=1, rec_runs=0)
+    ok(next(r for r in r6["by_agent"] if r["agent"] == "lodr-filings")["cost_usd"] is None and any("recorded but its price table does not price" in x for x in r6["not_measured"]), "recorded unpriced model -> null")
+    r7 = variant(est_runs=0, est_cost=0, est_model=None, rec_runs=1, rec_cost=0.002)
+    ok(r7["totals"]["workflow_cost_basis"] == "recorded" and r7["totals"]["workflow_cost_usd"] == 0.0441, "all recorded -> recorded")
+    es = json.loads(json.dumps(raw)); es["workspaces"][0]["by_agent"] = [a for a in es["workspaces"][0]["by_agent"] if a["agent"] != "research"]; es["workspaces"][0]["workflow_runs"] = 1
+    r8 = assemble("demo", 3, "vercel", es, dates)
+    ok(r8["totals"]["workflow_cost_basis"] == "estimated" and r8["totals"]["workflow_cost_usd"] == 0.0018, "all estimated -> estimated")
+    # the per-specialist rows unreadable: the recorded cost only, and runs that recorded none make it null, named
+    nc = json.loads(json.dumps(raw)); nc["workspaces"][0]["berr"] = {"specialists": "42501 permission denied"}
+    nc["workspaces"][0].update(workflow_uncosted=3, workflow_cost_usd=0, workflow_input_tokens=5000, workflow_output_tokens=70)
+    r9 = assemble("demo", 3, "vercel", nc, dates)
+    ok(r9["workspaces"][0]["workflow_cost_usd"] is None and r9["totals"]["workflow_cost_usd"] is None and r9["workspaces"][1]["workflow_cost_usd"] == 0.0, "uncosted -> null")
+    ok(any("3 of 3 workflow run(s) used the model and none" in x and "5,000 input" in x for x in r9["not_measured"]), "uncosted named with tokens")
+    # which model each specialist is configured with: its role from agent.ts, the deployment's model names first
+    st = {"provider": "cloudflare", "model": "@cf/zai-org/glm-5.2", "roles": {"orchestrator": "@cf/moonshotai/kimi-k2.6", "specialist": "@cf/zai-org/glm-5.3"}}
+    rargs = {"agent_roles": {"lodr-filings": "specialist", "research": "orchestrator", "evals": "vision"}, "state_models": st}
+    ok(resolve_models(rargs) == {"lodr-filings": {"role": "specialist", "model": "@cf/zai-org/glm-5.3", "from": "application.json model.roles.specialist"},
+                                 "research": {"role": "orchestrator", "model": "@cf/moonshotai/kimi-k2.6", "from": "application.json model.roles.orchestrator"},
+                                 "evals": {"role": "vision", "model": "@cf/zai-org/glm-5.2", "from": "application.json model.model"}}, "resolve from state")
+    envm = env_models({"CLOUDFLARE_MODEL_SPECIALIST": "@cf/zai-org/glm-5.3-flash", "CLOUDFLARE_MODEL": "[SENSITIVE]", "CLOUDFLARE_API_TOKEN": "tok_secret_value", "DATABASE_URL": "postgres://u:p@h/d"})
+    ok(envm == {"CLOUDFLARE_MODEL_SPECIALIST": "@cf/zai-org/glm-5.3-flash"}, "env_models keeps model names only: " + json.dumps(envm))
+    rm = resolve_models(rargs, envm)
+    ok(rm["lodr-filings"] == {"role": "specialist", "model": "@cf/zai-org/glm-5.3-flash", "from": "the deployment's CLOUDFLARE_MODEL_SPECIALIST"} and rm["research"]["from"] == "application.json model.roles.orchestrator", "the deployment's model wins")
+    ok(resolve_models(rargs, {"MODEL_PROVIDER": "gateway"})["lodr-filings"]["from"] == "application.json model.roles.specialist", "gateway without its variable falls back to state")
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        for rel, body in {"build/app1/agent/subagents/research/agent.ts": 'model: agentModel("orchestrator"),', "packs/p1/files/agent/subagents/lodr-filings/agent.ts": "model: agentModel('specialist'),",
+                          "molds/m1/codebase/agent/subagents/research/agent.ts": 'model: agentModel("specialist"),', "molds/m1/codebase/agent/subagents/evals/agent.ts": 'model: agentModel("vision"),',
+                          "molds/m1/codebase/agent/subagents/plain/agent.ts": 'model: someOtherModel,'}.items():
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True); open(os.path.join(d, rel), "w").write(body)
+        ok(agent_roles("app1", {"packs": ["p1"], "mold": "m1"}, root=d) == {"research": "orchestrator", "lodr-filings": "specialist", "evals": "vision"}, "agent_roles: build tree first, then pack, then mold")
     # no price table -> cost null, named
     r3 = assemble("demo", 3, "vercel", dict(raw, pricing=False), dates)
     ok(r3["totals"]["cost_usd"] is None and r3["workspaces"][0]["cost_usd"] is None and any("could not be loaded" in x for x in r3["not_measured"]), "no pricing")
@@ -603,10 +791,10 @@ def self_test():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         ef = os.path.join(d, "api.env")
-        open(ef, "w").write('DATABASE_URL="postgres://app_rw:pw_9876543210@127.0.0.1/app"\nOTHER_SECRET=zzzzzzzzzzzzzzzz\n')
+        open(ef, "w").write('DATABASE_URL="postgres://app_rw:pw_9876543210@127.0.0.1/app"\nOTHER_SECRET=zzzzzzzzzzzzzzzz\nCLOUDFLARE_MODEL_SPECIALIST=@cf/zai-org/glm-5.3-flash\n')
         calls = []
         def fake_node(argv_, **kw):
-            calls.append(kw); return subprocess.CompletedProcess(argv_, 1, "", "error: pw_9876543210 zzzzzzzzzzzzzzzz failed")
+            calls.append(kw); return subprocess.CompletedProcess(argv_, 1, "", "error: pw_9876543210 zzzzzzzzzzzzzzzz failed on @cf/zai-org/glm-5.3-flash")
         global run_node
         real = run_node
         def patched(cwd, env, secrets_, timeout=80, run=None, user_kw=None): return real(cwd, env, secrets_, timeout, fake_node, {})
@@ -616,21 +804,23 @@ def self_test():
         me = pwd.getpwuid(os.getuid()).pw_name
         try:
             with contextlib.redirect_stdout(buf):
-                remote_main(base64.b64encode(json.dumps({"env_file": ef, "user": me, "home": d, "app_dir": d, "args": {}}).encode()).decode())
+                remote_main(base64.b64encode(json.dumps({"env_file": ef, "user": me, "home": d, "app_dir": d,
+                    "args": {"agent_roles": {"lodr-filings": "specialist"}, "state_models": {"provider": "cloudflare", "roles": {"specialist": "@cf/zai-org/glm-5.3"}}}}).encode()).decode())
         finally: run_node = real
         o = buf.getvalue()
         ok("pw_98765" not in o and "zzzzzzzz" not in o and "error" in json.loads(o), "remote output scrubbed: " + o)
         ok(set(calls[0]["env"]) == {"PATH", "HOME", "LANG", "NODE_ENV", "DATABASE_URL", "SF_USAGE_ARGS"}, "only DATABASE_URL passes to node")
+        ok(json.loads(calls[0]["env"]["SF_USAGE_ARGS"])["agent_models"]["lodr-filings"] == {"role": "specialist", "model": "@cf/zai-org/glm-5.3-flash", "from": "the deployment's CLOUDFLARE_MODEL_SPECIALIST"}, "the server's own model names decide the configured model")
+        ok("@cf/zai-org/glm-5.3-flash" in o and "CLOUDFLARE_API_TOKEN" not in o, "a model id is not scrubbed; every other value is")
     # the query itself: read-only transactions, RLS per workspace, refuses a bypass role, prints no address
     ok(QUERY_JS.count("sql.begin('read only'") == 1 and "set_config('app.org_id'" in QUERY_JS and "rolbypassrls" in QUERY_JS, "query is read-only and scoped")
     ok(not re.search(r"\b(insert|update|delete|truncate|alter|drop|create)\b", QUERY_JS, re.I), "query writes nothing")
     ok("actor_email" in QUERY_JS and not re.search(r"out\.[a-z_]+ = .*\.e\b", QUERY_JS), "emails stay in the query process")
     # ---- by_agent / by_user (assembled from the fixture's raw rows) ----
-    akeys = {"agent", "kind", "workspace", "turns", "runs", "input_tokens", "output_tokens", "cost_usd", "last_active"}
+    akeys = {"agent", "kind", "workspace", "turns", "runs", "input_tokens", "output_tokens", "cost_usd", "cost_basis", "estimated_from", "last_active"}
     ukeys = {"user", "workspace", "chats", "chat_turns", "input_tokens", "output_tokens", "cost_usd", "workflow_runs", "last_active"}
     ok(all(set(r) == akeys for r in rep["by_agent"]) and all(set(r) == ukeys for r in rep["by_user"]), "row field sets")
     ok([(r["agent"], r["workspace"]) for r in rep["by_agent"]] == [("main agent", "Alpha"), ("research", "Alpha"), ("main agent", "Beta Co"), ("lodr-filings", "Alpha")], "by_agent order")
-    ok(next(r for r in rep["by_agent"] if r["agent"] == "lodr-filings")["cost_usd"] is None, "specialist with tokens and no recorded cost -> null")
     ok(all((r["turns"] is None) == (r["kind"] == "specialist") and (r["runs"] is None) == (r["kind"] == "main") for r in rep["by_agent"]), "turns for main, runs for specialists")
     ok([r["user"] for r in rep["by_user"]] == ["Alice Rao", "Member 1", "Alice Rao"] and [r["chat_turns"] for r in rep["by_user"]] == [3, 1, 1], "by_user order and the unnamed person")
     ok(rep["by_user"][2]["workflow_runs"] is None and sum("by_user workflow_runs (beta)" in x for x in rep["not_measured"]) == 1 and any("by_user workflow_runs (beta): null" in x and "42P01" in x for x in rep["not_measured"]), "unattributable runs -> null, named")
@@ -642,12 +832,14 @@ def self_test():
     # ---- the real query against a stand-in `postgres` (fixtures/app_usage/fake-app): naming, no addresses, read-only ----
     fake = os.path.join(FIX, "fake-app")
     rr = run_node(fake, {"PATH": os.environ.get("PATH", PATH), "HOME": "/tmp", "DATABASE_URL": "postgres://u:p@h/db",
-                         "SF_USAGE_ARGS": json.dumps({"orgs": [], "since": "2026-10-06T00:00:00+00:00", "days": 3})}, [])
+                         "SF_USAGE_ARGS": json.dumps({"orgs": [], "since": "2026-10-06T00:00:00+00:00", "days": 3,
+                                                      "agent_models": {"research": {"role": "specialist", "model": "m1", "from": "application.json model.roles.specialist"}}})}, [])
     ok("error" not in rr and not rr["workspaces"][0]["errors"] and not rr["workspaces"][0]["berr"], "fake query ran: " + json.dumps(rr)[:400])
     fr = assemble("fake", 3, "vercel", rr, dates)
     ok("@" not in json.dumps(fr["by_user"]) and "@" not in json.dumps(rr), "no email address leaves the query, not even one stored as a name")
     ok([(r["user"], r["chat_turns"], r["workflow_runs"], r["cost_usd"]) for r in fr["by_user"]] == [("Neha Shah", 3, 0, 2.1), ("Member 1", 2, 2, 0.98), ("Member 2", 1, 0, 0.12)], "names, stable Member N, runs and cost per person")
-    ok([(r["agent"], r["turns"], r["runs"], r["cost_usd"]) for r in fr["by_agent"]] == [("main agent", 6, None, 3.2), ("research", None, 2, None)], "main agent and specialist rows")
+    ok([(r["agent"], r["turns"], r["runs"], r["cost_usd"], r["cost_basis"], r["estimated_from"]) for r in fr["by_agent"]] == [("main agent", 6, None, 3.2, "recorded", None), ("research", None, 2, 0.0051, "estimated", "m1")], "main agent and specialist rows, the specialist estimated at its configured model by the app's price table")
+    ok(fr["totals"]["workflow_cost_usd"] == 0.0051 and fr["totals"]["workflow_cost_basis"] == "estimated", "totals from the query")
     ok(fr["totals"]["people_active"] == 3 and fr["totals"]["tickets"]["open"] == 1, "existing fields unchanged by the breakdowns")
     print(f"app_usage: {n} checks passed"); return 0
 
