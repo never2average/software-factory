@@ -65,6 +65,30 @@ export type UsageNumbers = {
   tickets: TicketCounts
 }
 
+export type AgentUsage = {
+  agent: string
+  kind: 'main' | 'specialist'
+  workspace: string
+  turns: Measured
+  runs: Measured
+  input_tokens: Measured
+  output_tokens: Measured
+  cost_usd: Measured
+  last_active: string
+}
+
+export type UserUsage = {
+  user: string
+  workspace: string
+  chats: Measured
+  chat_turns: Measured
+  input_tokens: Measured
+  output_tokens: Measured
+  cost_usd: Measured
+  workflow_runs: Measured
+  last_active: string
+}
+
 export type Usage = {
   app_id: string
   generated_at: string
@@ -73,6 +97,8 @@ export type Usage = {
   workspaces: (UsageNumbers & { org_id: string; name: string })[]
   daily: { date: string; chat_turns: Measured; people_active: Measured }[]
   not_measured: string[]
+  by_agent: AgentUsage[]
+  by_user: UserUsage[]
   error?: string
 }
 

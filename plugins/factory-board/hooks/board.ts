@@ -1,4 +1,4 @@
-import type { AppRow, Check, MoldRow, ProductRow, Ticket, Usage, UsageNumbers } from '../types'
+import type { AgentUsage, AppRow, Check, MoldRow, ProductRow, Ticket, Usage, UsageNumbers, UserUsage } from '../types'
 
 // Pure readers of the factory's own state files (state/factory.json, state/products.json,
 // state/application/<id>/*.json, state/tasks/<mold>.jsonl). No I/O here, so the tests drive them directly.
@@ -172,6 +172,32 @@ export function parseUsage(raw: Json): Usage {
       people_active: num(d.people_active),
     })),
     not_measured: (Array.isArray(raw.not_measured) ? raw.not_measured : []).map(String),
+    by_agent: (Array.isArray(raw.by_agent) ? raw.by_agent : []).map(
+      (a: Json): AgentUsage => ({
+        agent: String(a.agent ?? ''),
+        kind: a.kind === 'main' ? 'main' : 'specialist',
+        workspace: String(a.workspace ?? ''),
+        turns: num(a.turns),
+        runs: num(a.runs),
+        input_tokens: num(a.input_tokens),
+        output_tokens: num(a.output_tokens),
+        cost_usd: num(a.cost_usd),
+        last_active: String(a.last_active ?? ''),
+      }),
+    ),
+    by_user: (Array.isArray(raw.by_user) ? raw.by_user : []).map(
+      (u: Json): UserUsage => ({
+        user: String(u.user ?? ''),
+        workspace: String(u.workspace ?? ''),
+        chats: num(u.chats),
+        chat_turns: num(u.chat_turns),
+        input_tokens: num(u.input_tokens),
+        output_tokens: num(u.output_tokens),
+        cost_usd: num(u.cost_usd),
+        workflow_runs: num(u.workflow_runs),
+        last_active: String(u.last_active ?? ''),
+      }),
+    ),
     ...(raw.error ? { error: String(raw.error) } : {}),
   }
 }

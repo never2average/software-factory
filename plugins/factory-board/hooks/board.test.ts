@@ -88,6 +88,12 @@ test('analytics helpers: sparkline, usage report, tickets per app, short numbers
   expect(u.workspaces[0]?.name).toBe('o')
   expect(u.daily[0]?.people_active).toBe(null)
   expect(u.not_measured).toEqual(['cost_usd: no table'])
+  expect(u.by_agent).toEqual([])
+  const v = parseUsage({ by_agent: [{ agent: 'main agent', kind: 'main', turns: 5 }], by_user: [{ user: 'Member 1', chats: 2 }] })
+  expect(v.by_agent[0]?.turns).toBe(5)
+  expect(v.by_agent[0]?.runs).toBe(null)
+  expect(v.by_user[0]?.user).toBe('Member 1')
+  expect(v.by_user[0]?.cost_usd).toBe(null)
   const tickets = [
     { id: '1', mold: 'm', title: 'Lane fail: functional on onfinance_hfc — 1 check', status: 'todo', priority: 1 },
     { id: '2', mold: 'm', title: 'Lane fail: functional on onfinance_hfc_vm — 1 check', status: 'todo', priority: 1 },

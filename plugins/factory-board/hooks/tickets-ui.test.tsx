@@ -79,11 +79,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.press({ key: 'filter-all' })
     expect(await ui.find({ key: 'ticket-mold_v1-8' })).toBeDefined()
 
-    // the products tab shows the stage path and what is left for the next stage, clickable
+    // the products tab shows the stage path and the apps, and no tickets
     await ui.press({ key: 'tab-products' })
     expect(await ui.find({ text: '● built' })).toBeDefined()
     expect(await ui.find({ text: 'demo_app' })).toBeDefined()
-    await ui.press({ key: 'pticket-demo-mold_v1-9' })
-    expect(await ui.find({ key: 'ticket-work' })).toBeDefined()
+    expect(await ui.find({ key: 'pticket-demo-mold_v1-9' })).toBeUndefined()
   })
 }
