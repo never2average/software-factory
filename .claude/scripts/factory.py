@@ -5,6 +5,9 @@
   factory.py tasks [mold] [--all]        open tasks (default: todo/in_progress/blocked), priority order
   factory.py next [mold]                 the highest-priority unblocked todo task
   factory.py add <mold> "<title>" --type build [--pri 2] [--owner fable] [--lane x] [--dep id ...]
+                 [--product <product_id>] [--advances <stage>] [--accept "<criterion>" ...]
+                                         --product defaults to the mold's first product; --advances sets
+                                         advances_stage (a gate task for that product's stage)
   factory.py set <task_id> <field> <value>   e.g. set mold_v1-001 status done
   factory.py close <task_id> "<evidence>"    marks done and appends evidence; bumps product stage if advances_stage
   factory.py validate                    every state/*.json[l] file and every molds/*/testing/*/lane.json
@@ -16,6 +19,7 @@ import json, sys, os, datetime, re
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state")
 TODAY = datetime.date.today().isoformat()
+STAGES = ["defined","stamped","lanes_passing","deployed","released"]
 def load(p):
     with open(p) as f: return json.load(f)
 def tasks_path(m): return os.path.join(ST, "tasks", f"{m}.jsonl")
@@ -63,10 +67,17 @@ def cmd_add(a):
     def opt(k, d=None):
         return opts[opts.index(k)+1] if k in opts else d
     ts = read_tasks(m); n = max([int(t["task_id"].split("-")[1]) for t in ts] + [0]) + 1
-    pid = next(p["product_id"] for p in products()["products"] if p["mold_id"]==m)
+    pids = [p["product_id"] for p in products()["products"] if p["mold_id"]==m]
+    pid = opt("--product", pids[0])
+    if pid not in pids: sys.exit(f"no product {pid} on {m}: {', '.join(pids)}")
     t = {"task_id": f"{m}-{n:03d}", "mold_id": m, "product_id": pid, "title": title, "type": opt("--type","build"),
          "status":"todo","priority": int(opt("--pri",2)), "owner": opt("--owner","fable"), "created": TODAY, "updated": TODAY}
     if opt("--lane"): t["lane"] = opt("--lane")
+    if opt("--advances"):
+        if opt("--advances") not in STAGES[1:]: sys.exit(f"--advances must be one of {', '.join(STAGES[1:])}")
+        t["advances_stage"] = opt("--advances")
+    acc = [opts[i+1] for i,x in enumerate(opts) if x=="--accept"]
+    if acc: t["acceptance"] = acc
     deps = [opts[i+1] for i,x in enumerate(opts) if x=="--dep"]
     if deps: t["depends_on"] = deps
     ts.append(t); write_tasks(m, ts); print(t["task_id"])
@@ -84,8 +95,26 @@ def cmd_close(a):
     if ev: t.setdefault("evidence", []).append(ev)
     write_tasks(m, ts); print(f"{tid} done")
     if t.get("advances_stage"):
-        P = products(); order = ["defined","stamped","lanes_passing","deployed","released"]
-        for p in P["products"]:
+        P = products(); order = STAGES; tp = t.get("product_id")
+        if tp:
+            # Only the task's own product moves, on its own tasks: products share a mold's backlog, and a gate closed
+            # for one product is no evidence for another. A stage is reached only through every stage before it: from
+            # the current stage, step up while the next stage has tasks for this product and all of them are done.
+            p = next((x for x in P["products"] if x["product_id"]==tp and x["mold_id"]==m), None)
+            if p is None: return
+            start = p["stage"]
+            for nxt in order[order.index(start)+1:]:
+                mine = [x for x in ts if x.get("product_id")==tp and x.get("advances_stage")==nxt]
+                left = [x["task_id"] for x in mine if x["status"]!="done"]
+                if not mine or left:
+                    if nxt == t["advances_stage"] or order.index(nxt) <= order.index(t["advances_stage"]):
+                        print(f"stage {nxt} waits on {', '.join(left) or 'a task for it (none filed)'}")
+                    break
+                p["stage"] = nxt
+            if p["stage"] != start:
+                json.dump(P, open(os.path.join(ST,"products.json"),"w"), indent=2); print(f"{tp} -> {p['stage']}")
+            return
+        for p in P["products"]:    # a task with no product_id: the old mold-wide rule
             if p["mold_id"]==m and order.index(t["advances_stage"]) > order.index(p["stage"]):
                 remaining = [x for x in ts if x.get("advances_stage")==t["advances_stage"] and x["status"]!="done"]
                 if not remaining:
