@@ -166,7 +166,7 @@
       "mold_id": "mold_v1",
       "name": "OnFinance AI",
       "tagline": "Research workspace for listed Indian housing finance companies.",
-      "stage": "stamped",
+      "stage": "deployed",
       "target_model": "GLM 5.3 on Cloudflare Workers AI (onfinance_hfc: orchestrator and specialist; onfinance_hfc_vm: Kimi K2.6 orchestrator, GLM 5.3 specialist; image reading GLM 5.3 Flash on both)",
       "gates": {
         "stamped": [
