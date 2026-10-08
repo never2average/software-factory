@@ -11,6 +11,8 @@ import {
   ticketMatches,
   appRow,
   isComingSoon,
+  isEstimate,
+  cost,
   money,
   moldRow,
   openTickets,
@@ -559,7 +561,10 @@ export const register: Register = on => {
                 {money(chosen.totals.cost_usd)}
               </Text>
               <Text>
-                {short(chosen.totals.workflow_runs)} workflow runs · workflow cost {money(chosen.totals.workflow_cost_usd)}
+                {short(chosen.totals.workflow_runs)} workflow runs · workflow cost{' '}
+                <Text dimColor={isEstimate(chosen.totals.workflow_cost_basis)}>
+                  {cost(chosen.totals.workflow_cost_usd, chosen.totals.workflow_cost_basis)}
+                </Text>
               </Text>
             </Box>
 
@@ -605,8 +610,10 @@ export const register: Register = on => {
                   </Text>
                   <Text>{a.kind === 'main' ? `${short(a.turns)} turns` : `${short(a.runs)} runs`}</Text>
                   <Text dimColor>
-                    {short(a.input_tokens)} in · {short(a.output_tokens)} out · {money(a.cost_usd)}
+                    {short(a.input_tokens)} in · {short(a.output_tokens)} out ·
                   </Text>
+                  {/* An estimate is dimmed and marked "~ est." so it never reads as a measured figure. */}
+                  <Text dimColor={isEstimate(a.cost_basis)}>{cost(a.cost_usd, a.cost_basis)}</Text>
                   {chosen.workspaces.length > 1 && <Text dimColor>· {a.workspace}</Text>}
                 </Box>
               ))}
