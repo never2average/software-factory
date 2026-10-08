@@ -401,7 +401,7 @@ def file_task(mold_id, lane, app_id, fails, dry):
     defects = sorted({r["defect"] for r in fails if r["defect"]})
     if fails and len(defects) and all(r["defect"] for r in fails): return ", ".join(defects)
     for t in open_tasks(mold_id):
-        if t.get("lane") == lane and app_id in t.get("title", ""): return t["task_id"]
+        if t.get("lane") == lane and f" on {app_id} — " in t.get("title", ""): return t["task_id"]
     names = ", ".join(r["name"] for r in fails)
     title = f"Lane fail: {lane} on {app_id} — {len(fails)} check(s): {names}"
     if dry: return "(dry run: no task filed)"
