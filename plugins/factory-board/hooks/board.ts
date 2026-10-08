@@ -1,4 +1,4 @@
-import type { AppRow, Check, MoldRow, ProductRow, Ticket } from '../types'
+import type { AppRow, Check, MoldRow, ProductRow, Ticket, Usage, UsageNumbers } from '../types'
 
 // Pure readers of the factory's own state files (state/factory.json, state/products.json,
 // state/application/<id>/*.json, state/tasks/<mold>.jsonl). No I/O here, so the tests drive them directly.
@@ -25,6 +25,17 @@ export function parseTasks(jsonl: string): Ticket[] {
       title: String(row.title ?? ''),
       status: String(row.status ?? ''),
       priority: Number(row.priority ?? 9),
+      ...(row.type ? { type: String(row.type) } : {}),
+      ...(row.owner ? { owner: String(row.owner) } : {}),
+      ...(row.product_id ? { product: String(row.product_id) } : {}),
+      ...(row.created ? { created: String(row.created) } : {}),
+      ...(row.updated ? { updated: String(row.updated) } : {}),
+      ...(row.advances_stage ? { advancesStage: String(row.advances_stage) } : {}),
+      ...(Array.isArray(row.deps ?? row.depends_on) ? { dependsOn: (row.deps ?? row.depends_on).map(String) } : {}),
+      ...(Array.isArray(row.acceptance) ? { acceptance: row.acceptance.map(String) } : {}),
+      ...(Array.isArray(row.evidence) ? { evidence: row.evidence.map(String) } : {}),
+      ...(row.detail ? { detail: String(row.detail) } : {}),
+      ...(row.lane ? { lane: String(row.lane) } : {}),
     })
   }
   return [...byId.values()]
@@ -116,3 +127,73 @@ export function verdict(checks: readonly Check[]): 'healthy' | 'down' | 'pending
 
 /** A mold that is announced but not yet buildable. */
 export const isComingSoon = (status: string): boolean => status === 'coming_soon'
+
+const BARS = '▁▂▃▄▅▆▇█'
+
+/** A one-line bar chart of the values, scaled to the largest; all zero draws the lowest bar. */
+export function sparkline(values: readonly (number | null)[]): string {
+  const top = Math.max(0, ...values.map(v => v ?? 0))
+  return values.map(v => (v === null ? ' ' : BARS[top === 0 ? 0 : Math.min(7, Math.round((v / top) * 7))])).join('')
+}
+
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+function numbers(raw: Json | undefined): UsageNumbers {
+  const t = raw?.tickets ?? {}
+  return {
+    people_active: num(raw?.people_active),
+    chats: num(raw?.chats),
+    chat_turns: num(raw?.chat_turns),
+    input_tokens: num(raw?.input_tokens),
+    output_tokens: num(raw?.output_tokens),
+    cost_usd: num(raw?.cost_usd),
+    workflow_runs: num(raw?.workflow_runs),
+    workflow_cost_usd: num(raw?.workflow_cost_usd),
+    tickets: { open: num(t.open), in_progress: num(t.in_progress), done: num(t.done), total: num(t.total) },
+  }
+}
+
+/** The app_usage.py report, tolerant of missing fields (a missing number reads 0 and the report says what it did not measure). */
+export function parseUsage(raw: Json): Usage {
+  return {
+    app_id: String(raw.app_id ?? ''),
+    generated_at: String(raw.generated_at ?? ''),
+    days: num(raw.days) ?? 30,
+    totals: numbers(raw.totals),
+    workspaces: (Array.isArray(raw.workspaces) ? raw.workspaces : []).map((w: Json) => ({
+      ...numbers(w),
+      org_id: String(w.org_id ?? ''),
+      name: String(w.name ?? w.org_id ?? ''),
+    })),
+    daily: (Array.isArray(raw.daily) ? raw.daily : []).map((d: Json) => ({
+      date: String(d.date ?? ''),
+      chat_turns: num(d.chat_turns),
+      people_active: num(d.people_active),
+    })),
+    not_measured: (Array.isArray(raw.not_measured) ? raw.not_measured : []).map(String),
+    ...(raw.error ? { error: String(raw.error) } : {}),
+  }
+}
+
+/** The factory's open tickets that name this app. */
+export function ticketsForApp(tickets: readonly Ticket[], appId: string): Ticket[] {
+  const word = new RegExp(`(^|[^a-z0-9_])${appId.replace(/[^a-z0-9_]/gi, '')}($|[^a-z0-9_])`, 'i')
+  return tickets.filter(t => word.test(t.title))
+}
+
+/** 1234567 -> "1.2M", 1234 -> "1.2k"; not measured -> "—". */
+export function short(n: number | null): string {
+  if (n === null) return '—'
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`
+  return String(Math.round(n))
+}
+
+/** "$13.56", "$1,204"; not measured -> "not measured". */
+export function money(n: number | null): string {
+  if (n === null) return 'not measured'
+  return `$${n < 1000 ? n.toFixed(2) : Math.round(n).toLocaleString("en-US")}`
+}
+
+/** a + b, null when either is not measured. */
+export const plus = (a: number | null, b: number | null): number | null => (a === null || b === null ? null : a + b)

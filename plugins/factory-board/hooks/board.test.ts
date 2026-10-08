@@ -68,3 +68,39 @@ test('health verdicts, products, coming soon and ages', async () => {
   expect(ago('2026-10-01T12:00:00Z', now)).toBe('7d ago')
   expect(ago('', now)).toBe('—')
 })
+
+import { money, parseUsage, plus, short, sparkline, ticketsForApp } from './board'
+
+test('analytics helpers: sparkline, usage report, tickets per app, short numbers', async () => {
+  expect(sparkline([0, 5, 10])).toBe('▁▅█')
+  expect(sparkline([0, 0])).toBe('▁▁')
+  const u = parseUsage({
+    app_id: 'a',
+    generated_at: '2026-10-08T12:00:00Z',
+    days: 7,
+    totals: { people_active: 3, chats: 4, chat_turns: 20, tickets: { open: 1, in_progress: 2, done: 3, total: 6 } },
+    workspaces: [{ org_id: 'o', chats: 4 }],
+    daily: [{ date: '2026-10-08', chat_turns: 20 }],
+    not_measured: ['cost_usd: no table'],
+  })
+  expect(u.totals.cost_usd).toBe(null)
+  expect(u.totals.tickets).toEqual({ open: 1, in_progress: 2, done: 3, total: 6 })
+  expect(u.workspaces[0]?.name).toBe('o')
+  expect(u.daily[0]?.people_active).toBe(null)
+  expect(u.not_measured).toEqual(['cost_usd: no table'])
+  const tickets = [
+    { id: '1', mold: 'm', title: 'Lane fail: functional on onfinance_hfc — 1 check', status: 'todo', priority: 1 },
+    { id: '2', mold: 'm', title: 'Lane fail: functional on onfinance_hfc_vm — 1 check', status: 'todo', priority: 1 },
+  ]
+  expect(ticketsForApp(tickets, 'onfinance_hfc').map(t => t.id)).toEqual(['1'])
+  expect(ticketsForApp(tickets, 'onfinance_hfc_vm').map(t => t.id)).toEqual(['2'])
+  expect(short(1234)).toBe('1.2k')
+  expect(short(2_500_000)).toBe('2.5M')
+  expect(short(42)).toBe('42')
+  expect(short(null)).toBe('—')
+  expect(money(null)).toBe('not measured')
+  expect(money(13.564)).toBe('$13.56')
+  expect(money(0)).toBe('$0.00')
+  expect(plus(1, null)).toBe(null)
+  expect(sparkline([1, null, 2])).toBe('▅ █')
+})

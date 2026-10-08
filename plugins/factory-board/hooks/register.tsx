@@ -1,16 +1,39 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AppRow, Board, Check } from '../types'
-import { ago, appRow, isComingSoon, moldRow, openTickets, parseTasks, productRows, verdict } from './board'
+import type { AppRow, Board, Check, Tab, Ticket, Usage } from '../types'
+import {
+  ago,
+  appRow,
+  isComingSoon,
+  money,
+  moldRow,
+  openTickets,
+  parseTasks,
+  parseUsage,
+  plus,
+  productRows,
+  short,
+  sparkline,
+  ticketsForApp,
+  verdict,
+} from './board'
 
 const PANE = 'factory-board'
 const FALLBACK_ROOT = '/root/software-factory'
 const EVERY_MS = 5 * 60_000
+const USAGE_EVERY_MS = 30 * 60_000
 const PROBE_MS = 10_000
+const COLLECT_MS = 5 * 60_000
 
 const board = atom({ plugin: 'factory-board', key: 'board' } as const, null)
 const isRefreshing = atom({ plugin: 'factory-board', key: 'isRefreshing' } as const, false)
+const tab = atom({ plugin: 'factory-board', key: 'tab' } as const, 'apps')
+const selectedApp = atom({ plugin: 'factory-board', key: 'selectedApp' } as const, '')
+const usage = atom({ plugin: 'factory-board', key: 'usage' } as const, {})
+const isCollecting = atom({ plugin: 'factory-board', key: 'isCollecting' } as const, false)
+const collectError = atom({ plugin: 'factory-board', key: 'collectError' } as const, '')
+const openTicket = atom({ plugin: 'factory-board', key: 'openTicket' } as const, '')
 
 type $ = EngineInterface
 
@@ -19,6 +42,8 @@ let root = FALLBACK_ROOT
 async function readJson($: $, path: string): Promise<any> {
   return JSON.parse(await $.fs.read(path))
 }
+
+/* ---- the factory's records ------------------------------------------------------------------------------------ */
 
 /** Reads the factory's state files into a board; health probes stay pending until `probe`. */
 async function load($: $): Promise<Board> {
@@ -63,7 +88,7 @@ async function load($: $): Promise<Board> {
 /** One health page, given up on after PROBE_MS. */
 async function probe($: $, check: Check): Promise<Check> {
   const answer = await Promise.race([
-    $.http.fetch(check.url).then((r: { status: number }) => r.status).catch(() => 'down' as const),
+    $.http.fetch(check.url).then(r => r.status).catch(() => 'down' as const),
     $.clock.sleep(PROBE_MS).then(() => 'down' as const),
   ])
   return { ...check, status: answer }
@@ -81,6 +106,11 @@ async function refresh($: $): Promise<void> {
     const checkedAt = await $.clock.now()
     await update($, board, current => (current ? { ...current, apps, checkedAt } : current))
     $.ui.status(summary(apps, loaded.tickets.length))
+    if (!(await read($, selectedApp))) {
+      const first = apps.find(a => a.status !== 'retired')
+      if (first) await update($, selectedApp, () => first.id)
+    }
+    await readUsage($, apps)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await update($, board, current => ({
@@ -90,6 +120,42 @@ async function refresh($: $): Promise<void> {
     $.ui.status('factory: could not read state')
   } finally {
     await update($, isRefreshing, () => false)
+  }
+}
+
+/* ---- usage analytics: reports/usage/<app>.json, written by .claude/scripts/app_usage.py -------------------------- */
+
+async function readUsage($: $, apps: readonly AppRow[]): Promise<void> {
+  const found: Record<string, Usage> = {}
+  for (const app of apps) {
+    const raw = await readJson($, `${root}/reports/usage/${app.id}.json`).catch(() => null)
+    if (raw) found[app.id] = parseUsage(raw)
+  }
+  await update($, usage, () => found)
+}
+
+/** Runs the read-only collector for every app, then reads what it wrote. */
+async function collect($: $): Promise<void> {
+  if (await read($, isCollecting)) return
+  await update($, isCollecting, () => true)
+  await update($, collectError, () => '')
+  try {
+    const script = `${root}/.claude/scripts/app_usage.py`
+    if (!(await $.fs.exists(script))) {
+      await update($, collectError, () => 'The usage collector (.claude/scripts/app_usage.py) is not in this factory yet.')
+      return
+    }
+    const ran = await $.process.run(['python3', script, '--all'], { cwd: root, timeoutMs: COLLECT_MS })
+    if (ran.exitCode !== 0) {
+      const why = (ran.stderr || ran.stdout).trim().split('\n').slice(-1)[0] ?? ''
+      await update($, collectError, () => `The usage collector stopped (exit ${ran.exitCode}). ${why}`.trim())
+    }
+    const current = await read($, board)
+    if (current) await readUsage($, current.apps)
+  } catch (error) {
+    await update($, collectError, () => (error instanceof Error ? error.message : String(error)))
+  } finally {
+    await update($, isCollecting, () => false)
   }
 }
 
@@ -108,23 +174,41 @@ function stageColor(status: string): string {
   return 'text'
 }
 
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'apps', label: 'Apps' },
+  { id: 'molds', label: 'Molds' },
+  { id: 'tickets', label: 'Open tickets' },
+  { id: 'analytics', label: 'Analytics' },
+]
+
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     if (e.cwd && (await $.fs.exists(`${e.cwd}/state/factory.json`))) root = e.cwd
     await $.command.register({
       name: 'factory',
-      description: 'Show the factory board: app health, deploys, product stages, open tickets (/factory refresh)',
+      description: 'Factory board: apps, molds, open tickets, analytics (/factory apps|molds|tickets|analytics [app]|refresh|<ticket id>)',
     })
     void refresh($)
     $.clock.every(EVERY_MS, () => void refresh($))
+    $.clock.every(USAGE_EVERY_MS, () => void collect($))
     return started
   })
 
   on('command.run', { command: 'factory' }, async ($, e) => {
+    const [word = '', target = ''] = e.args.trim().split(/\s+/)
+    const arg = word
+    if (word === 'analytics' && target) await update($, selectedApp, () => target)
+    if (arg === 'apps' || arg === 'molds' || arg === 'tickets' || arg === 'analytics') await update($, tab, () => arg)
+    else if (/^[a-z0-9_]+-\d+$/i.test(arg)) {
+      await update($, openTicket, () => arg)
+      await update($, tab, () => 'tickets')
+    }
     await $.ui.open({ id: PANE, title: 'Factory board' })
-    if (e.args.trim() === 'refresh' || !(await read($, board))) await refresh($)
+    if (arg === 'refresh' || !(await read($, board))) await refresh($)
     else void refresh($)
+    if (arg === 'analytics' && Object.keys(await read($, usage)).length === 0) void collect($)
     const current = await read($, board)
     return { text: current ? summary(current.apps, current.tickets.length) : 'Factory board opened.' }
   })
@@ -133,63 +217,68 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const current = await read($, board)
     const busy = await read($, isRefreshing)
+    const shown = await read($, tab)
     const now = await $.clock.now()
 
     if (!current) return <Text dimColor>{busy ? 'Reading the factory state…' : 'No data yet. Run /factory refresh.'}</Text>
 
-    return (
-      <Box flexDirection="column" gap={1}>
-        {current.error && <Text color="error">Could not read {current.root}/state: {current.error}</Text>}
+    const tabs = (
+      <Box flexDirection="row" gap={1}>
+        {TABS.map(t => (
+          <Button
+            key={`tab-${t.id}`}
+            label={t.label}
+            variant={t.id === shown ? 'primary' : 'secondary'}
+            onPress={() => void update($, tab, () => t.id)}
+          />
+        ))}
+      </Box>
+    )
 
-        <Box flexDirection="column">
-          <Text bold>Apps</Text>
-          {current.apps.length === 0 && <Text dimColor>No apps in state/application.</Text>}
-          {current.apps.map(app => {
-            const health = verdict(app.checks)
-            return (
-              <Box flexDirection="column" key={app.id}>
-                <Box flexDirection="row" gap={1}>
-                  <Text bold>{app.id}</Text>
-                  <Text color={COLOR[health]}>{health}</Text>
-                  <Text color={stageColor(app.status)}>{app.status}</Text>
-                  <Text dimColor>{app.target}</Text>
-                </Box>
-                <Box flexDirection="row" gap={1} paddingLeft={2}>
-                  {app.checks.map(c => (
-                    <Text key={c.name} color={typeof c.status === 'number' && c.status < 300 ? 'success' : c.status === 'pending' ? 'subtle' : 'error'}>
-                      {c.name} {String(c.status)}
-                    </Text>
-                  ))}
-                  {app.rls && <Text dimColor>RLS {app.rls}</Text>}
-                </Box>
-                <Box flexDirection="row" gap={1} paddingLeft={2}>
-                  <Text dimColor>deployed {ago(app.deployedAt, now)}</Text>
-                  <Text color={app.isCurrent ? 'success' : 'warning'}>
-                    {app.moldId}@{app.moldCommit || '?'} {app.isCurrent ? 'current' : 'behind snapshot'}
-                  </Text>
-                </Box>
-                {app.url && <Text dimColor wrap="truncate">  {app.url}</Text>}
+    /* -- Apps ----------------------------------------------------------------------------------------------------- */
+    const appsTab = (
+      <Box flexDirection="column">
+        {current.apps.length === 0 && <Text dimColor>No apps in state/application.</Text>}
+        {current.apps.map(app => {
+          const health = verdict(app.checks)
+          return (
+            <Box flexDirection="column" key={app.id} marginBottom={1}>
+              <Box flexDirection="row" gap={1}>
+                <Text bold>{app.id}</Text>
+                <Text color={COLOR[health]}>{health}</Text>
+                <Text color={stageColor(app.status)}>{app.status}</Text>
+                <Text dimColor>{app.target}</Text>
               </Box>
-            )
-          })}
-        </Box>
+              <Box flexDirection="row" gap={1} paddingLeft={2}>
+                {app.checks.map(c => (
+                  <Text
+                    key={c.name}
+                    color={typeof c.status === 'number' && c.status < 300 ? 'success' : c.status === 'pending' ? 'subtle' : 'error'}
+                  >
+                    {c.name} {String(c.status)}
+                  </Text>
+                ))}
+                {app.rls && <Text dimColor>RLS {app.rls}</Text>}
+              </Box>
+              <Box flexDirection="row" gap={1} paddingLeft={2}>
+                <Text dimColor>deployed {ago(app.deployedAt, now)}</Text>
+                <Text color={app.isCurrent ? 'success' : 'warning'}>
+                  {app.moldId}@{app.moldCommit || '?'} {app.isCurrent ? 'current' : 'behind snapshot'}
+                </Text>
+                <Text dimColor>{app.product}</Text>
+              </Box>
+              {app.url && <Text dimColor wrap="truncate">  {app.url}</Text>}
+            </Box>
+          )
+        })}
+      </Box>
+    )
 
+    /* -- Molds ---------------------------------------------------------------------------------------------------- */
+    const moldsTab = (
+      <Box flexDirection="column" gap={1}>
         <Box flexDirection="column">
-          <Text bold>Products</Text>
-          {current.products.map(p => {
-            const soon = isComingSoon(current.molds.find(m => m.id === p.moldId)?.status ?? '')
-            return (
-              <Text key={p.id}>
-                {p.name}{' '}
-                {soon ? <Text color="claude">coming soon</Text> : <Text color="suggestion">{p.stage}</Text>}{' '}
-                <Text dimColor>({p.apps} app{p.apps === 1 ? '' : 's'})</Text>
-              </Text>
-            )
-          })}
-        </Box>
-
-        <Box flexDirection="column">
-          <Text bold>Molds and tickets</Text>
+          <Text bold>Molds</Text>
           {current.molds.map(m =>
             isComingSoon(m.status) ? (
               <Text key={m.id}>
@@ -205,16 +294,270 @@ export const register: Register = on => {
               </Text>
             ),
           )}
-          {current.tickets.slice(0, 12).map(t => (
-            <Text key={t.id} wrap="truncate">
-              <Text dimColor>{t.id}</Text> P{t.priority} {t.status === 'in_progress' ? '▶ ' : ''}{t.title}
-            </Text>
+        </Box>
+        <Box flexDirection="column">
+          <Text bold>Products</Text>
+          {current.products.map(p => {
+            const soon = isComingSoon(current.molds.find(m => m.id === p.moldId)?.status ?? '')
+            return (
+              <Text key={p.id}>
+                {p.name}{' '}
+                {soon ? <Text color="claude">coming soon</Text> : <Text color="suggestion">{p.stage}</Text>}{' '}
+                <Text dimColor>
+                  {p.moldId} · {p.apps} app{p.apps === 1 ? '' : 's'}
+                </Text>
+              </Text>
+            )
+          })}
+        </Box>
+      </Box>
+    )
+
+    const showTicket = async (id: string) => {
+      await update($, openTicket, () => id)
+      await update($, tab, () => 'tickets')
+    }
+    const openId = await read($, openTicket)
+    const opened: Ticket | undefined = current.tickets.find(t => t.id === openId)
+
+    const detail = opened && (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="row" gap={1}>
+          <Button key="ticket-back" label="← All tickets" onPress={() => void update($, openTicket, () => '')} />
+          <Button
+            key="ticket-work"
+            label="Work on this"
+            variant="primary"
+            onPress={() =>
+              void $.prompt.fill({
+                text: `Work on factory ticket ${opened.id} (${opened.mold}): ${opened.title}`,
+                mode: 'replace',
+              })
+            }
+          />
+        </Box>
+        <Text bold>{opened.title}</Text>
+        <Text>
+          <Text dimColor>{opened.id}</Text> ·{' '}
+          <Text color={opened.priority <= 1 ? 'error' : opened.priority === 2 ? 'warning' : 'subtle'}>P{opened.priority}</Text> ·{' '}
+          {opened.status.replace('_', ' ')}
+          {opened.type ? ` · ${opened.type}` : ''}
+          {opened.owner ? ` · owner ${opened.owner}` : ''}
+          {opened.lane ? ` · ${opened.lane} lane` : ''}
+        </Text>
+        <Text dimColor>
+          {opened.mold}
+          {opened.product ? ` · product ${opened.product}` : ''}
+          {opened.advancesStage ? ` · moves the product to ${opened.advancesStage}` : ''}
+          {opened.created ? ` · filed ${opened.created}` : ''}
+          {opened.updated && opened.updated !== opened.created ? ` · updated ${opened.updated}` : ''}
+        </Text>
+        {opened.detail && (
+          <Box flexDirection="column">
+            <Text bold>Details</Text>
+            <Text wrap="wrap">{opened.detail}</Text>
+          </Box>
+        )}
+        {opened.dependsOn && opened.dependsOn.length > 0 && (
+          <Box flexDirection="column">
+            <Text bold>Waits on</Text>
+            {opened.dependsOn.map(d => {
+              const other = current.tickets.find(t => t.id === d)
+              return other ? (
+                <Button key={`dep-${d}`} plain label={`${d}  ${other.title}`} onPress={() => void showTicket(d)} />
+              ) : (
+                <Text key={`dep-${d}`} dimColor>
+                  {d} (done)
+                </Text>
+              )
+            })}
+          </Box>
+        )}
+        {opened.acceptance && opened.acceptance.length > 0 && (
+          <Box flexDirection="column">
+            <Text bold>Done when</Text>
+            {opened.acceptance.map((a, i) => (
+              <Text key={`acc-${i}`}>• {a}</Text>
+            ))}
+          </Box>
+        )}
+        {opened.evidence && opened.evidence.length > 0 && (
+          <Box flexDirection="column">
+            <Text bold>Evidence so far</Text>
+            {opened.evidence.map((a, i) => (
+              <Text key={`ev-${i}`} dimColor>
+                • {a}
+              </Text>
+            ))}
+          </Box>
+        )}
+      </Box>
+    )
+
+    /* -- Open tickets --------------------------------------------------------------------------------------------- */
+    const activeMolds = current.molds.filter(m => !isComingSoon(m.status))
+    const ticketsTab = (
+      <Box flexDirection="column" gap={1}>
+        {current.tickets.length === 0 && <Text color="success">No open tickets.</Text>}
+        {activeMolds.map(m => {
+          const mine = current.tickets.filter(t => t.mold === m.id)
+          if (mine.length === 0) return null
+          return (
+            <Box flexDirection="column" key={`tickets-${m.id}`}>
+              <Text bold>
+                {m.id} <Text dimColor>· {mine.length} open</Text>
+              </Text>
+              {mine.map(t => {
+                const app = current.apps.find(a => ticketsForApp([t], a.id).length > 0)
+                const flags = [t.status === 'in_progress' ? 'in progress' : '', t.status === 'blocked' ? 'blocked' : '', app?.id ?? '']
+                  .filter(Boolean)
+                  .join(' · ')
+                return (
+                  <Button
+                    key={`ticket-${t.id}`}
+                    plain
+                    label={`P${t.priority}  ${t.id}  ${flags ? `[${flags}]  ` : ''}${t.title}`}
+                    onPress={() => void showTicket(t.id)}
+                  />
+                )
+              })}
+            </Box>
+          )
+        })}
+        {current.molds.some(m => isComingSoon(m.status)) && (
+          <Text dimColor>
+            Not shown: planned tickets of coming-soon molds (
+            {current.molds
+              .filter(m => isComingSoon(m.status))
+              .map(m => `${m.id} ${m.open + m.inProgress}`)
+              .join(', ')}
+            ).
+          </Text>
+        )}
+      </Box>
+    )
+
+    /* -- Analytics ------------------------------------------------------------------------------------------------ */
+    const reports = await read($, usage)
+    const collecting = await read($, isCollecting)
+    const collectProblem = await read($, collectError)
+    const liveApps = current.apps.filter(a => a.status !== 'retired')
+    const chosenId = (await read($, selectedApp)) || liveApps[0]?.id || ''
+    const chosen = reports[chosenId]
+    const factoryTickets = ticketsForApp(current.tickets, chosenId)
+
+    const analyticsTab = (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="row" gap={1}>
+          {liveApps.map(a => (
+            <Button
+              key={`app-${a.id}`}
+              label={a.id}
+              variant={a.id === chosenId ? 'primary' : 'secondary'}
+              onPress={() => void update($, selectedApp, () => a.id)}
+            />
           ))}
-          {current.tickets.length > 12 && <Text dimColor>…and {current.tickets.length - 12} more</Text>}
         </Box>
 
+        {!chosen && (
+          <Text dimColor>
+            {collecting ? 'Collecting usage from the apps…' : 'No usage report for this app yet. Press Collect usage.'}
+          </Text>
+        )}
+
+        {chosen && (
+          <Box flexDirection="column" gap={1}>
+            <Text dimColor>
+              Last {chosen.days} days · collected {ago(chosen.generated_at, now)}
+            </Text>
+            {chosen.error && <Text color="error">{chosen.error}</Text>}
+
+            <Box flexDirection="column">
+              <Text bold>Usage</Text>
+              <Text>
+                <Text color="suggestion">{short(chosen.totals.people_active)}</Text> people active ·{' '}
+                <Text color="suggestion">{short(chosen.totals.chats)}</Text> chats ·{' '}
+                <Text color="suggestion">{short(chosen.totals.chat_turns)}</Text> chat turns
+              </Text>
+              <Text>
+                {short(chosen.totals.input_tokens)} tokens in · {short(chosen.totals.output_tokens)} out · chat cost{' '}
+                {money(chosen.totals.cost_usd)}
+              </Text>
+              <Text>
+                {short(chosen.totals.workflow_runs)} workflow runs · workflow cost {money(chosen.totals.workflow_cost_usd)}
+              </Text>
+            </Box>
+
+            {chosen.daily.length > 0 && (
+              <Box flexDirection="column">
+                <Text bold>Chat turns per day</Text>
+                <Text color="suggestion">{sparkline(chosen.daily.map(d => d.chat_turns))}</Text>
+                <Text dimColor>
+                  {chosen.daily[0]?.date} → {chosen.daily[chosen.daily.length - 1]?.date} · busiest day{' '}
+                  {Math.max(0, ...chosen.daily.map(d => d.chat_turns ?? 0))} turns
+                </Text>
+              </Box>
+            )}
+
+            <Box flexDirection="column">
+              <Text bold>Tickets in the app</Text>
+              <Text>
+                <Text color={chosen.totals.tickets.open ? 'warning' : 'success'}>{short(chosen.totals.tickets.open)} open</Text> ·{' '}
+                {short(chosen.totals.tickets.in_progress)} in progress · {short(chosen.totals.tickets.done)} done{' '}
+                <Text dimColor>({short(chosen.totals.tickets.total)} in all)</Text>
+              </Text>
+            </Box>
+
+            {chosen.workspaces.length > 0 && (
+              <Box flexDirection="column">
+                <Text bold>By workspace</Text>
+                {chosen.workspaces.map(w => (
+                  <Text key={w.org_id} wrap="truncate">
+                    {w.name}: {short(w.people_active)} people · {short(w.chats)} chats · {short(w.chat_turns)} turns · chat{' '}
+                    {money(w.cost_usd)} · {short(w.workflow_runs)} workflow runs · {short(w.tickets.open)} open tickets
+                  </Text>
+                ))}
+              </Box>
+            )}
+
+            {chosen.not_measured.length > 0 && (
+              <Box flexDirection="column">
+                <Text bold>About these numbers</Text>
+                {chosen.not_measured.map(n => (
+                  <Text key={n} dimColor wrap="truncate">
+                    • {n}
+                  </Text>
+                ))}
+              </Box>
+            )}
+          </Box>
+        )}
+
+        <Box flexDirection="column">
+          <Text bold>Factory tickets for this app</Text>
+          {factoryTickets.length === 0 && <Text color="success">None open.</Text>}
+          {factoryTickets.map(t => (
+            <Button key={`aticket-${t.id}`} plain label={`P${t.priority}  ${t.id}  ${t.title}`} onPress={() => void showTicket(t.id)} />
+          ))}
+        </Box>
+
+        {collectProblem && <Text color="error">{collectProblem}</Text>}
+      </Box>
+    )
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        {tabs}
+        {current.error && <Text color="error">Could not read {current.root}/state: {current.error}</Text>}
+        {shown === 'apps' && appsTab}
+        {shown === 'molds' && moldsTab}
+        {shown === 'tickets' && (detail || ticketsTab)}
+        {shown === 'analytics' && analyticsTab}
         <Box flexDirection="row" gap={1}>
           <Button key="refresh" label={busy ? 'Refreshing…' : 'Refresh'} onPress={() => void refresh($)} />
+          {shown === 'analytics' && (
+            <Button key="collect" label={collecting ? 'Collecting…' : 'Collect usage'} onPress={() => void collect($)} />
+          )}
           <Text dimColor>
             health checked {current.checkedAt ? ago(new Date(current.checkedAt).toISOString(), now) : 'pending'} · every 5 min
           </Text>
