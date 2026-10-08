@@ -51,6 +51,9 @@ export type Board = {
 /** null: not measured (the report's not_measured says why); a number is a measured value, 0 included. */
 export type Measured = number | null
 
+/** How a cost was arrived at (app_usage.py): recorded by the app; estimated from tokens at the configured model; or both. */
+export type CostBasis = 'recorded' | 'estimated' | 'mixed'
+
 export type TicketCounts = { open: Measured; in_progress: Measured; done: Measured; total: Measured }
 
 export type UsageNumbers = {
@@ -62,6 +65,8 @@ export type UsageNumbers = {
   cost_usd: Measured
   workflow_runs: Measured
   workflow_cost_usd: Measured
+  /** Absent in an older report: read as recorded. */
+  workflow_cost_basis?: CostBasis | null
   tickets: TicketCounts
 }
 
@@ -74,6 +79,10 @@ export type AgentUsage = {
   input_tokens: Measured
   output_tokens: Measured
   cost_usd: Measured
+  /** Absent in an older report: read as recorded. estimated / mixed: shown as an estimate, never as measured. */
+  cost_basis?: CostBasis | null
+  /** The model an estimate was priced at, when there is one. */
+  estimated_from?: string | null
   last_active: string
 }
 

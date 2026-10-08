@@ -78,11 +78,11 @@ There are two buttons:
    - people active, chats, chat turns;
    - tokens in and out;
    - estimated chat cost;
-   - workflow (helper) runs and their cost.
+   - workflow (helper) runs and their cost (dimmed and marked **~ est.** when any of it is estimated).
 5. **Chat turns per day:** one bar per day, scaled to the busiest day.
 6. **Tickets in the app:** the tickets people raised inside the app itself (open, in progress, done). These are not the factory's tickets.
 7. **By workspace:** the same numbers for each workspace in the app.
-8. **By agent and By user:** the main agent's turns and each specialist's runs, with tokens and cost, and then each person's chats, turns, cost and when they were last active. People are shown by display name, never by email address. A figure that can't be measured says **not measured**, never `$0`. For example, Cloudflare Workers AI doesn't report the cost of helper runs.
+8. **By agent and By user:** the main agent's turns and each specialist's runs, with tokens and cost, and then each person's chats, turns, cost and when they were last active. People are shown by display name, never by email address. A figure that can't be worked out says **not measured**, never `$0`. A cost the app recorded is shown plainly. Some older helper runs recorded their tokens but no cost and no model, because Cloudflare Workers AI doesn't report costs and the app didn't yet record which model ran. Their cost is estimated: the tokens are priced at the model that helper is set up to use now, with the app's own price list. An estimate is shown dimmed as **~$1.23 est.**, so it never looks like a measured figure. The report names the model it used (`estimated_from`).
 9. **Factory tickets for this app:** open factory tickets that name this app. Each one is clickable.
 10. **Buttons:** **Refresh** checks health again. **Collect usage** pulls fresh numbers.
 

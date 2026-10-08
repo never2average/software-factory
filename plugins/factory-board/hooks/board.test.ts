@@ -69,7 +69,7 @@ test('health verdicts, products, coming soon and ages', async () => {
   expect(ago('', now)).toBe('—')
 })
 
-import { money, parseUsage, plus, short, sparkline, ticketsForApp } from './board'
+import { cost, isEstimate, money, parseUsage, plus, short, sparkline, ticketsForApp } from './board'
 
 test('analytics helpers: sparkline, usage report, tickets per app, short numbers', async () => {
   expect(sparkline([0, 5, 10])).toBe('▁▅█')
@@ -94,6 +94,31 @@ test('analytics helpers: sparkline, usage report, tickets per app, short numbers
   expect(v.by_agent[0]?.runs).toBe(null)
   expect(v.by_user[0]?.user).toBe('Member 1')
   expect(v.by_user[0]?.cost_usd).toBe(null)
+  // cost_basis is optional: an older report has none, and its costs read as recorded
+  expect(v.by_agent[0]?.cost_basis).toBe(null)
+  expect(v.totals.workflow_cost_basis).toBe(null)
+  const e = parseUsage({
+    totals: { workflow_cost_usd: 6.2364, workflow_cost_basis: 'estimated' },
+    workspaces: [{ org_id: 'o', workflow_cost_usd: 1, workflow_cost_basis: 'mixed' }],
+    by_agent: [
+      { agent: 'lodr-filings', kind: 'specialist', runs: 66, cost_usd: 2.4266, cost_basis: 'estimated', estimated_from: '@cf/zai-org/glm-5.3' },
+      { agent: 'research', kind: 'specialist', runs: 2, cost_usd: 0.04, cost_basis: 'recorded', estimated_from: null },
+      { agent: 'odd', kind: 'specialist', runs: 1, cost_usd: 1, cost_basis: 'guessed' },
+    ],
+  })
+  expect(e.totals.workflow_cost_basis).toBe('estimated')
+  expect(e.workspaces[0]?.workflow_cost_basis).toBe('mixed')
+  expect(e.by_agent.map(a => [a.cost_basis, a.estimated_from])).toEqual([
+    ['estimated', '@cf/zai-org/glm-5.3'],
+    ['recorded', null],
+    [null, null],
+  ])
+  expect(cost(e.by_agent[0]!.cost_usd, e.by_agent[0]!.cost_basis)).toBe('~$2.43 est.')
+  expect(cost(e.totals.workflow_cost_usd, 'mixed')).toBe('~$6.24 est.')
+  expect(cost(0.04, 'recorded')).toBe('$0.04')
+  expect(cost(0.04, null)).toBe('$0.04')
+  expect(cost(null, 'estimated')).toBe('not measured')
+  expect([isEstimate('estimated'), isEstimate('mixed'), isEstimate('recorded'), isEstimate(null)]).toEqual([true, true, false, false])
   const tickets = [
     { id: '1', mold: 'm', title: 'Lane fail: functional on onfinance_hfc — 1 check', status: 'todo', priority: 1 },
     { id: '2', mold: 'm', title: 'Lane fail: functional on onfinance_hfc_vm — 1 check', status: 'todo', priority: 1 },

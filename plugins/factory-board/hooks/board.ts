@@ -1,4 +1,4 @@
-import type { AgentUsage, AppRow, Check, MoldRow, ProductRow, Ticket, Usage, UsageNumbers, UserUsage } from '../types'
+import type { AgentUsage, AppRow, Check, CostBasis, MoldRow, ProductRow, Ticket, Usage, UsageNumbers, UserUsage } from '../types'
 
 // Pure readers of the factory's own state files (state/factory.json, state/products.json,
 // state/application/<id>/*.json, state/tasks/<mold>.jsonl). No I/O here, so the tests drive them directly.
@@ -139,6 +139,12 @@ export function sparkline(values: readonly (number | null)[]): string {
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
+/** A report's cost_basis, or null when it says none (an older report, or nothing to cost). */
+export const costBasis = (v: unknown): CostBasis | null => (v === 'recorded' || v === 'estimated' || v === 'mixed' ? v : null)
+
+/** Is this figure (at least partly) an estimate? Then it is shown as one, never as measured. */
+export const isEstimate = (basis: CostBasis | null | undefined): boolean => basis === 'estimated' || basis === 'mixed'
+
 function numbers(raw: Json | undefined): UsageNumbers {
   const t = raw?.tickets ?? {}
   return {
@@ -150,6 +156,7 @@ function numbers(raw: Json | undefined): UsageNumbers {
     cost_usd: num(raw?.cost_usd),
     workflow_runs: num(raw?.workflow_runs),
     workflow_cost_usd: num(raw?.workflow_cost_usd),
+    workflow_cost_basis: costBasis(raw?.workflow_cost_basis),
     tickets: { open: num(t.open), in_progress: num(t.in_progress), done: num(t.done), total: num(t.total) },
   }
 }
@@ -182,6 +189,8 @@ export function parseUsage(raw: Json): Usage {
         input_tokens: num(a.input_tokens),
         output_tokens: num(a.output_tokens),
         cost_usd: num(a.cost_usd),
+        cost_basis: costBasis(a.cost_basis),
+        estimated_from: typeof a.estimated_from === 'string' && a.estimated_from ? a.estimated_from : null,
         last_active: String(a.last_active ?? ''),
       }),
     ),
@@ -220,6 +229,12 @@ export function short(n: number | null): string {
 export function money(n: number | null): string {
   if (n === null) return 'not measured'
   return `$${n < 1000 ? n.toFixed(2) : Math.round(n).toLocaleString("en-US")}`
+}
+
+/** money(), and an estimate as "~$1.23 est." so it never reads as a measured figure (the board also dims it). */
+export function cost(n: number | null, basis?: CostBasis | null): string {
+  if (n === null || !isEstimate(basis)) return money(n)
+  return `~${money(n)} est.`
 }
 
 /** a + b, null when either is not measured. */
