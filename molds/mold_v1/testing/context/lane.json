@@ -52,6 +52,10 @@
     {
       "name": "test:org-isolation",
       "run": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-org-isolation.mjs",
+      "targets": [
+        "vercel",
+        "vm"
+      ],
       "timeout_s": 600,
       "why": "Multiplayer context is shared processes across one workspace; a leak here hands one customer another customer's work. Runs AS the deployed application: the runner places the app's own DATABASE_URL (app_rw) in the environment by name. Invoked directly rather than through `npm run test:org-isolation`: that script hardcodes Node's --env-file=.env.local, which aborts with exit 9 before the test starts whenever the file is absent, although the test itself reads DATABASE_URL from the environment first (measured 2026-09-13: the first run of this check ended at `node: .env.local: not found`).",
       "requires": [
@@ -65,9 +69,43 @@
       ]
     },
     {
+      "name": "test:org-isolation.server",
+      "targets": [
+        "vm_remote"
+      ],
+      "run": "PYTHONDONTWRITEBYTECODE=1 python3 {testing}/context/org-isolation-server.py {app_id}",
+      "timeout_s": 660,
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "Org isolation test PASSED",
+          "Connected as \\S+ \\(no BYPASSRLS\\)"
+        ]
+      },
+      "requires": [
+        {
+          "state": "datastores.postgres.rls",
+          "must_not": "off",
+          "else": "This app did not ask for tenant isolation (datastores.postgres.rls is \"off\"), so there is nothing to prove. Set it in state/application/{app_id}/datastores.json if it should be isolated."
+        },
+        {
+          "cmd": "python3 {testing}/accessibility/lane-url.py {app_id}",
+          "else": "This check runs on the application's own server and this application has not been deployed there yet: python3 .claude/scripts/provision.py {app_id} {deploy}"
+        }
+      ],
+      "why": "test:org-isolation for a vm_remote application, run ON its server: its DATABASE_URL lives in the env file there and never leaves it, and its Postgres listens on that server's loopback only, so the row above could only ever be skipped from here, and the lane never `pass`. Over SSH, as the deploy's own isolation proof does (provision.py {app_id} --verify-rls, vm_remote.py host-chain --measure-only), a short program on the server reads the URL from the env file and runs THIS lane copy's scripts/test-org-isolation.mjs (sent on stdin) in the app's own directory with the URL in the child's environment only; the output comes back redacted. Same test, same assertions (app_rw without BYPASSRLS, every scoped table policed, no stranded rows, scoped read, cross-tenant write refused), same database the app uses; only where it runs differs."
+    },
+    {
       "name": "clone.regression",
       "cwd": "root",
       "run": "python3 -c \"import json;print(json.dumps(json.load(open('state/application/{app_id}/application.json')).get('clone_of',{}).get('regression',{}) or {'status':'pending'}))\"",
+      "applies_when": [
+        {
+          "state": "application.clone_of",
+          "must": "nonempty",
+          "because": "this application was not stamped as a clone (application.json has no clone_of), so there is no live deployment it claims to replicate and no regression verdict to grade; a clone's lane runs this row."
+        }
+      ],
       "why": "This app claims to replicate a live deployment. The diff clone.py measured is the context verdict; without this row the lane would overwrite it with a greener answer than the evidence supports.",
       "expect": {
         "exit": 0,

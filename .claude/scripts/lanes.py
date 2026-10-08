@@ -65,6 +65,9 @@ lane's commands. It offers two things a lane.json may use: the placeholder {depl
 command the application's target has (`--deploy`, or `--deploy-remote` for vm_remote), and a check's `targets`
 list, which makes a check exist for those targets only (today: the functional lane's `tool.python` for vm_remote,
 a real python tool call in the sandbox). For any other target such a check is not run, not listed and not counted.
+A check's `applies_when` (state only) makes it exist only for an application whose state makes the claim it measures
+(today: the context lane's `clone.regression`, for an application stamped with `clone_of`). For any other
+application it is not run and not counted, and the report names it with the reason.
 """
 import datetime, json, os, re, subprocess, sys
 
@@ -278,15 +281,36 @@ def read_spec(lane, mold_id):
     if len(set(names)) != len(names): die(f"{os.path.relpath(f, ROOT)}: duplicate check names. Nothing ran.")
     return spec
 
+def applies(c, docs):
+    """None when the check exists for this application, else the `because` of the first `applies_when` condition its
+    state does not meet. State only, judged with the same rule as a `requires` state precondition (unmet)."""
+    for w in c.get("applies_when") or []:
+        if unmet(dict(w, **{"else": w["because"]}), docs, {}): return w["because"]
+    return None
+
 def for_target(spec, docs):
-    """The lane's spec as it stands for THIS application's deploy target: a check that names `targets` exists only
-    for an application of one of them. For any other target it is dropped before anything is listed, run or
-    counted, so it can neither fail the lane nor leave it `skipped`. A check without `targets` is every target's.
+    """The lane's spec as it stands for THIS application: its deploy target and what its state says it is.
+
+    A check that names `targets` exists only for an application of one of them. For any other target it is dropped
+    before anything is listed, run or counted, so it can neither fail the lane nor leave it `skipped`. A check
+    without `targets` is every target's.
+
+    A check with `applies_when` exists only for an application whose own state meets it (clone.regression: an
+    application that says it is a clone). Before it, a non-clone carried that row as `skipped` for ever, so its
+    context lane could never be `pass` whatever it measured. It is dropped the same way, but NAMED: the report lists
+    it under 'Not part of this lane for this application' with its `because` (`_not_applicable`), so a lane that
+    passes without it says so. A claim recorded only in part is still the `requires` beside it: skipped, not dropped.
     No harness, or nothing to drop: the spec itself, unchanged."""
     if not spec: return spec
     target = (docs.get("infrastructure") or {}).get("target")
-    keep = [c for c in spec.get("checks", []) if "targets" not in c or target in c["targets"]]
-    return spec if len(keep) == len(spec.get("checks", [])) else dict(spec, checks=keep)
+    keep, gone = [], []
+    for c in spec.get("checks", []):
+        if "targets" in c and target not in c["targets"]: continue
+        why = applies(c, docs)
+        if why: gone.append((c["name"], why)); continue
+        keep.append(c)
+    if len(keep) == len(spec.get("checks", [])): return spec
+    return dict(spec, checks=keep, _not_applicable=gone) if gone else dict(spec, checks=keep)
 
 def context(app_id, lane, mold_id, docs, report):
     infra = docs.get("infrastructure") or {}
@@ -382,6 +406,13 @@ def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet
         L += ["", "## Skipped, and what would make them run", ""]
         L += [f"- `{r['name']}` — {r['reason']}" for r in sk] + [f"- (whole lane) {e}" for e in unmet_lane]
         L += ["", "A skipped check is why this lane cannot report `pass`: nothing measured it."]
+    na = (spec or {}).get("_not_applicable") or []
+    if na:
+        L += ["", "## Not part of this lane for this application", ""]
+        L += [f"- `{n}` — {why}" for n, why in na]
+        L += ["", "Not run and not counted: what these measure is a claim this application does not make (lane.json "
+              "`applies_when`, read from its state). They are not skipped checks, so they do not stand between this "
+              "lane and `pass`; an application that makes the claim runs them."]
     L += ["", "## Not covered by this lane", ""]
     nc = (spec or {}).get("not_covered") or []
     L += [f"- {x}" for x in nc] or [f"- See `molds/{mold_id}/testing/{lane}/README.md`."]
