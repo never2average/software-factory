@@ -28,8 +28,11 @@ def _merge(base, over):
 
 
 def load_factory(state_dir):
-    with open(os.path.join(state_dir, "factory.json")) as f:
-        data = json.load(f)
+    path = os.path.join(state_dir, "factory.json")
+    data = {}
+    if os.path.exists(path):   # a copy of the scripts without the repository's state (a server's bundle) still runs
+        with open(path) as f:
+            data = json.load(f)
     # FACTORY_LOCAL names another file to merge instead (a rehearsal's example values; lib/services.py).
     local = os.environ.get("FACTORY_LOCAL") or os.path.join(state_dir, "factory.local.json")
     if os.path.exists(local):
