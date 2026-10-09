@@ -1,0 +1,722 @@
+{
+  "agent": "codex",
+  "task": "t2_status",
+  "title": "Where does an app stand?",
+  "date": "2026-10-09",
+  "model": "gpt-6-luna",
+  "approvals": "--sandbox workspace-write, approval policy never (exec's default): any command runs inside the sandbox, anything needing to leave it is rejected without asking",
+  "gate": "sandbox",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "6/6",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 16.3,
+    "turns": null,
+    "cost_usd": null,
+    "tokens": {
+      "input": 35939,
+      "output": 275,
+      "cache_read": 22016,
+      "reasoning": 0
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_tests_station",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "the next station is tests"
+    },
+    {
+      "id": "names_the_code",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "what is missing is a one-time sign-in code for the signed-in checks"
+    },
+    {
+      "id": "says_deployed",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "the app is deployed"
+    },
+    {
+      "id": "no_false_failure",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "nothing failed; skipped is not failed"
+    },
+    {
+      "id": "read_only",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing"
+    },
+    {
+      "id": "no_lane_run",
+      "group": "task",
+      "pass": true,
+      "detail": "0 matching call(s)",
+      "why": "answering a question does not run the tests"
+    }
+  ],
+  "expected_answer": "Deployed at https://delta-docs.rehearsal.invalid; every station up to tests is done; next: tests needs the operator: nothing failed, but the signed-in checks in functional, accessibility and responsiveness were skipped and need a one-time sign-in code (mint.py delta_app code-request <email>, then code <digits> <email>).",
+  "final_text": "**delta_app (Delta Docs)** is deployed at https://delta-docs.rehearsal.invalid. Its brief, state, and brand are complete; no extra workspace, package, or custom address is needed.\n\nThe five test lanes need signed-in checks in the functional, accessibility, and responsiveness lanes. Nothing has failed, but those checks were skipped because a one-time sign-in code is needed. Once those checks pass, the app can finish.\n\nTo continue, tell me which email can sign in and authorize sending it a code. The code expires after ten minutes.",
+  "agent_error": null,
+  "tool_calls": [
+    {
+      "name": "shell",
+      "input": {
+        "command": "/bin/bash -lc 'if [ -f AGENTS.local.md ]; then cat AGENTS.local.md; fi\npython3 .claude/scripts/factory.py doctor\ncat state/factory.json\ncat state/products.json\npython3 .claude/scripts/mint.py list --json\npython3 .claude/scripts/mint.py delta_app --json'"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T18:20:03Z",
+      "tool": "factory.py",
+      "argv": [
+        "doctor"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T18:20:03Z",
+      "tool": "gh",
+      "argv": [
+        "auth",
+        "status"
+      ],
+      "parent": "factory.py"
+    },
+    {
+      "t": "2026-10-09T18:20:03Z",
+      "tool": "vercel",
+      "argv": [
+        "whoami"
+      ],
+      "parent": "factory.py"
+    },
+    {
+      "t": "2026-10-09T18:20:04Z",
+      "tool": "mint.py",
+      "argv": [
+        "list"
+      ],
+      "parent": "agent",
+      "action": "list"
+    },
+    {
+      "t": "2026-10-09T18:20:04Z",
+      "tool": "factory.py",
+      "argv": [
+        "validate"
+      ],
+      "parent": "mint.py",
+      "action": "list"
+    },
+    {
+      "t": "2026-10-09T18:20:04Z",
+      "tool": "provision.py",
+      "argv": [
+        "alpha_app",
+        "--check"
+      ],
+      "parent": "mint.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:04Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/alpha-notes",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:05Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/alpha-notes-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:05Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/alpha-notes-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:05Z",
+      "tool": "vercel",
+      "argv": [
+        "env",
+        "ls",
+        "production",
+        "--project",
+        "alpha-notes"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:05Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/alpha-notes",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:05Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/alpha-notes-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:05Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/alpha-notes-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:05Z",
+      "tool": "factory.py",
+      "argv": [
+        "validate"
+      ],
+      "parent": "mint.py",
+      "action": "list"
+    },
+    {
+      "t": "2026-10-09T18:20:06Z",
+      "tool": "provision.py",
+      "argv": [
+        "beta_app",
+        "--check"
+      ],
+      "parent": "mint.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:06Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/beta-desk",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:06Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/beta-desk-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:06Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/beta-desk-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:06Z",
+      "tool": "vercel",
+      "argv": [
+        "env",
+        "ls",
+        "production",
+        "--project",
+        "beta-desk"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:06Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/beta-desk",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:06Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/beta-desk-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:06Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/beta-desk-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:07Z",
+      "tool": "factory.py",
+      "argv": [
+        "validate"
+      ],
+      "parent": "mint.py",
+      "action": "list"
+    },
+    {
+      "t": "2026-10-09T18:20:07Z",
+      "tool": "provision.py",
+      "argv": [
+        "cobalt_app",
+        "--check"
+      ],
+      "parent": "mint.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:07Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/cobalt-ledger",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:07Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/cobalt-ledger-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:07Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/cobalt-ledger-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:07Z",
+      "tool": "vercel",
+      "argv": [
+        "env",
+        "ls",
+        "production",
+        "--project",
+        "cobalt-ledger"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:07Z",
+      "tool": "vercel",
+      "argv": [
+        "integration",
+        "list",
+        "--all",
+        "--json"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:08Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v1/storage/stores",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:08Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/cobalt-ledger",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:08Z",
+      "tool": "factory.py",
+      "argv": [
+        "validate"
+      ],
+      "parent": "mint.py",
+      "action": "list"
+    },
+    {
+      "t": "2026-10-09T18:20:08Z",
+      "tool": "provision.py",
+      "argv": [
+        "delta_app",
+        "--check"
+      ],
+      "parent": "mint.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:08Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:08Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:08Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:09Z",
+      "tool": "vercel",
+      "argv": [
+        "env",
+        "ls",
+        "production",
+        "--project",
+        "delta-docs"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:09Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:09Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:09Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:09Z",
+      "tool": "factory.py",
+      "argv": [
+        "validate"
+      ],
+      "parent": "mint.py",
+      "action": "list"
+    },
+    {
+      "t": "2026-10-09T18:20:09Z",
+      "tool": "provision.py",
+      "argv": [
+        "gamma_app",
+        "--check"
+      ],
+      "parent": "mint.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:10Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/gamma-research",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:10Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/gamma-research-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:10Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/gamma-research-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:10Z",
+      "tool": "vercel",
+      "argv": [
+        "env",
+        "ls",
+        "production",
+        "--project",
+        "gamma-research"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:10Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/gamma-research",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:10Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/gamma-research-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:10Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/gamma-research-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:11Z",
+      "tool": "mint.py",
+      "argv": [
+        "delta_app"
+      ],
+      "parent": "agent",
+      "action": "status"
+    },
+    {
+      "t": "2026-10-09T18:20:11Z",
+      "tool": "factory.py",
+      "argv": [
+        "validate"
+      ],
+      "parent": "mint.py",
+      "action": "status"
+    },
+    {
+      "t": "2026-10-09T18:20:11Z",
+      "tool": "provision.py",
+      "argv": [
+        "delta_app",
+        "--check"
+      ],
+      "parent": "mint.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:11Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:11Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:11Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:11Z",
+      "tool": "vercel",
+      "argv": [
+        "env",
+        "ls",
+        "production",
+        "--project",
+        "delta-docs"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:12Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:12Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T18:20:12Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    }
+  ],
+  "exit_code": 0,
+  "rate_limit_retries": 0,
+  "stderr_tail": "Reading additional input from stdin...\n"
+}

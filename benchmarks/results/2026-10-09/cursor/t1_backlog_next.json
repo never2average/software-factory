@@ -1,0 +1,161 @@
+{
+  "agent": "cursor",
+  "task": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "date": "2026-10-09",
+  "model": "Auto",
+  "approvals": "--force (runs every command not explicitly denied; none is) and --trust",
+  "gate": "bypassed",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "2/2",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 14.4,
+    "turns": 2,
+    "cost_usd": null,
+    "tokens": {
+      "input": 14559,
+      "output": 395,
+      "cache_read": 38912,
+      "cache_write": 0
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "final_text": "Next on the backlog for **mold_v1**:\n\n**mold_v1-005** — Load lane: raise the concurrency target to 50 chats  \nAccept: verified and evidence recorded\n\nProducts on this mold: harbor is deployed; the others (alpha_notes, beta_desk, cobalt_ledger, delta_docs, gamma_research) are still defined. Backlog: 4 todo, 1 in progress, 2 done.\n\nWant me to set this task to `in_progress` and start it?",
+  "agent_error": null,
+  "tool_calls": [
+    {
+      "name": "read",
+      "input": {
+        "path": "/tmp/sf-bench-t1_backlog_next-wyn31ge9/factory/.claude/skills/task/SKILL.md"
+      }
+    },
+    {
+      "name": "glob",
+      "input": {
+        "targetDirectory": "/tmp/sf-bench-t1_backlog_next-wyn31ge9/factory",
+        "globPattern": "AGENTS.local.md"
+      }
+    },
+    {
+      "name": "shell",
+      "input": {
+        "command": "python3 .claude/scripts/factory.py status && python3 .claude/scripts/factory.py next mold_v1",
+        "workingDirectory": "/tmp/sf-bench-t1_backlog_next-wyn31ge9/factory",
+        "timeout": 30000,
+        "toolCallId": "call-829944b8-41e6-42fb-a554-d05e496f5668-2\nfc_446821dc-8e36-931f-bc73-60f5532ac6da_0",
+        "simpleCommands": [
+          "python3",
+          "python3"
+        ],
+        "hasInputRedirect": false,
+        "hasOutputRedirect": false,
+        "parsingResult": {
+          "parsingFailed": false,
+          "executableCommands": [
+            {
+              "name": "python3",
+              "args": [
+                {
+                  "type": "word",
+                  "value": ".claude/scripts/factory.py"
+                },
+                {
+                  "type": "word",
+                  "value": "status"
+                }
+              ],
+              "fullText": "python3 .claude/scripts/factory.py status"
+            },
+            {
+              "name": "python3",
+              "args": [
+                {
+                  "type": "word",
+                  "value": ".claude/scripts/factory.py"
+                },
+                {
+                  "type": "word",
+                  "value": "next"
+                },
+                {
+                  "type": "word",
+                  "value": "mold_v1"
+                }
+              ],
+              "fullText": "python3 .claude/scripts/factory.py next mold_v1"
+            }
+          ],
+          "hasRedirects": false,
+          "hasCommandSubstitution": false,
+          "redirects": []
+        },
+        "fileOutputThresholdBytes": "40000",
+        "isBackground": false,
+        "skipApproval": false,
+        "timeoutBehavior": "TIMEOUT_BEHAVIOR_BACKGROUND",
+        "hardTimeout": 86400000,
+        "description": "Get factory status and next task",
+        "closeStdin": true,
+        "conversationId": "305ff154-5677-4257-b235-0505b334480e",
+        "adminCommandDenylist": [],
+        "requestId": "97eceb29-0dd3-4682-b72b-7940f5023b3d"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T18:09:25Z",
+      "tool": "npx",
+      "argv": [
+        "-y",
+        "typescript-language-server",
+        "--stdio"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T18:09:32Z",
+      "tool": "factory.py",
+      "argv": [
+        "status"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T18:09:33Z",
+      "tool": "factory.py",
+      "argv": [
+        "next",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    }
+  ],
+  "exit_code": 0,
+  "rate_limit_retries": 0,
+  "stderr_tail": ""
+}

@@ -2,6 +2,9 @@
 # Format: https://learn.chatgpt.com/docs/agent-configuration/rules.md  Check with: codex execpolicy check
 # Rules match a fixed command prefix, so per-app commands (the app id comes second) cannot be listed here;
 # AGENTS.md's 'What needs an explicit yes' covers them.
+# They load only when this project is trusted: `[projects."<path to this checkout>"] trust_level = "trusted"` in
+# ~/.codex/config.toml (or `-c 'projects={"<path>"={trust_level="trusted"}}'` for one run). Under `codex exec` (approval
+# policy never) a "prompt" rule rejects the command without asking. Tested with codex-cli 0.162.0 on 2026-10-09.
 
 prefix_rule(pattern=["python3", ".claude/scripts/factory.py", "doctor"], decision="allow")
 prefix_rule(pattern=["python3", ".claude/scripts/factory.py", "status"], decision="allow")
@@ -19,6 +22,8 @@ prefix_rule(pattern=["python3", ".agents/scripts/mint.py", "list"], decision="al
 prefix_rule(pattern=["git", "push", "--force"], decision="prompt")
 prefix_rule(pattern=["git", "push", "-f"], decision="prompt")
 prefix_rule(pattern=["git", "push", "--force-with-lease"], decision="prompt")
+# the same with the remote named first (`git push origin --force main`); a union of literals matches any one of them
+prefix_rule(pattern=["git", "push", ["origin", "upstream"], ["--force", "-f", "--force-with-lease"]], decision="prompt")
 prefix_rule(pattern=["npm", "publish"], decision="prompt")
 prefix_rule(pattern=["gh", "repo", "create"], decision="prompt")
 prefix_rule(pattern=["gh", "repo", "delete"], decision="prompt")
