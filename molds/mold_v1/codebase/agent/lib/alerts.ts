@@ -39,7 +39,7 @@ export interface CustomerDigestSection {
   customerId: string;
   customerName: string;
   status?: string;
-  fdeOwner?: string;
+  accountOwner?: string;
   openCount: number;
   overdueCount: number;
   dueSoonCount: number;
@@ -217,7 +217,7 @@ export async function computeStandupDigest(opts: {
     listCustomers(opts.orgId),
   ]);
 
-  // Customer metadata (status / fdeOwner) from the customers listing.
+  // Customer metadata (status / accountOwner) from the customers listing.
   const meta = new Map(customers.map((c) => [c.id, c]));
 
   const byCustomer = new Map<string, FollowUpAlert[]>();
@@ -237,7 +237,7 @@ export async function computeStandupDigest(opts: {
       customerId,
       customerName: ranked[0].customerName,
       status: meta.get(customerId)?.status,
-      fdeOwner: meta.get(customerId)?.fdeOwner,
+      accountOwner: meta.get(customerId)?.accountOwner,
       openCount: ranked.length,
       overdueCount,
       dueSoonCount,

@@ -1,5 +1,5 @@
 {
-  "$comment": "What this library has ever put into a workspace, for `npm run operator:library-cleanup`: every workflow name it has shipped (one of them since removed) with the sha256 of each version's code skeleton (the script with the contents of its double-quoted strings removed, trimmed: the prompts were reworded and are stored in each deployment's own words, the code around them never changed), and every recipe slug. A stored row is this library's, untouched, only when its name and its skeleton are both here.",
+  "$comment": "What this library has ever put into a workspace, for `npm run operator:library-cleanup`: every workflow name it has shipped (one of them since removed) with the sha256 of each version's code skeleton (the script with the contents of its double-quoted strings removed, trimmed: the prompts were reworded and are stored in each deployment's own words, the code around them never changed), and every recipe slug. A stored row is this library's, untouched, only when its name and its skeleton are both here. A workflow whose only version is the file shipped today is not listed: knownLibraries() adds the skeleton of every file present.",
   "workflows": {
     "account-research": [
       "8076720ecc6a2b078dbd67beea6c119ff35abbc309c3fb20ddad74a38ab8ce6e"
@@ -24,9 +24,6 @@
     ],
     "infra-sizing": [
       "f51030881a89e21db06af84af339ccdfe18121db4042aea642569681f07be473"
-    ],
-    "integration-wiring": [
-      "41e007031d933a5f63cb198bccb023fdee1ef30880a60f0f695a76d7a2c5258c"
     ],
     "onboard-account": [
       "0c47a695ab70d02fa36205d59b7c501266d27e7a9c52efac54dd9b287af9013c"

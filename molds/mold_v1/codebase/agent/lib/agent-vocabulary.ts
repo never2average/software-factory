@@ -37,7 +37,7 @@
 import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type DeploymentProfile } from "./deployment-profile.generated.ts";
 import { SUBAGENT_KEYS } from "./subagent-registry.generated.ts";
 import { DATAROOM_DOMAIN_IDS, DATAROOM_FOLDER_IDS, foldersOf, type DataroomDomainId, type DataroomFolderId } from "./dataroom-folders.ts";
-import { LEGACY_MEMBER } from "./legacy-member.ts";
+import { LEGACY_MEMBER, LEGACY_OWNER_KEYS } from "./legacy-member.ts";
 import { withOwnerKeyTwins } from "./owner-keys.ts";
 import { PERIOD_KEYS, periodWordOf, workPeriodsOf, type WorkPeriods } from "./work-periods.ts";
 
@@ -240,19 +240,20 @@ function identifierReplacement(to: string, style: Case, snake: boolean): string 
 /**
  * TOOLS RENAMED TO A NEUTRAL NAME, and the name each had before.
  *
- * `list_fdes` was the base product's role word on the wire: the model was handed it as a tool name. The tool is
- * `list_members` now (agent/tools/list_members.ts), and that is the only name any model is shown. The old name is
+ * The roster tool's old name carried the base product's role word (LEGACY_MEMBER) on the wire: the model was handed
+ * it as a tool name. The tool is `list_members` now (agent/tools/list_members.ts), and that is the only name any model is shown. The old name is
  * an ALIAS, never advertised and still understood everywhere this codebase reads a tool name it did not just
  * issue: a stored transcript's tool call (the chat's labels and insights, the empty-response guard's read-only
  * proof: baseToolName / baseNameAmong / isReadOnlyTool), and a stored workflow or app prompt that tells the agent
- * to "call list_fdes" (withCurrentToolNames, applied to every workflow step). eve itself has no hidden-but-callable
+ * to call it by the old name (withCurrentToolNames, applied to every workflow step). eve itself has no hidden-but-callable
  * tool (a static tool is named by its file and is advertised), so a model that re-issues the old name after
  * reading it in an old session's history is answered by the SDK's "unavailable tool" error listing the tools it
  * has, and calls `list_members`.
  *
  * Old name -> current base name. Keep every entry until an announced removal: the names are held by stored data.
+ * The old name is built from the legacy word (agent/lib/legacy-member.ts), the one place it is spelled.
  */
-export const TOOL_ALIASES: Readonly<Record<string, string>> = { list_fdes: "list_members" };
+export const TOOL_ALIASES: Readonly<Record<string, string>> = { [`list_${LEGACY_WORD}s`]: "list_members" };
 
 /** The current base name for a tool called `name` (an alias resolves to its tool; any other name is itself). */
 export function canonicalToolName(name: string): string {
@@ -261,12 +262,12 @@ export function canonicalToolName(name: string): string {
 
 /**
  * A renamed tool keeps the name a RELABELLED deployment already calls it by: that name was spoken from the old
- * spelling (`list_fdes` -> `list_analysts`), and its sessions, prompts and stored workflows hold it. So the new
+ * spelling (the old roster tool's name -> `list_analysts`), and its sessions, prompts and stored workflows hold it. So the new
  * spelling is spoken from the old one when the profile relabels the word in it, and is itself otherwise.
  */
 const SPOKEN_FROM: Readonly<Record<string, string>> = Object.fromEntries(Object.entries(TOOL_ALIASES).map(([old, now]) => [now, old]));
 
-/** Translate one identifier (`customer_id`, `list_customers`, `deploymentId`, `solutionFdeOwner`). */
+/** Translate one identifier (`customer_id`, `list_customers`, `deploymentId`, `solutionOwner`). */
 export function speakIdentifierWith(v: Vocabulary, run: string): string {
   if (!v.relabelled || !v.words.size) return run;
   if (Object.prototype.hasOwnProperty.call(SPOKEN_FROM, run)) {
@@ -284,7 +285,8 @@ export function speakIdentifierWith(v: Vocabulary, run: string): string {
       if (!to) return seps[i] + p;
       let style = caseOf(p);
       // An acronym (the legacy member word) inside a mixed-case identifier takes the case of its position, not its
-      // own: `list_FDEs` -> `list_analysts`, `ownerFDE` -> `ownerAnalyst`.
+      // own: `list_<WORD>s` -> `list_analysts`, `owner<WORD>` -> `ownerAnalyst`, where <WORD> is the upper-case
+      // legacy word.
       if (style === "upper" && !allUpper) style = snake || i === 0 ? "lower" : "capital";
       return seps[i] + identifierReplacement(to, style, snake);
     })
@@ -594,7 +596,7 @@ const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "obj
  * translated, every tool name registered, and the two record areas' field keys. A token equal to one of these is
  * translated in a message and mapped back in a free-form `args` object; nothing else is.
  */
-const PRODUCT_KEYS = new Set<string>(["customerId", "customer_id", "customerIds", "customerName", "fdeOwner"]);
+const PRODUCT_KEYS = new Set<string>(["customerId", "customer_id", "customerIds", "customerName", "accountOwner"]);
 for (const area of Object.values(DOMAIN_FIELDS)) for (const k of Object.keys(area)) PRODUCT_KEYS.add(k);
 let reverseKeys: { size: number; v: Vocabulary | null; map: Map<string, string> } = { size: -1, v: null, map: new Map() };
 
@@ -960,12 +962,18 @@ export function baseNameAmong(name: string, bases: Iterable<string>, v: Vocabula
 
 /**
  * Text that tells the agent to call a tool by an old name (a workflow or app prompt stored before the rename:
- * "Call list_fdes for the roster"), with each old name replaced by the name this deployment's model is given.
+ * "Call <the old roster tool> for the roster"), or names a record key by its old name, with each old name replaced by
+ * the name this deployment's model is given.
  * Applied to every workflow step's prompt (lib/workflow-delegate.ts), so a stored script keeps working.
  */
 export function withCurrentToolNamesWith(v: Vocabulary, text: string): string {
   let out = text;
   for (const [old, now] of Object.entries(TOOL_ALIASES)) {
+    out = out.replace(new RegExp(`(?<![A-Za-z0-9_])${old}(?![A-Za-z0-9_])`, "g"), () => speakIdentifierWith(v, now));
+  }
+  // A record key renamed since (the owner's, drizzle/0037): a stored prompt that names the old key ("owned by the
+  // account's <old key>") names the field the model is given now.
+  for (const [now, old] of Object.entries(LEGACY_OWNER_KEYS)) {
     out = out.replace(new RegExp(`(?<![A-Za-z0-9_])${old}(?![A-Za-z0-9_])`, "g"), () => speakIdentifierWith(v, now));
   }
   return out;
@@ -1028,8 +1036,8 @@ type HidingProfile = { account_fields?: { hidden?: readonly string[] }; domains:
 export function hiddenFieldsOf(profile: HidingProfile): HiddenFields {
   const area = (fields: Record<string, { hidden?: boolean; fixed?: unknown }> | undefined) =>
     new Set(Object.entries(fields ?? {}).filter(([, f]) => f?.hidden && f.fixed === undefined).map(([k]) => k));
-  // An owner field hidden under either of its keys is hidden under both (agent/lib/owner-keys.ts): the record names
-  // it by the original key, a profile may name the neutral one.
+  // The second owner hidden under either of its keys is hidden under both, and a profile naming the owner by its
+  // pre-rename key hides `accountOwner` (agent/lib/owner-keys.ts withOwnerKeyTwins).
   const account = new Set(withOwnerKeyTwins((profile.account_fields?.hidden ?? []).filter((k) => k !== "id" && k !== "name")));
   const deployments = area(profile.domains.deployments?.fields);
   const implementation = area(profile.domains.implementations?.fields);

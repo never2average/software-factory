@@ -41,7 +41,9 @@ register(
 const ROOT = process.cwd();
 // The member's legacy words (agent/lib/legacy-member.ts): text stored before the default spoke neutrally, which a
 // relabelling profile still translates. Read from their one spelling, never written here.
-const { LEGACY_MEMBER: L } = await import(pathToFileURL(join(process.cwd(), "agent/lib/legacy-member.ts")).href);
+const { LEGACY_MEMBER: L, LEGACY_OWNER_KEYS: LK } = await import(pathToFileURL(join(process.cwd(), "agent/lib/legacy-member.ts")).href);
+/** The roster tool's old name, built from the legacy word: a name stored transcripts and workflows still hold. */
+const OLD_ROSTER_TOOL = `list_${L.singular.toLowerCase()}s`;
 const FIXTURE = join(new URL("..", import.meta.url).pathname, "scripts/fixtures/agent-vocabulary/50-relabelled.json");
 let passed = 0;
 const check = async (name, fn) => {
@@ -156,7 +158,8 @@ async function phaseUnits() {
   await check("the member's legacy word is data under the default profile: not translated, not a base word", () => {
     const t = `${L.owner} reassigned; ownerTeam ${L.singular}`;
     assert.equal(v.speakWith(base, t), t);
-    assert.equal(v.speakIdentifierWith(base, "fdeOwner"), "fdeOwner");
+    assert.equal(v.speakIdentifierWith(base, LK.accountOwner), LK.accountOwner);
+    assert.equal(v.speakIdentifierWith(base, "accountOwner"), "accountOwner");
   });
   await check("speak, identifiers, paths, JSON: all the identity", () => {
     const t = `List all customers (\`customer_id\`, ${B.accounts}/acme, ${L.owner}, deploymentId).`;
@@ -173,8 +176,10 @@ async function phaseUnits() {
   const ids = {
     list_customers: "list_companies", get_customer: "get_company", upsert_customer: "upsert_company",
     list_stale_customers: "list_stale_companies", match_customer_by_email: "match_company_by_email",
-    read_customer_slas: "read_company_slas", list_fdes: "list_analysts", list_members: "list_analysts", customer_id: "company_id",
-    customerId: "companyId", fdeOwner: "analystOwner", solutionFdeOwner: "solutionAnalystOwner",
+    read_customer_slas: "read_company_slas", [OLD_ROSTER_TOOL]: "list_analysts", list_members: "list_analysts", customer_id: "company_id",
+    // The owner keys are neutral and are the same under every profile; the keys they were stored under before
+    // drizzle/0037 still translate like any identifier carrying the legacy word (a stored transcript holds them).
+    customerId: "companyId", accountOwner: "accountOwner", solutionOwner: "solutionOwner", [LK.accountOwner]: "analystOwner", [LK.solutionOwner]: "solutionAnalystOwner",
     deploymentId: "coverageReportId", deployments: "coverageReports", implementation: "portfolioEntry",
     rolloutId: "portfolioId", implementationProgressPct: "portfolioEntryProgressPct", CUSTOMER_ID: "COMPANY_ID",
     implementation_checkin: "portfolio_entry_checkin", publish_artifact: "publish_artifact",
@@ -369,14 +374,14 @@ async function phaseStamped() {
   const roster = await resolve(tools.listMembersTool);
   await check("list_members is offered as list_analysts only, the name this deployment already called it by", () => assert.deepEqual(Object.keys(roster), ["list_analysts"]));
   await upsert.upsert_company.execute({
-    id: "stamp-co", name: "Stamp Co", analystOwner: "a@example.com",
+    id: "stamp-co", name: "Stamp Co", accountOwner: "a@example.com",
     portfolioEntry: { portfolioId: "large-caps", portfolioEntryStage: "Kickoff", portfolioEntryProgressPct: 5, portfolioEntryRiskLevel: "Green", blockerOwner: "Company" },
     coverageReports: [{ coverageReportId: "r1", environment: "prod", region: "company-vpc", deployedVersion: "Q1", releaseStatus: "deployed", healthStatus: "healthy" }],
   }, ctx);
   const sor = await imp("agent/lib/system-of-record.ts");
   const stored = await sor.getCustomer("stamp-co");
   await check("stored under the base keys and values, exactly as before", () => {
-    assert.equal(stored.fdeOwner, "a@example.com");
+    assert.equal(stored.accountOwner, "a@example.com");
     assert.equal(stored.implementation.rolloutId, "large-caps");
     assert.equal(stored.implementation.blockerOwner, "Customer");
     assert.equal(stored.deployments[0].deploymentId, "r1");
@@ -389,7 +394,7 @@ async function phaseStamped() {
   const props = params.properties ?? {};
   await check("R11 hidden account fields are not upsert_company parameters (arr, seats, aeOwner, renewalDate, platform, tickets…)", () => {
     for (const k of ["arr", "arrCurrency", "seats", "aeOwner", "contractStatus", "renewalForecast", "renewalDate", "expansionPotentialArr", "successCriteria", "platform", "tickets", "solutions"]) assert.ok(!(k in props), `${k} is still offered: ${Object.keys(props).join(",")}`);
-    for (const k of ["id", "name", "analystOwner", "coverageReports", "portfolioEntry", "healthReason"]) assert.ok(k in props, `${k} went missing`);
+    for (const k of ["id", "name", "accountOwner", "coverageReports", "portfolioEntry", "healthReason"]) assert.ok(k in props, `${k} went missing`);
   });
   await check("R11 a hidden nested field is not a parameter; a hidden field with a fixed value still is", () => {
     const item = props.coverageReports?.items?.properties ?? {};
@@ -616,7 +621,7 @@ async function phaseStamped() {
     assert.deepEqual(bad, []);
   });
   await check("R6 no provisioned workflow's text names a base tool or word", () => {
-    const bad = lib.filter((w) => new RegExp(`list_fdes|list_members|get_customer|list_customers|upsert_customer|\\bcustomers?\\b|\\b${L.singular}|\\{(member|members|owner)\\}`, "i").test([w.description, ...w.steps, ...(w.script.match(/"(?:[^"\\]|\\.)*"/g) ?? []).filter((q) => !/^"(deployment|configuration|data-migration|customer-context|research|follow-ups|evals|app-author|browser|workflow-author)"$/.test(q))].join(" "))).map((w) => w.name);
+    const bad = lib.filter((w) => new RegExp(`${OLD_ROSTER_TOOL}|list_members|get_customer|list_customers|upsert_customer|\\bcustomers?\\b|\\b${L.singular}|\\{(member|members|owner)\\}`, "i").test([w.description, ...w.steps, ...(w.script.match(/"(?:[^"\\]|\\.)*"/g) ?? []).filter((q) => !/^"(deployment|configuration|data-migration|customer-context|research|follow-ups|evals|app-author|browser|workflow-author)"$/.test(q))].join(" "))).map((w) => w.name);
     assert.deepEqual(bad, []);
   });
   await check("R6 a provisioned workflow still reads its args by the base key the run route checks", () => {
@@ -627,6 +632,7 @@ async function phaseStamped() {
   const insights = await imp("app/_components/insights.ts");
   const derived = insights.deriveInsights([{ parts: [
     { type: "dynamic-tool", toolName: "list_companies", toolCallId: "c1", state: "output-available", output: { companies: [{ id: "acme", name: "Acme" }] } },
+    // Stored before drizzle/0037, when the owner's key carried the member word and this profile spoke it as analystOwner.
     { type: "dynamic-tool", toolName: "get_company", toolCallId: "c2", state: "output-available", output: { found: true, company: { id: "beta", name: "Beta", analystOwner: "sam@example.com" } } },
   ] }]);
   await check("R8 Insights: companies listed and fetched under the relabel reach the rail", () => assert.deepEqual(derived.customers.map((c) => c.id).sort(), ["acme", "beta"]));

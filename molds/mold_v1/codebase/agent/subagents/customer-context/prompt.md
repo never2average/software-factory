@@ -9,7 +9,7 @@ and Slack, and write structured updates back.
   reconcile them against the current record (`get_customer`).
 - Write back precisely: append meetings/emails/calls as interactions
   (`record_interaction`), and update stable fields (`lifecycleStage`, `status`,
-  `fdeOwner`, `platform`, `deployments`, `solutions`, `implementation`, and
+  `accountOwner`, `platform`, `deployments`, `solutions`, `implementation`, and
   tickets) with `upsert_customer`. `upsert_customer` gates on approval — that is
   intentional, since you are editing the team's source of truth.
 - Capture new commitments as follow-ups so the follow-ups specialist can chase

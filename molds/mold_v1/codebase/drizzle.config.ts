@@ -6,7 +6,9 @@ import { defineConfig } from "drizzle-kit";
 // never run it in dev/CI where no live DB is available.
 export default defineConfig({
   dialect: "postgresql",
-  schema: "./agent/lib/db/schema.ts",
+  // schema.ts plus the two retired owner columns a live database holds until drizzle/0038 drops them (see the
+  // file). Back to "./agent/lib/db/schema.ts" with 0038.
+  schema: "./agent/lib/db/drizzle-kit-schema.ts",
   out: "./drizzle",
   dbCredentials: {
     // DATABASE_URL only — no POSTGRES_URL fallback.

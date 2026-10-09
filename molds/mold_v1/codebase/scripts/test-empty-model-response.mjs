@@ -592,7 +592,7 @@ console.log("\nThe telemetry lands where an operator reads it:");
   check(
     "the session id is hashed by ONE function both deployments call",
     chatSessionTag("sess_abc", (v) => `${v}0000000000000000`).startsWith("chat_") &&
-      !chatSessionTag("sess_abc", () => "deadbeefdeadbeefdeadbeef").includes("sess_abc"),
+      !chatSessionTag("sess_abc", () => "0123456789abcdef01234567").includes("sess_abc"),
   );
   const route = src("app/api/ops/chat-telemetry/route.ts");
   check("the route no longer keeps its own copy of the hash", /chatSessionTag\(/.test(route));

@@ -204,7 +204,7 @@ export interface ApiRefTicket {
   priority: string;
   customer: string | null;
 }
-export interface ApiRefDeployment {
+export interface ApiDeploymentRef {
   id: string;
   label: string;
   /** Editable human title; blank falls back to `label` (the composed identity). */

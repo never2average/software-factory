@@ -19,7 +19,7 @@
  * failed answer is never shared, and a read is shared only with callers asking within SHARE_MS of the first (or
  * while it is still in flight).
  */
-import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "./browser-storage.ts";
+import { STORAGE_KEYS } from "./browser-storage.ts";
 import { isWorkspaceRefusalBody, noteWorkspaceRefused } from "./workspace-refusal.ts";
 
 /** What every signed-in first screen reads. Each is a GET the server answers per person (and workspace). */
@@ -64,10 +64,10 @@ declare global {
  */
 export function startupScript(): string {
   const k = (key: string) => JSON.stringify(key);
-  const token = `s.getItem(${k(STORAGE_KEYS.token)})||s.getItem(${k(LEGACY_STORAGE_KEYS[STORAGE_KEYS.token])})`;
+  const token = `s.getItem(${k(STORAGE_KEYS.token)})`;
   const orgKey = k(STORAGE_KEYS.activeOrg);
   // THIS TAB's workspace first (sessionStorage), then the default for new tabs (lib/browser-storage.ts readActiveOrg).
-  const org = `(ss&&ss.getItem(${orgKey}))||s.getItem(${orgKey})||s.getItem(${k(LEGACY_STORAGE_KEYS[STORAGE_KEYS.activeOrg])})`;
+  const org = `(ss&&ss.getItem(${orgKey}))||s.getItem(${orgKey})`;
   // A link that names its workspace (`?org=`: a notification, a shared thread, "open as chat") is adopted by THIS TAB
   // before the first reads go out, so the whole page loads in that workspace. Only a plausible id is taken; the
   // server still honours it only for a member (a guest of one shared chat reads that chat, nothing else). The
