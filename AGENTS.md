@@ -55,7 +55,7 @@ Scripts are in `.claude/scripts/` (`.agents/scripts/` is a mirror). Run them fro
   ```
 
   It asks at a hidden prompt and prints only the name. Give them that line with the real app id and NAME, then wait for them to say it is done.
-- Do not use your tool's in-chat shell (`!` in Claude Code, Codex, Gemini, Qwen, OpenCode, and others) for this: its output goes into the conversation. A few tools have a private shell (Amp `$$`, Pi `!!`); a separate terminal works with every tool.
+- Do not use your tool's in-chat shell (`!` in Claude Code, Codex, Gemini, Qwen, OpenCode, and others) for this: its output goes into the conversation. Pi's `!!` runs a command without sending its output to the model; a separate terminal works with every tool.
 - If someone pastes a secret into the chat, do not repeat it or write it anywhere. Tell them it should be replaced (it has been exposed), and give them the `--set-secret` line for the new one.
 
 ## What needs an explicit yes

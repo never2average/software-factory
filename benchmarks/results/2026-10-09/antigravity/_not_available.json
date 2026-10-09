@@ -1,8 +1,8 @@
 {
-  "agent": "cursor-agent",
+  "agent": "antigravity",
   "date": "2026-10-09",
   "available": false,
-  "reason": "`cursor-agent` is not installed (not on PATH)",
+  "reason": "no credentials found (GEMINI_API_KEY); sign in by running `agy` once, or set GEMINI_API_KEY with \"modelProvider\": \"gemini\"; if it is signed in another way, set BENCH_SIGNED_IN=antigravity",
   "tasks": [
     "t1_backlog_next",
     "t2_status",

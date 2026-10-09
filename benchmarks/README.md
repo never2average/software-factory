@@ -151,25 +151,89 @@ must pass everything, and once breaking the rule each task is about, which must 
 Agents are adapters in `run.py` (`AGENTS`). An adapter says:
 
 - which binary to look for, and how to tell whether it is signed in (an environment variable or a credentials file);
-- the headless command line for a prompt (`command`); it runs with the rehearsal folder as its working directory;
-- how to read its output (`parse`): the final answer, and if it reports them, tool calls, turns, tokens and cost.
+- the headless command line for a prompt (`command`); it runs with the rehearsal folder as its working directory, and
+  may use `{prompt}`, `{turns}`, `{seconds}` and `{minutes}` from the task's caps;
+- how to read its output (`parse`): the final answer, and if it reports them, tool calls, turns, tokens and cost;
+- how it is allowed to use tools headless (`approvals`), and whether the agent has a per-command gate at all when it
+  runs headless (`gate`). Both are written into every result and into `results/latest.md`.
 
-For a tool that prints a JSON result, one line is enough:
+For a tool that prints a JSON result, one entry is enough:
 
 ```python
-GenericJSON("mytool", "mytool", ["mytool", "--print", "{prompt}", "--json"],
-            envs=("MYTOOL_API_KEY",), files=("~/.mytool/auth.json",), login_hint="run `mytool login`"),
+GenericJSON("mytool", "mytool", ["mytool", "--print", "{prompt}", "--json", "--max-turns", "{turns}"],
+            envs=("MYTOOL_API_KEY",), files=("~/.mytool/auth.json",), login_hint="run `mytool login`",
+            approvals="--yes (every tool call)", docs="https://mytool.example/docs/headless"),
 ```
 
 Then run `python3 benchmarks/run.py --agent mytool --task t1` and check the result file: if the final answer is
 missing or garbled, write a `parse` for it. Let it run tools without asking (each run is a throwaway copy), but keep
-its own sandbox if it has one.
+its own sandbox if it has one. Use only flags the agent's documentation shows.
 
-Adapters today: `claude` (Claude Code, `claude -p … --output-format stream-json`), `codex` (`codex exec --json`),
-`gemini` (`gemini -p --output-format json`), `aider` (`aider --message`), `cursor-agent`, `copilot`, `opencode`
-(`opencode run`), `goose` (`goose run`), `amp`, `qwen`, `droid`. Only `claude` has been run on the machine that
-produced the current results; the others are written from each tool's documented headless mode and have not been
-exercised yet, so check the first result file of each before trusting a score.
+### The adapters
+
+One per agent in the README's list, plus Aider. Every flag, cap and key name below comes from the agent's own
+documentation, checked on 2026-10-09 (sources in [`docs/AGENT_INTEGRATION.md`](../docs/AGENT_INTEGRATION.md)). Only
+`claude` has been run. **Every other adapter is from docs, not yet run:** check its first result file before trusting
+a score. Where an agent has no cap of its own, the harness's outside time cap (the task's `seconds`) is the cap; it
+applies to every agent anyway.
+
+| adapter | agent | headless command | cap | sign-in it looks for | status |
+|---|---|---|---|---|---|
+| `claude` | Claude Code | `claude -p … --output-format stream-json --verbose` | `--max-turns`, `--max-budget-usd` | `claude auth status`, `ANTHROPIC_API_KEY` | run: 8/8 in 3 of 3 rounds |
+| `codex` | Codex CLI | `codex exec --json --skip-git-repo-check --sandbox workspace-write …` | outside time cap | `CODEX_API_KEY`, `~/.codex/auth.json` | from docs, not yet run |
+| `gemini` | Gemini CLI | `gemini -p … --output-format json --approval-mode=yolo --skip-trust` | outside time cap | `GEMINI_API_KEY` | from docs, not yet run |
+| `copilot` | GitHub Copilot CLI | `copilot -p … --output-format json --allow-all-tools --no-ask-user` | outside time cap | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `~/.copilot/config.json` | from docs, not yet run |
+| `cursor` | Cursor CLI | `agent -p … --output-format json --force --trust` | outside time cap | `CURSOR_API_KEY` | from docs, not yet run |
+| `opencode` | OpenCode | `opencode run --format json --auto …` | outside time cap | `~/.local/share/opencode/auth.json`, provider keys | from docs, not yet run |
+| `antigravity` | Antigravity | `agy -p … --output-format json --print-timeout <N>m --dangerously-skip-permissions` | `--print-timeout` | `GEMINI_API_KEY` (with `"modelProvider": "gemini"`) | from docs, not yet run |
+| `pi` | Pi | `pi --mode json --approve …` | outside time cap | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `~/.pi/agent/auth.json` | from docs, not yet run |
+| `cline` | Cline | `cline --json -t <seconds> …` | `-t` | `~/.cline/data/settings/providers.json` | from docs, not yet run |
+| `devin` | Devin CLI | `devin -p … --permission-mode dangerous --respect-workspace-trust false` (text only) | outside time cap | `~/.local/share/devin/credentials.toml` | from docs, not yet run |
+| `kilo` | Kilo CLI | `kilo run --auto --format json …` | outside time cap | `KILO_API_KEY` | from docs, not yet run |
+| `amp` | Amp | `amp -x … --stream-json` (read like Claude Code's stream) | outside time cap | `AMP_API_KEY` | from docs, not yet run |
+| `droid` | Droid | `droid exec --auto high -o json …` | outside time cap | `FACTORY_API_KEY` | from docs, not yet run |
+| `warp` | Warp | `oz agent run --prompt …` (text only) | outside time cap | `WARP_API_KEY` | from docs, not yet run |
+| `goose` | Goose | `goose run --no-session --output-format json --max-turns <N> -t …` | `--max-turns` | `GOOSE_PROVIDER`, `~/.config/goose/config.yaml` | from docs, not yet run |
+| `qwen` | Qwen Code | `qwen -p … --output-format json --approval-mode yolo --max-session-turns <N> --max-wall-time <N>s` | both | `OPENAI_API_KEY`, `BAILIAN_CODING_PLAN_API_KEY` | from docs, not yet run |
+| `openhands` | OpenHands | `openhands --headless --json --override-with-envs -t …` (model from `LLM_MODEL`) | outside time cap | `LLM_API_KEY`, `~/.openhands/agent_settings.json` | from docs, not yet run |
+| `junie` | Junie CLI | `junie --output-format json …` | outside time cap | `JUNIE_API_KEY` | from docs, not yet run |
+| `kiro` | Kiro CLI | `kiro-cli chat --no-interactive --v3 --trust-all-tools --output-format stream-json …` | outside time cap | `KIRO_API_KEY` | from docs, not yet run |
+| `auggie` | Auggie | `auggie --print … --output-format json --max-turns <N> --rules AGENTS.md --permission launch-process:allow` | `--max-turns` | `AUGMENT_SESSION_AUTH` | from docs, not yet run |
+| `aider` | Aider | `aider --message … --yes-always` (it answers no to shell commands, so it can't run the scripts) | outside time cap | a model key, `~/.aider.conf.yml` | from docs, not yet run |
+
+An agent whose CLI is missing is "not available"; so is one with none of the listed sign-ins. Some agents keep their
+sign-in in the system keyring or a file their docs don't name (Antigravity's cached sign-in, Kilo's `auth.json`): if
+yours is signed in that way, say so with `BENCH_SIGNED_IN=antigravity,kilo` and the harness will run it.
+
+Each rehearsal also gets every agent's project file from this repository (`opencode.json`, `kilo.jsonc`,
+`.codex/rules/`, `.cursor/cli.json`, `.qwen/settings.json`, `.devin/config.json`, `.factory/settings.json`,
+`.augment/settings.json`, `.kiro/agents/factory.json`, `.gemini/settings.json`) and the `.kiro/skills` link, so a run
+reads what a real checkout gives that agent. The adapters switch each agent's approvals off, so for most agents the
+files don't change a score. Two exceptions:
+
+- **Droid:** its docs say an ask rule still stops a one-shot run under `--auto high`. So in t8, `.factory/settings.json`
+  (not Droid's judgement) would stop the force-push, and the run fails fast. Read Droid's t8 safety with that in mind.
+- **Codex:** what a `prompt` rule from `.codex/rules/` does under `codex exec` is not documented (U).
+
+### Agents that can't be gated headless
+
+Five agents have **no per-command gate when they run headless**, whatever the repository ships:
+
+- **OpenHands:** headless "always runs in always-approve mode", and this can't be changed.
+- **Pi:** never asks before a tool call.
+- **Cline:** auto-approves every tool by default and has no command list.
+- **Amp:** doesn't ask before running tools; gating is a code plugin.
+- **Goose:** its default mode is fully autonomous, and its permissions are per tool, not per command.
+
+For these five, nothing but the agent's own judgement and `AGENTS.md` stands between a request and a deploy, a
+force-push or a secret typed into a file. Their adapters say so (`gate="none"`), the result files carry it, and
+`results/latest.md` prints it under the agent's scores. The safety criteria are the same for every agent and are
+judged from the rehearsal's call log and files, so a safety pass for these agents means the agent itself chose to
+stop. It is never a config that stopped it, and no score is adjusted either way.
+
+For every other agent, the adapter turns the agent's own gate off for the throwaway run (`--force`, `--auto`, yolo
+modes, `--trust-all-tools`), as `claude` does, so a run can't hang on a prompt nobody can answer. That makes the safety
+score comparable across agents: it measures the agent's own judgement, not its configuration (Droid above excepted).
 
 How Claude Code is run: `--permission-mode dontAsk` with only `Bash Read Edit Write Glob Grep Skill` allowed (so it
 cannot wait on a permission prompt and cannot start subagents), `--setting-sources project` (the rehearsal's own

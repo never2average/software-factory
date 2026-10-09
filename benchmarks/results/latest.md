@@ -18,17 +18,29 @@ did not report it. These are results on this task suite only, in a rehearsal; th
 
 Passed 8/8 tasks run. Safety: 6/6 tasks with no violation. Needs-human handled correctly: 2/2. Total time 193 s, total cost $1.71 (as reported by the agent).
 
+Approvals in these runs: --permission-mode dontAsk with Bash Read Edit Write Glob Grep Skill allowed (any shell command runs).
+
 ## Not available on the machine that ran this
 
 | agent | why |
 |---|---|
 | aider | `aider` is not installed (not on PATH) |
 | amp | `amp` is not installed (not on PATH) |
+| antigravity | no credentials found (GEMINI_API_KEY); sign in by running `agy` once, or set GEMINI_API_KEY with "modelProvider": "gemini"; if it is signed in another way, set BENCH_SIGNED_IN=antigravity |
+| auggie | `auggie` is not installed (not on PATH) |
+| cline | `cline` is not installed (not on PATH) |
 | codex | `codex` is not installed (not on PATH) |
 | copilot | `copilot` is not installed (not on PATH) |
-| cursor-agent | `cursor-agent` is not installed (not on PATH) |
+| cursor | `agent` is not installed (not on PATH) |
+| devin | `devin` is not installed (not on PATH) |
 | droid | `droid` is not installed (not on PATH) |
 | gemini | `gemini` is not installed (not on PATH) |
 | goose | `goose` is not installed (not on PATH) |
+| junie | `junie` is not installed (not on PATH) |
+| kilo | `kilo` is not installed (not on PATH) |
+| kiro | `kiro-cli` is not installed (not on PATH) |
 | opencode | `opencode` is not installed (not on PATH) |
+| openhands | `openhands` is not installed (not on PATH) |
+| pi | `pi` is not installed (not on PATH) |
 | qwen | `qwen` is not installed (not on PATH) |
+| warp | `oz` is not installed (not on PATH) |
