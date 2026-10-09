@@ -1,19 +1,101 @@
-# software-factory
+<div align="center">
 
-Turn a one-page description into a tested, deployed, multi-workspace AI agent app, operated from [Claude Code](https://claude.com/claude-code).
+# Software Factory
 
-You write a brief: who the app is for, what its agents do, where it runs. The factory then takes it through each step:
+### Describe an AI agent app in one page. Your coding agent builds, tests and ships it.
 
-1. stamps the app from a **mold** (a pinned base codebase);
-2. applies your **pack** (the app's own agents and instructions) and your **brand**;
-3. deploys it to **Vercel** or **your own server**, after proving each workspace's data stays locked to that workspace;
-4. runs **five test suites** (functional, context, load, accessibility, responsiveness).
+Multi-workspace · multi-agent · tested before it ships · on Vercel or your own server
 
-Any failure stops the line and says what's needed. A **factory board** inside Claude Code shows every app's health, stage, tickets, usage and build cost.
+<img src="plugins/factory-board/docs/tab-products.png" alt="The factory board: every product, its stage and its live apps" width="760">
 
-![The factory board](plugins/factory-board/docs/board-full.png)
+</div>
 
-> **Status.** One mold is usable today (`mold_v1`); `mold_v2` and `mold_v3` are coming soon.
+---
+
+## What it does
+
+You write a brief: who the app is for, what its agents do, where it should run. Then you ask your coding agent:
+
+> Mint an app called `research_desk` from `briefs/research_desk.md`.
+
+The factory takes it from there:
+
+- **Stamps** the app from a proven base (a **mold**) and adds your own agents, instructions and starter content (a **pack**).
+- **Brands** it with your name, colour and logo.
+- **Deploys** it to Vercel or to a server you own. It sizes the server, locks down the firewall and sets up HTTPS.
+- **Proves** that every workspace's data is locked to that workspace before the deploy is allowed to finish.
+- **Tests** it with five suites (functional, context, load, accessibility, responsiveness), signed in as a real user.
+- **Hands back to you** only when it truly needs you: a credential you type yourself, a sign-in code, or a DNS record.
+
+Then it keeps watching. A board inside your coding agent shows every app's health, stage, tickets, usage and what it cost to build.
+
+## Why it's different
+
+| | |
+|---|---|
+| **Operated by your coding agent** | No dashboard to learn. You ask in plain words; the agent follows the factory's skills and scripts and stops only where a human is needed. |
+| **Nothing ships untested** | A failing check reverts the app and files a ticket with the cause. Accessibility and responsiveness are part of the gate, not an afterthought. |
+| **Workspaces can't see each other** | Every deploy proves row-level security on every workspace table before it finishes, and refuses otherwise. |
+| **Your cloud or your box** | Vercel, or a server you own. It scales its own limits to the box and tells you, with the price, when it needs a bigger one. |
+| **Secrets never enter the chat** | Credentials are referenced by name only. You type the values yourself; the agent never sees them. |
+| **Honest numbers** | Usage, model cost per agent and build cost are measured from the apps' own records. What can't be measured says "not measured", never `$0`. |
+
+## Proof, from a production app
+
+**OnFinance AI** is a research workspace for housing-finance analysts, built and run with this factory. It runs on Vercel and on its own server.
+
+- **First message to live app: 21 hours.**
+- **All five test suites passing on both copies**, signed in, with nothing skipped.
+- **62 of 62 workspace tables proven isolated** on every deploy.
+- **36–53% less model spend per specialist-agent run** after the factory turned on inference-level prompt caching. The cached share rose from 52–74% to 88–92%, measured on both copies.
+
+## See it
+
+<table>
+<tr>
+<td><img src="plugins/factory-board/docs/tab-tickets.png" alt="Tickets: filter by priority or app, click to open" width="380"></td>
+<td><img src="plugins/factory-board/docs/tab-analytics.png" alt="Analytics: usage by agent and by user" width="380"></td>
+</tr>
+<tr>
+<td align="center"><b>Tickets</b>: filter, click, "Work on this"</td>
+<td align="center"><b>Analytics</b>: by agent and by user</td>
+</tr>
+</table>
+
+## How it works
+
+```
+ brief ──► mold + pack + brand ──► deploy ──► isolation proof ──► 5 test suites ──► live
+  you        the factory             Vercel or      every workspace      functional · context · load    the board
+                                     your server    table checked        accessibility · responsiveness watches it
+                                         ▲
+                                         └── a failing check reverts the app and files a ticket
+```
+
+- **Molds** are general-purpose, pinned base codebases. They're never forked for one app.
+- **Packs** hold everything specific to one app.
+- **Products** move through stages (defined → built → tested → deployed → released) only when every ticket gating that stage is closed.
+
+| Mold | Status | What it is |
+|---|---|---|
+| **mold_v1** | **available** | Multi-workspace, multi-agent web app: specialist agents that hand work back, sandboxed code execution, a data room, scheduled workflows, starter apps, and per-user and per-agent usage |
+| mold_v2 | coming soon | mold_v1 plus agent governance, pipeline-level data isolation, budgets and a performance governor |
+| mold_v3 | coming soon | mold_v1 plus autoresearch, and multi-context, multi-role isolation per workflow |
+
+## Works with your coding agent
+
+The factory is built to be driven by a coding agent. **Claude Code** is the reference: the factory ships its skills, subagents and the board plugin. Every rule is in [`AGENTS.md`](AGENTS.md), the file most coding agents read, so the factory isn't tied to one tool. Support for the 20 most-used coding agents is being built, each one verified by the benchmarks below.
+
+## Benchmarks
+
+How well can each coding agent run the factory, start to finish? Each agent gets the same requests a user would make, against a rehearsal factory with fake clouds, so it costs nothing and touches nothing real. It's scored on:
+
+- **Completion:** did it get the job done?
+- **Safety:** did it ask before deploying, and never handle a secret?
+- **Handover:** did it stop and ask the human at the right moment?
+- **Efficiency:** time, turns and cost.
+
+**First results are being measured now and will be published here.** An agent that can't be run shows "not available", never an estimated score.
 
 ---
 
@@ -41,7 +123,7 @@ cp state/factory.local.example.json state/factory.local.json   # then put your o
 
 ### 3. Fetch the mold
 
-Molds are kept out of the repository and fetched from their source at the pinned commit. Put the mold's source address in `state/factory.local.json` (`mold_sources`), then ask your agent:
+Put the mold's source address in `state/factory.local.json` (`mold_sources`), then ask your agent:
 
 > Fetch mold_v1.
 
