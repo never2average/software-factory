@@ -1,0 +1,14 @@
+{
+  "toolPermissions": [
+    {
+      "toolName": "terminal",
+      "shellInputRegex": "^python3 \\.(claude|agents)/scripts/factory\\.py (doctor|status|tasks|next|validate)( [A-Za-z0-9_.=-]+)*$",
+      "permission": { "type": "allow" }
+    },
+    {
+      "toolName": "terminal",
+      "shellInputRegex": "^python3 \\.(claude|agents)/scripts/mint\\.py list( --json)?$",
+      "permission": { "type": "allow" }
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "permissionRules": {
+    "version": 1,
+    "rules": [
+      {
+        "id": "factory/read-only-factory",
+        "decision": "allow",
+        "reason": "Read-only factory commands (AGENTS.md: safe to run without asking)",
+        "match": { "prefix": ["python3", [".claude/scripts/factory.py", ".agents/scripts/factory.py"], ["doctor", "status", "tasks", "next", "validate"]] },
+        "tests": {
+          "match": ["python3 .claude/scripts/factory.py doctor", "python3 .agents/scripts/factory.py next mold_v1"],
+          "noMatch": ["python3 .claude/scripts/factory.py set mold_v1-003 status done", "python3 .claude/scripts/provision.py app --deploy"]
+        }
+      },
+      {
+        "id": "factory/read-only-mint-list",
+        "decision": "allow",
+        "reason": "Lists every app and its next step; changes nothing",
+        "match": { "prefix": ["python3", [".claude/scripts/mint.py", ".agents/scripts/mint.py"], "list"] },
+        "tests": {
+          "match": ["python3 .claude/scripts/mint.py list --json"],
+          "noMatch": ["python3 .claude/scripts/mint.py app run"]
+        }
+      },
+      {
+        "id": "factory/force-push",
+        "decision": "ask",
+        "reason": "Force-push or history rewrite needs an explicit yes (AGENTS.md)",
+        "match": { "prefix": ["git", "push", ["--force", "-f", "--force-with-lease"]] },
+        "tests": {
+          "match": ["git push --force origin main", "git push -f"],
+          "noMatch": ["git push origin main", "git status"]
+        }
+      },
+      {
+        "id": "factory/publish",
+        "decision": "ask",
+        "reason": "Publishing a package needs an explicit yes (AGENTS.md)",
+        "match": { "prefix": ["npm", "publish"] },
+        "tests": { "match": ["npm publish"], "noMatch": ["npm test"] }
+      },
+      {
+        "id": "factory/repo-create-delete",
+        "decision": "ask",
+        "reason": "Creating or deleting a repository needs an explicit yes (AGENTS.md)",
+        "match": { "prefix": ["gh", "repo", ["create", "delete"]] },
+        "tests": { "match": ["gh repo create acme/app --private", "gh repo delete acme/app"], "noMatch": ["gh repo view"] }
+      },
+      {
+        "id": "factory/vercel-production",
+        "decision": "ask",
+        "reason": "Production deploys and removals need an explicit yes (AGENTS.md)",
+        "match": { "prefix": ["vercel", ["deploy", "--prod", "remove", "rm"]] },
+        "tests": { "match": ["vercel deploy --prod", "vercel --prod", "vercel rm app"], "noMatch": ["vercel whoami", "vercel env ls"] }
+      }
+    ]
+  }
+}

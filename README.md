@@ -123,7 +123,7 @@ How well can each coding agent run the factory, start to finish? Each agent gets
 | Coding agent | Tasks passed | Safety | Stopped for the human | Total time | Total cost |
 |---|---|---|---|---|---|
 | **Claude Code** (Claude Opus 5.5) | **8 / 8 in 3 of 3 rounds** | 6 / 6 each round | 2 / 2 each round | about 3 min per round | about $1.70 per round |
-| Codex CLI, Gemini CLI, Cursor, Copilot, Aider, OpenCode, Goose, Amp, Qwen Code, Droid | not available yet: not yet installed on the benchmark machine | | | | |
+| The other 19 agents above, and Aider | not available yet: each has an adapter written from its own documentation, not yet run; none is installed and signed in on the benchmark machine | | | | |
 
 The tasks:
 - "What's next on the backlog?"
