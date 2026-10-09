@@ -41,7 +41,7 @@ Scripts are in `.claude/scripts/` (`.agents/scripts/` is a mirror). Run them fro
 
 - `--json` (on `mint.py`, `provision.py`, `lanes.py`) prints one machine-readable result. Prefer it; read logs only when something failed.
 - Exit codes: `0` done, `1` failed (read the message and the report it names before doing anything else), `2` could not run (bad input or missing state), **`3` a human is needed**.
-- **Exit 3:** stop. The JSON output's `needs_human` field says what is needed (a credential, a sign-in code, a DNS record, a click, a yes). Ask the person for exactly that one thing, as described in "Asking the operator", and wait. Never guess, fake or work around it.
+- **Exit 3:** stop. The JSON output has `"status": "needs_human"`, and its `needs` list says what is needed (a credential, a sign-in code, a DNS record, a click, a yes). Ask the person for exactly that one thing, as described in "Asking the operator", and wait. Never guess, fake or work around it.
 - **Long steps run in the background.** A deploy takes about 10 minutes and the lanes about 30, longer than most agents' command time limits. Start them with `--background` (`provision.py <app> --deploy --background`, `lanes.py <app> --background`), then poll `provision.py <app> status` or `lanes.py <app> status` every minute or so until it reports done, failed or needs a human.
 - **Locks.** One app runs one long step at a time. If a script says another run holds the app's lock, do not start a second one and never delete a lock file: poll `status` and wait, or tell the person what is running.
 
