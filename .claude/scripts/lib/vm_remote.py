@@ -1617,7 +1617,8 @@ def bundle(S, crons):
 def bundle_copies():
     """The factory's own database tooling, copied verbatim so the server runs the same chain this VM does."""
     out = [(os.path.join(SCRIPTS, "provision.py"), ".claude/scripts/provision.py"), (os.path.abspath(__file__), ".claude/scripts/lib/vm_remote.py"),
-           (os.path.join(SCRIPTS, "library.py"), ".claude/scripts/library.py")]     # the library cleanup's and apply's rules and words (library-cleanup, library-apply, below)
+           (os.path.join(SCRIPTS, "library.py"), ".claude/scripts/library.py"),
+           (os.path.join(ROOT, "state", "factory.json"), "state/factory.json")]   # read by provision.py through lib/factory_local.py (public; no machine values)     # the library cleanup's and apply's rules and words (library-cleanup, library-apply, below)
     for f in sorted(os.listdir(HERE)):
         # .mjs: the database chain's node helpers. .py: the helpers provision.py and this file import (agent_result,
         # runs, services, legacy, factory_local, ...); a helper missing here stops the deploy on the server.
