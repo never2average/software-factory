@@ -15,6 +15,8 @@ python3 .claude/scripts/mint.py <app_id> handoff                            # on
 python3 .claude/scripts/mint.py list                                        # every application and its next step
 ```
 
+Before the first app on a machine, the mold's codebase must be there: if `molds/<mold_id>/codebase` is missing, fetch it first (the `mold` skill, `python3 .claude/scripts/mold.py fetch <mold_id>`).
+
 Stations, in order: brief, state, packs, brand, keys, deploy, workspaces, tests, package, address. `run` is safe to
 repeat at any time. For an application on a server of its own (`target: vm_remote`) the workspaces station also writes
 the brief's own workspace and then the application's surface (default agent profile, subagent configs, workflow definitions

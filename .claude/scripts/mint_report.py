@@ -42,6 +42,7 @@ GAP = 300   # seconds of silence after which the session is counted as idle, not
 
 sys.path.insert(0, os.path.join(S, "lib"))
 import lane_url   # target_url(infra): the application's address, per deploy target
+from factory_local import mold_source, repo_slug
 
 def load(p): return json.load(open(p))
 def ts(s):
@@ -243,7 +244,8 @@ def lanes(app_id, mold_id):
     return out
 
 def upstream(mold_id, since, until):
-    repo = next(((m.get("source") or {}).get("repo", "") for m in load(os.path.join(ROOT, "state", "factory.json"))["molds"] if m["mold_id"] == mold_id), "").replace("github.com/", "")
+    # owner/name of the mold's source, from this machine's own state/factory.local.json -> mold_sources (lib/factory_local.py)
+    repo = (repo_slug(mold_source(mold_id)) or "").replace("github.com/", "")
     if not repo or not since: return None
     r = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", "200", "--json", "number,mergedAt,additions,deletions"], capture_output=True, text=True)
     if r.returncode: return None
@@ -308,8 +310,8 @@ def product_totals(summaries, products):
         got = {a: summaries[a] for a in p.get("app_ids") or [] if a in summaries}
         vals = lambda k: [v[k] for v in got.values() if v.get(k) is not None]
         add = lambda k, nd=2: round(sum(vals(k)), nd) if vals(k) else None
-        firsts = vals("first_message"); fdep = vals("first_deploy"); ldep = vals("latest_deploy")
-        f, d = (min(firsts, key=ts) if firsts else None), (min(fdep, key=ts) if fdep else None)
+        firsts = vals("first_message"); first_deps = vals("first_deploy"); ldep = vals("latest_deploy")
+        f, d = (min(firsts, key=ts) if firsts else None), (min(first_deps, key=ts) if first_deps else None)
         bases = {v["build_cost_basis"] for v in got.values() if v.get("build_cost_basis")}
         out[p["product_id"]] = dict(app_ids=sorted(got), not_reported=[a for a in p.get("app_ids") or [] if a not in got],
                                     build_cost_usd=add("build_cost_usd"), build_cost_basis=None if not bases else "own" if bases == {"own"} else "apportioned",

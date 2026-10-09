@@ -12,6 +12,6 @@ Vercel target. CLI is logged in on the VM as `your-vercel-team` (team `your-verc
 
 ## Live reference deployment (do not touch from the factory)
 
-The upstream redacted runs as three projects, one per config file: `redacted` (`vercel.json`, Next app + crons), `redacted` (`vercel.api.json`, eve API), `redacted` (`vercel.eve.json`, eve workflow service). A stamped product needs the same split: create `redacted-api` and `redacted-workflow` when deploying (task mold_v1-009).
+The mold's source runs live as three projects, one per config file: the web project (`vercel.json`, Next app + crons), the API project (`vercel.api.json`, eve API) and the workflow project (`vercel.eve.json`, eve workflow service); their names are in `state/factory.local.json` → `live_projects`. A stamped product needs the same split: create `redacted-api` and `redacted-workflow` when deploying (task mold_v1-009).
 
-`env-names.redacted.txt` lists the 32 production env var **names** on the live app (values never recorded). Use it as the `secrets` list in `infrastructure.json`. Note the live datastore is Supabase Postgres, not Neon; `datastores.schema.json` allows both.
+`env-names.live-web.txt` lists the 32 production env var **names** on the live app (values never recorded). Use it as the `secrets` list in `infrastructure.json`. Note the live datastore is Supabase Postgres, not Neon; `datastores.schema.json` allows both.
