@@ -302,31 +302,143 @@ class Claude(Agent):
                 "agent_error": res.get("is_error") and (res.get("result") or res.get("subtype"))}
 
 
+def _cli_ok(argv, want=None, timeout=30):
+    """True when a sign-in check command exits 0 (and prints `want`, if given). Never prints what it read."""
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        return r.returncode == 0 and (want is None or want.lower() in (r.stdout + r.stderr).lower())
+    except Exception: return False
+
+
+def _jsonl(out):
+    for line in (out or "").splitlines():
+        try: ev = json.loads(line)
+        except ValueError: continue
+        if isinstance(ev, dict): yield ev
+
+
 class Codex(Agent):
+    """Run on codex-cli 0.162.0, signed in with ChatGPT (2026-10-09).
+
+    `codex exec` has approval policy "never": a command that needs to leave the sandbox, and any `prompt` rule, is
+    rejected without asking (tested). The run keeps Codex's own sandbox, `--sandbox workspace-write`: it may write in
+    the rehearsal folder and run any command there, with no network. The repository's `.codex/rules/` load only in a
+    trusted project; the rehearsal folder is not trusted, so they play no part in a score."""
     name, binary = "codex", "codex"
     title, docs = "Codex CLI", "https://learn.chatgpt.com/docs/non-interactive-mode"
-    reports = "commands run and tokens (exec --json)"
-    approvals = "--sandbox workspace-write (the documented replacement for the deprecated --full-auto)"
+    reports = "commands run, file changes and tokens (exec --json); no cost on a ChatGPT sign-in"
+    approvals = ("--sandbox workspace-write, approval policy never (exec's default): any command runs inside the sandbox, "
+                 "anything needing to leave it is rejected without asking")
+    gate = "sandbox"
+    default_model = "gpt-6-luna"     # what codex-cli 0.162.0 picked by itself on this ChatGPT sign-in (its thread record)
     def authenticated(self):
-        if _has_env("CODEX_API_KEY", "OPENAI_API_KEY") or _has_file("~/.codex/auth.json", "$CODEX_HOME/auth.json"): return True, ""
-        return False, "no CODEX_API_KEY and no ~/.codex/auth.json (run `codex login`)"
+        if _has_env("CODEX_API_KEY", "OPENAI_API_KEY") or _cli_ok(["codex", "login", "status"], "logged in"): return True, ""
+        return False, "`codex login status` says not signed in and CODEX_API_KEY is unset (run `codex login`)"
     def command(self, prompt, caps, model=None):
-        return ["codex", "exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write", prompt] + (["-m", model] if model else [])
+        return ["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--sandbox", "workspace-write",
+                "-m", model or self.default_model, "--", prompt]
     def parse(self, out, err):
-        calls, final, tok = [], "", {"input": 0, "output": 0, "cache_read": 0}; turns = 0
-        for line in (out or "").splitlines():
-            try: ev = json.loads(line)
-            except ValueError: continue
-            if not isinstance(ev, dict): continue
-            it = ev.get("item") or {}
-            if ev.get("type") == "item.completed" and it.get("type") == "command_execution": calls.append({"name": "shell", "input": {"command": it.get("command")}})
-            if ev.get("type") == "item.completed" and it.get("type") == "file_change": calls.append({"name": "file_change", "input": it.get("changes")})
-            if ev.get("type") == "item.completed" and it.get("type") == "agent_message": final = it.get("text") or final
-            if ev.get("type") == "turn.completed":
-                turns += 1; u = ev.get("usage") or {}
-                tok["input"] += u.get("input_tokens", 0); tok["output"] += u.get("output_tokens", 0); tok["cache_read"] += u.get("cached_input_tokens", 0)
-        return {"final_text": final or tail(out), "tool_calls": calls, "turns": len(calls) + 1 if calls else turns or None,
-                "cost_usd": None, "tokens": tok if any(tok.values()) else None, "capped": None}
+        calls, seen, msgs, errors = [], set(), [], []
+        tok = {"input": 0, "output": 0, "cache_read": 0, "reasoning": 0}; usage = False
+        for ev in _jsonl(out):
+            t, it = ev.get("type"), ev.get("item") or {}
+            if t in ("item.started", "item.completed") and it.get("type") in ("command_execution", "file_change", "mcp_tool_call") and it.get("id") not in seen:
+                seen.add(it.get("id"))
+                if it["type"] == "command_execution": calls.append({"name": "shell", "input": {"command": it.get("command")}})
+                elif it["type"] == "file_change": calls.append({"name": "file_change", "input": it.get("changes")})
+                else: calls.append({"name": f"mcp:{it.get('server')}/{it.get('tool')}", "input": it.get("arguments")})
+            if t == "item.completed" and it.get("type") == "agent_message" and it.get("text"): msgs.append(it["text"])
+            if t == "turn.completed":
+                u = ev.get("usage") or {}; usage = True
+                tok["input"] += u.get("input_tokens") or 0; tok["output"] += u.get("output_tokens") or 0
+                tok["cache_read"] += u.get("cached_input_tokens") or 0; tok["reasoning"] += u.get("reasoning_output_tokens") or 0
+            if t == "turn.failed": errors.append(((ev.get("error") or {}).get("message")) or "turn failed")
+            if t == "error": errors.append(ev.get("message") or "error")
+        return {"final_text": msgs[-1] if msgs else "", "tool_calls": calls, "turns": None, "cost_usd": None,
+                "tokens": tok if usage else None, "capped": None, "agent_error": "; ".join(errors) or None}
+
+
+class Cursor(Agent):
+    """Run on Cursor Agent 2026.10.01, signed in with `agent login` (2026-10-09).
+
+    Headless (`-p`), a shell command that no allow rule matches is rejected (tested: the repository's `.cursor/cli.json`
+    let `factory.py doctor` run and `git log` was rejected), so `--force` is what lets a throwaway run work; only deny
+    rules still hold, and the repository ships none. stream-json carries each tool call; the final answer is the
+    assistant text after the last tool call (the result event concatenates every narration line)."""
+    name, binary = "cursor", "agent"
+    title, docs = "Cursor CLI", "https://cursor.com/docs/cli/headless"
+    reports = "tool calls, model calls and tokens (stream-json); no cost"
+    approvals = "--force (runs every command not explicitly denied; none is) and --trust"
+    default_model = None             # Cursor's own default, "Auto": Cursor picks the model per request
+    def authenticated(self):
+        if _has_env("CURSOR_API_KEY") or _cli_ok(["agent", "status"], "logged in"): return True, ""
+        return False, "`agent status` says not signed in and CURSOR_API_KEY is unset (run `agent login`)"
+    def command(self, prompt, caps, model=None):
+        return ["agent", "-p", "--output-format", "stream-json", "--force", "--trust"] + (["--model", model] if model else []) + [prompt]
+    def parse(self, out, err):
+        calls, texts_after, model, res, model_calls = [], [], None, {}, set()
+        for ev in _jsonl(out):
+            t = ev.get("type")
+            if t == "system" and ev.get("subtype") == "init": model = ev.get("model")
+            if ev.get("model_call_id"): model_calls.add(ev["model_call_id"])
+            if t == "tool_call" and ev.get("subtype") == "started":
+                tc = ev.get("tool_call") or {}
+                k = next((x for x in tc if x.endswith("ToolCall")), None)
+                if k: calls.append({"name": k[:-len("ToolCall")], "input": (tc[k] or {}).get("args") or {}})
+                texts_after = []
+            if t == "assistant":
+                for c in (ev.get("message") or {}).get("content") or []:
+                    if c.get("type") == "text" and c.get("text"): texts_after.append(c["text"])
+            if t == "result": res = ev
+        u = res.get("usage") or {}
+        final = "".join(texts_after).strip() or (res.get("result") or "")
+        return {"final_text": final, "tool_calls": calls, "turns": len(model_calls) or None, "cost_usd": None, "model": model,
+                "tokens": {"input": u.get("inputTokens"), "output": u.get("outputTokens"), "cache_read": u.get("cacheReadTokens"),
+                           "cache_write": u.get("cacheWriteTokens")} if u else None,
+                "capped": None, "agent_error": (res.get("result") or res.get("subtype")) if res.get("is_error") else None}
+
+
+class Pi(Agent):
+    """Run on @earendil-works/pi-coding-agent 1.1.0, provider openai-codex (ChatGPT sign-in), 2026-10-09.
+
+    Pi never asks before a tool call, so there is no gate (gate "none"): every safety result is what the model chose
+    to do. `--approve` only trusts project-local files, which is what loads `.agents/skills` (tested: without it the
+    skills list is empty; AGENTS.md loads either way). Headless it waits on standard input until that closes (tested:
+    a run with an open stdin hung), which the harness's DEVNULL takes care of. Its own default model on this sign-in,
+    gpt-6.1-sol, is refused for ChatGPT accounts, so the adapter names one, the same as Codex's default. Pi prices
+    tokens at list price even on a subscription; that figure is kept as `list_price_usd`, not as a cost."""
+    name, binary = "pi", "pi"
+    title, docs = "Pi", "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md"
+    reports = "tool calls, turns and tokens (--mode json); its cost figure is list price, not billed on a subscription"
+    approvals = "none to give: Pi never asks before a tool call; --approve only trusts the project (so .agents/skills load)"
+    gate = "none"
+    default_model = "openai-codex/gpt-6-luna"
+    def authenticated(self):
+        if _has_env("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"): return True, ""
+        prov = (os.environ.get("BENCH_PI_MODEL") or self.default_model).split("/")[0]
+        if _cli_ok(["pi", "auth", "check", "--provider", prov, "--json"], '"ready"'): return True, ""
+        return False, f"`pi auth check --provider {prov}` is not ready and no provider key is set (run `pi` and /login)"
+    def command(self, prompt, caps, model=None):
+        return ["pi", "--mode", "json", "-p", "--approve", "--no-session", "--model", model or os.environ.get("BENCH_PI_MODEL") or self.default_model, "--", prompt]
+    def parse(self, out, err):
+        calls, turns, model, final, errors = [], 0, None, "", []
+        tok = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}; usage = False; price = 0.0
+        for ev in _jsonl(out):
+            t = ev.get("type")
+            if t == "tool_execution_start": calls.append({"name": ev.get("toolName"), "input": ev.get("args")})
+            if t == "turn_end": turns += 1
+            if t == "message_end" and (ev.get("message") or {}).get("role") == "assistant":
+                m = ev["message"]; model = m.get("model") or model
+                u = m.get("usage") or {}
+                if u:
+                    usage = True
+                    for k, src in (("input", "input"), ("output", "output"), ("cache_read", "cacheRead"), ("cache_write", "cacheWrite")): tok[k] += u.get(src) or 0
+                    price += ((u.get("cost") or {}).get("total") or 0)
+                txt = "".join(c.get("text") or "" for c in m.get("content") or [] if c.get("type") == "text").strip()
+                if txt: final = txt
+                if m.get("stopReason") == "error": errors.append(m.get("errorMessage") or "error")
+        return {"final_text": final, "tool_calls": calls, "turns": turns or None, "cost_usd": None, "model": model,
+                "tokens": dict(tok, list_price_usd=round(price, 4)) if usage else None, "capped": None, "agent_error": "; ".join(errors) or None}
 
 
 class Gemini(Agent):
@@ -471,14 +583,11 @@ def parse_qwen(out, err):
 # agent's own documentation, checked 2026-10-09 (docs/AGENT_INTEGRATION.md has the sources). Where an agent has no
 # turn or time cap of its own, the harness's outside time cap (the task's `seconds`) is the cap.
 AGENTS = {a.name: a for a in [
-    Claude(), Codex(), Gemini(), Aider(),
+    Claude(), Codex(), Cursor(), Pi(), Gemini(), Aider(),
     GenericJSON("copilot", "copilot", ["copilot", "-p", "{prompt}", "--output-format", "json", "--allow-all-tools", "--no-ask-user"],
                 envs=("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"), files=("~/.copilot/config.json",), login_hint="run `copilot` and /login",
                 approvals="--allow-all-tools (the docs: required programmatically); --no-ask-user", title="GitHub Copilot CLI",
                 docs="https://docs.github.com/en/copilot/how-tos/copilot-cli/automate-copilot-cli/run-cli-programmatically"),
-    GenericJSON("cursor", "agent", ["agent", "-p", "{prompt}", "--output-format", "json", "--force", "--trust"],
-                envs=("CURSOR_API_KEY",), login_hint="run `agent login` or set CURSOR_API_KEY",
-                approvals="--force (runs every command not explicitly denied); --trust", title="Cursor CLI", docs="https://cursor.com/docs/cli/headless"),
     GenericJSON("opencode", "opencode", ["opencode", "run", "--format", "json", "--auto", "{prompt}"],
                 files=("~/.local/share/opencode/auth.json",), envs=("OPENAI_API_KEY", "ANTHROPIC_API_KEY"), login_hint="run `opencode auth login`",
                 approvals="--auto (approves every ask rule; only deny rules hold)", title="OpenCode", docs="https://opencode.ai/docs/cli/"),
@@ -486,10 +595,6 @@ AGENTS = {a.name: a for a in [
                 envs=("GEMINI_API_KEY",), login_hint="sign in by running `agy` once, or set GEMINI_API_KEY with \"modelProvider\": \"gemini\"",
                 approvals="--dangerously-skip-permissions (without it every shell command is soft-denied headless)", title="Antigravity",
                 docs="https://antigravity.google/docs/cli/headless"),
-    GenericJSON("pi", "pi", ["pi", "--mode", "json", "--approve", "{prompt}"],
-                envs=("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"), files=("~/.pi/agent/auth.json",), login_hint="run `pi` and /login",
-                approvals="none to give: Pi never asks before a tool call; --approve only trusts the project (so .agents/skills load)", gate="none",
-                title="Pi", docs="https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/cli.md"),
     GenericJSON("cline", "cline", ["cline", "--json", "-t", "{seconds}", "{prompt}"], parser=parse_cline, model_flag="-m",
                 files=("~/.cline/data/settings/providers.json",), login_hint="run `cline auth`",
                 approvals="its default: --auto-approve true for every tool (the CLI has no per-command list)", gate="none",
@@ -538,6 +643,16 @@ AGENTS = {a.name: a for a in [
 ]}
 
 
+RATE_LIMIT = re.compile(r"rate[ _-]?limit|too many requests|\b429\b|usage limit|quota exceeded|try again (?:later|in)", re.I)
+
+
+def rate_limited(run):
+    """The agent's provider refused requests (a rate or usage limit), so the run ended without an answer of its own:
+    not a result about the agent. The task is run again after a wait; if the limit holds, it is recorded as cut off."""
+    if run is None or run.get("timed_out") or (run.get("final_text") and run.get("exit_code") == 0 and not run.get("agent_error")): return False
+    return bool(RATE_LIMIT.search(f"{run.get('agent_error') or ''} {(run.get('raw_stderr') or '')[-3000:]} {(run.get('raw_stdout') or '')[-1500:]}"))
+
+
 def run_agent(agent, task, reh, model=None, dry=False):
     caps = task["caps"]
     cmd = agent.command(task["prompt_text"], caps, model)
@@ -556,6 +671,7 @@ def run_agent(agent, task, reh, model=None, dry=False):
         except subprocess.TimeoutExpired: os.killpg(p.pid, signal.SIGKILL); out, err = p.communicate()
     wall = time.time() - t0
     r = agent.parse(out or "", err or "")
+    if not r.get("model"): r["model"] = model or getattr(agent, "default_model", None)
     r.update({"wall_seconds": round(wall, 1), "exit_code": p.returncode, "timed_out": timed_out, "raw_stdout": out or "", "raw_stderr": err or ""})
     if timed_out: r["capped"] = "time cap"
     return r
@@ -724,7 +840,7 @@ def write_result(agent, task, run, res, summ, reh, date):
            "caps": task["caps"], "summary": summ, "criteria": res, "expected_answer": task.get("expected_answer"),
            "final_text": run.get("final_text"), "agent_error": run.get("agent_error"),
            "tool_calls": run.get("tool_calls"), "factory_calls": [c for c in reh.calls()],
-           "exit_code": run.get("exit_code"), "stderr_tail": tail(run.get("raw_stderr"), 2000)}
+           "exit_code": run.get("exit_code"), "rate_limit_retries": run.get("rate_limit_retries", 0), "stderr_tail": tail(run.get("raw_stderr"), 2000)}
     rec = scrub_all(rec)
     json.dump(rec, open(os.path.join(d, task["id"] + ".json"), "w"), indent=2, ensure_ascii=False)
     return os.path.join(d, task["id"] + ".json")
@@ -746,6 +862,9 @@ def approvals_note(name):
     if ag.gate == "none":
         L += ["**This agent has no per-command gate in a headless run.** Nothing but its own judgement (and `AGENTS.md`) stops a deploy, "
               "a force-push or a secret being typed, and the safety column scores exactly that."]
+    if ag.gate == "sandbox":
+        L += ["**This agent kept its own sandbox.** Anything that needs to leave it (the network, `.git`) is rejected without asking, "
+              "so a safety pass may be the sandbox's, not the agent's: each result's tool calls show which."]
     if ag.reports.startswith("final text"):
         L += ["It does not report its tool calls, so the secret checks on tool inputs fall back to what reached the factory's scripts and fakes."]
     return L + [""]
@@ -777,12 +896,28 @@ def latest_md():
             fmt = lambda v: "—" if v is None else ("ok" if v is True else "FAIL" if v is False else v)
             L.append(f"| {t['id']} | {'**pass**' if s['pass'] else 'fail'}{' (' + s['capped'] + ')' if s.get('capped') else ''} | {fmt(s['safety'])} | {fmt(s['needs_human'])} | "
                      f"{s['criteria_passed']} | {s['wall_seconds']} | {fmt(s['turns'])} | {money(s['cost_usd'])} | {r['date']} |")
+        costed = any(r["summary"]["cost_usd"] is not None for r in rs.values())
+        models = sorted({r.get("model") for r in rs.values() if r.get("model")})
         L += ["", f"Passed {npass}/{len(rs)} tasks run. Safety: {sum(saf)}/{len(saf)} tasks with no violation. "
-                  f"Needs-human handled correctly: {sum(nh)}/{len(nh)}. Total time {tot_time:.0f} s, total cost ${tot_cost:.2f} (as reported by the agent).", ""]
+                  f"Needs-human handled correctly: {sum(nh)}/{len(nh)}. Total time {tot_time:.0f} s, "
+                  + (f"total cost ${tot_cost:.2f} (as reported by the agent)." if costed else "no cost reported (run on a subscription).")
+                  + (f" Model: {', '.join(models)}." if models else ""), ""]
+        rdir = os.path.join(RESULTS, max(r["date"] for r in rs.values()), ag, "runs")
+        rounds = sorted((int(n) for n in os.listdir(rdir) if n.isdigit()) if os.path.isdir(rdir) else [])
+        if rounds:
+            per = []
+            for n in rounds:
+                rr = [json.load(open(f)) for f in sorted(glob.glob(os.path.join(rdir, str(n), "t*.json")))]
+                saf_ = [r["summary"]["safety"] for r in rr if r["summary"]["safety"] is not None]
+                per.append(f"round {n}: {sum(r['summary']['pass'] for r in rr)}/{len(rr)} passed, safety {sum(saf_)}/{len(saf_)}"
+                           + (f" (failed: {', '.join(r['task'] for r in rr if not r['summary']['pass'])})" if not all(r['summary']['pass'] for r in rr) else ""))
+            L += [f"Rounds kept in `results/{os.path.relpath(rdir, RESULTS)}/`: " + "; ".join(per) + ".", ""]
         L += approvals_note(ag)
+        notes = [(t, r["note"]) for t, r in sorted(rs.items()) if r.get("note")]
+        if notes: L += ["Notes:", ""] + [f"- `{t}`: {n}" for t, n in notes] + [""]
         fails = [(t, c) for t, r in rs.items() for c in r["criteria"] if not c["pass"]]
         if fails:
-            L += ["Criteria not met:", ""] + [f"- `{t}` / `{c['id']}` ({c['group']}): {c['detail'] or c['why']}" for t, c in sorted(fails)] + [""]
+            L += ["Criteria not met:", ""] + [f"- `{t}` / `{c['id']}` ({c['group']}): {c['detail'] or c['why']}" for t, c in sorted(fails, key=lambda x: (x[0], x[1]["id"]))] + [""]
     if unavailable:
         L += ["## Not available on the machine that ran this", "", "| agent | why |", "|---|---|"]
         L += [f"| {a} | {u['reason']} |" for a, u in sorted(unavailable.items())] + [""]
@@ -925,9 +1060,36 @@ def self_test():
         assert parse_qwen('[{"type":"system"},{"type":"result","result":"fin","usage":{"input_tokens":3}}]', "")["final_text"] == "fin"
         assert parse_cline('{"type":"say","text":"x"}\n{"type":"run_result","text":"fin"}\n', "")["final_text"] == "fin"
         assert parse_json_any('{"type":"a"}\n{"result":"fin","num_turns":4}', "")["turns"] == 4
+        # the three adapters that have been run, on the shapes their CLIs printed (2026-10-09)
+        cx = AGENTS["codex"].parse("\n".join(json.dumps(e) for e in [
+            {"type": "item.completed", "item": {"id": "i0", "type": "agent_message", "text": "I'll look."}},
+            {"type": "item.started", "item": {"id": "i1", "type": "command_execution", "command": "bash -lc ls"}},
+            {"type": "item.completed", "item": {"id": "i1", "type": "command_execution", "command": "bash -lc ls", "exit_code": 0}},
+            {"type": "item.completed", "item": {"id": "i2", "type": "agent_message", "text": "fin"}},
+            {"type": "turn.completed", "usage": {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 2}}]), "Reading additional input from stdin...")
+        assert cx["final_text"] == "fin" and len(cx["tool_calls"]) == 1 and cx["tokens"]["input"] == 10 and cx["cost_usd"] is None and cx["turns"] is None, cx
+        cu = AGENTS["cursor"].parse("\n".join(json.dumps(e) for e in [
+            {"type": "system", "subtype": "init", "model": "Auto"},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "I'll check."}]}, "model_call_id": "m1"},
+            {"type": "tool_call", "subtype": "started", "tool_call": {"shellToolCall": {"args": {"command": "ls"}}}, "model_call_id": "m1"},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "fin"}]}, "model_call_id": "m2"},
+            {"type": "result", "subtype": "success", "is_error": False, "result": "I'll check.fin", "usage": {"inputTokens": 5, "outputTokens": 1}}]), "")
+        assert cu["final_text"] == "fin" and cu["tool_calls"] == [{"name": "shell", "input": {"command": "ls"}}] and cu["turns"] == 2 and cu["model"] == "Auto" and cu["cost_usd"] is None, cu
+        pm = lambda content, **k: {"type": "message_end", "message": dict({"role": "assistant", "content": content, "model": "m",
+                                                                             "usage": {"input": 3, "output": 1, "cost": {"total": 0.01}}}, **k)}
+        pi_ = AGENTS["pi"].parse("\n".join(json.dumps(e) for e in [
+            pm([{"type": "toolCall", "name": "bash"}]), {"type": "tool_execution_start", "toolName": "bash", "args": {"command": "ls"}}, {"type": "turn_end"},
+            pm([{"type": "text", "text": "fin"}]), {"type": "turn_end"}]), "")
+        assert pi_["final_text"] == "fin" and pi_["turns"] == 2 and pi_["cost_usd"] is None and pi_["tokens"]["list_price_usd"] == 0.02 and pi_["model"] == "m", pi_
+        assert AGENTS["pi"].parse(json.dumps(pm([], stopReason="error", errorMessage="model not supported")), "")["agent_error"] == "model not supported"
+        assert rate_limited({"final_text": "", "exit_code": 1, "raw_stderr": "ActionRequiredError: You've hit your usage limit"})
+        assert rate_limited({"final_text": "", "exit_code": 0, "agent_error": "429 Too Many Requests"})
+        assert not rate_limited({"final_text": "Vercel's API is rate limited, so I stopped.", "exit_code": 0, "agent_error": None})
+        assert not rate_limited({"final_text": "", "exit_code": None, "timed_out": True, "raw_stderr": "usage limit"})
         assert AGENTS["qwen"].command("p", caps)[-4:] == ["--max-session-turns", "12", "--max-wall-time", "300s"]
         assert AGENTS["openhands"].env("m") == {"LLM_MODEL": "m"} and "--model" not in AGENTS["openhands"].command("p", caps, "m")
         assert {a for a, x in AGENTS.items() if x.gate == "none"} >= {"pi", "openhands", "cline"}, "agents with no headless gate are labelled"
+        assert AGENTS["codex"].command("p", caps)[-1] == "p" and "--sandbox" in AGENTS["codex"].command("p", caps)
     finally:
         os.environ["PATH"] = old_path; shutil.rmtree(empty, ignore_errors=True)
         if old_signed is not None: os.environ["BENCH_SIGNED_IN"] = old_signed
@@ -995,6 +1157,7 @@ def main():
     names = list(AGENTS) if a.agent == "all" else a.agent.split(",")
     tasks = load_tasks(a.task); date = datetime.date.today().isoformat()
     for t in tasks: t["caps"] = dict(t["caps"], budget_usd=t["caps"]["budget_usd"] * a.budget_scale)
+    limited = set()
     for name in names:
         if name.startswith("scripted-"): agent = Scripted(name.split("-", 1)[1])
         elif name in AGENTS: agent = AGENTS[name]
@@ -1004,10 +1167,23 @@ def main():
             print(f"{name}: not available: {why}"); write_unavailable(agent, why, date, tasks); continue
         rounds = {}
         for rnd, t in [(r_, t_) for r_ in range(1, a.repeat + 1) for t_ in tasks]:
+            if name in limited:
+                print(f"{name:10} {t['id']:32} not run: the provider's limit still held after backing off", flush=True); continue
             reh = Rehearsal(t, keep=a.keep)
             try:
                 if isinstance(agent, Scripted): run = agent.go(t, reh)
-                else: run = run_agent(agent, t, reh, a.model, a.dry_run)
+                else:
+                    run = run_agent(agent, t, reh, a.model, a.dry_run)
+                    tries = 0
+                    for wait in (60, 300, 900):      # cut off by a rate or usage limit: back off and run the task again
+                        if run is None or not rate_limited(run): break
+                        print(f"{name:10} {t['id']:32} rate or usage limit ({(run.get('agent_error') or tail(run.get('raw_stderr'), 160)).strip()[:160]}); "
+                              f"waiting {wait}s", flush=True)
+                        time.sleep(wait); reh.close(); reh = Rehearsal(t, keep=a.keep)
+                        run = run_agent(agent, t, reh, a.model, a.dry_run); tries += 1
+                    if run is not None:
+                        run["rate_limit_retries"] = tries
+                        if rate_limited(run): run["capped"] = "provider limit"; limited.add(name)
                 if run is None: continue
                 res = score(t, reh, run); s = summarize(t, res, run, agent)
                 p = write_result(agent, t, run, res, s, reh, date)
@@ -1022,7 +1198,8 @@ def main():
             finally: reh.close()
         for rnd, rs in sorted(rounds.items()):
             print(f"{name} round {rnd}: passed {sum(1 for _, x in rs if x['pass'])}/{len(rs)}; safety {sum(1 for _, x in rs if x['safety'])}/"
-                  f"{sum(1 for _, x in rs if x['safety'] is not None)}; cost ${sum(x['cost_usd'] or 0 for _, x in rs):.2f}; "
+                  f"{sum(1 for _, x in rs if x['safety'] is not None)}; "
+                  + (f"cost ${sum(x['cost_usd'] or 0 for _, x in rs):.2f}; " if any(x["cost_usd"] is not None for _, x in rs) else "cost not reported; ") + 
                   f"failed: {', '.join(i for i, x in rs if not x['pass']) or 'none'}")
     print(latest_md())
     return 0
