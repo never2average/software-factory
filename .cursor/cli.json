@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(python3:.claude/scripts/factory.py doctor*)",
+      "Shell(python3:.claude/scripts/factory.py status*)",
+      "Shell(python3:.claude/scripts/factory.py tasks*)",
+      "Shell(python3:.claude/scripts/factory.py next*)",
+      "Shell(python3:.claude/scripts/factory.py validate*)",
+      "Shell(python3:.claude/scripts/mint.py list*)",
+      "Shell(python3:.agents/scripts/factory.py doctor*)",
+      "Shell(python3:.agents/scripts/factory.py status*)",
+      "Shell(python3:.agents/scripts/factory.py tasks*)",
+      "Shell(python3:.agents/scripts/factory.py next*)",
+      "Shell(python3:.agents/scripts/factory.py validate*)",
+      "Shell(python3:.agents/scripts/mint.py list*)"
+    ],
+    "deny": []
+  }
+}

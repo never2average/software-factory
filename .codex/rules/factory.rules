@@ -1,0 +1,24 @@
+# Codex CLI command rules for the software factory (read when this project is trusted).
+# Format: https://learn.chatgpt.com/docs/agent-configuration/rules.md  Check with: codex execpolicy check
+# Rules match a fixed command prefix, so per-app commands (the app id comes second) cannot be listed here;
+# AGENTS.md's 'What needs an explicit yes' covers them.
+
+prefix_rule(pattern=["python3", ".claude/scripts/factory.py", "doctor"], decision="allow")
+prefix_rule(pattern=["python3", ".claude/scripts/factory.py", "status"], decision="allow")
+prefix_rule(pattern=["python3", ".claude/scripts/factory.py", "tasks"], decision="allow")
+prefix_rule(pattern=["python3", ".claude/scripts/factory.py", "next"], decision="allow")
+prefix_rule(pattern=["python3", ".claude/scripts/factory.py", "validate"], decision="allow")
+prefix_rule(pattern=["python3", ".claude/scripts/mint.py", "list"], decision="allow")
+prefix_rule(pattern=["python3", ".agents/scripts/factory.py", "doctor"], decision="allow")
+prefix_rule(pattern=["python3", ".agents/scripts/factory.py", "status"], decision="allow")
+prefix_rule(pattern=["python3", ".agents/scripts/factory.py", "tasks"], decision="allow")
+prefix_rule(pattern=["python3", ".agents/scripts/factory.py", "next"], decision="allow")
+prefix_rule(pattern=["python3", ".agents/scripts/factory.py", "validate"], decision="allow")
+prefix_rule(pattern=["python3", ".agents/scripts/mint.py", "list"], decision="allow")
+
+prefix_rule(pattern=["git", "push", "--force"], decision="prompt")
+prefix_rule(pattern=["git", "push", "-f"], decision="prompt")
+prefix_rule(pattern=["git", "push", "--force-with-lease"], decision="prompt")
+prefix_rule(pattern=["npm", "publish"], decision="prompt")
+prefix_rule(pattern=["gh", "repo", "create"], decision="prompt")
+prefix_rule(pattern=["gh", "repo", "delete"], decision="prompt")
