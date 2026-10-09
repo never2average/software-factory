@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Exec(python3 .claude/scripts/factory.py doctor)",
+      "Exec(python3 .claude/scripts/factory.py status)",
+      "Exec(python3 .claude/scripts/factory.py tasks)",
+      "Exec(python3 .claude/scripts/factory.py next)",
+      "Exec(python3 .claude/scripts/factory.py validate)",
+      "Exec(python3 .claude/scripts/mint.py list)",
+      "Exec(python3 .agents/scripts/factory.py doctor)",
+      "Exec(python3 .agents/scripts/factory.py status)",
+      "Exec(python3 .agents/scripts/factory.py tasks)",
+      "Exec(python3 .agents/scripts/factory.py next)",
+      "Exec(python3 .agents/scripts/factory.py validate)",
+      "Exec(python3 .agents/scripts/mint.py list)"
+    ],
+    "ask": [
+      "Exec(git push --force)",
+      "Exec(git push -f)",
+      "Exec(git push --force-with-lease)",
+      "Exec(npm publish)",
+      "Exec(gh repo create)",
+      "Exec(gh repo delete)"
+    ],
+    "deny": []
+  }
+}

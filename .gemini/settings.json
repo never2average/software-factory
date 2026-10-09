@@ -1,0 +1,23 @@
+{
+  "context": {
+    "fileName": [
+      "AGENTS.md"
+    ]
+  },
+  "tools": {
+    "allowed": [
+      "run_shell_command(python3 .claude/scripts/factory.py doctor)",
+      "run_shell_command(python3 .claude/scripts/factory.py status)",
+      "run_shell_command(python3 .claude/scripts/factory.py tasks)",
+      "run_shell_command(python3 .claude/scripts/factory.py next)",
+      "run_shell_command(python3 .claude/scripts/factory.py validate)",
+      "run_shell_command(python3 .claude/scripts/mint.py list)",
+      "run_shell_command(python3 .agents/scripts/factory.py doctor)",
+      "run_shell_command(python3 .agents/scripts/factory.py status)",
+      "run_shell_command(python3 .agents/scripts/factory.py tasks)",
+      "run_shell_command(python3 .agents/scripts/factory.py next)",
+      "run_shell_command(python3 .agents/scripts/factory.py validate)",
+      "run_shell_command(python3 .agents/scripts/mint.py list)"
+    ]
+  }
+}

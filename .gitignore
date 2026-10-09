@@ -39,3 +39,6 @@ reports/usage/
 
 # This machine's real operator email, notification domain, Vercel team and address (lib/factory_local.py).
 /state/factory.local.json
+
+# This machine's and operator's own agent instructions (AGENTS.md says to read it when present).
+/AGENTS.local.md
