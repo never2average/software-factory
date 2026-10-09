@@ -4,7 +4,7 @@
 
 ### Describe an AI agent app in one page. Your coding agent builds, tests and ships it.
 
-Multi-workspace · multi-agent · tested before it ships · on Vercel or your own server
+Multi-workspace · multi-agent · tested before it ships · on Vercel or your own server · MIT licensed
 
 <img src="plugins/factory-board/docs/tab-products.png" alt="The factory board: every product, its stage and its live apps" width="760">
 
@@ -223,3 +223,7 @@ A **product** is a mold under a brand, with stage gates: defined → built → t
 - [`docs/COST_MODEL.md`](docs/COST_MODEL.md): inference and hosting costs per workspace.
 - [`docs/STATE.md`](docs/STATE.md): the state files.
 - [`AGENTS.md`](AGENTS.md): the rules any agent working in this repository follows.
+
+## License
+
+[MIT](LICENSE)
