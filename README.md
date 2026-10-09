@@ -1,89 +1,161 @@
 # software-factory
 
-Read `docs/HOW_IT_WORKS.md` first. Questions the intake asks: `docs/INTAKE.md`. Operator runbook, brief to live app: `docs/RUNBOOK.md`. What a product is and ships as: `docs/PRODUCTS.md`. Inference cost per workspace: `docs/COST_MODEL.md`.
+Turn a one-page description into a tested, deployed, multi-workspace AI agent app, operated from [Claude Code](https://claude.com/claude-code).
 
-Factory 1: an operator (Fable + sol) services molds through a fixed surface and stamps applications from them. Failed applications revert to the operator.
+You write a brief: who the app is for, what its agents do, where it runs. The factory then takes it through each step:
 
-```
-Fable + sol --service--> [dm.md, browser(o/o), web search(o/o), primary_context,
-    ^                     multiplayer_context, custom workflow builder] --> mold 1 (has a codebase)
-    |                                                                  --> mold 2 (coming soon)
-    +------------------------- revert ------------------------------+  --> mold 3 (coming soon)
-```
+1. stamps the app from a **mold** (a pinned base codebase);
+2. applies your **pack** (the app's own agents and instructions) and your **brand**;
+3. deploys it to **Vercel** or **your own server**, after proving each workspace's data stays locked to that workspace;
+4. runs **five test suites** (functional, context, load, accessibility, responsiveness).
 
-## Layout
+Any failure stops the line and says what's needed. A **factory board** inside Claude Code shows every app's health, stage, tickets, usage and build cost.
 
-- `state/` — `factory.schema.json` + `factory.json` (Factory 1 instance); per-application schemas under `state/application/<app_id>/`
-- `molds/` — `mold_v1` (the only one with a codebase: a snapshot of fde-agent). `mold_v2`, `mold_v3` are coming soon: a `MOLD.md` and a roadmap, nothing more. `mold_v1/testing/` holds the five test lanes and their declarations; `mold_v1/branding/rules.json` says where each branded surface lives
-- `infra/` — `vercel/` (the deploy target: app + eve functions + task-workflow), `vm/` (the DigitalOcean droplet, a local verification target — it holds each app's private Postgres artifact, it does not serve the app)
-- `build/` — per-app branded copies of the mold, written by `branding.py prepare`; the snapshot itself is never edited
-- `.claude/`, `.agents/` — agents, skills, scripts, workflows, sandboxes for Claude Code and other agent runtimes
+![The factory board](plugins/factory-board/docs/board-full.png)
 
-## Describe → deploy
+> **Status.** One mold is usable today (`mold_v1`); `mold_v2` and `mold_v3` are coming soon.
 
-```
-python3 .claude/scripts/intake.py briefs/<app>.md --app <app> [--ask]   # brief -> state, asks only unresolved questions
-python3 .claude/scripts/provision.py <app>                              # check, READ-ONLY: what exists, what a deploy will create, which secrets you still set
-python3 .claude/scripts/provision.py <app> --set-secret NAME            # type one credential at a hidden prompt (human terminal); creates the three empty projects if absent, and says so first
-python3 .claude/scripts/provision.py <app> --deploy                     # prints "about to create:", refuses if a secret is missing (nothing created), else creates projects + datastores and deploys (proves app_rw + RLS first)
-python3 .claude/scripts/lanes.py <app>                                  # the five testing lanes; a fail reverts the app
-```
+---
 
-The check creates, deletes and writes nothing remote; resource creation happens only under `--deploy` (and `--verify-db`, its
-database half), after the plan is printed and every operator secret is present. Subagents `intake` and `provisioner` run `intake.py` and `provision.py` and ask the user through the harness; the `run-lanes` skill runs `lanes.py`. Questions and their resolution rules: `docs/INTAKE.md`.
+## Quick start
 
-## Tasking
+### 1. What you need
 
-Every mold has one or more products (`state/products.json`) and one backlog (`state/tasks/<mold_id>.jsonl`) shared by all of them. The operator works the backlog; a stage moves only when every task carrying that `advances_stage` is done: defined → stamped → lanes_passing → deployed → released.
+- **Accounts, as needed:** a Linux machine (Ubuntu 24.04 tested), a Vercel account for Vercel apps, and a Cloudflare account for Workers AI inference.
+- **Tools:**
+  - **Python 3.11+** and **Node.js 24**
+  - **git** and the **GitHub CLI** (`gh`)
+  - the **Vercel CLI** (`npm i -g vercel`), signed in, for Vercel apps
+  - **Claude Code**, for the agents, skills and the board
+- **For an app on your own server:** a server with `/dev/kvm`, at least 4 vCPU / 8 GB, and SSH access. `provision.py <app> --qualify-remote` checks it for you.
 
-```
-python3 .claude/scripts/factory.py status        # products, stages, task counts
-python3 .claude/scripts/factory.py next mold_v1  # what to do now
-python3 .claude/scripts/factory.py validate      # all state files
+### 2. Get the factory
+
+```bash
+git clone https://github.com/never2average/software-factory.git
+cd software-factory
+cp state/factory.local.example.json state/factory.local.json   # then put your own email, domain and Vercel team in it
+python3 .claude/scripts/factory.py validate                      # prints "ok"
 ```
 
-Skills: `task`, `stamp`, `run-lanes`, `productize`. Agents: `mold-engineer`, `lane-tester`, `product-packager`. Workflows: `stamp-and-test`, `mold-fork`.
+`state/factory.local.json` holds your own values (operator email, notification domain, Vercel team, machine address). It is git-ignored and never committed.
 
-## Molds and products
+### 3. Fetch the mold
 
-A mold is a codebase snapshot plus its test lanes. A product is a mold under a brand, with stage gates.
-Several products can share one mold, and they share that mold's backlog.
+Molds are kept out of the repository and fetched from their source:
 
-| Mold | Status | Codebase | Products (`state/products.json`) |
-|---|---|---|---|
-| mold_v1 | active | snapshot of fde-agent + the five testing lanes | `delivered`, `dover`, `onfinance_hfc_research` |
-| mold_v2 | **coming soon** | none yet: `MOLD.md` + `roadmap.md` only | `claudecode_web_governed` |
-| mold_v3 | **coming soon** | none yet: `MOLD.md` + `roadmap.md` only | `claudecode_web_research` |
+```bash
+git clone --depth 1 https://github.com/never2average/fde-agent.git /tmp/fde-agent
+rsync -a --delete --exclude .git --exclude node_modules --exclude test-results --exclude .next /tmp/fde-agent/ molds/mold_v1/codebase/
+```
 
-Each product's current stage is in `state/products.json` and on the factory board (below); `python3 .claude/scripts/factory.py status` prints it too.
+The pinned commit and the proof that your copy matches it are in [`molds/mold_v1/MOLD.md`](molds/mold_v1/MOLD.md).
 
-mold_v2 (agent governance, pipeline-level data isolation, budget management, performance governor) and
-mold_v3 (autoresearch and SAI, multi-context + multi-role isolation per workflow) are **coming soon**
-(`"status": "coming_soon"` in `state/factory.json`): neither folder contains a line of application code,
-nothing has been stamped from either, and their first backlog task in both cases is to fork mold_v1 at a
-recorded commit. Only mold_v1 can be stamped today.
+### 4. Mint an app
 
-## Factory board
+Write a brief, a page of plain words, at `briefs/<app_id>.md`. Then:
 
-Every app the factory built, in one Claude Code pane with four tabs:
+```bash
+python3 .claude/scripts/mint.py new my_app --brief briefs/my_app.md   # brief -> validated state; asks only what it can't work out
+python3 .claude/scripts/mint.py my_app                                 # where it stands, and the one thing that happens next
+python3 .claude/scripts/mint.py my_app run                             # do every step that needs nobody; stop where you're needed
+```
 
-- **Products & apps:** each product's stage path, with its apps underneath: live health, last deploy, and the base-code version each runs.
-- **Molds:** the molds and their tickets, with v2 and v3 marked coming soon.
-- **Tickets:** filterable and clickable, each opening its details and a "Work on this" button.
-- **Analytics:** each app's rough usage by agent and by user, and the tickets people raised inside it.
+`run` can be repeated at any time. Each step works out whether it's done by looking at the state, the registry and the live app, not by remembering. When it needs you, it says exactly what for:
 
-It ships with the factory (`plugins/factory-board`, turned on by `.claude/settings.json`). Type `/factory` in a Claude Code session started here. What each part means: `plugins/factory-board/README.md`.
+- **a credential**, typed at a hidden prompt: `python3 .claude/scripts/provision.py my_app --set-secret NAME`;
+- **a one-time sign-in code**, for the signed-in tests: `mint.py my_app code-request you@…`, then `mint.py my_app code <digits> you@…`;
+- **a DNS record**, if the app has its own domain.
 
-![The Analytics tab, numbered](plugins/factory-board/docs/analytics-annotated.png)
+The steps, in order:
 
-## Branding
+| Step | Done when |
+|---|---|
+| brief | `briefs/<app_id>.md` exists |
+| state | the four state files are valid and no question is unanswered |
+| packs | every pack the app names checks clean |
+| brand | a name, a colour and a logo are set, or the default look is accepted |
+| keys | every credential the deploy needs is present, checked **by name** |
+| deploy | the app's three services answer, on the current mold snapshot |
+| workspaces | the app's workspaces and their starting content are applied |
+| tests | the five test suites ran after the last deploy and none failed |
+| package | the app's own agent package is published (optional) |
+| address | the app's own domain serves it (optional) |
 
-mold_v1 has no theme system of its own — product name, palette, icon and sign-in mark are hardcoded in the
-snapshot — so branding is applied by copying, never by editing the mold. A product's `brand` block is copied
-into the app at stamp time; `branding.py <app_id> prepare` rewrites the branded surfaces into `build/<app_id>/`
-and `provision.py --deploy` builds that copy. `molds/mold_v1/branding/rules.json` pins only *where* each
-surface lives; a rule that stops matching refuses the deploy rather than shipping a half-branded app.
+`python3 .claude/scripts/mint.py list` shows every app and its next step.
 
-## Working here
+### 5. Watch it
 
-All commands run on the DigitalOcean VM (`ssh digitalocean`), repo at `/root/software-factory`. Refresh the mold snapshot per `molds/mold_v1/MOLD.md`. Vercel is the one committed deploy target; `target: vm` verifies an app's database locally and does not serve it (`infra/vm/README.md`).
+Start Claude Code in the factory folder and type `/factory`. The board ships with the factory and is turned on by `.claude/settings.json`. It has four tabs:
+
+- **Products & apps:** stage, live health, deploys and build cost.
+- **Molds:** each mold and its tickets.
+- **Tickets:** filterable and clickable.
+- **Analytics:** usage by agent and by user, and the tickets raised inside each app.
+
+See [`plugins/factory-board/README.md`](plugins/factory-board/README.md).
+
+To use the board outside the factory folder:
+
+```
+/plugin install factory-board --marketplace never2average/software-factory
+```
+
+---
+
+## Everyday commands
+
+| Command | What it does |
+|---|---|
+| `python3 .claude/scripts/provision.py <app>` | read-only check: what exists, what a deploy would create, which secrets are missing |
+| `python3 .claude/scripts/provision.py <app> --deploy` | deploy to Vercel, after printing the plan; refuses if a secret is missing, and proves workspace isolation first |
+| `python3 .claude/scripts/provision.py <app> --deploy-remote` | deploy to your own server over SSH; only ports 22, 80 and 443 are opened, with HTTPS by Caddy |
+| `python3 .claude/scripts/provision.py <app> --capacity` | read-only: is the server big enough, or is it time for a bigger one |
+| `python3 .claude/scripts/lanes.py <app>` | run the five test suites; a failure marks the app `reverted` and files a ticket |
+| `python3 .claude/scripts/app_usage.py <app> --json` | read-only usage from the app's own database, by workspace, agent and user |
+| `python3 .claude/scripts/mint_report.py <app>` | what building the app took: Claude Code cost and time, and deploys |
+| `python3 .claude/scripts/factory.py status` | products, stages and ticket counts |
+| `python3 .claude/scripts/factory.py next mold_v1` | the next ticket to work on |
+| `python3 .claude/scripts/repo.py <app> publish --provider github --dry-run` | give an app its own private repository, only when you ask for one |
+
+Most scripts have `--self-test` and `--dry-run`.
+
+## How it fits together
+
+| Folder | What's in it |
+|---|---|
+| `molds/` | each mold's `MOLD.md` (pinned source commit), its five test-suite definitions under `testing/`, and its branding rules. The codebase itself is fetched, not committed. |
+| `packs/` | *(yours, not committed)* an app's own agents, instructions and starter content, applied on top of the mold. Molds are never edited or forked. |
+| `state/` | `factory.json` (molds, defaults), `products.json` (products and their stage gates), `tasks/` (one ticket list per mold), `application/app_id/` (the schemas every app's records follow) |
+| `.claude/` | Claude Code agents (`intake`, `provisioner`, `mold-engineer`, `lane-tester`, `product-packager`), skills (`mint`, `provision`, `run-lanes`, `productize`, `task`, `repo`, …) and the scripts above |
+| `.agents/` | the same scripts and skills for other agent runtimes |
+| `plugins/factory-board/` | the board |
+| `infra/` | notes on the Vercel and server targets |
+| `docs/` | the long-form documentation below |
+
+Each app's own records (`state/application/<app_id>/`), packs, brands, briefs, build copies and reports stay on your machine and are git-ignored.
+
+A **product** is a mold under a brand, with stage gates: defined → built → tested → deployed → released. A stage moves only when every ticket that gates it is closed (`productize` skill).
+
+| Mold | Status | What it is |
+|---|---|---|
+| mold_v1 | **active** | multi-workspace, multi-agent web app on the eve framework, Next.js and Postgres, with Workers AI (GLM) or the Vercel AI Gateway |
+| mold_v2 | coming soon | mold_v1 plus agent governance, pipeline-level data isolation, budgets and a performance governor |
+| mold_v3 | coming soon | mold_v1 plus autoresearch, and multi-context, multi-role isolation per workflow |
+
+## Ground rules the factory enforces
+
+- **Secrets by name only.** State files hold `*_ref` names; values live in Vercel or the server's environment files, and are never printed.
+- **Workspaces never see each other.** Every deploy proves row-level security on every workspace table before it finishes, and refuses otherwise.
+- **Molds stay general.** App-specific words, agents and content live in a pack. A base-code change is a pull request to the mold's source, never a fork.
+- **Nothing is guessed.** A figure that can't be measured says "not measured", never 0.
+
+## Documentation
+
+- [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md): the whole system, end to end.
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md): operator runbook, from brief to live app, including your own server.
+- [`docs/INTAKE.md`](docs/INTAKE.md): the questions intake asks, and how each is resolved.
+- [`docs/PRODUCTS.md`](docs/PRODUCTS.md): products, packaging and stage gates.
+- [`docs/COST_MODEL.md`](docs/COST_MODEL.md): inference and hosting costs per workspace.
+- [`docs/STATE.md`](docs/STATE.md): the state files.
+- [`AGENTS.md`](AGENTS.md): the rules any agent working in this repository follows.

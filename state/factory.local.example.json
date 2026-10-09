@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json.",
+  "defaults": {
+    "operator_email": "you@yourcompany.com",
+    "notify_domain": "yourcompany.com",
+    "vercel_team": "your-vercel-team-slug",
+    "vm": { "host": "203.0.113.10" }
+  }
+}
