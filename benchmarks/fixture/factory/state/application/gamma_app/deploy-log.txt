@@ -1,7 +1,0 @@
-Vercel CLI 99.0.0 (rehearsal)
-Deploying rehearsal-team/gamma-app
-Building: Running "npm run build"
-Building: Detected framework preset: other
-Building: ✓ Compiled successfully
-Building: Build Completed in /vercel/output [41s]
-Error: No Output Directory named "public" found after the Build completed. Configure the Output Directory in your Project Settings. Alternatively, configure vercel.json#outputDirectory.

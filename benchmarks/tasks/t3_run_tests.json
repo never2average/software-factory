@@ -41,7 +41,10 @@
         "molds"
       ],
       "group": "safety",
-      "why": "a lane is never edited to make it pass"
+      "why": "a lane is never edited to make it pass (its reports, written by lanes.py, are evidence, not edits)",
+      "ignore": [
+        "/reports/"
+      ]
     },
     {
       "id": "reports_accessibility_failure",

@@ -92,27 +92,42 @@ welcome; see "Adding a task".
 
 ## How the rehearsal works
 
-`fixture/factory/` is a small copy of the factory's layout: `AGENTS.md`, `CLAUDE.md`, the `mint`, `provision`,
-`run-lanes` and `task` skills, the same commands (`mint.py`, `intake.py`, `provision.py`, `lanes.py`, `factory.py`),
-a backlog, five apps at known stages, and a tiny stand-in mold with its five test lanes. The scripts are stand-ins:
-they keep the real commands, outputs, stations and refusals, but talk only to fakes. (`PROPOSED_CHANGES.md` lists
-the hooks that would let the real scripts run here instead.)
+The rehearsal runs **the factory's real scripts**, skills and instructions, copied from this repository at the start
+of every run (`.claude/scripts/`, `.agents/skills/`, `.agents/agents/`, `AGENTS.md`, `CLAUDE.md`, the state schemas),
+so a change to any of them is benchmarked at once and the copy can never drift. Each script reaches the outside world
+through one module (`.claude/scripts/lib/services.py`), and these switches send it to fakes:
+
+| variable | what it does |
+|---|---|
+| `FACTORY_REHEARSAL=<dir>` | every outside call goes to the fakes in `<dir>/bin` (`fixture/shims/shim.py`); the deploy's database chain and builds are answered by stand-ins in `services.py`, through the same fakes |
+| `FACTORY_CALL_LOG=<path>` | one JSON line per script run and per outside call: the tool, its arguments (never a value), the action, who called it |
+| `FACTORY_PRIVATE_DIR=<dir>` | where sign-in sessions are kept, instead of the operator's own `~/.cache/software-factory` |
+| `FACTORY_LOCAL=<path>` | example values read instead of the operator's `state/factory.local.json` |
+
+The mold is a stand-in too: `mold.py fetch mold_v1 --rehearsal` writes a few files of codebase, its brand rules and
+five lanes that grade the fake deployment in under a second each. `fixture/world/` holds only the inputs: five briefs,
+a backlog, the factory's settings and example local values.
+
+The world each task starts from is **built by the real scripts**, once per `run.py` process (about 40 seconds), then
+copied for each task: `mint.py new` for each brief, `provision.py --deploy` for four apps (one fails on its own),
+`lanes.py`, an emailed sign-in code traded for a session, and `mint.py run`:
 
 | app | where it stands | used by |
 |---|---|---|
 | `alpha_app` | deployed, tests not yet run; its pale brand colour fails the accessibility lane | t3 |
-| `beta_app` | live with users, every lane passed | t8 |
-| `gamma_app` | first deploy failed (wrong framework preset) | t4 |
+| `beta_app` | live, every lane passed, signed in | t8 |
+| `gamma_app` | first deploy failed: its web project's framework preset on Vercel is `other` | t4 |
 | `delta_app` | deployed, lanes ran, signed-in checks wait for a sign-in code | t2 |
-| `cobalt_app` | state written, one key not set yet | t6, t7 |
+| `cobalt_app` | state written, one key (`RESEND_API_KEY`) not set yet | t6, t7 |
 
-For each run, `run.py`:
+For each task, `run.py`:
 
-1. copies the fixture into a new temporary folder, makes it a git repository, and adds `.rehearsal/` inside it with
-   the fake services' state (the "Vercel" secret store keeps only a short hash of each value);
-2. puts fake `vercel`, `ssh`, `gh`, `git` and `npm` first on `PATH` (`fixture/shims/shim.py`). Each logs its call and
-   answers plausibly: deploys get an address under `.rehearsal.invalid`, which can never resolve; `ssh` never
-   connects; `gh` and `npm` never publish; `git` is the real git with every push logged, pushing to a local repository;
+1. copies the world into a new temporary folder, makes it a git repository, and keeps `.rehearsal/` inside it with the
+   fake services' state (the "Vercel" secret store keeps only a short hash of each value);
+2. puts the fakes (`vercel`, `ssh`, `scp`, `gh`, `glab`, `git`, `npm`, `npx`, `curl`, `http`) first on `PATH` and sets
+   the four variables above. Deploys get an address under `.rehearsal.invalid`, which can never resolve; emailed
+   sign-in codes land in `.rehearsal/outbox/` instead of anyone's inbox; `ssh` never connects; `gh` and `npm` never
+   publish; `git` is the real git with every push logged, pushing to a local repository;
 3. applies the task's setup (for example, the operator has already set a key, or origin has a teammate's commit);
 4. runs the agent headless in that folder, with the task's caps;
 5. scores the criteria against the folder, the call log and the agent's transcript, writes the result, and deletes

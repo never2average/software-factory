@@ -1,9 +1,0 @@
-{
-  "lane": "context",
-  "checks": [
-    {
-      "name": "workspace isolation: a second workspace's rows are unreadable",
-      "kind": "isolation"
-    }
-  ]
-}

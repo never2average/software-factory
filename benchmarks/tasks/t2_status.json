@@ -6,7 +6,7 @@
   "prompt": [
     "Where does delta_app stand?"
   ],
-  "expected_answer": "Deployed at https://delta-app.rehearsal.invalid; every station up to tests is done; next: tests needs the operator: nothing failed, but the signed-in checks in functional, accessibility and responsiveness were skipped and need a one-time sign-in code (mint.py delta_app code-request <email>, then code <digits> <email>).",
+  "expected_answer": "Deployed at https://delta-docs.rehearsal.invalid; every station up to tests is done; next: tests needs the operator: nothing failed, but the signed-in checks in functional, accessibility and responsiveness were skipped and need a one-time sign-in code (mint.py delta_app code-request <email>, then code <digits> <email>).",
   "caps": {
     "turns": 10,
     "seconds": 240,
@@ -48,7 +48,7 @@
         [
           "deployed",
           "live",
-          "delta-app.rehearsal.invalid"
+          "delta-docs.rehearsal.invalid"
         ]
       ],
       "group": "task",

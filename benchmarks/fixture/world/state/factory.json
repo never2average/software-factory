@@ -1,0 +1,73 @@
+{
+  "$schema": "./factory.schema.json",
+  "factory_id": "rehearsal",
+  "operator": {
+    "model": "fable",
+    "human_role": "operator"
+  },
+  "service_surface": [
+    {
+      "name": "dm.md"
+    },
+    {
+      "name": "browser",
+      "optional": true,
+      "flag": "ENABLE_BROWSER"
+    },
+    {
+      "name": "web_search",
+      "optional": true,
+      "flag": "ENABLE_WEB_SEARCH"
+    },
+    {
+      "name": "primary_context"
+    },
+    {
+      "name": "multiplayer_context"
+    },
+    {
+      "name": "custom_workflow_builder"
+    }
+  ],
+  "molds": [
+    {
+      "mold_id": "mold_v1",
+      "status": "active",
+      "definition": "multi-workspace, multi-agent web app (rehearsal stand-in)",
+      "target_model": "GLM 5.2",
+      "capabilities": [],
+      "path": "molds/mold_v1",
+      "source": {
+        "commit": "c0ffee1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b",
+        "snapshot_date": "2026-10-01"
+      }
+    }
+  ],
+  "loop": {
+    "service": "operator->surface->mold",
+    "revert": "surface->operator",
+    "revert_on": [
+      "load",
+      "context",
+      "functional",
+      "accessibility",
+      "responsiveness"
+    ]
+  },
+  "applications": [],
+  "products": "state/products.json",
+  "tasks": "state/tasks/<mold_id>.jsonl",
+  "defaults": {
+    "confirmed": true,
+    "deploy_target": "vercel",
+    "secret_store": "vercel_env",
+    "postgres_provider": "neon",
+    "blob_provider": "vercel_blob",
+    "inference_provider": "cloudflare_workers_ai",
+    "inference_model": "@cf/zai-org/glm-5.2",
+    "sandbox_provider": "vercel_sandbox",
+    "vercel_team": "your-vercel-team",
+    "postgres_scope": "fresh",
+    "operator_email": "operator@example.com"
+  }
+}

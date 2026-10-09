@@ -1,6 +1,0 @@
-{
-  "products": [
-    {"product_id": "harbor", "mold_id": "mold_v1", "name": "Harbor", "stage": "deployed",
-     "gates": {"stamped": ["state filled"], "lanes_passing": ["all five lanes pass"], "deployed": ["production URL"], "released": ["onboarding path works end to end"]}}
-  ]
-}

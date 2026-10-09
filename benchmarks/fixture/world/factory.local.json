@@ -1,0 +1,11 @@
+{
+  "_comment": "The rehearsal's own example values (FACTORY_LOCAL); never a real address.",
+  "defaults": {
+    "operator_email": "operator@rehearsal.example",
+    "notify_domain": "rehearsal.example",
+    "vercel_team": "rehearsal-team"
+  },
+  "mold_sources": {
+    "mold_v1": "https://git.rehearsal.invalid/mold-source.git"
+  }
+}

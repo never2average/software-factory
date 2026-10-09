@@ -1,0 +1,31 @@
+{
+  "$schema": "./products.schema.json",
+  "products": [
+    {
+      "product_id": "harbor",
+      "mold_id": "mold_v1",
+      "name": "Harbor",
+      "stage": "deployed",
+      "target_model": "GLM 5.2",
+      "gates": {
+        "stamped": [
+          "state filled"
+        ],
+        "lanes_passing": [
+          "all five lanes pass"
+        ],
+        "deployed": [
+          "production URL"
+        ],
+        "released": [
+          "onboarding path works end to end"
+        ]
+      },
+      "app_ids": [],
+      "deploy_targets": [
+        "vercel"
+      ],
+      "vercel_project": "harbor"
+    }
+  ]
+}
