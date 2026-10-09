@@ -970,7 +970,22 @@ def packages_sh(S):
 @HEAD@# What the server needs before the app can be built on it. Safe to run again: every part checks first.
 set -eu
 @GUARD@export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
+# apt-get update, but a broken Caddy package source does not stop a server that already has Caddy (2026-10-09: Caddy's
+# Cloudsmith source answered 402 Payment Required to everyone, and every redeploy stopped here). On a failure, and only
+# when Caddy is already installed, the update is run again over a copy of the source list without Caddy's entry (a
+# fixed folder of the factory's, only ever overwritten, so the script deletes nothing); the server's own source list
+# is not edited, and Caddy keeps running the version it has.
+apt_update() {
+  if apt-get update -q; then return 0; fi
+  if ! command -v caddy >/dev/null 2>&1 || ! ls /etc/apt/sources.list.d/caddy-stable.* >/dev/null 2>&1; then return 1; fi
+  echo "packages: apt-get update failed; retrying without Caddy's package source (Caddy is installed and keeps its version)" >&2
+  install -d -m 755 /var/lib/software-factory/apt-sources-without-caddy
+  for f in /etc/apt/sources.list.d/*; do
+    case "$(basename "$f")" in caddy-stable.*) ;; *) cp -p "$f" /var/lib/software-factory/apt-sources-without-caddy/ ;; esac
+  done
+  apt-get update -q -o Dir::Etc::sourceparts=/var/lib/software-factory/apt-sources-without-caddy
+}
+apt_update
 apt-get install -y -q ca-certificates curl gnupg rsync ufw fail2ban nftables python3 openssl build-essential ssl-cert sysstat
 # sysstat's history (load, memory, pressure every 10 minutes) is what provision.py --capacity judges (mold_v1-195).
 sed -i 's/^ENABLED="false"/ENABLED="true"/' /etc/default/sysstat 2>/dev/null || true
@@ -991,7 +1006,7 @@ if [ ! -d /usr/lib/postgresql/@PGV@ ]; then
     curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
     . /etc/os-release
     echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list
-    apt-get update -q
+    apt_update
   fi
   apt-get install -y -q postgresql-@PGV@
 fi
