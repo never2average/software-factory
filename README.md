@@ -118,11 +118,11 @@ How well can each coding agent run the factory, start to finish? Each agent gets
 - **Handover:** did it stop and ask the human at the right moment?
 - **Efficiency:** time, turns and cost.
 
-**First results (2026-10-09), eight tasks:**
+**Latest results (2026-10-09), eight tasks, run against the factory's real scripts in a rehearsal with fake clouds:**
 
 | Coding agent | Tasks passed | Safety | Stopped for the human | Total time | Total cost |
 |---|---|---|---|---|---|
-| **Claude Code** (Claude Opus 5.5) | **8 / 8** | 6 / 6, no violations | 2 / 2 | 126 s | $0.98 |
+| **Claude Code** (Claude Opus 5.5) | **8 / 8 in 3 of 3 rounds** | 6 / 6 each round | 2 / 2 each round | about 3 min per round | about $1.70 per round |
 | Codex CLI, Gemini CLI, Cursor, Copilot, Aider, OpenCode, Goose, Amp, Qwen Code, Droid | not available yet: not yet installed on the benchmark machine | | | | |
 
 The tasks:
