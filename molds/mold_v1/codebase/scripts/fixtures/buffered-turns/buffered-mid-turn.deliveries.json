@@ -1,0 +1,13 @@
+{
+  "note": "MSG-2 POSTed while turn_0 was still streaming: eve answers 200 and runs it as turn_1 after turn_0's session.waiting.",
+  "deliveries": [
+    {
+      "at": 0,
+      "message": "MSG-1 slow"
+    },
+    {
+      "at": 5,
+      "message": "MSG-2 sent mid-turn"
+    }
+  ]
+}

@@ -1,0 +1,161 @@
+{
+  "platformVersionId": "2026.06.3",
+  "agentId": "research-copilot",
+  "recipe": {
+    "agentId": "research-copilot",
+    "platformVersionId": "2026.06.3",
+    "title": "Research Copilot seed recipe",
+    "instructions": "# Research Copilot\n\nSeed the workspace with the coverage universe and house style guide, then answer analyst questions with cited excerpts from filings and internal research.\n",
+    "seedFiles": [
+      {
+        "path": "recipe/coverage-universe.csv",
+        "description": "Tickers and sectors the desk covers",
+        "contentType": "text/csv"
+      },
+      {
+        "path": "recipe/house-style.md",
+        "description": "Citation and tone guide for drafted answers",
+        "contentType": "text/markdown"
+      }
+    ],
+    "requiredConnectors": ["edgar", "sharepoint"],
+    "requiredTools": ["web_search", "record_interaction"],
+    "version": "2.1.0",
+    "updatedAt": "2026-06-12T09:00:00Z"
+  },
+  "runConfigsSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.example.com/2026.06.3/agents/research-copilot/run_configs.schema.json",
+    "title": "Research Copilot run config",
+    "type": "object",
+    "properties": {
+      "temperature": { "type": "number", "minimum": 0, "maximum": 1 },
+      "maxCitations": { "type": "integer", "minimum": 1 },
+      "retrievalTopK": { "type": "integer", "minimum": 1 }
+    },
+    "required": ["retrievalTopK"]
+  },
+  "evals": {
+    "dataset": [
+      {
+        "caseId": "case-earnings-summary-01",
+        "input": {
+          "question": "Summarize Example Co's Q1 2026 earnings call in three bullets.",
+          "ticker": "EXMPL"
+        },
+        "expected": {
+          "mustMention": ["revenue growth", "net interest margin", "guidance"]
+        },
+        "tags": ["earnings", "summarization"],
+        "weight": 1,
+        "createdAt": "2026-06-01T12:00:00Z"
+      },
+      {
+        "caseId": "case-citation-grounding-02",
+        "input": {
+          "question": "What did the 10-K say about deposit concentration risk?",
+          "ticker": "EXMPL"
+        },
+        "reference": "Item 1A, Deposit concentration risk paragraph",
+        "tags": ["grounding", "citations"],
+        "weight": 2
+      }
+    ],
+    "benchmark": [
+      {
+        "metric": "groundedness",
+        "threshold": 0.9,
+        "comparison": "gte",
+        "baseline": 0.86,
+        "appliesToTags": ["grounding"],
+        "description": "Grounded-answer rate must clear 90% on citation cases."
+      }
+    ],
+    "runs": [
+      {
+        "config": {
+          "runId": "run-2026-06-20-a",
+          "target": {
+            "kind": "agent",
+            "agentId": "research-copilot",
+            "platformVersionId": "2026.06.3"
+          },
+          "model": "example-research-1",
+          "modelParams": { "temperature": 0.2 },
+          "runConfig": { "retrievalTopK": 8, "maxCitations": 5 },
+          "datasetRef": "{folder:solutions}/2026.06.3/agents/research-copilot/evals/dataset.jsonl",
+          "benchmarkRef": "{folder:solutions}/2026.06.3/agents/research-copilot/evals/benchmark.jsonl",
+          "gitSha": "9f2c41ab",
+          "initiatedByEmail": "quinn@example.com",
+          "startedAt": "2026-06-20T07:00:00Z",
+          "completedAt": "2026-06-20T07:12:00Z"
+        },
+        "outputs": [
+          {
+            "runId": "run-2026-06-20-a",
+            "caseId": "case-earnings-summary-01",
+            "output": {
+              "answer": "Revenue grew 9% YoY; net interest margin expanded 12bps; FY guidance reaffirmed."
+            },
+            "scores": { "groundedness": 0.95, "completeness": 0.9 },
+            "pass": true,
+            "gradedBy": "llm_judge",
+            "latencyMs": 5400,
+            "inputTokens": 6120,
+            "outputTokens": 410
+          },
+          {
+            "runId": "run-2026-06-20-a",
+            "caseId": "case-citation-grounding-02",
+            "output": {
+              "answer": "The 10-K flags concentration in commercial deposits from ten relationships.",
+              "citations": ["10-K Item 1A ¶4"]
+            },
+            "scores": { "groundedness": 0.92 },
+            "pass": true,
+            "gradedBy": "llm_judge",
+            "latencyMs": 4800
+          }
+        ],
+        "traces": [
+          {
+            "runId": "run-2026-06-20-a",
+            "traceId": "tr-8842",
+            "at": "2026-06-20T07:00:00Z",
+            "eventType": "run_start",
+            "name": "eval run start"
+          },
+          {
+            "runId": "run-2026-06-20-a",
+            "traceId": "tr-8842",
+            "spanId": "sp-01",
+            "caseId": "case-earnings-summary-01",
+            "at": "2026-06-20T07:00:05Z",
+            "eventType": "llm_call",
+            "name": "draft-answer",
+            "durationMs": 5100,
+            "payload": { "model": "example-research-1" }
+          },
+          {
+            "runId": "run-2026-06-20-a",
+            "traceId": "tr-8842",
+            "spanId": "sp-02",
+            "parentSpanId": "sp-01",
+            "caseId": "case-citation-grounding-02",
+            "at": "2026-06-20T07:06:00Z",
+            "eventType": "retrieval",
+            "name": "filing-retrieval",
+            "durationMs": 900,
+            "payload": { "topK": 8 }
+          },
+          {
+            "runId": "run-2026-06-20-a",
+            "traceId": "tr-8842",
+            "at": "2026-06-20T07:12:00Z",
+            "eventType": "run_end"
+          }
+        ]
+      }
+    ]
+  }
+}

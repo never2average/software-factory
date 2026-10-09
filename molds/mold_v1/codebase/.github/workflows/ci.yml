@@ -1,0 +1,1508 @@
+name: CI
+
+# Why this exists: the repo had 17 test scripts and nothing that ran them.
+# They executed only when someone remembered, which is how `main` drifted 88
+# commits behind production and how a set of fail-open cron guards reached
+# review. This turns the existing suite from documentation into a gate.
+#
+# Everything here runs WITHOUT a database or any secret, so it works on forks
+# and on the very first push. The database-backed checks (test:org-isolation,
+# test:browser) are deliberately NOT here — see the note at the bottom.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same PR makes the previous run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # 13.5 minutes measured before test:specialist-detach grew to ~6 (mold_v1-184 review scenarios).
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # eve 0.25.1 is patched (patches/eve+0.25.1.patch, applied by patch-package in postinstall; the readable source
+      # is scripts/eve-patch/). The build fails unless eve is pinned exactly, installed at that version, and carries
+      # exactly the recorded patch (mold_v1-184).
+      - name: eve is the version the patch is for, with the patch on it
+        run: npm run check:eve-patch
+
+      # A Vercel build runs `npm install` over node_modules restored from its build cache, so `postinstall` meets an eve
+      # that already carries a patch: this one (a redeploy) or the PREVIOUS revision (the first deploy after the patch
+      # changed). Plain patch-package failed the second ("Failed to apply patch for package eve") and broke the live
+      # deploy of #133. Postinstall is applied again here, then over a stand-in for an older revision: plain
+      # patch-package must fail that, and postinstall must put eve back as published and patch it. Leaves eve patched.
+      - name: The eve patch survives a second install and an install over an older patch (postinstall)
+        run: npm run test:eve-patch-install
+
+      # A checkout another job (or a local run) stamped with another deployment profile fails here, by name, before
+      # anything builds from it (mold_v1-188). Every job also runs this last.
+      - name: Checkout matches the commit (profiles/, generated files)
+        run: npm run check:checkout-clean
+
+      # The copy those profile-stamping checks build in is removed on every way out (pass, fail, process.exit,
+      # SIGINT, SIGTERM), and the guard above fails on a profile or generated file left behind.
+      - name: Stamped copies leave nothing behind (every exit path; the guard both ways)
+        run: npm run test:checkout-copy
+
+      # Generated artifacts must match their sources. Every one of these is
+      # committed AND derived, so a source edit without a regenerate ships
+      # yesterday's output — silently. subagent-meta had drifted 146 lines,
+      # misrepresenting the agent's own subagents in the UI, and nothing
+      # noticed because nothing checked.
+      - name: Generated artifacts are current
+        run: npm run check:generated
+
+      # Subagents are discovered, never listed: the registry must match the directories, every subagent.json must
+      # be one the data room can load, and every workspace-standard subagent (incl. any pack's) must pass.
+      - name: Subagent registry and workspaces
+        run: npm run check:subagent-shared && npm run check:subagents
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Catches the class of bug that a typecheck cannot: a route that compiles
+      # but fails to build, a client/server boundary violation, a bad import.
+      - name: Build
+        run: npm run build
+
+      # FIRST-LOAD JAVASCRIPT HAS A BUDGET. Opening the chat downloaded 32 files, 4.4 MB of JavaScript (1.0 MB
+      # brotli) before the person did anything: shiki, katex, mermaid, recharts, zod, motion and every Ops Center
+      # panel were imported at the top of modules the chat loads. They load on first use now; this keeps it that way.
+      # It weighs what `next build` reports each page loads first against scripts/bundle-budget.json (brotli +5% or
+      # +20 KB, whichever is smaller; no extra file; a missing page fails) and, since size alone let motion back in
+      # at +34 KB, checks by MODULE IDENTITY that none of the lazily loaded libraries and panels is in a first load:
+      # a second, source-mapped build into .next-budget/ (so .next/ never holds maps) attributes every byte to its
+      # module. A failure names the modules that are new or heavier.
+      - name: First-load JavaScript within budget
+        if: always()
+        run: npm run check:bundle-budget
+
+      # The offline suites. Each is independent, so `if: always()` reports every
+      # failure in one run instead of stopping at the first — a green-after-fix
+      # loop that only ever shows you one problem at a time wastes a cycle per
+      # bug.
+      - name: Prompt context
+        if: always()
+        run: npm run test:prompt-context
+
+      - name: Memory store
+        if: always()
+        run: npm run test:memory
+
+      - name: Browser security
+        if: always()
+        run: npm run test:browser-security
+
+      - name: Workflow leases
+        if: always()
+        run: npm run test:workflow-leases
+
+      - name: Cron matching
+        if: always()
+        run: npm run test:cron-match
+
+      - name: Schedules
+        if: always()
+        run: npm run test:schedules
+
+      - name: Render
+        if: always()
+        run: npm run test:render
+
+      - name: System of record
+        if: always()
+        run: npm run test:sor
+
+      # Every workspace's data room is its own prefix (dataroom/orgs/<id>/), a missing workspace id throws, and the
+      # legacy workspace no longer lists the others' trees. Both drivers and every door, against an in-memory blob
+      # store answering the real @vercel/blob client; plus the one-time move of the root (lib/dataroom-keyspace.ts).
+      - name: Data room isolation (every door, both drivers, the root's migration)
+        if: always()
+        run: npm run test:dataroom-isolation
+
+      # The data room's folder names are the deployment profile's (dataroom.domains.<id>.folder), never the code's.
+      # A copy of the checkout stamped with the pin a deployment that already holds files carries must store every
+      # path where it always did: the stored-path census (the grammar, a file written/listed/read at every template,
+      # the agent's tools, the workbooks, the web guards, the starter tree, both seeders) and the object keys every
+      # door asks the store for are held byte for byte to before-images taken on the last commit that had the names
+      # in the code. The default profile stores the same tree under its own names, and a data room that holds a
+      # former folder its profile does not use is refused at build and at the first write, never forked.
+      - name: Data room folder names (the profile's; a pinned deployment moves nothing; an unpinned one is refused)
+        if: always()
+        run: npm run test:dataroom-folders
+
+      # THE FILE STORE IS BEHIND ONE INTERFACE (lib/storage), and the live app must not notice. Three steps:
+      #
+      #   1. The boundary: `@vercel/blob` is imported by lib/storage/vercel-blob.ts and nowhere else in the
+      #      application, and no application code names the Vercel Blob host (the host allow-lists ask the driver).
+      #   2. The default: with STORAGE_DRIVER unset (and again with vercel-blob), every code path that touches the
+      #      store makes the SAME calls into @vercel/blob (operation, key, options), sends the same requests, reads
+      #      signed URLs with the same fetch options and returns the same values as the code before the driver
+      #      (recorded at 6f10b09 by this same script: scripts/fixtures/storage/default-driver.golden.json).
+      #   3. The other drivers: the filesystem and S3 drivers keep the contract the callers rely on (plain-prefix
+      #      listing, order, pages, atomic writes, one winner for a contested key), a path-backed key cannot leave the
+      #      root, the app's own signed links are refused when tampered, expired or re-pointed, and one workspace
+      #      cannot read, list or overwrite another's files through the agent's store, the web reader or the routes.
+      #      The S3 signer is held to the worked examples in Amazon's documentation.
+      - name: Storage driver boundary (one file imports @vercel/blob; no call site names its host)
+        if: always()
+        run: npm run check:storage-driver
+
+      - name: Default storage driver makes today's exact Vercel Blob calls (recorded before the driver)
+        if: always()
+        run: npm run test:storage-default
+
+      - name: Storage drivers (filesystem, S3, signed links, workspace isolation on each)
+        if: always()
+        run: npm run test:storage-drivers
+
+      # THE FILESYSTEM DRIVER SHARED BY TWO SERVICE USERS (STORAGE_FS_GROUP_SHARED=1), for a server that runs the web
+      # app and the agent as different users. Unset, every folder and file has the mode it had before the setting
+      # (0700 / 0600; recorded at 1f43117 by this same script: scripts/fixtures/storage/filesystem-modes.golden.json).
+      # On, folders are 2770 and files 0660 under any umask, the root is refused unless it is set up for exactly
+      # that, and two real user ids in one group read, overwrite and delete each other's files through the driver
+      # while a third reads nothing. That last part runs as other users through the runner's passwordless sudo (no
+      # account is created; one scratch directory, removed). REQUIRE_TWO_USERS makes "could not run it" a failure here.
+      - name: Filesystem storage shared by two users (unset is today's modes; on, one group and nobody else)
+        if: always()
+        run: REQUIRE_TWO_USERS=1 npm run test:storage-fs-group-shared
+
+      # A MISCONFIGURED store is not "not configured". A mistyped STORAGE_DRIVER, or a selected driver missing a
+      # setting, used to read as an empty data room (GET /api/dataroom 200 {"paths":[]}) and as "storage is not
+      # configured": storageConfigured() swallowed the error and answered false. Now every storage route answers 503
+      # naming the setting, the agent throws the same error, and it is logged once when the module loads. The
+      # not-configured answers (default driver, no token) are asserted byte-for-byte unchanged, and so is "nothing
+      # logged" with nothing set. Fails on the code before the fix (113 of 172 checks).
+      - name: A misconfigured storage driver fails loudly (503 naming the setting; not-configured unchanged)
+        if: always()
+        run: npm run test:storage-misconfigured
+
+      # lib/storage is server-only: it holds the store's credentials. `import "server-only"` throws in the agent and
+      # in plain node scripts, which load these modules too, so the guard is lib/storage/server-guard.ts at run time
+      # and this at build time: no "use client" file may reach anything under lib/storage/ except hosts.ts.
+      - name: Storage modules are server-only (a client component may import lib/storage/hosts.ts only)
+        if: always()
+        run: npm run check:storage-server-only
+
+      # Text on a tinted panel (bg-<hue>-500/10 with text-<hue>-700, …) must read 4.5:1 on every light and dark surface
+      # token in app/globals.css. The page colour is not white, so a shade that clears it on white can fail live: the
+      # accessibility lane caught the chat sidebar's save notice at 4.23:1.
+      - name: Tinted text reads 4.5:1 on every surface (WCAG AA)
+        if: always()
+        run: npm run check:tint-contrast
+
+      # A link to a chat names its workspace and the tab adopts it; each tab keeps its own workspace and names it on
+      # every request, the /eve proxy included (the agent side is in test:session-guard, isolation job).
+      - name: Deep links and tabs carry their workspace
+        if: always()
+        run: npm run test:workspace-deep-link
+
+      - name: Workbook spec
+        if: always()
+        run: npm run test:workbook-spec
+
+      # The data room's workbook preview: long text cut on whole characters (never inside an emoji), the cap
+      # banner saying the order the rows were kept in, and free-text dates read as dates for "most recent first".
+      - name: Workbook preview (text cut, cap banner, date order wiring)
+        if: always()
+        run: npm run test:workbook-preview
+
+      # These four existed and were never wired in, so the chat suite ran only
+      # when somebody typed it — which is the pre-CI failure mode this file was
+      # written to end. Every chat regression this month shipped past a green CI
+      # that was not looking at chat.
+      - name: Chat reliability
+        if: always()
+        run: npm run test:chat-persistence
+
+      # Saving the sidebar to localStorage has been rewritten twice under
+      # pressure, and both rewrites lost something — one evicted old chats on
+      # overflow, the other stripped every transcript but the newest four.
+      # Neither could have been caught, because the only thing guarding that
+      # code was a regex over a .tsx file. The rules now live in
+      # lib/chat-persist.ts and this RUNS them. It matters more since the write
+      # was moved off the React commit onto an animation frame (it was 266 ms of
+      # JSON.stringify + setItem per persist of a streaming turn): what must
+      # still hold is checked against a storage that really throws
+      # QuotaExceededError, and against the pre-change implementation byte for
+      # byte — a departing page still persists synchronously, a half-updated
+      # list can never be stored, the back-off still strips oldest-first and
+      # still caps, and a chat that did not change is not serialised again.
+      # The main chat's sandbox must be able to READ an uploaded document. A real upload died on
+      # a missing pdfplumber on 2026-09-23 and nothing asserted the library list.
+      - name: Sandbox document libraries
+        if: always()
+        run: npm run test:sandbox-libs
+
+      # WHERE THE SANDBOX RUNS is a setting now (SANDBOX_BACKEND), for a deployment that is not on Vercel. With it
+      # unset both sandbox definitions must be what they were: no backend named (eve picks Vercel Sandbox on Vercel),
+      # the same bootstrap commands, the formatter at /root/fmt_xlsx.py and the research prompt naming it. With
+      # microsandbox: 2 vCPUs, 1024 MiB, and a network policy eve's own translation turns into deny rules for cloud
+      # metadata, the private ranges and loopback. Loads the real modules per setting; creates no sandbox (no KVM
+      # here). Then the serial prewarm script's self-test (stale locks, one template at a time).
+      # Then what makes the setting reach EVERY sandbox (scripts/lib/sandbox-overlay.mjs): with it unset the eve
+      # build is handed the committed files byte for byte; with microsandbox every node's sandbox slot holds a
+      # wrapper, and the tree is put back after a build, a failed build and a killed one. The prewarm refuses a
+      # node that would start on eve's defaults, and gives up on a template that hangs. (The same through the real
+      # `eve build` is the sandbox-coverage job below.)
+      - name: Sandbox backend setting (default unchanged, microsandbox policy, serial prewarm)
+        if: always()
+        run: npm run test:sandbox-backend
+
+      # VISION IS A TOOL NOW, NOT A PROPERTY OF THE ORCHESTRATOR. The orchestrator was
+      # Kimi K2.6 only because it reads images; it began returning MODEL_CALL_FAILED
+      # ("Empty model response") on real uploads, so the fleet moved to a text-only
+      # GLM 5.3 and lost image understanding. This holds the replacement: the tool is
+      # declared in what SHIPS and gated everywhere it is declared (a pack's subagents
+      # included), the vision role does NOT chain to the fleet's text-only model, an
+      # image reaches the provider as an image, an empty completion is one refusal
+      # rather than a dead turn, a scanned pdf is rendered and read inside a page and
+      # byte bound, and the data-room reader accepts exactly the paths the data-room
+      # door accepts. It calls no provider: scripts/fake-model-server.mjs answers and a
+      # stub `fitz` stands in for pymupdf, so there is no network and no wheel download.
+      - name: Vision tool (behavioural)
+        if: always()
+        run: npm run test:vision
+
+      - name: Chat list persistence (behavioural)
+        if: always()
+        run: npm run test:chat-persist-coalesce
+
+      # The BEHAVIOURAL chat tests — they execute the real module rather than
+      # Reopening a thread mounts a CACHED transcript and replays only the tail,
+      # so a conversation can now be assembled from two sources — and one
+      # assembled wrongly is invisible to the person reading it. This runs eve's
+      # real reducer over several transcripts, at every point one could be split,
+      # and fails if the result differs from a full replay by a single byte. It
+      # also holds the access rule: a cached transcript is the most complete copy
+      # of a conversation this system stores.
+      - name: Thread snapshot equals a full replay (behavioural)
+        if: always()
+        run: npm run test:thread-snapshot
+
+      # WHO MAY REACH A CONVERSATION. Every hole closed here was a
+      # correct-looking rule sitting on top of a read that returned nothing —
+      # the gate in front of eve's own session routes said "deny when it belongs
+      # to someone else" in a comment and allowed every signed-in caller in
+      # fact, because it asked an unscoped handle under a fail-closed policy. So
+      # this RUNS the decisions, RUNS the shared-thread proxy's token redaction
+      # over real NDJSON at every chunk boundary, and requires check:tenancy to
+      # fail on the SHAPE of the original bug — the regression guard matters as
+      # much as the fix, since the reason it survived is that nothing ever
+      # scanned the directory it lived in. The database half (those reads really
+      # do return zero rows) is in the isolation job below.
+      - name: Chat access control (behavioural)
+        if: always()
+        run: npm run test:chat-access
+
+      # ONE WORKSPACE CANNOT REACH ANOTHER'S RECORD BY ID. get_customer returned another workspace's whole record:
+      # getCustomer read across every workspace, then asked in the caller's scope who owned the row, and under the
+      # fail-closed policy that second read saw nothing and `row?.orgId && …` let it through. Every by-id tool now
+      # passes the caller's workspace, and this holds the WIRING (no tool may omit it or take its workspace from a
+      # customer id), that a failed query's error never carries its values to the model or an API response, and that
+      # check:tenancy fails on each shape of the guard. The database half is in the isolation job below.
+      - name: Cross-workspace reads by id (wiring, error text, ratchet)
+        if: always()
+        run: npm run test:cross-workspace
+
+      # WHO MAY NAME A WORKSPACE. A service session names the workspace it acts for; eve's vercelOidc also admits
+      # every token of the agent's OWN project in any environment (a preview of any branch, a developer's env pull),
+      # so trusting "any Vercel token" let those pick any tenant. This signs the reviewer's token matrix locally and
+      # runs it through the REAL verifier: only the front-end's production token may name one.
+      - name: Service tokens that may name a workspace (real vercelOidc, locally signed)
+        if: always()
+        run: npm run test:service-scope-oidc
+
+      # THE SAME SERVICE, OFF VERCEL. There is no Vercel OIDC token off Vercel, so the crons, the run trigger and the
+      # run-cancel fan-out did nothing there. With SERVICE_AUTH=session-key the web app signs a two-minute token with
+      # the session key pair and the agent admits it under the SAME service rules. This signs every wrong token
+      # (expired, wrong audience, wrong kind, wrong key, a person's sign-in replayed or rewritten) and drives them
+      # through the real channel and the real door; then again with the setting UNSET, where the door must not exist
+      # and the web app must present exactly what it presents today.
+      - name: Web app service identity off Vercel (session-key token, real channel, setting on and unset)
+        if: always()
+        run: npm run test:service-identity
+
+      # CONNECTOR CREDENTIALS PER WORKSPACE. GitHub's on every target; Slack's with CONNECTIONS_PROVIDER=env, for a
+      # server that is not on Vercel.
+      #
+      #   1. The default: with the setting unset (and again with vercel-connect) the two files that import
+      #      @vercel/connect make the SAME calls into it with the same arguments and hand eve the same Slack
+      #      definitions as the code before the setting (recorded at 4ad0c2c by this same script:
+      #      scripts/fixtures/connections/default-provider.golden.json). The recording's GitHub lines were changed
+      #      on purpose: the read-only tool list, and the credential resolved per workspace (a per-caller resolver;
+      #      nothing configured is "not connected", not an empty bearer). The token and the mint request are the same.
+      #   2. A workspace's credentials are its own stored connector secrets, or the server's environment values for
+      #      the one workspace CONNECTIONS_WORKSPACE names; never another workspace's. A server-wide GitHub
+      #      credential is ignored without it (one warning), however many workspaces there are. With nothing configured the real eve modules still load, a tool call gets eve's
+      #      own authorization-failed error (what an uninstalled Connect connector raises), and with the setting on
+      #      Vercel Connect is never called and the real Slack route refuses an inbound request. No request is made
+      #      to Slack or GitHub.
+      - name: Connectors with CONNECTIONS_PROVIDER unset make exactly the recorded calls (Slack as before the setting; GitHub per workspace)
+        if: always()
+        run: npm run test:connections-default
+
+      - name: Connector credentials per workspace (its own, or the server's for the workspace CONNECTIONS_WORKSPACE names; nothing configured is "not connected")
+        if: always()
+        run: npm run test:connections-provider
+
+      # The GitHub connection is GitHub's hosted MCP server, which advertises write tools beside the read ones.
+      # "Read-only" used to rest on the token's permissions alone. The connection now carries an allow-list of read
+      # tools (agent/lib/github-mcp-tools.ts): eve's real MCP client, against a stand-in server that advertises what
+      # GitHub's advertised on 2026-10-04 and would carry out any call, shows the model no write tool and refuses
+      # one called by name before any request is sent; the read tools the specialists use are still listed.
+      - name: The GitHub connection exposes read tools only, whatever the server advertises (eve's real MCP client, a stand-in server)
+        if: always()
+        run: npm run test:github-mcp-readonly
+
+      # The other BEHAVIOURAL chat test — it executes the real module rather than
+      # grepping source, which is how every other chat regression got past CI.
+      # It also holds the pure half of the adversarial review of #37: a gap in
+      # the attached tail must be CLOSABLE by a restarted reader (it was
+      # permanent, and froze the transcript for the rest of the session), that
+      # reader must reopen at the index the transcript actually needs, a hand-off
+      # on `session.failed`/`session.completed` must hand back no session id and
+      # no token (eve's own advanceSession drops both, and overriding it posted
+      # the next message to a dead session), and an expired sign-in must read as
+      # "sign in again" rather than "still working".
+      - name: Chat turn state (behavioural)
+        if: always()
+        run: npm run test:chat-turn-state
+
+      # The reattach: a turn nobody is listening to is the defect the operator
+      # reported as "streaming has many many problems". This drives the real
+      # decision, the real merge (against eve's own reducer, at every point a
+      # transcript could be split) and the real reader over eve's own
+      # ClientSession.stream on a stream that severs mid-turn. It also parses
+      # every telemetry kind the chat emits through the route's own schema —
+      # the check that would have caught the #34 trap, and that caught two more
+      # kinds (`resync`, `stop`) that were being dropped silently.
+      #
+      # Since the adversarial review of #37 it also holds the reader's own load
+      # and liveness rules, each one measured before it was fixed: a stream that
+      # yields one event per open must not reopen 200 times in 3 ms against an
+      # ownership-gated route, a segment that produces nothing must be cut rather
+      # than hanging the turn forever with the poll stood down, and a 401 (a
+      # stale hour-long token) must be told apart from a 403 (a revoked share).
+      - name: Chat reattach to a detached turn (behavioural)
+        if: always()
+        run: npm run test:chat-reattach
+
+      # THE SUBAGENT HAND-BACK. A declared specialist's output never reached the
+      # chat — measured across six live sessions, where the built-in `agent`
+      # tool returned every time and not one declared specialist ever did. The
+      # difference is that a specialist PARKS, and eve routes an answer to a
+      # parked child only as structured `inputResponses`; this chat dropped
+      # every proxied child request before it could become one, so the
+      # operator's typed answer left as a plain message and was swallowed. This
+      # runs eve's own reducer and this repo's own rules over streams RECORDED
+      # from the real runtime (scripts/fixtures/subagent-delivery), including
+      # the swallow itself, and holds the run-accounting half: a specialist's
+      # invocation must leave an automation_runs row even when the provider
+      # reports no tokens, which is why that table was empty.
+      - name: Subagent result delivery (behavioural)
+        if: always()
+        run: npm run test:subagent-delivery
+
+      # THE HAND-BACK STAYS LIVE. After a specialist's question is answered the
+      # parent's stream is silent until the child hands back; the chat's reader
+      # counted each quiet ~120s seam as a failure, gave up, and the
+      # orchestrator's follow-on waited out a 5-60s rearm round. Replays the
+      # RECORDED park -> answer -> subagent-result -> continuation on a virtual
+      # clock through the real reader.
+      - name: Subagent hand-back stays live (behavioural)
+        if: always()
+        run: npm run test:subagent-handback
+
+      # "Subagents don't automatically message back the main agent" (2026-10-05).
+      # The server-side half of the same sentence: eve resumes a parent only when
+      # its WHOLE batch of delegations is back, so a specialist stopped on its
+      # own left the main thread waiting for ever, a finished specialist whose
+      # sibling still worked was offered a "Bring result" that cancelled the
+      # sibling, a specialist's approval notified nobody with the tab closed,
+      # and a program's step (an app refreshed from a specialist) took eve's
+      # park for the end. Runs the real modules — the session guard's stop
+      # planner, the notifier, the chat's hand-back states and the real
+      # workflow delegate — over streams recorded from the live runtime.
+      # Also: a hostile specialist's output cannot leave its quoted block,
+      # forge an entry or pass for the person; a Stop racing a natural
+      # finish, a new turn or an unsettled main thread sends nothing it
+      # should not and reports what happened.
+      - name: A specialist's result reaches the main agent (behavioural)
+        if: always()
+        run: npm run test:specialist-handback
+
+      # eve's two callback routes resume any workflow hook by token with no sign-in: `<sessionId>:cancel` cancelled a
+      # person's running turn and `<sessionId>:turn-control:0:inbox` handed it a forged specialist result. On the REAL
+      # eve runtime (`eve dev` of a scratch app, a scripted model): both attacks work on eve as shipped, and with this
+      # app's guard every hook token is refused (404) and changes nothing (docs/SECURITY.md). The check holds the rest:
+      # eve's callback channels are all replaced, nothing here needs them open, the web app forwards neither.
+      - name: Callback routes closed (unauthenticated hook resume; real eve runtime)
+        if: always()
+        run: npm run check:callback-routes && npm run test:callback-routes
+
+      # "Reports later" as every reader of a main thread sees it (mold_v1-184), over streams recorded from the real
+      # runtime with the eve patch: a detached specialist's question stays answerable, it is never "lost", a program's
+      # step is not over until its late result, a Stop is not handed back twice, the run history is not cleared early;
+      # and the patch's own pure helpers deliver a late result exactly once.
+      - name: Specialists that report later (behavioural, recorded streams)
+        if: always()
+        run: npm run test:detached-delegation
+
+      # eve's local world (patched, mold_v1-191) refuses a second, queued start of a step another invocation runs inline,
+      # and accepts the runtime's backstop exactly at the inline-ownership lease boundary (counted from the inline start
+      # event's createdAt), a step's retry, and the lease setting clamped as the core clamps it. Controlled clock.
+      - name: The local world never starts a step twice, and never refuses the backstop
+        if: always()
+        run: npm run test:eve-local-world-inline
+
+      # On the REAL eve runtime (`eve dev` of a two-specialist app written to a temp dir, a scripted model, eve's
+      # in-process just-bash sandbox; no provider, no VM, about 30 s): eve hands a step's specialists back together,
+      # a message sent to the main thread meanwhile runs only after that (so an early hand-back would be a duplicate),
+      # and the delegation rule's shape holds nothing. And the Control Panel's old Resume on a stopped specialist:
+      # eve answered 200 and started an unrelated session; the panel no longer offers it (mold_v1-184).
+      - name: Specialists called together, and Resume on a stopped one (real eve runtime)
+        if: always()
+        run: npm run test:specialist-batch
+
+      # PER-RESULT DELEGATION (mold_v1-184), on the REAL eve runtime WITH patches/eve+0.25.1.patch (same setup, about
+      # 6 minutes): with `subagents: { batch: "detach" }` a finished specialist's result reaches the main agent while
+      # another waits on the person (at once) or is merely slow (after the bound); the other reports later as its own
+      # tool result, once, also when it is stopped (working or waiting on its question), also when it lands mid-turn or
+      # while the main agent waits on its own question, also when a second copy is sent; stopping the main thread stops
+      # it; a program's session keeps eve's batch; and an app without the setting is event for event unpatched eve.
+      # …and (mold_v1-196/197) the main thread does not stop for a specialist: a batch whose step did other work, or that
+      # passed the idle bound, is handed over with nothing back; and the specialist sweep's operations (hand a waiting
+      # batch over, deliver a late result) and the app's own sweep wired as in production: a frozen specialist is told
+      # once with its reason and stopped, a copy racing the specialist's own result is delivered once.
+      - name: Specialists report one at a time (eve patch, real eve runtime)
+        if: always()
+        run: npm run test:specialist-detach
+
+      # THE SPECIALIST SWEEP (mold_v1-196), offline over a world that answers as eve does: (a) frozen — stopped with a
+      # plain reason, delivered once, the run stopped and ended; never one that works, waits on a person or for a
+      # sandbox, or is unreadable; "not started yet" is not frozen; (b) a finished result never handed back — delivered,
+      # or handed over with its batch; (c) stopped or crashed without a report; (d) waiting on a person — surfaced, never
+      # stopped; and the races (the specialist's own result, two sweeps at once, one that wakes as it is looked at).
+      - name: The specialist sweep (behavioural)
+        if: always()
+        run: npm run test:specialist-sweep
+
+      # A parked approval survives a reload on purpose; one whose run has ENDED
+      # must not, or it comes back as a live prompt and wedges the composer on a
+      # chat that is already finished. Runs eve's own reducer over persisted
+      # streams.
+      - name: Chat stale approvals (behavioural)
+        if: always()
+        run: npm run test:chat-stale-approvals
+
+      # The send gate against the REAL eve store over a stubbed fetch. It existed
+      # and was never wired in — the same gap that put the three tests above here.
+      - name: Chat send gate (behavioural)
+        if: always()
+        run: npm run test:chat-send-gate
+
+      # "When I send a second message, only then does it load the second message"
+      # and "if something is stuck, the messages keep getting stacked and
+      # unanswered messages cannot be deleted" — one defect, reproduced in the
+      # real UI against the real eve runtime. eve answers 200 to a message sent
+      # while a turn runs or a specialist is parked, buffers it silently, and runs
+      # it as its own turn AFTER the next session.waiting; every reader stopped at
+      # the first boundary, so that reply surfaced only on the next send. Runs
+      # eve's own store and stream over streams RECORDED from that runtime
+      # (scripts/fixtures/buffered-turns), plus the queue that now survives a
+      # reload, the visible Stop, and the reader that no longer gives up.
+      - name: Chat buffered turns, stuck queue, Stop (behavioural)
+        if: always()
+        run: npm run test:chat-buffered-turns
+
+      # A Stop's markers, notes and "stopped here" turns outlive a remount at module scope; keyed by person,
+      # workspace and chat, and forgotten on sign-out, so a shared machine never shows the last person's Stop.
+      - name: Chat Stop state is one person's (keyed, cleared on sign-out)
+        if: always()
+        run: npm run test:chat-stop-state
+
+      # "You're showing [the chat directives] many, many times. That should not
+      # ever be shown." One function (lib/chat-attachments displayText) over every
+      # form a directive was ever sent or stored in, and a gate over every site
+      # that displays or persists a chat title, preview or user message.
+      - name: Chat directives never displayed (behavioural + gate)
+        if: always()
+        run: npm run test:chat-directives
+
+      # "When waiting for a tool call the agent pretends like things are done and
+      # it shows the feedback, copy, and retry buttons normally seen at the end of
+      # answers" — reported by the operator against a turn that read a 21-page pdf
+      # (one sentence, four tool calls, then the rest). Two traps, both driven here
+      # over eve's OWN reducer: eve writes `metadata.status = "complete"` for any
+      # text part it closes, tool-call steps included (and writes nothing at all on
+      # turn.failed), and the eve store's status describes the local READER, so
+      # every detached stretch of a live turn looked finished. 26 of these 56
+      # checks fail on the rules that shipped.
+      - name: Chat end of answer (behavioural)
+        if: always()
+        run: npm run test:chat-end-of-answer
+
+      # "The thinking stream continues above the subagent segment." After a specialist returns, eve resumes the
+      # turn at stepIndex 0 again, and its reducer keys thinking and text by step, so the orchestrator's later
+      # thinking streamed INTO the block above the card (and a sentence written before delegating was overwritten
+      # by the answer). Recorded eve streams (scripts/fixtures/event-order), folded whole (a reopened thread),
+      # event by event (a live turn), resumed mid-fold, compacted as a snapshot and across two sessions: every
+      # part lands in event order, a retried step still rewrites in place, and every other recorded transcript
+      # projects as before. The rendered half is tests/event-order.spec.ts.
+      - name: Chat parts in event order (behavioural)
+        if: always()
+        run: npm run test:chat-event-order
+
+      # The offline half of the attachment contract. The end-to-end companion
+      # (test:attachment-e2e) needs production credentials and a live agent, so
+      # it is run by hand; this half holds the two invariants on every PR.
+      # Desktop notifications, the server half: RFC 8291 encryption (the RFC's own vector), a VAPID request a
+      # fake push service can verify, a payload of title + short preview only (title alone with previews off),
+      # a 410 removing that device, and which moments of a turn notify.
+      - name: Web Push (encryption, VAPID, payload, 410 cleanup)
+        run: npm run test:web-push
+
+      - name: Chat attachments (behavioural)
+        if: always()
+        run: npm run test:chat-attachments
+
+      # A pdf an analyst UPLOADS must be previewable, which it was not: the one
+      # viewer in the app was wired to a pdf the AGENT publishes, so a filing
+      # dropped into the data room or a deck attached in chat was listed,
+      # downloadable, and unreadable in the product that had just read it. This
+      # runs the rules the viewer, the data-room bytes mode and the chat chip all
+      # import — the path grammar, the 40 MB ceiling decided from the blob
+      # listing before a byte moves, and the same-origin url that must never
+      # carry a presigned blob signature — and ratchets the four wiring facts a
+      # pure module cannot hold. CI runs no browser, so this is the guard that
+      # runs; the drawing itself is still checked by hand.
+      - name: PDF preview (rules, and the wiring that ships)
+        if: always()
+        run: npm run test:pdf-preview
+
+      # A test talks to the server it started, or fails loudly: fixed ports and
+      # "the port answers" readiness let a squatter answer every assertion.
+      - name: Own listeners (no fixed ports, no squatters)
+        if: always()
+        run: npm run test:own-listener
+
+      # AN EMPTY MODEL RESPONSE. On 2026-09-23 the live chat died on every
+      # attempt with `MODEL_CALL_FAILED "Empty model response"` AFTER the pdf had
+      # already been read and extracted — and left no row anywhere, because every
+      # chat telemetry kind that existed is emitted by the browser. This runs the
+      # real recovery middleware against a model that really answers empty (the
+      # scripted server, extended to emit `finish_reason: "length"` with no
+      # content and the whole budget spent on reasoning), proves a person always
+      # gets either an answer or a sentence, proves the record carries the shape
+      # and none of the prompt, and asserts at the WIRE what `max_tokens` the model
+      # path really sends — the hypothesis that only a live request could settle.
+      - name: Empty model response (survival, telemetry, output cap)
+        if: always()
+        run: npm run test:empty-model-response
+
+      # A RECOVERY MUST NOT INVITE A FABRICATION. example_app, 2026-09-24: the
+      # first step spent its whole budget reasoning and came back empty with NO
+      # tool results in the prompt; the retry was told "answer from the tool
+      # results already above, do not re-run tools", and wrote "notes updated …
+      # set via upsert_company" with no tool call anywhere. Replays that sequence:
+      # the nudge says only what is true and never forbids tools, and a recovered
+      # answer claiming a write no tool made is not delivered.
+      - name: Recovery honesty (no false nudge, no unbacked "done")
+        if: always()
+        run: npm run test:recovery-honesty
+
+      # THE OUTPUT BUDGET — what that `cap=` field went on to name. The live row of
+      # 2026-09-23 reads `finish=length out=1500 out_thinking=1500` on
+      # `path=generate`: the VISION call's own `maxOutputTokens: 1_500`, sized for
+      # the answer, spent entirely on the thinking a reasoning model does first, so
+      # `read_image` reported "returned no text" on pages it could have read, all
+      # day. Every role now carries a budget chosen from a measurement (max_tokens
+      # 256 reproduces the failure exactly; 8192 and 16384 are accepted and answer
+      # normally; switching models is not available on this account), and a retry
+      # after a `length` failure asks for twice the room rather than repeating a
+      # call that cannot succeed. This asserts on the REQUEST BODIES the scripted
+      # provider recorded — the source saying what it sends is the evidence that
+      # was wrong last time — and holds the env grammar, in particular that an
+      # EMPTY variable means the default and not "off" (#46/#47).
+      - name: Model output budget (per role, at the wire)
+        if: always()
+        run: npm run test:model-output-budget
+
+      # WHAT A SPECIALIST RUN COSTS. Workers AI reports no cost, so every specialist run read $0 whatever it spent, and
+      # its row did not say which model ran. Each step is now priced at the model that SERVED it (the empty-response
+      # fallback's when it answered, noted at the model boundary: agent/lib/served-model.ts) with the chat's own price
+      # table; an unpriced model is unknown, never $0; a provider's own figure is kept. The database half is
+      # test:run-history-db in the isolation job.
+      - name: Specialist run cost (the step's price, the model that served it)
+        if: always()
+        run: npm run test:workflow-run-cost
+
+      # …and the note crosses eve's own boundary: on the real runtime (eve dev, a scripted model), a specialist's
+      # step.completed hook takes the model its own model call noted, and the main agent's takes the main agent's.
+      - name: Specialist run cost, the served model on the real eve runtime
+        if: always()
+        run: npm run test:served-model-eve
+
+      # PREFIX CACHING NEEDS ONE INSTANCE PER SESSION. Workers AI caches a prompt's prefix on the instance that computed
+      # it and routes on `x-session-affinity` (developers.cloudflare.com/workers-ai/features/prompt-caching/). Read at
+      # the wire: every role's call (orchestrator, specialist, fallback, vision) carries the session's value; on the real
+      # eve runtime one value holds across all of a session's steps and turns, a specialist's child session has its
+      # own, a second conversation gets new ones, and none carries an address, a workspace or eve's session id.
+      - name: Session affinity on every Workers AI call (at the wire, real eve runtime)
+        if: always()
+        run: npm run test:session-affinity
+
+      - name: Auth gates in lockstep
+        if: always()
+        run: npm run check:gates
+
+      # Which Google clients a deployment admits are its settings (WORKSPACE_OAUTH_CLIENT_ID, WORKSPACE_CLI_CLIENT_ID),
+      # never client ids written into the code. Real signed tokens against the front door, offline.
+      - name: Google audiences come from the deployment's settings
+        if: always()
+        run: npm run test:google-audiences
+
+      # Which Google Workspace domains may sign in to the agent (single-tenant) is WORKSPACE_LOGIN_DOMAINS, never a
+      # domain written into eve.ts; unset is closed (no Google sign-in), never open.
+      - name: Login domains come from the deployment's settings, and unset is closed
+        if: always()
+        run: npm run test:login-domains
+
+      - name: Tenancy ratchet (web, agent and service inside RLS scope)
+        if: always()
+        run: npm run check:tenancy
+
+      # The ownership-guard rule inside check:tenancy, run over guards it must catch (every shape the regex version
+      # missed: aliased orgForCustomer, a variable holding row?.orgId, `row != null &&`, `if (!row) return true`,
+      # `rows.length === 0 ||`, bracket access, workspaceId) and sound code it must leave alone.
+      - name: Tenancy ownership-guard rule (syntax tree, fixtures both ways)
+        if: always()
+        run: npm run test:check-tenancy
+
+      # Workspaces are not aware of each other: check:tenancy (above) fails when a cross-workspace reader
+      # (acrossOrgDbs, acrossOrgsRls, listWorkspaceIds, .listOrgs(), a bare select from orgs) is reachable from a
+      # person's request — function-level, through imports and dynamic imports. These fixtures hold the rule both ways.
+      - name: Tenancy cross-workspace-reader rule (request paths vs system paths, fixtures both ways)
+        if: always()
+        run: npm run test:check-cross-workspace
+
+      # Chromium for the rendered checks below, from a cache keyed on the Playwright version and proved to start
+      # (.github/actions/chromium). The download and its apt packages were 37 s of this job when quick and minutes
+      # when not, and the job was cancelled at its limit for it.
+      - name: Chromium for the rendered-page checks
+        if: always()
+        uses: ./.github/actions/chromium
+
+      # The service worker in a real Chromium with notifications granted: a pushed payload is shown under its
+      # event's tag (never twice), not for the chat on screen, and a click opens that chat.
+      - name: Desktop notifications service worker (push shown, deduped, click opens the chat)
+        run: npm run test:push-sw
+
+      # No invented record reaches a person (factory task mold_v1-120). Every live workspace showed two bundled
+      # sample accounts ("Acme Bank", "Northwind Capital") in the data room's Master.xlsx previews, with a real
+      # person's email on the People sheet, and the chat's company picker offered them whenever the workspace had
+      # none. This scans the production build the Build step left in .next/ for the sample records' names and
+      # emails (and any @example.com address), then renders the data room and the picker with the ops API faked:
+      # an empty workspace shows the empty state, a workspace with records shows those, a loading or failed list
+      # says so. Needs no secret.
+      - name: No sample data in the product (built bundle, rendered data room and picker)
+        if: always()
+        run: npm run check:no-sample-data
+
+      # A signed-in person's first screen comes from this browser, at once. The page painted the sign-in card for
+      # someone signed in, then an empty sidebar, then a new chat, and asked the server for nothing until every script
+      # had run (two reads twice, one after another; the agent's cold start paid by the first message). On the
+      # production build, signed in with the ops API faked and a slow chat list: the first paint is the app's frame
+      # (signed out: the card), the last chat and the sidebar show from the cache before the list answers, with a
+      # quiet "updating" until it has, a chat deleted elsewhere is not kept open, each startup read is made once and
+      # before the scripts have arrived, and the agent is warmed once per tab.
+      - name: First screen from the browser's cache, startup reads early and once, agent warmed
+        if: always()
+        run: npm run check:first-screen
+
+      # A workspace the server refuses (the tab is set to one the person is not a member of, or that does not exist:
+      # scripts/test-named-workspace-http-db.mjs, isolation job) is said in plain words. On the production build, signed
+      # in with the ops API faked to refuse as the server does: the page shows "You are not a member of this workspace"
+      # and the person's own workspaces, never another workspace's records under its name and never a blank page; it
+      # asks for nothing more by itself (no retry loop); choosing their own workspace opens the console in it and a
+      # link's `?org=` is not adopted again; the settings page does the same; a guest of one shared chat still reads it.
+      - name: A refused workspace is a plain message with the person's own workspaces (rendered)
+        if: always()
+        run: npm run check:workspace-refused
+
+      # …and the rules that need no build: the no-database fallback is empty unless DEMO_SAMPLE_DATA=1 and never
+      # writes to disk, seed:postgres refuses without DEMO_SAMPLE_DATA=1 or --sample (before connecting), and nothing
+      # the model or a connector card reads names the sample file or its ids.
+      - name: Sample data stays a local demo's (fallback, seed gate, prompts)
+        if: always()
+        run: npm run test:sample-data
+
+      # The heavy libraries that left the first load ("First-load JavaScript within budget") still arrive when used.
+      # A stray static import puts one back into every page load; a lazy one that never arrives leaves a reply as raw
+      # source. On the production build, signed in with the ops API faked: a plain chat downloads none of them; a
+      # code fence is highlighted (also nested in a list or a quote, and when it arrives mid-stream), a mermaid fence
+      # is a diagram, $$…$$ is typeset (with katex's stylesheet) without redrawing a diagram already on screen, CJK
+      # emphasis parses, a dashboard draws its chart and its mermaid chart, an attached PDF paints a page, an agent's
+      # .xlsx opens as a table, the data room, the Ops Center and the control panel open. A chunk that cannot be
+      # fetched shows a card with Retry and leaves the chat working, and Retry loads it once the network is back.
+      - name: Heavy libraries load on first use, and work (built chunks, rendered chat)
+        if: always()
+        run: npm run check:lazy-features
+
+      # The same bug one layer in, on the identifiers rather than the words: the
+      # tool names a coding assistant is served, the environment variables a person
+      # types into an MCP config, and the keys in an analyst's browser. `fde_status`
+      # was one of 59 tools and the only one not use-case agnostic — and it survived
+      # PR #46 because both existing gates exempt identifiers containing "_". This
+      # covers that remainder, reading the tool names from the REAL tool list rather
+      # than from the tree, since what ships is applied into the tree by a pack.
+      - name: Wire identifiers are use-case agnostic
+        if: always()
+        run: npm run check:wire-names
+
+      # The same bug one layer further in: what the eve agent's MODEL reads. A research deployment whose profile
+      # calls customers "Companies" had an agent reasoning "the stored folder is shown as Companies… companies under
+      # the stored folder", because its prompt, its tools (list_customers, customer_id), its folders and
+      # its per-turn briefing all spoke the base product's words. This renders the whole model-facing surface
+      # (prompts, briefing, every tool's name/description/parameters, the roster and every specialist's prompt,
+      # real tool results) under a copy of that profile and fails on any base word; and holds the DEFAULT
+      # profile's surface byte-identical to the snapshot taken before the vocabulary work.
+      - name: Agent vocabulary comes from the deployment profile (model-facing surface)
+        if: always()
+        run: npm run check:agent-vocabulary
+
+      # …and that what the model WRITES in the profile's words lands in storage exactly where it always did.
+      - name: Agent vocabulary round-trips to unchanged storage (behavioural)
+        if: always()
+        run: npm run test:agent-vocabulary
+
+      # And the migration those names rest on, which is invisible in a diff: an
+      # assistant that learned the old tool name is still answered, a deployment
+      # still set with FDE_* still reads it (once, loudly), and an analyst signed in
+      # before the rename is not signed out by it.
+      - name: Wire-name migration (behavioural)
+        if: always()
+        run: npm run test:wire-names
+      - name: Renamed tools keep their old names (stored transcripts, workflow prompts, the model boundary)
+        if: always()
+        run: npm run test:tool-aliases
+
+      # The rest of the tree, which none of the gates above walks: the base product's role word may appear only
+      # as a listed contract (a column, a variable, a bin, a script name, each with its migration plan), under a
+      # per-file ceiling that equals today's count, or under an exempt path. A new identifier, file name or
+      # comment carrying it fails, and so does a ceiling left higher than the file needs. The same check holds the
+      # record words written as prose, and the data-room folder names (the former ones and the default profile's):
+      # no file spells one as the head of a path or as a value, outside the profile and the one legacy definition.
+      - name: Neutral names (no new occurrence of the base role word outside the contracts)
+        if: always()
+        run: npm run test:neutral-names && npm run check:neutral-names
+
+      # RUNTIME CODE NAMES NO DEPLOYMENT. The agent admitted the web app's Vercel OIDC token only for one product's own
+      # team and project, written into eve.ts and service-scope.ts, and defaulted the web app's and the agent's
+      # addresses to that product's URLs: every other deployment had each service call refused. Which team, project
+      # and address are the deployment's settings now. This fails on a Vercel team/project/Connect id, a *.vercel.app
+      # address, an OIDC subject or issuer, or a literal teamSlug/projectName anywhere in runtime code.
+      - name: Deployment identifiers (no Vercel team, project or address in runtime code)
+        if: always()
+        run: npm run check:deployment-ids
+
+      # NO GOOGLE OAUTH CLIENT IN THE CODE. The coding-agent package's login and MCP modules carried one project's desktop
+      # client id and secret, and both front doors admitted that client by id, so every deployment trusted one
+      # project's client and the code could not be published. The server reads WORKSPACE_OAUTH_CLIENT_ID /
+      # WORKSPACE_CLI_CLIENT_ID; the package build writes the client into the BUILT package from its environment
+      # (test:agent-cli proves it lands there and nowhere else). This fails on a client id or secret in any tracked file.
+      - name: No Google OAuth client id or secret in the code
+        if: always()
+        run: npm run check:google-client
+
+      # Base code used to write its own workflows (13) and onboarding recipes (5) into every workspace of every
+      # deployment, whatever the deployment was for. A workspace's library is the deployment profile's now
+      # (library.sources; none by default): this proves the default provisions nothing, that the one-line opt-in
+      # builds exactly the former built-ins (pinned before the move), that a bad source fails the build, and the
+      # rules of the operator's cleanup. check:neutral-names (above) holds the ratchet. Offline.
+      - name: Workflow library is the profile's (default empty, opt-in loses nothing, cleanup rules)
+        if: always()
+        run: npm run test:workflow-library
+
+      # Starter apps (the apps a new workspace is created with) are a library's too: `<library>/apps.json`. The
+      # default profile ships none; library/account-delivery ships three; the build refuses one it could not
+      # generate (a source that is not a specialist of the build or a workflow of the same library, one the profile
+      # excludes, a duplicate key or name, a secret-looking string, a bad schedule); the cleanup's rules for one; and
+      # the wiring (an idempotent insert on the key, a first open that asks once, an existing workspace left alone).
+      # Offline. The routes against a database are in the isolation job.
+      - name: Starter apps are the library's (default none, build-time validation, cleanup rules)
+        if: always()
+        run: npm run test:starter-apps
+
+      # The operator tooling moved to scripts/operator/ (npm run operator:*) with every old name kept: each old npm
+      # script runs the same file, both old lib import paths re-export the new modules, the four variables are read
+      # neutral-first with the old name as a fallback, and the member-profile memory key is written neutral and read
+      # both ways. Offline; no database.
+      - name: Operator tooling (old script names, import paths, env names and memory key still work)
+        if: always()
+        run: npm run test:operator-tooling
+
+      # The profile generator's rules (including custom_fields) and the per-turn briefing. It existed and was not
+      # wired in; the custom-field checks below lean on it, so both run.
+      - name: Deployment profile (generator rules, briefing)
+        if: always()
+        run: npm run test:deployment-profile
+
+      # WORK PERIODS (profiles `work_periods`). The base product had one idea of a period, a shared one under its
+      # own word, written into the UI, the model's tools, the coding agent's tools, the routes and the activity feed;
+      # a deployment whose people each hold their own targets for a week could neither reshape it nor turn it off.
+      # The profile now says which of three things it is and what it is called. A mode is decided at build time, so
+      # this renders three builds: the DEFAULT (mode team) is held to a before-image to the letter (every UI string,
+      # the coding agent's tools, the model's three tool definitions, the routes); under "off" (a copy of the
+      # checkout) the view is gone, the model has no period tool and no cycleId, every cycles route is a 404 and
+      # nothing the model reads mentions one; under "individual" (another copy) the words, tools and routes are a
+      # person's own items. Plus the generator's refusals and the rules (whose an item is, the reporting chain).
+      - name: Work periods follow the profile (generator, each mode's views, words, tools and routes; the default to the letter)
+        if: always()
+        run: npm run test:work-periods
+
+      # A profile's OWN fields on the two record areas and the account record: the one validator every write path shares, the agent's
+      # write path, the MCP tool inputs, the migration, and a ratchet that a new writer of the two tables
+      # cannot skip the validator.
+      - name: Profile custom fields (validator, write paths, migration)
+        if: always()
+        run: npm run test:custom-fields
+
+      # Each deployment publishes its own agent package (docs/AGENT_CLI.md). This builds real ones and proves the
+      # safety gate keeps secrets, operator rulebooks and other deployments' addresses out of a public package.
+      - name: Per-deployment agent package builds, and its safety gate holds
+        if: always()
+        run: npm run test:agent-cli
+
+      # The task-workflow service is a SEPARATE deployment with its own tests,
+      # and none of them ran here — so the engine that owns the Tasks tab was
+      # the one part of the system CI never exercised. Its deps are vendored in
+      # the service directory, so this needs its own install.
+      - name: Task-workflow service tests
+        if: always()
+        run: npm --prefix services/task-workflow test
+
+      # An app (a document regenerated on a schedule) could be made from any row of the workflows table, but only a
+      # row with a script could refresh: an app made from a specialist's row, which is most rows in a pack's
+      # workspace, was saved and could only fail ("has no script"). lib/app-source.ts decides what can generate an
+      # app (a script, one of this workspace's specialists, a prompt) and every door asks it. Offline: the rules
+      # under the default and the relabelling profile, and that the routes, the agent's tools, the picker and the
+      # form all ask. The routes against a database are in the isolation job.
+      - name: App sources (a script, a specialist or a prompt; refused at the form when it cannot run)
+        if: always()
+        run: npm run test:app-source
+
+      - name: Workflow args validation
+        if: always()
+        run: npm run test:workflow-args
+
+      - name: Workflow step context
+        if: always()
+        run: npm run test:step-context
+
+      - name: Email sign-in
+        if: always()
+        run: npm run test:email-signin
+
+      # TWO DEFAULTS THAT WERE ONLY RIGHT ON VERCEL. With no agent address the web app fell back to the Vercel
+      # agent, so a web app built anywhere else proxied chat there in silence; and the migration scripts required
+      # TLS, which a Postgres on the app's own machine does not have. Off Vercel a production build or server now
+      # refuses without the address (a real `next build` and `next start` must stop with the message), and
+      # DATABASE_SSL=disable is accepted for a local database only. Holds, over every combination of the two
+      # variables, that on Vercel, in development and in a CI build the address resolves exactly as it did.
+      - name: Off-Vercel defaults (agent address required off Vercel, TLS setting for migrations)
+        if: always()
+        run: npm run test:off-vercel-defaults
+
+      # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
+      # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
+
+  # WHAT A PERSON READS, in its own job: it copies the checkout, stamps the copy with a relabelling profile and runs
+  # its OWN `next build` and `next start`, so it uses nothing the verify job builds. It was the longest step of
+  # verify (3 minutes of 13.5, against a 15-minute limit; run 37211119371) and waits on nothing there, so it runs
+  # beside it instead of the limit being raised.
+  ui-vocabulary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Chromium for the rendered-page pass
+        uses: ./.github/actions/chromium
+
+      # What a PERSON reads comes from the deployment profile. The gate before this looked for one word (the
+      # member's legacy word) in four source folders and skipped generated files, so a research deployment
+      # (companies / analysts / coverage reports) shipped a bundle that named the member roster by the legacy word, and "Customer DMs":
+      # the subagent roster and the whole workflow library reached the client as generated text. This builds the
+      # app under a relabelling profile and fails on any base word (customer, deployment, implementation, rollout,
+      # the legacy member word) in the source text a person reads, in every string of the built client bundle (mapped back to its
+      # file; allow-listed only with a reason, scripts/fixtures/ui-vocabulary/allow.json) and in the prerendered
+      # pages; and holds the default profile's words to its neutral ones (no legacy member word on any label).
+      # Its last pass reads what a person SEES: `next start` of the relabelled build, Chromium over every page and
+      # tab (visible text, titles, placeholders, options, hover tooltips), signed in with a locally made token and
+      # the ops API faked, so it needs no secret. A code value joined into a sentence ("filed under a
+      # deployment/implementation") passed every static rule; the rendered DOM is where it shows.
+      - name: UI vocabulary comes from the deployment profile (source, enum labels, built bundle, rendered pages)
+        if: always()
+        run: npm run check:ui-vocabulary
+
+      # …and what the scans cannot read: keys in JSON a person copies or views, ops API errors, the base library
+      # rows a workspace does not run (still listed and adoptable, naming no excluded specialist), a visible enum
+      # value with no profile label, and the profile generator while an eve build moves specialists aside.
+      - name: UI vocabulary, behavioural (keys, API errors, library rows, enum labels, concurrent build)
+        if: always()
+        run: npm run test:ui-vocabulary
+
+      # Work periods as a person SEES them under each mode (profiles `work_periods.mode`), in Chromium against the
+      # auth-free preview: team is a card with a burndown; off has no period view among the navigation's entries;
+      # individual groups a period by person, the signed-in person first, each with their own progress and items and
+      # no burndown. The relabelled build above renders mode individual in the real Todos workspace
+      # (scripts/lib/rendered-text.mjs periodExpectations); this holds all three side by side from one dev server.
+      # It runs with EVERY auth-free preview spec (`npm run test:cards`, the whole offline Playwright suite, which is
+      # what the factory's functional lane runs): with only cards.spec.ts here, a starter-apps spec stale since the
+      # refresh rework and a domain-forms spec stale since the neutral default words failed nowhere but in the lane
+      # (mold_v1-214/215). Every preview page is compiled once first (tests/warm-previews.ts).
+      - name: Every auth-free preview spec, work periods in each mode (team, individual, off) among them
+        if: always()
+        run: npm run test:cards
+
+      # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
+      # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
+
+  # EVERY sandbox takes the SANDBOX_* settings off Vercel, through the REAL `eve build`. On the first self-hosted
+  # server only the two definitions that named the settings had them: the other specialists, and all four of a
+  # pack's, built on eve's default microsandbox (1 vCPU, allow-all egress) and the second template hung for 1h50m.
+  # A copy of the checkout is stamped like a deployment (the pack-like fixture profile, a fixture specialist with
+  # NO sandbox file and a pack-shaped one that names no backend), built twice, and its graph read back with
+  # `sandbox:prewarm --plan`: with microsandbox every node carries the configured CPUs, memory and deny list; with
+  # the setting unset every node is eve's own choice, as on Vercel, and a server pointed at that build is refused.
+  # No sandbox is created (no KVM here). Its own job: two eve builds do not fit in verify's budget.
+  sandbox-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Every sandbox takes the SANDBOX_* settings (real eve build; unset is eve's own choice)
+        run: npm run test:sandbox-coverage
+
+      # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
+      # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
+
+  # The most important test in the repo: it proves one tenant cannot read or
+  # write another's rows. It needs a real Postgres, which is why it sat outside
+  # CI and ran only when someone remembered.
+  #
+  # An EPHEMERAL database, not a secret pointing at production. The test writes
+  # probe rows, and a credential that reaches prod from every PR is a worse
+  # trade than the thing it verifies. This needs no secrets and works on forks.
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: workspace_test
+        ports: ["5432:5432"]
+        # Without this the job races the container and fails on connect.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/workspace_test
+      # Where scripts/relabelled-build.mjs makes the relabelling-profile build the HTTP checks run against.
+      RELABELLED_BUILD: ${{ github.workspace }}/.ui-vocabulary/relabelled-build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install
+        run: npm ci
+
+      # Schema from schema.ts, so this tracks the source automatically: a new
+      # table with an org_id gets a policy and is then checked, with no list to
+      # maintain anywhere.
+      - name: Push schema
+        run: DATABASE_URL="$ADMIN_URL" npx drizzle-kit push --force
+
+      - name: Build the tenancy model (app_rw + RLS)
+        run: DATABASE_URL="$ADMIN_URL" node scripts/bootstrap-test-db.mjs
+
+      # A new deployment's database is built from drizzle/meta/_journal.json (db:migrate:production), this job's
+      # from schema.ts (push). The journal missed a rename (implementation.provider_launch_approver_email), so every
+      # implementation read failed on a journal-built database. Builds one from the journal and compares.
+      - name: The migration journal builds the schema the app reads
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:migrations-db
+
+      # …so a NEW database on a plain Postgres is built the way docs/self-hosting/DATABASE_AND_AGENT_URL.md says:
+      # schema.ts pushed onto an empty database, the journal recorded on top, the app's role and fail-closed policies,
+      # the task-workflow tables. Runs those five commands as written against a scratch database here (this Postgres
+      # has no TLS, like one on the app's own machine: DATABASE_SSL=disable; without it both migration scripts must
+      # still refuse) and checks the result as app_rw.
+      - name: A new database on plain Postgres without TLS (the documented path, run as written)
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:new-database-db
+
+      # THE COMPANY KEY IS (org_id, customer_id) (mold_v1-118): drizzle/0024 on a database built as the live one was
+      # (pushed from the schema before this change, scripts/fixtures/schema-419b38d.ts, then bootstrapped) and seeded
+      # like it (two workspaces, 100 companies, rows in every table), through the deploy chain the factory runs on a
+      # live database: the journal, then a read-only drift dry run of `drizzle-kit push` against schema.ts, whose plan
+      # must be EMPTY (push --force runs only on an empty database). Also a journal-built database with the NULL
+      # workspaces and planted rows it allows: no row lost, keys as schema.ts names them, harmless run twice.
+      - name: Company key per workspace, migration on production-shaped data
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:company-key-migration-db
+
+      # 0025 drops the single-column customer_id indexes the (org_id, customer_id, …) keys made redundant. The deploy's
+      # drift step refuses index drops, so the journal must do it and the plan after it must be empty (mold_v1-145).
+      - name: Redundant customer_id indexes dropped by the journal, drift plan empty after it
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:customer-id-index-migration-db
+
+      # NEUTRAL OWNER COLUMNS (mold_v1-103, PR 4): drizzle/0028 adds customers.account_owner and
+      # solutions.solution_owner beside the original owner columns, copies them and keeps each pair equal by a trigger
+      # (the software factory still writes the original in raw SQL). On the live shape with the journal to 0027: the
+      # drift plan after it is empty (no DROP COLUMN, no index drop), a write under either name reads under the other
+      # (raw SQL and the app's own paths), and row-level security on both tables is still fail-closed.
+      - name: Neutral owner columns, migration on production-shaped data
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:owner-columns-migration-db
+
+      # NEUTRAL SECOND-OWNER COLUMN (mold_v1-103, PR 7c): drizzle/0029 adds customers.secondary_owner beside
+      # customers.ae_owner (a column named for one line of work's role), copies it and keeps the pair equal by its own
+      # trigger, as 0028 did for the owner. On the live shape with the journal to 0028: the drift plan after it is
+      # empty (no DROP COLUMN, no index drop), a write under either name reads under the other for both pairs (raw
+      # SQL and the app's own paths, with and without the trigger), 0028's trigger is untouched, and row-level
+      # security on customers is still fail-closed.
+      - name: Neutral second-owner column, migration on production-shaped data
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:secondary-owner-migration-db
+
+      - name: Cross-tenant isolation
+        run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" node scripts/test-org-isolation.mjs
+
+      # The chat access holes all rested on ONE database fact: under the
+      # production fail-closed policy an unscoped read returns zero rows, and
+      # the session gate read zero rows as "no record of this session, let it
+      # through". That is not visible in source and cannot be asserted without a
+      # database, so it is asserted here: the same queries, made both ways,
+      # against a Postgres whose policies this step flips to the production
+      # shape (bootstrap-test-db builds the permissive one the isolation test
+      # above needs) and restores afterwards.
+      - name: Chat access control, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          node scripts/test-chat-access-db.mjs
+
+      # WHOSE SESSION IS IT — enforced by the AGENT, for every caller. The agent API is its own public deployment,
+      # and eve's per-session routes authenticate a caller and then act on any session id: a signed-in person from
+      # another workspace, calling it directly, read a transcript (its continuation token included), posted into
+      # it, answered its approvals and cancelled it. This drives the channel agent/channels/eve.ts exports — its
+      # real auth list and real verifiers, eve's runtime replaced by an in-memory one that delivers by token as eve
+      # does — as app_rw against the production fail-closed policies: the owner, a shared thread's participant,
+      # viewer and revoked member, a workspace-visible workflow step, the front-end's service token, a subagent's
+      # child session, a token bound to one session, a continuation token on another session's id, a spoofed
+      # `Host: localhost` in production, and the database going away (503, closed). The live-HTTP companion against
+      # `eve dev` is scripts/test-session-guard-live.mjs, run by hand (see its header).
+      - name: Agent session ownership (the agent's own routes), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:session-guard
+
+      # ONE HAND-BACK PER STOPPED SPECIALIST, ACROSS INSTANCES (mold_v1-181). The agent is serverless: two Stops on one
+      # specialist can land on two instances, where a memory of "already doing this" holds in one. The claim is a row in
+      # specialist_handbacks. Two separate node processes per round, released at the same instant against this
+      # Postgres as app_rw: exactly one wins, every round, for the claim and for taking over an undelivered hand-back.
+      # Also: the row is its workspace's (invisible and untouchable from another), and drizzle/0031 is additive, in
+      # step with schema.ts, with an empty drift plan after it.
+      - name: One hand-back per stopped specialist across processes, and its migration, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:specialist-handback-db
+
+      # THE SPECIALIST SWEEP'S CLAIM, ACROSS PROCESSES AND WORKSPACES (mold_v1-196): two sweeps on two instances, one
+      # winner every round; which rows a later sweep may take over and which never; the rows, the chat's notes and the
+      # scheduled sweep's main threads are one workspace's; the wired sweep acts on a main thread only in the workspace
+      # its owner record is in; drizzle/0034 is additive, with an empty drift plan after it.
+      - name: One sweep per delegation across processes, its workspace scope, and its migration, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:specialist-sweep-db
+
+      # THE FIVE ROUTES THAT CALL THE AGENT AS THE WEB APP (resume-workflows, run-cron-workflows, refresh-apps, ops/run,
+      # the run-cancel fan-out), on a deployment with no Vercel variable and SERVICE_AUTH=session-key: each real
+      # handler does its work through the real channel, and every call the agent saw carried the web app's own
+      # two-minute service token naming the workspace, never a person's. Fails on the code before the setting existed.
+      - name: Web app service identity off Vercel (five routes and the channel), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:service-identity-db
+
+      # THE CROSS-WORKSPACE READ, against the production policy: for every by-id reader and writer the model can
+      # reach, workspace B asking for workspace A's id gets nothing and A's record is unchanged, the owner still
+      # gets it, and a refused write's error carries none of the row's values. Flips every org_isolation policy to
+      # fail-closed and restores it, like the step above.
+      - name: Cross-workspace reads by id, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:cross-workspace-db
+
+      # TWO WORKSPACES HOLD THE SAME COMPANY ID (mold_v1-118), through the agent's write and read paths and every
+      # agent tool that reads a company, against the production fail-closed policies: each sees only its own record in
+      # every part, an update or delete in one never touches the other, a row still cannot be planted under another
+      # workspace's company (the foreign key carries the workspace), and a system path must name its workspace.
+      - name: Two workspaces, one company id (agent paths), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:shared-company-id-db
+
+      # create → refresh → content through the real app routes (create, edit, refresh, the lists, the cron), in a
+      # copy of the tree stamped like a research pack's deployment: the relabelling fixture profile plus a fixture
+      # specialist the base product does not have. A source that cannot run is refused at create and nothing is
+      # saved; an app made from a specialist's row refreshes to that specialist's reply; an app saved before the
+      # fix, still carrying "has no script", refreshes without being recreated; changing an app's source clears the
+      # error about the one it no longer has. On the code before the fix 33 of its 38 checks fail.
+      - name: Apps from a script, a specialist or a prompt (create, refresh, content), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:app-source-db
+
+      # AN APP REFRESH OUTLIVES THE REQUEST THAT ASKED FOR IT. A specialist refresh ran inside one serverless request,
+      # was killed at the route's 300 s limit (504) and left the app "refreshing" for ever. Here the web function is a
+      # separate process SIGKILLed at a forced 3 s limit, the agent a real HTTP server whose specialist takes longer:
+      # the request answers 202 with the session it opened, the next cron tick writes the document; a function killed
+      # before any session was recorded leaves a marker that expires with a sentence (the live app's shape too); two
+      # Try agains start one run; a specialist parked on a question fails at once naming it; each workspace's
+      # refresh opens, reads and writes only its own. On the code before the fix 26 of its 34 checks fail.
+      - name: App refreshes run in the background and end, however long they take, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:app-refresh-background-db
+
+      # THE RUN HISTORY, which is two database facts and nothing else. That a
+      # parent writing a row for a child that never started cannot produce a
+      # SECOND row is the unique index on run_key doing its job, and an index
+      # either behaves that way or it does not — source says nothing. That the
+      # abandoned-run sweeper closes only rows which cannot still be live is one
+      # WHERE clause whose whole value is in what it does not match, including
+      # the specialist parked on a question that a person will answer tomorrow.
+      # Both are run here against the real recorder the hooks call. And what a run COSTS: each step priced at the
+      # model that served it (Workers AI reports no cost, so a run read $0), an unpriced model left unknown, never $0,
+      # a provider's own figure kept; drizzle/0036 (automation_runs.model_usage) additive, with an empty drift plan.
+      - name: Subagent run history and run cost, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:run-history-db
+
+      # THE ACCOUNT RECORD'S OWN FIELDS (account_fields.custom_fields). Two database facts: that
+      # drizzle/0019_account_custom_fields.sql applies to a customers table that already holds rows (the live
+      # shape: the step drops the column push created, writes a legacy row, applies the file twice) without
+      # touching a row or the table's row-level security; and that a note written through the agent's write path
+      # comes back verbatim, as app_rw under RLS, and not from another workspace's scope; and that concurrent writes
+      # lose nothing (an upsert racing a scoped UPDATE of custom, 40 rounds; two appends and a pick at once).
+      - name: Account custom fields, migration and round trip against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:account-custom-fields-db
+
+      # The real provisionWorkspace and the real cleanup command against the fail-closed database: a default
+      # deployment's workspace receives no recipe and no library workflow; one that opts in receives byte for byte
+      # what the old code stored; a specialist the profile excludes gets no row and a pack's gets its own; the
+      # cleanup's dry run changes nothing and --apply removes only rows nobody edited, ran or built on.
+      - name: Workspace provisioning and library cleanup, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:library-provisioning-db
+
+      # WORK PERIODS IN EACH MODE, as app_rw under the fail-closed policies (the database half of
+      # test:work-periods). drizzle/0030_cycle_member_goals.sql: the new table is row-level secured like its
+      # neighbours and the file applies again over rows without touching one. Then two workspaces per mode (team:
+      # this checkout; individual and off: a copy under each fixture profile), through the real routes and the
+      # model's real tools: A reads none of B's periods, tasks or goals and can change none; an ended period rolls
+      # over inside its own workspace only, each person's unfinished items into their next period; an item or a
+      # goal is set for oneself or a reportee per the roster and for nobody else; under "off" every route is a 404
+      # and the stored rows are byte for byte what they were. A workspace's own period length (drizzle/0033, one
+      # column on orgs; drift plan empty after it): only its admin sets it, inside the profile's range, audited; new
+      # periods (by hand, the model's tool, auto rollover) run it, existing ones keep their dates, and another
+      # workspace's periods are untouched by it.
+      - name: Work periods in each mode, two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:work-periods-db
+
+      # A WORKSPACE SHOWS ONLY ITS OWN WORKFLOWS AND APPS, AND OPENS WITH ITS LIBRARY'S STARTER APPS. In two copies of
+      # the tree stamped like a research pack's deployment (the relabelling fixture profile, a fixture specialist the
+      # base product does not have), through the real routes as app_rw under the fail-closed policies, the agent a
+      # stand-in at the web app's fetch. With NO library named: a workspace created through POST /api/ops/orgs is
+      # asked for every list a person or the model reads (Workflows tab, app source picker, Apps tab, recipes, the
+      # specialists roster, agent-configs, the agent's list tool, the MCP server's tools and its list tools, health,
+      # the model-facing surface): nothing of library/account-delivery and no excluded specialist anywhere; and the
+      # cleanup removes a starter app an earlier build left only while nobody touched it. With a pack-shaped library
+      # named: a new workspace gets exactly its starter apps, with no document and no model run; the first open
+      # writes one through the specialist, once; provisioning again creates nothing; a deleted one is not
+      # resurrected; an existing workspace gets them only from operator:library-apply (dry run first).
+      - name: A workspace shows only its own, and opens with its library's starter apps, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:starter-apps-db
+
+      # The two record areas (deployments[], implementation) written by upsert_customer: only the rows and fields
+      # a patch names change, each in SQL onto what is stored at write time; a row is deleted only by remove: true;
+      # the result is read back after the write. 40-round races against a scoped ops write, as for #57.
+      - name: Record areas merge per row, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-areas-db
+
+      # WHO OWNS A CHAT IN THE LIST MIRROR. The upsert conflicts on the row id
+      # (the eve session id) while ownership was checked only on eveSessionId,
+      # so a colleague in the same workspace who knew a session id could post
+      # {id} alone and take the row over: owner rewritten, eve session nulled.
+      # Runs the route's own write path (lib/chat-sessions-mirror.ts) as app_rw
+      # under RLS, plus: one chat's oversize markers never fail the batch, and
+      # the list works on either side of migration 0020.
+      # The data room's records as GET /api/ops/workbook serves them, over HTTP from `next start`, as app_rw under
+      # RLS: only the own fields the profile lists and text cut to a preview (a 2 MB note went out on every open),
+      # one unreadable table named `unavailable` instead of blanking the workspace, no hidden field, a capped table
+      # flagged and holding the most recent rows, Cache-Control: private, no-store. Built under the relabelling
+      # (research-desk) profile, so its 26 hidden account fields are what is asserted absent.
+      - name: Data room workbook route, against a fail-closed Postgres (relabelling profile build)
+        if: always()
+        # The relabelled build is made in a copy (scripts/relabelled-build.mjs, .ui-vocabulary/relabelled-build), never
+        # here: this step used to copy the profile into profiles/ and build in the checkout, leaving both behind
+        # (mold_v1-188). The HTTP checks below reuse it with --dir; the job's last steps remove it and check the
+        # checkout is the commit.
+        run: |
+          npm run build:relabelled
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:workbook-route-db -- --dir "$RELABELLED_BUILD"
+
+      # THE WORKSPACE SWITCHER'S COUNTS. lib/workspace-attention.ts counted every workspace at once on the bare
+      # handle, so under the fail-closed policy every count was 0. Seeds known numbers in two workspaces, flips the
+      # six tables' policies to fail-closed, and asks the module as app_rw: each workspace inside its own scope.
+      - name: Workspace attention counts, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:workspace-attention-db
+
+      - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:chat-sessions-mirror-db
+
+      # A workspace reads its OWN mailbox: its gmail connector, or the deployment's IMAP_* mailbox only when
+      # IMAP_WORKSPACE binds it to that workspace. Intake and list_inbox from any other workspace never connect to it
+      # (a stand-in mail server counts connections). connector_secrets is RLS-strict, so this runs as app_rw.
+      - name: Email intake and inbox read the workspace's own mailbox, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:workspace-mailbox-db
+
+      # A chat lives in one workspace and is visible only there: the real thread routes, the session gate and the
+      # notification recipients, for a member of that workspace, a member of both currently in the other, an
+      # outside guest following the chat's link (read-only, nothing else of the workspace), and an uninvited person.
+      # connector_secrets is RLS-strict and each row is sealed under a key derived from its workspace: this holds the
+      # real read to both. A's stored Slack token is A's; B gets B's or "not connected"; a disabled or personal
+      # connector is never used; A's ciphertext copied onto another workspace's connector does not decrypt. GitHub
+      # through the real connection with CONNECTIONS_PROVIDER unset and with `env`: A's member gets A's token, B's
+      # gets "not connected", a server-wide GITHUB_TOKEN connects nobody unless CONNECTIONS_WORKSPACE names one;
+      # and with the orgs table made unreadable to app_rw every answer is the same (nothing counts workspaces).
+      - name: Connector credentials are per workspace (stored secrets, strict RLS, per-workspace key; GitHub on both provider settings), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:connector-credentials-db
+
+      - name: A chat is visible only in its own workspace (guests read-only via its link), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:thread-visibility-db
+
+      # An invite a chat share sent before #85 (origin 'chat_share', migration 0026) is never listed, claimed or
+      # accepted as a workspace membership; a workspace invite still is. The operator's tool marks or expires them.
+      - name: Chat-share invites never make a guest a member, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:chat-share-invites-db
+
+      # A guest of one shared chat signs in from its link with an emailed code OR with Google (verified address must be
+      # the invited one), lands on that chat, and gets nothing else: no membership, no workspace, no other chat, no
+      # sidebar, no other workspace, nothing from a withdrawn or expired invite — asserted for both doors.
+      - name: A chat's guest signs in by code or Google and gets only that chat, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:guest-signin-db
+
+      # The root migration attributes a company's files by each workspace's own customers table (read in its scope).
+      - name: Data room root migration attribution, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:migrate-attribution-db
+
+      # The filesystem storage driver over HTTP (reuses the build above; `next start` with STORAGE_DRIVER=filesystem
+      # and a temp directory): two real members of two workspaces. Bob cannot list, read or overwrite Alice's files
+      # by any spelling of a path, naming her workspace is refused, he gets no link for her artifact, a signed link is
+      # refused when tampered, expired or re-pointed and is served sandboxed, and every object on disk is under its
+      # own workspace's tree.
+      - name: Filesystem storage driver, two workspaces over HTTP, against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:storage-isolation-http-db -- --dir "$RELABELLED_BUILD"
+
+      # THE CHAT QUEUE MOVED TO THE SERVER (closing a tab no longer loses a queued message), and the devices people
+      # asked to be notified on. Database facts only: that both tables are owner-only AND workspace-scoped (the
+      # takeover variants above, through the library and in raw SQL under the restrictive owner policy of
+      # drizzle/0021), that eight claimers racing for one session send ONE message every time, and that the drain
+      # the agent's hook and a tab both call keeps #59's guarantees (Plan mode, stale, ×, two tabs) with a fake eve.
+      - name: Chat queue and notification devices (owner-only, exactly once), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:chat-queue-db
+
+      # deployment_upsert (MCP) posts to POST /api/ops/deployments, which was insert-only: a record could be created
+      # and never corrected. Reuses the relabelling build of the workbook route step.
+      - name: deployment_upsert updates an existing record, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:deployment-upsert-db -- --dir "$RELABELLED_BUILD"
+
+      # The same over HTTP (reuses the relabelling build above): the Ops API, the workbook route, the export and the
+      # hosted MCP endpoint, for one person in two workspaces that both hold `example-listed-co`.
+      - name: Two workspaces, one company id (Ops API, workbook, MCP), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:shared-company-id-http-db -- --dir "$RELABELLED_BUILD"
+
+      # A NAMED WORKSPACE IS NEVER SWAPPED FOR ANOTHER (found live, 2026-10-02): `x-ops-org` / `?org=` was "a
+      # preference", so a request naming a workspace the caller was not in — or one that did not exist — was answered
+      # from their first membership: one workspace's records under another's name, and writes landing in the wrong
+      # one. Over HTTP (reuses the relabelling build above): a member of A naming B, and a platform admin, are refused
+      # on reads and writes with nothing written anywhere; an unknown id is the same refusal byte for byte; a guest of
+      # one shared chat in B still opens it; no name still means the default; the workspace list holds only the
+      # caller's own. The agent's half (its own routes) is in test:session-guard above.
+      - name: A named workspace is served or refused, never swapped (Ops API, MCP, guest chat), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:named-workspace-http-db -- --dir "$RELABELLED_BUILD"
+
+      - name: Remove the relabelled build's copy
+        if: always()
+        run: npm run clean:relabelled
+
+      # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
+      # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
+
+# NOT RUN HERE, deliberately:
+#
+#   test:browser, test:syncs — need live third-party credentials (Browserbase,
+#     IMAP, Granola). Same reasoning.
+#
+#   test:task-workflow:stress — Playwright against a live service. (test:cards,
+#     the offline preview suite, now runs in the ui-vocabulary job.)

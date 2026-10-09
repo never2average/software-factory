@@ -1,0 +1,592 @@
+{
+  "$comment": "Fixture for scripts/check-agent-vocabulary.mjs: a copy of the research-desk pack's profile (a deployment that relabels every domain the base product names). Like that deployment, it already holds files: it names each domain by the key it had before folder names were a profile setting, and pins the folder its files are stored under (\"folder\"), so nothing moves. Its own wording is written the way a relabelled deployment's must be: in its words only. The check renders the agent's whole model-facing surface under it and fails on any base word.",
+  "product": {
+    "tagline": "Research workspace for Indian housing finance companies.",
+    "description": "{product} — a research workspace for analysts covering Indian housing finance companies: an agent that fetches SEBI LODR filings and investor presentations, reads them, and builds cited KPI tables."
+  },
+  "vocabulary": {
+    "account": {
+      "singular": "company",
+      "plural": "companies"
+    },
+    "member": {
+      "singular": "analyst",
+      "plural": "analysts"
+    },
+    "owner": "Covering analyst",
+    "account_context": "Company context"
+  },
+  "chat": {
+    "hero_lines": [
+      "{product}",
+      "Which company are we looking at?",
+      "Pull the latest quarterly results",
+      "Build the KPI table",
+      "What changed in guidance?",
+      "Find it in the annual report"
+    ],
+    "empty_sections": {
+      "stalled": "Companies not looked at recently"
+    },
+    "starter_cards": {
+      "owner_label": "Covering analyst",
+      "quiet_title": "Refresh the coverage",
+      "quiet_summary": "Nothing logged in {days} days.",
+      "quiet_summary_long": "Nothing logged for over a month.",
+      "quiet_prompt": "{name} has had nothing logged for {days} days. Check the exchanges for filings and any new investor presentation since then, file what you find, and tell me what changed."
+    },
+    "account_search": {
+      "title": "Company context",
+      "description": "Pick the companies this conversation is about — the agent grounds itself in their filings and record.",
+      "placeholder": "Search companies…",
+      "empty": "No companies found.",
+      "pill_empty": "Set the company context for this chat"
+    }
+  },
+  "dataroom": {
+    "root_label": "Research Room",
+    "domains": {
+      "Customers": {
+        "folder": "Customers",
+        "label": "Companies",
+        "description": "One folder per covered company: its SEBI LODR filings, investor presentations and concalls, and the KPI tables built from them.",
+        "visible": true
+      },
+      "People": {
+        "folder": "People",
+        "label": "People",
+        "description": "Management and investor-relations contacts at covered companies.",
+        "visible": true
+      },
+      "Platform": {
+        "folder": "Platform",
+        "visible": false
+      },
+      "Deployments": {
+        "folder": "Deployments",
+        "label": "Coverage reports",
+        "visible": true,
+        "description": "One row per company per report: what was published, for which period, and how complete its data is."
+      },
+      "Solutions": {
+        "folder": "Solutions",
+        "visible": false
+      },
+      "Implementation": {
+        "folder": "Implementation",
+        "label": "Portfolios",
+        "visible": true,
+        "description": "The sets of companies a desk covers, and how far each company's coverage has been built out."
+      },
+      "Tickets": {
+        "folder": "Tickets",
+        "visible": false
+      }
+    },
+    "seed": [
+      {
+        "path": "README.md",
+        "content": "# {workspace} — research room\n\nEverything the analysts and the agent know about the covered companies lives here as plain files. Every figure the agent reports is cited to a file in this room and a page or slide in it.\n\n## The tree\n\n```\nCompanies/{company_id}/             one folder per covered company\n  context.md                        what we know about the company, curated by its covering analyst\n  interactions.jsonl                earnings calls and meetings, append-only\n  filings/\n    lodr/                           SEBI LODR filings: {YYYY-MM-DD}_{tag}_{name}; annual report maps and extracts\n    presentations/                  investor presentations, concall transcripts, ip-metrics.jsonl, guidance.jsonl\n    filing-log.jsonl                the dated log of everything filed\n    kpis.jsonl                      the standard quarterly KPI table, one row per KPI, cited\n    annual-report-data.jsonl        line items extracted from annual reports\nPeople/{person_id}/                 management and IR contacts (external people only)\nUploads/                            files analysts attach in chat\n```\n\nTwo rules the room depends on:\n\n1. A company's material never goes outside its own `Companies/{company_id}/` folder.\n2. Nothing is written without its validator passing, and nothing is reported without its source.\n"
+      },
+      {
+        "path": "Customers/README.md",
+        "content": "# Companies\n\nOne folder per covered housing finance company, named by its id (the NSE symbol where there is one).\n\n- Listed companies: quarterly results (SEBI LODR Reg 33) and their own investor presentation.\n- Unlisted, debt-listed companies: SEBI LODR filings first (Reg 52), then the parent company's investor presentation.\n- Companies with no listed securities publish no LODR filings; the agent will say so rather than guess.\n\nAsk the agent to \"get the latest filings for <company>\" to start a folder.\n"
+      }
+    ]
+  },
+  "agent": {
+    "briefing": "This is a financial research workspace for analysts covering Indian housing finance companies. Your job here is research. For research requests delegate to the research specialists (`lodr-filings`, `investor-presentations`, `annual-report-format`, `hfc-kpi-extraction`) and relay their `needs_review`, `carried_forward` and `not_found` statuses as they are. Every figure carries its document and page or slide; never state a number from memory. Keep the two tracking areas true as work happens: a company's Portfolio entry (its build-out stage and completeness) and a Coverage report for each report you produce."
+  },
+  "domains": {
+    "deployments": {
+      "label": {
+        "singular": "Coverage report",
+        "plural": "Coverage reports"
+      },
+      "description": "One row per company per report: what was published, for which period, and how complete its data is.",
+      "id_label": "Report id",
+      "kind_field": "runtime",
+      "kinds": [
+        "Initiation",
+        "Quarterly results update",
+        "Annual report review",
+        "Event / rating update",
+        "Sector note"
+      ],
+      "create_fields": [
+        "runtime",
+        "lastDeployAt",
+        "approvedByEmail",
+        "notes"
+      ],
+      "detail_fields": [
+        "runtime",
+        "lastDeployAt",
+        "approvedByEmail",
+        "liveUrl",
+        "notes"
+      ],
+      "fields": {
+        "deploymentId": {
+          "placeholder": "Q2FY26-results"
+        },
+        "runtime": {
+          "label": "Report type",
+          "short_label": "Type"
+        },
+        "deployedVersion": {
+          "label": "Period / basis",
+          "short_label": "Period",
+          "placeholder": "Q2 FY26 · standalone · unaudited"
+        },
+        "releaseStatus": {
+          "label": "Status",
+          "options": {
+            "deployed": "Published",
+            "in-progress": "In progress",
+            "pending-approval": "Awaiting review",
+            "rolled-back": "Restated",
+            "failed": "Failed"
+          }
+        },
+        "healthStatus": {
+          "label": "Data quality",
+          "options": {
+            "healthy": "Complete",
+            "degraded": "Partial (values carried forward)",
+            "down": "Missing",
+            "unknown": "Unknown"
+          }
+        },
+        "lastDeployAt": {
+          "label": "Results date",
+          "placeholder": "2025-10-24"
+        },
+        "approvedByEmail": {
+          "label": "Reviewer",
+          "placeholder": "name@company.com"
+        },
+        "deployOwnerEmail": {
+          "label": "Analyst"
+        },
+        "notes": {
+          "label": "What changed / needs review"
+        },
+        "liveUrl": {
+          "label": "Published report link",
+          "placeholder": "https://…"
+        },
+        "region": {
+          "hidden": true,
+          "fixed": "ap-south-1"
+        },
+        "environment": {
+          "hidden": true,
+          "fixed": "prod"
+        },
+        "cloudProvider": {
+          "hidden": true
+        },
+        "deploymentStrategy": {
+          "hidden": true
+        },
+        "buildSha": {
+          "hidden": true
+        },
+        "modelRouteId": {
+          "hidden": true
+        },
+        "modelRoutingMode": {
+          "hidden": true
+        },
+        "primaryModelRef": {
+          "hidden": true
+        },
+        "primaryModelVersion": {
+          "hidden": true
+        },
+        "fallbackModelRef": {
+          "hidden": true
+        },
+        "fallbackModelVersion": {
+          "hidden": true
+        },
+        "modelTrafficPrimaryPct": {
+          "hidden": true
+        },
+        "uptime30dPct": {
+          "hidden": true
+        },
+        "errorRate30dPct": {
+          "hidden": true
+        },
+        "latencyP95Ms": {
+          "hidden": true
+        },
+        "latencySloMs": {
+          "hidden": true
+        },
+        "requestCount30d": {
+          "hidden": true
+        },
+        "llmRequestCount30d": {
+          "hidden": true
+        },
+        "inputTokens30d": {
+          "hidden": true
+        },
+        "outputTokens30d": {
+          "hidden": true
+        },
+        "cacheHitRate30dPct": {
+          "hidden": true
+        },
+        "guardrailBlockRate30dPct": {
+          "hidden": true
+        },
+        "cost30dUsd": {
+          "hidden": true
+        },
+        "costBudget30dUsd": {
+          "hidden": true
+        },
+        "projectedCost30dUsd": {
+          "hidden": true
+        },
+        "capacityLimitRpm": {
+          "hidden": true
+        },
+        "peakRpm30d": {
+          "hidden": true
+        },
+        "utilization30dPct": {
+          "hidden": true
+        },
+        "rollbackVersion": {
+          "hidden": true
+        },
+        "rollbackStatus": {
+          "hidden": true
+        },
+        "rollbackTestedAt": {
+          "hidden": true
+        },
+        "lastIncidentRef": {
+          "hidden": true
+        },
+        "activeIncidentRefs": {
+          "hidden": true
+        },
+        "incidentCount30d": {
+          "hidden": true
+        },
+        "dashboardUrl": {
+          "hidden": true
+        },
+        "runbookUrl": {
+          "hidden": true
+        },
+        "lastTelemetryAt": {
+          "hidden": true
+        }
+      },
+      "custom_fields": [
+        {
+          "key": "rating",
+          "label": "Rating",
+          "type": "pick_list",
+          "options": [
+            "Buy",
+            "Add",
+            "Hold",
+            "Reduce",
+            "Sell",
+            "Not rated"
+          ],
+          "show_in_list": true
+        },
+        {
+          "key": "target_price",
+          "label": "Target price (₹)",
+          "type": "number",
+          "help": "Per share. Leave blank for a debt-listed company.",
+          "show_in_list": true
+        },
+        {
+          "key": "kpi_completeness",
+          "label": "KPI table completeness",
+          "type": "percent",
+          "help": "Share of the standard quarterly KPI table filled and cited for this period.",
+          "show_in_list": true
+        },
+        {
+          "key": "aum_cr",
+          "label": "AUM (₹ crore)",
+          "type": "number",
+          "help": "As reported for the period, after unit conversion."
+        },
+        {
+          "key": "gnpa_pct",
+          "label": "Gross NPA",
+          "type": "percent",
+          "help": "Gross stage 3 as a share of the loan book, as reported."
+        },
+        {
+          "key": "source_filing",
+          "label": "Source filing",
+          "type": "link",
+          "help": "The exchange filing or presentation the report rests on."
+        }
+      ]
+    },
+    "implementations": {
+      "label": {
+        "singular": "Portfolio entry",
+        "plural": "Portfolio entries"
+      },
+      "description": "Named sets of companies a desk covers, with each company's coverage build-out.",
+      "id_label": "Portfolio",
+      "group_by": "rolloutId",
+      "group_label": {
+        "singular": "Portfolio",
+        "plural": "Portfolios"
+      },
+      "create_fields": [],
+      "detail_fields": [
+        "rolloutId",
+        "implementationProgressPct",
+        "dataReadinessPct",
+        "integrationReadinessPct",
+        "dataQualityStatus",
+        "evalAcceptanceStatus",
+        "uatStatus",
+        "currentMilestone",
+        "currentMilestoneDueDate",
+        "blocker",
+        "blockerOwner",
+        "targetGoLiveDate",
+        "actualGoLiveDate"
+      ],
+      "fields": {
+        "rolloutId": {
+          "label": "Portfolio"
+        },
+        "implementationOwnerEmail": {
+          "label": "Analyst"
+        },
+        "implementationStage": {
+          "label": "Build-out stage",
+          "short_label": "Stage",
+          "options": {
+            "Kickoff": "Not started",
+            "Discovery": "Sources identified",
+            "Configuration": "Filings ingested",
+            "Integration": "Presentations ingested",
+            "UAT": "KPI table built",
+            "Pilot": "Under review",
+            "Go-Live": "Published",
+            "Stabilization": "First update done",
+            "Steady State": "Steady coverage",
+            "On Hold": "On hold"
+          }
+        },
+        "implementationProgressPct": {
+          "label": "Progress %",
+          "short_label": "Progress"
+        },
+        "implementationRiskLevel": {
+          "label": "Risk",
+          "options": {
+            "Green": "Green",
+            "Yellow": "Yellow",
+            "Red": "Red"
+          }
+        },
+        "dataReadinessPct": {
+          "label": "Filings completeness",
+          "short_label": "Filings"
+        },
+        "integrationReadinessPct": {
+          "label": "Presentations & concalls completeness",
+          "short_label": "Decks & calls"
+        },
+        "dataQualityStatus": {
+          "label": "Validation"
+        },
+        "evalAcceptanceStatus": {
+          "label": "Reviewer sign-off",
+          "short_label": "Sign-off"
+        },
+        "uatStatus": {
+          "label": "Analyst check"
+        },
+        "currentMilestone": {
+          "label": "Current milestone"
+        },
+        "currentMilestoneDueDate": {
+          "label": "Milestone due",
+          "placeholder": "2025-11-15"
+        },
+        "blocker": {
+          "label": "Blocker"
+        },
+        "blockerOwner": {
+          "label": "Blocker owner",
+          "options": {
+            "Provider": "Us",
+            "Customer": "Company",
+            "Third-Party Vendor": "Exchange / third party",
+            "None": "None"
+          }
+        },
+        "targetGoLiveDate": {
+          "label": "Coverage initiation (target)",
+          "short_label": "Initiation",
+          "placeholder": "2025-12-01"
+        },
+        "actualGoLiveDate": {
+          "label": "Coverage initiation (actual)",
+          "placeholder": "2025-12-01"
+        },
+        "launchScopeSolutionIds": {
+          "hidden": true
+        },
+        "securityReviewStatus": {
+          "hidden": true
+        },
+        "privacyReviewStatus": {
+          "hidden": true
+        },
+        "billingReadinessStatus": {
+          "hidden": true
+        },
+        "entitlementProvisioningStatus": {
+          "hidden": true
+        },
+        "billingStartDate": {
+          "hidden": true
+        },
+        "runbookStatus": {
+          "hidden": true
+        },
+        "runbookLink": {
+          "hidden": true
+        },
+        "supportHandoffStatus": {
+          "hidden": true
+        },
+        "supportOwnerEmail": {
+          "hidden": true
+        },
+        "supportChannelRef": {
+          "hidden": true
+        },
+        "launchWindowStartAt": {
+          "hidden": true
+        },
+        "launchWindowEndAt": {
+          "hidden": true
+        },
+        "connectorProvisioningStatus": {
+          "hidden": true
+        },
+        "integrationTestStatus": {
+          "hidden": true
+        },
+        "trainingStatus": {
+          "hidden": true
+        },
+        "launchDecision": {
+          "hidden": true
+        },
+        "launchDecisionDate": {
+          "hidden": true
+        },
+        "rolloutGovernanceStatus": {
+          "hidden": true
+        },
+        "customerLaunchApproverEmail": {
+          "hidden": true
+        },
+        "providerLaunchApproverEmail": {
+          "hidden": true
+        }
+      },
+      "custom_fields": [
+        {
+          "key": "coverage_priority",
+          "label": "Priority",
+          "type": "pick_list",
+          "options": [
+            "Core",
+            "Watch",
+            "Passive"
+          ],
+          "show_in_list": true
+        },
+        {
+          "key": "next_review",
+          "label": "Next review",
+          "type": "date",
+          "show_in_list": true
+        }
+      ]
+    }
+  },
+  "persona": {
+    "$comment": "The pack's agent/instructions/50-pack-research-desk.md says who the agent is.",
+    "base": false
+  },
+  "specialists": {
+    "$comment": "The base specialists a research workspace has no use for.",
+    "exclude": [
+      "deployment",
+      "configuration",
+      "data-migration",
+      "customer-context"
+    ]
+  },
+  "account_fields": {
+    "$comment": "What the research-desk pack is asked to hide at the account level: the SaaS commercial and customer-success fields a research workspace has no use for. Removed from the record tools the model is given; stored values are untouched. custom_fields: the company notes the operator asked to keep ON the company record (and a listed pick list, to cover show_in_list).",
+    "hidden": [
+      "aeOwner",
+      "arr",
+      "arrCurrency",
+      "seats",
+      "accountRegion",
+      "contractStatus",
+      "renewalForecast",
+      "renewalRiskReason",
+      "expansionPotentialArr",
+      "valueRealizationStage",
+      "targetAnnualValue",
+      "realizedAnnualValue",
+      "successCriteria",
+      "valuePeriodStart",
+      "valuePeriodEnd",
+      "valueEvidenceStatus",
+      "valueEvidenceUrl",
+      "lastBusinessReviewDate",
+      "nextBusinessReviewDate",
+      "contractStart",
+      "renewalDate",
+      "technicalOwnerEmail",
+      "executiveSponsorEmail",
+      "platform",
+      "solutions",
+      "tickets"
+    ],
+    "custom_fields": [
+      { "key": "notes", "label": "Notes", "type": "long_text", "help": "What the desk knows about the company: filings read, calls held, open questions." },
+      { "key": "house_view", "label": "House view", "type": "pick_list", "options": ["Positive", "Neutral", "Negative"], "show_in_list": true }
+    ]
+  },
+  "work_periods": {
+    "$comment": "Analysts do not run a shared sprint: each holds their own targets for the week. Mode individual, in the desk's words; the list reads the same word (list_label follows label).",
+    "mode": "individual",
+    "label": { "singular": "week", "plural": "weeks" },
+    "item_label": { "singular": "target", "plural": "targets" },
+    "length_days": 7,
+    "auto_rollover": true
+  }
+}

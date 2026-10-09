@@ -73,7 +73,7 @@ Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `val
 
 ## Rules
 
-- Molds under `molds/<mold_id>/codebase` are general-purpose snapshots, fetched by `mold.py` (the source's address is the machine's own, in `state/factory.local.json`). Never edit one in place and never fork one for an app. A base-code change is a pull request to the mold's source.
+- Molds under `molds/<mold_id>/codebase` are general-purpose snapshots, committed in this repository at their pinned version and refreshed from their source by `mold.py` (the source's address is the machine's own, in `state/factory.local.json`). Never edit one in place and never fork one for an app. A base-code change is a pull request to the mold's source.
 - An app's own code (specialist agents, an instructions section, sandbox helpers) is a pack under `packs/<pack_id>/`, named in the app's state and applied to `build/<app_id>/` by `packs.py`.
 - Stamping an app means: copy `state/application/app_id/` to a real id, fill the four JSON files against their schemas, then run the five lanes in `molds/<mold_id>/testing/`. A failed lane sets the app to `reverted` and hands control back to the operator. Report what was measured, never what was hoped; never edit a lane or a test to make it pass.
 - Shallow-clone external repositories.

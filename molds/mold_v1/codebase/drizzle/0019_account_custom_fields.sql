@@ -1,0 +1,12 @@
+-- A deployment profile may declare its OWN fields on the account record itself (`account_fields.custom_fields`,
+-- docs/DEPLOYMENT_PROFILE.md): a research desk's notes on a company, a field-service team's permit number on a
+-- site. Their values live in ONE jsonb column, keyed by the field's key, exactly as deployments.custom and
+-- implementation.custom do for the two areas (0017): a profile changes what the keys are, never the schema.
+-- Values are validated on every write by agent/lib/custom-fields.ts.
+-- NULLABLE with no default, unlike 0017: NULL reads as "no own values", so adding the column is a catalogue-only
+-- change that rewrites no row and takes the table lock only for the instant of the ALTER; the code that predates
+-- it never names the column and keeps working. IF NOT EXISTS makes a re-run harmless.
+-- Adding a column touches no policy: org_isolation on customers is row-level and stays exactly as it is, and the
+-- grants app_rw holds on the table cover every column.
+-- Applied by `npm run db:migrate:production` (scripts/migrate-production.mjs).
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "custom" jsonb;

@@ -1,0 +1,76 @@
+/**
+ * The `kind` claim on the tokens this platform signs (lib/auth-session.ts), in one dependency-free place so the web
+ * app's verifiers and the agent's (agent/channels/eve.ts) cannot disagree about which kinds exist.
+ *
+ * A token's kind decides what it may do, so every verifier CHECKS it. The agent's email-session verifier used to
+ * accept any token with our issuer and audience whatever its kind — harmless while only one kind was ever minted,
+ * and a hole the day a second one is.
+ */
+
+/** A person's sign-in (the emailed-code flow). Proves an email address and nothing else. */
+export const EMAIL_SESSION_KIND = "email-session";
+
+/**
+ * A token the SERVER mints to act for a person on ONE eve session while they are away: PR #63's queue-delivery
+ * token (lib/auth-session.ts `mintQueueDeliveryToken` there), which sends a queued chat message after its tab has
+ * closed. Its own audience and `kind`, a `sid` claim naming the session, two minutes long; #63 also adds the agent's
+ * door for it (agent/lib/queue-delivery-auth.ts), which authenticates it only on that session's routes.
+ *
+ * The session guard does not depend on that door being right. Any principal whose token carries this `kind` OR a
+ * {@link SESSION_BOUND_CLAIM} claim, whatever door let it in, is a SESSION-BOUND caller (agent/lib/session-guard.ts
+ * `callerOf`): admitted only on the one session it names, only when its `email` is that session's recorded owner,
+ * and never to create a session (lib/chat-gate.ts). So the door is an extra restriction, never a way around the
+ * ownership rule. #63's lib/queue-delivery-token.ts imports its names from here (one source).
+ */
+export const SESSION_BOUND_TOKEN_KIND = "queue-delivery";
+/** Its audience (never the sign-in audience, so no web-app route accepts it). */
+export const SESSION_BOUND_TOKEN_AUDIENCE = "delivered-queue-delivery";
+
+/** The claim naming the one session a session-bound token may touch. */
+export const SESSION_BOUND_CLAIM = "sid";
+
+/**
+ * The claim saying what a session-bound token may do there: "read" (the stream) or "post" (one message). The
+ * session guard enforces it too (lib/chat-gate.ts): a read token can never send, answer or cancel, whatever door
+ * admitted it; a post token never reads. #63's lib/queue-delivery-token.ts takes its names from here.
+ */
+export const SESSION_BOUND_ACT_CLAIM = "act";
+
+/**
+ * WHO MAY MAKE A NEW SESSION WORKSPACE-VISIBLE. A workflow, app or cron step is the workspace's to look at (the run
+ * timeline opens it for every member), so the web app's delegate (lib/workflow-delegate.ts) creates steps
+ * workspace-visible. Any client could set a bare header, though, so the agent honours only a GRANT: a two-minute
+ * ES256 token the web app signs server-side (lib/auth-session.ts `mintWorkspaceStepGrant`; only it holds the private
+ * key), carrying its own kind and audience — so it is never a sign-in anywhere — and the email of the person whose
+ * token creates the step. The agent (agent/lib/session-guard.ts) accepts it only when that email is the verified
+ * caller's. Colleagues get READ access only (lib/chat-gate.ts).
+ */
+export const SESSION_VISIBILITY_GRANT_HEADER = "x-session-visibility-grant";
+export const WORKSPACE_STEP_GRANT_KIND = "workspace-step-grant";
+export const WORKSPACE_STEP_GRANT_AUDIENCE = "delivered-agent-grant";
+export const WORKSPACE_STEP_GRANT_TTL_SECONDS = 120;
+
+/**
+ * THE WEB APP AS A SERVICE, OFF VERCEL. The crons, the on-demand run trigger and the run-cancel fan-out reach the agent
+ * as the web app itself, not as a person. On Vercel that identity is the web project's own OIDC token, which Vercel
+ * mints and rotates per invocation. Anywhere else there is no such token, and those five routes did nothing.
+ *
+ * With `SERVICE_AUTH=session-key` the web app signs its own: a two-minute ES256 token made with the key pair it
+ * already signs sign-ins with (lib/auth-session.ts `mintWebServiceToken`; only the web app holds the private half).
+ * Its own `kind` and audience, so it is never a sign-in anywhere and a sign-in is never one; a fixed subject that is
+ * not an email; no person, no session and no workspace in it. The agent admits it at its own door
+ * (agent/lib/web-service-auth.ts) only when the same setting is on there, and then treats it exactly as it treats the
+ * Vercel OIDC service identity (agent/lib/service-scope.ts): same rules, nothing more. No static shared secret.
+ *
+ * Unset (the default, and every Vercel deployment today) nothing here is minted and nothing here is accepted.
+ */
+export const WEB_SERVICE_TOKEN_KIND = "web-service";
+/** Its audience (never the sign-in audience, so no web-app route accepts it). */
+export const WEB_SERVICE_TOKEN_AUDIENCE = "delivered-agent-service";
+/** Its subject. Not an email, so nothing that derives a person from a subject ever finds one. */
+export const WEB_SERVICE_TOKEN_SUBJECT = "service:web-app";
+export const WEB_SERVICE_TOKEN_TTL_SECONDS = 120;
+
+/** The setting, on BOTH the web app and the agent (read by lib/service-auth-mode.ts). */
+export const SERVICE_AUTH_ENV = "SERVICE_AUTH";
+export const SERVICE_AUTH_SESSION_KEY = "session-key";

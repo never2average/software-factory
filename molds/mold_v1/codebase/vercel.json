@@ -1,0 +1,30 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/cron/resume-workflows",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/run-cron-workflows",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/refresh-apps",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/sync-inbox",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/close-abandoned-runs",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/deliver-queued",
+      "schedule": "* * * * *"
+    }
+  ]
+}

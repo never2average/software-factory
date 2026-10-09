@@ -1,0 +1,54 @@
+{
+  "$comment": "What this library has ever put into a workspace, for `npm run operator:library-cleanup`: every workflow name it has shipped (one of them since removed) with the sha256 of each version's code skeleton (the script with the contents of its double-quoted strings removed, trimmed: the prompts were reworded and are stored in each deployment's own words, the code around them never changed), and every recipe slug. A stored row is this library's, untouched, only when its name and its skeleton are both here.",
+  "workflows": {
+    "account-research": [
+      "8076720ecc6a2b078dbd67beea6c119ff35abbc309c3fb20ddad74a38ab8ce6e"
+    ],
+    "assign-account": [
+      "e1e3cbe278980133d879408197f520be88f7708d064cb3fc54eeca44afd39c1e"
+    ],
+    "data-migration-plan": [
+      "acc1b8382d60ed0bb213142d148429d6217669dee2bfec05d2f3dd8a78f1622c"
+    ],
+    "eval-regression-triage": [
+      "9cdd6013564728ab9ed09838b33104a32e201a443b2a0ee42087c32600f52bbc"
+    ],
+    "go-live-sprint": [
+      "ee255db3360e51ee356e5a1a6e7745e88b0702af5377517aad31bd7e0cf5c054"
+    ],
+    "incident-postmortem": [
+      "565cad2aaed66501f71c39a79904e53cdc7abe4064dbc573cd62b71b1dec74e1"
+    ],
+    "infosec-checklist": [
+      "ba1421b748476070a2a9c3533cc0d7d8e4e4e1f633f2d92c511ef83a688701a6"
+    ],
+    "infra-sizing": [
+      "f51030881a89e21db06af84af339ccdfe18121db4042aea642569681f07be473"
+    ],
+    "integration-wiring": [
+      "41e007031d933a5f63cb198bccb023fdee1ef30880a60f0f695a76d7a2c5258c"
+    ],
+    "onboard-account": [
+      "0c47a695ab70d02fa36205d59b7c501266d27e7a9c52efac54dd9b287af9013c"
+    ],
+    "qbr-prep": [
+      "8b678f8fa0765220e72f2d95e01f725c7ed3062115da05748c8e6a02f582f1f4"
+    ],
+    "renewal-risk": [
+      "8512094aa7fe09b4fcd43107a01d5e5802df677222545646df0e55808e279845"
+    ],
+    "route-incident": [
+      "176dfb8bbdda2971e35d00b18394313c8663ca038496543f22d3ea7a88098626"
+    ],
+    "solution-engineering": [
+      "c37400a1eb4432f6ac8430c512b232dcf06a310c6e2ca847467fe70b396b5b12"
+    ]
+  },
+  "recipes": [
+    "onboard-self",
+    "import-roster",
+    "connect-sources",
+    "seed-workflows",
+    "onboard-customer"
+  ]
+}

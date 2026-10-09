@@ -1,0 +1,4 @@
+# The email module is the draft-only enforcement point: it implements IMAP list +
+# draft (APPEND) and deliberately has NO SMTP/send path. Any change here must be
+# reviewed so a send capability can't be added by accident.
+/agent/lib/email.ts @never2average

@@ -1,0 +1,8 @@
+{
+  "$comment": "Opts a deployment into the account-delivery library: the workflow scripts and the onboarding recipes this product shipped as built-ins before the library became the deployment profile's. Copy this file into profiles/ (cp library/account-delivery/profile.json profiles/40-library-account-delivery.json), then npm run build:generated. Every workspace created afterwards is provisioned with it; a workspace that already exists gets it from npm run operator:seed-workflows -- --org <id>. See library/account-delivery/README.md and docs/DEPLOYMENT_PROFILE.md, \"library\".",
+  "library": {
+    "sources": {
+      "account-delivery": "library/account-delivery"
+    }
+  }
+}

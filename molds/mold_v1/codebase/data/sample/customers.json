@@ -1,0 +1,116 @@
+{
+  "_comment": "SYNTHETIC sample for a LOCAL DEMO only: two invented accounts, no real customer or person (every email is @example.com or a .example domain). Nothing imports this file. agent/lib/sample-data.ts reads it from disk into the no-database fallback only when the process runs with DEMO_SAMPLE_DATA=1; unset, the fallback starts empty. scripts/test-alerts.mjs sets the flag and pins every assertion in the deterministic alerts engine to this file at now=2026-07-10T12:00:00Z, so changing a due date, priority or status here changes what that test asserts. npm run check:no-sample-data fails if any name or email here reaches the production client build.",
+  "customers": [
+    {
+      "id": "acme-bank",
+      "name": "Acme Bank",
+      "status": "On Track",
+      "lifecycleStage": "Live",
+      "tier": "Enterprise",
+      "fdeOwner": "alex.rivera@example.com",
+      "accountRegion": "NA",
+      "vertical": "Banking",
+      "companyDomain": "acme-bank.example",
+      "tickets": [
+        {
+          "ticketType": "Access Request",
+          "ticketCategory": "Configuration Change Request",
+          "ticketStatus": "Waiting on Customer",
+          "ticketPriority": "P1-High",
+          "ticketOwnerEmail": "alex.rivera@example.com",
+          "sourceChannel": "Email",
+          "ownerTeam": "FDE",
+          "ticketId": "TCK-1001",
+          "summary": "SAML SSO cutover blocked on security review",
+          "severity": "S1",
+          "ticketOpenedDate": "2026-07-02",
+          "lastActivityDate": "2026-07-08",
+          "slaDueAt": "2026-07-09T17:00:00Z",
+          "slaStatus": "breached",
+          "ticketNextStep": "Waiting on Sam Cole to confirm security review completion date."
+        },
+        {
+          "ticketType": "Feature Request",
+          "ticketCategory": "Feature Request",
+          "ticketStatus": "Open",
+          "ticketPriority": "P2-Medium",
+          "ticketOwnerEmail": "alex.rivera@example.com",
+          "sourceChannel": "Email",
+          "ownerTeam": "FDE",
+          "ticketId": "TCK-1002",
+          "summary": "Add quarterly usage export to the account dashboard",
+          "ticketOpenedDate": "2026-06-28",
+          "lastActivityDate": "2026-07-07",
+          "ticketDueDate": "2026-07-20",
+          "ticketNextStep": "Size the export job with the data team at next sprint planning."
+        },
+        {
+          "ticketType": "Bug",
+          "ticketCategory": "Bug Report",
+          "ticketStatus": "In Progress",
+          "ticketPriority": "P2-Medium",
+          "ticketOwnerEmail": "alex.rivera@example.com",
+          "sourceChannel": "Email",
+          "ownerTeam": "FDE",
+          "ticketId": "TCK-1003",
+          "summary": "Interaction sync misses Granola notes older than 30 days",
+          "severity": "S2",
+          "ticketOpenedDate": "2026-07-05",
+          "lastActivityDate": "2026-07-09",
+          "resolutionDueAt": "2026-07-12T17:00:00Z",
+          "slaStatus": "on_track",
+          "ticketNextStep": "Backfill the 30-day window once the connector patch ships."
+        }
+      ]
+    },
+    {
+      "id": "northwind-cap",
+      "name": "Northwind Capital",
+      "status": "Needs Attention",
+      "lifecycleStage": "Onboarding",
+      "tier": "Enterprise",
+      "fdeOwner": "alex.rivera@example.com",
+      "accountRegion": "EMEA",
+      "vertical": "Asset Management",
+      "companyDomain": "northwind-cap.example",
+      "tickets": [
+        {
+          "ticketType": "Bug",
+          "ticketCategory": "Bug Report",
+          "ticketStatus": "In Progress",
+          "ticketPriority": "P0-Critical",
+          "ticketOwnerEmail": "alex.rivera@example.com",
+          "sourceChannel": "Email",
+          "ownerTeam": "FDE",
+          "ticketId": "TCK-2031",
+          "summary": "Research copilot returns empty citations in production",
+          "severity": "S0",
+          "ticketOpenedDate": "2026-07-09",
+          "lastActivityDate": "2026-07-10",
+          "slaDueAt": "2026-07-10T17:00:00Z",
+          "slaStatus": "at_risk",
+          "escalated": true,
+          "escalationLevel": "L2",
+          "productionImpact": true,
+          "escalationReason": "Customer-visible in production during onboarding.",
+          "ticketNextStep": "Ship the citation-index rebuild and confirm with the customer on the 17:00 call."
+        },
+        {
+          "ticketType": "Config Change",
+          "ticketCategory": "Configuration Change Request",
+          "ticketStatus": "Open",
+          "ticketPriority": "P2-Medium",
+          "ticketOwnerEmail": "alex.rivera@example.com",
+          "sourceChannel": "Email",
+          "ownerTeam": "FDE",
+          "ticketId": "TCK-2032",
+          "summary": "Wire the Slack channel for onboarding standups",
+          "ticketOpenedDate": "2026-07-06",
+          "lastActivityDate": "2026-07-08",
+          "ticketDueDate": "2026-08-15",
+          "ticketNextStep": "Ask the workspace admin to approve the Slack app install."
+        }
+      ]
+    }
+  ]
+}

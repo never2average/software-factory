@@ -1,0 +1,1080 @@
+{
+  "nothing set": {
+    "calls": [
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://api.githubcopilot.com/mcp/",
+          "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+          "auth": {
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
+          }
+        }
+      },
+      {
+        "call": "connect",
+        "args": [
+          {
+            "connector": "slack/agent-workspace",
+            "principalType": "app"
+          }
+        ]
+      },
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://slack-mcp.example.com/mcp",
+          "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+          "auth": {
+            "tagged": "connect#1"
+          }
+        }
+      },
+      {
+        "call": "connectSlackCredentials",
+        "args": [
+          "slack/agent-workspace"
+        ]
+      },
+      {
+        "call": "slackChannel",
+        "options": {
+          "credentials": {
+            "botToken": {
+              "tagged": "connectSlackCredentials#1.botToken"
+            },
+            "webhookVerifier": {
+              "tagged": "connectSlackCredentials#1.webhookVerifier"
+            }
+          },
+          "threadContext": {
+            "since": "last-agent-reply"
+          }
+        }
+      }
+    ],
+    "exports": {
+      "githubConnection": {
+        "url": "https://api.githubcopilot.com/mcp/",
+        "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+        "auth": {
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
+        }
+      },
+      "slackConnection": {
+        "url": "https://slack-mcp.example.com/mcp",
+        "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+        "auth": {
+          "tagged": "connect#1"
+        }
+      },
+      "slackChannel": {
+        "credentials": {
+          "botToken": {
+            "tagged": "connectSlackCredentials#1.botToken"
+          },
+          "webhookVerifier": {
+            "tagged": "connectSlackCredentials#1.webhookVerifier"
+          }
+        },
+        "threadContext": {
+          "since": "last-agent-reply"
+        }
+      },
+      "connectionsModule": [
+        "githubConnection",
+        "slackConnection"
+      ]
+    },
+    "tokens": [
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      },
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      },
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      }
+    ],
+    "requests": []
+  },
+  "slack bot-token override": {
+    "calls": [
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://api.githubcopilot.com/mcp/",
+          "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+          "auth": {
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
+          }
+        }
+      },
+      {
+        "call": "connect",
+        "args": [
+          {
+            "connector": "slack/agent-workspace",
+            "principalType": "app"
+          }
+        ]
+      },
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://slack-mcp.example.com/mcp",
+          "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+          "auth": {
+            "tagged": "connect#1"
+          }
+        }
+      },
+      {
+        "call": "connectSlackCredentials",
+        "args": [
+          "slack/agent-workspace"
+        ]
+      },
+      {
+        "call": "slackChannel",
+        "options": {
+          "credentials": {
+            "botToken": "xoxb-test-override",
+            "webhookVerifier": {
+              "tagged": "connectSlackCredentials#1.webhookVerifier"
+            }
+          },
+          "threadContext": {
+            "since": "last-agent-reply"
+          }
+        }
+      }
+    ],
+    "exports": {
+      "githubConnection": {
+        "url": "https://api.githubcopilot.com/mcp/",
+        "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+        "auth": {
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
+        }
+      },
+      "slackConnection": {
+        "url": "https://slack-mcp.example.com/mcp",
+        "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+        "auth": {
+          "tagged": "connect#1"
+        }
+      },
+      "slackChannel": {
+        "credentials": {
+          "botToken": "xoxb-test-override",
+          "webhookVerifier": {
+            "tagged": "connectSlackCredentials#1.webhookVerifier"
+          }
+        },
+        "threadContext": {
+          "since": "last-agent-reply"
+        }
+      },
+      "connectionsModule": [
+        "githubConnection",
+        "slackConnection"
+      ]
+    },
+    "tokens": [
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      },
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      },
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      }
+    ],
+    "requests": []
+  },
+  "mcp urls": {
+    "calls": [
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://github-mcp.internal.test/mcp/",
+          "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+          "auth": {
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
+          }
+        }
+      },
+      {
+        "call": "connect",
+        "args": [
+          {
+            "connector": "slack/agent-workspace",
+            "principalType": "app"
+          }
+        ]
+      },
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://slack-mcp.internal.test/mcp",
+          "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+          "auth": {
+            "tagged": "connect#1"
+          }
+        }
+      },
+      {
+        "call": "connectSlackCredentials",
+        "args": [
+          "slack/agent-workspace"
+        ]
+      },
+      {
+        "call": "slackChannel",
+        "options": {
+          "credentials": {
+            "botToken": {
+              "tagged": "connectSlackCredentials#1.botToken"
+            },
+            "webhookVerifier": {
+              "tagged": "connectSlackCredentials#1.webhookVerifier"
+            }
+          },
+          "threadContext": {
+            "since": "last-agent-reply"
+          }
+        }
+      }
+    ],
+    "exports": {
+      "githubConnection": {
+        "url": "https://github-mcp.internal.test/mcp/",
+        "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+        "auth": {
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
+        }
+      },
+      "slackConnection": {
+        "url": "https://slack-mcp.internal.test/mcp",
+        "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+        "auth": {
+          "tagged": "connect#1"
+        }
+      },
+      "slackChannel": {
+        "credentials": {
+          "botToken": {
+            "tagged": "connectSlackCredentials#1.botToken"
+          },
+          "webhookVerifier": {
+            "tagged": "connectSlackCredentials#1.webhookVerifier"
+          }
+        },
+        "threadContext": {
+          "since": "last-agent-reply"
+        }
+      },
+      "connectionsModule": [
+        "githubConnection",
+        "slackConnection"
+      ]
+    },
+    "tokens": [
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      },
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      },
+      {
+        "threw": "ConnectionAuthorizationFailedError",
+        "message": "GitHub is not connected for this workspace: store GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_TOKEN) on its 'github' connector."
+      }
+    ],
+    "requests": []
+  },
+  "github pat": {
+    "calls": [
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://api.githubcopilot.com/mcp/",
+          "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+          "auth": {
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
+          }
+        }
+      },
+      {
+        "call": "connect",
+        "args": [
+          {
+            "connector": "slack/agent-workspace",
+            "principalType": "app"
+          }
+        ]
+      },
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://slack-mcp.example.com/mcp",
+          "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+          "auth": {
+            "tagged": "connect#1"
+          }
+        }
+      },
+      {
+        "call": "connectSlackCredentials",
+        "args": [
+          "slack/agent-workspace"
+        ]
+      },
+      {
+        "call": "slackChannel",
+        "options": {
+          "credentials": {
+            "botToken": {
+              "tagged": "connectSlackCredentials#1.botToken"
+            },
+            "webhookVerifier": {
+              "tagged": "connectSlackCredentials#1.webhookVerifier"
+            }
+          },
+          "threadContext": {
+            "since": "last-agent-reply"
+          }
+        }
+      }
+    ],
+    "exports": {
+      "githubConnection": {
+        "url": "https://api.githubcopilot.com/mcp/",
+        "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+        "auth": {
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
+        }
+      },
+      "slackConnection": {
+        "url": "https://slack-mcp.example.com/mcp",
+        "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+        "auth": {
+          "tagged": "connect#1"
+        }
+      },
+      "slackChannel": {
+        "credentials": {
+          "botToken": {
+            "tagged": "connectSlackCredentials#1.botToken"
+          },
+          "webhookVerifier": {
+            "tagged": "connectSlackCredentials#1.webhookVerifier"
+          }
+        },
+        "threadContext": {
+          "since": "last-agent-reply"
+        }
+      },
+      "connectionsModule": [
+        "githubConnection",
+        "slackConnection"
+      ]
+    },
+    "tokens": [
+      {
+        "value": {
+          "token": "ghp_test_pat"
+        }
+      },
+      {
+        "value": {
+          "token": "ghp_test_pat"
+        }
+      },
+      {
+        "value": {
+          "token": "ghp_test_pat"
+        }
+      }
+    ],
+    "requests": []
+  },
+  "github app": {
+    "calls": [
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://api.githubcopilot.com/mcp/",
+          "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+          "auth": {
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
+          }
+        }
+      },
+      {
+        "call": "connect",
+        "args": [
+          {
+            "connector": "slack/agent-workspace",
+            "principalType": "app"
+          }
+        ]
+      },
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://slack-mcp.example.com/mcp",
+          "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+          "auth": {
+            "tagged": "connect#1"
+          }
+        }
+      },
+      {
+        "call": "connectSlackCredentials",
+        "args": [
+          "slack/agent-workspace"
+        ]
+      },
+      {
+        "call": "slackChannel",
+        "options": {
+          "credentials": {
+            "botToken": {
+              "tagged": "connectSlackCredentials#1.botToken"
+            },
+            "webhookVerifier": {
+              "tagged": "connectSlackCredentials#1.webhookVerifier"
+            }
+          },
+          "threadContext": {
+            "since": "last-agent-reply"
+          }
+        }
+      }
+    ],
+    "exports": {
+      "githubConnection": {
+        "url": "https://api.githubcopilot.com/mcp/",
+        "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+        "auth": {
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
+        }
+      },
+      "slackConnection": {
+        "url": "https://slack-mcp.example.com/mcp",
+        "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+        "auth": {
+          "tagged": "connect#1"
+        }
+      },
+      "slackChannel": {
+        "credentials": {
+          "botToken": {
+            "tagged": "connectSlackCredentials#1.botToken"
+          },
+          "webhookVerifier": {
+            "tagged": "connectSlackCredentials#1.webhookVerifier"
+          }
+        },
+        "threadContext": {
+          "since": "last-agent-reply"
+        }
+      },
+      "connectionsModule": [
+        "githubConnection",
+        "slackConnection"
+      ]
+    },
+    "tokens": [
+      {
+        "value": {
+          "token": "ghs_minted_1",
+          "expiresAt": 1768482000000
+        }
+      },
+      {
+        "value": {
+          "token": "ghs_minted_1",
+          "expiresAt": 1768482000000
+        }
+      },
+      {
+        "value": {
+          "token": "ghs_minted_2",
+          "expiresAt": 1768482000000
+        }
+      }
+    ],
+    "requests": [
+      {
+        "method": "POST",
+        "url": "https://api.github.com/app/installations/67890/access_tokens",
+        "headers": {
+          "authorization": {
+            "scheme": "Bearer",
+            "jwtHeader": {
+              "alg": "RS256",
+              "typ": "JWT"
+            },
+            "jwtClaims": {
+              "iat": 1768478340,
+              "exp": 1768478940,
+              "iss": "12345"
+            },
+            "signature": "valid for the App key"
+          },
+          "accept": "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28"
+        }
+      },
+      {
+        "method": "POST",
+        "url": "https://api.github.com/app/installations/67890/access_tokens",
+        "headers": {
+          "authorization": {
+            "scheme": "Bearer",
+            "jwtHeader": {
+              "alg": "RS256",
+              "typ": "JWT"
+            },
+            "jwtClaims": {
+              "iat": 1768481700,
+              "exp": 1768482300,
+              "iss": "12345"
+            },
+            "signature": "valid for the App key"
+          },
+          "accept": "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28"
+        }
+      }
+    ]
+  },
+  "github app, base64 key, mint refused": {
+    "calls": [
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://api.githubcopilot.com/mcp/",
+          "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+          "auth": {
+            "function": true
+          },
+          "tools": {
+            "allow": [
+              "search_repositories",
+              "get_file_contents",
+              "get_repository_tree",
+              "search_code",
+              "list_branches",
+              "list_tags",
+              "get_tag",
+              "list_releases",
+              "get_latest_release",
+              "get_release_by_tag",
+              "list_commits",
+              "get_commit",
+              "search_commits",
+              "list_issues",
+              "issue_read",
+              "search_issues",
+              "list_issue_types",
+              "list_issue_fields",
+              "get_label",
+              "list_pull_requests",
+              "pull_request_read",
+              "search_pull_requests",
+              "actions_list",
+              "actions_get",
+              "get_job_logs"
+            ]
+          }
+        }
+      },
+      {
+        "call": "connect",
+        "args": [
+          {
+            "connector": "slack/agent-workspace",
+            "principalType": "app"
+          }
+        ]
+      },
+      {
+        "call": "defineMcpClientConnection",
+        "definition": {
+          "url": "https://slack-mcp.example.com/mcp",
+          "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+          "auth": {
+            "tagged": "connect#1"
+          }
+        }
+      },
+      {
+        "call": "connectSlackCredentials",
+        "args": [
+          "slack/agent-workspace"
+        ]
+      },
+      {
+        "call": "slackChannel",
+        "options": {
+          "credentials": {
+            "botToken": {
+              "tagged": "connectSlackCredentials#1.botToken"
+            },
+            "webhookVerifier": {
+              "tagged": "connectSlackCredentials#1.webhookVerifier"
+            }
+          },
+          "threadContext": {
+            "since": "last-agent-reply"
+          }
+        }
+      }
+    ],
+    "exports": {
+      "githubConnection": {
+        "url": "https://api.githubcopilot.com/mcp/",
+        "description": "GitHub (read-only): inspect repos, issues, pull requests, commits, and workflow runs for account platforms.",
+        "auth": {
+          "function": true
+        },
+        "tools": {
+          "allow": [
+            "search_repositories",
+            "get_file_contents",
+            "get_repository_tree",
+            "search_code",
+            "list_branches",
+            "list_tags",
+            "get_tag",
+            "list_releases",
+            "get_latest_release",
+            "get_release_by_tag",
+            "list_commits",
+            "get_commit",
+            "search_commits",
+            "list_issues",
+            "issue_read",
+            "search_issues",
+            "list_issue_types",
+            "list_issue_fields",
+            "get_label",
+            "list_pull_requests",
+            "pull_request_read",
+            "search_pull_requests",
+            "actions_list",
+            "actions_get",
+            "get_job_logs"
+          ]
+        }
+      },
+      "slackConnection": {
+        "url": "https://slack-mcp.example.com/mcp",
+        "description": "Slack: read account channels and threads, and post stand-up summaries and follow-up reminders.",
+        "auth": {
+          "tagged": "connect#1"
+        }
+      },
+      "slackChannel": {
+        "credentials": {
+          "botToken": {
+            "tagged": "connectSlackCredentials#1.botToken"
+          },
+          "webhookVerifier": {
+            "tagged": "connectSlackCredentials#1.webhookVerifier"
+          }
+        },
+        "threadContext": {
+          "since": "last-agent-reply"
+        }
+      },
+      "connectionsModule": [
+        "githubConnection",
+        "slackConnection"
+      ]
+    },
+    "tokens": [
+      {
+        "threw": "Error",
+        "message": "GitHub App installation-token mint failed (401): {\"message\":\"Bad credentials\"}"
+      },
+      {
+        "threw": "Error",
+        "message": "GitHub App installation-token mint failed (401): {\"message\":\"Bad credentials\"}"
+      },
+      {
+        "threw": "Error",
+        "message": "GitHub App installation-token mint failed (401): {\"message\":\"Bad credentials\"}"
+      }
+    ],
+    "requests": [
+      {
+        "method": "POST",
+        "url": "https://api.github.com/app/installations/67890/access_tokens",
+        "headers": {
+          "authorization": {
+            "scheme": "Bearer",
+            "jwtHeader": {
+              "alg": "RS256",
+              "typ": "JWT"
+            },
+            "jwtClaims": {
+              "iat": 1768478340,
+              "exp": 1768478940,
+              "iss": "12345"
+            },
+            "signature": "valid for the App key"
+          },
+          "accept": "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28"
+        }
+      },
+      {
+        "method": "POST",
+        "url": "https://api.github.com/app/installations/67890/access_tokens",
+        "headers": {
+          "authorization": {
+            "scheme": "Bearer",
+            "jwtHeader": {
+              "alg": "RS256",
+              "typ": "JWT"
+            },
+            "jwtClaims": {
+              "iat": 1768478340,
+              "exp": 1768478940,
+              "iss": "12345"
+            },
+            "signature": "valid for the App key"
+          },
+          "accept": "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28"
+        }
+      },
+      {
+        "method": "POST",
+        "url": "https://api.github.com/app/installations/67890/access_tokens",
+        "headers": {
+          "authorization": {
+            "scheme": "Bearer",
+            "jwtHeader": {
+              "alg": "RS256",
+              "typ": "JWT"
+            },
+            "jwtClaims": {
+              "iat": 1768481700,
+              "exp": 1768482300,
+              "iss": "12345"
+            },
+            "signature": "valid for the App key"
+          },
+          "accept": "application/vnd.github+json",
+          "x-github-api-version": "2022-11-28"
+        }
+      }
+    ]
+  }
+}

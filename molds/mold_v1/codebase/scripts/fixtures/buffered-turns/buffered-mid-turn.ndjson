@@ -1,0 +1,23 @@
+{"data":{"runtime":{"agentId":"agent-workspace","agentName":"agent-workspace","eveVersion":"0.25.1","modelId":"cloudflare-workers-ai/@cf/test/scripted"}},"type":"session.started","meta":{"at":"2026-09-24T17:12:35.083Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.started","meta":{"at":"2026-09-24T17:12:35.083Z"}}
+{"data":{"message":"MSG-1 slow","parts":[{"text":"MSG-1 slow","type":"text"}],"sequence":0,"turnId":"turn_0"},"type":"message.received","meta":{"at":"2026-09-24T17:12:35.108Z"}}
+{"data":{"sequence":0,"stepIndex":0,"turnId":"turn_0"},"type":"step.started","meta":{"at":"2026-09-24T17:12:35.130Z"}}
+{"data":{"messageDelta":"REPLY-1 part 1. ","messageSoFar":"REPLY-1 part 1. ","sequence":0,"stepIndex":0,"turnId":"turn_0"},"type":"message.appended","meta":{"at":"2026-09-24T17:12:35.529Z"}}
+{"data":{"messageDelta":"REPLY-1 part 2. ","messageSoFar":"REPLY-1 part 1. REPLY-1 part 2. ","sequence":0,"stepIndex":0,"turnId":"turn_0"},"type":"message.appended","meta":{"at":"2026-09-24T17:12:35.830Z"}}
+{"data":{"messageDelta":"REPLY-1 part 3. ","messageSoFar":"REPLY-1 part 1. REPLY-1 part 2. REPLY-1 part 3. ","sequence":0,"stepIndex":0,"turnId":"turn_0"},"type":"message.appended","meta":{"at":"2026-09-24T17:12:36.131Z"}}
+{"data":{"messageDelta":"REPLY-1 END.","messageSoFar":"REPLY-1 part 1. REPLY-1 part 2. REPLY-1 part 3. REPLY-1 END.","sequence":0,"stepIndex":0,"turnId":"turn_0"},"type":"message.appended","meta":{"at":"2026-09-24T17:12:36.433Z"}}
+{"data":{"finishReason":"stop","message":"REPLY-1 part 1. REPLY-1 part 2. REPLY-1 part 3. REPLY-1 END.","sequence":0,"stepIndex":0,"turnId":"turn_0"},"type":"message.completed","meta":{"at":"2026-09-24T17:12:36.436Z"}}
+{"data":{"finishReason":"stop","sequence":0,"stepIndex":0,"turnId":"turn_0","usage":{"inputTokens":11,"outputTokens":7,"cacheReadTokens":0}},"type":"step.completed","meta":{"at":"2026-09-24T17:12:36.454Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.completed","meta":{"at":"2026-09-24T17:12:36.490Z"}}
+{"data":{"continuationToken":"eve:e140e036-915a-4c7d-9d14-33914f1c1038","wait":"next-user-message"},"type":"session.waiting","meta":{"at":"2026-09-24T17:12:36.500Z"}}
+{"data":{"sequence":1,"turnId":"turn_1"},"type":"turn.started","meta":{"at":"2026-09-24T17:12:37.090Z"}}
+{"data":{"message":"MSG-2 sent mid-turn","parts":[{"text":"MSG-2 sent mid-turn","type":"text"}],"sequence":1,"turnId":"turn_1"},"type":"message.received","meta":{"at":"2026-09-24T17:12:37.090Z"}}
+{"data":{"sequence":1,"stepIndex":0,"turnId":"turn_1"},"type":"step.started","meta":{"at":"2026-09-24T17:12:37.109Z"}}
+{"data":{"messageDelta":"REPLY-2 part 1. ","messageSoFar":"REPLY-2 part 1. ","sequence":1,"stepIndex":0,"turnId":"turn_1"},"type":"message.appended","meta":{"at":"2026-09-24T17:12:37.489Z"}}
+{"data":{"messageDelta":"REPLY-2 part 2. ","messageSoFar":"REPLY-2 part 1. REPLY-2 part 2. ","sequence":1,"stepIndex":0,"turnId":"turn_1"},"type":"message.appended","meta":{"at":"2026-09-24T17:12:37.789Z"}}
+{"data":{"messageDelta":"REPLY-2 part 3. ","messageSoFar":"REPLY-2 part 1. REPLY-2 part 2. REPLY-2 part 3. ","sequence":1,"stepIndex":0,"turnId":"turn_1"},"type":"message.appended","meta":{"at":"2026-09-24T17:12:38.090Z"}}
+{"data":{"messageDelta":"REPLY-2 END.","messageSoFar":"REPLY-2 part 1. REPLY-2 part 2. REPLY-2 part 3. REPLY-2 END.","sequence":1,"stepIndex":0,"turnId":"turn_1"},"type":"message.appended","meta":{"at":"2026-09-24T17:12:38.392Z"}}
+{"data":{"finishReason":"stop","message":"REPLY-2 part 1. REPLY-2 part 2. REPLY-2 part 3. REPLY-2 END.","sequence":1,"stepIndex":0,"turnId":"turn_1"},"type":"message.completed","meta":{"at":"2026-09-24T17:12:38.395Z"}}
+{"data":{"finishReason":"stop","sequence":1,"stepIndex":0,"turnId":"turn_1","usage":{"inputTokens":11,"outputTokens":7,"cacheReadTokens":0}},"type":"step.completed","meta":{"at":"2026-09-24T17:12:38.410Z"}}
+{"data":{"sequence":1,"turnId":"turn_1"},"type":"turn.completed","meta":{"at":"2026-09-24T17:12:38.437Z"}}
+{"data":{"continuationToken":"eve:e140e036-915a-4c7d-9d14-33914f1c1038","wait":"next-user-message"},"type":"session.waiting","meta":{"at":"2026-09-24T17:12:38.442Z"}}

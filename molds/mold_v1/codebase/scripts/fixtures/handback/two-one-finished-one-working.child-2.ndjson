@@ -1,0 +1,4 @@
+{"data":{"runtime":{"agentId":"specialist-b","eveVersion":"0.25.1"}},"type":"session.started","meta":{"at":"2026-10-05T09:12:06.494Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.started","meta":{"at":"2026-10-05T09:12:06.494Z"}}
+{"data":{"message":"You are the subagent \"specialist-b\".\n\nCaller message:\nRun this exact bash command once: sleep 90; echo SLEPT . Then reply with exactly: CHILD-SLOW. Ask nobody anything.","sequence":0,"turnId":"turn_0"},"type":"message.received","meta":{"at":"2026-10-05T09:12:06.549Z"}}
+{"type":"step.started","data":{"turnId":"turn_0","sequence":0,"stepIndex":0},"meta":{"at":"2026-10-05T09:12:06.551Z"}}

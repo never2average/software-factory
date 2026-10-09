@@ -1,0 +1,97 @@
+[
+  {
+    "source": "^(lib/org-seed\\.ts|scripts/seed-dataroom-blob\\.mjs)$",
+    "literal": "^(\\{folder:[a-z]+\\})?/\\S*$",
+    "why": "A data-room path as STORED, below its folder: the folder at its head is never spelled (a placeholder, `{folder:accounts}`, or FOLDER.<id> interpolated before this text: agent/lib/dataroom-folders.ts), and what follows are storage's own tokens, which never move (the `{customer_id}` token of a path template, a signoff party's file name such as `customer.infra.md`). Where a person reads one, the folder shows under the domain's profile label."
+  },
+  {
+    "source": "^app/api/ops/(orgs/\\[id\\]/health|summary)/route\\.ts$",
+    "literal": "^(/\\?dataroom=customers|/ops/(deployments|implementations))$",
+    "why": "A deep link's URL (a data-room tab, an ops view). URLs never move; the link's label beside it is in the profile's words."
+  },
+  {
+    "source": "^app/api/ops/workbook/route\\.ts$",
+    "literal": "^\"[a-z_]+\"\\.\"[a-z_]+\"$",
+    "why": "A quoted table.column in a SQL ORDER BY. Tables and columns never move, and SQL is never shown."
+  },
+  {
+    "source": "^lib/org-seed\\.ts$",
+    "literal": "^onboard-customer$",
+    "why": "A coding-agent skill's real slug (.claude/skills/onboard-customer), which a person types to run it. Kept verbatim on purpose (keep()); the sentence around it is in the profile's words."
+  },
+  {
+    "source": "^lib/workflow-runtime\\.ts$",
+    "literal": "^(__data(Customers|Deployments|Implementations)|data\\.(customers|deployments|implementations)\\(\\))$",
+    "why": "The workflow scripts' own API (`data.customers()`) and the bridge function behind it: code a script author calls by this name, which stored scripts already do."
+  },
+  {
+    "source": "^scripts/seed-(dataroom|postgres)\\.ts$",
+    "literal": "^\\.\\./data/sample/customers\\.json$",
+    "why": "The sample data file's path on disk."
+  },
+  {
+    "source": "^scripts/seed-dataroom\\.ts$",
+    "literal": "Owned by the customer-context subagent",
+    "why": "The customer-context specialist's directory name, which is how it is delegated to and never translated; the stub names the specialist that owns the file."
+  },
+  {
+    "source": "^scripts/seed-inbox-samples\\.mjs$",
+    "literal": "^(\\) \\+ \\()?\\s*(SELECT|INSERT INTO|DELETE FROM) ",
+    "why": "SQL the seeder runs: table and column names, which never move. Never shown."
+  },
+  {
+    "source": "^(app/_components/(agent-chat|cockpit|chat-shell)\\.tsx|app/_components/ops/workspace-panel\\.tsx|lib/chat-attachments\\.ts)$",
+    "literal": "^Plan$|[Pp]lan mode|[Ii]nvestigate (&|and) plan|[Tt]he plan (above|below)|this plan|Implement plan",
+    "why": "Plan mode, the chat's own feature: the agent investigates and writes a plan before it acts. The mode's name, its option label and the sentences about it are ordinary English, not the name of the second record area's group (a profile's `group_label`, which the default profile happens to call a plan)."
+  },
+  {
+    "source": "^(app/_components/(auth-gate|share-thread)\\.tsx|lib/ops-auth\\.ts|app/api/auth/guest/google/route\\.ts|app/api/ops/threads/\\[id\\]/members/route\\.ts)$",
+    "literal": "accounts?\\b",
+    "why": "A person's SIGN-IN account (a Google, Workspace, work or personal account): the identity they sign in with, in the sign-in and invite messages. Not the product's account record."
+  },
+  {
+    "source": "^app/_components/ops/connectors-panel\\.tsx$",
+    "literal": "a key only your account derives",
+    "why": "The signed-in person's own account (whose key seals a personal connector's credentials), not the product's account record."
+  },
+  {
+    "source": "^app/_components/ops/connectors-panel\\.tsx$",
+    "literal": "^Issues and projects from our Linear workspace$",
+    "why": "Linear's own word for its projects, in the example text of a custom connector's description: a third-party product's thing."
+  },
+  {
+    "source": "^app/_components/dataroom\\.tsx$",
+    "literal": "^Accounts$",
+    "why": "Salesforce's own object name on the Salesforce connector card (\"Accounts · ARR & renewals · Contacts & roles\"): what that third-party product syncs. The system-of-record card beside it says W.Accounts."
+  },
+  {
+    "source": "^(app/_components/cockpit\\.tsx|app/_components/ops/run-timeline\\.tsx|lib/platform-notify\\.ts)$",
+    "literal": "delivers when|delivery point|^Delivery failed: $|^email delivery is not configured",
+    "why": "The delivery of a MESSAGE (a queued chat message reaching a step, a notification email going out): ordinary English, not the record area the default profile calls a delivery."
+  },
+  {
+    "source": "^(app/_components/ops/workflow-builder\\.tsx|app/_components/ops/workspace-panel\\.tsx)$",
+    "literal": "^Project workflows$",
+    "why": "The workflow builder's name: the stages any tracked work moves through (the task workflow and the record area's pipeline, which is named from the profile beside it: `${W.Implementation} pipeline`). Project work in the ordinary sense, under every profile."
+  },
+  {
+    "source": "^(app/onboard/page\\.tsx|lib/mcp-connect\\.ts|lib/platform-notify\\.ts|lib/secret-crypto\\.ts)$",
+    "literal": "every project|this project only|the project's environment",
+    "why": "A code project on the reader's machine (where a coding agent's skill or MCP config is installed) or the hosting project's environment: setup instructions, not the record area the default profile calls a project."
+  },
+  {
+    "source": "^app/api/ops/people/\\[email\\]/account-summary/route\\.ts$",
+    "literal": "^\\[account-summary\\] cache (read|write) failed",
+    "why": "A server log line tagged with this route's own name (`…/account-summary`, a URL that never moves)."
+  },
+  {
+    "source": "^scripts/seed-dataroom-blob\\.mjs$",
+    "literal": "go-live plan|UAT plan|onboarding plan|plan before apply|Terraform plan|delinquent accounts|Account contact history|Route accounts flagged|Acme Bank account",
+    "why": "Sample CONTENT of the demo data room, in ordinary English or its fictional bank's own terms: a go-live / UAT / onboarding plan, `terraform plan`, the bank's delinquent accounts that its collections agent works, AWS's account for the bank. Data about a made-up business, not this product's records; every sentence that names a record takes the word from W."
+  },
+  {
+    "source": "^scripts/seed-ops\\.mjs$",
+    "literal": "^Plan & execute $",
+    "why": "The verb, in a specialist's one-line description (\"Plan & execute … data migrations\")."
+  }
+]

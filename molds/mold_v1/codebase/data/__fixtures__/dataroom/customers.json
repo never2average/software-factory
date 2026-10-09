@@ -1,0 +1,52 @@
+{
+  "customerId": "example-bank",
+  "interactions": [
+    {
+      "interactionId": "INT-FX-0001",
+      "interactionAt": "2026-06-18T15:00:00Z",
+      "interactionType": "qbr",
+      "sourceSystem": "granola",
+      "sourceId": "granola-doc-91f2",
+      "sourceLink": "https://notes.granola.ai/d/granola-doc-91f2",
+      "summary": "Q2 business review: research copilot value recap and SSO rollout plan",
+      "note": "Walked through Q2 usage and value metrics for the research copilot. Customer confirmed SAML SSO security review completes 2026-06-26; go-live gate is the infosec signoff.",
+      "outcome": "Customer committed to SSO cutover window in early July.",
+      "participantEmails": ["quinn@example.com", "sam@examplebank.com"],
+      "relatedTicketIds": ["TCK-1001"],
+      "nextAction": "Send the SSO cutover runbook for customer review",
+      "nextActionOwnerEmail": "quinn@example.com",
+      "nextActionDueDate": "2026-06-24",
+      "sentiment": "positive",
+      "sensitivity": "internal",
+      "recordedByEmail": "quinn@example.com",
+      "recordedAt": "2026-06-18T16:05:00Z"
+    }
+  ],
+  "context": {
+    "path": "{folder:accounts}/example-bank/context.md",
+    "title": "Example Bank — account context",
+    "summary": "Live research-copilot customer; SSO rollout is the current gating workstream.",
+    "content": "# Example Bank\n\nExample Bank runs the research copilot in production for the wealth desk. Current focus: SAML SSO rollout pending customer infosec review; renewal proof points tracked in the Solutions sheet.\n",
+    "updatedAt": "2026-06-18T16:10:00Z",
+    "updatedByEmail": "quinn@example.com"
+  },
+  "agreements": [
+    {
+      "agreementId": "AGR-EXMPL-MSA-2025",
+      "scope": "customer",
+      "customerId": "example-bank",
+      "agreementType": "MSA",
+      "title": "Master Services Agreement — Example Bank & Example Provider",
+      "status": "executed",
+      "counterpartyLegalName": "Example Bank N.A.",
+      "effectiveDate": "2025-09-01",
+      "expirationDate": "2027-08-31",
+      "signedByEmails": ["sam@examplebank.com", "rohan@example.com"],
+      "fileName": "example-bank-msa-2025.pdf",
+      "storagePath": "{folder:accounts}/example-bank/agreements/example-bank-msa-2025.pdf",
+      "uploadedByEmail": "rohan@example.com",
+      "uploadedAt": "2025-09-03T10:00:00Z",
+      "notes": "Includes the AI addendum covering zero-retention model usage."
+    }
+  ]
+}

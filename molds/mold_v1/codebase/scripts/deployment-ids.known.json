@@ -1,0 +1,4 @@
+{
+  "why": "Team slugs refused by name in runtime code, beside the generic rules (a personal team slug has its own). check-deployment-ids fails on any of them outside tests, operator scripts and docs. The placeholder the docs and the Makefile use is one.",
+  "teamSlugs": ["your-vercel-team"]
+}

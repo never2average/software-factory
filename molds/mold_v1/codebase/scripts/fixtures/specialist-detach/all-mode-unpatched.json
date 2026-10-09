@@ -1,0 +1,23 @@
+[
+  "session.started",
+  "turn.started turn_0",
+  "message.received [[hb alpha:fast beta:ask]]",
+  "step.started turn_0",
+  "actions.requested turn_0",
+  "actions.requested turn_0",
+  "step.completed turn_0",
+  "subagent.called alpha",
+  "subagent.called beta",
+  "input.requested Which fiscal year should I use?",
+  "turn.completed turn_0",
+  "session.waiting",
+  "subagent.completed alpha",
+  "action.result alpha completed \"CHILD-RESULT alpha\"",
+  "subagent.completed beta",
+  "action.result beta completed \"CHILD-RESULT beta\"",
+  "step.started",
+  "message.completed PARENT-DONE: CHILD-RESULT alpha | CHILD-RESULT beta",
+  "step.completed",
+  "turn.completed",
+  "session.waiting"
+]

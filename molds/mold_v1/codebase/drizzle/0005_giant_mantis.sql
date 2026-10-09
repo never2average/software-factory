@@ -1,0 +1,1 @@
+ALTER TABLE "system_cron_overrides" ADD COLUMN "cron" text;

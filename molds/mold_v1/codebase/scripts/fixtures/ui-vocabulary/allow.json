@@ -1,0 +1,108 @@
+[
+  {
+    "source": "^app/preview/",
+    "literal": ".",
+    "why": "Design previews with mock records (cards, domain forms, stickloop). app/preview/layout.tsx calls notFound() in production, so no person of any deployment reaches them."
+  },
+  {
+    "source": "^agent/lib/legacy-member\\.ts$",
+    "literal": "^FDE(s| owner)?$",
+    "why": "The member's legacy word as DATA, in the one module that spells it: the UI matches stored values (a ticket's ownerTeam, a value-evidence status) and the stored owner key against it, and shows the profile's member word or owner label in its place (lib/ui-words.ts storedValueLabel, lib/ui-keys.ts humanizeKey). It is never displayed itself; the rendered-page pass and the default-profile pass prove what a person reads."
+  },
+  {
+    "source": "^app/_components/ops/workflows-panel\\.tsx$",
+    "literal": "subagent: \"customer-context\"",
+    "why": "The base starter workflow script, used only when this deployment keeps the customer-context and follow-ups specialists (STARTER_SCRIPT); a specialist is delegated to by its directory name, which never moves. A deployment that excludes either starts from a one-step script naming a specialist it has."
+  },
+  {
+    "source": "^app/api/ops/(deployments|implementations)/route\\.ts$",
+    "literal": "^ first \\(POST /api/ops/customers, or customer_create from the CLI\\)\\.$",
+    "why": "The real API route and CLI command that create the record the error is about: renaming them in the message would send the caller to an endpoint that does not exist. The sentence around them is in the profile's words."
+  },
+  {
+    "source": "^app/api/ops/(browser-credentials|deployments/\\[id\\])/route\\.ts$",
+    "literal": "^customerId( \\+ siteOrigin)? (is )?required$",
+    "why": "A request-validation error naming the API's own parameter, for a caller that omitted it. The UI always sends it, so a person using the UI never sees this."
+  },
+  {
+    "source": "^app/api/ops/export/route\\.ts$",
+    "literal": "^(deployment|implementation)$",
+    "rendered": true,
+    "why": "The export API's accepted `type` values (EXPORT_TYPES), listed as the API takes them in the request-validation error for a caller that sent none: `type (task|deployment|implementation) + id required`. A caller is meant to read the values it may send; the UI always sends one, so a person using it never sees this."
+  },
+  {
+    "source": "^agent/lib/render-html\\.ts$",
+    "literal": "^Unknown customer: $",
+    "why": "The error renderAccountReport throws for an id outside the caller's workspace. It never reaches the report: the tool's error goes to the model, through the model-facing boundary that speaks it (check:agent-vocabulary), and the cross-workspace tests match it. Every label the reports print comes from the profile (reportWords)."
+  },
+  {
+    "source": "^lib/workflow-runtime\\.ts$",
+    "literal": "globalThis\\.args = JSON\\.parse",
+    "why": "The QuickJS prelude injected before a workflow script: code whose `data.customers()` / `data.deployments()` are the scripts' API, never shown to a person."
+  },
+  {
+    "source": ".*",
+    "literal": "^(customers?|deployments?|implementations?|rollouts?)$",
+    "why": "A code value, never a label: an enum value or record type (a TODO's containerType / linkType, a workflow's entity, an export `type`), a data-room tab or ops view key, a URL `?dataroom=` / `?view=` value, or an object key read by name. What a person reads for it comes from the profile (lib/ui-words.ts, domainView(...))."
+  },
+  {
+    "source": "^(app/_components/dataroom\\.tsx|scripts/seed-ops\\.mjs)$",
+    "literal": "^Deployments$",
+    "why": "Vercel's own word on the Vercel connector card and in the seeded Vercel connector row (\"Syncs Deployments · Build logs · …\"): it names the third-party product's builds, not this product's record area, and is the same under every profile. A data-room domain's stored name is no longer an exception here: the folder, its Master.xlsx and its sheet take their name from the profile (FOLDER.<id>, agent/lib/dataroom-folders.ts), no component spells one, and every place a person reads a domain shows its profile label (domainDisplay / domainLabel / sheetTitle)."
+  },
+  {
+    "source": ".*",
+    "literal": "^[a-z][a-z0-9]*(?:(?:[A-Z][a-z0-9]*)+|(?:_[a-z0-9]+)+)$",
+    "why": "A key: a record field, API parameter or workbook column (customerId, customer_id, implementationStage, fdeOwner, rollout_id), a base tool name matched in a transcript (list_customers, get_customer), or a code property. Keys never move: the API, the database and the workbook key on them. Where a person reads one — a data-room sheet's header, a Markdown export's field — it is spoken through lib/ui-keys.ts (company_id, \"Covering analyst\")."
+  },
+  {
+    "source": ".*",
+    "literal": "^(/api/ops/(customers|deployments|implementations)/?|\\?customerId=)$",
+    "why": "An ops API route and its query parameter. Routes never move; the UI only fetches them."
+  },
+  {
+    "source": ".*",
+    "literal": "^(customer-context|customer-stakeholders|customer-vpc|impl-customer)$",
+    "why": "An identifier: the customer-context specialist's directory name (delegated to by name, never translated; it is listed only when the profile keeps it), the stakeholders tab key, a stored enum value (customer-vpc), or a data-testid (impl-customer)."
+  },
+  {
+    "source": "^lib/browser-storage\\.ts$",
+    "literal": "^fde-[a-z-]+$",
+    "why": "A localStorage / sessionStorage key. Renaming one would drop every person's saved chats, workspace and theme on the next load; a key is never shown."
+  },
+  {
+    "source": ".*",
+    "literal": "^(CustomerMark|CustomerSelect|DEPLOYMENT_PROFILE|DEFAULT_DOMAINS)$",
+    "why": "A module export's or component's name, kept by the bundler in its module map. Never rendered."
+  },
+  {
+    "source": "^app/_components/dataroom\\.tsx$",
+    "literal": "^((dom|master):(customers|deployments|implementation)|(customers|deployments)/syncs(/[a-z0-9_]+)*|customer_stakeholder)$",
+    "why": "A data-room tree node's id (a folder's id is its stored path) or a stored person type. The tree renders the node's name and its domain's profile label, never the id."
+  },
+  {
+    "source": "^agent/lib/agent-vocabulary\\.ts$",
+    "literal": ".",
+    "why": "The translator's own table: the base words it maps FROM (BASE, PRODUCT_KEYS, the domain names). The UI imports it to recognise a model-facing tool name in a transcript (baseNameAmong) and to speak a key (lib/ui-keys.ts); none of these strings is rendered."
+  },
+  {
+    "source": "^(agent/)?lib/deployment-profile\\.generated\\.ts$",
+    "literal": "^(Deployments?|Implementations?|Rollouts?|Deployment id|Rollout id|Deployments, filtered by owner\\.|Rollouts, filtered by owner\\.)$",
+    "why": "DEFAULT_DOMAINS: profiles/00-default.json's own labels for the two record areas, kept only so lib/profile-domains.ts can tell what a profile redefined. A relabelling profile overrides each of them, and the rendered pass shows none of them reaches a page."
+  },
+  {
+    "source": "^(agent/)?lib/deployment-profile\\.generated\\.ts$",
+    "literal": "^Customer$",
+    "why": "blockerOwner's STORED value `Customer`, the key of the profile's option labels ({ \"Customer\": \"Company\" }). A person reads the label; the enum pass (1b) proves every visible enum value is shown through one."
+  },
+  {
+    "source": "^(agent/)?lib/deployment-profile\\.generated\\.ts$",
+    "literal": "^Customers/README\\.md$",
+    "why": "A seed file's STORED path (dataroom.seed[].path): the folder in storage is Customers/. The data room shows it under the domain's label."
+  },
+  {
+    "source": "^lib/ui-keys\\.ts$",
+    "literal": "^(customers?|fdes?|deployments?|implementations?|rollouts?)$",
+    "why": "lib/ui-keys.ts's own table of which base words a KEY may carry: what it translates FROM, never rendered."
+  }
+]

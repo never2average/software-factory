@@ -1,0 +1,500 @@
+{
+  "$comment": "scripts/check-neutral-names.mjs reads this. See scripts/lib/neutral-names.mjs for what each section means. Contracts and examples are exact names; base_word gives a per-file ceiling for the bare word and must equal today's count. record_words is the second ratchet (scripts/lib/record-words.mjs): which files are read for the record words written as prose, the names that are not prose, and a per-file ceiling for what remains.",
+  "exempt_paths": {
+    "$comment": "Whole paths the check does not read, each for a reason that does not expire with a rename.",
+    "drizzle/meta/": "migration history: the journal's schema snapshots are immutable records of what each migration produced; rewriting one would make drift lie",
+    "scripts/fixtures/": "pinned before-images: the pre-rename package surface, the default profile's model-facing surface and an old schema, kept verbatim so tests can prove the migrations and translations against them",
+    "scripts/fde/lib/": "two one-line re-exports kept at the operator tooling's old lib paths (customer.mjs, which the software factory's workspace seeding imports, and the old helpers module), so an import written against the old path still resolves; the code is in scripts/operator/lib/",
+    "scripts/neutral-names.allow.json": "this list",
+    "scripts/lib/neutral-names.mjs": "the check, which has to describe what it matches",
+    "scripts/check-neutral-names.mjs": "the check's entry point",
+    "scripts/test-neutral-names.mjs": "the check's test, which constructs an offender of every kind"
+  },
+  "contracts": {
+    "$comment": "Exact names that something outside this repository already holds. Each moves by an additive migration with the old name kept working; the plan says which PR. A name listed here that no longer occurs anywhere fails the check.",
+    "fde_owner": {
+      "kind": "database column (customers); the software factory's workspace seeding writes it in raw SQL",
+      "plan": "PR 4 (done): drizzle/0028_neutral_owner_columns.sql added customers.account_owner, copied the values, and a trigger keeps the two equal whichever is written; the app writes both and reads account_owner first (agent/lib/db/owner-columns.ts; test:owner-columns-migration-db). This one is never dropped here; it goes only in a later, announced removal PR once nothing outside names it"
+    },
+    "solution_fde_owner": {
+      "kind": "database column (solutions)",
+      "plan": "PR 4 (done): drizzle/0028_neutral_owner_columns.sql added solutions.solution_owner beside it, kept equal by a trigger; the app writes both and reads solution_owner first. Never dropped here"
+    },
+    "customers_fde_owner_idx": {
+      "kind": "database index",
+      "plan": "PR 4 (done): customers_account_owner_idx was added beside it (0028); this one is still declared in schema.ts, because dropping it would be an index drop the deploy's drift step refuses. It goes with the column"
+    },
+    "fdeOwner": {
+      "kind": "Ops API / workbook / sample-data JSON key and Drizzle property of customers.fde_owner",
+      "plan": "PR 4 (done): the Ops API accepts and returns both fdeOwner and accountOwner (always equal) and writes both columns; the agent's record contract and the workbook still name the owner by this key, which the profile translates at the tool and UI boundary (agent/lib/agent-vocabulary.ts, lib/ui-keys.ts); a later PR may move them"
+    },
+    "solutionFdeOwner": {
+      "kind": "Ops API / workbook JSON key and Drizzle property of solutions.solution_fde_owner",
+      "plan": "PR 4 (done): the workbook route returns both solutionFdeOwner and solutionOwner (always equal) and every writer names both; the agent's record contract still names it by this key, translated per profile"
+    },
+    "internal-fde": {
+      "kind": "stored value: People/{id}/identity.json `kind`",
+      "plan": "PR 4 (done): agent/lib/member-kind.ts; readers (list_members, operator:doctor) accept `internal-member` and this, operator:onboard-self writes `internal-member`; stored entries are never rewritten"
+    },
+    "list_fdes": {
+      "kind": "eve tool name (file name under agent/tools/ and two specialists' tools/, stored transcripts and workflow prompts)",
+      "plan": "PR 5 (done): the tool is list_members (agent/tools/list_members.ts and the specialists' copies), the only name a model is shown; this one is TOOL_ALIASES in agent/lib/agent-vocabulary.ts, read back everywhere a tool name is (chat labels, insights, the empty-response guard), rewritten in stored workflow prompts, and renamed at the model boundary when a model re-issues it (agent/lib/tool-name-aliases.ts), proved by test:tool-aliases; removed only in a later, announced removal PR"
+    },
+    "fde_status": {
+      "kind": "MCP tool alias",
+      "plan": "already migrated (#47): accepted by tools/call as an alias of workspace_status, never advertised"
+    },
+    "FDE_OPS_URL": {
+      "kind": "environment variable (package, operator tooling)",
+      "plan": "already migrated (#47): read as a declared legacy alias through compatEnv, which warns once; the operator tooling reads it the same way (LEGACY_OPERATOR_ENV, PR 2); removed only in a later, announced removal PR"
+    },
+    "FDE_ORG": {
+      "kind": "environment variable (package, operator tooling)",
+      "plan": "already migrated (#47): read as a declared legacy alias through compatEnv, which warns once; the operator tooling reads it the same way (LEGACY_OPERATOR_ENV, PR 2); removed only in a later, announced removal PR"
+    },
+    "FDE_ACTOR": {
+      "kind": "environment variable (package)",
+      "plan": "already migrated (#47): read as a declared legacy alias through compatEnv, which warns once; removed only in a later, announced removal PR"
+    },
+    "FDE_PRODUCT_NAME": {
+      "kind": "environment variable (package)",
+      "plan": "already migrated (#47): read as a declared legacy alias through compatEnv, which warns once; removed only in a later, announced removal PR"
+    },
+    "FDE_OAUTH_CLIENT_ID": {
+      "kind": "environment variable (package)",
+      "plan": "already migrated (#47): read as a declared legacy alias through compatEnv, which warns once; removed only in a later, announced removal PR"
+    },
+    "FDE_OAUTH_CLIENT_SECRET": {
+      "kind": "environment variable (package)",
+      "plan": "already migrated (#47): read as a declared legacy alias through compatEnv, which warns once; removed only in a later, announced removal PR"
+    },
+    "FDE_CLI_CLIENT_ID": {
+      "kind": "environment variable (deployed app and agent)",
+      "plan": "already migrated (#47): read as a declared legacy alias through compatEnv, which warns once; removed only in a later, announced removal PR"
+    },
+    "FDE_PEOPLE_SEED": {
+      "kind": "environment variable (test fixture path)",
+      "plan": "already migrated (#47): read as a declared legacy alias through compatEnv, which warns once; removed only in a later, announced removal PR"
+    },
+    "FDE_SELF_EMAIL": {
+      "kind": "environment variable (operator tooling: who runs the script)",
+      "plan": "PR 2 (done): the operator tooling reads WORKSPACE_SELF_EMAIL first and this as a fallback that warns once (LEGACY_OPERATOR_ENV in scripts/operator/lib/operator.mjs); removed only in a later, announced removal PR"
+    },
+    "FDE_GOOGLE_TOKEN": {
+      "kind": "environment variable (operator tooling: the thread-open-perf harness's sign-in token)",
+      "plan": "PR 2 (done): the operator tooling reads WORKSPACE_GOOGLE_TOKEN first and this as a fallback that warns once (LEGACY_OPERATOR_ENV in scripts/operator/lib/operator.mjs); removed only in a later, announced removal PR"
+    },
+    "fde-google-token": {
+      "kind": "browser-storage key",
+      "plan": "already migrated (#47): a LEGACY_STORAGE_KEYS entry lib/browser-storage.ts still reads so a signed-in person stays signed in; removed only in a later, announced removal PR"
+    },
+    "fde-google-nonce": {
+      "kind": "browser-storage key",
+      "plan": "already migrated (#47): a LEGACY_STORAGE_KEYS entry lib/browser-storage.ts still reads so a signed-in person stays signed in; removed only in a later, announced removal PR"
+    },
+    "fde-active-org": {
+      "kind": "browser-storage key",
+      "plan": "already migrated (#47): a LEGACY_STORAGE_KEYS entry lib/browser-storage.ts still reads so a signed-in person stays signed in; removed only in a later, announced removal PR"
+    },
+    "fde-theme": {
+      "kind": "browser-storage key",
+      "plan": "already migrated (#47): a LEGACY_STORAGE_KEYS entry lib/browser-storage.ts still reads so a signed-in person stays signed in; removed only in a later, announced removal PR"
+    },
+    "fde-invite-result": {
+      "kind": "browser-storage key",
+      "plan": "already migrated (#47): a LEGACY_STORAGE_KEYS entry lib/browser-storage.ts still reads so a signed-in person stays signed in; removed only in a later, announced removal PR"
+    },
+    "fde-dismissed-inputs": {
+      "kind": "browser-storage key",
+      "plan": "already migrated (#47): a LEGACY_STORAGE_KEYS entry lib/browser-storage.ts still reads so a signed-in person stays signed in; removed only in a later, announced removal PR"
+    },
+    "fde-chats": {
+      "kind": "browser-storage key prefix",
+      "plan": "already migrated (#47): a LEGACY_STORAGE_KEYS entry lib/browser-storage.ts still reads so a signed-in person stays signed in; removed only in a later, announced removal PR"
+    },
+    "fde-profile": {
+      "kind": "stored memory key `fde-profile:<email>` (memories table, team scope)",
+      "plan": "PR 2 (done): onboard-self writes `member-profile:<email>` and reads both, moving a profile found under this key to the new one (scripts/operator/lib/operator.mjs, proved by test:operator-tooling); the name stays while rows written by older checkouts may exist"
+    },
+    "fde-login": {
+      "kind": "package bin and file name",
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR"
+    },
+    "fde-mcp": {
+      "kind": "package bin and file name; the ~/.config/fde-mcp folder a signed-in person already has",
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR; the config folder moved to ~/.config/workspace-mcp, and one made earlier in ~/.config/fde-mcp is still read and copied over (LEGACY_CONFIG_DIR)"
+    },
+    "fde-install-skill": {
+      "kind": "package bin and file name",
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR"
+    },
+    "fde-cli": {
+      "kind": "package file name (bin `cli`)",
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR"
+    },
+    "fde-tools": {
+      "kind": "package module file name",
+      "plan": "PR 3 (done): setup/fde-*.mjs became setup/workspace-*.mjs, and each old file stays as a one-line re-export that runs its new file when run directly; the bins gained workspace-* names and keep the fde-* ones as aliases (setup/package.json), and the entrypoint still answers the old command words (legacyCommands), never showing them (test:agent-cli); removed only in a later, announced removal PR"
+    },
+    "fde-control": {
+      "kind": "MCP server name a coding agent showed before #46",
+      "plan": "history only: named in the comment that records the rename; nothing reads it"
+    },
+    "FDE_WORKFLOW": {
+      "kind": "document path (docs/FDE_WORKFLOW.md), linked from the factory's MOLD.md and from lib/org-seed.ts",
+      "plan": "PR 2 (done): moved to docs/OPERATOR_WORKFLOW.md; the old path is a one-line pointer until the links that name it are updated"
+    },
+    "fde:onboard-self": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:onboard-self` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:new-customer": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:new-customer` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:new-org": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:new-org` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:backfill-customizations": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:backfill-customizations` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:backfill-integrations": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:backfill-integrations` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:configure-platform": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:configure-platform` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:configure-solution": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:configure-solution` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:configure-agents": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:configure-agents` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:configure-infra": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:configure-infra` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:validate-solution": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:validate-solution` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:context-graph": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:context-graph` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:doctor": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:doctor` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:seed-workflows": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:seed-workflows` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:inventory": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:inventory` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:sandbox": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:sandbox` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:thread-open-perf": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:thread-open-perf` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:chat-persist-perf": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:chat-persist-perf` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    },
+    "fde:seed-subagent-rows": {
+      "kind": "npm script (operator command), kept as an alias",
+      "plan": "PR 2 (done): the tooling moved to scripts/operator/ and `npm run operator:seed-subagent-rows` was added; this old name runs the same file (test:operator-tooling), removed only in a later, announced removal PR"
+    }
+  },
+  "examples": {
+    "$comment": "Names that are not contracts but must be spelled with the word: the legacy prefixes explained in prose, the vocabulary machinery's own examples, and offenders the gate tests construct to prove they are caught. Same rule: each must still occur.",
+    "fde-": {
+      "kind": "legacy prefix named in prose",
+      "plan": "stays while the aliases it explains exist"
+    },
+    "FDE_": {
+      "kind": "legacy prefix named in prose and in a test's env filter",
+      "plan": "stays while the aliases it explains exist"
+    },
+    "list_FDEs": {
+      "kind": "vocabulary machinery example (acronym casing inside an identifier)",
+      "plan": "stays with agent/lib/agent-vocabulary.ts"
+    },
+    "ownerFDE": {
+      "kind": "vocabulary machinery example (acronym casing inside an identifier)",
+      "plan": "stays with agent/lib/agent-vocabulary.ts"
+    },
+    "fde-desk": {
+      "kind": "test/doc example: a deployment whose OWN name contains the word",
+      "plan": "stays: proves the own-name gate does not flag a package's own name"
+    },
+    "fde-desk-login": {
+      "kind": "test example (own-name gate)",
+      "plan": "stays"
+    },
+    "fde_reindex": {
+      "kind": "constructed offender (wire-name gate test)",
+      "plan": "stays"
+    },
+    "FDE_NEW_THING": {
+      "kind": "constructed offender (wire-name gate test)",
+      "plan": "stays"
+    },
+    "fde-new-thing": {
+      "kind": "constructed offender (wire-name gate test)",
+      "plan": "stays"
+    },
+    "fde-sneaky": {
+      "kind": "constructed offender (wire-name gate test)",
+      "plan": "stays"
+    },
+    "fde-notes": {
+      "kind": "constructed offender (own-name gate test)",
+      "plan": "stays"
+    },
+    "fde_nonsense": {
+      "kind": "constructed unknown tool (wire-name test)",
+      "plan": "stays"
+    }
+  },
+  "base_word": {
+    "$comment": "Per file, the exact count of the bare word today, grouped by why it may stay. More fails; fewer fails with the number to lower it to.",
+    "legacy": {
+      "why": "The member's legacy word itself, spelled once: agent/lib/legacy-member.ts holds it (singular, plural, owner phrase) for the machinery that still meets it in contract identifiers, stored values and older text (the vocabulary translates it under a relabelling profile; the UI shows a stored value in the profile's member word), and scripts/lib/agent-cli.mjs holds BASE_PRODUCT_WORD, the lower-case spelling every gate and test that refuses the word builds its pattern from. Base text never spells it: it writes role placeholders ({member}, {owner}) the profile fills (PR 6).",
+      "files": {
+        "agent/lib/legacy-member.ts": 3,
+        "scripts/lib/agent-cli.mjs": 1
+      }
+    },
+    "stored": {
+      "why": "Stored enum values (a ticket's `ownerTeam: \"<legacy word>\"`, a value-evidence status `\"<legacy word> Verified\"`) and the sample and fixture records that carry them. Rows are never rewritten here: changing a stored value is a data migration. A person reads them in the profile's member word (storedValueLabel in lib/ui-words.ts); the model writes them back as stored, like a column name, and check:agent-vocabulary allows exactly these values in a tool schema.",
+      "files": {
+        "agent/lib/customer-schema.ts": 2,
+        "data/__fixtures__/dataroom/tickets.json": 1,
+        "data/sample/customers.json": 5
+      }
+    }
+  },
+  "record_words": {
+    "$comment": "The record words (customer, deployment, implementation, rollout; any case, singular or plural) written as PROSE in text base code hands to a reader: string literals, template text and JSX text of source files, Markdown, the string values of JSON. Base text writes a placeholder the profile fills instead ({account}, {deployment}, {implementation}, {rollout}; agent/lib/agent-vocabulary.ts) or takes the word from lib/ui-words.ts. Identifiers, paths, code spans, quoted values and one-token strings are never counted. `node scripts/check-neutral-names.mjs --records --lines` lists what is left.",
+    "scan": {
+      "$comment": "Globs of the files read. Everything a model or a person is handed by base code; not docs, tests, comments or migrations.",
+      "agent/**": "the agent: prompts, tool and parameter descriptions, messages, skills and sandbox files",
+      "app/**": "the web app and its API messages",
+      "components/**": "shared UI components",
+      "lib/**": "server and client libraries whose strings reach a page, an API answer or a seeded file",
+      "skills/**": "the base skill a coding assistant installs",
+      "setup/skills/**": "the base skill as the generic package ships it (filled from the default profile)",
+      "scripts/operator/**": "the operator tooling",
+      "scripts/seed*": "the seeders: what a new data room and a demo database are filled with",
+      "profiles/00-default.json": "the default profile: the words every placeholder is filled with",
+      "dm.md": "the data-room description served to coding assistants",
+      "proxy.ts": "the request gate's own messages",
+      "library/**/workflows/**": "the library workflows: their prompts write the placeholders the profile fills",
+      "library/**/recipes.json": "the library recipes, the same"
+    },
+    "skip": {
+      "$comment": "Globs left out of the scan, each for a reason.",
+      "**/*.generated.*": "derived from a scanned source (prompts, the profile, the workflow library, the subagent registry)",
+      "agent/lib/agent-vocabulary.ts": "the vocabulary machinery: it names the legacy words to translate them (LEGACY_RECORDS) and its comments' examples are not text anyone is handed",
+      "**/__fixtures__/**": "fixture records: stored data, not base text"
+    },
+    "names": {
+      "$comment": "Whole names that are not prose where they stand: a specialist's directory name (hyphenated anywhere; a single word only when written **bold** or as code), and stored enum values and sheet names of more than one word. Each is a contract.",
+      "customer-context": "specialist directory name: the model delegates to it by this name",
+      "deployment": "specialist directory name (allowed as **deployment** in a roster line)",
+      "customer-vpc": "stored enum value (deployment region / hosting model)",
+      "Waiting on Customer": "stored enum value (ticketStatus)",
+      "Customer Stakeholders": "workbook sheet name (People/Master.xlsx), a contract of the data model",
+      "Customer Verified": "stored enum value (valueEvidenceStatus)",
+      "new-customer": "npm script and operator tool name (operator:new-customer), a contract (scripts/test-operator-tooling.mjs)"
+    },
+    "ceilings": {
+      "$comment": "Per file, the exact count of record words written as prose today, grouped by why they remain. More fails; fewer fails with the number to lower it to; a ceiling on a file that carries none fails. The agent side (prompts, tool and parameter descriptions, messages, the library workflows, the base skill, the default profile, the operator tooling) carries none: PR 7a. A data-room domain's name is no exception any more (mold_v1-148): its folder is the deployment profile's, base text writes it as a placeholder ({domain:accounts}), and a capitalised record word in a sentence is counted like any other.",
+      "stored": {
+        "why": "A stored enum value that is the record word itself (`blockerOwner: \"Customer\"`, a ticket's waiting party). Rows are never rewritten here: changing a stored value is a data migration. A relabelling profile's reader gets the profile's label for it (domains.<area>.fields.<key>.options).",
+        "files": {
+          "agent/lib/customer-schema.ts": 2
+        }
+      },
+      "ui": {
+        "why": "The web app, its API messages and the libraries behind them (app/, components/, lib/): PR 7b of mold_v1-103 owns these and lowers each ceiling as it takes the word from lib/ui-words.ts (W.account, W.deployments, …) or fills a placeholder. Counted at the commit PR 7a branched from.",
+        "files": {
+          "lib/workflow-runtime.ts": 3
+        }
+      },
+      "seeders": {
+        "why": "The seeders (scripts/seed*): the sample data room and demo database they write. PR 7b of mold_v1-103 owns these; sample CONTENT (a fictional account's notes) is data and may stay under its ceiling, the seeders' own labels and messages move to the profile's words.",
+        "files": {}
+      },
+      "third_party": {
+        "why": "Another product's own word for what it syncs, on that product's connector card: the Vercel card lists Vercel's \"Deployments\" beside its build logs and regions. It names the third party's builds, not this product's record area, and is the same under every profile. Counted since a data-room domain's former folder name stopped being an exception (mold_v1-148): before that the word was passed over as \"a stored folder name\".",
+        "files": {
+          "app/_components/dataroom.tsx": 1,
+          "scripts/seed-ops.mjs": 1
+        }
+      }
+    }
+  },
+  "stored_folders": {
+    "$comment": "The data-room folder names (the names the folders had while they were written into the code, scripts/lib/legacy-dataroom-folders.json, and the default profile's) spelled in base code: as the head of a path anywhere in a file, comments included, or as a string that is exactly a name. Base code builds a path from FOLDER.<id> (agent/lib/dataroom-folders.ts) and base text writes {folder:<id>} or {domain:<id>}, so the names are the deployment profile's and a deployment that already holds files keeps them by pinning. `node scripts/check-neutral-names.mjs --folders --lines` lists what is left.",
+    "scan": {
+      "$comment": "Globs of the files read: everything that runs, ships or is handed to a reader, and the tests and checks that exercise it.",
+      "agent/**": "the agent: tools, stores, prompts, skills and sandbox files",
+      "app/**": "the web app and its API routes",
+      "components/**": "shared UI components",
+      "lib/**": "server and client libraries",
+      "services/**": "the task-workflow service",
+      "skills/**": "the base skill a coding assistant installs",
+      "setup/**": "the package a coding agent installs: its tools and hosts",
+      "scripts/**": "the seeders, the operator tooling, the library workflows, the generators, the checks and the tests",
+      "tests/**": "the browser tests",
+      "data/**": "sample and fixture records",
+      "dm.md": "the data-room description served to coding assistants",
+      "proxy.ts": "the request gate",
+      ".claude/**": "the skills, agents and scripts a coding agent follows in this repository (the eve-* subagent skills a pack author copies paths from included): a path written there is copied into a pack's subagent.json or an operator run, so it is written {folder:<id>}",
+      "*.md": "the root instructions a coding agent reads first (AGENTS.md, CLAUDE.md)",
+      "library/**/workflows/**": "the library workflows"
+    },
+    "values_in": {
+      "$comment": "Globs, within the scan, of the files whose string literals are also read for a value that is exactly a folder name: the code that runs or ships. A test's or a check's strings are read for path heads only (a string that is exactly one of these words there is the word: a record area's label, a heading).",
+      "agent/**": "the agent",
+      "app/**": "the web app and its API routes",
+      "components/**": "shared UI components",
+      "lib/**": "server and client libraries",
+      "services/**": "the task-workflow service",
+      "setup/**": "the package a coding agent installs",
+      "scripts/operator/**": "the operator tooling",
+      "scripts/seed*": "the seeders",
+      "scripts/migrate*": "the data-room migration",
+      "scripts/validate*": "the fixture validators",
+      "proxy.ts": "the request gate",
+      "library/**/workflows/**": "the library workflows"
+    },
+    "skip": {
+      "$comment": "Globs left out of the scan, each for a reason.",
+      "**/*.generated.*": "derived from a scanned source and the profile (the profile itself, the prompts, the registry, the workflow library, the package's deployment module)",
+      "scripts/lib/legacy-dataroom-folders.json": "THE ONE LEGACY DEFINITION: the names the folders had while they were written into the code",
+      "setup/dm.md": "the generic package's dm.md: generated from dm.md and the default profile (npm run build:agent-cli -- --write-default)",
+      "setup/skills/**": "the base skill as the generic package ships it: generated from skills/ and the default profile",
+      "scripts/fixtures/**": "pinned before-images and profile fixtures: what a deployment read and stored before folder names were a profile setting, kept verbatim so the tests can prove a pinned profile against it",
+      "scripts/neutral-names.allow.json": "this list"
+    },
+    "ceilings": {
+      "$comment": "Per file, the exact count of folder names spelled today, grouped by why they remain. More fails; fewer fails with the number to lower it to; a ceiling on a file that spells none fails.",
+      "placeholder_keys": {
+        "why": "The record placeholders' own keys ({Accounts}, {Deployments}, {Implementation}; RECORD_KEYS): the capitalised plural of a record WORD, which is what base text writes to have the profile's word filled in. Words of the placeholder grammar, never a folder: a path is built from FOLDER.<id> and a folder is written {folder:<id>}.",
+        "files": {
+          "agent/lib/agent-vocabulary.ts": 3
+        }
+      },
+      "third_party": {
+        "why": "Another product's own word for what it syncs, on that product's connector card (Salesforce's \"Accounts\", Vercel's \"Deployments\"): the third party's objects, the same under every profile, never a data-room folder.",
+        "files": {
+          "app/_components/dataroom.tsx": 2,
+          "scripts/seed-ops.mjs": 1
+        }
+      },
+      "roster": {
+        "why": "The workspace's own People tab and the roster workbook's sheet (Workspace > People > Import roster): the members of the workspace. Not the data room's people domain, whose folder and label come from the profile.",
+        "files": {
+          "app/_components/ops/workspace-panel.tsx": 2,
+          "lib/roster-workbook.ts": 1
+        }
+      }
+    }
+  },
+  "builtin_library": {
+    "$comment": "Base code ships no workflow, no recipe and no starter app of its own: what a workspace is provisioned with is the deployment profile's (library.sources; scripts/lib/builtin-library.mjs says what is checked). libraries: where a library's content may live. skip: tests and pinned fixtures, which never run in a deployment. writers: every source file that inserts into the workflows, recipes or apps table, each with what decides its rows; a new one fails until it is listed here with its reason, and one that stops inserting fails until it is removed.",
+    "libraries": {
+      "library/**": "the library directories a deployment profile names under library.sources (workflows/*.workflow.js, recipes.json, apps.json, history.json)"
+    },
+    "skip": {
+      "scripts/fixtures/**": "pinned before-images, among them the built-ins base code carried before the library became the profile's",
+      "scripts/test-*.mjs": "tests insert the rows they then assert on, in throwaway workspaces",
+      "scripts/lib/builtin-library.mjs": "this check, which has to describe what it matches",
+      "tests/**": "Playwright specs",
+      "services/**": "the task-workflow service: its own tables and tests, no workspace library"
+    },
+    "writers": {
+      "agent/lib/app-tools.ts": "create_app: one app a person asked the agent for, approved by them",
+      "agent/lib/provision-workspace.ts": "a new workspace: the deployment profile's library (recipes, workflows and starter apps, none by default) and one row per specialist of the generated registry, minus the ones the profile excludes",
+      "app/api/ops/apps/route.ts": "POST /api/ops/apps: one app a signed-in person asked for",
+      "app/api/ops/workflows/route.ts": "POST /api/ops/workflows: one row a signed-in person asked for",
+      "scripts/operator/seed-workflows.mjs": "operator:seed-workflows: the deployment profile's library into a workspace an operator names; nothing when the profile names none",
+      "scripts/seed-ops.mjs": "a legacy local demo seeder in no npm script, kept for its --print test: its rows carry no org_id, which the NOT NULL column refuses, so it cannot write to a current database"
+    }
+  },
+  "period_words": {
+    "$comment": "What a work period is called is the deployment profile's (work_periods.label; agent/lib/work-periods.ts). The default profile's word for it (read from profiles/00-default.json by scripts/lib/period-words.mjs, never spelled there) may appear only: in the default profile and the modules generated from it (default_profile); in ONE legacy definition, with an exact count (legacy_definition); inside a listed contract, a pattern for an exact name something outside this repository already holds, optionally limited to the files it may appear in (contracts); or under an exempt path (exempt_paths). Anything else fails check:neutral-names.",
+    "default_profile": {
+      "profiles/00-default.json": "The default profile: work_periods.label is where the word lives.",
+      "lib/deployment-profile.generated.ts": "Generated from profiles/*.json (the web app's copy of the merged profile).",
+      "agent/lib/deployment-profile.generated.ts": "Generated from profiles/*.json (the agent's copy of the merged profile).",
+      "setup/deployment.generated.mjs": "Generated from the default profile: the generic coding-agent package's settings (workPeriods.label)."
+    },
+    "legacy_definition": {
+      "why": "The `cycles` table's own comment says what a cycle was in the base product's words. One sentence, kept so the stored name can be understood; it also says that nothing else spells the word.",
+      "files": {
+        "agent/lib/db/schema.ts": 1
+      }
+    },
+    "contracts": [
+      {
+        "pattern": "sprint_(?:list|create|\\*)",
+        "files": [
+          "setup/workspace-tools.mjs",
+          "docs/MCP.md",
+          "docs/DEPLOYMENT_PROFILE.md",
+          "scripts/lib/work-period-probe.mjs",
+          "scripts/test-work-periods.mjs",
+          "scripts/test-work-periods-db.mjs"
+        ],
+        "why": "The coding agent's two period tools, by their wire names: a saved MCP configuration and a published package call them. Their descriptions take the profile's word; a rename would be an additive alias (setup/workspace-tools.mjs `aliases`), never a replacement."
+      },
+      {
+        "pattern": "view=sprints|\"sprints\"",
+        "files": [
+          "lib/work-periods-ui.ts",
+          "scripts/lib/rendered-text.mjs",
+          "tests/cards.spec.ts",
+          "scripts/test-work-periods.mjs",
+          "docs/DEPLOYMENT_PROFILE.md"
+        ],
+        "why": "The period view's key in a Todos deep link (/?ops=todos&view=…): links people already shared carry it. It is a key, defined once (PERIOD_VIEW in lib/work-periods-ui.ts), never a label."
+      },
+      {
+        "pattern": "go-live-sprint",
+        "files": [
+          "docs/AGENT_INVENTORY.md",
+          "scripts/test-library-provisioning-db.mjs",
+          "scripts/test-workflow-library.mjs"
+        ],
+        "why": "A workflow of the account-delivery library, by its stored name (workflows.name in every workspace provisioned with that library). It names a readiness push, not a work period; the library itself is exempt below."
+      }
+    ],
+    "exempt_paths": {
+      "drizzle/": "Migration history and its snapshots: never rewritten.",
+      "library/": "A library a deployment profile opts into (library.sources) is that library's own content, in its own line of work's words: not base text.",
+      "scripts/fixtures/": "Recorded before-images of what a default deployment's model and pages read, and test fixtures: they hold the default profile's word because the default deployment reads it.",
+      ".migrate-cycles.mjs": "A one-off migration script that already ran: history.",
+      ".migrate-cycles-lead.mjs": "A one-off migration script that already ran: history.",
+      ".migrate-workspace-v2.mjs": "A one-off migration script that already ran: history.",
+      "data/sample/": "The local demo's sample records: data, never shipped as product text (scripts/test-sample-data.mjs holds that).",
+      "scripts/neutral-names.allow.json": "This list.",
+      "services/task-workflow/package-lock.json": "A lockfile.",
+      "package-lock.json": "A lockfile."
+    }
+  }
+}

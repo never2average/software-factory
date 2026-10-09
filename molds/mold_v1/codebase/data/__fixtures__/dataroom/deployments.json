@@ -1,0 +1,126 @@
+{
+  "customerId": "example-bank",
+  "platformVersionId": "2026.06.3",
+  "infrastructure": {
+    "inference": {
+      "customizationsPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/customizations.tf",
+      "rationale": {
+        "path": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/rationale.md",
+        "title": "Inference customizations rationale",
+        "content": "# Why dedicated inference capacity\n\nExample Bank requires in-region inference with a dedicated capacity pool to meet the wealth desk latency SLO and data-residency constraint.\n",
+        "updatedAt": "2026-06-10T09:00:00Z",
+        "updatedByEmail": "quinn@example.com"
+      },
+      "signoffs": {
+        "customerId": "example-bank",
+        "platformVersionId": "2026.06.3",
+        "component": "inference",
+        "records": [
+          {
+            "customerId": "example-bank",
+            "platformVersionId": "2026.06.3",
+            "component": "inference",
+            "role": "internal",
+            "status": "approved",
+            "approverName": "Quinn",
+            "approverEmail": "quinn@example.com",
+            "approverOrg": "Example Provider",
+            "requestedAt": "2026-06-10T09:30:00Z",
+            "decidedAt": "2026-06-11T14:00:00Z",
+            "documentPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+            "notes": "Capacity plan and rollback path reviewed."
+          },
+          {
+            "customerId": "example-bank",
+            "platformVersionId": "2026.06.3",
+            "component": "inference",
+            "role": "customer.infra",
+            "status": "approved",
+            "approverName": "Sam Whitfield",
+            "approverEmail": "sam@examplebank.com",
+            "approverOrg": "Example Bank",
+            "requestedAt": "2026-06-11T15:00:00Z",
+            "decidedAt": "2026-06-16T11:30:00Z",
+            "documentPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/signoff/customer.infra.md",
+            "conditions": ["Capacity review repeats at next platform version upgrade"]
+          },
+          {
+            "customerId": "example-bank",
+            "platformVersionId": "2026.06.3",
+            "component": "inference",
+            "role": "customer.infosec",
+            "status": "in_review",
+            "approverName": "Dana Rhodes",
+            "approverEmail": "dana@examplebank.com",
+            "approverOrg": "Example Bank",
+            "requestedAt": "2026-06-16T12:00:00Z",
+            "documentPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/signoff/customer.infosec.md",
+            "notes": "Pending completion of the SAML SSO security review."
+          },
+          {
+            "customerId": "example-bank",
+            "platformVersionId": "2026.06.3",
+            "component": "inference",
+            "role": "customer.cloudvendor",
+            "status": "waived",
+            "documentPath": "{folder:deliveries}/example-bank/2026.06.3/infrastructure/inference/signoff/customer.cloudvendor.md",
+            "notes": "Deployment runs in provider-managed VPC; no customer cloud-vendor approval applies."
+          }
+        ]
+      }
+    }
+  },
+  "platform": {
+    "organization": {
+      "orgId": "example-bank",
+      "displayName": "Example Bank",
+      "defaultLocale": "en-US"
+    },
+    "pipelines": [
+      {
+        "pipelineId": "pl-research-briefs",
+        "pipelineConfig": {
+          "pipelineId": "pl-research-briefs",
+          "name": "Morning research briefs",
+          "description": "Builds pre-market research briefs for the wealth desk.",
+          "platformVersionId": "2026.06.3",
+          "version": "1.4.0",
+          "ownerEmail": "quinn@example.com",
+          "trigger": { "type": "schedule", "schedule": "0 6 * * 1-5" },
+          "steps": [
+            {
+              "stepId": "ingest-filings",
+              "name": "Ingest overnight filings",
+              "kind": "source",
+              "uses": "connector:edgar",
+              "config": { "lookbackHours": 18 }
+            },
+            {
+              "stepId": "draft-brief",
+              "name": "Draft the research brief",
+              "kind": "llm",
+              "uses": "model:example-research-1",
+              "dependsOn": ["ingest-filings"]
+            },
+            {
+              "stepId": "publish-brief",
+              "name": "Publish to the wealth desk workspace",
+              "kind": "sink",
+              "uses": "connector:sharepoint",
+              "dependsOn": ["draft-brief"]
+            }
+          ],
+          "connectors": ["edgar", "sharepoint"],
+          "runConfigsSchemaRef": "{folder:solutions}/2026.06.3/pipelines/pl-research-briefs/run_configs.schema.json",
+          "createdAt": "2026-05-02T08:00:00Z",
+          "updatedAt": "2026-06-12T10:00:00Z"
+        },
+        "privateIntegromat": {
+          "pipelineId": "pl-research-briefs",
+          "secretRefs": { "sharepoint": "vault://example-bank/sharepoint-app" }
+        }
+      }
+    ],
+    "integromat": { "connections": ["edgar", "sharepoint"] }
+  }
+}

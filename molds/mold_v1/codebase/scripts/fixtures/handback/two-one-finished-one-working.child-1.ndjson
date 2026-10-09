@@ -1,0 +1,8 @@
+{"data":{"runtime":{"agentId":"specialist-a","eveVersion":"0.25.1"}},"type":"session.started","meta":{"at":"2026-10-05T09:09:04.939Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.started","meta":{"at":"2026-10-05T09:09:04.940Z"}}
+{"data":{"message":"You are the subagent \"specialist-a\".\n\nCaller message:\nDo not use tools. Reply with exactly: CHILD-FAST","sequence":0,"turnId":"turn_0"},"type":"message.received","meta":{"at":"2026-10-05T09:09:05.015Z"}}
+{"type":"step.started","data":{"turnId":"turn_0","sequence":0,"stepIndex":0},"meta":{"at":"2026-10-05T09:09:05.016Z"}}
+{"data":{"finishReason":"stop","message":"CHILD-FAST","sequence":0,"stepIndex":0,"turnId":"turn_0"},"type":"message.completed","meta":{"at":"2026-10-05T09:09:08.479Z"}}
+{"type":"step.completed","data":{"turnId":"turn_0","sequence":0,"stepIndex":0,"finishReason":"stop"},"meta":{"at":"2026-10-05T09:09:08.488Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.completed","meta":{"at":"2026-10-05T09:09:08.517Z"}}
+{"type":"session.completed","meta":{"at":"2026-10-05T09:09:08.530Z"}}

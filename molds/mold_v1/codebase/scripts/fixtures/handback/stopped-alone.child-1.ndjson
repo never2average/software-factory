@@ -1,0 +1,6 @@
+{"data":{"runtime":{"agentId":"specialist-a","eveVersion":"0.25.1"}},"type":"session.started","meta":{"at":"2026-10-05T09:26:14.807Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.started","meta":{"at":"2026-10-05T09:26:14.807Z"}}
+{"data":{"message":"You are the subagent \"specialist-a\".\n\nCaller message:\nUse no tools. Write a 2500-word essay on the history of canal building, then end with the line CHILD-ESSAY-DONE.","sequence":0,"turnId":"turn_0"},"type":"message.received","meta":{"at":"2026-10-05T09:26:14.837Z"}}
+{"type":"step.started","data":{"turnId":"turn_0","sequence":0,"stepIndex":0},"meta":{"at":"2026-10-05T09:26:14.838Z"}}
+{"data":{"sequence":0,"turnId":"turn_0"},"type":"turn.cancelled","meta":{"at":"2026-10-05T09:26:35.122Z"}}
+{"data":{"continuationToken":"wrun_FIXTURE02:call_eba95bab97a6fc095db6d378","wait":"next-user-message"},"type":"session.waiting","meta":{"at":"2026-10-05T09:26:35.122Z"}}

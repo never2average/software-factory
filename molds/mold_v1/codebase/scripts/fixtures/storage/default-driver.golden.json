@@ -1,0 +1,4931 @@
+{
+ "calls": [
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/customer-b/Customers/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/customer-b/Deployments/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/customer-b/Implementation/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Accounts/acme-bank/context.md",
+    "# Acme Bank\n\nA's context.\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "text/markdown; charset=utf-8",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Deliveries/acme-bank/2026.06.3/platform/organization.json",
+    "{\"a\":1}",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "application/json",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Deliveries/acme-bank/2026.06.3/platform/organization.json.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Deliveries/acme-bank/2026.06.3/infrastructure/inference/customizations.tf",
+    "# tf\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "text/plain; charset=utf-8",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Deliveries/acme-bank/2026.06.3/infrastructure/inference/customizations.tf.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf",
+    "%PDF-1.7 not really\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "application/octet-stream",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Accounts/Master.xlsx",
+    "PK not really",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/Master.xlsx.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl",
+    "{\"interactionId\":\"INT-0\"}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "application/x-ndjson",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000000-abababab.part",
+    "{\"interactionId\":\"INT-1\"}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": false,
+     "contentType": "application/x-ndjson",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000001-abababab.part",
+    "{\"interactionId\":\"INT-2\"}\n{\"interactionId\":\"INT-3\"}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": false,
+     "contentType": "application/x-ndjson",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part",
+    "{\"interactionId\":\"P-1\"}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": false,
+     "contentType": "application/x-ndjson",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000000-abababab.part",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": {
+      "text": {
+       "chars": 263,
+       "sha256": "fb51c83d28e097a6a7dd62bd58122933065b8e5656ed8d39939b000722ae74ad"
+      }
+     }
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000000-abababab.part",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000001-abababab.part",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": {
+      "text": {
+       "chars": 263,
+       "sha256": "94b4e367bbe0455cd6c11d98bfd47e0ef754282309ed27cbf470141be39003b4"
+      }
+     }
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000001-abababab.part",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": {
+      "text": {
+       "chars": 268,
+       "sha256": "c2005807317dd4e4d2cc72cc869cb67e97b21feccade9952b5aaa1c41cb526ab"
+      }
+     }
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/nobody/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/nobody/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvbm9ib2R5L2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/nobody/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9ib2FyZC1wYWNrLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/missing.pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9taXNzaW5nLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/missing.pdf",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9ib2FyZC1wYWNrLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl",
+    "{\"interactionId\":\"INT-9\"}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "application/x-ndjson",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "del",
+   "args": [
+    [
+     "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000000-abababab.part",
+     "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000001-abababab.part"
+    ],
+    {
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Accounts/acme-bank/context.md",
+    "# Acme Bank, again\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "text/markdown; charset=utf-8",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/desk-a/Customers/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/desk-a/Deployments/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/desk-a/Implementation/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/desk-a/Accounts/zeta/context.md",
+    "# Zeta (B)\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "text/markdown; charset=utf-8",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/desk-a/Accounts/zeta/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/desk-a/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/desk-a/Accounts/zeta/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/desk-a/Accounts/zeta/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2Rlc2stYS9BY2NvdW50cy96ZXRhL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/desk-a/Accounts/zeta/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/desk-a/Accounts",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/desk-a/Accounts",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "1000",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/desk-a/Accounts",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/desk-a/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "1000",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/desk-a/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/org-onfinance/Customers/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/org-onfinance/Deployments/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/org-onfinance/Implementation/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+    "notes\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "text/markdown; charset=utf-8",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "artifacts/orgs/customer-b/status-report.html",
+    "<h1>Status</h1>",
+    {
+     "access": "private",
+     "addRandomSuffix": true,
+     "contentType": "text/html; charset=utf-8",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "artifacts/orgs/customer-b/status-report.html",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1791547200000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9jdXN0b21lci1iL3N0YXR1cy1yZXBvcnQuaHRtbCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTE1NDcyMDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "artifacts/orgs/customer-b/status-report.html",
+     "validUntil": 1791547200000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "artifacts/orgs/customer-b/tracker.xlsx",
+    {
+     "bytes": 17,
+     "sha256": "4b26f9d913e31ba2b5fe7c4d60e019d0580c0c0b34f0f4e53af13b250982bfef"
+    },
+    {
+     "access": "private",
+     "addRandomSuffix": true,
+     "contentType": "application/x-test",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "artifacts/orgs/customer-b/tracker.xlsx",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1791547200000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9jdXN0b21lci1iL3RyYWNrZXIueGxzeCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTE1NDcyMDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "artifacts/orgs/customer-b/tracker.xlsx",
+     "validUntil": 1791547200000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "artifacts/orgs/org-onfinance/blob.weird",
+    "?",
+    {
+     "access": "private",
+     "addRandomSuffix": true,
+     "contentType": "application/octet-stream",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "artifacts/orgs/org-onfinance/blob.weird",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1791547200000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkxNTQ3MjAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "artifacts/orgs/org-onfinance/blob.weird",
+     "validUntil": 1791547200000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/customer-b/Customers/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/customer-b/Deployments/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/customer-b/Implementation/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Uploads/priya-example-org/deck.pdf",
+    {
+     "bytes": 13,
+     "sha256": "8ca7f71396260ed265f5e4b9b88a8a9869d8723034ce5a5ddf09100e10ff1de4"
+    },
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "application/pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/Accounts/acme-bank/personas.jsonl",
+    "{\"p\":1}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": {
+      "text": {
+       "chars": 268,
+       "sha256": "c2005807317dd4e4d2cc72cc869cb67e97b21feccade9952b5aaa1c41cb526ab"
+      }
+     }
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/nobody/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/nobody/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvbm9ib2R5L2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/nobody/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Uploads/priya-example-org/deck.pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Uploads/priya-example-org/none.pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/deck.pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9kZWNrLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/deck.pdf",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/none.pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9ub25lLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Uploads/priya-example-org/none.pdf",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/customer-b/_versions/customer-b/1700000000000-Accounts/acme-bank/context.md",
+    "# before\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "text/plain",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/_versions/customer-b/1700000000000-Accounts/acme-bank/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/_versions/customer-b/1700000000000-Accounts/acme-bank/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvX3ZlcnNpb25zL2N1c3RvbWVyLWIvMTcwMDAwMDAwMDAwMC1BY2NvdW50cy9hY21lLWJhbmsvY29udGV4dC5tZCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/_versions/customer-b/1700000000000-Accounts/acme-bank/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/customer-b/Accounts/acme-bank/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/none.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/none.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm9uZS5tZCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/none.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/org-onfinance/Customers/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/org-onfinance/Deployments/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1,
+     "prefix": "dataroom/orgs/org-onfinance/Implementation/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/org-onfinance/Uploads/reader-example-com/Board Pack _final_.pdf",
+    {
+     "bytes": 17,
+     "sha256": "4fed2354a39a8085ecbb76ef4a934a611ba341bfae2b9c2ebffddcae2f2244bc"
+    },
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "application/pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Uploads/reader-example-com/none.pdf",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Accounts/new-co/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/org-onfinance/Accounts/new-co/context.md",
+    "# New\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/context.md",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Accounts/new-co/context.md.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/context.md",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/org-onfinance/_versions/org-onfinance/1790942400000-Accounts/new-co/context.md",
+    "# New\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "text/plain",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/org-onfinance/Accounts/new-co/context.md",
+    "# Newer\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+    "{\"i\":1}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "list",
+   "args": [
+    {
+     "cursor": "<undefined>",
+     "limit": 1000,
+     "prefix": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl.appends/",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+     "validUntil": 1790942700000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/org-onfinance/_versions/org-onfinance/1790942400000-Accounts/new-co/interactions.jsonl",
+    "{\"i\":1}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "contentType": "text/plain",
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl",
+    "{\"i\":1}\n{\"i\":2}\n",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "artifacts/orgs/org-onfinance/blob.weird",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790946000000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQ2MDAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "artifacts/orgs/org-onfinance/blob.weird",
+     "validUntil": 1790946000000
+    }
+   ]
+  },
+  {
+   "op": "issueSignedToken",
+   "args": [
+    {
+     "operations": [
+      "get"
+     ],
+     "pathname": "artifacts/orgs/org-onfinance/blob.weird",
+     "token": "vercel_blob_rw_fakestore_fakesecret",
+     "validUntil": 1790946000000
+    }
+   ]
+  },
+  {
+   "op": "presignUrl",
+   "args": [
+    {
+     "clientSigningToken": "fake-signing-key",
+     "delegationToken": "eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQ2MDAwMDAwfQ.fakesig"
+    },
+    {
+     "access": "private",
+     "operation": "get",
+     "pathname": "artifacts/orgs/org-onfinance/blob.weird",
+     "validUntil": 1790946000000
+    }
+   ]
+  },
+  {
+   "op": "put",
+   "args": [
+    "_health/probe-1790942400000.txt",
+    "health 2026-10-02T12:00:00.000Z",
+    {
+     "access": "private",
+     "addRandomSuffix": false,
+     "allowOverwrite": true,
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "head",
+   "args": [
+    "https://fakestore.private.blob.vercel-storage.com/_health/probe-1790942400000.txt",
+    {
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  },
+  {
+   "op": "del",
+   "args": [
+    "https://fakestore.private.blob.vercel-storage.com/_health/probe-1790942400000.txt",
+    {
+     "token": "vercel_blob_rw_fakestore_fakesecret"
+    }
+   ]
+  }
+ ],
+ "wire": [
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fcustomer-b%2FCustomers%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fcustomer-b%2FDeployments%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fcustomer-b%2FImplementation%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Fcontext.md",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "text/markdown; charset=utf-8",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 26,
+    "sha256": "fe89714de6cdc24377b4a0aae7e0f84b7f2a243aa888b6b21fc5e2d6c95b6b26"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FDeliveries%2Facme-bank%2F2026.06.3%2Fplatform%2Forganization.json",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "application/json",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 7,
+    "sha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FDeliveries%2Facme-bank%2F2026.06.3%2Fplatform%2Forganization.json.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FDeliveries%2Facme-bank%2F2026.06.3%2Finfrastructure%2Finference%2Fcustomizations.tf",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "text/plain; charset=utf-8",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 5,
+    "sha256": "7f2a85a0f1a29ba52450011a09fb5e03bd5c9fbd74b8cd42ad876e449b03d7a4"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FDeliveries%2Facme-bank%2F2026.06.3%2Finfrastructure%2Finference%2Fcustomizations.tf.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FUploads%2Fpriya-example-org%2Fboard-pack.pdf",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "application/octet-stream",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 20,
+    "sha256": "347b612c8a783b796cfac96f76d602cd259c589af028fef3bc91c084ceca793c"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FUploads%2Fpriya-example-org%2Fboard-pack.pdf.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2FMaster.xlsx",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 13,
+    "sha256": "20fb6fc49fd7b9d59e57f1d6b8731c72d57d9f440770a97bff73f7e579e67dfa"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2FMaster.xlsx.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Finteractions.jsonl",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "application/x-ndjson",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 26,
+    "sha256": "f52d68d623a280aa5678fc0961c8cdb83a68778d4e1c42ea4fed50d8d701193a"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Finteractions.jsonl.appends%2F01790942400000-000000-abababab.part",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "0",
+    "x-content-type": "application/x-ndjson",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 26,
+    "sha256": "83b06efda7105db4d8249fa8ed2d61b7f16a09bc75e6ac405157157e71ff67cc"
+   }
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Finteractions.jsonl.appends%2F01790942400000-000001-abababab.part",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "0",
+    "x-content-type": "application/x-ndjson",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 52,
+    "sha256": "605581cedc193a30c0476207e373867dbbeeabfc57b3bfe172b48fe865685e11"
+   }
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FPeople%2Fsam-example-com%2Finteractions.jsonl.appends%2F01790942400000-000002-abababab.part",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "0",
+    "x-content-type": "application/x-ndjson",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 24,
+    "sha256": "6537b21e7df19667a0817a89fb5d7665a87a9b30038489e8e68757b0e4e22223"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 117,
+    "sha256": "b05695fda81b4d636749cadcc0295c6b021d9974c7682fe20501f79a2f23af79"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/acme-bank/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=euLi6kJ8-qC4UOCCipnt-FGbHQLykHkHeUfyifPOKHo",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 125,
+    "sha256": "a701126837d329f292934460f8762a8a6b3f1d1db815cbc6e50887cd97037a6e"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=fBJRnHc5Pgk3M8cJUchOpbD0Ibc6vD91_Gsg7BntIt8",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 169,
+    "sha256": "ca97c385dee8c29cc06f354616e950b17298619c17897f3e9bb576769bce46df"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000000-abababab.part?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubC5hcHBlbmRzLzAxNzkwOTQyNDAwMDAwLTAwMDAwMC1hYmFiYWJhYi5wYXJ0Iiwib3BlcmF0aW9ucyI6WyJnZXQiXSwidmFsaWRVbnRpbCI6MTc5MDk0MjcwMDAwMH0.fakesig&vercel-blob-signature=EjSvMbSw3uD3V0fYZ_sMO1UK-5_0L-VMd-Rmh3gxHiE",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 169,
+    "sha256": "9cc03d0faa7e74b60274c55a40d659dba0ffde49f3285ee4066b511b111872a2"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000001-abababab.part?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubC5hcHBlbmRzLzAxNzkwOTQyNDAwMDAwLTAwMDAwMS1hYmFiYWJhYi5wYXJ0Iiwib3BlcmF0aW9ucyI6WyJnZXQiXSwidmFsaWRVbnRpbCI6MTc5MDk0MjcwMDAwMH0.fakesig&vercel-blob-signature=lBCK1wC8H6Aad1Ygb4tq2YJX6bIXVaKVGxZVGQeUWVU",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 129,
+    "sha256": "7520773964be51fb73112d5994a254b3131f7a0e2b41765937bbfd8efcb24625"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FPeople%2Fsam-example-com%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=FMJbOvpAe8GZ-fYm0dozljuRrA1AY7mbyLZnyvubfPg",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 173,
+    "sha256": "0aafdd15fe943f2d3e4fbbf5607824676a47d232233165fe14bf5d985fce987e"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwuYXBwZW5kcy8wMTc5MDk0MjQwMDAwMC0wMDAwMDItYWJhYmFiYWIucGFydCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=XbMMqFwvVhgDECM0akiooT-MqYZclDJ6ErysX4u1s-4",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 114,
+    "sha256": "04f7c7b4fa27af6d81efcc4a45cc157a404f8b5ed103abd073ee6e06fd05e861"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Fnobody%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/nobody/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvbm9ib2R5L2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=miSz4u0-s6juWlNLK65iXVE0IdZDZQDgpw73XdeUigE",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 128,
+    "sha256": "6eda3f69fd83d3acd4a8d82474e88842f81d7a7f43955f06191f956534efef01"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9ib2FyZC1wYWNrLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=kmS9F2bkCY8OAC11z8Ik5pNUkJhWCed1RPB0S312Dcs",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 125,
+    "sha256": "9d0f826278897ca4cdd33ed5c1ce95635a42eddfb0a4eb9cc9cf602edc71bdf3"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Uploads/priya-example-org/missing.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9taXNzaW5nLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=C4N5iJORwEqECR2EFOL1Sj6tZ6cCRqlWYLDDBLCBya4",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 128,
+    "sha256": "6eda3f69fd83d3acd4a8d82474e88842f81d7a7f43955f06191f956534efef01"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Finteractions.jsonl",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "application/x-ndjson",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 26,
+    "sha256": "183c8adcac5d767d4901803f77918a36334b2093bfe9fb572fb7f356a872c80d"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/delete",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 228,
+    "sha256": "a1aa406a39404953c596a0e7a1536913b7d821b6cfa12f5a09d9047f9bc45e5f"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 125,
+    "sha256": "a701126837d329f292934460f8762a8a6b3f1d1db815cbc6e50887cd97037a6e"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=fBJRnHc5Pgk3M8cJUchOpbD0Ibc6vD91_Gsg7BntIt8",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Fcontext.md",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "text/markdown; charset=utf-8",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 19,
+    "sha256": "11efd303d61537e0d700a40addd1bc9962ce2f3994a76882299fe6ec7972e371"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fdesk-a%2FCustomers%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fdesk-a%2FDeployments%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fdesk-a%2FImplementation%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fdesk-a%2FAccounts%2Fzeta%2Fcontext.md",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "text/markdown; charset=utf-8",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 11,
+    "sha256": "0402ea744dea28084a6f9badd38e273397350f6451c222a9bb2170038b344abe"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fdesk-a%2FAccounts%2Fzeta%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fdesk-a%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 108,
+    "sha256": "3d02a53503cb1696f51f7fe812f652bda5326c90a453eba9218c2041210e2ae7"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fdesk-a%2FAccounts%2Fzeta%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/desk-a/Accounts/zeta/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2Rlc2stYS9BY2NvdW50cy96ZXRhL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=nCt9-dHfBiyXl1K6_91LdNlV0ZUyBSpgAMdv7dbyqJo",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fdesk-a%2FAccounts",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fdesk-a%2FAccounts",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fdesk-a%2FAccounts&cursor=1000",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fdesk-a%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fdesk-a%2F&cursor=1000",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Forg-onfinance%2FCustomers%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Forg-onfinance%2FDeployments%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Forg-onfinance%2FImplementation%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Forg-onfinance%2FUploads%2Fsam-example-com%2Fnotes.md",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "text/markdown; charset=utf-8",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 6,
+    "sha256": "444e0fffbd825e9610ff5b199485707a0c895339ae80c15cc8a8aee41b106fda"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FUploads%2Fsam-example-com%2Fnotes.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 123,
+    "sha256": "5bed332844e848ae0c41e418f49fb34ca2d36f66b600bb56d32e07bcbb3826ce"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FUploads%2Fsam-example-com%2Fnotes.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=Jt3Ckj1taHR2zLTcDTRgMSDubQzUa_icHZMgEpQiN-Y",
+   "headers": {},
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 123,
+    "sha256": "5bed332844e848ae0c41e418f49fb34ca2d36f66b600bb56d32e07bcbb3826ce"
+   }
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=artifacts%2Forgs%2Fcustomer-b%2Fstatus-report.html",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "1",
+    "x-content-type": "text/html; charset=utf-8",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 15,
+    "sha256": "91f5292342bac59205746da966ad9390fcbfbc53790a9f3f8fccd46c289520e1"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 107,
+    "sha256": "1775656e30d79baeacb417b30627067b4ea924db6e346f09364bd94a1632dc64"
+   }
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=artifacts%2Forgs%2Fcustomer-b%2Ftracker.xlsx",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-add-random-suffix": "1",
+    "x-content-type": "application/x-test",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 17,
+    "sha256": "4b26f9d913e31ba2b5fe7c4d60e019d0580c0c0b34f0f4e53af13b250982bfef"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 101,
+    "sha256": "1750aa3867c9f898ce798de5bb1ba91c2f084dfe4af651878be4ce1e85c8d405"
+   }
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=artifacts%2Forgs%2Forg-onfinance%2Fblob.weird",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "1",
+    "x-content-type": "application/octet-stream",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 1,
+    "sha256": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 102,
+    "sha256": "0a50e2e0bd4300978871211b9d1fbe67f7c2389364e13c345045af35dd9276f1"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fcustomer-b%2FCustomers%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fcustomer-b%2FDeployments%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Fcustomer-b%2FImplementation%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FUploads%2Fpriya-example-org%2Fdeck.pdf",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "application/pdf",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 13,
+    "sha256": "8ca7f71396260ed265f5e4b9b88a8a9869d8723034ce5a5ddf09100e10ff1de4"
+   }
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Fpersonas.jsonl",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 8,
+    "sha256": "b97cb2a7c65ebca09931f5501bd3d98feac4f445ce05d40d7461b7458a5de42f"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 117,
+    "sha256": "b05695fda81b4d636749cadcc0295c6b021d9974c7682fe20501f79a2f23af79"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/acme-bank/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=euLi6kJ8-qC4UOCCipnt-FGbHQLykHkHeUfyifPOKHo",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 129,
+    "sha256": "7520773964be51fb73112d5994a254b3131f7a0e2b41765937bbfd8efcb24625"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FPeople%2Fsam-example-com%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=FMJbOvpAe8GZ-fYm0dozljuRrA1AY7mbyLZnyvubfPg",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 173,
+    "sha256": "0aafdd15fe943f2d3e4fbbf5607824676a47d232233165fe14bf5d985fce987e"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwuYXBwZW5kcy8wMTc5MDk0MjQwMDAwMC0wMDAwMDItYWJhYmFiYWIucGFydCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=XbMMqFwvVhgDECM0akiooT-MqYZclDJ6ErysX4u1s-4",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 114,
+    "sha256": "04f7c7b4fa27af6d81efcc4a45cc157a404f8b5ed103abd073ee6e06fd05e861"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Fnobody%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/nobody/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvbm9ib2R5L2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=miSz4u0-s6juWlNLK65iXVE0IdZDZQDgpw73XdeUigE",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FUploads%2Fpriya-example-org%2Fdeck.pdf",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FUploads%2Fpriya-example-org%2Fnone.pdf",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 122,
+    "sha256": "95cc90c378089c16520ca384494b40e95da3ace8c2c8aea0403c6198d5c40f5e"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Uploads/priya-example-org/deck.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9kZWNrLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=gn4fG0uJb6v4cFdU-m5AURL8lwRp0K8hSuQiiupglDc",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 122,
+    "sha256": "19f4a5d92d1dc114690136ae1cbb3b36f82c4d25991f77ffbd1c0f5ffc834488"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Uploads/priya-example-org/none.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9ub25lLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=qtOIbi6Dg-M3TJXlpNM9G9h3Qi0IKKq5K4UccMzTvz4",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Fcustomer-b%2F_versions%2Fcustomer-b%2F1700000000000-Accounts%2Facme-bank%2Fcontext.md",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "text/plain",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 9,
+    "sha256": "33bd16e27837021a42cec7076425ee9217e1f1be818d11bb57ea47c1a0a7e56a"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 152,
+    "sha256": "e6fcdcfd6b082e8274c714443f3ff624892bf7b3852d2bc1c9b006bd60da6fe6"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2F_versions%2Fcustomer-b%2F1700000000000-Accounts%2Facme-bank%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/_versions/customer-b/1700000000000-Accounts/acme-bank/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvX3ZlcnNpb25zL2N1c3RvbWVyLWIvMTcwMDAwMDAwMDAwMC1BY2NvdW50cy9hY21lLWJhbmsvY29udGV4dC5tZCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=gsiHK78lqC9kFd8az-13UVK2jsIlXEdrUoggF1l635E",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 117,
+    "sha256": "b05695fda81b4d636749cadcc0295c6b021d9974c7682fe20501f79a2f23af79"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Fcustomer-b%2FAccounts%2Facme-bank%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/customer-b/Accounts/acme-bank/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=euLi6kJ8-qC4UOCCipnt-FGbHQLykHkHeUfyifPOKHo",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 123,
+    "sha256": "5bed332844e848ae0c41e418f49fb34ca2d36f66b600bb56d32e07bcbb3826ce"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FUploads%2Fsam-example-com%2Fnotes.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=Jt3Ckj1taHR2zLTcDTRgMSDubQzUa_icHZMgEpQiN-Y",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 122,
+    "sha256": "0534be93703e8982809a72c67adcd3a7f3d05a1693a254da1c1d6d472f55da15"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FUploads%2Fsam-example-com%2Fnone.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Uploads/sam-example-com/none.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm9uZS5tZCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=b4NALAPHJki2vGGQygSwKiNgbfPUMkF238z9IsBqWiA",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Forg-onfinance%2FCustomers%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Forg-onfinance%2FDeployments%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1&prefix=dataroom%2Forgs%2Forg-onfinance%2FImplementation%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Forg-onfinance%2FUploads%2Freader-example-com%2FBoard+Pack+_final_.pdf",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "application/pdf",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 17,
+    "sha256": "4fed2354a39a8085ecbb76ef4a934a611ba341bfae2b9c2ebffddcae2f2244bc"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FUploads%2Freader-example-com%2Fnone.pdf",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 123,
+    "sha256": "5bed332844e848ae0c41e418f49fb34ca2d36f66b600bb56d32e07bcbb3826ce"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FUploads%2Fsam-example-com%2Fnotes.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=Jt3Ckj1taHR2zLTcDTRgMSDubQzUa_icHZMgEpQiN-Y",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 117,
+    "sha256": "b15c1b4b77367d6178dbfd8cdf17a73732b4ea034ebe820b75c5e9f81f5210cd"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Accounts/new-co/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=jXkdoqsgSzxeEpOyCqEWrAKS1BWmW-KzPYaGcffgw_w",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Fcontext.md",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 6,
+    "sha256": "f676b43bd55f91451babc1663739064abb7e11e2b5f4a7efe62c29e4eeb0d117"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 117,
+    "sha256": "b15c1b4b77367d6178dbfd8cdf17a73732b4ea034ebe820b75c5e9f81f5210cd"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Fcontext.md.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Accounts/new-co/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=jXkdoqsgSzxeEpOyCqEWrAKS1BWmW-KzPYaGcffgw_w",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Forg-onfinance%2F_versions%2Forg-onfinance%2F1790942400000-Accounts%2Fnew-co%2Fcontext.md",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "text/plain",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 6,
+    "sha256": "f676b43bd55f91451babc1663739064abb7e11e2b5f4a7efe62c29e4eeb0d117"
+   }
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Fcontext.md",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 8,
+    "sha256": "6cc9f68b7f343c644a64ef9de4043c5ea17084d4c6853baec393a9b4173a8530"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 125,
+    "sha256": "ae70d9ca8ac6a5fa571344bcc48bdb5c1da410db9b4344474637c6d42806d359"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=310qppIu9xg0CeO08hTmSuinOBy5LNbg30UO0Hk4ViU",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 125,
+    "sha256": "ae70d9ca8ac6a5fa571344bcc48bdb5c1da410db9b4344474637c6d42806d359"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=310qppIu9xg0CeO08hTmSuinOBy5LNbg30UO0Hk4ViU",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Finteractions.jsonl",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 8,
+    "sha256": "3e61556219c8ddba801b9d8b7d1d2894af42d122eeddb3407033cf19506c7508"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 125,
+    "sha256": "ae70d9ca8ac6a5fa571344bcc48bdb5c1da410db9b4344474637c6d42806d359"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=310qppIu9xg0CeO08hTmSuinOBy5LNbg30UO0Hk4ViU",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 125,
+    "sha256": "ae70d9ca8ac6a5fa571344bcc48bdb5c1da410db9b4344474637c6d42806d359"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?limit=1000&prefix=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Finteractions.jsonl.appends%2F",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=310qppIu9xg0CeO08hTmSuinOBy5LNbg30UO0Hk4ViU",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Forg-onfinance%2F_versions%2Forg-onfinance%2F1790942400000-Accounts%2Fnew-co%2Finteractions.jsonl",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-content-type": "text/plain",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 8,
+    "sha256": "3e61556219c8ddba801b9d8b7d1d2894af42d122eeddb3407033cf19506c7508"
+   }
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=dataroom%2Forgs%2Forg-onfinance%2FAccounts%2Fnew-co%2Finteractions.jsonl",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 16,
+    "sha256": "58ab9e56fa26d7b5db7aeac1c47d9d08214fee79bbeb061f079e49b282c88418"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 102,
+    "sha256": "7b82613df33544b9b6ca0ec077989722616591ff25b745e7a3815b994f6273d8"
+   }
+  },
+  {
+   "method": "POST",
+   "target": "api:/signed-token",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 102,
+    "sha256": "7b82613df33544b9b6ca0ec077989722616591ff25b745e7a3815b994f6273d8"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "object:/artifacts/orgs/org-onfinance/blob.weird?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQ2MDAwMDAwfQ.fakesig&vercel-blob-signature=UE4ybeElbdlke0N0FDWrdGRCBKqfHc8-DaMtMAVPCp4",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "GET",
+   "target": "object:/artifacts/none.html?x=1",
+   "headers": {
+    "cache-control": "no-cache",
+    "pragma": "no-cache"
+   },
+   "body": null
+  },
+  {
+   "method": "PUT",
+   "target": "api:/?pathname=_health%2Fprobe-1790942400000.txt",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "text/plain;charset=UTF-8",
+    "x-add-random-suffix": "0",
+    "x-allow-overwrite": "1",
+    "x-vercel-blob-access": "private",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 31,
+    "sha256": "e0fafa64a99721deedd28c3f733c64d4dd1136910d6475866d6bdc0200d4c186"
+   }
+  },
+  {
+   "method": "GET",
+   "target": "api:/?url=https%3A%2F%2Ffakestore.private.blob.vercel-storage.com%2F_health%2Fprobe-1790942400000.txt",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": null
+  },
+  {
+   "method": "POST",
+   "target": "api:/delete",
+   "headers": {
+    "authorization": "Bearer vercel_blob_rw_fakestore_fakesecret",
+    "content-type": "application/json",
+    "x-vercel-blob-store-id": "fakestore"
+   },
+   "body": {
+    "bytes": 94,
+    "sha256": "dc804e7a92c7c86d528a2e63eadfede58b46316e2ba7eb57a6bd34e6818d6587"
+   }
+  }
+ ],
+ "fetches": [
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/acme-bank/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=euLi6kJ8-qC4UOCCipnt-FGbHQLykHkHeUfyifPOKHo",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=fBJRnHc5Pgk3M8cJUchOpbD0Ibc6vD91_Gsg7BntIt8",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000000-abababab.part?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubC5hcHBlbmRzLzAxNzkwOTQyNDAwMDAwLTAwMDAwMC1hYmFiYWJhYi5wYXJ0Iiwib3BlcmF0aW9ucyI6WyJnZXQiXSwidmFsaWRVbnRpbCI6MTc5MDk0MjcwMDAwMH0.fakesig&vercel-blob-signature=EjSvMbSw3uD3V0fYZ_sMO1UK-5_0L-VMd-Rmh3gxHiE",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl.appends/01790942400000-000001-abababab.part?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubC5hcHBlbmRzLzAxNzkwOTQyNDAwMDAwLTAwMDAwMS1hYmFiYWJhYi5wYXJ0Iiwib3BlcmF0aW9ucyI6WyJnZXQiXSwidmFsaWRVbnRpbCI6MTc5MDk0MjcwMDAwMH0.fakesig&vercel-blob-signature=lBCK1wC8H6Aad1Ygb4tq2YJX6bIXVaKVGxZVGQeUWVU",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=FMJbOvpAe8GZ-fYm0dozljuRrA1AY7mbyLZnyvubfPg",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwuYXBwZW5kcy8wMTc5MDk0MjQwMDAwMC0wMDAwMDItYWJhYmFiYWIucGFydCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=XbMMqFwvVhgDECM0akiooT-MqYZclDJ6ErysX4u1s-4",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/nobody/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvbm9ib2R5L2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=miSz4u0-s6juWlNLK65iXVE0IdZDZQDgpw73XdeUigE",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9ib2FyZC1wYWNrLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=kmS9F2bkCY8OAC11z8Ik5pNUkJhWCed1RPB0S312Dcs",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Uploads/priya-example-org/missing.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9taXNzaW5nLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=C4N5iJORwEqECR2EFOL1Sj6tZ6cCRqlWYLDDBLCBya4",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/acme-bank/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=fBJRnHc5Pgk3M8cJUchOpbD0Ibc6vD91_Gsg7BntIt8",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/desk-a/Accounts/zeta/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2Rlc2stYS9BY2NvdW50cy96ZXRhL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=nCt9-dHfBiyXl1K6_91LdNlV0ZUyBSpgAMdv7dbyqJo",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=Jt3Ckj1taHR2zLTcDTRgMSDubQzUa_icHZMgEpQiN-Y",
+   "init": "<undefined>"
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/acme-bank/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=euLi6kJ8-qC4UOCCipnt-FGbHQLykHkHeUfyifPOKHo",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=FMJbOvpAe8GZ-fYm0dozljuRrA1AY7mbyLZnyvubfPg",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/People/sam-example-com/interactions.jsonl.appends/01790942400000-000002-abababab.part?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvUGVvcGxlL3NhbS1leGFtcGxlLWNvbS9pbnRlcmFjdGlvbnMuanNvbmwuYXBwZW5kcy8wMTc5MDk0MjQwMDAwMC0wMDAwMDItYWJhYmFiYWIucGFydCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=XbMMqFwvVhgDECM0akiooT-MqYZclDJ6ErysX4u1s-4",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/nobody/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvbm9ib2R5L2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=miSz4u0-s6juWlNLK65iXVE0IdZDZQDgpw73XdeUigE",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Uploads/priya-example-org/deck.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9kZWNrLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=gn4fG0uJb6v4cFdU-m5AURL8lwRp0K8hSuQiiupglDc",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Uploads/priya-example-org/none.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9ub25lLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=qtOIbi6Dg-M3TJXlpNM9G9h3Qi0IKKq5K4UccMzTvz4",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/_versions/customer-b/1700000000000-Accounts/acme-bank/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvX3ZlcnNpb25zL2N1c3RvbWVyLWIvMTcwMDAwMDAwMDAwMC1BY2NvdW50cy9hY21lLWJhbmsvY29udGV4dC5tZCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=gsiHK78lqC9kFd8az-13UVK2jsIlXEdrUoggF1l635E",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Accounts/acme-bank/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvQWNjb3VudHMvYWNtZS1iYW5rL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=euLi6kJ8-qC4UOCCipnt-FGbHQLykHkHeUfyifPOKHo",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=Jt3Ckj1taHR2zLTcDTRgMSDubQzUa_icHZMgEpQiN-Y",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Uploads/sam-example-com/none.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm9uZS5tZCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=b4NALAPHJki2vGGQygSwKiNgbfPUMkF238z9IsBqWiA",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=Jt3Ckj1taHR2zLTcDTRgMSDubQzUa_icHZMgEpQiN-Y",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Accounts/new-co/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=jXkdoqsgSzxeEpOyCqEWrAKS1BWmW-KzPYaGcffgw_w",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Accounts/new-co/context.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2NvbnRleHQubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=jXkdoqsgSzxeEpOyCqEWrAKS1BWmW-KzPYaGcffgw_w",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=310qppIu9xg0CeO08hTmSuinOBy5LNbg30UO0Hk4ViU",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=310qppIu9xg0CeO08hTmSuinOBy5LNbg30UO0Hk4ViU",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=310qppIu9xg0CeO08hTmSuinOBy5LNbg30UO0Hk4ViU",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Accounts/new-co/interactions.jsonl?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvQWNjb3VudHMvbmV3LWNvL2ludGVyYWN0aW9ucy5qc29ubCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=310qppIu9xg0CeO08hTmSuinOBy5LNbg30UO0Hk4ViU",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/artifacts/orgs/org-onfinance/blob.weird?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQ2MDAwMDAwfQ.fakesig&vercel-blob-signature=UE4ybeElbdlke0N0FDWrdGRCBKqfHc8-DaMtMAVPCp4",
+   "init": {
+    "cache": "no-store"
+   }
+  },
+  {
+   "url": "https://fakestore.private.blob.vercel-storage.com/artifacts/none.html?x=1",
+   "init": {
+    "cache": "no-store"
+   }
+  }
+ ],
+ "results": [
+  {
+   "step": "agent store: backend kind",
+   "returned": "vercel-blob",
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "agent store: write a markdown file",
+   "returned": "<undefined>",
+   "blobCalls": 5,
+   "requests": 5
+  },
+  {
+   "step": "agent store: write a json file",
+   "returned": "<undefined>",
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "agent store: write a terraform file",
+   "returned": "<undefined>",
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "agent store: write a binary-typed path",
+   "returned": "<undefined>",
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "agent store: write a workbook path",
+   "returned": "<undefined>",
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "agent store: write a jsonl file (no trailing newline given)",
+   "returned": "<undefined>",
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "agent store: append one record",
+   "returned": 1,
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "agent store: append two records",
+   "returned": 2,
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "agent store: append to a file with no base object",
+   "returned": 1,
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "agent store: read markdown",
+   "returned": "# Acme Bank\n\nA's context.\n",
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "agent store: read jsonl (base + parts)",
+   "returned": "{\"interactionId\":\"INT-0\"}\n{\"interactionId\":\"INT-1\"}\n{\"interactionId\":\"INT-2\"}\n{\"interactionId\":\"INT-3\"}\n",
+   "blobCalls": 7,
+   "requests": 7
+  },
+  {
+   "step": "agent store: readJsonl (parts only)",
+   "returned": [
+    {
+     "interactionId": "P-1"
+    }
+   ],
+   "blobCalls": 5,
+   "requests": 5
+  },
+  {
+   "step": "agent store: read a missing file",
+   "returned": null,
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "agent store: readBytes",
+   "returned": {
+    "bytes": 20,
+    "sha256": "347b612c8a783b796cfac96f76d602cd259c589af028fef3bc91c084ceca793c"
+   },
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "agent store: readBytes of a missing file",
+   "returned": null,
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "agent store: downloadUrl",
+   "returned": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/customer-b/Uploads/priya-example-org/board-pack.pdf?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL2N1c3RvbWVyLWIvVXBsb2Fkcy9wcml5YS1leGFtcGxlLW9yZy9ib2FyZC1wYWNrLnBkZiIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTA5NDI3MDAwMDB9.fakesig&vercel-blob-signature=kmS9F2bkCY8OAC11z8Ik5pNUkJhWCed1RPB0S312Dcs",
+   "blobCalls": 2,
+   "requests": 1
+  },
+  {
+   "step": "agent store: list everything",
+   "returned": [
+    "Accounts/Master.xlsx",
+    "Accounts/acme-bank/context.md",
+    "Accounts/acme-bank/interactions.jsonl",
+    "Deliveries/acme-bank/2026.06.3/infrastructure/inference/customizations.tf",
+    "Deliveries/acme-bank/2026.06.3/platform/organization.json",
+    "People/sam-example-com/interactions.jsonl",
+    "Uploads/priya-example-org/board-pack.pdf"
+   ],
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "agent store: list a prefix",
+   "returned": [
+    "Accounts/acme-bank/context.md",
+    "Accounts/acme-bank/interactions.jsonl"
+   ],
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "agent store: list a prefix with a trailing slash",
+   "returned": [
+    "Accounts/Master.xlsx",
+    "Accounts/acme-bank/context.md",
+    "Accounts/acme-bank/interactions.jsonl"
+   ],
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "agent store: overwrite the jsonl (retires its append parts)",
+   "returned": "<undefined>",
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "agent store: read it back",
+   "returned": "{\"interactionId\":\"INT-9\"}\n",
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "agent store: overwrite a file that has no parts",
+   "returned": "<undefined>",
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "agent store: an invalid path is refused before any call",
+   "threw": "invalid data-room path \"../escape.md\": segment \"..\" is not a safe path segment",
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "agent store (explicit token): write",
+   "returned": "<undefined>",
+   "blobCalls": 5,
+   "requests": 5
+  },
+  {
+   "step": "agent store (explicit token): list",
+   "returned": [
+    "Accounts/zeta/context.md"
+   ],
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "agent store (blobToken option): read",
+   "returned": "# Zeta (B)\n",
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "agent store: the shared per-workspace store",
+   "returned": {
+    "kind": "vercel-blob",
+    "list": [
+     "Accounts/zeta/context.md"
+    ],
+    "same": true
+   },
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "agent store: no workspace is refused before any call",
+   "threw": "The data room needs a workspace: no workspace was given. Nothing was read or written.",
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "agent store: list across two pages (1006 objects)",
+   "returned": {
+    "items": 1006,
+    "first": [
+     "Accounts/bulk/agreements/doc-0000.md",
+     "Accounts/bulk/agreements/doc-0001.md",
+     "Accounts/bulk/agreements/doc-0002.md"
+    ],
+    "last": "Accounts/zeta/context.md"
+   },
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "web reader: list across two pages",
+   "returned": {
+    "items": 1006,
+    "first": [
+     "Accounts/bulk/agreements/doc-0000.md",
+     "Accounts/bulk/agreements/doc-0001.md",
+     "Accounts/bulk/agreements/doc-0002.md"
+    ],
+    "last": "Accounts/zeta/context.md"
+   },
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "dataroom_write tool",
+   "returned": {
+    "path": "Uploads/sam-example-com/notes.md",
+    "written": true
+   },
+   "blobCalls": 5,
+   "requests": 5
+  },
+  {
+   "step": "dataroom_list tool",
+   "returned": {
+    "paths": [
+     "Uploads/sam-example-com/notes.md"
+    ]
+   },
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "dataroom_read tool",
+   "returned": {
+    "content": "notes\n",
+    "path": "Uploads/sam-example-com/notes.md"
+   },
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "dataroom_fetch_to_sandbox tool (the signed link handed to the sandbox)",
+   "returned": {
+    "command": "curl -sSL -o \"/workspace/notes.md\" \"https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=Jt3Ckj1taHR2zLTcDTRgMSDubQzUa_icHZMgEpQiN-Y\"",
+    "destination": "/workspace/notes.md",
+    "expiresInSeconds": 300,
+    "next": "Run the command in bash, then parse \"/workspace/notes.md\" (openpyxl is available for .xlsx).",
+    "path": "Uploads/sam-example-com/notes.md",
+    "url": "https://fakestore.private.blob.vercel-storage.com/dataroom/orgs/org-onfinance/Uploads/sam-example-com/notes.md?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJkYXRhcm9vbS9vcmdzL29yZy1vbmZpbmFuY2UvVXBsb2Fkcy9zYW0tZXhhbXBsZS1jb20vbm90ZXMubWQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQyNzAwMDAwfQ.fakesig&vercel-blob-signature=Jt3Ckj1taHR2zLTcDTRgMSDubQzUa_icHZMgEpQiN-Y"
+   },
+   "blobCalls": 2,
+   "requests": 1
+  },
+  {
+   "step": "publish_artifact: an html report",
+   "returned": {
+    "expiresAt": "2026-10-09T12:00:00.000Z",
+    "pathname": "artifacts/orgs/customer-b/status-report.html",
+    "url": "https://fakestore.private.blob.vercel-storage.com/artifacts/orgs/customer-b/status-report.html?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9jdXN0b21lci1iL3N0YXR1cy1yZXBvcnQuaHRtbCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTE1NDcyMDAwMDB9.fakesig&vercel-blob-signature=7GGkd_6kqoUVLa1lPAaZoS-0l2eIuSAjQd5JZOvDuyU"
+   },
+   "blobCalls": 3,
+   "requests": 2
+  },
+  {
+   "step": "publish_artifact: bytes with an explicit type",
+   "returned": {
+    "expiresAt": "2026-10-09T12:00:00.000Z",
+    "pathname": "artifacts/orgs/customer-b/tracker.xlsx",
+    "url": "https://fakestore.private.blob.vercel-storage.com/artifacts/orgs/customer-b/tracker.xlsx?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9jdXN0b21lci1iL3RyYWNrZXIueGxzeCIsIm9wZXJhdGlvbnMiOlsiZ2V0Il0sInZhbGlkVW50aWwiOjE3OTE1NDcyMDAwMDB9.fakesig&vercel-blob-signature=wYNksYJC7e6IXJQeD1CpOZuHQW9ssTn9uHSjvCipbjs"
+   },
+   "blobCalls": 3,
+   "requests": 2
+  },
+  {
+   "step": "publish_artifact: an unknown extension",
+   "returned": {
+    "expiresAt": "2026-10-09T12:00:00.000Z",
+    "pathname": "artifacts/orgs/org-onfinance/blob.weird",
+    "url": "https://fakestore.private.blob.vercel-storage.com/artifacts/orgs/org-onfinance/blob.weird?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkxNTQ3MjAwMDAwfQ.fakesig&vercel-blob-signature=UE4ybeElbdlke0N0FDWrdGRCBKqfHc8-DaMtMAVPCp4"
+   },
+   "blobCalls": 3,
+   "requests": 2
+  },
+  {
+   "step": "publish_artifact: no workspace is refused before any call",
+   "threw": "The data room needs a workspace: no workspace was given. Nothing was read or written.",
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "web: write with a content type",
+   "returned": "<undefined>",
+   "blobCalls": 4,
+   "requests": 4
+  },
+  {
+   "step": "web: write without a content type",
+   "returned": "<undefined>",
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "web: list",
+   "returned": [
+    "Accounts/Master.xlsx",
+    "Accounts/acme-bank/context.md",
+    "Accounts/acme-bank/interactions.jsonl",
+    "Accounts/acme-bank/personas.jsonl",
+    "Deliveries/acme-bank/2026.06.3/infrastructure/inference/customizations.tf",
+    "Deliveries/acme-bank/2026.06.3/platform/organization.json",
+    "People/sam-example-com/interactions.jsonl",
+    "Uploads/priya-example-org/board-pack.pdf",
+    "Uploads/priya-example-org/deck.pdf"
+   ],
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "web: read (base only)",
+   "returned": "# Acme Bank, again\n",
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "web: read (parts only)",
+   "returned": "{\"interactionId\":\"P-1\"}\n",
+   "blobCalls": 5,
+   "requests": 5
+  },
+  {
+   "step": "web: read a missing file",
+   "returned": null,
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "web: stat",
+   "returned": {
+    "size": 13
+   },
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "web: stat a missing file",
+   "returned": null,
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "web: open (raw bytes)",
+   "returned": {
+    "body": {
+     "bytes": 13,
+     "sha256": "8ca7f71396260ed265f5e4b9b88a8a9869d8723034ce5a5ddf09100e10ff1de4"
+    },
+    "contentType": "application/pdf",
+    "status": 200
+   },
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "web: open a missing file",
+   "returned": null,
+   "blobCalls": 2,
+   "requests": 2
+  },
+  {
+   "step": "web: write a snapshot",
+   "returned": "<undefined>",
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "web: read a snapshot",
+   "returned": "# before\n",
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "web: another workspace's snapshot key is refused before any call",
+   "threw": "\"_versions/customer-b/1700000000000-Accounts/acme-bank/context.md\" is not a snapshot of this workspace",
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "web: no workspace is refused before any call",
+   "threw": "The data room needs a workspace: no workspace was given. Nothing was read or written.",
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "workflow data: list",
+   "returned": [
+    "Accounts/Master.xlsx",
+    "Accounts/acme-bank/context.md",
+    "Accounts/acme-bank/interactions.jsonl",
+    "Accounts/acme-bank/personas.jsonl"
+   ],
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "workflow data: read",
+   "returned": "# Acme Bank, again\n",
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "GET /api/dataroom (list)",
+   "returned": {
+    "body": {
+     "paths": [
+      "Uploads/sam-example-com/notes.md"
+     ]
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "GET /api/dataroom?path= (text)",
+   "returned": {
+    "body": {
+     "content": "notes\n",
+     "path": "Uploads/sam-example-com/notes.md"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "GET /api/dataroom?path= (missing)",
+   "returned": {
+    "body": {
+     "found": false,
+     "path": "Uploads/sam-example-com/none.md"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "POST /api/ops/upload",
+   "returned": {
+    "body": {
+     "name": "Board Pack _final_.pdf",
+     "ok": true,
+     "path": "Uploads/reader-example-com/Board Pack _final_.pdf",
+     "size": 17
+    },
+    "status": 200
+   },
+   "blobCalls": 4,
+   "requests": 4
+  },
+  {
+   "step": "GET /api/dataroom?path=…&as=bytes (the PDF viewer)",
+   "returned": {
+    "body": {
+     "error": "Invalid data-room path"
+    },
+    "contentType": "application/json",
+    "status": 400
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "GET /api/dataroom?path=…&as=bytes (missing)",
+   "returned": {
+    "body": {
+     "code": "upstream_missing",
+     "error": "That file is not in the data room."
+    },
+    "contentType": "application/json",
+    "status": 404
+   },
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "GET /api/ops/dataroom (list with a prefix)",
+   "returned": {
+    "body": {
+     "paths": [
+      "Uploads/reader-example-com/Board Pack _final_.pdf",
+      "Uploads/sam-example-com/notes.md"
+     ]
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 1,
+   "requests": 1
+  },
+  {
+   "step": "GET /api/ops/dataroom?path=",
+   "returned": {
+    "body": {
+     "content": "notes\n",
+     "found": true,
+     "path": "Uploads/sam-example-com/notes.md"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "POST /api/ops/dataroom (create)",
+   "returned": {
+    "body": {
+     "bytes": 6,
+     "ok": true,
+     "path": "Accounts/new-co/context.md"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 4,
+   "requests": 4
+  },
+  {
+   "step": "POST /api/ops/dataroom (overwrite: snapshots the previous bytes first)",
+   "returned": {
+    "body": {
+     "bytes": 8,
+     "ok": true,
+     "path": "Accounts/new-co/context.md"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 5,
+   "requests": 5
+  },
+  {
+   "step": "POST /api/ops/dataroom (append)",
+   "returned": {
+    "body": {
+     "bytes": 8,
+     "ok": true,
+     "path": "Accounts/new-co/interactions.jsonl"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 7,
+   "requests": 7
+  },
+  {
+   "step": "POST /api/ops/dataroom (append again)",
+   "returned": {
+    "body": {
+     "bytes": 16,
+     "ok": true,
+     "path": "Accounts/new-co/interactions.jsonl"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 8,
+   "requests": 8
+  },
+  {
+   "step": "GET /api/ops/artifact-link?path= (own workspace)",
+   "returned": {
+    "body": {
+     "expiresAt": "2026-10-02T13:00:00.000Z",
+     "path": "artifacts/orgs/org-onfinance/blob.weird",
+     "proxyUrl": "/api/artifact-proxy?url=https%3A%2F%2Ffakestore.private.blob.vercel-storage.com%2Fartifacts%2Forgs%2Forg-onfinance%2Fblob.weird%3Fvercel-blob-delegation%3DeyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQ2MDAwMDAwfQ.fakesig%26vercel-blob-signature%3DUE4ybeElbdlke0N0FDWrdGRCBKqfHc8-DaMtMAVPCp4",
+     "url": "https://fakestore.private.blob.vercel-storage.com/artifacts/orgs/org-onfinance/blob.weird?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQ2MDAwMDAwfQ.fakesig&vercel-blob-signature=UE4ybeElbdlke0N0FDWrdGRCBKqfHc8-DaMtMAVPCp4"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 2,
+   "requests": 1
+  },
+  {
+   "step": "GET /api/ops/artifact-link?url= (the published link)",
+   "returned": {
+    "body": {
+     "expiresAt": "2026-10-02T13:00:00.000Z",
+     "path": "artifacts/orgs/org-onfinance/blob.weird",
+     "proxyUrl": "/api/artifact-proxy?url=https%3A%2F%2Ffakestore.private.blob.vercel-storage.com%2Fartifacts%2Forgs%2Forg-onfinance%2Fblob.weird%3Fvercel-blob-delegation%3DeyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQ2MDAwMDAwfQ.fakesig%26vercel-blob-signature%3DUE4ybeElbdlke0N0FDWrdGRCBKqfHc8-DaMtMAVPCp4",
+     "url": "https://fakestore.private.blob.vercel-storage.com/artifacts/orgs/org-onfinance/blob.weird?vercel-blob-delegation=eyJzdG9yZUlkIjoiZmFrZXN0b3JlIiwicGF0aG5hbWUiOiJhcnRpZmFjdHMvb3Jncy9vcmctb25maW5hbmNlL2Jsb2Iud2VpcmQiLCJvcGVyYXRpb25zIjpbImdldCJdLCJ2YWxpZFVudGlsIjoxNzkwOTQ2MDAwMDAwfQ.fakesig&vercel-blob-signature=UE4ybeElbdlke0N0FDWrdGRCBKqfHc8-DaMtMAVPCp4"
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 2,
+   "requests": 1
+  },
+  {
+   "step": "GET /api/ops/artifact-link (another workspace's artifact)",
+   "returned": {
+    "body": {
+     "error": "Artifact not found."
+    },
+    "contentType": "application/json",
+    "status": 404
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "GET /api/ops/artifact-link (a link on another host)",
+   "returned": {
+    "body": {
+     "error": "Missing or invalid artifact path."
+    },
+    "contentType": "application/json",
+    "status": 400
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "GET /api/artifact-proxy (the fresh link)",
+   "returned": {
+    "body": {
+     "bytes": 1,
+     "sha256": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    "contentType": "application/octet-stream",
+    "status": 200
+   },
+   "blobCalls": 0,
+   "requests": 1
+  },
+  {
+   "step": "GET /api/artifact-proxy (a missing object)",
+   "returned": {
+    "body": {
+     "error": "Artifact fetch failed",
+     "expired": false
+    },
+    "contentType": "application/json",
+    "status": 404
+   },
+   "blobCalls": 0,
+   "requests": 1
+  },
+  {
+   "step": "GET /api/artifact-proxy (another host is refused)",
+   "returned": {
+    "body": {
+     "error": "Artifact host is not allowed"
+    },
+    "contentType": "application/json",
+    "status": 400
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "GET /api/artifact-proxy (http is refused)",
+   "returned": {
+    "body": {
+     "error": "Artifact host is not allowed"
+    },
+    "contentType": "application/json",
+    "status": 400
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "GET /api/ops/health (the storage probe: write, head, delete)",
+   "returned": {
+    "blob": {
+     "detail": "write → head → delete ok",
+     "ok": true
+    }
+   },
+   "blobCalls": 3,
+   "requests": 3
+  },
+  {
+   "step": "safe-fetch: which hosts are our own store",
+   "returned": [
+    [
+     "vercel-storage.com",
+     true
+    ],
+    [
+     "abc.private.blob.vercel-storage.com",
+     true
+    ],
+    [
+     "ABC.Public.Blob.Vercel-Storage.com",
+     true
+    ],
+    [
+     "evilvercel-storage.com",
+     false
+    ],
+    [
+     "vercel-storage.com.evil.org",
+     false
+    ],
+    [
+     "storage.test",
+     false
+    ],
+    [
+     "localhost",
+     false
+    ]
+   ],
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "safe-fetch: a store link is flagged",
+   "returned": {
+    "blob": true,
+    "ok": true,
+    "other": false
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: the agent store falls back to local files",
+   "returned": {
+    "downloadUrl": null,
+    "kind": "local",
+    "list": [
+     "Accounts/acme-bank/context.md",
+     "Accounts/acme-bank/interactions.jsonl"
+    ],
+    "onDisk": true,
+    "read": "{\"i\":1}\n"
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: publish_artifact refuses",
+   "threw": "Artifact publishing is not configured: set BLOB_READ_WRITE_TOKEN (a private Vercel Blob store on the API project) to enable publish_artifact.",
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: web list",
+   "returned": [],
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: web read",
+   "returned": null,
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: web stat",
+   "returned": null,
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: web open",
+   "returned": null,
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: web write",
+   "threw": "BLOB_READ_WRITE_TOKEN is not set",
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: GET /api/dataroom",
+   "returned": {
+    "body": {
+     "paths": []
+    },
+    "contentType": "application/json",
+    "status": 200
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: GET /api/dataroom as=bytes",
+   "returned": {
+    "body": {
+     "code": "upstream_error",
+     "error": "Data room storage is not configured."
+    },
+    "contentType": "application/json",
+    "status": 503
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: GET /api/ops/dataroom",
+   "returned": {
+    "body": {
+     "error": "Data room storage is not configured."
+    },
+    "contentType": "application/json",
+    "status": 503
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: POST /api/ops/dataroom",
+   "returned": {
+    "body": {
+     "error": "Data room storage is not configured."
+    },
+    "contentType": "application/json",
+    "status": 503
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: POST /api/ops/upload",
+   "returned": {
+    "body": {
+     "error": "Data room storage is not configured."
+    },
+    "status": 503
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: GET /api/ops/artifact-link",
+   "returned": {
+    "body": {
+     "error": "Artifact storage is not configured."
+    },
+    "contentType": "application/json",
+    "status": 503
+   },
+   "blobCalls": 0,
+   "requests": 0
+  },
+  {
+   "step": "unconfigured: GET /api/ops/health",
+   "returned": {
+    "blob": {
+     "detail": "no BLOB_READ_WRITE_TOKEN — the blob store is not configured",
+     "ok": false
+    },
+    "status": 503
+   },
+   "blobCalls": 0,
+   "requests": 0
+  }
+ ]
+}
