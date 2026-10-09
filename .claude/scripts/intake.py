@@ -12,6 +12,9 @@ With --ask it prompts on the terminal (sol path). Exit 0 = state complete and va
 The brief drives the six service-surface blocks in application.json (docs/STATE.md).
 Anything the brief does not say gets the mold's own default, never a guess.
 """
+import sys as _sys_fl, os as _os_fl
+_sys_fl.path.insert(0, _os_fl.path.join(_os_fl.path.dirname(_os_fl.path.abspath(__file__)), "lib"))
+from factory_local import load_factory
 import json, os, re, sys, datetime, subprocess
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
@@ -573,7 +576,7 @@ def main(a):
     def opt(k, d=None): return opts[opts.index(k)+1] if k in opts else d
     app_id = opt("--app") or re.sub(r"[^a-z0-9_]+","_", os.path.basename(brief_path).split(".")[0].lower())
     text = open(brief_path).read(); hints = parse_brief(text)
-    factory = load(os.path.join(ST,"factory.json")); d = factory.get("defaults", {})
+    factory = load_factory(ST); d = factory.get("defaults", {})
     mold_id = opt("--mold") or hints.get("mold_id") or "mold_v1"
     outdir = os.path.join(ST, "application", app_id); os.makedirs(outdir, exist_ok=True)
     existing = {n: load(os.path.join(outdir, f"{n}.json")) for n in ("application","infrastructure","datastores","datainfra") if os.path.exists(os.path.join(outdir, f"{n}.json"))}
