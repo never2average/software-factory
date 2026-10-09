@@ -218,7 +218,7 @@ SESSION_ELSE = ("This check signs in as a person, and no session is on hand: som
                 "python3 .claude/scripts/mint.py {app_id} code <six digits> <email>.")
 def _lane(name, order, checks, summary):
     return {"lane": name, "order": order, "summary": summary, "checks": checks,
-            "not_covered": ["Everything a real mold's lane measures: this is the rehearsal's stand-in, graded against a fake deployment."]}
+            "not_covered": ["Anything beyond the checks listed above."]}
 def _chk(name, kind, signed=False, why=""):
     c = {"name": name, "run": f"python3 {{testing}}/rehearsal_checks.py {kind} {{app_id}}", "cwd": "root", "timeout_s": 60,
          "expect": {"exit": 0}, "emits": "markdown_table", "why": why}

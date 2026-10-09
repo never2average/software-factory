@@ -1,0 +1,85 @@
+{
+  "agent": "claude",
+  "task": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "2/2",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 12.5,
+    "turns": 3,
+    "cost_usd": 0.15004620000000002,
+    "tokens": {
+      "input": 6,
+      "output": 898,
+      "cache_read": 63751,
+      "cache_write": 14914
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "final_text": "The next task on the mold_v1 backlog is **mold_v1-005: Load lane: raise the concurrency target to 50 chats**. It's a P2 test task. It counts as done once the 50-chat target is verified and the evidence is recorded.\n\nBefore starting it, note that **mold_v1-004 (Keyboard focus ring on the chat composer)** is still marked in progress. It's P1, so you may want to finish or close that one first.\n\nThe rest of the backlog:\n\n| Task | Priority | Status | Title |\n|---|---|---|---|\n| mold_v1-003 | P1 | to do, waiting on 006 | Release gate: onboarding works end to end on a stamped app |\n| mold_v1-006 | P2 | to do | Write the operator runbook (brief to live app) |\n| mold_v1-008 | P2 | blocked | Workspace export to CSV |\n| mold_v1-007 | P3 | to do | Responsiveness lane: add a 320 px viewport |\n\nThe P1 release gate (003) can't start until the runbook (006) is written. Picking up 006 soon would unblock it.\n\nShould I mark 005 as in progress and start it, or work on 004 or 006 first?",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-a96ok1ah/factory; ls AGENTS.local.md 2>/dev/null && cat AGENTS.local.md; python3 -c \"import json;d=json.load(open('state/factory.json'));print(json.dumps({k:d[k] for k in d if k in('molds','defaults')},indent=1))\" | head -40; sed -n 1,80p .agents/skills/task/SKILL.md",
+        "description": "Read local rules, factory state, and task skill"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-a96ok1ah/factory; python3 .claude/scripts/factory.py next mold_v1; echo \"exit=$?\"; python3 .claude/scripts/factory.py tasks mold_v1 2>&1 | head -40",
+        "description": "Show next backlog task and task list"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T13:52:27Z",
+      "tool": "factory.py",
+      "argv": [
+        "next",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T13:52:27Z",
+      "tool": "factory.py",
+      "argv": [
+        "tasks",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}

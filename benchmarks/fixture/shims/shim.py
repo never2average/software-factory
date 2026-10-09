@@ -123,7 +123,7 @@ def vercel():
         if not proj: log(); print("Error: Your codebase isn't linked to a project on Vercel. Run `vercel link` to begin.", file=sys.stderr); return 1
         if cmd == "build": log(); print("Build Completed in .vercel/output (rehearsal)"); return 0
         st = store(proj); fw = st.get("framework") or ("eve" if proj.endswith("-api") else "nextjs"); n = len(st["deployments"]) + 1
-        print(f"Vercel CLI 99.0.0 (rehearsal)\nDeploying rehearsal-team/{proj}\nFramework Preset: {fw} (Project Settings -> Build and Deployment)")
+        print(f"Vercel CLI 50.4.1\nDeploying rehearsal-team/{proj}\nFramework Preset: {fw} (Project Settings -> Build and Deployment)")
         if fw not in ("nextjs", "eve"):
             print('Building: Running "npm run build"\nBuilding: Compiled successfully', flush=True)
             print('Error: No Output Directory named "public" found after the Build completed. Configure the Output Directory '

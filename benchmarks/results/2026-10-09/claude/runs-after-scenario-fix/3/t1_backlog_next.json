@@ -1,0 +1,92 @@
+{
+  "agent": "claude",
+  "task": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "2/2",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 13.1,
+    "turns": 4,
+    "cost_usd": 0.15271400000000002,
+    "tokens": {
+      "input": 8,
+      "output": 926,
+      "cache_read": 89410,
+      "cache_write": 14535
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "final_text": "The next task on the mold_v1 backlog is **mold_v1-005: Load lane: raise the concurrency target to 50 chats.** It's a P2 test task.\n\n- **Done when:** the 50-chat target is verified and the evidence is recorded.\n- **Why it comes before the P1 items:**\n  - mold_v1-004 (keyboard focus ring on the chat composer) is already in progress.\n  - mold_v1-003 (the release gate) can't start until mold_v1-006 (the operator runbook) is finished.\n\nThe rest of the backlog:\n\n| Task | Priority | State | What it is |\n|---|---|---|---|\n| mold_v1-004 | P1 | in progress | Keyboard focus ring on the chat composer |\n| mold_v1-003 | P1 | waiting on 006 | Release gate: onboarding works end to end on a stamped app |\n| mold_v1-006 | P2 | to do | Operator runbook (brief to live app) |\n| mold_v1-008 | P2 | blocked | Workspace export to CSV |\n| mold_v1-007 | P3 | to do | Responsiveness lane: add a 320 px viewport |\n\nDo you want me to start on mold_v1-005? It means running the load lane on a stamped app and recording what it measures. Doing 006 next would also clear the way for the P1 release gate.",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cat AGENTS.local.md 2>/dev/null; python3 -c \"import json;d=json.load(open('state/factory.json'));print(json.dumps({k:d[k] for k in d if k in('molds','defaults')},indent=1))\"",
+        "description": "Read local rules and mold list"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "python3 .claude/scripts/factory.py next mold_v1; echo \"exit=$?\"",
+        "description": "Show next backlog task for mold_v1"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "python3 .claude/scripts/factory.py tasks mold_v1 2>&1 | head -30",
+        "description": "List backlog tasks for context"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T14:12:35Z",
+      "tool": "factory.py",
+      "argv": [
+        "next",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T14:12:37Z",
+      "tool": "factory.py",
+      "argv": [
+        "tasks",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}

@@ -4,3 +4,5 @@ Workspace: Beta Ops
 Owner: owner@beta.example
 
 A workspace assistant for a small team. Web search off, browser off.
+
+Status note from the operator: Beta Desk has been live since September; 38 people at Beta Ops use it every working day.

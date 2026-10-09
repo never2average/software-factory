@@ -1,0 +1,98 @@
+{
+  "agent": "claude",
+  "task": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "2/2",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 17.3,
+    "turns": 5,
+    "cost_usd": 0.18494039999999998,
+    "tokens": {
+      "input": 10,
+      "output": 1368,
+      "cache_read": 117862,
+      "cache_write": 16746
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "final_text": "The next task on the backlog is **mold_v1-005: Load lane: raise the concurrency target to 50 chats.** I got this from `factory.py next mold_v1`, and `mold_v1` is the only mold.\n\n- **Type:** test, priority 2. Nothing has to be finished before it.\n- **To close it:** the 50-chat target has to be checked and the proof written down, for example a lane report path or a commit.\n\nTwo other things on the backlog matter here:\n\n1. **mold_v1-004, \"Keyboard focus ring on the chat composer,\" is already in progress** at priority 1. It's worth finishing or checking on it before starting something new.\n2. **mold_v1-006, \"Write the operator runbook,\" is also priority 2, and it's the one that unblocks the release.** The priority-1 release check, mold_v1-003 (sign-up works end to end on a stamped app), can't start until 006 is done. `next` picked 005 only because the two tie on priority and 005 comes first by id. If shipping Harbor sooner matters more, I'd do 006 first.\n\nThe rest of the backlog: 007 (add a 320 px screen width to the responsiveness lane, priority 3) is still to do. 008 (Workspace export to CSV) is blocked, and the backlog doesn't say why. 001 and 002 are done.\n\nDo you want me to start on 005, switch to 006, or finish 004 first? Whichever I take, I'll mark it in progress first.",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-tf1ledea/factory; ls AGENTS.local.md 2>/dev/null; cat .agents/skills/task/SKILL.md; python3 -c \"import json;d=json.load(open('state/factory.json'));print(json.dumps({k:d[k] for k in d if k in('molds','defaults')},indent=1))\"",
+        "description": "Read task skill and factory molds"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-tf1ledea/factory; python3 .claude/scripts/factory.py next mold_v1; echo \"exit=$?\"; python3 .claude/scripts/factory.py status; echo \"exit=$?\"",
+        "description": "Show next backlog task and factory status"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-tf1ledea/factory; python3 -c \"\nimport json\nfor l in open('state/tasks/mold_v1.jsonl'):\n  if l.strip():\n    t=json.loads(l);print(t.get('id'),t.get('status'),t.get('pri'),t.get('type'),t.get('deps') or t.get('dep'),'|',t.get('title'))\"",
+        "description": "List all mold_v1 backlog tasks"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-tf1ledea/factory; cat state/tasks/mold_v1.jsonl",
+        "description": "Show raw backlog file"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T14:09:00Z",
+      "tool": "factory.py",
+      "argv": [
+        "next",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T14:09:01Z",
+      "tool": "factory.py",
+      "argv": [
+        "status"
+      ],
+      "parent": "agent"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}

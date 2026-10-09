@@ -1,0 +1,90 @@
+{
+  "agent": "claude",
+  "task": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "2/2",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 21.5,
+    "turns": 5,
+    "cost_usd": 0.1644706,
+    "tokens": {
+      "input": 8,
+      "output": 1027,
+      "cache_read": 89453,
+      "cache_write": 15751
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "final_text": "The backlog tool says the next task is **mold_v1-005: Load lane: raise the concurrency target to 50 chats**. It's priority 2, a test task, with no dependencies. To close it, the change has to be verified and the evidence recorded.\n\nTwo things to weigh before starting it:\n\n- **mold_v1-004, \"Keyboard focus ring on the chat composer\", is already in progress.** It's priority 1, which is higher than 005. Since we don't start a second task while one is open, it would normally be finished first.\n- **mold_v1-006, \"Write the operator runbook (brief to live app)\", is also priority 2 with no dependencies, and it unblocks more.** The priority-1 release gate (mold_v1-003, the onboarding check for the harbor product) can't start until 006 is done. The tool picked 005 over 006, probably because it has the lower number, but doing 006 first would clear the way to release harbor.\n\nThe rest of the mold_v1 backlog:\n\n| Task | Status | Priority | Title |\n|---|---|---|---|\n| mold_v1-003 | todo | 1 | Release gate: onboarding works end to end (waits on 006) |\n| mold_v1-007 | todo | 3 | Responsiveness lane: add a 320 px viewport |\n| mold_v1-008 | blocked | 2 | Workspace export to CSV (no reason recorded) |\n\nTasks 001 and 002 (fetching the mold and stamping the first app) are done.\n\nMy suggestion is to finish 004, then do 006, then 005. Tell me which one to take and I'll mark it in progress and start.",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Skill",
+      "input": {
+        "skill": "task"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "ls AGENTS.local.md 2>/dev/null; python3 .claude/scripts/factory.py status; echo; for m in $(ls state/tasks/ | sed 's/\\.jsonl$//'); do echo \"== $m\"; python3 .claude/scripts/factory.py next $m; done",
+        "description": "Show factory status and next task per mold"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cat state/tasks/mold_v1.jsonl",
+        "description": "Show mold_v1 backlog"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T14:28:16Z",
+      "tool": "factory.py",
+      "argv": [
+        "status"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T14:28:16Z",
+      "tool": "factory.py",
+      "argv": [
+        "next",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}
