@@ -973,8 +973,18 @@ def _lanes(check):
     for label, d in (("vercel", vdocs), ("vm", {"infrastructure": {"target": "vm"}})):
         got = L.for_target(raw, d)
         check(f"  ...and a {label} app's functional lane does not have it at all (not skipped: absent)", [c["name"] for c in got["checks"]] == names[:-1] and len(got["checks"]) == len(raw["checks"]) - 1)
-    check("  ...no other lane changes with the target", all(L.for_target(L.read_spec(l, "mold_v1"), d) is not None and L.for_target(L.read_spec(l, "mold_v1"), d) == L.read_spec(l, "mold_v1")
-                                                           for l in ("context", "load", "accessibility", "responsiveness") for d in (ddocs, vdocs)))
+    # What changes with the TARGET: a check that declares `targets` (the functional lane's tool.python; the context lane's
+    # test:org-isolation for vercel/vm and test:org-isolation.server for vm_remote) exists only for those targets, and a
+    # check's `applies_when` (state, not target: clone.regression for an application stamped with clone_of) drops it for
+    # both of these non-clone fixtures alike. Every other row stays, in its declared order.
+    def kept(spec, d):
+        t = (d.get("infrastructure") or {}).get("target")
+        return [c["name"] for c in spec["checks"] if ("targets" not in c or t in c["targets"]) and not L.applies(c, d)]
+    check("  ...no other lane changes with the target", all(
+        [c["name"] for c in L.for_target(L.read_spec(l, "mold_v1"), d)["checks"]] == kept(L.read_spec(l, "mold_v1"), d)
+        for l in ("context", "load", "accessibility", "responsiveness") for d in (ddocs, vdocs)))
+    check("  ...and only the functional and context lanes declare target-only checks", sorted(
+        l for l in L.LANES if any("targets" in c for c in (L.read_spec(l, "mold_v1") or {}).get("checks", []))) == ["context", "functional"])
     check("  ...a lane with no harness stays no harness", L.for_target(None, ddocs) is None)
     sch = load(os.path.join(testing, "lane.schema.json"))
     bad = json.loads(json.dumps(raw)); bad["checks"][-1]["targets"] = ["vm-remote"]

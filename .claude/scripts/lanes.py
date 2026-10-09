@@ -20,10 +20,16 @@
                                            <lane>/reports/dry/ and say DRY RUN, so the evidence archive can
                                            never hold a verdict that state never recorded.
   lanes.py <app_id> --list                 per lane: harness or not, how many checks, which preconditions are unmet
+  lanes.py <app_id> [--lane x] --background   start the run detached and return at once (it takes about 30 minutes)
+  lanes.py <app_id> status                 the latest run: still running (which lane, how long), or its result
+  lanes.py --self-test                     the agent interface, offline, in a throwaway factory
+  any of them with --json                  one result ({"ok","status","summary","next","needs","log","details"}); the
+                                           lanes' own output goes to the log it names (lib/agent_result.py)
 
 Exit 0 every lane passed or was skipped · 1 a lane failed, and (outside --dry-run) the application is now
 `reverted` with a task filed · 2 the runner could not run at all (unknown app, missing state, a malformed
-or misnamed lane.json).
+or misnamed lane.json) · 4 another lane run of this application holds its lock (one run per app at a time: two
+used to starve each other of the machine); the message names who holds it, since when, and the status command.
 
 A lane declares itself in `molds/<mold_id>/testing/<lane>/lane.json` against `lane.schema.json`, so a new
 CHECK, harness or precondition in a future mold never edits this file. A sixth LANE does: `testing` in
@@ -79,6 +85,7 @@ import library   # which starter library an application asks for (library.instal
 def _wants_library(app): return library.install(app) == "all"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 import lane_url  # {url}: the deployed URL per target (the lanes' own lane-url.py decides what a CHECK grades)
+import agent_result as AR, runs, services   # --json, the lane lock, --background and status, the rehearsal switch
 TODAY = datetime.date.today().isoformat()
 LANES = ["functional", "context", "load", "accessibility", "responsiveness"]   # the contract's order
 DEFAULT_ORDER = {n: (i + 1) * 10 for i, n in enumerate(LANES)}
@@ -481,9 +488,10 @@ def main(a):
 
     if listing:
         print(f"{'lane':16} {'harness':8} {'checks':>6}  preconditions")
+        listed = {}
         for l in todo:
             s = specs[l]
-            if not s: print(f"{l:16} {'no':8} {0:>6}  no lane.json — this lane is skipped, never passed"); continue
+            if not s: print(f"{l:16} {'no':8} {0:>6}  no lane.json — this lane is skipped, never passed"); listed[l] = {"harness": False, "checks": 0, "unmet": []}; continue
             ctx = context(app_id, l, mold_id, docs, os.path.join(ROOT, "molds", mold_id, "testing", l, "reports",
                           *(["dry"] if dry else []), f"{app_id}-{TODAY}T<hhmmss>Z.md"))   # pattern: --list writes nothing
             u = [e for e in (unmet(p, docs, ctx) for p in s.get("requires", [])) if e]
@@ -493,6 +501,9 @@ def main(a):
                   (unmet(p, docs, dict(ctx, _env={**os.environ, **app_secret_values(docs, c.get("app_env", []), app_id)})
                          if c.get("app_env") else ctx) for p in c.get("requires", [])) if e]
             print(f"{l:16} {'yes':8} {len(s.get('checks', [])):>6}  " + ("; ".join(dict.fromkeys(u))[:160] if u else "all met"))
+            listed[l] = {"harness": True, "checks": len(s.get("checks", [])), "unmet": list(dict.fromkeys(u))}
+        AR.detail("lanes", listed)
+        AR.note(summary=f"{len(todo)} lane(s) for {app_id}: " + ", ".join(f"{l} {'no harness' if not v['harness'] else str(v['checks']) + ' checks' + (', ' + str(len(v['unmet'])) + ' precondition(s) unmet' if v['unmet'] else '')}" for l, v in listed.items()) + ".")
         return 0
 
     verdicts, first_fail = {}, None
@@ -563,6 +574,12 @@ def main(a):
         lane, fails, rel, tid, not_run = first_fail
         rest = (f" The run stopped here: {', '.join(not_run)} did not run, so their results were reset to "
                 f"`pending` rather than left standing." if not_run else " Nothing else ran.")
+        AR.detail("lanes", {l: {"status": v[0], "report": os.path.relpath(v[2], ROOT), "passed": sum(1 for r in v[1] if r["status"] == "pass"),
+                                "checks": len(v[1]), "failed_checks": [r["name"] for r in v[1] if r["status"] == "fail"],
+                                "skipped_checks": [r["name"] for r in v[1] if r["status"] == "skipped"]} for l, v in verdicts.items()})
+        AR.note(summary=f"The {lane} lane failed ({len(fails)} of {len(verdicts[lane][1])} checks: {', '.join(r['name'] for r in fails)[:200]})"
+                        + ("" if dry else f"; {app_id} is now reverted and {tid} was filed") + ".",
+                next=f"Read the report, {rel}, find the cause and tell the operator; never edit a lane to make it pass.")
         print(f"{lane} failed ({len(fails)} of {len(verdicts[lane][1])} checks). Report: {rel}. "
               f"{app_id} is now reverted; {'tasks' if ',' in tid else 'task'} {tid} cover{'' if ',' in tid else 's'} it.{rest}{unmeasured}")
         return 1
@@ -576,9 +593,105 @@ def main(a):
               + "No state was written and no task was filed." + tail)
         return 1 if f else 0
     which = ("all five lanes in order (" + ", ".join(todo) + ")") if ordered else ", ".join(todo)
+    AR.detail("lanes", {l: {"status": v[0], "report": os.path.relpath(v[2], ROOT), "passed": sum(1 for r in v[1] if r["status"] == "pass"),
+                            "checks": len(v[1]), "skipped_checks": [r["name"] for r in v[1] if r["status"] == "skipped"]} for l, v in verdicts.items()})
+    sk = [l for l in todo if verdicts.get(l, ("",))[0] == "skipped"]
+    AR.note(summary=f"{len(verdicts)} lane(s) finished for {app_id}: {c('pass')} passed, {c('skipped')} skipped, nothing failed"
+                    + (f" (skipped: {', '.join(sk)}; each report says what would make it run)" if sk else "") + ".",
+            next=("" if not sk else f"See why each skipped lane could not measure everything: python3 .claude/scripts/lanes.py {app_id} --list"))
     print(f"{len(verdicts)} lane(s) finished for {app_id} — {which}: {c('pass')} passed, {c('skipped')} skipped. "
           f"Nothing failed, so {app_id} was not reverted." + tail + unmeasured)
     print(clear_stale_revert(adir, app_id, ordered) or "", end="")
     return 0
 
-if __name__ == "__main__": sys.exit(main(sys.argv[1:]))
+def entry(a):
+    """--json, --background, status and the lane lock around main()."""
+    as_json, a = AR.wants_json(a)
+    if not a or a[0].startswith("-"): return main(a)
+    app_id = a[0]; services.script_start("lanes.py", a, action="status" if a[1:2] == ["status"] else "lanes")
+    start = f"python3 .claude/scripts/lanes.py {app_id} --background --json"
+    if a[1:2] == ["status"]:
+        res = runs.status(ROOT, "lanes.py", app_id, "lanes", start)
+        if as_json: return AR.emit(res)
+        print(res["summary"] + (f"\nnext: {res['next']}" if res["next"] else "") + (f"\nlog: {res['log']}" if res["log"] else ""))
+        return AR.exit_code(res)
+    if "--background" in a:
+        res, code = runs.start_background(ROOT, "lanes.py", app_id, "lanes", [x for x in a if x != "--background"], start)
+        if as_json: return AR.emit(res, locked=code == AR.LOCKED)
+        print(res["summary"] + f"\nnext: {res['next']}"); return code
+    if "--list" in a or "--dry-run" in a:     # reads only (a dry run writes no state): no lock
+        return AR.run_json(main, a, root=ROOT, app=app_id, step="lanes-dry" if "--dry-run" in a else "lanes-list") if as_json else main(a)
+    log = AR.new_log(ROOT, app_id, "lanes") if as_json else ""
+    if as_json: os.environ["FACTORY_RUN_LOG"] = log
+    held = runs.Held(ROOT, app_id, "lanes", "lanes.py", a, log=log).__enter__()
+    if held.locked:
+        res = runs.locked_result("lanes.py", app_id, "lanes", held.lock.held_by)
+        if as_json: return AR.emit(res, locked=True)
+        print(res["summary"] + f"\n  Check on it: {res['next']}"); return AR.LOCKED
+    try:
+        if as_json: return AR.run_json(main, a, root=ROOT, app=app_id, step="lanes")
+        try: code = main(a)
+        except SystemExit as e: code = e.code if isinstance(e.code, int) else 1; runs.finish_record(held.record, code); raise
+        runs.finish_record(held.record, code); return code
+    finally:
+        held.__exit__(None, None, None)
+
+def self_test():
+    """The agent interface in a throwaway factory with a five-lane stand-in mold: --json, exit 0/1/4, the lane lock,
+    --background and status. The lanes run `sleep` and `true`/`false`; nothing is deployed or contacted."""
+    import shutil, subprocess, tempfile, time
+    checks = []
+    def ok(c, what): checks.append(what); assert c, what
+    here = os.path.dirname(os.path.abspath(__file__))
+    t = tempfile.mkdtemp(prefix="lanes-selftest-")
+    try:
+        shutil.copytree(here, os.path.join(t, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
+        a = os.path.join(t, "state", "application", "app1"); os.makedirs(a); os.makedirs(os.path.join(t, "state", "tasks"))
+        json.dump({"molds": [{"mold_id": "m1", "status": "active"}]}, open(os.path.join(t, "state", "factory.json"), "w"))
+        json.dump({"products": [{"product_id": "p", "mold_id": "m1", "name": "P", "stage": "defined", "gates": {}}]}, open(os.path.join(t, "state", "products.json"), "w"))
+        open(os.path.join(t, "state", "tasks", "m1.jsonl"), "w").close()
+        json.dump({"app_id": "app1", "mold_id": "m1", "status": "stamped"}, open(os.path.join(a, "application.json"), "w"))
+        json.dump({"target": "vercel", "vercel": {"production_url": "https://app1.example.test"}}, open(os.path.join(a, "infrastructure.json"), "w"))
+        for n in ("datastores", "datainfra"): json.dump({}, open(os.path.join(a, f"{n}.json"), "w"))
+        for i, lane in enumerate(LANES):
+            d = os.path.join(t, "molds", "m1", "testing", lane); os.makedirs(d)
+            run = "test -e {root}/FAIL_LOAD && exit 1; sleep 0.4; true" if lane == "load" else "sleep 0.4; true"
+            json.dump({"lane": lane, "checks": [{"name": f"{lane}.ok", "run": run, "cwd": "root"}]}, open(os.path.join(d, "lane.json"), "w"))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FACTORY_")}
+        L = os.path.join(t, ".claude", "scripts", "lanes.py")
+        def go(*args):
+            r = subprocess.run([sys.executable, L, "app1", *args], cwd=t, env=env, capture_output=True, text=True)
+            try: d = json.loads(r.stdout)
+            except ValueError: d = {}
+            return r.returncode, d, r
+        code, d, r = go("--json")
+        ok(code == 0 and d.get("status") == "done" and set(d) == {"ok", "status", "summary", "next", "needs", "log", "details"}
+           and d["details"]["lanes"]["load"]["status"] == "pass", "--json: done, exit 0, one result with every lane in details")
+        ok("functional" not in r.stdout.split('"summary"')[0] and "load.ok" not in r.stdout and "pass" in open(d["log"]).read(), "  ...the lanes' own output is in the log, not on stdout")
+        code, d, r = go("--list", "--json")
+        ok(code == 0 and d["details"]["lanes"]["context"]["checks"] == 1, "--list --json: each lane's checks")
+        code, d, r = go("--background", "--json")
+        ok(code == 0 and d.get("status") == "running" and "lanes.py app1 status" in d.get("next", ""), "--background: returns at once, running, with the status command")
+        code2, d2, _ = go("--json")
+        ok(code2 == 4 and d2.get("details", {}).get("holder", {}).get("pid") == d["details"]["pid"], "a second run while it runs: exit 4, naming the background run's pid")
+        code, d, _ = go("status", "--json")
+        ok(d.get("status") == "running" and d["details"].get("pid"), "status while it runs: running")
+        for _ in range(100):
+            code, d, _ = go("status", "--json")
+            if d.get("status") != "running": break
+            time.sleep(0.2)
+        ok(code == 0 and d.get("status") == "done" and d["details"]["run"]["background"] is True, "status after it ends: the run's own result")
+        open(os.path.join(t, "FAIL_LOAD"), "w").close()
+        code, d, r = go("--json")
+        ok(code == 1 and d.get("status") == "failed" and "load lane failed" in d.get("summary", "") and "never edit a lane" in d.get("next", ""), "a failing lane: failed, exit 1, and what to do next")
+        ok(json.load(open(os.path.join(a, "application.json")))["status"] == "reverted", "  ...and the application is reverted, as without --json")
+        code, d, r = go("status")
+        ok(code == 1 and "failed" in r.stdout, "status without --json: one plain sentence and the exit code")
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+    print(f"lanes: {len(checks)} checks passed (--json, exit codes, the lane lock, --background and status)")
+    return 0
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["--self-test"]: sys.exit(self_test())
+    sys.exit(entry(sys.argv[1:]))

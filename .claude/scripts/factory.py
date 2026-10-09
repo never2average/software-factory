@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """Factory CLI. No dependencies beyond the stdlib.
 
+  factory.py doctor [--json]             is this machine ready? tools (python, node 24, git, gh, vercel), sign-ins
+                                         (gh, vercel), state/factory.local.json present and filled, each active mold
+                                         fetched and IDENTICAL to its pin (mold.py check), disk space. Each item passes
+                                         or names its plain fix. Exit 0 ready, 1 something to install, 3 a person is needed
   factory.py status                      products, stage, open/done task counts per mold
+  factory.py status <app_id> [--json]    the app's latest deploy and lane run (provision.py / lanes.py <app> status)
   factory.py tasks [mold] [--all]        open tasks (default: todo/in_progress/blocked), priority order
-  factory.py next [mold]                 the highest-priority unblocked todo task
+  factory.py next [mold] [--json]        the highest-priority unblocked todo task
+  factory.py --self-test
   factory.py add <mold> "<title>" --type build [--pri 2] [--owner fable] [--lane x] [--dep id ...]
                  [--product <product_id>] [--advances <stage>] [--accept "<criterion>" ...]
                                          --product defaults to the mold's first product; --advances sets
@@ -18,6 +24,8 @@
 import json, sys, os, datetime, re
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 import legacy   # an older application's pre-rename state keys, where this machine names them (lib/legacy.py)
+import agent_result as AR   # the one --json result shape (lib/agent_result.py)
+import services             # FACTORY_CALL_LOG and the rehearsal switch (lib/services.py)
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state")
 TODAY = datetime.date.today().isoformat()
@@ -38,7 +46,8 @@ def blocked_by(t, idx):
 def products(): return load(os.path.join(ST,"products.json"))
 def cmd_status(a):
     """One row per product. A mold can carry several (same codebase, different brand), and they share
-    that mold's backlog, so the task counts repeat across its products."""
+    that mold's backlog, so the task counts repeat across its products. With an app id: its runs (cmd_app_status)."""
+    if a and not a[0].startswith("-"): return cmd_app_status(a)
     print(f"{'mold':9} {'product':26} {'stage':14} {'apps':>4} {'todo':>4} {'wip':>4} {'done':>4}")
     for m in molds():
         ts = read_tasks(m); c = lambda s: sum(1 for t in ts if t["status"] == s)
@@ -55,7 +64,25 @@ def cmd_tasks(a):
             if not show_all and t["status"] in ("done","dropped"): continue
             b = blocked_by(t, idx); flag = f" [blocked by {','.join(b)}]" if b and t["status"]=="todo" else ""
             print(f"{t['task_id']:13} P{t['priority']} {t['status']:11} {t['owner']:6} {t['type']:10} {t['title']}{flag}")
+def next_tasks(ms):
+    idx = all_tasks(); out = []
+    for m in ms:
+        c = [t for t in read_tasks(m) if t["status"]=="todo" and not blocked_by(t, idx)]
+        out.append((m, min(c, key=lambda t:(t["priority"], t["task_id"])) if c else None))
+    return out
 def cmd_next(a):
+    as_json = "--json" in a; a = [x for x in a if x != "--json"]
+    if as_json:
+        found = next_tasks([a[0]] if a else molds())
+        hit = [(m, t) for m, t in found if t]
+        if hit:
+            m, t = hit[0]
+            res = AR.result(True, "done", f"{t['task_id']}  {t['title']}", f"python3 .claude/scripts/factory.py set {t['task_id']} status in_progress "
+                            f"(only when you start it)", [], "", {"mold": m, "task": t, "next_per_mold": {m_: (t_ or {}).get("task_id") for m_, t_ in found}})
+        else:
+            res = AR.result(True, "done", "Nothing unblocked on " + ", ".join(m for m, _ in found) + ".", "", [], "",
+                            {"next_per_mold": {m_: None for m_, _ in found}})
+        sys.exit(AR.emit(res))
     ms = [a[0]] if a else molds(); idx = all_tasks()
     for m in ms:
         c = [t for t in read_tasks(m) if t["status"]=="todo" and not blocked_by(t, idx)]
@@ -779,7 +806,148 @@ def cmd_validate(a):
     errs += _lane_specs()
     for e in errs: print(e)
     print("ok" if not errs else f"{len(errs)} problem(s)"); sys.exit(1 if errs else 0)
+
+# ---- doctor: is this machine ready to run the factory? ------------------------------------------------------------
+PLACEHOLDER = re.compile(r"your-|yourcompany|you@|example\.com$|^<|^$", re.I)
+def _run(argv, timeout=30):
+    import subprocess
+    try: r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
+    except FileNotFoundError: return None
+    except Exception as e: return type("R", (), {"returncode": 1, "stdout": "", "stderr": str(e)})()
+    return r
+def doctor_items():
+    """[{name, ok, kind: tool|login|value|mold|disk, fix}] — every check, in the order a person would fix them."""
+    import shutil
+    items = []
+    def add(name, ok, kind, fix=""): items.append({"name": name, "ok": bool(ok), "kind": kind, "fix": "" if ok else fix})
+    v = sys.version_info
+    add(f"python {v.major}.{v.minor}", v >= (3, 10), "tool", "Install Python 3.10 or later (Ubuntu: sudo apt install python3).")
+    r = _run(["node", "--version"])
+    nv = (r.stdout.strip() if r and r.returncode == 0 else "")
+    add(f"node {nv or 'not installed'} (24 wanted)", nv.startswith("v24."), "tool",
+        "Install Node.js 24: curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt-get install -y nodejs")
+    for tool, fix in (("git", "Install git: sudo apt install git"),
+                      ("gh", "Install the GitHub CLI: https://cli.github.com (Ubuntu: sudo apt install gh)"),
+                      ("vercel", "Install the Vercel CLI: npm i -g vercel")):
+        add(f"{tool} installed", shutil.which(tool), "tool", fix)
+    if shutil.which("gh"):
+        r = _run(["gh", "auth", "status"])
+        add("gh signed in", r and r.returncode == 0, "login",
+            "The operator signs in to GitHub once, in a terminal on this machine: gh auth login (choose GitHub.com, then 'Login with a web browser'; it shows a code to type at https://github.com/login/device).")
+    if shutil.which("vercel"):
+        r = _run(["vercel", "whoami"], timeout=60)
+        add("vercel signed in" + (f" ({r.stdout.strip().splitlines()[-1]})" if r and r.returncode == 0 and r.stdout.strip() else ""),
+            r and r.returncode == 0, "login",
+            "The operator signs in to Vercel once, in a terminal on this machine: vercel login (it prints a link to open and confirm).")
+    loc = os.environ.get("FACTORY_LOCAL") or os.path.join(ST, "factory.local.json")
+    rel = os.path.relpath(loc, ROOT) if loc.startswith(ROOT) else loc
+    if not os.path.exists(loc):
+        add(f"{rel} present", False, "value", f"Copy state/factory.local.example.json to {rel} and fill in the operator's own email, "
+            f"sending domain, Vercel team and each mold's source address (the operator knows them; the file is never committed).")
+    else:
+        try: L = load(loc)
+        except ValueError as e: L = None; add(f"{rel} readable", False, "value", f"{rel} is not valid JSON ({e}); fix it.")
+        if L is not None:
+            d = L.get("defaults") or {}
+            want = {"defaults.operator_email": d.get("operator_email"), "defaults.notify_domain": d.get("notify_domain"),
+                    "defaults.vercel_team": d.get("vercel_team")}
+            for m in [m for m in load(os.path.join(ST, "factory.json"))["molds"] if m.get("status") == "active"]:
+                want[f"mold_sources.{m['mold_id']}"] = (L.get("mold_sources") or {}).get(m["mold_id"])
+            blank = [k for k, x in want.items() if not isinstance(x, str) or PLACEHOLDER.search(x.strip())]
+            add(f"{rel} filled", not blank, "value", f"{rel} still lacks the operator's own value for {', '.join(blank)} "
+                f"(state/factory.local.example.json shows each one). Ask the operator for them, one at a time.")
+    for m in [m for m in load(os.path.join(ST, "factory.json"))["molds"] if m.get("status") == "active"]:
+        mid = m["mold_id"]; cb = os.path.join(ROOT, "molds", mid, "codebase")
+        if not os.path.isdir(cb) or not os.listdir(cb):
+            add(f"{mid} fetched", False, "mold", f"Fetch it: python3 .claude/scripts/mold.py fetch {mid}"); continue
+        if services.REHEARSAL:
+            add(f"{mid} fetched (rehearsal mold)", True, "mold"); continue
+        r = _run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "mold.py"), "check", mid], timeout=600)
+        out = ((r.stdout or "") + (r.stderr or "")) if r else ""
+        add(f"{mid} fetched and IDENTICAL to its pin", r and r.returncode == 0, "mold",
+            (f"Put the pinned commit back: python3 .claude/scripts/mold.py fetch {mid}" if r and r.returncode == 1 else
+             (out.strip().splitlines() or [f"python3 .claude/scripts/mold.py check {mid} could not run"])[-1][:300]))
+    du = shutil.disk_usage(ROOT); free = du.free // (1024 ** 3)
+    add(f"disk: {free} GB free", free >= 5, "disk", f"Only {free} GB is free on this machine's disk; a deploy needs about 5 GB. "
+        f"Remove old build copies (rm -rf build/*) or ask the operator for a bigger disk.")
+    return items
+def cmd_doctor(a):
+    as_json = "--json" in a
+    items = doctor_items()
+    human = [i for i in items if not i["ok"] and i["kind"] in ("login", "value")]
+    bad = [i for i in items if not i["ok"]]
+    needs = [{"kind": "login" if i["kind"] == "login" else "approval", "name": i["name"], "how": i["fix"]} for i in human]
+    status = "needs_human" if human else "failed" if bad else "done"
+    summary = ("This machine is ready." if not bad else
+               f"{len(bad)} of {len(items)} checks need attention: " + "; ".join(i["name"] for i in bad) + ".")
+    nxt = (human[0]["fix"] if human else bad[0]["fix"] if bad else "python3 .claude/scripts/mint.py list --json")
+    res = AR.result(not bad, status, summary, nxt, needs, "", {"checks": items})
+    if as_json: sys.exit(AR.emit(res))
+    for i in items: print(f"  {'ok     ' if i['ok'] else 'MISSING'} {i['name']}" + ("" if i["ok"] else f"\n          fix: {i['fix']}"))
+    print("\n" + summary + ("" if not bad else f"\nnext: {nxt}"))
+    sys.exit(AR.exit_code(res))
+def cmd_app_status(a):
+    """factory.py status <app_id>: the latest deploy and lane run, the same as provision.py / lanes.py <app> status."""
+    import runs
+    app = a[0]; as_json = "--json" in a
+    dep = runs.status(ROOT, "provision.py", app, "deploy", f"python3 .claude/scripts/provision.py {app} --deploy --background --json")
+    ln = runs.status(ROOT, "lanes.py", app, "lanes", f"python3 .claude/scripts/lanes.py {app} --background --json")
+    st = "running" if "running" in (dep["status"], ln["status"]) else "needs_human" if "needs_human" in (dep["status"], ln["status"]) \
+         else "failed" if "failed" in (dep["status"], ln["status"]) else "done"
+    res = AR.result(st in ("done", "running"), st, f"deploy: {dep['summary']} lanes: {ln['summary']}",
+                    next((x["next"] for x in (dep, ln) if x["status"] == st and x["next"]), ""), dep["needs"] + ln["needs"], "",
+                    {"deploy": dep, "lanes": ln})
+    if as_json: sys.exit(AR.emit(res))
+    print(f"{app}\n  deploy: {dep['summary']}\n  lanes:  {ln['summary']}" + (f"\nnext: {res['next']}" if res["next"] else ""))
+    sys.exit(AR.exit_code(res))
+
+def self_test():
+    import tempfile, shutil, subprocess, io, contextlib
+    checks = []
+    def ok(c, what): checks.append(what); assert c, what
+    here = os.path.dirname(os.path.abspath(__file__))
+    with tempfile.TemporaryDirectory() as t:
+        os.makedirs(os.path.join(t, ".claude")); shutil.copytree(here, os.path.join(t, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
+        os.makedirs(os.path.join(t, "state", "tasks")); os.makedirs(os.path.join(t, "bin"))
+        json.dump({"molds": [{"mold_id": "m1", "status": "active"}]}, open(os.path.join(t, "state", "factory.json"), "w"))
+        json.dump({"products": [{"product_id": "p", "mold_id": "m1", "stage": "defined"}]}, open(os.path.join(t, "state", "products.json"), "w"))
+        with open(os.path.join(t, "state", "tasks", "m1.jsonl"), "w") as f:
+            for tid, st, pri, dep in (("m1-001", "todo", 1, ["m1-003"]), ("m1-002", "todo", 2, []), ("m1-003", "in_progress", 1, [])):
+                f.write(json.dumps({"task_id": tid, "mold_id": "m1", "title": f"task {tid}", "status": st, "priority": pri, "owner": "x", "type": "build", "depends_on": dep}) + "\n")
+        F = os.path.join(t, ".claude", "scripts", "factory.py")
+        for n, body in (("node", "echo v24.1.0"), ("gh", "[ \"$1\" = auth ] && exit 1; exit 0"), ("vercel", "echo team-x")):
+            open(os.path.join(t, "bin", n), "w").write(f"#!/bin/sh\n{body}\n"); os.chmod(os.path.join(t, "bin", n), 0o755)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FACTORY_")}
+        env["PATH"] = os.path.join(t, "bin") + os.pathsep + env.get("PATH", "")
+        r = subprocess.run([sys.executable, F, "next", "m1", "--json"], capture_output=True, text=True, env=env)
+        d = json.loads(r.stdout)
+        ok(r.returncode == 0 and d["details"]["task"]["task_id"] == "m1-002" and d["status"] == "done" and set(d) == {"ok", "status", "summary", "next", "needs", "log", "details"},
+           "next --json: the unblocked task (m1-001 waits on m1-003), in the one result shape")
+        r = subprocess.run([sys.executable, F, "next", "m1"], capture_output=True, text=True, env=env)
+        ok(r.stdout.startswith("m1-002  task m1-002"), "next without --json prints as it always did")
+        r = subprocess.run([sys.executable, F, "doctor", "--json"], capture_output=True, text=True, env=env)
+        d = json.loads(r.stdout); names = {i["name"]: i for i in d["details"]["checks"]}
+        ok(r.returncode == 3 and d["status"] == "needs_human", "doctor: a missing sign-in and a missing local file need the human: exit 3")
+        ok(not names["gh signed in"]["ok"] and "gh auth login" in names["gh signed in"]["fix"] and names["vercel signed in (team-x)"]["ok"], "doctor: each sign-in passes or names the plain fix")
+        ok(any(n["kind"] == "login" and n["name"] == "gh signed in" for n in d["needs"]) and names["node v24.1.0 (24 wanted)"]["ok"], "doctor: the sign-in is in needs; node 24 passes")
+        ok(not names["state/factory.local.json present"]["ok"] and not names["m1 fetched"]["ok"] and "mold.py fetch m1" in names["m1 fetched"]["fix"], "doctor: no local file and no mold: both named with the fix")
+        json.dump({"defaults": {"operator_email": "you@yourcompany.com", "notify_domain": "real.test", "vercel_team": "t"}, "mold_sources": {"m1": "https://git.test/m.git"}},
+                  open(os.path.join(t, "state", "factory.local.json"), "w"))
+        r = subprocess.run([sys.executable, F, "doctor", "--json"], capture_output=True, text=True, env=env)
+        names = {i["name"]: i for i in json.loads(r.stdout)["details"]["checks"]}
+        ok(not names["state/factory.local.json filled"]["ok"] and "defaults.operator_email" in names["state/factory.local.json filled"]["fix"], "doctor: a placeholder value left from the example is named")
+        r = subprocess.run([sys.executable, F, "status", "app1", "--json"], capture_output=True, text=True, env=env)
+        d = json.loads(r.stdout)
+        ok(r.returncode == 0 and "No deploy" in d["details"]["deploy"]["summary"] and "--background" in d["details"]["lanes"]["next"], "status <app>: nothing run yet says so, with the start commands")
+        r = subprocess.run([sys.executable, F, "status"], capture_output=True, text=True, env=env)
+        ok(r.returncode == 0 and r.stdout.startswith("mold "), "status with no app: the products table as before")
+    print(f"factory: {len(checks)} checks passed")
+    return 0
+
 if __name__ == "__main__":
-    cmds = {"status":cmd_status,"tasks":cmd_tasks,"next":cmd_next,"add":cmd_add,"set":cmd_set,"close":cmd_close,"validate":cmd_validate}
+    cmds = {"status":cmd_status,"tasks":cmd_tasks,"next":cmd_next,"add":cmd_add,"set":cmd_set,"close":cmd_close,"validate":cmd_validate,
+            "doctor":cmd_doctor}
+    if sys.argv[1:2] == ["--self-test"]: sys.exit(self_test())
     if len(sys.argv)<2 or sys.argv[1] not in cmds: sys.exit(__doc__)
+    services.script_start("factory.py", sys.argv[1:])
     cmds[sys.argv[1]](sys.argv[2:])

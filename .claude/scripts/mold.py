@@ -5,6 +5,10 @@
   mold.py refresh <mold_id> [--into DIR]   the source at its current main; records the new commit and snapshot date
                                            in state/factory.json and the mold's MOLD.md
   mold.py check <mold_id> [--into DIR]     compare the snapshot with the pinned commit; writes nothing
+  mold.py fetch <mold_id> --rehearsal      INSIDE A REHEARSAL ONLY (FACTORY_REHEARSAL set; lib/services.py): write a tiny
+                                           stand-in mold instead of fetching the source: a few files of codebase, the
+                                           brand rules for them, and five lanes whose checks run in under a second against
+                                           the rehearsal's fake deployment. Nothing is cloned and no account is needed.
   mold.py --self-test
 
 Where the source lives is this machine's own: state/factory.local.json -> "mold_sources" -> {"<mold_id>": "<git URL>"}
@@ -115,6 +119,14 @@ def record(root, mold_id, commit, today):
 def main(a, root=ROOT, today=None):
     if not a or a[0] not in ("fetch", "refresh", "check") or len(a) < 2: print(__doc__); return 2
     cmd, mold_id = a[0], a[1]
+    if "--rehearsal" in a:
+        if cmd != "fetch": print("--rehearsal goes with fetch only.", file=sys.stderr); return 2
+        if not os.environ.get("FACTORY_REHEARSAL"):
+            print(f"--rehearsal writes a stand-in over molds/{mold_id}/, so it runs only inside a rehearsal (FACTORY_REHEARSAL "
+                  f"set to the rehearsal's directory; lib/services.py). Nothing was written.", file=sys.stderr); return 2
+        n = rehearsal_mold(root, mold_id)
+        print(f"{mold_id}: rehearsal stand-in written to molds/{mold_id}/ ({n} files: codebase, branding, five lanes); nothing was fetched")
+        return 0
     dest = os.path.abspath(a[a.index("--into") + 1]) if "--into" in a and a.index("--into") + 1 < len(a) else os.path.join(root, "molds", mold_id, "codebase")
     today = today or datetime.date.today().isoformat()
     try:
@@ -147,6 +159,117 @@ def main(a, root=ROOT, today=None):
         return 0
     except Stop as e:
         print(str(e), file=sys.stderr); return e.code
+
+
+# ---- the rehearsal mold (FACTORY_REHEARSAL only) ------------------------------------------------------------------
+REHEARSAL_CHECKS = r'''#!/usr/bin/env python3
+"""The rehearsal mold's checks (mold.py fetch --rehearsal). Each reads the application's state and asks the rehearsal's
+fake deployment through `curl` (the fake on PATH); nothing reaches a real address. Exit 0 pass, 1 fail."""
+import json, os, subprocess, sys
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+kind, app = sys.argv[1], sys.argv[2]
+d = os.path.join(ROOT, "state", "application", app)
+a = json.load(open(os.path.join(d, "application.json"))); i = json.load(open(os.path.join(d, "infrastructure.json")))
+url = (i.get("vercel") or {}).get("production_url") or ""
+def get(path, token=None):
+    argv = ["curl", "--silent", "--show-error", "--max-time", "20", "-w", "\n%{http_code}"] + (["-H", f"authorization: Bearer {token}"] if token else []) + [url + path]
+    r = subprocess.run(argv, capture_output=True, text=True)
+    body, _, code = r.stdout.rpartition("\n")
+    return code.strip(), body
+def lum(h):
+    def ch(c):
+        c = c / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(h[k:k + 2], 16) for k in (1, 3, 5))
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+if not url and kind not in ("corpus", "contrast"):
+    print(f"{app} has no production address yet; deploy it first"); sys.exit(1)
+if kind == "health":
+    code, body = get("/api/ops/health"); print(f"| health | {'pass' if code == '200' else 'fail'} | {url}/api/ops/health answered {code or 'nothing'} |")
+    sys.exit(0 if code == "200" else 1)
+if kind == "isolation":
+    code, body = get("/api/ops/health")
+    try: det = json.loads(body)["db"]["detail"]
+    except Exception: det = ""
+    ok = "(RLS enforced)" in det; print(f"| isolation | {'pass' if ok else 'fail'} | {det or 'no db check in the health answer'} |"); sys.exit(0 if ok else 1)
+if kind == "corpus":
+    n = len(((a.get("surface") or {}).get("primary_context") or {}).get("corpus") or [])
+    print(f"| corpus | {'pass' if n else 'fail'} | {n} corpus kind(s) declared for the agent's context |"); sys.exit(0 if n else 1)
+if kind == "load":
+    codes = [get("/api/ops/health")[0] for _ in range(5)]
+    ok = all(c == "200" for c in codes); print(f"| load | {'pass' if ok else 'fail'} | 5 of 5 requests answered 200; p95 first token 1.9 s (budget 4 s) |" if ok else f"| load | fail | answers: {codes} |")
+    sys.exit(0 if ok else 1)
+if kind == "contrast":
+    col = ((a.get("surface") or {}).get("branding") or {}).get("brand_color") or "#1F4FD8"
+    if not (col.startswith("#") and len(col) == 7): print(f"| contrast | pass | brand colour {col} is not a hex colour; the mold's own theme applies |"); sys.exit(0)
+    hi, lo = sorted((lum(col), 1.0), reverse=True); ratio = (hi + 0.05) / (lo + 0.05)
+    if ratio >= 4.5: print(f"| contrast | pass | brand colour {col} on white: {ratio:.1f}:1 |"); sys.exit(0)
+    print(f"| contrast | fail | brand colour {col} on white has a contrast of {ratio:.1f}:1; buttons and links need at least 4.5:1 (WCAG AA) |"); sys.exit(1)
+if kind == "viewport":
+    code, _ = get("/"); ok = code == "200"
+    print(f"| viewports | {'pass' if ok else 'fail'} | 375 px, 768 px and 1280 px: no horizontal scroll |"); sys.exit(0 if ok else 1)
+if kind == "signed_in":
+    code, body = get("/api/ops/me", os.environ.get("MOLD_V1_SESSION_TOKEN"))
+    ok = code == "200"; print(f"| signed in | {'pass' if ok else 'fail'} | the signed-in page answered {code} |"); sys.exit(0 if ok else 1)
+print(f"unknown check {kind}"); sys.exit(2)
+'''
+SESSION_ELSE = ("This check signs in as a person, and no session is on hand: someone who can sign in gets a one-time code "
+                "(python3 .claude/scripts/mint.py {app_id} code-request <email>, only when they say so), then "
+                "python3 .claude/scripts/mint.py {app_id} code <six digits> <email>.")
+def _lane(name, order, checks, summary):
+    return {"lane": name, "order": order, "summary": summary, "checks": checks,
+            "not_covered": ["Everything a real mold's lane measures: this is the rehearsal's stand-in, graded against a fake deployment."]}
+def _chk(name, kind, signed=False, why=""):
+    c = {"name": name, "run": f"python3 {{testing}}/rehearsal_checks.py {kind} {{app_id}}", "cwd": "root", "timeout_s": 60,
+         "expect": {"exit": 0}, "emits": "markdown_table", "why": why}
+    if signed: c["requires"] = [{"env": "MOLD_V1_SESSION_TOKEN", "else": SESSION_ELSE}]
+    return c
+def rehearsal_mold(root, mold_id):
+    """Write the stand-in mold under molds/<mold_id>/ (codebase/, branding/, testing/). -> how many files."""
+    m = os.path.join(root, "molds", mold_id); n = 0
+    files = {
+        "codebase/package.json": json.dumps({"name": "rehearsal-mold", "private": True, "scripts": {"build": "next build"}}, indent=2) + "\n",
+        "codebase/next.config.mjs": "export default {};\n",
+        "codebase/app/layout.tsx": "export const metadata = { title: \"Workbench\" };\nexport default function Layout({ children }) { return <html><body>{children}</body></html>; }\n",
+        "codebase/app/page.tsx": "export default function Page() { return <main>Workbench</main>; }\n",
+        "codebase/app/icon.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><rect width=\"32\" height=\"32\" rx=\"8\"/></svg>\n",
+        "codebase/app/globals.css": ":root {\n  --primary: oklch(0.2 0 0);\n  --ring: oklch(0.7 0 0);\n  --radius: 0.625rem;\n}\n.dark {\n  --primary: oklch(0.9 0 0);\n  --ring: oklch(0.5 0 0);\n}\n",
+        "codebase/services/task-workflow/package.json": json.dumps({"name": "task-workflow", "private": True}) + "\n",
+        "codebase/vercel.json": json.dumps({"crons": []}) + "\n",
+        "codebase/dm.md": "# Data room\n\nThe rehearsal mold's data room layout.\n",
+        "codebase/node_modules/.keep": "",
+        "branding/rules.json": json.dumps({"mold_id": mold_id, "product_name_default": "Workbench",
+                                          "files": {"icon": "app/icon.svg", "layout": "app/layout.tsx", "globals": "app/globals.css"},
+                                          "product_name_files": ["layout"], "replacements": [],
+                                          "palette_blocks": [{"id": "light", "anchor": ":root {", "scheme": "light"}, {"id": "dark", "anchor": ".dark {", "scheme": "dark"}]}, indent=2) + "\n",
+        "testing/rehearsal_checks.py": REHEARSAL_CHECKS,
+    }
+    lanes = {
+        "functional": _lane("functional", 10, [_chk("health", "health", why="the deployed app answers"), _chk("tenant.isolation", "isolation", why="a workspace cannot read another's rows"),
+                                               _chk("chat.turn", "signed_in", True, "one signed-in chat turn answers")], "Health, workspace isolation and one signed-in chat turn."),
+        "context": _lane("context", 20, [_chk("corpus.declared", "corpus", why="the agent's context is declared")], "The agent's declared context."),
+        "load": _lane("load", 30, [_chk("concurrency", "load", why="the app keeps answering under load")], "Answers under concurrent requests."),
+        "accessibility": _lane("accessibility", 40, [_chk("brand.contrast", "contrast", why="buttons and links in the brand colour must be readable"),
+                                                     _chk("authenticated.surface", "signed_in", True, "signed-in pages pass an accessibility scan")],
+                               "Brand colour contrast (WCAG AA 4.5:1) and the signed-in pages."),
+        "responsiveness": _lane("responsiveness", 50, [_chk("viewports", "viewport", why="no horizontal scroll at phone, tablet and desktop widths"),
+                                                       _chk("authenticated.viewports", "signed_in", True, "the signed-in workspace at 375 px")], "Phone, tablet and desktop widths."),
+    }
+    for lane, spec in lanes.items(): files[f"testing/{lane}/lane.json"] = json.dumps(dict({"$schema": "../lane.schema.json"}, **spec), indent=2) + "\n"
+    if not os.path.exists(os.path.join(m, "testing", "lane.schema.json")):
+        # A minimal schema of the same shape, when the rehearsal did not bring the factory's own.
+        files["testing/lane.schema.json"] = json.dumps({"type": "object", "required": ["lane", "checks"], "properties": {
+            "lane": {"type": "string", "enum": ["load", "context", "functional", "accessibility", "responsiveness"]},
+            "checks": {"type": "array", "items": {"type": "object", "required": ["name", "run"]}}}}, indent=2) + "\n"
+    for rel, body in files.items():
+        p = os.path.join(m, rel); os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f: f.write(body)
+        if rel.endswith(".py"): os.chmod(p, 0o755)
+        n += 1
+    if not os.path.exists(os.path.join(m, "MOLD.md")):
+        open(os.path.join(m, "MOLD.md"), "w").write(f"# {mold_id} (rehearsal stand-in)\n\nWritten by `mold.py fetch {mold_id} --rehearsal`: a few files of codebase, "
+                                                    "its brand rules and five lanes graded against the rehearsal's fake deployment. Never edited in place.\n"); n += 1
+    return n
 
 
 def self_test():
@@ -220,6 +343,18 @@ def self_test():
         ok(rc == 1 and "0000000" in out and open(os.path.join(snap, "app", "page.tsx")).read() == before, "a pin the source does not have: refused, snapshot untouched")
         rc, out = quiet(["fetch", "nope"], root)
         ok(rc == 2 and "no mold called" in out, "an unknown mold: refused")
+        was = os.environ.pop("FACTORY_REHEARSAL", None)
+        try:
+            rc, out = quiet(["fetch", "r", "--rehearsal"], root)
+            ok(rc == 2 and "only inside a rehearsal" in out and not os.path.exists(os.path.join(root, "molds", "r")), "--rehearsal outside a rehearsal: refused, nothing written")
+            os.environ["FACTORY_REHEARSAL"] = os.path.join(t, "reh")
+            rc, out = quiet(["fetch", "r", "--rehearsal"], root)
+            lj = json.load(open(os.path.join(root, "molds", "r", "testing", "accessibility", "lane.json")))
+            ok(rc == 0 and lj["lane"] == "accessibility" and os.path.exists(os.path.join(root, "molds", "r", "branding", "rules.json"))
+               and os.path.isdir(os.path.join(root, "molds", "r", "codebase", "node_modules")), "--rehearsal: codebase, brand rules and five lanes, nothing cloned")
+        finally:
+            if was is None: os.environ.pop("FACTORY_REHEARSAL", None)
+            else: os.environ["FACTORY_REHEARSAL"] = was
     print(f"mold: {len(checks)} checks passed (offline: a local bare repository as the source)")
 
 

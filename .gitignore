@@ -42,3 +42,6 @@ reports/usage/
 
 # This machine's and operator's own agent instructions (AGENTS.md says to read it when present).
 /AGENTS.local.md
+
+# Run records, logs and locks of deploys and lane runs (lib/runs.py, lib/agent_result.py): this machine's own.
+/.runs/
