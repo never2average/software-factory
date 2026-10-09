@@ -37,6 +37,9 @@ so `run` can be repeated at any time and picks up where things stand:
 This file only ORDERS the work. Each station is the script that already owns it (intake.py, packs.py, branding.py,
 provision.py, workspace.py, lanes.py, agent_cli.py, domain.py); their rules and refusals are unchanged.
 """
+import sys as _sys_fl, os as _os_fl
+_sys_fl.path.insert(0, _os_fl.path.join(_os_fl.path.dirname(_os_fl.path.abspath(__file__)), "lib"))
+from factory_local import load_factory
 import hashlib, json, os, re, subprocess, sys, time, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -285,7 +288,7 @@ def reuse_keys(app, other):
         r = subprocess.run([sys.executable, os.path.join(S, "provision.py"), app, "--set-secret", n], input=vals[n] + "\n", text=True, cwd=ROOT, capture_output=True)
         print(f"  {n}: {'copied' if r.returncode == 0 else 'NOT copied: ' + clean(r.stderr).strip()[-160:].replace(vals[n], '<value>')}")
     # The sender is this app's own, but it is not a secret and needs nobody: <Product> <project@the operator's verified domain>.
-    dom = load(os.path.join(ROOT, "state", "factory.json")).get("defaults", {}).get("notify_domain")
+    dom = load_factory(os.path.join(ROOT, "state")).get("defaults", {}).get("notify_domain")
     if dom and "PLATFORM_NOTIFY_FROM" in (i.get("secrets_user") or []):
         name = ((a.get("surface") or {}).get("branding") or {}).get("product_name") or a["app_id"]
         sender = f"{name} <{i['vercel']['project']}@{dom}>"
@@ -329,7 +332,7 @@ def new(app, brief, mold):
 def finish_new(app, brief_text):
     """What a newcomer should not have to ask for: the brand from the product's name, and the app's own agent
     package under the operator's npm organisation (factory.json defaults.agent_cli_scope)."""
-    a, i = docs(app); d = load(os.path.join(ROOT, "state", "factory.json")).get("defaults", {})
+    a, i = docs(app); d = load_factory(os.path.join(ROOT, "state")).get("defaults", {})
     m = re.search(r"^\s*product name:\s*\"?([^\n\".]+?)\"?\s*(?:\.|$)", brief_text, re.I | re.M)
     if m and not ((a.get("surface") or {}).get("branding") or {}).get("product_name"):
         args = ["--name", m.group(1).strip()]

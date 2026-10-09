@@ -36,3 +36,6 @@ reports/usage/
 /molds/*/testing/*/reports/
 /state/application/*
 !/state/application/app_id/
+
+# This machine's real operator email, notification domain, Vercel team and address (lib/factory_local.py).
+/state/factory.local.json
